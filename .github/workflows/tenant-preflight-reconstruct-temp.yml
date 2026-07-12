@@ -1,0 +1,114 @@
+name: tenant-preflight-reconstruct-temp
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tenant-preflight-reconstruct-temp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tenant-preflight-reconstruct-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconstruct:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact current-main branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reconstruct historical evidence against current schema
+        run: |
+          set -Eeuo pipefail
+          test "$(git merge-base HEAD origin/main)" = "cdecaf955a5a04f948b0346815c9be0c5579805d"
+          git fetch --no-tags origin audit/p0-tenant-preflight-546-20260712
+          for path in \
+            .github/workflows/tenant-principal-preflight.yml \
+            docs/architecture/tenant-principal-migration.md \
+            scripts/qualification/tenant/tenant_principal_preflight.py \
+            scripts/qualification/tenant/test_tenant_principal_preflight.py
+          do
+            mkdir -p "$(dirname "$path")"
+            git show origin/audit/p0-tenant-preflight-546-20260712:"$path" > "$path"
+          done
+
+          python - <<'PY'
+          from pathlib import Path
+
+          script = Path('scripts/qualification/tenant/tenant_principal_preflight.py')
+          source = script.read_text(encoding='utf-8')
+          source = source.replace(
+              'MAX_ISSUE_SAMPLES = 12\n',
+              '''MAX_ISSUE_SAMPLES = 12\nCURRENT_ALEMBIC_HEAD = "20260711_0058"\nCURRENT_TENANT_COLUMNS = frozenset({\n    "case_contexts.tenant_id",\n    "knowledge_chunks.tenant_id",\n    "knowledge_items.tenant_id",\n    "operations_dispatch_outbox.tenant_key",\n    "operator_queue_scope_grants.tenant_key",\n    "runtime_decision_audits.tenant_id",\n    "webchat_conversations.tenant_key",\n    "webchat_public_origin_bindings.tenant_key",\n})\n''',
+              1,
+          )
+          source = source.replace(
+              '"schema_version": "nexus_tenant_principal_preflight_v1",',
+              '''"schema_version": "nexus_tenant_principal_preflight_v2",\n            "schema_baseline": {\n                "alembic_head": CURRENT_ALEMBIC_HEAD,\n                "expected_existing_tenant_columns": sorted(CURRENT_TENANT_COLUMNS),\n                "observed_existing_tenant_columns": sorted(scanned_tenant_columns),\n            },''',
+              1,
+          )
+          marker = '            scanned_tenant_columns = _scan_existing_tenant_columns(connection, inspector, tenant_keys, findings)\n'
+          addition = marker + '''            observed_columns = set(scanned_tenant_columns)\n            for missing_column in sorted(CURRENT_TENANT_COLUMNS - observed_columns):\n                findings.add(\n                    "tenant.current_schema_column_missing",\n                    kind="schema",\n                    record_id=missing_column,\n                )\n'''
+          if source.count(marker) != 1:
+              raise SystemExit(f'schema marker count={source.count(marker)}')
+          source = source.replace(marker, addition, 1)
+          script.write_text(source, encoding='utf-8')
+
+          tests = Path('scripts/qualification/tenant/test_tenant_principal_preflight.py')
+          source = tests.read_text(encoding='utf-8')
+          marker = '\n\nif __name__ == "__main__":\n'
+          test = '''\n    def test_current_schema_baseline_is_explicit_and_bounded(self) -> None:\n        self.assertEqual(MODULE.CURRENT_ALEMBIC_HEAD, "20260711_0058")\n        self.assertEqual(len(MODULE.CURRENT_TENANT_COLUMNS), 8)\n        self.assertNotIn("default", MODULE.CURRENT_TENANT_COLUMNS)\n\n'''
+          if source.count(marker) != 1:
+              raise SystemExit(f'test marker count={source.count(marker)}')
+          tests.write_text(source.replace(marker, test + marker, 1), encoding='utf-8')
+
+          doc = Path('docs/architecture/tenant-principal-migration.md')
+          source = doc.read_text(encoding='utf-8')
+          preface = '''# Current-main reconstruction\n\nThis migration gate was reconstructed from historical PR #609 against `main@cdecaf955a5a04f948b0346815c9be0c5579805d`. Historical code is evidence only. The accepted baseline is Alembic `20260711_0058`, six core ownership tables without Tenant foreign keys, and eight existing operational `tenant_id`/`tenant_key` columns. No next migration revision is reserved until this preflight is accepted.\n\n'''
+          doc.write_text(preface + source, encoding='utf-8')
+
+          workflow = Path('.github/workflows/tenant-principal-preflight.yml')
+          source = workflow.read_text(encoding='utf-8')
+          old = '''      - name: Upgrade disposable PostgreSQL to exact head\n        working-directory: backend\n        run: alembic upgrade head\n'''
+          new = '''      - name: Upgrade disposable PostgreSQL to exact head\n        working-directory: backend\n        run: |\n          set -Eeuo pipefail\n          alembic upgrade head\n          test "$(alembic heads | awk '{print $1}')" = "20260711_0058"\n'''
+          if source.count(old) != 1:
+              raise SystemExit(f'workflow upgrade marker count={source.count(old)}')
+          source = source.replace(old, new, 1)
+          pass_marker = '          test "$(jq -r \'.status\' artifacts/tenant/preflight-pass.json)" = "pass"\n'
+          pass_addition = pass_marker + '''          test "$(jq -r '.schema_version' artifacts/tenant/preflight-pass.json)" = "nexus_tenant_principal_preflight_v2"\n          test "$(jq -r '.schema_baseline.alembic_head' artifacts/tenant/preflight-pass.json)" = "20260711_0058"\n          test "$(jq -r '.schema_baseline.expected_existing_tenant_columns | length' artifacts/tenant/preflight-pass.json)" = "8"\n'''
+          if source.count(pass_marker) != 1:
+              raise SystemExit(f'workflow pass marker count={source.count(pass_marker)}')
+          workflow.write_text(source.replace(pass_marker, pass_addition, 1), encoding='utf-8')
+          PY
+
+      - name: Verify reconstructed mapping contract
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            scripts/qualification/tenant/tenant_principal_preflight.py \
+            scripts/qualification/tenant/test_tenant_principal_preflight.py
+          python -m unittest scripts/qualification/tenant/test_tenant_principal_preflight.py
+          git diff --check
+
+      - name: Remove bootstrap and commit current-main preflight
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/workflows/tenant-preflight-reconstruct-temp.yml
+          git add -A
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 5
+          git config user.name 'nexus-osr-tenant-bot'
+          git config user.email 'nexus-osr-tenant-bot@users.noreply.github.com'
+          git commit -m 'test(tenant): reconstruct current-main ownership preflight (#546)'
+          git push origin HEAD:"${HEAD_BRANCH}"
