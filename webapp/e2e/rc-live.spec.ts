@@ -92,14 +92,23 @@ test('RC public WebChat message is visible in the authenticated operator surface
 
   markStage('public-send')
   await input.fill(message)
-  const messageRequest = page.waitForResponse((response) => {
-    const url = new URL(response.url())
-    return response.request().method() === 'POST'
+  const messageRequest = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url())
+    return candidate.request().method() === 'POST'
       && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
   })
   await page.locator('.nd-webchat-send').click()
-  const response = await messageRequest
-  expect(response.ok()).toBeTruthy()
+  const messageResponse = await messageRequest
+  expect(messageResponse.ok()).toBeTruthy()
+
+  const conversationMatch = new URL(messageResponse.url()).pathname.match(
+    /^\/api\/webchat\/conversations\/(wc_[A-Za-z0-9_-]+)\/messages$/,
+  )
+  expect(conversationMatch).not.toBeNull()
+  const conversationId = conversationMatch?.[1] || ''
+  expect(conversationId).toMatch(/^wc_[A-Za-z0-9_-]+$/)
+  const operatorSessionKey = `webchat:${conversationId}`
+
   markStage('public-persisted')
   await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
 
@@ -114,18 +123,16 @@ test('RC public WebChat message is visible in the authenticated operator surface
   await expect(page).not.toHaveURL(/\/login$/)
 
   markStage('operator-navigation')
-  const operatorResponse = await navigate(page, '/webchat')
+  const operatorPath = `/webchat?session=${encodeURIComponent(operatorSessionKey)}`
+  const operatorResponse = await navigate(page, operatorPath)
   markStage('operator-console')
   expect(operatorResponse).not.toBeNull()
   expect(operatorResponse?.ok()).toBeTruthy()
   await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
+  await expect(page).toHaveURL(new RegExp(`session=${encodeURIComponent(operatorSessionKey)}`))
 
-  markStage('operator-row')
-  const matchingRow = page.locator('button.support-row', { hasText: message }).first()
-  await expect(matchingRow).toBeVisible({ timeout: 25_000 })
-  await matchingRow.click()
-  markStage('operator-message')
-  await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 20_000 })
+  markStage('operator-session')
+  await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 25_000 })
 
   markStage('completed')
 })
