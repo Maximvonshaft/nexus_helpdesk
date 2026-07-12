@@ -65,6 +65,7 @@
   "token_authority": {
     "semantic_tokens_path": "webapp/src/styles/tokens.css",
     "component_primitives_path": "webapp/src/components/ui",
+    "enforcement_status": "target_not_yet_enforced",
     "feature_raw_hex_policy": "prohibited_after_migration",
     "legacy_sources": [
       "webapp/src/styles.css",
