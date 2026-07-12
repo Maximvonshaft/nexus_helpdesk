@@ -31,6 +31,13 @@ def test_candidate_compose_joins_external_runtime_network() -> None:
     )
 
 
+def test_candidate_compose_requires_exact_release_and_migration_identity() -> None:
+    compose = (ROOT / "deploy" / "docker-compose.candidate.yml").read_text(encoding="utf-8")
+
+    assert 'EXPECTED_MIGRATION_HEAD: "${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}"' in compose
+    assert 'READINESS_REQUIRE_RELEASE_METADATA: "true"' in compose
+
+
 def test_candidate_compose_includes_native_whatsapp_sidecar_path() -> None:
     compose = (ROOT / "deploy" / "docker-compose.candidate.yml").read_text(encoding="utf-8")
     sidecar_overlay = (ROOT / "deploy" / "docker-compose.whatsapp-sidecar.example.yml").read_text(encoding="utf-8")
