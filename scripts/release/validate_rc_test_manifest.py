@@ -201,7 +201,62 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _write_failure(path: Path) -> None:
+def _safe_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")[:48]
+
+
+def _reason_code(exc: Exception) -> str:
+    message = str(exc)
+    evidence_match = re.match(r"^evidence\.([a-z0-9_]+)(?:\.| )", message)
+    if evidence_match:
+        name = _safe_token(evidence_match.group(1))
+        if "size is outside" in message:
+            return f"evidence_{name}_size_invalid"
+        if ".size_bytes mismatch" in message:
+            return f"evidence_{name}_size_mismatch"
+        if ".sha256 mismatch" in message:
+            return f"evidence_{name}_digest_mismatch"
+        if ".sha256 must" in message:
+            return f"evidence_{name}_digest_format_invalid"
+        if "reuses another" in message:
+            return f"evidence_{name}_path_reused"
+        if ".path" in message:
+            return f"evidence_{name}_path_invalid"
+        if "must be an object" in message:
+            return f"evidence_{name}_type_invalid"
+    candidate_match = re.match(r"^candidate\.([a-z0-9_]+)", message)
+    if candidate_match:
+        return f"candidate_{_safe_token(candidate_match.group(1))}_invalid"
+    if message.startswith("schema must"):
+        return "schema_invalid"
+    if message.startswith("release_class must"):
+        return "release_class_invalid"
+    if message.startswith("decision must"):
+        return "decision_invalid"
+    if message.startswith("required checks"):
+        return "checks_not_pass"
+    if message.startswith("safety.") or message.startswith("safety fields"):
+        return "safety_contract_invalid"
+    if message.startswith("missing evidence:"):
+        return "missing_evidence"
+    if message.startswith("unexpected evidence:"):
+        return "unexpected_evidence"
+    if message.startswith("manifest not found"):
+        return "manifest_missing_or_irregular"
+    if message.startswith("manifest exceeds"):
+        return "manifest_too_large"
+    if message.startswith("manifest is not valid"):
+        return "manifest_json_invalid"
+    if message.startswith("manifest root"):
+        return "manifest_root_invalid"
+    if message.startswith("duplicate JSON key"):
+        return "manifest_duplicate_key"
+    if message.endswith("must be an object"):
+        return f"{_safe_token(message.split(' ', 1)[0])}_type_invalid"
+    return "manifest_validation_failed"
+
+
+def _write_failure(path: Path, *, reason_code: str) -> None:
     root = path.parent
     root.mkdir(parents=True, exist_ok=True)
     (root / "failure-summary.json").write_text(
@@ -211,7 +266,7 @@ def _write_failure(path: Path) -> None:
                 "status": "failed",
                 "stage": "manifest-validate",
                 "exit_code": 2,
-                "reason_code": "manifest_validation_failed",
+                "reason_code": reason_code,
                 "service_states": {},
             },
             indent=2,
@@ -231,8 +286,9 @@ def main() -> int:
         payload = load_manifest(manifest_path)
         validate_manifest(payload, manifest_path)
     except (ManifestError, OSError) as exc:
-        _write_failure(args.manifest)
-        print(f"RC_MANIFEST_VALID=false reason={exc}")
+        reason_code = _reason_code(exc)
+        _write_failure(args.manifest, reason_code=reason_code)
+        print(f"RC_MANIFEST_VALID=false reason_code={reason_code}")
         return 2
     print("RC_MANIFEST_VALID=true")
     return 0
