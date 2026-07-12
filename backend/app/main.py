@@ -127,13 +127,10 @@ def _migration_revision(conn: Connection) -> str | None:
 
 def _migration_readiness(observed: str | None) -> tuple[dict[str, object], list[str]]:
     expected = settings.expected_migration_head
-    required = bool(expected) or bool(settings.readiness_require_release_metadata)
+    required = bool(expected)
     reason_codes: list[str] = []
     ok = True
-    if required and not expected:
-        ok = False
-        reason_codes.append('migration_head_required')
-    elif expected and not observed:
+    if expected and not observed:
         ok = False
         reason_codes.append('migration_head_unavailable')
     elif expected and observed != expected:
