@@ -3,18 +3,43 @@ import type { ButtonHTMLAttributes, PropsWithChildren } from 'react'
 import { cn } from '@/lib/cn'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
+type Size = 'sm' | 'md' | 'lg'
 
-type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>> & { variant?: Variant }
+type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>> & {
+  variant?: Variant
+  size?: Size
+  loading?: boolean
+  loadingLabel?: string
+}
 
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ children, className, variant = 'secondary', type = 'button', ...rest }, ref) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
+  children,
+  className,
+  variant = 'secondary',
+  size = 'md',
+  type = 'button',
+  loading = false,
+  loadingLabel = '处理中…',
+  disabled,
+  ...rest
+}, ref) {
   return (
     <button
       ref={ref}
       type={type}
-      className={cn('button', variant !== 'secondary' && variant, className)}
+      className={cn(
+        'button',
+        'nd-button',
+        `nd-button--${size}`,
+        `nd-button--${variant}`,
+        variant !== 'secondary' && variant,
+        className,
+      )}
+      aria-busy={loading ? true : undefined}
+      disabled={disabled || loading}
       {...rest}
     >
-      {children}
+      {loading ? loadingLabel : children}
     </button>
   )
 })
