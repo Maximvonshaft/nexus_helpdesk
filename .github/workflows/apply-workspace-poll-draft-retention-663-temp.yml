@@ -56,8 +56,10 @@ jobs:
             .github/patches/workspace-poll-draft-retention-663.patch.b64 \
             .github/workflows/apply-workspace-poll-draft-retention-663-temp.yml
           git add -A
-          test "$(git diff --cached --name-only | wc -l)" -eq 4
           git diff --cached --name-only | sort | diff -u - <(printf '%s\n' \
+            .github/patches/workspace-poll-draft-retention-663.patch \
+            .github/patches/workspace-poll-draft-retention-663.patch.b64 \
+            .github/workflows/apply-workspace-poll-draft-retention-663-temp.yml \
             webapp/e2e/operator-workspace.spec.ts \
             webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx \
             webapp/src/features/operator-workspace/operator-workspace.css \
