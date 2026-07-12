@@ -184,16 +184,21 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         ):
             self.assertIn(service, self.runner)
 
-    def test_browser_selects_the_exact_conversation_before_asserting_message_body(self):
-        row_selector = "page.locator('button.support-row', { hasText: message }).first()"
-        click_selector = "await matchingRow.click()"
+    def test_browser_binds_operator_thread_to_server_conversation_identity(self):
+        identity_extract = "new URL(messageResponse.url()).pathname.match"
+        session_key = "const operatorSessionKey = `webchat:${conversationId}`"
+        operator_path = "`/webchat?session=${encodeURIComponent(operatorSessionKey)}`"
         body_selector = "page.locator('.support-message-body', { hasText: message }).first()"
-        self.assertIn(row_selector, self.browser)
-        self.assertIn(click_selector, self.browser)
+        self.assertIn(identity_extract, self.browser)
+        self.assertIn("^\\/api\\/webchat\\/conversations\\/(wc_[A-Za-z0-9_-]+)\\/messages$", self.browser)
+        self.assertIn(session_key, self.browser)
+        self.assertIn(operator_path, self.browser)
         self.assertIn(body_selector, self.browser)
-        self.assertLess(self.browser.index(row_selector), self.browser.index(click_selector))
-        self.assertLess(self.browser.index(click_selector), self.browser.index(body_selector))
-        self.assertNotIn("page.getByText(message, { exact: false }).first()", self.browser)
+        self.assertLess(self.browser.index(identity_extract), self.browser.index(session_key))
+        self.assertLess(self.browser.index(session_key), self.browser.index(operator_path))
+        self.assertLess(self.browser.index(operator_path), self.browser.index(body_selector))
+        self.assertNotIn("button.support-row', { hasText: message }", self.browser)
+        self.assertNotIn("await matchingRow.click()", self.browser)
 
     def test_rc_browser_stage_is_bound_without_stateful_retries(self):
         self.assertIn("RC_BROWSER_STAGE_FILE", self.browser)
