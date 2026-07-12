@@ -159,6 +159,8 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
             raise FinalizationError("sbom_component_identity_invalid")
         licenses = _licenses(component)
         if purl in overrides:
+            if licenses:
+                raise FinalizationError("override_for_licensed_component")
             applied.add(purl)
             override_value = overrides[purl]
             licenses = (
