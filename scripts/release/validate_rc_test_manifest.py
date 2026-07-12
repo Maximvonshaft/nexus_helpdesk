@@ -88,13 +88,16 @@ def _resolve_evidence_path(manifest_path: Path, logical_name: str, entry: dict[s
     if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
         raise ManifestError(f"evidence.{logical_name}.path must stay directly inside the evidence root")
     root = manifest_path.parent.resolve(strict=True)
-    candidate = (root / relative).resolve(strict=True)
+    unresolved = root / relative
+    if unresolved.is_symlink():
+        raise ManifestError(f"evidence.{logical_name}.path must not be a symlink")
+    candidate = unresolved.resolve(strict=True)
     try:
         candidate.relative_to(root)
     except ValueError as exc:
         raise ManifestError(f"evidence.{logical_name}.path escapes the evidence root") from exc
-    if candidate.is_symlink() or not candidate.is_file():
-        raise ManifestError(f"evidence.{logical_name}.path must be a regular non-symlink file")
+    if not candidate.is_file():
+        raise ManifestError(f"evidence.{logical_name}.path must be a regular file")
     return candidate
 
 
@@ -198,6 +201,27 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _write_failure(path: Path) -> None:
+    root = path.parent
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "failure-summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "nexus.osr.rc-test-failure-summary.v1",
+                "status": "failed",
+                "stage": "manifest-validate",
+                "exit_code": 2,
+                "reason_code": "manifest_validation_failed",
+                "service_states": {},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", type=Path)
@@ -207,6 +231,7 @@ def main() -> int:
         payload = load_manifest(manifest_path)
         validate_manifest(payload, manifest_path)
     except (ManifestError, OSError) as exc:
+        _write_failure(args.manifest)
         print(f"RC_MANIFEST_VALID=false reason={exc}")
         return 2
     print("RC_MANIFEST_VALID=true")
