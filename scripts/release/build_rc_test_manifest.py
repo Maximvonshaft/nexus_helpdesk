@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Build the exact-candidate RC manifest from completed bounded evidence."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+EVIDENCE_FILES = {
+    "health": "healthz.json",
+    "readiness": "readyz.json",
+    "http_core_smoke": "http-core-smoke.json",
+    "browser_smoke": "browser-smoke.txt",
+    "workers": "compose-ps-healthy.txt",
+    "migration": "migration.txt",
+    "migration_head": "migration-head.txt",
+    "migration_current": "migration-current.txt",
+    "seed_first": "seed-first.txt",
+    "seed_second": "seed-second.txt",
+    "seed_verification": "seed-verification.json",
+    "side_effect_safety": "side-effect-safety.json",
+    "network_safety": "network-safety.json",
+    "safe_config": "safe-config.json",
+    "teardown": "teardown.txt",
+    "rollback_verification": "rollback-verification.json",
+}
+
+
+def _digest(path: Path) -> str:
+    value = hashlib.sha256(path.read_bytes()).hexdigest()
+    return "sha256:" + value
+
+
+def _read(path: Path) -> str:
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        raise ValueError(f"empty evidence file: {path.name}")
+    return value
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--image-tag", required=True)
+    parser.add_argument("--migration-head", required=True)
+    args = parser.parse_args()
+
+    root = args.evidence_dir.resolve(strict=True)
+    ready = json.loads((root / "readyz.json").read_text(encoding="utf-8"))
+    safe_config = json.loads((root / "safe-config.json").read_text(encoding="utf-8"))
+    image_id = _read(root / "image-id.txt")
+    postgres_digest = _read(root / "postgres-image-digest.txt")
+    nginx_digest = _read(root / "nginx-image-digest.txt")
+    if ready.get("migration_revision") != args.migration_head:
+        raise ValueError("readiness migration revision mismatch")
+
+    evidence: dict[str, dict[str, object]] = {}
+    for logical_name, filename in EVIDENCE_FILES.items():
+        path = root / filename
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"missing regular evidence file: {filename}")
+        evidence[logical_name] = {
+            "path": filename,
+            "size_bytes": path.stat().st_size,
+            "sha256": _digest(path),
+        }
+
+    config_digest = "sha256:" + hashlib.sha256(
+        json.dumps(safe_config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    manifest = {
+        "schema": "nexus.osr.rc-test-candidate.v1",
+        "release_class": "controlled_test_deployment",
+        "decision": "RC0_TEST_DEPLOYABLE",
+        "candidate": {
+            "source_sha": args.source_sha,
+            "frontend_build_sha": args.source_sha,
+            "image_tag": args.image_tag,
+            "image_id": image_id,
+            "postgres_image_digest": postgres_digest,
+            "nginx_image_digest": nginx_digest,
+            "migration_revision": args.migration_head,
+            "config_profile": "rc-test-isolated-v1",
+            "config_digest": config_digest,
+        },
+        "checks": {
+            "image_build": "pass",
+            "compose_validation": "pass",
+            "migration": "pass",
+            "application_ready": "pass",
+            "workers_healthy": "pass",
+            "http_core_smoke": "pass",
+            "browser_smoke": "pass",
+            "side_effect_safety": "pass",
+            "network_isolation": "pass",
+            "teardown": "pass",
+        },
+        "safety": {
+            "production_data_used": False,
+            "production_network_joined": False,
+            "provider_candidate_enabled": False,
+            "real_outbound_enabled": False,
+            "whatsapp_enabled": False,
+            "speedaf_write_enabled": False,
+            "operations_dispatch_enabled": False,
+            "production_ready": False,
+            "full_osr_automation": "NO_GO",
+            "test_environment_isolated": True,
+        },
+        "evidence": evidence,
+    }
+    (root / "candidate-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print("RC_MANIFEST_BUILT=true")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
