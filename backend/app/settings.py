@@ -5,6 +5,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
+
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -12,12 +13,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-
 class Settings:
     def __init__(self) -> None:
         self.project_root = Path(__file__).resolve().parents[2]
         self.backend_root = self.project_root / "backend"
         self.app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
+        default_app_version = "unknown" if self.app_env == "production" else "development"
+        self.app_version = os.getenv("APP_VERSION", "").strip() or default_app_version
+        self.expected_migration_head = os.getenv("EXPECTED_MIGRATION_HEAD", "").strip() or None
+        self.readiness_require_release_metadata = _env_bool(
+            "READINESS_REQUIRE_RELEASE_METADATA",
+            self.app_env == "production",
+        )
         self.legacy_frontend_root = self.project_root / "frontend"
         self.frontend_dist_root = self.project_root / "frontend_dist"
         self.frontend_dist_index = self.frontend_dist_root / "index.html"
@@ -139,10 +146,7 @@ class Settings:
         self.webchat_ai_turn_debounce_seconds = float(os.getenv("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS", "0.15"))
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
-            self.webchat_ai_reconciler_interval_seconds = max(
-                5,
-                int(os.getenv("WEBCHAT_AI_RECONCILER_INTERVAL_SECONDS", "30")),
-            )
+            self.webchat_ai_reconciler_interval_seconds = max(5, int(os.getenv("WEBCHAT_AI_RECONCILER_INTERVAL_SECONDS", "30")))
         except ValueError:
             self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
