@@ -75,7 +75,11 @@ find "$STAGING_DIR" -type f -exec chmod 600 {} +
   sha256sum --check --strict SHA256SUMS >/dev/null
 )
 
-mv -T -- "$STAGING_DIR" "$BACKUP_DIR"
+mv -T -n -- "$STAGING_DIR" "$BACKUP_DIR"
+if [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+  echo "backup target appeared during publication; verified bundle was not published" >&2
+  exit 5
+fi
 trap - EXIT
 chmod 700 "$BACKUP_DIR"
 
