@@ -40,14 +40,42 @@ def _read(path: Path) -> str:
     return value
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--evidence-dir", type=Path, required=True)
-    parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--image-tag", required=True)
-    parser.add_argument("--migration-head", required=True)
-    args = parser.parse_args()
+def _reason_code(exc: Exception) -> str:
+    message = str(exc)
+    if message.startswith("missing regular evidence file:"):
+        return "missing_evidence_file"
+    if message.startswith("empty evidence file:"):
+        return "empty_evidence_file"
+    if message == "readiness migration revision mismatch":
+        return "migration_revision_mismatch"
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json_evidence"
+    if isinstance(exc, FileNotFoundError):
+        return "missing_evidence_root_or_identity"
+    return "manifest_build_failed"
 
+
+def _write_failure(root: Path, *, reason_code: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "failure-summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "nexus.osr.rc-test-failure-summary.v1",
+                "status": "failed",
+                "stage": "manifest-build",
+                "exit_code": 2,
+                "reason_code": reason_code,
+                "service_states": {},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def build_manifest(args: argparse.Namespace) -> None:
     root = args.evidence_dir.resolve(strict=True)
     ready = json.loads((root / "readyz.json").read_text(encoding="utf-8"))
     safe_config = json.loads((root / "safe-config.json").read_text(encoding="utf-8"))
@@ -116,6 +144,22 @@ def main() -> int:
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--image-tag", required=True)
+    parser.add_argument("--migration-head", required=True)
+    args = parser.parse_args()
+
+    try:
+        build_manifest(args)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        _write_failure(args.evidence_dir, reason_code=_reason_code(exc))
+        print(f"RC_MANIFEST_BUILT=false reason_code={_reason_code(exc)}")
+        return 2
     print("RC_MANIFEST_BUILT=true")
     return 0
 
