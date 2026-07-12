@@ -66,6 +66,15 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def test_default_backup_root_matches_repository_ignore_contract() -> None:
+    script = SOURCE_SCRIPT.read_text(encoding="utf-8")
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    assert '$ROOT_DIR/deploy_backups/$STAMP' in script
+    assert '$ROOT_DIR/.deploy_backups/$STAMP' not in script
+    assert "/deploy_backups/" in gitignore
+
+
 def test_backup_is_private_atomic_and_checksum_verified(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path)
     backup_dir = tmp_path / "backups" / "candidate"
