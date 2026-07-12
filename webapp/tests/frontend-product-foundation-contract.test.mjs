@@ -168,11 +168,12 @@ test('DESIGN register defines a subject-grounded non-template direction', () => 
 
 test('engineering integration assigns implementation to existing authorities', () => {
   const guide = readRequired(PATHS.engineering, 'frontend engineering integration guide')
+  const normalizedGuide = guide.toLowerCase()
   for (const workItem of ['#525', '#564', '#573', '#587', '#526']) {
     assert.ok(guide.includes(workItem), `engineering guide must reference ${workItem}`)
   }
-  assert.ok(guide.includes('no big-bang rewrite'))
-  assert.ok(guide.includes('architecture gate'))
+  assert.ok(normalizedGuide.includes('no big-bang rewrite'))
+  assert.ok(normalizedGuide.includes('architecture gate'))
 })
 
 test('the foundation remains additive and does not claim current route implementation', () => {
