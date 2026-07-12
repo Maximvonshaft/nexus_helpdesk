@@ -1,0 +1,81 @@
+name: frontend-truth-apply
+
+on:
+  push:
+    branches:
+      - fix/frontend-truth-641
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frontend-truth-apply-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/frontend-truth-641
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node immutable
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Apply bounded frontend truth codemod
+        run: |
+          set -Eeuo pipefail
+          python scripts/ci/apply_frontend_truth.py
+          git diff --check
+
+      - name: Install locked webapp dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Verify source contracts and build
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npm run typecheck
+          npm run lint
+          npm run build
+          npm run size-report
+
+      - name: Install Playwright Chromium
+        working-directory: webapp
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify browser behavior
+        working-directory: webapp
+        run: npm run e2e
+
+      - name: Publish verified GREEN commit and remove helper
+        env:
+          TARGET_BRANCH: fix/frontend-truth-641
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/workflows/frontend-truth-apply.yml scripts/ci/apply_frontend_truth.py
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            webapp/src/features/support-console/SupportConsolePage.tsx \
+            webapp/src/features/support-console/support-console.css \
+            webapp/src/lib/supportStatus.ts \
+            webapp/tests/frontend-truth-contract.test.mjs \
+            webapp/e2e/smoke.spec.ts \
+            .github/workflows/frontend-truth-apply.yml \
+            scripts/ci/apply_frontend_truth.py
+          git commit -m "fix(frontend): enforce operational truth semantics"
+          git push origin "HEAD:${TARGET_BRANCH}"
