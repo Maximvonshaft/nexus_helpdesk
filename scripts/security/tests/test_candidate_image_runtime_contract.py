@@ -28,6 +28,26 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8080/readyz", app_section)
         self.assertIn("assert response.status == 200", app_section)
 
+    def test_evidence_scan_and_quarantine_always_run_before_upload(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "release-image-assurance.yml"
+        ).read_text(encoding="utf-8")
+
+        scan_marker = "      - name: Scan bounded free-text evidence\n"
+        structured_marker = "      - name: Validate structured evidence schemas\n"
+        upload_marker = "      - name: Upload bounded release-image evidence\n"
+
+        scan_start = workflow.index(scan_marker)
+        structured_start = workflow.index(structured_marker)
+        upload_start = workflow.index(upload_marker)
+        scan_block = workflow[scan_start:structured_start]
+        structured_block = workflow[structured_start:upload_start]
+
+        self.assertIn("        if: always()\n", scan_block)
+        self.assertIn("        if: always()\n", structured_block)
+        self.assertLess(scan_start, structured_start)
+        self.assertLess(structured_start, upload_start)
+
     def test_failed_artifact_scan_quarantines_all_candidate_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artifact_dir = Path(directory) / "artifacts" / "release-image"
