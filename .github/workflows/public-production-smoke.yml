@@ -81,7 +81,7 @@ jobs:
               parsed = urlsplit(raw)
               if parsed.scheme.lower() not in {"http", "https"}:
                   fail(f"{name}_scheme")
-              if not parsed.hostname or parsed.username or parsed.password:
+              if not parsed.hostname or "@" in parsed.netloc:
                   fail(f"{name}_authority")
               if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
                   fail(f"{name}_must_be_origin_or_root")
