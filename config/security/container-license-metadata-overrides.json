@@ -1,0 +1,17 @@
+{
+  "schema_version": "nexus_container_license_metadata_overrides_v1",
+  "entries": [
+    {
+      "purl": "pkg:generic/python@3.11.15",
+      "license": "PSF-2.0",
+      "source": "https://docs.python.org/3.11/license.html",
+      "reason": "The official Python 3.11 license page supplies the missing base-runtime license metadata."
+    },
+    {
+      "purl": "pkg:pypi/annotated-types@0.7.0",
+      "license": "MIT",
+      "source": "https://pypi.org/project/annotated-types/0.7.0/",
+      "reason": "The exact PyPI release metadata identifies annotated-types 0.7.0 as MIT licensed."
+    }
+  ]
+}

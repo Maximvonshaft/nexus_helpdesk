@@ -95,7 +95,13 @@ services:
         --timeout "$${WEB_TIMEOUT:-30}"
         --bind 0.0.0.0:8080
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()
       interval: 30s
       timeout: 5s
       retries: 5
