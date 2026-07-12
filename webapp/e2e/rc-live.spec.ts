@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page, type Response } from '@playwright/test'
 
 const adminUsername = process.env.RC_TEST_ADMIN_USERNAME || ''
 const adminPassword = process.env.RC_TEST_ADMIN_PASSWORD || ''
@@ -13,6 +13,29 @@ const rcConfigured = Boolean(
 
 function rcUrl(path: string): string {
   return new URL(path, `${baseURL}/`).toString()
+}
+
+function reportBoundedBrowserError(error: unknown): void {
+  const raw = error instanceof Error ? error.message : String(error)
+  const bounded = raw
+    .replaceAll(baseURL, '{base_url}')
+    .replaceAll(adminUsername, '{admin_username}')
+    .replaceAll(adminPassword, '{admin_password}')
+    .replaceAll(sourceSha, '{source_sha}')
+    .slice(0, 400)
+  console.log(`RC_BROWSER_DETAIL_HEX=${Buffer.from(bounded, 'utf8').toString('hex')}`)
+}
+
+async function navigate(page: Page, path: string): Promise<Response | null> {
+  try {
+    return await page.goto(rcUrl(path), {
+      waitUntil: 'commit',
+      timeout: 20_000,
+    })
+  } catch (error) {
+    reportBoundedBrowserError(error)
+    throw error
+  }
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -32,10 +55,7 @@ test('RC public WebChat message is visible in the authenticated operator surface
       return response.request().method() === 'POST' && url.pathname === '/api/webchat/init'
     })
 
-    const navigationResponse = await page.goto(rcUrl('/webchat/demo/'), {
-      waitUntil: 'commit',
-      timeout: 20_000,
-    })
+    const navigationResponse = await navigate(page, '/webchat/demo/')
     console.log('RC_BROWSER_STAGE=public-committed')
     expect(navigationResponse).not.toBeNull()
     expect(navigationResponse?.ok()).toBeTruthy()
@@ -78,10 +98,7 @@ test('RC public WebChat message is visible in the authenticated operator surface
 
   console.log('RC_BROWSER_STAGE=login-navigation')
   await test.step('isolated operator authentication succeeds', async () => {
-    const loginResponse = await page.goto(rcUrl('/login'), {
-      waitUntil: 'commit',
-      timeout: 20_000,
-    })
+    const loginResponse = await navigate(page, '/login')
     console.log('RC_BROWSER_STAGE=login-form')
     expect(loginResponse).not.toBeNull()
     expect(loginResponse?.ok()).toBeTruthy()
@@ -93,10 +110,7 @@ test('RC public WebChat message is visible in the authenticated operator surface
 
   console.log('RC_BROWSER_STAGE=operator-navigation')
   await test.step('operator selects the matching conversation and sees the same message', async () => {
-    const operatorResponse = await page.goto(rcUrl('/webchat'), {
-      waitUntil: 'commit',
-      timeout: 20_000,
-    })
+    const operatorResponse = await navigate(page, '/webchat')
     console.log('RC_BROWSER_STAGE=operator-console')
     expect(operatorResponse).not.toBeNull()
     expect(operatorResponse?.ok()).toBeTruthy()
