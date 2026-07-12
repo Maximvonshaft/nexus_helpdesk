@@ -99,6 +99,26 @@ def _component_license_values(component: dict[str, Any]) -> set[str]:
     return values
 
 
+def _installed_components(installed: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    components = installed.get("components")
+    if not isinstance(components, list):
+        raise ComplianceError("installed_components_invalid")
+    expected = {"purl", "package", "version", "license_files"}
+    result: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in components:
+        if not isinstance(item, dict) or set(item) != expected:
+            raise ComplianceError("installed_component_keys_invalid")
+        key = (
+            _safe_purl(item.get("purl")),
+            _safe(item.get("package"), label="installed_package"),
+            _safe(item.get("version"), label="installed_version"),
+        )
+        if key in result:
+            raise ComplianceError("installed_component_duplicate")
+        result[key] = item
+    return result
+
+
 def verify(
     *,
     compliance_path: Path,
@@ -162,14 +182,7 @@ def verify(
         exception_map[key] = item
 
     sbom_by_purl = _sbom_components(sbom)
-    installed_components = installed.get("components")
-    if not isinstance(installed_components, list):
-        raise ComplianceError("installed_components_invalid")
-    installed_map = {
-        (str(item.get("package")), str(item.get("version"))): item
-        for item in installed_components
-        if isinstance(item, dict)
-    }
+    installed_map = _installed_components(installed)
     notice = notice_path.read_text(encoding="utf-8")
     checked: list[dict[str, object]] = []
     seen: set[tuple[str, str, str, str]] = set()
@@ -223,7 +236,7 @@ def verify(
         if license_id not in _component_license_values(component):
             raise ComplianceError("compliance_sbom_license_mismatch")
 
-        installed_component = installed_map.get((package, version))
+        installed_component = installed_map.get((purl, package, version))
         if not isinstance(installed_component, dict):
             raise ComplianceError("compliance_installed_component_missing")
         files = installed_component.get("license_files")
