@@ -23,7 +23,7 @@ export function ConfirmDialog({
   confirmLabel = '确认',
   cancelLabel = '取消',
   tone = 'default',
-  pending,
+  pending = false,
   onConfirm,
   onCancel,
   children,
@@ -35,7 +35,7 @@ export function ConfirmDialog({
     const previous = document.activeElement as HTMLElement | null
     const timer = window.setTimeout(() => cancelRef.current?.focus(), 0)
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
+      if (event.key === 'Escape' && !pending) onCancel()
     }
     window.addEventListener('keydown', onKey)
     return () => {
@@ -43,7 +43,7 @@ export function ConfirmDialog({
       window.removeEventListener('keydown', onKey)
       previous?.focus?.()
     }
-  }, [onCancel, open])
+  }, [onCancel, open, pending])
 
   if (!open) return null
 
@@ -55,8 +55,15 @@ export function ConfirmDialog({
         {consequence ? <div className="dialog-consequence">{consequence}</div> : null}
         {children}
         <div className="button-row dialog-actions">
-          <button ref={cancelRef} className="button" onClick={onCancel} disabled={pending}>{cancelLabel}</button>
-          <Button variant={tone === 'danger' ? 'danger' : 'primary'} onClick={onConfirm} disabled={pending}>{pending ? '处理中...' : confirmLabel}</Button>
+          <Button ref={cancelRef} variant="secondary" onClick={onCancel} disabled={pending}>{cancelLabel}</Button>
+          <Button
+            variant={tone === 'danger' ? 'danger' : 'primary'}
+            onClick={onConfirm}
+            loading={pending}
+            loadingLabel="处理中…"
+          >
+            {confirmLabel}
+          </Button>
         </div>
       </div>
     </div>
