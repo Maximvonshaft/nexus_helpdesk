@@ -87,5 +87,14 @@ class ManifestValidationTests(unittest.TestCase):
             MODULE.validate_manifest(payload)
 
 
+class TopologyContractTests(unittest.TestCase):
+    def test_app_healthcheck_uses_runtime_available_python_client(self):
+        root = Path(__file__).resolve().parents[3]
+        text = (root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
+        app_block = text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
+        self.assertNotIn("- curl\n", app_block)
+        self.assertIn("urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()", app_block)
+
+
 if __name__ == "__main__":
     unittest.main()
