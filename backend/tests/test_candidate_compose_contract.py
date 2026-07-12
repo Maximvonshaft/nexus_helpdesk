@@ -40,6 +40,8 @@ def test_candidate_compose_includes_native_whatsapp_sidecar_path() -> None:
     assert "python scripts/run_worker.py --worker-id worker-outbound-candidate --queue outbound" in compose
     assert 'NEXUS_BACKEND_URL: "${CANDIDATE_NEXUS_BACKEND_URL:-http://app-candidate:8080}"' in compose
     assert 'WHATSAPP_SESSION_ROOT: "/data/whatsapp-sessions"' in compose
+    assert 'WA_SIDECAR_CONNECTOR_MODE: "${WA_SIDECAR_CONNECTOR_MODE:-mock}"' in compose
+    assert 'WA_SIDECAR_AUTO_START_ACCOUNTS: "${WA_SIDECAR_AUTO_START_ACCOUNTS:-}"' in compose
     assert "CANDIDATE_WHATSAPP_SESSION_ROOT" in compose
     assert "http://app:8080" not in compose
     assert 'NEXUS_BACKEND_URL: "${NEXUS_BACKEND_URL:?set NEXUS_BACKEND_URL to the intended Nexus backend service}"' in sidecar_overlay
