@@ -18,6 +18,10 @@ export default defineConfig({
     video: 'retain-on-failure',
     launchOptions: {
       channel: 'chrome',
+      // RC browser traffic is loopback-only. Do not inherit an ambient runner
+      // proxy for 127.0.0.1; that can make curl pass while Chrome navigation
+      // fails before the main document commits.
+      args: ['--no-proxy-server'],
     },
   },
   webServer: externalBaseURL ? undefined : {
