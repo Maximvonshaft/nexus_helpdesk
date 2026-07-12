@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -59,7 +58,7 @@ def build_values(*, source_sha: str, compose_project: str, origin: str) -> dict[
         "RC_PUBLIC_ORIGIN": normalized_origin,
         "RC_TEST_TENANT_KEY": "rc-test",
         "RC_TEST_CHANNEL_KEY": "website",
-        "RC_TEST_DISPLAY_NAME": "RC Test Website",
+        "RC_TEST_DISPLAY_NAME": "RC-Test-Website",
         "POSTGRES_DB": "nexus_rc",
         "POSTGRES_USER": "nexus_rc",
         "POSTGRES_PASSWORD": pg_password,
@@ -150,6 +149,8 @@ def write_env(path: Path, values: dict[str, str]) -> None:
     for key, value in values.items():
         if any(char in value for char in "\r\n\x00"):
             raise ValueError(f"unsafe control character in {key}")
+        if any(char.isspace() for char in value):
+            raise ValueError(f"unquoted whitespace is not allowed in shell-loadable RC value {key}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
     path.chmod(0o600)
