@@ -5,6 +5,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from pathlib import Path
+
+# This helper is executed by absolute path from /app/scripts while the app
+# package is installed as source under /app/backend. Bootstrap that exact root
+# before importing the application boundary.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2] / "backend"
+if not _BACKEND_ROOT.is_dir():
+    raise SystemExit("RC_SIDE_EFFECT_PROOF_FAILED reason=backend_root_missing")
+_backend_text = str(_BACKEND_ROOT)
+if _backend_text not in sys.path:
+    sys.path.insert(0, _backend_text)
 
 from sqlalchemy import inspect, text
 
