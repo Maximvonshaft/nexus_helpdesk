@@ -6,6 +6,7 @@ export const Route = createRoute({
   getParentRoute: () => RootRoute,
   path: '/',
   beforeLoad: () => {
-    throw redirect({ to: getSupportToken() ? '/webchat' : '/login' })
+    if (getSupportToken()) throw redirect({ to: '/workspace' })
+    throw redirect({ to: '/login' })
   },
 })
