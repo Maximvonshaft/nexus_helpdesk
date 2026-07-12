@@ -181,7 +181,7 @@ async def test_zero_percent_routes_to_control_without_calling_candidate():
 
 
 @pytest.mark.asyncio
-async def test_environment_zero_percent_overrides_database_rule(monkeypatch):
+async def test_environment_zero_percent_overrides_valid_database_rule(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "0")
     mock_db = _mock_db(_rule(canary_percent=100))
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
@@ -287,7 +287,27 @@ async def test_invalid_traffic_configuration_fails_closed_without_provider_call(
 
 
 @pytest.mark.asyncio
-async def test_persisted_invalid_kill_switch_fails_closed_without_provider_call():
+async def test_valid_env_canary_override_does_not_mask_invalid_persisted_canary(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "5")
+    mock_db = _mock_db(_rule(canary_percent=101))
+    adapter = DummyAdapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "provider_runtime_canary_percent_invalid"
+    assert adapter.calls == 0
+    audit = mock_db.audit_rows[-1]
+    assert audit["operation"] == "traffic_select"
+    assert audit["status"] == "failed"
+    assert _audit_summary(audit)["traffic_selection"]["configuration_errors"] == [
+        "provider_runtime_canary_percent_invalid"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_valid_env_kill_false_does_not_mask_invalid_persisted_kill_switch(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     mock_db = _mock_db(_rule(kill_switch="false"))
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
@@ -297,6 +317,26 @@ async def test_persisted_invalid_kill_switch_fails_closed_without_provider_call(
     assert result.error_code == "provider_runtime_kill_switch_invalid"
     assert adapter.calls == 0
     assert _audit_summary(mock_db.audit_rows[-1])["traffic_selection"]["execute_candidate"] is False
+
+
+@pytest.mark.asyncio
+async def test_valid_env_kill_true_overrides_invalid_persisted_values_and_records_drift(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "5")
+    mock_db = _mock_db(_rule(canary_percent=101, kill_switch="false"))
+    adapter = DummyAdapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "kill_switch_active"
+    assert adapter.calls == 0
+    traffic = _audit_summary(mock_db.audit_rows[-1])["traffic_selection"]
+    assert traffic["path"] == "kill_switch"
+    assert traffic["configuration_errors"] == [
+        "provider_runtime_canary_percent_invalid",
+        "provider_runtime_kill_switch_invalid",
+    ]
 
 
 @pytest.mark.asyncio
