@@ -1,6 +1,27 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { expect, test, type Page, type Route } from '@playwright/test'
 
 const TOKEN_KEY = 'helpdesk-webapp-token'
+const SUPPORT_SOURCE_SUFFIX = 'src/features/support-console/lazy.tsx'
+
+type ManifestRecord = {
+  src?: string
+  file: string
+}
+
+function supportConsoleAssetPath() {
+  const manifestPath = resolve(process.cwd(), '../frontend_dist/.vite/manifest.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, ManifestRecord>
+  const pair = Object.entries(manifest).find(([key, record]) => {
+    const source = String(record.src || key).replaceAll('\\', '/')
+    return source.endsWith(SUPPORT_SOURCE_SUFFIX)
+  })
+  if (!pair) throw new Error(`Missing manifest entry for ${SUPPORT_SOURCE_SUFFIX}`)
+  return pair[1].file
+}
+
+const SUPPORT_ASSET_PATH = supportConsoleAssetPath()
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({
@@ -118,7 +139,7 @@ async function setAuthenticatedSession(page: Page) {
 test('unauthenticated webchat redirect does not request the lazy console module', async ({ page }) => {
   let lazyModuleRequests = 0
   page.on('request', (request) => {
-    if (request.url().includes('/src/features/support-console/lazy.tsx')) lazyModuleRequests += 1
+    if (request.url().includes(`/${SUPPORT_ASSET_PATH}`)) lazyModuleRequests += 1
   })
 
   await page.goto('/webchat')
@@ -128,13 +149,14 @@ test('unauthenticated webchat redirect does not request the lazy console module'
 
 test('authenticated webchat announces loading then renders the async console', async ({ page }) => {
   await setAuthenticatedSession(page)
-  await page.route('**/src/features/support-console/lazy.tsx*', async (route) => {
+  await page.route(`**/${SUPPORT_ASSET_PATH}*`, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 600))
     await route.continue()
   })
 
-  await page.goto('/webchat')
-  await expect(page.getByRole('status')).toHaveText(/加载运营工作台中…/)
+  await page.goto('/webchat', { waitUntil: 'domcontentloaded' })
+  const loading = page.getByRole('status').filter({ hasText: '加载运营工作台中…' })
+  await expect(loading).toBeVisible()
   await expect(page.getByTestId('nexus-support-console')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Lazy Route Customer' })).toBeVisible()
 })
