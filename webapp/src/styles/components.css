@@ -46,25 +46,25 @@
   font-size: var(--nd-text-form);
 }
 
-.nd-button--primary {
+.nd-button.nd-button--primary {
   background: var(--nd-color-brand);
   border-color: var(--nd-color-brand);
   color: var(--nd-color-text-inverse);
 }
 
-.nd-button--secondary {
+.nd-button.nd-button--secondary {
   background: var(--nd-color-surface);
   border-color: var(--nd-color-border-strong);
   color: var(--nd-color-text);
 }
 
-.nd-button--ghost {
+.nd-button.nd-button--ghost {
   background: transparent;
   border-color: transparent;
   color: var(--nd-color-text-muted);
 }
 
-.nd-button--danger {
+.nd-button.nd-button--danger {
   background: var(--nd-color-danger);
   border-color: var(--nd-color-danger);
   color: var(--nd-color-text-inverse);
@@ -75,18 +75,18 @@
   border-color: var(--nd-color-accent);
 }
 
-.nd-button--primary:hover:not(:disabled) {
+.nd-button.nd-button--primary:hover:not(:disabled) {
   background: var(--nd-color-brand-hover);
   border-color: var(--nd-color-brand-hover);
 }
 
-.nd-button--ghost:hover:not(:disabled) {
+.nd-button.nd-button--ghost:hover:not(:disabled) {
   background: var(--nd-color-surface-hover);
   border-color: transparent;
   color: var(--nd-color-text);
 }
 
-.nd-button--danger:hover:not(:disabled) {
+.nd-button.nd-button--danger:hover:not(:disabled) {
   background: var(--nd-color-danger-hover);
   border-color: var(--nd-color-danger-hover);
 }
@@ -161,31 +161,31 @@
   white-space: normal;
 }
 
-.nd-badge--success {
+.nd-badge.nd-badge--success {
   background: var(--nd-color-success-bg);
   border-color: var(--nd-color-success-border);
   color: var(--nd-color-success);
 }
 
-.nd-badge--warning {
+.nd-badge.nd-badge--warning {
   background: var(--nd-color-warning-bg);
   border-color: var(--nd-color-warning-border);
   color: var(--nd-color-warning);
 }
 
-.nd-badge--danger {
+.nd-badge.nd-badge--danger {
   background: var(--nd-color-danger-bg);
   border-color: var(--nd-color-danger-border);
   color: var(--nd-color-danger);
 }
 
-.nd-badge--info {
+.nd-badge.nd-badge--info {
   background: var(--nd-color-info-bg);
   border-color: var(--nd-color-info-border);
   color: var(--nd-color-info);
 }
 
-.nd-badge--ai {
+.nd-badge.nd-badge--ai {
   background: var(--nd-color-ai-bg);
   border-color: var(--nd-color-ai-border);
   color: var(--nd-color-ai);
