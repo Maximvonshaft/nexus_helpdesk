@@ -146,7 +146,10 @@ class Settings:
         self.webchat_ai_turn_debounce_seconds = float(os.getenv("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS", "0.15"))
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
-            self.webchat_ai_reconciler_interval_seconds = max(5, int(os.getenv("WEBCHAT_AI_RECONCILER_INTERVAL_SECONDS", "30")))
+            self.webchat_ai_reconciler_interval_seconds = max(
+                5,
+                int(os.getenv("WEBCHAT_AI_RECONCILER_INTERVAL_SECONDS", "30")),
+            )
         except ValueError:
             self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
