@@ -83,11 +83,20 @@ class RcSeedContractTest(unittest.TestCase):
             "EXIT_BACKEND_ROOT_MISSING": "20",
             "EXIT_UNSAFE_ENVIRONMENT": "21",
             "EXIT_DATABASE_INSPECTION": "22",
-            "EXIT_MISSING_TABLES": "23",
+            "EXIT_MISSING_MULTIPLE_TABLES": "23",
             "EXIT_EXECUTION_RECORDS": "24",
         }
         for name, value in expected_codes.items():
             self.assertIn(f"{name} = {value}", self.side_effect_source)
+        expected_table_codes = {
+            "provider_runtime_audit_logs": "31",
+            "provider_auth_sessions": "32",
+            "provider_credentials": "33",
+            "outbound_messages": "34",
+            "operations_dispatch_outbox": "35",
+        }
+        for table, code in expected_table_codes.items():
+            self.assertIn(f'"{table}": {code}', self.side_effect_source)
         for reason in (
             "backend_root_missing",
             "unsafe_environment_controls",
