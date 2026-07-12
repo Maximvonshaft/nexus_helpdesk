@@ -1,15 +1,6 @@
 from __future__ import annotations
 
 try:
-    from .external_channel_unresolved_store import apply_external_channel_unresolved_store_patch
-
-    apply_external_channel_unresolved_store_patch()
-except Exception:
-    # Service package import must remain resilient. Detailed failures are covered
-    # by the ExternalChannel unresolved idempotency tests and runtime CI gates.
-    pass
-
-try:
     from .outbound_dispatch_transaction_boundary import apply_outbound_dispatch_transaction_boundary_patch
 
     apply_outbound_dispatch_transaction_boundary_patch()

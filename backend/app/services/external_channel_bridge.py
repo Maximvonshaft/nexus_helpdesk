@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource
@@ -32,6 +35,7 @@ settings = get_settings()
 
 ALLOWED_CHANNEL_ACCOUNT_PROVIDERS = {"whatsapp", "telegram", "sms"}
 _RETIRED_STATUS = "legacy_external_channel_runtime_retired"
+_ACTIVE_UNRESOLVED_STATUSES = ("pending", "failed", "replaying")
 
 
 def _retired_dispatch_result(action: str) -> tuple[MessageStatus, str, None]:
@@ -174,6 +178,56 @@ def _extract_event_route(event: dict[str, Any]) -> dict[str, Any]:
     return route
 
 
+def _canonical_external_channel_payload_json(event: dict[str, Any]) -> str:
+    return json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _external_channel_payload_hash(event: dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_external_channel_payload_json(event).encode("utf-8")).hexdigest()
+
+
+def _find_active_unresolved_external_channel_event(
+    db: Session,
+    *,
+    source: str,
+    session_key: str | None,
+    payload_hash: str,
+) -> ExternalChannelUnresolvedEvent | None:
+    return (
+        db.query(ExternalChannelUnresolvedEvent)
+        .filter(
+            ExternalChannelUnresolvedEvent.source == source,
+            func.coalesce(ExternalChannelUnresolvedEvent.session_key, "") == (session_key or ""),
+            ExternalChannelUnresolvedEvent.payload_hash == payload_hash,
+            ExternalChannelUnresolvedEvent.status.in_(_ACTIVE_UNRESOLVED_STATUSES),
+        )
+        .order_by(ExternalChannelUnresolvedEvent.id.asc())
+        .first()
+    )
+
+
+def _refresh_unresolved_external_channel_event(
+    row: ExternalChannelUnresolvedEvent,
+    *,
+    event_type: str | None,
+    recipient: str | None,
+    source_chat_id: str | None,
+    preferred_reply_contact: str | None,
+    error: str | None,
+) -> None:
+    if event_type is not None:
+        row.event_type = event_type
+    if recipient is not None:
+        row.recipient = recipient
+    if source_chat_id is not None:
+        row.source_chat_id = source_chat_id
+    if preferred_reply_contact is not None:
+        row.preferred_reply_contact = preferred_reply_contact
+    if error is not None:
+        row.last_error = error
+    row.updated_at = utc_now()
+
+
 def persist_unresolved_external_channel_event(
     db: Session,
     *,
@@ -183,21 +237,69 @@ def persist_unresolved_external_channel_event(
     error: str | None = None,
 ) -> ExternalChannelUnresolvedEvent:
     route = _extract_event_route(event)
+    resolved_session_key = session_key or _extract_event_session_key(event)
+    event_type = _clean(event.get("type") or event.get("event_type"), limit=80)
+    recipient = _clean(route.get("recipient"), limit=255)
+    source_chat_id = _clean(route.get("threadId") or route.get("source_chat_id"), limit=120)
+    preferred_reply_contact = _clean(route.get("recipient"), limit=160)
+    payload_json = _canonical_external_channel_payload_json(event)
+    payload_hash = _external_channel_payload_hash(event)
+
+    existing = _find_active_unresolved_external_channel_event(
+        db,
+        source=source,
+        session_key=resolved_session_key,
+        payload_hash=payload_hash,
+    )
+    if existing is not None:
+        _refresh_unresolved_external_channel_event(
+            existing,
+            event_type=event_type,
+            recipient=recipient,
+            source_chat_id=source_chat_id,
+            preferred_reply_contact=preferred_reply_contact,
+            error=error,
+        )
+        db.flush()
+        return existing
+
     row = ExternalChannelUnresolvedEvent(
         source=source,
-        session_key=session_key or _extract_event_session_key(event),
-        event_type=_clean(event.get("type") or event.get("event_type"), limit=80),
-        recipient=_clean(route.get("recipient"), limit=255),
-        source_chat_id=_clean(route.get("threadId") or route.get("source_chat_id"), limit=120),
-        preferred_reply_contact=_clean(route.get("recipient"), limit=160),
-        payload_json=json.dumps(event, ensure_ascii=False, sort_keys=True, default=str),
+        session_key=resolved_session_key,
+        event_type=event_type,
+        recipient=recipient,
+        source_chat_id=source_chat_id,
+        preferred_reply_contact=preferred_reply_contact,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
         status="pending",
         replay_count=0,
         last_error=error,
     )
-    db.add(row)
-    db.flush()
-    return row
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+        return row
+    except IntegrityError:
+        winner = _find_active_unresolved_external_channel_event(
+            db,
+            source=source,
+            session_key=resolved_session_key,
+            payload_hash=payload_hash,
+        )
+        if winner is None:
+            raise
+        _refresh_unresolved_external_channel_event(
+            winner,
+            event_type=event_type,
+            recipient=recipient,
+            source_chat_id=source_chat_id,
+            preferred_reply_contact=preferred_reply_contact,
+            error=error,
+        )
+        db.flush()
+        return winner
 
 
 def process_external_channel_inbound_event(

@@ -55,7 +55,8 @@ jobs:
             backend/tests/test_worker_daemon_readiness.py \
             backend/tests/test_db_query_timing.py \
             backend/tests/test_observability_metrics.py \
-            backend/tests/test_worker_metrics.py
+            backend/tests/test_worker_metrics.py \
+            backend/tests/test_external_channel_persistence_authority.py
 
       - name: Run WebChat voice readiness header tests
         run: |
