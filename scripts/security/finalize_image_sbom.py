@@ -9,10 +9,17 @@ from typing import Any
 
 MAX_BYTES = 4 * 1024 * 1024
 MAX_COMPONENTS = 2000
-_SAFE_PURL = re.compile(r"^pkg:(?:pypi/[A-Za-z0-9._-]+|generic/python)@[A-Za-z0-9._+!-]{1,100}$")
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$")
+_SAFE_PYTHON_PURL = re.compile(
+    r"^pkg:(?:pypi/[A-Za-z0-9._-]+|generic/python)@[A-Za-z0-9._+!-]{1,100}$"
+)
+_SAFE_NPM_PURL = re.compile(
+    r"^pkg:npm/(?:%40[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+@[A-Za-z0-9._+!~-]{1,120}(?:\?[A-Za-z0-9._~%=&+-]{1,300})?$"
+)
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9@][A-Za-z0-9@/._+-]{0,199}$")
 _SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+!-]{0,119}$")
-_SAFE_SPDX = re.compile(r"^[A-Za-z0-9.+-]+(?: (?:AND|OR) [A-Za-z0-9.+-]+)*$")
+_SAFE_SPDX = re.compile(
+    r"^[A-Za-z0-9.+-]+(?: (?:AND|OR) [A-Za-z0-9.+-]+)*$"
+)
 
 _ALIASES = {
     "apache software license 2.0": "Apache-2.0",
@@ -42,8 +49,34 @@ def _load(path: Path) -> Any:
         raise FinalizationError(f"json_invalid:{path.name}") from exc
 
 
+def _valid_purl(value: str) -> bool:
+    return bool(_SAFE_PYTHON_PURL.fullmatch(value) or _SAFE_NPM_PURL.fullmatch(value))
+
+
+def _strip_balanced_outer_parentheses(value: str) -> str:
+    text = value.strip()
+    while len(text) >= 2 and text[0] == "(" and text[-1] == ")":
+        depth = 0
+        closes_at_end = False
+        for index, character in enumerate(text):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth < 0:
+                    return text
+                if depth == 0:
+                    closes_at_end = index == len(text) - 1
+                    break
+        if not closes_at_end:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
 def _normalize(value: object) -> str | None:
     text = " ".join(str(value or "").strip().split())
+    text = _strip_balanced_outer_parentheses(text)
     if not text:
         return None
     normalized = _ALIASES.get(text.lower(), text)
@@ -73,7 +106,11 @@ def _licenses(component: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _load_overrides(path: Path) -> dict[str, str]:
     payload = _load(path)
-    if not isinstance(payload, dict) or payload.get("schema_version") != "nexus_container_license_metadata_overrides_v1":
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version")
+        != "nexus_container_license_metadata_overrides_v1"
+    ):
         raise FinalizationError("override_schema_invalid")
     entries = payload.get("entries")
     if not isinstance(entries, list) or len(entries) > 100:
@@ -86,7 +123,7 @@ def _load_overrides(path: Path) -> dict[str, str]:
         license_id = _normalize(raw.get("license"))
         source = str(raw.get("source") or "").strip()
         reason = " ".join(str(raw.get("reason") or "").strip().split())
-        if not _SAFE_PURL.fullmatch(purl) or not license_id:
+        if not _valid_purl(purl) or not license_id:
             raise FinalizationError("override_key_invalid")
         if not source.startswith("https://") or not 12 <= len(reason) <= 240:
             raise FinalizationError("override_evidence_invalid")
@@ -114,7 +151,11 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
         purl = str(component.get("purl") or "").strip()
         name = str(component.get("name") or "").strip()
         version = str(component.get("version") or "").strip()
-        if not _SAFE_PURL.fullmatch(purl) or not _SAFE_NAME.fullmatch(name) or not _SAFE_VERSION.fullmatch(version):
+        if (
+            not _valid_purl(purl)
+            or not _SAFE_NAME.fullmatch(name)
+            or not _SAFE_VERSION.fullmatch(version)
+        ):
             raise FinalizationError("sbom_component_identity_invalid")
         licenses = _licenses(component)
         if purl in overrides:
@@ -130,7 +171,11 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
         finalized.append(
             {
                 "bom-ref": purl,
-                "type": "application" if component.get("type") == "application" else "library",
+                "type": (
+                    "application"
+                    if component.get("type") == "application"
+                    else "library"
+                ),
                 "name": name,
                 "version": version,
                 "purl": purl,
@@ -139,8 +184,16 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
         )
 
     unused = sorted(set(overrides) - applied)
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    properties = metadata.get("properties") if isinstance(metadata.get("properties"), list) else []
+    metadata = (
+        payload.get("metadata")
+        if isinstance(payload.get("metadata"), dict)
+        else {}
+    )
+    properties = (
+        metadata.get("properties")
+        if isinstance(metadata.get("properties"), list)
+        else []
+    )
     safe_properties = [
         item
         for item in properties
@@ -150,8 +203,10 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
     ][:32]
     status = "pass" if not unresolved and not unused else "fail"
     safe_properties = [
-        item for item in safe_properties
-        if item.get("name") not in {
+        item
+        for item in safe_properties
+        if item.get("name")
+        not in {
             "nexus:license-metadata-status",
             "nexus:license-metadata-unresolved-count",
             "nexus:license-metadata-applied-override-count",
@@ -161,9 +216,18 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
     safe_properties.extend(
         [
             {"name": "nexus:license-metadata-status", "value": status},
-            {"name": "nexus:license-metadata-unresolved-count", "value": str(len(unresolved))},
-            {"name": "nexus:license-metadata-applied-override-count", "value": str(len(applied))},
-            {"name": "nexus:license-metadata-unused-override-count", "value": str(len(unused))},
+            {
+                "name": "nexus:license-metadata-unresolved-count",
+                "value": str(len(unresolved)),
+            },
+            {
+                "name": "nexus:license-metadata-applied-override-count",
+                "value": str(len(applied)),
+            },
+            {
+                "name": "nexus:license-metadata-unused-override-count",
+                "value": str(len(unused)),
+            },
         ]
     )
     result = {
@@ -173,7 +237,9 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
         "metadata": {"properties": safe_properties},
         "components": sorted(finalized, key=lambda item: item["purl"]),
     }
-    output.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
     summary = {
         "schema_version": "nexus_finalized_image_sbom_v1",
         "status": status,
