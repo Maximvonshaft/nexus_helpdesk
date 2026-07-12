@@ -1,0 +1,52 @@
+name: frontend-semantic-smoke-reconcile
+
+on:
+  push:
+    branches:
+      - fix/frontend-semantic-621
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
+    paths:
+      - .github/workflows/frontend-semantic-smoke-reconcile.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-existing-login-smoke:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/frontend-semantic-621
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reconcile accepted Login heading assertion
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('webapp/e2e/smoke.spec.ts')
+          text = path.read_text(encoding='utf-8')
+          old = "await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()"
+          new = "await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one legacy Login heading assertion, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Publish bounded test-contract correction
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add webapp/e2e/smoke.spec.ts
+          git commit -m "test(frontend): align Login smoke with product authority"
+          git push origin HEAD:fix/frontend-semantic-621
