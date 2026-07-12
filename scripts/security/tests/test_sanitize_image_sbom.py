@@ -48,7 +48,9 @@ class SanitizeImageSbomTests(unittest.TestCase):
                             "version": "3.14.1",
                             "purl": "pkg:pypi/aiohttp@3.14.1",
                             "licenses": [{"expression": "Apache-2.0 AND MIT"}],
-                            "properties": [{"name": "path", "value": "/home/person@example.com"}],
+                            "properties": [
+                                {"name": "path", "value": "/home/person@example.com"}
+                            ],
                         },
                     ],
                 },
@@ -56,19 +58,25 @@ class SanitizeImageSbomTests(unittest.TestCase):
             overrides = self._write(
                 root,
                 "overrides.json",
-                {"schema_version": "nexus_container_license_metadata_overrides_v1", "entries": []},
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [],
+                },
             )
             output = root / "safe.json"
-
-            code = sanitize_sbom(source, overrides, output)
+            self.assertEqual(sanitize_sbom(source, overrides, output), 0)
             payload = json.loads(output.read_text())
             encoded = output.read_text()
-
-            self.assertEqual(code, 0)
-            self.assertEqual([item["purl"] for item in payload["components"]], ["pkg:pypi/aiohttp@3.14.1"])
+            self.assertEqual(
+                [item["purl"] for item in payload["components"]],
+                ["pkg:pypi/aiohttp@3.14.1"],
+            )
             self.assertNotIn("example.com", encoded)
             self.assertNotIn("/home/", encoded)
-            properties = {item["name"]: item["value"] for item in payload["metadata"]["properties"]}
+            properties = {
+                item["name"]: item["value"]
+                for item in payload["metadata"]["properties"]
+            }
             self.assertEqual(properties["nexus:base-os-package-count"], "1")
 
     def test_normalizes_common_license_aliases(self) -> None:
@@ -85,16 +93,26 @@ class SanitizeImageSbomTests(unittest.TestCase):
                             "name": "sample",
                             "version": "1",
                             "purl": "pkg:pypi/sample@1",
-                            "licenses": [{"license": {"name": "Apache License 2.0"}}],
+                            "licenses": [
+                                {"license": {"name": "Apache License 2.0"}}
+                            ],
                         }
                     ],
                 },
             )
-            overrides = self._write(root, "overrides.json", {"schema_version": "nexus_container_license_metadata_overrides_v1", "entries": []})
+            overrides = self._write(
+                root,
+                "overrides.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [],
+                },
+            )
             output = root / "safe.json"
-
             self.assertEqual(sanitize_sbom(source, overrides, output), 0)
-            license_id = json.loads(output.read_text())["components"][0]["licenses"][0]["license"]["id"]
+            license_id = json.loads(output.read_text())["components"][0]["licenses"][0][
+                "license"
+            ]["id"]
             self.assertEqual(license_id, "Apache-2.0")
 
     def test_missing_license_requires_exact_evidence_override(self) -> None:
@@ -106,15 +124,31 @@ class SanitizeImageSbomTests(unittest.TestCase):
                 {
                     "bomFormat": "CycloneDX",
                     "components": [
-                        {"type": "library", "name": "missing", "version": "1", "purl": "pkg:pypi/missing@1"}
+                        {
+                            "type": "library",
+                            "name": "missing",
+                            "version": "1",
+                            "purl": "pkg:pypi/missing@1",
+                        }
                     ],
                 },
             )
-            empty = self._write(root, "empty.json", {"schema_version": "nexus_container_license_metadata_overrides_v1", "entries": []})
+            empty = self._write(
+                root,
+                "empty.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [],
+                },
+            )
             failed = root / "failed.json"
             self.assertEqual(sanitize_sbom(source, empty, failed), 1)
-            self.assertEqual(json.loads((root / "failed.json.summary.json").read_text())["unresolved_count"], 1)
-
+            self.assertEqual(
+                json.loads((root / "failed.json.summary.json").read_text())[
+                    "unresolved_count"
+                ],
+                1,
+            )
             exact = self._write(
                 root,
                 "exact.json",
@@ -132,7 +166,93 @@ class SanitizeImageSbomTests(unittest.TestCase):
             )
             passed = root / "passed.json"
             self.assertEqual(sanitize_sbom(source, exact, passed), 0)
-            self.assertEqual(json.loads(passed.read_text())["components"][0]["licenses"][0]["license"]["id"], "MIT")
+            self.assertEqual(
+                json.loads(passed.read_text())["components"][0]["licenses"][0][
+                    "license"
+                ]["id"],
+                "MIT",
+            )
+
+    def test_matching_override_counts_as_applied(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            purl = "pkg:pypi/annotated-types@0.7.0"
+            source = self._write(
+                root,
+                "raw.json",
+                {
+                    "bomFormat": "CycloneDX",
+                    "components": [
+                        {
+                            "type": "library",
+                            "name": "annotated-types",
+                            "version": "0.7.0",
+                            "purl": purl,
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        }
+                    ],
+                },
+            )
+            overrides = self._write(
+                root,
+                "overrides.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [
+                        {
+                            "purl": purl,
+                            "license": "MIT",
+                            "source": "https://pypi.org/project/annotated-types/0.7.0/",
+                            "reason": "The exact upstream metadata confirms the same MIT license.",
+                        }
+                    ],
+                },
+            )
+            output = root / "safe.json"
+            self.assertEqual(sanitize_sbom(source, overrides, output), 0)
+            summary = json.loads((root / "safe.json.summary.json").read_text())
+            self.assertEqual(summary["applied_override_count"], 1)
+            self.assertEqual(summary["unused_override_count"], 0)
+
+    def test_conflicting_override_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            purl = "pkg:pypi/licensed@1"
+            source = self._write(
+                root,
+                "raw.json",
+                {
+                    "bomFormat": "CycloneDX",
+                    "components": [
+                        {
+                            "type": "library",
+                            "name": "licensed",
+                            "version": "1",
+                            "purl": purl,
+                            "licenses": [{"license": {"id": "AGPL-3.0-only"}}],
+                        }
+                    ],
+                },
+            )
+            overrides = self._write(
+                root,
+                "overrides.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [
+                        {
+                            "purl": purl,
+                            "license": "MIT",
+                            "source": "https://example.test/licensed",
+                            "reason": "A conflicting override must never rewrite existing metadata.",
+                        }
+                    ],
+                },
+            )
+            with self.assertRaisesRegex(
+                SbomSanitizationError, "license_metadata_override_conflict"
+            ):
+                sanitize_sbom(source, overrides, root / "safe.json")
 
     def test_stale_unused_override_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -169,7 +289,6 @@ class SanitizeImageSbomTests(unittest.TestCase):
                 },
             )
             output = root / "safe.json"
-
             self.assertEqual(sanitize_sbom(source, overrides, output), 1)
             summary = json.loads((root / "safe.json.summary.json").read_text())
             self.assertEqual(summary["unused_override_count"], 1)
@@ -184,10 +303,20 @@ class SanitizeImageSbomTests(unittest.TestCase):
                 "purl": "pkg:pypi/same@1",
                 "licenses": [{"license": {"id": "MIT"}}],
             }
-            source = self._write(root, "raw.json", {"bomFormat": "CycloneDX", "components": [component, component]})
-            overrides = self._write(root, "overrides.json", {"schema_version": "nexus_container_license_metadata_overrides_v1", "entries": []})
+            source = self._write(
+                root,
+                "raw.json",
+                {"bomFormat": "CycloneDX", "components": [component, component]},
+            )
+            overrides = self._write(
+                root,
+                "overrides.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [],
+                },
+            )
             output = root / "safe.json"
-
             self.assertEqual(sanitize_sbom(source, overrides, output), 0)
             self.assertEqual(len(json.loads(output.read_text())["components"]), 1)
 
