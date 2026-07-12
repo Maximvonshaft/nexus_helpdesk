@@ -35,6 +35,8 @@ python -m py_compile \
 - exit `2`: registry, Git index or input evidence is malformed; treat the scan as unavailable.
 - `findings_truncated=true`: the full count is retained but the output list is capped.
 
+Registry path globs are case-insensitive; exact paths remain exact. Content-marker reads request at most the configured byte limit plus one sentinel byte.
+
 The output never includes matched source lines or values. A finding contains a repository path, a truncated SHA-256 path fingerprint, the discovery rule and reason codes.
 
 ## Protected classes
