@@ -60,7 +60,7 @@ jobs:
           SKIP_AI_REPLY_INPUT: ${{ inputs.skip_ai_reply }}
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
+          python3 - <<'PY'
           import os
           import re
           from urllib.parse import urlsplit
@@ -101,7 +101,7 @@ jobs:
           if expected_git_sha and re.fullmatch(r"[0-9a-f]{40}", expected_git_sha) is None:
               fail("expected_git_sha_format")
           expected_image_tag = single_line("RAW_EXPECTED_IMAGE_TAG", allow_empty=True, max_length=512)
-          if expected_image_tag and (any(char.isspace() for char in expected_image_tag) or "\\" in expected_image_tag):
+          if expected_image_tag and re.fullmatch(r"[a-z0-9][a-z0-9._:/@+-]{0,511}", expected_image_tag) is None:
               fail("expected_image_tag_format")
 
           latency_raw = single_line("RAW_MAX_LATENCY_MS", max_length=9)
@@ -142,6 +142,7 @@ jobs:
           python-version: "3.11"
 
       - name: Run public WebChat smoke
+        id: public_smoke
         env:
           BASE_URL: ${{ steps.target.outputs.base_url }}
           EXPECTED_GIT_SHA: ${{ steps.target.outputs.expected_git_sha }}
@@ -169,13 +170,14 @@ jobs:
           fi
           python scripts/smoke/public_webchat_smoke.py "${args[@]}"
 
-      - name: Upload public smoke evidence immutable
+      - name: Upload redacted public smoke evidence immutable
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: public-production-smoke-evidence
           path: artifacts/public-production-smoke
           if-no-files-found: warn
+          retention-days: 7
 
       - name: Summarize public smoke safely
         if: always()
@@ -186,10 +188,11 @@ jobs:
           SUMMARY_REQUIRE_AI_REPLY: ${{ steps.target.outputs.require_ai_reply }}
           SUMMARY_SKIP_AI_REPLY: ${{ steps.target.outputs.skip_ai_reply }}
           SUMMARY_MAX_LATENCY_MS: ${{ steps.target.outputs.max_latency_ms }}
+          SUMMARY_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -198,6 +201,7 @@ jobs:
               "## Public production smoke",
               "",
               f"- Target: `{os.environ.get('SUMMARY_BASE_URL', '[validation-failed]')}`",
+              f"- Smoke outcome: `{os.environ.get('SUMMARY_SMOKE_OUTCOME', 'not-run')}`",
               f"- Expected git SHA: `{os.environ.get('SUMMARY_EXPECTED_GIT_SHA', '')}`",
               f"- Expected image tag: `{os.environ.get('SUMMARY_EXPECTED_IMAGE_TAG', '')}`",
               f"- Require AI reply: `{os.environ.get('SUMMARY_REQUIRE_AI_REPLY', 'false')}`",
