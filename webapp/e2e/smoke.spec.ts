@@ -21,6 +21,7 @@ async function fulfillApi(route: Route) {
     body: JSON.stringify(body),
   })
 
+  if (path === '/api/auth/login') return json({ access_token: 'admin-token', user: authUser() })
   if (path === '/api/auth/me') return json(authUser())
   if (path === '/api/support/conversations') {
     return json({
@@ -274,9 +275,41 @@ async function mockAuthenticatedConsole(page: Page) {
 
 test('login page renders', async ({ page }) => {
   await page.goto('/login')
-  await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '进入运营工作台' })).toBeVisible()
   await expect(page.getByLabel('账号')).toBeVisible()
-  await expect(page.getByRole('button', { name: '登录' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()
+})
+
+test('login form reveals the password and submits with Enter', async ({ page }) => {
+  await page.route('**/api/**', fulfillApi)
+  await page.goto('/login')
+
+  const password = page.getByLabel('密码')
+  const reveal = page.getByRole('button', { name: '显示密码' })
+  await expect(password).toHaveAttribute('type', 'password')
+  await expect(reveal).toHaveAttribute('aria-pressed', 'false')
+  await reveal.click()
+  await expect(password).toHaveAttribute('type', 'text')
+  await expect(page.getByRole('button', { name: '隐藏密码' })).toHaveAttribute('aria-pressed', 'true')
+
+  await page.getByLabel('账号').fill('admin')
+  await password.fill('valid-password')
+  await password.press('Enter')
+  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
+})
+
+test('login remains usable at a 375px touch viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.goto('/login')
+
+  const submit = page.getByRole('button', { name: '登录运营工作台' })
+  const reveal = page.getByRole('button', { name: '显示密码' })
+  await expect(submit).toBeVisible()
+  await expect(reveal).toBeVisible()
+  expect((await submit.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  expect((await reveal.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+  expect(overflow).toBeLessThanOrEqual(1)
 })
 
 test('unauthenticated protected route redirects back to login', async ({ page }) => {
