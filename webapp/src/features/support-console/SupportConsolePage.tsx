@@ -17,6 +17,15 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { Field, Input, Select, Textarea } from '@/components/ui/Field'
+import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
+import {
+  channelPresentation,
+  controlledActionPresentation,
+  healthPresentation,
+  knowledgeStatusPresentation,
+  runtimePresentation,
+  sourceConversationPresentation,
+} from '@/lib/supportStatus'
 
 type InboxView = 'open' | 'needs_human' | 'mine' | 'all'
 type ChannelFilter = 'all' | 'webchat' | 'whatsapp'
@@ -83,7 +92,7 @@ function readSupportWorkbenchSearch() {
     activeView: oneOf(params.get('tab'), workbenchViews.map((item) => item.value), 'conversations'),
     view: oneOf(params.get('view'), viewOptions.map((item) => item.value), 'open'),
     channel: oneOf(params.get('channel'), channelOptions.map((item) => item.value), 'all'),
-    query: params.get('q') || '',
+    query: '',
     sessionKey: params.get('session'),
   }
 }
@@ -92,35 +101,6 @@ function safeTone(value: string | undefined | null, fallback: BadgeTone = 'defau
   return value === 'success' || value === 'warning' || value === 'danger' || value === 'default'
     ? value
     : fallback
-}
-
-function toneForChannel(channel: string): BadgeTone {
-  if (channel === 'whatsapp') return 'success'
-  if (channel === 'webchat') return 'warning'
-  return 'default'
-}
-
-function toneForHealth(value: string | null | undefined): BadgeTone {
-  const normalized = String(value || '').toLowerCase()
-  if (['connected', 'healthy', 'ok', 'ready', 'online', 'pass', 'success'].some((token) => normalized.includes(token))) return 'success'
-  if (['offline', 'failed', 'error', 'dead', 'blocked'].some((token) => normalized.includes(token))) return 'danger'
-  if (['degraded', 'warning', 'pending', 'unknown', 'review'].some((token) => normalized.includes(token))) return 'warning'
-  return 'default'
-}
-
-function stateLabel(item: SupportConversation) {
-  if (item.needs_human) return '待人工'
-  if (item.handoff_status === 'accepted') return '人工中'
-  if (item.ai_pending) return 'AI中'
-  if (item.status === 'closed' || item.status === 'resolved') return '已结束'
-  return '打开'
-}
-
-function toneForConversation(item: SupportConversation): BadgeTone {
-  if (item.needs_human) return 'danger'
-  if (item.handoff_status === 'accepted') return 'success'
-  if (item.ai_pending) return 'warning'
-  return 'default'
 }
 
 function authorLabel(author: string | null | undefined) {
@@ -262,18 +242,20 @@ function errorCopy(error: unknown, fallback: string) {
 }
 
 function ConversationRow({ item, active, onSelect }: { item: SupportConversation; active: boolean; onSelect: () => void }) {
+  const channelState = channelPresentation(item.channel)
+  const conversationState = sourceConversationPresentation(item)
   return (
     <button type="button" className={`support-row${active ? ' active' : ''}`} onClick={onSelect} aria-pressed={active}>
       <span className="support-row-top">
         <span className="support-row-title">{sanitizeDisplayText(item.display_name || item.customer_contact || '客户')}</span>
-        <Badge tone={toneForChannel(item.channel)}>{item.channel === 'whatsapp' ? 'WhatsApp' : 'WebChat'}</Badge>
+        <Badge tone={channelState.tone}>{channelState.label}</Badge>
       </span>
       <span className="support-row-preview">
         {item.latest_author ? `${authorLabel(item.latest_author)}：` : null}
         {sanitizeDisplayText(item.latest_message || item.title || '暂无消息')}
       </span>
       <span className="support-row-bottom">
-        <Badge tone={toneForConversation(item)}>{stateLabel(item)}</Badge>
+        <Badge tone={conversationState.tone}>{conversationState.label}</Badge>
         <span>{item.updated_at ? formatDateTime(item.updated_at) : '未更新'}</span>
       </span>
     </button>
@@ -303,7 +285,7 @@ function MetricTile({ label, value, tone = 'default' }: { label: string; value: 
 
 function SupportMemoryPanel({ ledger }: { ledger?: SupportMemoryLedger | null }) {
   if (!ledger) {
-    return <EmptyState title="暂无记忆证据" description="当前会话还没有可展示的知识、工具或接管证据。" />
+    return <EmptyState title="暂无案例证据" description="当前会话还没有可展示的事实、知识、工具或接管依据。" />
   }
   const latestTurnSummary = ledger.ai_state?.last_turn?.summary as { runtime_trace?: Record<string, unknown> } | undefined
   const runtimeTrace = latestTurnSummary?.runtime_trace
@@ -332,8 +314,7 @@ function SupportMemoryPanel({ ledger }: { ledger?: SupportMemoryLedger | null })
         </div>
       </div>
       {runtimeTrace ? (
-        <div className="support-side-note">
-          <span>Runtime trace</span>
+        <TechnicalDetails title="技术详情" summary="AI Runtime 诊断">
           <div className="support-runtime-trace">
             <strong>{sanitizeDisplayText(String(runtimeTrace.latency_class || 'standard'))}</strong>
             <small>{sanitizeDisplayText(String(runtimeTrace.model || 'model unknown'))}</small>
@@ -342,7 +323,7 @@ function SupportMemoryPanel({ ledger }: { ledger?: SupportMemoryLedger | null })
               {promptElapsed !== null ? ` · prompt ${compactLatency(promptElapsed)}` : ''}
             </small>
           </div>
-        </div>
+        </TechnicalDetails>
       ) : null}
       {ledger.current_intent ? (
         <div className="support-side-note">
@@ -478,6 +459,9 @@ function SpeedafControlledActionsPanel({
     || (action === 'address_update' && !whatsAppPhone.trim())
   const actionError = waybillLookupMutation.error || workOrderMutation.error || addressMutation.error || cancelPreviewMutation.error || cancelConfirmMutation.error
   const actionResult = workOrderMutation.data || addressMutation.data || cancelConfirmMutation.data
+  const actionPresentation = actionResult
+    ? controlledActionPresentation(actionResult.status, actionResult.message)
+    : null
   const lookupResult = waybillLookupMutation.data
 
   return (
@@ -526,10 +510,15 @@ function SpeedafControlledActionsPanel({
           </Field>
         ) : null}
         {actionError ? <ErrorSummary title="Speedaf 动作失败" errors={[errorCopy(actionError, '请稍后重试')]} /> : null}
-        {actionResult ? (
-          <div className="support-action-result success">
-            <strong>{sanitizeDisplayText(actionResult.message || actionResult.status)}</strong>
-            {actionResult.jobId ? <small>Job #{actionResult.jobId}</small> : null}
+        {actionResult && actionPresentation ? (
+          <div className={`support-action-result ${actionPresentation.tone}`} role="status" aria-live="polite">
+            <strong>{actionPresentation.label}</strong>
+            {actionPresentation.detail ? <small>{sanitizeDisplayText(actionPresentation.detail)}</small> : null}
+            {actionResult.jobId ? (
+              <TechnicalDetails title="技术详情" summary="请求追踪信息">
+                <code translate="no">Job #{actionResult.jobId}</code>
+              </TechnicalDetails>
+            ) : null}
           </div>
         ) : null}
         {action === 'waybill_lookup' && lookupResult ? (
@@ -556,7 +545,7 @@ function SpeedafControlledActionsPanel({
           </div>
         ) : null}
         {cancelPreview ? (
-          <div className={`support-action-result ${cancelPreview.cancelAllowed ? 'success' : 'warning'}`}>
+          <div className={`support-action-result ${cancelPreview.cancelAllowed ? 'default' : 'warning'}`} role="status" aria-live="polite">
             <strong>{cancelPreview.cancelAllowed ? '可取消' : '不可取消'}</strong>
             <small>{sanitizeDisplayText(cancelPreview.currentStatusLabel || cancelPreview.reasonLabel || '')}</small>
           </div>
@@ -601,12 +590,13 @@ function OverviewPanel({
   supportMemory?: SupportMemoryLedger | null
   onDone: () => Promise<void>
 }) {
+  const conversationState = activeConversation ? sourceConversationPresentation(activeConversation) : null
   return (
     <aside className="support-context" aria-label="会话上下文">
       <section className="support-panel">
         <div className="support-panel-head">
           <span>会话状态</span>
-          {activeConversation ? <Badge tone={toneForConversation(activeConversation)}>{stateLabel(activeConversation)}</Badge> : null}
+          {conversationState ? <Badge tone={conversationState.tone}>{conversationState.label}</Badge> : null}
         </div>
         {activeConversation ? (
           <div className="support-side-stack">
@@ -834,7 +824,7 @@ function KnowledgeView() {
                   <small>{sanitizeDisplayText(item.fact_question || item.summary || item.item_key)}</small>
                 </span>
                 <span>
-                  <Badge tone={toneForHealth(item.status)}>{knowledgeStatusLabel(item.status)}</Badge>
+                  <Badge tone={knowledgeStatusPresentation(item.status).tone}>{knowledgeStatusPresentation(item.status).label}</Badge>
                   <small>{knowledgeKindLabel(item.knowledge_kind)} · 优先级 {item.priority ?? 100} · v{item.published_version || 0}</small>
                 </span>
               </button>
@@ -848,7 +838,7 @@ function KnowledgeView() {
       <div className="support-panel support-knowledge-editor" ref={editorRef}>
         <div className="support-panel-head">
           <span>{selectedId && !isCreating ? '编辑知识' : '新建知识'}</span>
-          <Badge tone={toneForHealth(draft.status)}>{knowledgeStatusLabel(draft.status)}</Badge>
+          <Badge tone={knowledgeStatusPresentation(draft.status).tone}>{knowledgeStatusPresentation(draft.status).label}</Badge>
         </div>
         {saveError ? <ErrorSummary title="保存失败" errors={[errorCopy(saveError, '请稍后重试')]} /> : null}
         {savedMessage ? <div className="support-action-result success"><strong>{savedMessage}</strong></div> : null}
@@ -1003,31 +993,44 @@ function ChannelsView() {
         {accounts.isError ? (
           <ErrorSummary title="渠道账号不可用" errors={[errorCopy(accounts.error, '请稍后重试')]} />
         ) : (
-          <div className="support-table">
-            <div className="support-table-row head">
-              <span>渠道</span>
-              <span>账号</span>
-              <span>状态</span>
-              <span>优先级</span>
-            </div>
-            {activeAccounts.slice(0, 12).map((item: ChannelAccount) => (
-              <div className="support-table-row" key={item.id}>
-                <span data-label="渠道">{item.provider}</span>
-                <span data-label="账号">{sanitizeDisplayText(item.display_name || item.account_id)}</span>
-                <span data-label="状态"><Badge tone={toneForHealth(item.health_status)}>{item.health_status}</Badge></span>
-                <span data-label="优先级">{item.priority}</span>
-              </div>
-            ))}
-            {!activeAccounts.length ? <EmptyState title="暂无渠道账号" description="当前没有可展示的发送线路。" /> : null}
+          <div className="support-table-wrap">
+            <table className="support-table">
+              <caption className="sr-only">当前启用的渠道账号</caption>
+              <thead>
+                <tr>
+                  <th scope="col">渠道</th>
+                  <th scope="col">账号</th>
+                  <th scope="col">状态</th>
+                  <th scope="col">优先级</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeAccounts.slice(0, 12).map((item: ChannelAccount) => {
+                  const health = healthPresentation(item.health_status)
+                  return (
+                    <tr key={item.id}>
+                      <td data-label="渠道">{sanitizeDisplayText(item.provider)}</td>
+                      <td data-label="账号">{sanitizeDisplayText(item.display_name || item.account_id)}</td>
+                      <td data-label="状态"><Badge tone={health.tone}>{sanitizeDisplayText(health.label)}</Badge></td>
+                      <td data-label="优先级">{item.priority}</td>
+                    </tr>
+                  )
+                })}
+                {!activeAccounts.length ? (
+                  <tr><td colSpan={4}><EmptyState title="暂无渠道账号" description="当前没有可展示的发送线路。" /></td></tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
       <div className="support-panel">
         <div className="support-panel-head">
           <span>WhatsApp Native</span>
-          <Badge tone={toneForHealth(whatsappStatus.data?.status || whatsappAccount?.health_status)}>
-            {whatsappStatus.data?.status || whatsappAccount?.health_status || 'unknown'}
-          </Badge>
+          {(() => {
+            const health = healthPresentation(whatsappStatus.data?.status || whatsappAccount?.health_status)
+            return <Badge tone={health.tone}>{sanitizeDisplayText(health.label)}</Badge>
+          })()}
         </div>
         {whatsappStatus.isError ? (
           <ErrorSummary title="WhatsApp 状态不可用" errors={[errorCopy(whatsappStatus.error, '请稍后重试')]} />
@@ -1080,15 +1083,19 @@ function RuntimeView() {
   const privateRuntime = runtime.data?.providers?.find((item) => item.name === 'private_ai_runtime')
   const runtimeDiagnostics = privateRuntime?.diagnostics ?? {}
   const latency = metrics.data?.runtime_latency
+  const runtimeState = runtimePresentation({
+    isLoading: runtime.isLoading,
+    isError: runtime.isError,
+    ok: runtime.data?.ok,
+    warnings: runtime.data?.warnings,
+  })
 
   return (
     <section className="support-overview-grid" aria-label="运行">
       <div className="support-panel wide">
         <div className="support-panel-head">
           <span>AI Runtime</span>
-          <Badge tone={(runtime.data?.warnings?.length ?? 0) ? 'warning' : 'success'}>
-            {(runtime.data?.warnings?.length ?? 0) ? '需要关注' : '正常'}
-          </Badge>
+          <Badge tone={runtimeState.tone}>{runtimeState.label}</Badge>
         </div>
         {runtime.isError ? (
           <ErrorSummary title="运行状态不可用" errors={[errorCopy(runtime.error, '请稍后重试')]} />
@@ -1220,8 +1227,7 @@ export function SupportConsolePage() {
     else params.set('view', view)
     if (channel === 'all') params.delete('channel')
     else params.set('channel', channel)
-    if (query.trim()) params.set('q', query.trim())
-    else params.delete('q')
+    params.delete('q')
     if (selectedSessionKey) params.set('session', selectedSessionKey)
     else params.delete('session')
     const next = `${url.pathname}${params.toString() ? `?${params.toString()}` : ''}${url.hash}`
@@ -1250,7 +1256,8 @@ export function SupportConsolePage() {
   const state = useQuery({
     queryKey: ['supportConversationState'],
     queryFn: () => supportApi.supportConversationState(),
-    refetchInterval: 10000,
+    enabled: activeView === 'conversations',
+    refetchInterval: activeView === 'conversations' ? 10000 : false,
   })
 
   const selected = useMemo(
@@ -1383,7 +1390,7 @@ export function SupportConsolePage() {
         <div className="support-head-status" aria-label="实时状态">
           <Badge tone="default">{state.data?.open ?? 0} 个打开会话</Badge>
           <Badge tone="danger">{state.data?.requested_handoffs ?? 0} 个待人工</Badge>
-          <Badge tone="success">{state.data?.my_handoffs ?? 0} 个我的接管</Badge>
+          <Badge tone="default">{state.data?.my_handoffs ?? 0} 个我的接管</Badge>
           <span className="support-user">{session.data?.display_name || session.data?.username || '客服'}</span>
           <Button variant="ghost" onClick={handleLogout}>退出</Button>
         </div>
@@ -1441,9 +1448,9 @@ export function SupportConsolePage() {
                   <div className="support-thread-title">
                     <h2>{sanitizeDisplayText(activeConversation.display_name || activeConversation.customer_contact || '客户')}</h2>
                     <div className="support-thread-subtitle">
-                      <Badge tone={toneForChannel(activeConversation.channel)}>{activeConversation.channel === 'whatsapp' ? 'WhatsApp' : 'WebChat'}</Badge>
+                      <Badge tone={channelPresentation(activeConversation.channel).tone}>{channelPresentation(activeConversation.channel).label}</Badge>
                       <span>{sanitizeDisplayText(activeConversation.customer_contact || '未提供联系方式')}</span>
-                      <span>{stateLabel(activeConversation)}</span>
+                      <span>{sourceConversationPresentation(activeConversation).label}</span>
                     </div>
                   </div>
                   <div className="support-actions">

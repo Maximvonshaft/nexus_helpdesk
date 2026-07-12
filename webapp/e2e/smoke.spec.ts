@@ -209,7 +209,7 @@ async function fulfillApi(route: Route) {
         display_name: 'WhatsApp Native +41798559737',
         is_active: true,
         priority: 10,
-        health_status: 'healthy',
+        health_status: 'offline',
         updated_at: '2026-07-04T08:00:00Z',
       },
     ])
@@ -217,12 +217,12 @@ async function fulfillApi(route: Route) {
   if (path === '/api/admin/whatsapp/accounts/wa-test-41798559737/status') {
     return json({
       account_id: 'wa-test-41798559737',
-      status: 'connected',
+      status: 'disconnected',
       qr_status: 'linked',
       phone_number: '+41790000000',
       reconnect_count: 0,
       channel_account_id: 8,
-      channel_health_status: 'healthy',
+      channel_health_status: 'offline',
     })
   }
   if (path === '/api/admin/external_channel/runtime-health') {
@@ -310,9 +310,68 @@ test('support workbench renders the consolidated production views', async ({ pag
   await page.getByRole('button', { name: '渠道' }).click()
   await expect(page.getByText('WhatsApp Native +41798559737')).toBeVisible()
   await expect(page.getByText('WhatsApp Default (disabled history)')).toHaveCount(0)
-  await expect(page.getByText('connected')).toBeVisible()
+  const disconnected = page.getByText('disconnected', { exact: true })
+  await expect(disconnected).toBeVisible()
+  await expect(disconnected).toHaveClass(/danger/)
+  await expect(page.getByRole('table', { name: '当前启用的渠道账号' })).toBeVisible()
 
   await page.getByRole('button', { name: '运行' }).click()
   await expect(page.getByText('AI Runtime')).toBeVisible()
   await expect(page.getByText('正常')).toBeVisible()
+})
+
+
+test('runtime failure never presents normal operation', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.route('**/api/admin/provider-runtime/status', (route) => route.fulfill({
+    status: 503,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify({ detail: 'runtime unavailable' }),
+  }))
+  await page.goto('/webchat')
+  await page.getByRole('button', { name: '运行' }).click()
+  await expect(page.getByText('不可用', { exact: true })).toBeVisible()
+  await expect(page.getByText('正常', { exact: true })).toHaveCount(0)
+})
+
+test('queued controlled action remains pending and hides technical id by default', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.route('**/api/tickets/11/speedaf/work-orders', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify({
+      ok: true,
+      status: 'queued',
+      message: 'Speedaf work order queued.',
+      jobId: 91,
+      dedupeKey: 'bounded-test-key',
+    }),
+  }))
+  await page.goto('/webchat')
+  await page.getByLabel('运单').fill('WB123456')
+  await page.getByLabel('Caller ID').fill('+41790000000')
+  await page.getByLabel('说明').fill('Follow up delivery')
+  await page.getByRole('button', { name: '创建工单' }).click()
+
+  const result = page.locator('.support-action-result').filter({ hasText: '请求已排队' })
+  await expect(result).toBeVisible()
+  await expect(result).not.toHaveClass(/success/)
+  await expect(page.getByText('Job #91')).not.toBeVisible()
+  await result.getByText('技术详情').click()
+  await expect(page.getByText('Job #91')).toBeVisible()
+})
+
+test('mobile navigation and segment controls meet the 44px target floor', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await mockAuthenticatedConsole(page)
+  await page.goto('/webchat')
+
+  const topTab = page.getByTestId('support-workbench-tabs').getByRole('button').first()
+  const segment = page.locator('.support-segments').first().getByRole('button').first()
+  expect((await topTab.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  expect((await segment.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+
+  await page.getByRole('button', { name: /WebChat Visitor/ }).click()
+  const back = page.getByRole('button', { name: '‹ 会话' })
+  expect((await back.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
 })
