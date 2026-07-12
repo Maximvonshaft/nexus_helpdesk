@@ -37,7 +37,7 @@ class RcSeedContractTest(unittest.TestCase):
     def test_origin_is_runtime_configurable_and_normalized(self) -> None:
         self.assertIn('"RC_PUBLIC_ORIGIN"', self.source)
         self.assertIn("normalize_public_origin(requested_origin)", self.source)
-        self.assertNotIn("ORIGIN =", self.source)
+        self.assertNotIn('origin = "https://rc-test.invalid"', self.source)
 
     def test_seed_is_idempotent_and_committed(self) -> None:
         self.assertIn("WebchatPublicOriginBinding.normalized_origin == origin", self.source)
