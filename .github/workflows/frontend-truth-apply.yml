@@ -11,6 +11,7 @@ on:
     paths:
       - .github/workflows/frontend-truth-apply.yml
       - scripts/ci/apply_frontend_truth.py
+      - scripts/ci/patch_frontend_truth_codemod.py
       - webapp/src/features/support-console/SupportConsolePage.tsx
       - webapp/src/features/support-console/support-console.css
       - webapp/src/lib/supportStatus.ts
@@ -47,7 +48,8 @@ jobs:
       - name: Apply bounded frontend truth codemod
         run: |
           set -Eeuo pipefail
-          python scripts/ci/apply_frontend_truth.py 2>&1 | tee frontend-truth-codemod.log
+          python scripts/ci/patch_frontend_truth_codemod.py 2>&1 | tee frontend-truth-codemod.log
+          python scripts/ci/apply_frontend_truth.py 2>&1 | tee -a frontend-truth-codemod.log
           git diff --check 2>&1 | tee -a frontend-truth-codemod.log
 
       - name: Upload bounded codemod failure evidence
@@ -86,7 +88,11 @@ jobs:
           TARGET_BRANCH: fix/frontend-truth-641
         run: |
           set -Eeuo pipefail
-          rm -f .github/workflows/frontend-truth-apply.yml scripts/ci/apply_frontend_truth.py frontend-truth-codemod.log
+          rm -f \
+            .github/workflows/frontend-truth-apply.yml \
+            scripts/ci/apply_frontend_truth.py \
+            scripts/ci/patch_frontend_truth_codemod.py \
+            frontend-truth-codemod.log
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -97,6 +103,7 @@ jobs:
             webapp/tests/frontend-truth-contract.test.mjs \
             webapp/e2e/smoke.spec.ts \
             .github/workflows/frontend-truth-apply.yml \
-            scripts/ci/apply_frontend_truth.py
+            scripts/ci/apply_frontend_truth.py \
+            scripts/ci/patch_frontend_truth_codemod.py
           git commit -m "fix(frontend): enforce operational truth semantics"
           git push origin "HEAD:${TARGET_BRANCH}"
