@@ -51,6 +51,8 @@ Each domain has:
 
 Reachable Git history is intentionally not represented by a tracked-file selector. Its authority remains #565; a tracked placeholder such as `.gitignore` would be false evidence.
 
+Path globs are matched case-insensitively so discovery and ownership cannot disagree only because historical filenames use uppercase or mixed-case markers. Exact paths remain exact.
+
 Discovery rules are separate from domain selectors. A discovery rule identifies a high-confidence legacy marker and declares which domain IDs are allowed to own it. This separation permits an orphan marker to fail closed instead of silently assigning ownership.
 
 ## Security and privacy
@@ -59,7 +61,7 @@ The scanner:
 
 - reads only Git-index regular files;
 - excludes symlinks and gitlinks;
-- caps text reads at 256 KiB;
+- requests at most `max_text_bytes + 1` bytes from any tracked file before rejecting oversize content;
 - skips binary/non-UTF-8 content;
 - emits no source lines or matched values;
 - emits bounded repository paths and truncated path hashes;
