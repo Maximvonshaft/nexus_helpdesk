@@ -116,3 +116,18 @@ test('responsive structure keeps queue, case, communication and actions reachabl
   assert.match(workspaceCss, /100dvh/)
   assert.doesNotMatch(workspaceCss, /operator-(?:context|actions)[^{]*\{[^}]*display:\s*none/)
 })
+
+
+
+test('workspace preserves scroll ownership, protects drafts, and transfers mobile focus', () => {
+  assert.match(workspacePage, /useLayoutEffect/)
+  assert.match(workspacePage, /isNearMessageBottom/)
+  assert.match(workspacePage, /newMessageCount/)
+  assert.match(workspacePage, /条新消息/)
+  assert.match(workspacePage, /beforeunload/)
+  assert.match(workspacePage, /onReplyDirtyChange/)
+  assert.match(workspacePage, /放弃未发送的回复/)
+  assert.match(workspacePage, /focus\(\{ preventScroll: true \}\)/)
+  assert.match(workspacePage, /tabIndex=\{-1\}/)
+  assert.doesNotMatch(workspacePage, /messagesRef\.current\.scrollTop\s*=\s*messagesRef\.current\.scrollHeight/)
+})

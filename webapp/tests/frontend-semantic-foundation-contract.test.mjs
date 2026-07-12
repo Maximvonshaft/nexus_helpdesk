@@ -57,8 +57,11 @@ test('Field uses explicit label association and semantic controls', () => {
 test('PageHeader and ConfirmDialog consume shared semantic primitives', () => {
   assert.match(pageHeader, /headingLevel/)
   assert.match(pageHeader, /const Heading/)
-  assert.match(confirmDialog, /<Button ref=\{cancelRef\}/)
-  assert.match(confirmDialog, /loading=\{pending\}/)
+  assert.match(confirmDialog, /@radix-ui\/react-dialog/)
+  assert.match(confirmDialog, /Dialog\.Title/)
+  assert.match(confirmDialog, /Dialog\.Description/)
+  assert.match(confirmDialog, /Dialog\.Close asChild/)
+  assert.match(confirmDialog, /loading=\{busy\}/)
   assert.doesNotMatch(confirmDialog, /处理中\.\.\./)
 })
 
