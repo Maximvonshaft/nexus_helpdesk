@@ -147,6 +147,7 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         cls.workflow = (cls.root / ".github" / "workflows" / "rc-test-candidate.yml").read_text(encoding="utf-8")
         cls.seed = (cls.root / "scripts" / "release" / "seed_rc_test_data.py").read_text(encoding="utf-8")
         cls.browser = (cls.root / "webapp" / "e2e" / "rc-live.spec.ts").read_text(encoding="utf-8")
+        cls.playwright = (cls.root / "webapp" / "playwright.config.ts").read_text(encoding="utf-8")
 
     def test_postgres_receives_only_database_environment(self):
         block = self.compose.split("  postgres-rc:\n", 1)[1].split("\n  migrate-rc:\n", 1)[0]
@@ -193,6 +194,15 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         self.assertLess(self.browser.index(row_selector), self.browser.index(click_selector))
         self.assertLess(self.browser.index(click_selector), self.browser.index(body_selector))
         self.assertNotIn("page.getByText(message, { exact: false }).first()", self.browser)
+
+    def test_rc_browser_stage_is_bound_without_stateful_retries(self):
+        self.assertIn("RC_BROWSER_STAGE_FILE", self.browser)
+        self.assertIn("writeFileSync(browserStageFile", self.browser)
+        self.assertIn('browser_stage_file="${RUNNER_TEMP}/rc-browser-stage"', self.workflow)
+        self.assertIn('RC_BROWSER_STAGE_FILE="${browser_stage_file}"', self.workflow)
+        self.assertIn('tr -d', self.workflow)
+        self.assertIn("retries: rcBrowser ? 0", self.playwright)
+        self.assertNotIn("artifacts/rc-test/browser-stage", self.workflow)
 
     def test_workflow_scans_explicit_files_and_uploads_only_after_success(self):
         self.assertIn("validate_rc_test_evidence.py", self.workflow)
