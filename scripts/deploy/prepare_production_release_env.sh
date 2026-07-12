@@ -39,6 +39,9 @@ if [ "$OUTPUT_ENV" = "$PROD_ENV" ] && [ "${ALLOW_IN_PLACE:-false}" != "true" ]; 
   echo "refusing in-place update; set OUTPUT_ENV to a separate file or ALLOW_IN_PLACE=true" >&2
   exit 2
 fi
+if [ "$OUTPUT_ENV" != "$PROD_ENV" ]; then
+  rm -f -- "$OUTPUT_ENV"
+fi
 
 python - "$RELEASE_METADATA_ENV" "$PROD_ENV" "$OUTPUT_ENV" "$APP_HOST_PORT_OVERRIDE" <<'PY'
 from __future__ import annotations
