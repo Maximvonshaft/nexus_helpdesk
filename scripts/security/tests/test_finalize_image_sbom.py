@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from finalize_image_sbom import finalize  # noqa: E402
+from finalize_image_sbom import FinalizationError, finalize  # noqa: E402
 
 
 class FinalizeImageSbomTests(unittest.TestCase):
@@ -155,6 +155,47 @@ class FinalizeImageSbomTests(unittest.TestCase):
                 },
             )
             self.assertEqual(finalize(source_with_license, overrides, root / "unused.json"), 1)
+
+    def test_override_cannot_replace_existing_license_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._write(
+                root,
+                "licensed.json",
+                {
+                    "bomFormat": "CycloneDX",
+                    "metadata": {"properties": []},
+                    "components": [
+                        {
+                            "type": "library",
+                            "name": "licensed-lib",
+                            "version": "1.0.0",
+                            "purl": "pkg:pypi/licensed-lib@1.0.0",
+                            "licenses": [{"license": {"id": "AGPL-3.0-only"}}],
+                        }
+                    ],
+                },
+            )
+            overrides = self._write(
+                root,
+                "overrides.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [
+                        {
+                            "purl": "pkg:pypi/licensed-lib@1.0.0",
+                            "license": "MIT",
+                            "source": "https://example.invalid/licensed-lib",
+                            "reason": "An override must never replace authoritative license metadata.",
+                        }
+                    ],
+                },
+            )
+
+            with self.assertRaisesRegex(
+                FinalizationError, "override_for_licensed_component"
+            ):
+                finalize(source, overrides, root / "final.json")
 
 
 if __name__ == "__main__":
