@@ -84,6 +84,9 @@ def _manual_values(**overrides: str) -> dict[str, str]:
         "RAW_CORS_ORIGIN": "https://portal.example.test",
         "RAW_ACCOUNT_ID": "",
         "RAW_TEST_SEND_CONFIRM": "",
+        "RAW_ALLOWED_SECRET_BASE_URL": "",
+        "CHECK_METRICS": "false",
+        "CHECK_ADMIN": "false",
         "CHECK_TEST_SEND": "false",
     }
     values.update(overrides)
@@ -140,6 +143,26 @@ def test_dispatch_strings_are_not_pasted_into_shell_or_python_source() -> None:
     assert "if: ${{ inputs.cors_origin != '' }}" not in manual
 
 
+def test_secret_bearing_steps_require_validated_allowlisted_target() -> None:
+    manual = MANUAL_WORKFLOW.read_text(encoding="utf-8")
+    assert (
+        "RAW_ALLOWED_SECRET_BASE_URL: ${{ vars.STAGING_SMOKE_ALLOWED_BASE_URL }}"
+        in manual
+    )
+    assert (
+        "inputs.check_metrics && steps.target.outputs.secret_target_authorized == 'true'"
+        in manual
+    )
+    assert (
+        "inputs.check_outbound_email_admin && steps.target.outputs.secret_target_authorized == 'true'"
+        in manual
+    )
+    assert (
+        "inputs.check_outbound_email_test_send && steps.target.outputs.secret_target_authorized == 'true'"
+        in manual
+    )
+
+
 def test_summaries_report_actual_step_outcomes() -> None:
     manual = MANUAL_WORKFLOW.read_text(encoding="utf-8")
     public = PUBLIC_WORKFLOW.read_text(encoding="utf-8")
@@ -162,6 +185,7 @@ def test_manual_validator_normalizes_safe_values(tmp_path: Path) -> None:
         "expected_status": "ready",
         "cors_origin": "https://portal.example.test",
         "account_id": "17",
+        "secret_target_authorized": "false",
         "test_send_authorized": "false",
     }
 
@@ -192,12 +216,54 @@ def test_manual_validator_rejects_unsafe_inputs(
     assert outputs == {}
 
 
+@pytest.mark.parametrize("check_name", ["CHECK_METRICS", "CHECK_ADMIN", "CHECK_TEST_SEND"])
+def test_secret_checks_require_configured_exact_allowlist(
+    tmp_path: Path,
+    check_name: str,
+) -> None:
+    values = _manual_values(**{check_name: "true"})
+    if check_name == "CHECK_TEST_SEND":
+        values["RAW_TEST_SEND_CONFIRM"] = "I_UNDERSTAND_THIS_SENDS_REAL_EMAIL"
+
+    completed, outputs = _run_validator(
+        tmp_path,
+        MANUAL_WORKFLOW,
+        "Validate smoke inputs without secrets",
+        values,
+    )
+    assert completed.returncode != 0
+    assert outputs == {}
+
+    values["RAW_ALLOWED_SECRET_BASE_URL"] = "https://attacker.example.test"
+    completed, outputs = _run_validator(
+        tmp_path,
+        MANUAL_WORKFLOW,
+        "Validate smoke inputs without secrets",
+        values,
+    )
+    assert completed.returncode != 0
+    assert outputs == {}
+
+    values["RAW_ALLOWED_SECRET_BASE_URL"] = "https://support.example.test"
+    completed, outputs = _run_validator(
+        tmp_path,
+        MANUAL_WORKFLOW,
+        "Validate smoke inputs without secrets",
+        values,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert outputs["secret_target_authorized"] == "true"
+
+
 def test_manual_real_email_requires_operator_confirmation(tmp_path: Path) -> None:
     completed, _ = _run_validator(
         tmp_path,
         MANUAL_WORKFLOW,
         "Validate smoke inputs without secrets",
-        _manual_values(CHECK_TEST_SEND="true"),
+        _manual_values(
+            CHECK_TEST_SEND="true",
+            RAW_ALLOWED_SECRET_BASE_URL="https://support.example.test",
+        ),
     )
     assert completed.returncode != 0
 
@@ -207,10 +273,12 @@ def test_manual_real_email_requires_operator_confirmation(tmp_path: Path) -> Non
         "Validate smoke inputs without secrets",
         _manual_values(
             CHECK_TEST_SEND="true",
+            RAW_ALLOWED_SECRET_BASE_URL="https://support.example.test",
             RAW_TEST_SEND_CONFIRM="I_UNDERSTAND_THIS_SENDS_REAL_EMAIL",
         ),
     )
     assert completed.returncode == 0, completed.stderr
+    assert outputs["secret_target_authorized"] == "true"
     assert outputs["test_send_authorized"] == "true"
 
 
@@ -350,5 +418,6 @@ def test_workflow_wires_require_ai_reply_and_pending_conflict() -> None:
     assert "require_ai_reply_conflicts_with_skip_ai_reply" in public
     assert "pending_ok = args.allow_pending and not args.require_ai_reply" in smoke
     assert "outbound_email_test_send_confirm" in manual
+    assert "secret_target_authorized == 'true'" in manual
     assert "test_send_authorized == 'true'" in manual
     assert "Upload redacted public smoke evidence immutable" in public
