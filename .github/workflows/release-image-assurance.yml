@@ -64,13 +64,15 @@ jobs:
             scripts/security/tests/test_sanitize_image_sbom.py \
             scripts/security/tests/test_finalize_image_sbom.py \
             scripts/security/tests/test_verify_license_compliance.py \
-            scripts/security/tests/test_release_image_policy_inputs.py
+            scripts/security/tests/test_release_image_policy_inputs.py \
+            scripts/security/tests/test_bind_release_image_compliance.py
           python -m unittest \
             scripts/security/tests/test_release_image_assurance.py \
             scripts/security/tests/test_sanitize_image_sbom.py \
             scripts/security/tests/test_finalize_image_sbom.py \
             scripts/security/tests/test_verify_license_compliance.py \
-            scripts/security/tests/test_release_image_policy_inputs.py
+            scripts/security/tests/test_release_image_policy_inputs.py \
+            scripts/security/tests/test_bind_release_image_compliance.py
 
       - name: Build local candidate image only
         run: |
@@ -252,6 +254,7 @@ jobs:
             --source-sha "${EXACT_SOURCE_SHA}" \
             --image-id "${image_id}" \
             --manifest "${ARTIFACT_DIR}/release-image-manifest.json" \
+            --policy-input-validation "${ARTIFACT_DIR}/policy-input-validation.json" \
             --compliance "${ARTIFACT_DIR}/license-compliance-evidence.json" \
             --installed "${ARTIFACT_DIR}/installed-license-evidence.json" \
             --output "${ARTIFACT_DIR}/release-image-compliance-binding.json"
