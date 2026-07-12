@@ -6,6 +6,7 @@ from app.services.provider_runtime.traffic_selection import (
     configured_traffic_mode,
     effective_canary_percent,
     effective_kill_switch,
+    persisted_traffic_configuration_errors,
     safe_traffic_configuration,
     select_provider_traffic,
     stable_canary_bucket,
@@ -235,6 +236,21 @@ def test_invalid_database_or_direct_kill_switch_value_fails_closed(monkeypatch, 
             kill_switch=value,
             configured_mode_value="canary",
         )
+
+
+def test_persisted_configuration_errors_are_independent_of_env_overrides(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "5")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "true")
+
+    errors = persisted_traffic_configuration_errors(
+        canary_percent=101,
+        kill_switch="false",
+    )
+
+    assert errors == [
+        "provider_runtime_canary_percent_invalid",
+        "provider_runtime_kill_switch_invalid",
+    ]
 
 
 def test_safe_configuration_reports_invalid_database_default(monkeypatch):
