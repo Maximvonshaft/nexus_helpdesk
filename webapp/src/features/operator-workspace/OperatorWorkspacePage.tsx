@@ -523,6 +523,7 @@ function ConversationPanel({
   capabilities,
   onRefresh,
   onReplyDirtyChange,
+  selectionUnavailable,
 }: {
   item: UnifiedOperatorQueueItem
   thread: WebchatThread | null
@@ -531,6 +532,7 @@ function ConversationPanel({
   capabilities: Set<string>
   onRefresh: () => Promise<void>
   onReplyDirtyChange: (dirty: boolean) => void
+  selectionUnavailable: boolean
 }) {
   const [reply, setReply] = useState('')
   const [confirmReview, setConfirmReview] = useState(false)
@@ -539,7 +541,7 @@ function ConversationPanel({
   const followsLatestRef = useRef(true)
   const lastQueueIdRef = useRef<string | null>(null)
   const lastMessageCountRef = useRef(0)
-  const canReply = Boolean(thread && item.ticket_id && hasCapability(capabilities, 'outbound.send') && thread.handoff?.can_reply !== false)
+  const canReply = Boolean(!selectionUnavailable && thread && item.ticket_id && hasCapability(capabilities, 'outbound.send') && thread.handoff?.can_reply !== false)
   const replyMutation = useMutation({
     mutationFn: () => {
       if (!item.ticket_id) throw new Error('当前案例没有可回复的 Ticket')
@@ -613,15 +615,17 @@ function ConversationPanel({
   }, [item.queue_id, scrollToLatest, thread?.messages.length])
 
   const mutationSafety = replyMutationSafety(replyMutation.error)
-  const disabledReason = !thread
-    ? '当前案例没有可用会话'
-    : !hasCapability(capabilities, 'outbound.send')
-      ? '当前权限不允许发送客户消息'
-      : thread.handoff?.can_reply === false
-        ? '请先接管案例，或等待当前 AI 处理完成'
-        : !reply.trim()
-          ? '请先输入回复内容'
-          : ''
+  const disabledReason = selectionUnavailable
+    ? '当前任务已离开授权队列，请先选择仍可处理的任务'
+    : !thread
+      ? '当前案例没有可用会话'
+      : !hasCapability(capabilities, 'outbound.send')
+        ? '当前权限不允许发送客户消息'
+        : thread.handoff?.can_reply === false
+          ? '请先接管案例，或等待当前 AI 处理完成'
+          : !reply.trim()
+            ? '请先输入回复内容'
+            : ''
 
   return (
     <section id="workspace-conversation" className="operator-conversation" aria-labelledby="operator-conversation-title" tabIndex={-1}>
@@ -1160,6 +1164,7 @@ export function OperatorWorkspacePage() {
   const [replyDraftDirty, setReplyDraftDirty] = useState(false)
   const [replyDiscardOpen, setReplyDiscardOpen] = useState(false)
   const pendingReplyActionRef = useRef<(() => void) | null>(null)
+  const [retainedSelectedItem, setRetainedSelectedItem] = useState<UnifiedOperatorQueueItem | null>(null)
 
   useEffect(() => {
     document.title = '操作员工作台 · Nexus OSR'
@@ -1190,14 +1195,32 @@ export function OperatorWorkspacePage() {
     () => queue.data?.pages.flatMap((page) => page.items) ?? [],
     [queue.data?.pages],
   )
-  const selectedItem = useMemo(
-    () => queueItems.find((item) => item.queue_id === selectedQueueId) ?? queueItems[0] ?? null,
+  const selectedQueueItem = useMemo(
+    () => queueItems.find((item) => item.queue_id === selectedQueueId) ?? null,
     [queueItems, selectedQueueId],
   )
+  const selectedQueueItemMissing = Boolean(
+    selectedQueueId
+    && !selectedQueueItem
+    && retainedSelectedItem?.queue_id === selectedQueueId,
+  )
+  const preserveMissingSelection = replyDraftDirty && selectedQueueItemMissing
+  const selectedItem = selectedQueueItem
+    ?? (preserveMissingSelection ? retainedSelectedItem : queueItems[0] ?? null)
 
   useEffect(() => {
-    if (!selectedQueueId && selectedItem) setSelectedQueueId(selectedItem.queue_id)
-  }, [selectedItem, selectedQueueId])
+    if (selectedQueueItem) setRetainedSelectedItem(selectedQueueItem)
+  }, [selectedQueueItem])
+
+  useEffect(() => {
+    if (!selectedQueueId && selectedItem) {
+      setSelectedQueueId(selectedItem.queue_id)
+      return
+    }
+    if (selectedQueueId && !selectedQueueItem && !replyDraftDirty) {
+      setSelectedQueueId(queueItems[0]?.queue_id ?? null)
+    }
+  }, [queueItems, replyDraftDirty, selectedItem, selectedQueueId, selectedQueueItem])
 
   const thread = useQuery({
     queryKey: ['operatorWorkspaceThread', selectedItem?.queue_id, selectedItem?.source_links.conversation],
@@ -1379,6 +1402,12 @@ export function OperatorWorkspacePage() {
             {selectedItem ? (
               <>
                 <CaseHeader item={selectedItem} currentUserId={session.data.id} />
+                {preserveMissingSelection ? (
+                  <div className="operator-selection-stale" role="status" aria-live="polite">
+                    <strong>当前任务已离开队列，回复草稿仍已保留</strong>
+                    <p>任务可能已被其他操作员处理、重新分配或移出当前范围。发送和受控动作已暂停；选择其他任务时仍会要求确认是否放弃草稿。</p>
+                  </div>
+                ) : null}
                 <CaseSpine item={selectedItem} memory={memory} thread={thread.data ?? null} />
                 {sourceRecord.data && !thread.data ? (
                   <section className="operator-source-summary">
@@ -1405,6 +1434,7 @@ export function OperatorWorkspacePage() {
                   capabilities={capabilities}
                   onRefresh={refreshSelected}
                   onReplyDirtyChange={setReplyDraftDirty}
+                  selectionUnavailable={preserveMissingSelection}
                 />
               </>
             ) : (
@@ -1429,12 +1459,19 @@ export function OperatorWorkspacePage() {
                   {memory?.current_intent ? <p>识别意图：{sanitizeDisplayText(memory.current_intent)}</p> : null}
                   <small>前端建议不替代服务端权限、政策和结果权威。</small>
                 </section>
-                <ActionPanel
-                  item={selectedItem}
-                  thread={thread.data ?? null}
-                  capabilities={capabilities}
-                  onRefresh={refreshSelected}
-                />
+                {preserveMissingSelection ? (
+                  <EmptyState
+                    title="当前任务动作已暂停"
+                    description="该任务已不在授权队列中。回复草稿仍保留，请选择一个当前可见任务后继续操作。"
+                  />
+                ) : (
+                  <ActionPanel
+                    item={selectedItem}
+                    thread={thread.data ?? null}
+                    capabilities={capabilities}
+                    onRefresh={refreshSelected}
+                  />
+                )}
                 <OutcomeTimeline memory={memory} />
                 <TechnicalDetails title="技术与来源详情" summary="默认收起">
                   <dl className="operator-technical-list">
