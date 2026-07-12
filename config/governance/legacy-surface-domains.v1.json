@@ -1,6 +1,6 @@
 {
   "schema": "nexus.legacy-surface.registry.v1",
-  "registry_version": "2026-07-12.2",
+  "registry_version": "2026-07-12.3",
   "audited_main_sha": "a18e9b3009e979c4dfc0dbf563ef9f27bf507bba",
   "coverage": "bounded_known_legacy_markers_and_protected_history",
   "enforcement": "fail_closed",
@@ -255,29 +255,6 @@
         "issue:#650",
         "issue:#613",
         "issue:#585"
-      ]
-    },
-    {
-      "id": "protected_reachable_git_history",
-      "owner_issue": 565,
-      "disposition": "protected_history",
-      "deletion_authorized": false,
-      "rationale": "Reachable Git objects require exposure assurance and explicit authorization before any history rewrite.",
-      "prerequisites": [
-        "reachable_blob_scan",
-        "credential_rotation_if_required",
-        "explicit_owner_authorization",
-        "collaborator_recovery_plan"
-      ],
-      "selectors": {
-        "paths": [
-          ".gitignore"
-        ],
-        "globs": [],
-        "content_rules": []
-      },
-      "authoritative_refs": [
-        "issue:#565"
       ]
     }
   ],
