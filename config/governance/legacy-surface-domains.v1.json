@@ -1,6 +1,6 @@
 {
   "schema": "nexus.legacy-surface.registry.v1",
-  "registry_version": "2026-07-12.4",
+  "registry_version": "2026-07-12.5",
   "audited_main_sha": "a18e9b3009e979c4dfc0dbf563ef9f27bf507bba",
   "coverage": "bounded_known_legacy_markers_and_protected_history",
   "enforcement": "fail_closed",
@@ -266,9 +266,12 @@
       "content_markers": [],
       "content_path_globs": [],
       "allowed_domain_ids": [
-        "external_channel_compatibility"
+        "external_channel_compatibility",
+        "protected_alembic_history",
+        "historical_round_artifacts",
+        "legacy_static_frontend"
       ],
-      "allow_multiple_domains": false
+      "allow_multiple_domains": true
     },
     {
       "id": "legacy_static_frontend_root",
@@ -297,9 +300,10 @@
       "content_markers": [],
       "content_path_globs": [],
       "allowed_domain_ids": [
-        "historical_round_artifacts"
+        "historical_round_artifacts",
+        "external_channel_compatibility"
       ],
-      "allow_multiple_domains": false
+      "allow_multiple_domains": true
     },
     {
       "id": "round_release_identity",
@@ -366,9 +370,10 @@
       "content_markers": [],
       "content_path_globs": [],
       "allowed_domain_ids": [
-        "protected_alembic_history"
+        "protected_alembic_history",
+        "external_channel_compatibility"
       ],
-      "allow_multiple_domains": false
+      "allow_multiple_domains": true
     },
     {
       "id": "versioned_contract_path",
