@@ -1,7 +1,7 @@
 {
   "schema": "nexus.legacy-surface.registry.v1",
-  "registry_version": "2026-07-12.1",
-  "audited_main_sha": "7f39ff7b215db8092fc0c7c0d48b289171b54e45",
+  "registry_version": "2026-07-12.2",
+  "audited_main_sha": "a18e9b3009e979c4dfc0dbf563ef9f27bf507bba",
   "coverage": "bounded_known_legacy_markers_and_protected_history",
   "enforcement": "fail_closed",
   "finding_limit": 100,
