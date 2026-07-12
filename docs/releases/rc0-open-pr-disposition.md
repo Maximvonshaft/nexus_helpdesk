@@ -21,13 +21,16 @@ current-main reconciled, exact-head accepted, non-RED, and scope-bounded.
 | #596 | **Defer unless RC evidence fails on event persistence** | Typed TicketEvent persistence is important product hardening but is not assumed to block isolated build/start/smoke. |
 | #595 | **Defer** | Provider canary authority is not required because RC0 disables Provider Runtime, sets canary to zero, and enables the kill switch. |
 | #593 | **Defer; rerun on exact candidate** | Resilience qualification should consume the selected candidate rather than define it. |
-| #580 | **Conditional, non-blocking** | If it gains exact-head acceptance and merges before final RC freeze, consume it. Otherwise RC0 proceeds and records image assurance as a deferred production-strength gate. |
+| #580 | **Included through main** | Release-image assurance merged to `main@05d1e75ce9fd852ea724decb5e3d2faafc870895` and was synchronized into the RC branch through temporary PR #631. |
 | #578 | **Exclude / reconstruct later** | Known blocking defects, old architecture assumptions, and scope expansion make it unsuitable for urgent candidate convergence. |
+| #631 | **Completed temporary sync** | Branch-only synchronization of current `main` into #629. It is not an independent release deliverable and must not be merged to `main` separately. |
 
 ## Mainline inclusion
 
-The baseline includes only commits already merged to `main`, including the
-business-scenario catalog merged through #594.
+The candidate branch is reconciled with `main@05d1e75ce9fd852ea724decb5e3d2faafc870895`.
+It includes the business-scenario catalog merged through #594 and release-image
+assurance merged through #580. No other open implementation or intentional RED
+PR is included by default.
 
 ## Cleanup policy
 
