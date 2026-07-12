@@ -45,12 +45,19 @@ features through its environment.
 RC0 instead uses `deploy/docker-compose.rc-test.yml`:
 
 - its own PostgreSQL volume and database;
-- its own internal project network;
+- an internal project network for App, PostgreSQL and Workers;
 - its own upload and backup volumes;
 - no production mounts;
-- no external network;
+- no production network;
+- a credential-free Nginx gateway on a project-local edge network that publishes
+  only `127.0.0.1:${RC_APP_PORT}`;
+- no direct App port or App edge-network membership;
 - no WhatsApp sidecar or session;
 - Provider traffic, outbound, Speedaf writes, and Operations Dispatch disabled.
+
+The Nginx gateway does not load the RC environment file, business credentials,
+Provider tokens, customer data, or runtime secrets. Its only function is to
+expose the internal App to the local test host.
 
 ## Local or test-server prerequisites
 
@@ -112,14 +119,14 @@ The script performs:
 4. isolated PostgreSQL startup;
 5. `alembic upgrade head`;
 6. creation of a synthetic RC-only admin;
-7. app and explicit worker startup;
-8. condition-based health waits;
+7. App, credential-free loopback Nginx gateway and explicit Worker startup;
+8. condition-based App, gateway and Worker health waits;
 9. exact runtime identity checks;
 10. invalid and valid login checks;
 11. synthetic WebChat init, send, poll, and operator read;
 12. in-container side-effect configuration proof;
-13. Playwright login/protected-route smoke;
-14. teardown with isolated volume removal;
+13. Playwright login/protected-route smoke through the loopback gateway;
+14. teardown with isolated volume and network removal;
 15. exact candidate manifest validation.
 
 Evidence is written to `artifacts/rc-test/` and is ignored by Git.
@@ -134,10 +141,12 @@ inside the live production checkout. Do not reuse:
 - production uploads;
 - production WhatsApp sessions;
 - production runtime token mounts;
-- the public Nginx target.
+- the public production Nginx target.
 
-Bind the app only to loopback. Access it through an SSH tunnel or a test-only
-reverse proxy after the local smoke passes.
+The included `nginx-rc` service binds only to loopback. Access it through an SSH
+tunnel or an explicitly controlled test-only ingress after the local smoke
+passes. Do not expose `app-rc` directly and do not join it to an external or
+production network.
 
 ## Failure handling
 
