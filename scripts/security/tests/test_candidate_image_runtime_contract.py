@@ -28,25 +28,51 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8080/readyz", app_section)
         self.assertIn("assert response.status == 200", app_section)
 
-    def test_evidence_scan_and_quarantine_always_run_before_upload(self) -> None:
+    def test_cleanup_scan_quarantine_and_upload_have_one_safe_order(self) -> None:
         workflow = (
             ROOT / ".github" / "workflows" / "release-image-assurance.yml"
         ).read_text(encoding="utf-8")
 
+        cleanup_marker = (
+            "      - name: Remove raw third-party metadata before evidence upload\n"
+        )
         scan_marker = "      - name: Scan bounded free-text evidence\n"
         structured_marker = "      - name: Validate structured evidence schemas\n"
         upload_marker = "      - name: Upload bounded release-image evidence\n"
+        enforce_marker = "      - name: Enforce release image gate\n"
 
+        cleanup_start = workflow.index(cleanup_marker)
         scan_start = workflow.index(scan_marker)
         structured_start = workflow.index(structured_marker)
         upload_start = workflow.index(upload_marker)
+        enforce_start = workflow.index(enforce_marker)
+
+        cleanup_block = workflow[cleanup_start:scan_start]
         scan_block = workflow[scan_start:structured_start]
         structured_block = workflow[structured_start:upload_start]
+        upload_block = workflow[upload_start:enforce_start]
+
+        self.assertIn("        if: always()\n", cleanup_block)
+        self.assertIn("raw-cleanup-exit-code", cleanup_block)
+        self.assertIn("cleanup_code=1", cleanup_block)
 
         self.assertIn("        if: always()\n", scan_block)
+        self.assertIn("raw-cleanup-exit-code", scan_block)
+
         self.assertIn("        if: always()\n", structured_block)
+        self.assertIn("raw_cleanup_not_clean", structured_block)
+        self.assertIn("unsafe_artifacts_uploaded", structured_block)
+        self.assertIn("upload_safe=true", structured_block)
+        self.assertIn('echo "upload_safe=${upload_safe}"', structured_block)
+
+        self.assertIn(
+            "if: ${{ always() && steps.structured_scan.outputs.upload_safe == 'true' }}",
+            upload_block,
+        )
+        self.assertLess(cleanup_start, scan_start)
         self.assertLess(scan_start, structured_start)
         self.assertLess(structured_start, upload_start)
+        self.assertLess(upload_start, enforce_start)
 
     def test_failed_artifact_scan_quarantines_all_candidate_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
