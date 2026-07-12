@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
-BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/.deploy_backups/$STAMP}"
+BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/deploy_backups/$STAMP}"
 BACKUP_PARENT="$(dirname "$BACKUP_DIR")"
 
 if [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; then
