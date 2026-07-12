@@ -1,0 +1,37 @@
+services:
+  worker-operations-dispatch:
+    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+    env_file:
+      - .env.prod
+    environment:
+      APP_ENV: production
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+      EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled
+      EXTERNAL_CHANNEL_TRANSPORT: disabled
+      EXTERNAL_CHANNEL_SYNC_ENABLED: "false"
+      EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED: "false"
+      EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED: "false"
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+      APP_VERSION: ${APP_VERSION:-server}
+      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
+    volumes:
+      - /run/secrets:/run/secrets:ro
+      - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro
+      - ${NEXUSDESK_UPLOADS_DIR:-/opt/nexus_helpdesk/data/uploads}:/app/backend/uploads
+    command: python scripts/run_operations_dispatch_worker.py --worker-id worker-operations-dispatch
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'run_operations_dispatch_worker.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('operations-dispatch-worker-alive')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
