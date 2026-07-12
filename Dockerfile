@@ -6,7 +6,25 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/python:3.11-slim
+FROM docker.io/library/python:3.11-alpine3.22 AS python-wheel-builder
+WORKDIR /build
+COPY backend/requirements.txt /build/requirements.txt
+RUN apk upgrade --no-cache \
+    && apk add --no-cache --virtual .build-deps \
+        build-base \
+        cargo \
+        libffi-dev \
+        openssl-dev \
+    && python -m pip install --upgrade \
+        "pip>=26.1.1" \
+        "setuptools>=82.0.0" \
+        "wheel>=0.46.2" \
+        "jaraco.context>=6.1.0" \
+    && python -m pip wheel \
+        --wheel-dir /wheels \
+        --requirement /build/requirements.txt
+
+FROM docker.io/library/python:3.11-alpine3.22
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
@@ -27,35 +45,46 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+# Apply the current Alpine security repository before installing the candidate.
+# Install only prebuilt wheels; compilers, Cargo and development headers remain
+# in the discarded wheel-builder stage. Packaging/build tools are removed from
+# the runtime after installation because the service never builds packages.
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt
+COPY --from=python-wheel-builder /wheels /wheels
+RUN apk upgrade --no-cache \
+    && python -m pip install \
+        --no-index \
+        --find-links=/wheels \
+        --requirement /tmp/requirements.txt \
+    && python -m pip uninstall -y \
+        autocommand \
+        jaraco.context \
+        setuptools \
+        wheel \
+    && rm -rf /wheels /tmp/requirements.txt /root/.cache
 
 # Keep the runtime image deterministic. Do not COPY the whole repository because
 # that can bake local caches, VCS metadata, env files, uploads, or secrets into
 # the image when .dockerignore drifts.
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
+COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
-# Round B webchat widget static export
-# Keep embeddable public webchat files outside SPA fallback.
-RUN mkdir -p /app/frontend_dist/static/webchat \
-    && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/
-
-RUN mkdir -p /app/backend/uploads \
-    && addgroup --system appgroup \
-    && adduser --system --ingroup appgroup --home /app --shell /usr/sbin/nologin appuser \
+# Round B webchat widget static export. Keep embeddable public files outside SPA
+# fallback while retaining the non-root runtime boundary.
+RUN mkdir -p /app/frontend_dist/static/webchat /app/backend/uploads \
+    && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/ \
+    && addgroup -S appgroup \
+    && adduser -S -D -H -s /sbin/nologin -G appgroup appuser \
     && chown -R appuser:appgroup /app
 
 WORKDIR /app/backend
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()" || exit 1
 
 USER appuser
 

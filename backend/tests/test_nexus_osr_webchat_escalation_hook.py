@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSo
 from app.models import Customer, Ticket  # noqa: E402
 from app.models_osr import EscalationPolicyRecord, HumanHoursPolicyRecord, RuntimeDecisionAuditRecord  # noqa: E402
 from app.services import webchat_ai_safe_service  # noqa: E402
+from app.services.nexus_osr.policies import HumanHoursPolicy  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatHandoffRequest, WebchatMessage  # noqa: E402
 
 
@@ -45,10 +47,30 @@ def db_session(tmp_path):
 def reset_webchat_settings(monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", False, raising=False)
+    original_evaluate = HumanHoursPolicy.evaluate
+    fixed_now = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
+
+    def evaluate_at_fixed_time(self, now=None):
+        return original_evaluate(self, fixed_now if now is None else now)
+
+    monkeypatch.setattr(HumanHoursPolicy, "evaluate", evaluate_at_fixed_time)
 
 
 def _online_hours() -> dict[str, list[list[str]]]:
     return {day: [["00:00", "23:59"]] for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+
+
+def test_online_hours_boundary_is_explicit_and_not_wall_clock_dependent():
+    policy = HumanHoursPolicy(
+        queue_key="zz-webchat",
+        timezone_name="UTC",
+        weekly_hours={
+            day: [("00:00", "23:59")]
+            for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+        },
+    )
+    assert policy.evaluate(datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)).is_online is True
+    assert policy.evaluate(datetime(2026, 7, 6, 23, 59, 30, tzinfo=timezone.utc)).is_online is False
 
 
 def add_hours(db, *, online: bool, country_code: str = "ZZ", channel: str = "webchat", queue_key: str = "zz-webchat") -> None:
