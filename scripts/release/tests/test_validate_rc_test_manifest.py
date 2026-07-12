@@ -90,8 +90,8 @@ class ManifestValidationTests(unittest.TestCase):
 class TopologyContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        root = Path(__file__).resolve().parents[3]
-        cls.text = (root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
+        cls.root = Path(__file__).resolve().parents[3]
+        cls.text = (cls.root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
 
     def test_app_healthcheck_uses_runtime_available_python_client(self):
         app_block = self.text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
@@ -107,6 +107,16 @@ class TopologyContractTests(unittest.TestCase):
         self.assertIn('127.0.0.1:${RC_APP_PORT:-18083}:80', nginx_block)
         self.assertIn("      - rc\n      - edge", nginx_block)
         self.assertNotIn("env_file:", nginx_block)
+
+    def test_production_mode_webchat_uses_server_owned_synthetic_origin_binding(self):
+        seed_path = self.root / "scripts" / "release" / "seed_rc_test_data.py"
+        self.assertTrue(seed_path.is_file())
+        seed = seed_path.read_text(encoding="utf-8")
+        self.assertIn("WebchatPublicOriginBinding", seed)
+        self.assertIn('ORIGIN = "https://rc-test.invalid"', seed)
+        self.assertIn('TENANT_KEY = "rc-test"', seed)
+        self.assertIn('CHANNEL_KEY = "website"', seed)
+        self.assertIn("service_completed_successfully", self.text)
 
 
 if __name__ == "__main__":
