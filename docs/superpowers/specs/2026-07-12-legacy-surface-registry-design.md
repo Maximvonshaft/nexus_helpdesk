@@ -3,7 +3,8 @@
 ## Status
 
 - Work Item: #650
-- Baseline: `main@7f39ff7b215db8092fc0c7c0d48b289171b54e45`
+- Initial baseline: `main@7f39ff7b215db8092fc0c7c0d48b289171b54e45`
+- Reconciled current main: `main@a18e9b3009e979c4dfc0dbf563ef9f27bf507bba`
 - Delivery class: non-destructive inventory and governance control
 - Runtime, schema, migration, frontend, deployment and workflow changes: none
 
