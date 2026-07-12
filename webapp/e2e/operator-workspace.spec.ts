@@ -264,7 +264,7 @@ test('workspace preserves historical scroll position and exposes a bounded new-m
     created_at: '2026-07-12T21:00:00Z',
   })
 
-  await expect(page.getByText('A new message while the operator reads history')).toBeVisible({ timeout: 7000 })
+  await expect(page.getByLabel('客户沟通').getByText('A new message while the operator reads history')).toBeVisible({ timeout: 7000 })
   expect(await timeline.evaluate((node) => node.scrollTop)).toBeLessThan(20)
   const newMessages = page.getByRole('button', { name: '1 条新消息，查看最新' })
   await expect(newMessages).toBeVisible()
