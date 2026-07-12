@@ -36,6 +36,7 @@ SUCCESS_REQUIRED = {
 FAILURE_ALLOWED = SUCCESS_REQUIRED | {
     "compose-ps-failure.txt",
     "bounded-failure-logs.txt",
+    "failure-summary.json",
 }
 POST_SCAN_ALLOWED = FAILURE_ALLOWED | {
     "artifact-scan.json",
@@ -77,7 +78,12 @@ def main() -> int:
         if missing:
             raise SystemExit("missing successful RC evidence files: " + ", ".join(missing))
     else:
-        diagnostics = {"compose-ps-failure.txt", "bounded-failure-logs.txt", "teardown.txt"}
+        diagnostics = {
+            "compose-ps-failure.txt",
+            "bounded-failure-logs.txt",
+            "failure-summary.json",
+            "teardown.txt",
+        }
         missing = sorted(diagnostics - names)
         if missing:
             raise SystemExit("missing failure diagnostics: " + ", ".join(missing))
