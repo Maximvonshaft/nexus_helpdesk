@@ -98,6 +98,14 @@ export function healthPresentation(value: string | null | undefined): Operationa
   return { tone: 'warning', label: visible }
 }
 
+export function knowledgeStatusPresentation(value: string | null | undefined): OperationalPresentation {
+  const normalized = normalizeStatus(value)
+  if (normalized === 'active' || normalized === 'published') return { tone: 'success', label: '已上线' }
+  if (normalized === 'draft') return { tone: 'warning', label: '草稿' }
+  if (normalized === 'archived') return { tone: 'default', label: '已归档' }
+  return { tone: 'warning', label: String(value ?? '').trim() || '状态未知' }
+}
+
 export function channelPresentation(channel: string | null | undefined): OperationalPresentation {
   const normalized = normalizeStatus(channel)
   if (normalized === 'whatsapp') return { tone: 'default', label: 'WhatsApp' }
