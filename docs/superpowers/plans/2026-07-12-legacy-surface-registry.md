@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Baseline is `main@7f39ff7b215db8092fc0c7c0d48b289171b54e45`.
+- Initial baseline was `main@7f39ff7b215db8092fc0c7c0d48b289171b54e45`; exact-head delivery is reconciled to `main@a18e9b3009e979c4dfc0dbf563ef9f27bf507bba`.
 - Work Item is #650 and the active Claim owns only the six declared additive paths.
 - Do not modify runtime, API, model, migration, frontend, deployment, workflow or production data.
 - Do not duplicate #549/#565/#570/#572/#573/#574 domain authority.
