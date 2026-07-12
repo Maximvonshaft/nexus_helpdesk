@@ -43,7 +43,7 @@ def _ready_dependencies(
     heads = observed_heads if observed_heads is not None else (observed_head,)
     monkeypatch.setattr(main_module, "engine", _Engine())
     monkeypatch.setattr(main_module, "_migration_revisions", lambda _conn: heads, raising=False)
-    monkeypatch.setattr(main_module, "_migration_revision", lambda _conn: heads[0] if heads else None)
+    monkeypatch.setattr(main_module, "_migration_revision", lambda _conn: heads[0] if heads else None, raising=False)
     monkeypatch.setattr(
         main_module,
         "check_storage_readiness",
