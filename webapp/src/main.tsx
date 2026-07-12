@@ -6,8 +6,9 @@ import { router } from '@/router'
 import { queryClient } from '@/lib/queryClient'
 import { initWebVitals } from '@/lib/webVitals'
 import '@/styles/tokens.css'
-import '@/styles/components.css'
 import '@/styles.css'
+import '@/styles/components.css'
+import '@/styles/auth.css'
 import '@/a11y.css'
 
 initWebVitals()
