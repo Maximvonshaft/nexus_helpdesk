@@ -34,7 +34,9 @@ class FinalizeImageSbomTests(unittest.TestCase):
                             "name": "prometheus-client",
                             "version": "0.21.1",
                             "purl": "pkg:pypi/prometheus-client@0.21.1",
-                            "licenses": [{"license": {"id": "Apache Software License 2.0"}}],
+                            "licenses": [
+                                {"license": {"id": "Apache Software License 2.0"}}
+                            ],
                         },
                         {
                             "type": "library",
@@ -49,11 +51,17 @@ class FinalizeImageSbomTests(unittest.TestCase):
             overrides = self._write(
                 root,
                 "overrides.json",
-                {"schema_version": "nexus_container_license_metadata_overrides_v1", "entries": []},
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [],
+                },
             )
             output = root / "final.json"
             self.assertEqual(finalize(source, overrides, output), 0)
-            components = {item["name"]: item for item in json.loads(output.read_text())["components"]}
+            components = {
+                item["name"]: item
+                for item in json.loads(output.read_text())["components"]
+            }
             self.assertEqual(
                 components["prometheus-client"]["licenses"],
                 [{"license": {"id": "Apache-2.0"}}],
@@ -79,7 +87,11 @@ class FinalizeImageSbomTests(unittest.TestCase):
                             "version": "3.2.6",
                             "purl": "pkg:pypi/psycopg@3.2.6",
                             "licenses": [
-                                {"license": {"id": "GNU Lesser General Public License v3 (LGPLv3)"}}
+                                {
+                                    "license": {
+                                        "id": "GNU Lesser General Public License v3 (LGPLv3)"
+                                    }
+                                }
                             ],
                         }
                     ],
@@ -88,11 +100,16 @@ class FinalizeImageSbomTests(unittest.TestCase):
             overrides = self._write(
                 root,
                 "overrides.json",
-                {"schema_version": "nexus_container_license_metadata_overrides_v1", "entries": []},
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [],
+                },
             )
             output = root / "final.json"
             self.assertEqual(finalize(source, overrides, output), 0)
-            license_id = json.loads(output.read_text())["components"][0]["licenses"][0]["license"]["id"]
+            license_id = json.loads(output.read_text())["components"][0]["licenses"][0][
+                "license"
+            ]["id"]
             self.assertEqual(license_id, "LGPL-3.0-only")
 
     def test_exact_override_resolves_missing_metadata_and_unused_fails(self) -> None:
@@ -154,7 +171,52 @@ class FinalizeImageSbomTests(unittest.TestCase):
                     ],
                 },
             )
-            self.assertEqual(finalize(source_with_license, overrides, root / "unused.json"), 1)
+            self.assertEqual(
+                finalize(source_with_license, overrides, root / "unused.json"), 1
+            )
+
+    def test_matching_override_confirms_existing_metadata_without_rewriting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            purl = "pkg:pypi/licensed-lib@1.0.0"
+            source = self._write(
+                root,
+                "licensed.json",
+                {
+                    "bomFormat": "CycloneDX",
+                    "metadata": {"properties": []},
+                    "components": [
+                        {
+                            "type": "library",
+                            "name": "licensed-lib",
+                            "version": "1.0.0",
+                            "purl": purl,
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        }
+                    ],
+                },
+            )
+            overrides = self._write(
+                root,
+                "overrides.json",
+                {
+                    "schema_version": "nexus_container_license_metadata_overrides_v1",
+                    "entries": [
+                        {
+                            "purl": purl,
+                            "license": "MIT",
+                            "source": "https://example.invalid/licensed-lib",
+                            "reason": "The override confirms the same authoritative license metadata.",
+                        }
+                    ],
+                },
+            )
+            output = root / "final.json"
+            self.assertEqual(finalize(source, overrides, output), 0)
+            self.assertEqual(
+                json.loads(output.read_text())["components"][0]["licenses"],
+                [{"license": {"id": "MIT"}}],
+            )
 
     def test_override_cannot_replace_existing_license_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -191,9 +253,8 @@ class FinalizeImageSbomTests(unittest.TestCase):
                     ],
                 },
             )
-
             with self.assertRaisesRegex(
-                FinalizationError, "override_for_licensed_component"
+                FinalizationError, "override_existing_license_conflict"
             ):
                 finalize(source, overrides, root / "final.json")
 
