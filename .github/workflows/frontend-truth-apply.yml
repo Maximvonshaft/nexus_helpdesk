@@ -47,8 +47,17 @@ jobs:
       - name: Apply bounded frontend truth codemod
         run: |
           set -Eeuo pipefail
-          python scripts/ci/apply_frontend_truth.py
-          git diff --check
+          python scripts/ci/apply_frontend_truth.py 2>&1 | tee frontend-truth-codemod.log
+          git diff --check 2>&1 | tee -a frontend-truth-codemod.log
+
+      - name: Upload bounded codemod failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-truth-codemod-failure-${{ github.sha }}
+          path: frontend-truth-codemod.log
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Install locked webapp dependencies
         working-directory: webapp
@@ -77,7 +86,7 @@ jobs:
           TARGET_BRANCH: fix/frontend-truth-641
         run: |
           set -Eeuo pipefail
-          rm -f .github/workflows/frontend-truth-apply.yml scripts/ci/apply_frontend_truth.py
+          rm -f .github/workflows/frontend-truth-apply.yml scripts/ci/apply_frontend_truth.py frontend-truth-codemod.log
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
