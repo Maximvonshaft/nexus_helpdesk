@@ -33,6 +33,7 @@ jobs:
       CANDIDATE_IMAGE: nexus-candidate:${{ github.event.pull_request.head.sha || github.sha }}
       ARTIFACT_DIR: artifacts/release-image
       EXACT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MAX_SUMMARY_BYTES: "262144"
     steps:
       - name: Checkout immutable
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -90,7 +91,8 @@ jobs:
             --file Dockerfile . 2>&1 | tee "${ARTIFACT_DIR}/candidate-build.full.log"
           build_code=${PIPESTATUS[0]}
           printf '%s\n' "${build_code}" > "${ARTIFACT_DIR}/build-exit-code"
-          tail -n 120 "${ARTIFACT_DIR}/candidate-build.full.log" > "${ARTIFACT_DIR}/candidate-build-summary.txt"
+          tail -c "${MAX_SUMMARY_BYTES}" "${ARTIFACT_DIR}/candidate-build.full.log" > "${ARTIFACT_DIR}/candidate-build-summary.txt"
+          test "$(wc -c < "${ARTIFACT_DIR}/candidate-build-summary.txt")" -le "${MAX_SUMMARY_BYTES}"
           rm -f "${ARTIFACT_DIR}/candidate-build.full.log"
           if [ "${build_code}" -eq 0 ]; then
             image_id="$(docker image inspect "${CANDIDATE_IMAGE}" --format '{{.Id}}')"
@@ -109,7 +111,8 @@ jobs:
             'set -eu; python -c "import app.main, psycopg, cryptography, argon2"; gunicorn --check-config app.main:app' \
             > "${ARTIFACT_DIR}/runtime-smoke.full.log" 2>&1
           code=$?
-          tail -n 120 "${ARTIFACT_DIR}/runtime-smoke.full.log" > "${ARTIFACT_DIR}/runtime-smoke-summary.txt"
+          tail -c "${MAX_SUMMARY_BYTES}" "${ARTIFACT_DIR}/runtime-smoke.full.log" > "${ARTIFACT_DIR}/runtime-smoke-summary.txt"
+          test "$(wc -c < "${ARTIFACT_DIR}/runtime-smoke-summary.txt")" -le "${MAX_SUMMARY_BYTES}"
           rm -f "${ARTIFACT_DIR}/runtime-smoke.full.log"
           printf '%s\n' "${code}" > "${ARTIFACT_DIR}/runtime-smoke-exit-code"
           exit 0
@@ -179,6 +182,7 @@ jobs:
             --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
             --vulnerability-exceptions config/security/container-vulnerability-exceptions.json \
             --license-policy config/security/container-license-policy.json \
+            --license-compliance config/security/container-license-compliance.json \
             --output "${ARTIFACT_DIR}/policy-input-validation.json" \
             --today "${policy_date}"
           code=$?
