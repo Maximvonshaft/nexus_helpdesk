@@ -14,7 +14,7 @@ const paths = {
   main: 'webapp/src/main.tsx',
   tokens: 'webapp/src/styles/tokens.css',
   components: 'webapp/src/styles/components.css',
-  legacy: 'webapp/src/styles.css',
+  auth: 'webapp/src/styles/auth.css',
   a11y: 'webapp/src/a11y.css',
   button: 'webapp/src/components/ui/Button.tsx',
   badge: 'webapp/src/components/ui/Badge.tsx',
@@ -37,12 +37,14 @@ test('merged PRODUCT and DESIGN remain the implementation authority', () => {
   assert.match(read(paths.design), /Dense calm logistics cockpit/)
 })
 
-test('semantic component CSS loads after legacy compatibility CSS', () => {
+test('semantic component and Login CSS load after legacy compatibility CSS', () => {
   const source = read(paths.main)
   const legacyIndex = source.indexOf("import '@/styles.css'")
   const componentsIndex = source.indexOf("import '@/styles/components.css'")
+  const authIndex = source.indexOf("import '@/styles/auth.css'")
   assert.ok(legacyIndex >= 0, 'legacy compatibility CSS import is missing')
   assert.ok(componentsIndex > legacyIndex, 'semantic component CSS must load after legacy compatibility CSS')
+  assert.ok(authIndex > componentsIndex, 'Login semantic CSS must load after shared component CSS')
 })
 
 test('semantic tokens define the shared control and motion floor', () => {
@@ -126,10 +128,11 @@ test('Login is a semantic keyboard-complete form', () => {
   assert.ok(source.includes('安全结案'))
 })
 
-test('Login presentation removes the generic gradient and over-rounded glass card', () => {
-  const source = read(paths.legacy)
+test('final Login stylesheet removes generic gradient, glass and over-rounding', () => {
+  const source = read(paths.auth)
   const shell = cssBlock(source, '.auth-shell')
   const card = cssBlock(source, '.auth-card')
+  assert.equal(/#[0-9a-f]{3,8}\b/i.test(source), false, 'Login CSS must consume semantic tokens rather than raw hex colors')
   assert.equal(shell.includes('gradient'), false, 'Login shell must not use decorative gradients')
   assert.equal(card.includes('rgba('), false, 'Login task surface must not use translucent glass styling')
   assert.equal(/border-radius:\s*(2[0-9]|[3-9][0-9])px/.test(card), false, 'Login task surface is over-rounded')
