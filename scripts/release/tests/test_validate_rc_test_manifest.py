@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,8 +15,22 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def valid_manifest():
-    return {
+def _digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def valid_manifest(root: Path) -> tuple[dict, Path]:
+    evidence = {}
+    for index, logical_name in enumerate(MODULE.REQUIRED_EVIDENCE):
+        filename = f"evidence-{index:02d}-{logical_name}.txt"
+        path = root / filename
+        path.write_text(f"bounded {logical_name} evidence\n", encoding="utf-8")
+        evidence[logical_name] = {
+            "path": filename,
+            "size_bytes": path.stat().st_size,
+            "sha256": _digest(path),
+        }
+    payload = {
         "schema": "nexus.osr.rc-test-candidate.v1",
         "release_class": "controlled_test_deployment",
         "decision": "RC0_TEST_DEPLOYABLE",
@@ -22,21 +39,13 @@ def valid_manifest():
             "frontend_build_sha": "a" * 40,
             "image_tag": "nexusdesk/helpdesk:rc-test-a",
             "image_id": "sha256:" + "b" * 64,
+            "postgres_image_digest": "pgvector/pgvector@sha256:" + "c" * 64,
+            "nginx_image_digest": "nginx@sha256:" + "d" * 64,
             "migration_revision": "20260711_0058",
             "config_profile": "rc-test-isolated-v1",
-            "config_digest": "sha256:" + "c" * 64,
+            "config_digest": "sha256:" + "e" * 64,
         },
-        "checks": {
-            "image_build": "pass",
-            "compose_validation": "pass",
-            "migration": "pass",
-            "application_ready": "pass",
-            "workers_healthy": "pass",
-            "http_core_smoke": "pass",
-            "browser_smoke": "pass",
-            "side_effect_safety": "pass",
-            "teardown": "pass",
-        },
+        "checks": {name: "pass" for name in MODULE.REQUIRED_CHECKS},
         "safety": {
             "production_data_used": False,
             "production_network_joined": False,
@@ -44,79 +53,140 @@ def valid_manifest():
             "real_outbound_enabled": False,
             "whatsapp_enabled": False,
             "speedaf_write_enabled": False,
+            "operations_dispatch_enabled": False,
             "production_ready": False,
             "full_osr_automation": "NO_GO",
             "test_environment_isolated": True,
         },
-        "evidence": {
-            "health": "healthz.json",
-            "readiness": "readyz.json",
-        },
+        "evidence": evidence,
     }
+    manifest_path = root / "candidate-manifest.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    return payload, manifest_path
 
 
 class ManifestValidationTests(unittest.TestCase):
-    def test_accepts_complete_isolated_candidate_manifest(self):
-        MODULE.validate_manifest(valid_manifest())
+    def test_accepts_complete_digest_bound_isolated_candidate_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload, manifest_path = valid_manifest(Path(tmp))
+            MODULE.validate_manifest(payload, manifest_path)
 
     def test_rejects_unsafe_or_incomplete_manifest(self):
         cases = [
             (("decision",), "PRODUCTION_GO"),
             (("candidate", "source_sha"), "bad"),
             (("candidate", "frontend_build_sha"), "b" * 40),
+            (("candidate", "image_id"), "sha256:short"),
+            (("candidate", "migration_revision"), "head"),
+            (("candidate", "postgres_image_digest"), "pgvector/pgvector:pg16"),
             (("checks", "browser_smoke"), "not_run"),
+            (("checks", "network_isolation"), "not_run"),
             (("safety", "real_outbound_enabled"), True),
+            (("safety", "operations_dispatch_enabled"), True),
             (("safety", "production_ready"), True),
             (("safety", "full_osr_automation"), "GO"),
             (("safety", "test_environment_isolated"), False),
         ]
         for path, value in cases:
-            with self.subTest(path=path, value=value):
-                payload = copy.deepcopy(valid_manifest())
+            with self.subTest(path=path, value=value), tempfile.TemporaryDirectory() as tmp:
+                payload, manifest_path = valid_manifest(Path(tmp))
+                payload = copy.deepcopy(payload)
                 cursor = payload
                 for key in path[:-1]:
                     cursor = cursor[key]
                 cursor[path[-1]] = value
                 with self.assertRaises(MODULE.ManifestError):
-                    MODULE.validate_manifest(payload)
+                    MODULE.validate_manifest(payload, manifest_path)
 
-    def test_rejects_absolute_evidence_paths(self):
-        payload = valid_manifest()
-        payload["evidence"]["health"] = "/tmp/healthz.json"
-        with self.assertRaises(MODULE.ManifestError):
-            MODULE.validate_manifest(payload)
+    def test_rejects_missing_unexpected_or_reused_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload, manifest_path = valid_manifest(Path(tmp))
+            missing = copy.deepcopy(payload)
+            missing["evidence"].pop("health")
+            with self.assertRaises(MODULE.ManifestError):
+                MODULE.validate_manifest(missing, manifest_path)
+
+            unexpected = copy.deepcopy(payload)
+            unexpected["evidence"]["raw_logs"] = copy.deepcopy(unexpected["evidence"]["health"])
+            with self.assertRaises(MODULE.ManifestError):
+                MODULE.validate_manifest(unexpected, manifest_path)
+
+            reused = copy.deepcopy(payload)
+            reused["evidence"]["readiness"] = copy.deepcopy(reused["evidence"]["health"])
+            with self.assertRaises(MODULE.ManifestError):
+                MODULE.validate_manifest(reused, manifest_path)
+
+    def test_rejects_traversal_backslash_and_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload, manifest_path = valid_manifest(Path(tmp))
+            for bad_path in ("../outside.txt", "nested/file.txt", "nested\\file.txt", "/tmp/file.txt"):
+                candidate = copy.deepcopy(payload)
+                candidate["evidence"]["health"]["path"] = bad_path
+                with self.subTest(path=bad_path), self.assertRaises(MODULE.ManifestError):
+                    MODULE.validate_manifest(candidate, manifest_path)
+
+            bad_digest = copy.deepcopy(payload)
+            bad_digest["evidence"]["health"]["sha256"] = "sha256:" + "f" * 64
+            with self.assertRaises(MODULE.ManifestError):
+                MODULE.validate_manifest(bad_digest, manifest_path)
+
+    def test_load_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "candidate-manifest.json"
+            path.write_text('{"schema":"a","schema":"b"}', encoding="utf-8")
+            with self.assertRaises(MODULE.ManifestError):
+                MODULE.load_manifest(path)
 
 
-class TopologyContractTests(unittest.TestCase):
+class TopologyAndWorkflowContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parents[3]
-        cls.text = (cls.root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
+        cls.compose = (cls.root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
+        cls.runner = (cls.root / "scripts" / "release" / "run_rc_test_candidate.sh").read_text(encoding="utf-8")
+        cls.workflow = (cls.root / ".github" / "workflows" / "rc-test-candidate.yml").read_text(encoding="utf-8")
+        cls.seed = (cls.root / "scripts" / "release" / "seed_rc_test_data.py").read_text(encoding="utf-8")
 
-    def test_app_healthcheck_uses_runtime_available_python_client(self):
-        app_block = self.text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
+    def test_postgres_receives_only_database_environment(self):
+        block = self.compose.split("  postgres-rc:\n", 1)[1].split("\n  migrate-rc:\n", 1)[0]
+        self.assertNotIn("env_file:", block)
+        for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"):
+            self.assertIn(key, block)
+        for forbidden in ("SECRET_KEY", "RC_TEST_ADMIN_PASSWORD", "RUNTIME_CONTRACT_SIGNING_SECRET"):
+            self.assertNotIn(forbidden, block)
+
+    def test_app_healthcheck_and_loopback_gateway_are_runtime_compatible(self):
+        app_block = self.compose.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
         self.assertNotIn("- curl\n", app_block)
         self.assertIn("urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()", app_block)
-
-    def test_loopback_gateway_exposes_internal_app_without_direct_app_port(self):
-        app_block = self.text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
         self.assertNotIn("    ports:\n", app_block)
-        self.assertIn("aliases:\n          - app", app_block)
-        self.assertIn("  nginx-rc:\n", self.text)
-        nginx_block = self.text.split("  nginx-rc:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+        nginx_block = self.compose.split("  nginx-rc:\n", 1)[1].split("\nnetworks:\n", 1)[0]
         self.assertIn('127.0.0.1:${RC_APP_PORT:-18083}:80', nginx_block)
         self.assertIn("      - rc\n      - edge", nginx_block)
-        self.assertNotIn("env_file:", nginx_block)
 
-    def test_production_mode_webchat_uses_server_owned_synthetic_origin_binding(self):
-        seed_path = self.root / "scripts" / "release" / "seed_rc_test_data.py"
-        self.assertTrue(seed_path.is_file())
-        seed = seed_path.read_text(encoding="utf-8")
-        self.assertIn("WebchatPublicOriginBinding", seed)
-        self.assertIn('ORIGIN = "https://rc-test.invalid"', seed)
-        self.assertIn('TENANT_KEY = "rc-test"', seed)
-        self.assertIn('CHANNEL_KEY = "website"', seed)
-        self.assertIn("service_completed_successfully", self.text)
+    def test_seed_registers_models_and_uses_real_runtime_origin(self):
+        self.assertIn("register_all_models()", self.seed)
+        self.assertIn('"RC_PUBLIC_ORIGIN"', self.seed)
+        self.assertIn("normalize_public_origin(requested_origin)", self.seed)
+        self.assertIn("service_completed_successfully", self.compose)
+
+    def test_runner_proves_exact_migration_browser_and_all_failure_logs(self):
+        self.assertIn("RC requires exactly one Alembic head", self.runner)
+        self.assertIn("MIGRATION_CURRENT", self.runner)
+        self.assertIn("e2e/rc-live.spec.ts", self.runner)
+        self.assertIn("rc_test_side_effects.py", self.runner)
+        for service in (
+            "postgres-rc", "migrate-rc", "seed-rc", "app-rc", "nginx-rc",
+            "worker-outbound-rc", "worker-background-rc", "worker-webchat-ai-rc",
+            "worker-handoff-snapshot-rc",
+        ):
+            self.assertIn(service, self.runner)
+
+    def test_workflow_scans_explicit_files_and_uploads_only_after_success(self):
+        self.assertIn("validate_rc_test_evidence.py", self.workflow)
+        self.assertIn('"${evidence_files[@]}"', self.workflow)
+        self.assertIn("steps.scan-evidence.outcome == 'success'", self.workflow)
+        self.assertNotIn("artifacts/rc-test\n", self.workflow.split("scan_artifacts.py", 1)[1].split("Upload", 1)[0])
 
 
 if __name__ == "__main__":
