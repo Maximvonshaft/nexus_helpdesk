@@ -1,0 +1,84 @@
+name: frontend-semantic-foundation-gate
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - .github/workflows/frontend-semantic-foundation-gate.yml
+      - webapp/e2e/login-semantic.spec.ts
+      - webapp/src/a11y.css
+      - webapp/src/components/ui/Badge.tsx
+      - webapp/src/components/ui/Button.tsx
+      - webapp/src/components/ui/ConfirmDialog.tsx
+      - webapp/src/components/ui/Field.tsx
+      - webapp/src/components/ui/PageHeader.tsx
+      - webapp/src/main.tsx
+      - webapp/src/routes/login.tsx
+      - webapp/src/styles/auth.css
+      - webapp/src/styles/components.css
+      - webapp/src/styles/tokens.css
+      - webapp/tests/frontend-semantic-foundation-contract.test.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-semantic-foundation-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-semantic-foundation:
+    name: exact-head semantic Login and primitives gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact proposed head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert exact checkout identity
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Setup Node immutable
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Verify semantic contracts and production build
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npm run typecheck
+          npm run lint
+          npm run build
+          npm run size-report
+
+      - name: Install Playwright Chromium
+        working-directory: webapp
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify Login and existing browser behavior
+        working-directory: webapp
+        run: npm run e2e
+
+      - name: Verify bounded exact diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          git diff --check "${BASE_SHA}"...HEAD
