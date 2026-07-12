@@ -104,18 +104,45 @@ jobs:
           if [[ "${code}" -ne 0 ]]; then
             stage="$(grep -E '^RC_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
             stage="${stage:-unknown}"
+            diagnostic_hex=""
             if [[ "${stage}" == "browser-smoke" ]]; then
               browser_stage="$(grep -E '^RC_BROWSER_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
               if [[ -n "${browser_stage}" ]]; then
                 stage="browser-${browser_stage}"
               fi
+              diagnostic_hex="$(python - "${run_log}" "${RC_BASE_URL}" "${RC_SOURCE_SHA}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          log_path, base_url, source_sha = sys.argv[1:]
+          text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+          text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+          candidates = [
+              line.strip()
+              for line in text.splitlines()
+              if any(token in line for token in (
+                  "page.goto:", "browserType.launch:", "Target page, context or browser",
+                  "net::ERR_", "TimeoutError:", "Test timeout", "Error:",
+              ))
+          ]
+          detail = candidates[-1] if candidates else "playwright_process_failed_without_error_line"
+          detail = detail.replace(base_url, "{base_url}").replace(source_sha, "{source_sha}")
+          detail = re.sub(r"https?://[^\s]+", "{url}", detail)
+          detail = detail[:400]
+          print(detail.encode("utf-8").hex())
+          PY
+          )"
+              if ! [[ "${diagnostic_hex}" =~ ^[0-9a-f]{2,800}$ ]]; then
+                diagnostic_hex=""
+              fi
             fi
-            python - "${stage}" "${code}" <<'PY'
+            python - "${stage}" "${code}" "${diagnostic_hex}" <<'PY'
           import json
           import re
           import sys
           from pathlib import Path
-          stage, code = sys.argv[1:]
+          stage, code, diagnostic_hex = sys.argv[1:]
           if not re.fullmatch(r"[a-z0-9_-]{1,64}", stage):
               stage = "unknown"
           root = Path("artifacts/rc-test")
@@ -129,6 +156,8 @@ jobs:
               "reason_code": "candidate_chain_failed",
               "service_states": {},
           }
+          if diagnostic_hex and re.fullmatch(r"[0-9a-f]{2,800}", diagnostic_hex):
+              summary["diagnostic_hex"] = diagnostic_hex
           if summary_path.is_file():
               try:
                   current = json.loads(summary_path.read_text(encoding="utf-8"))
