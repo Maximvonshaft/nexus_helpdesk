@@ -19,7 +19,7 @@ MISSING_TABLE_EXIT_CODES = {
     "provider_runtime_audit_logs": 31,
     "provider_auth_sessions": 32,
     "provider_credentials": 33,
-    "outbound_messages": 34,
+    "ticket_outbound_messages": 34,
     "operations_dispatch_outbox": 35,
 }
 
