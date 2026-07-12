@@ -232,8 +232,6 @@ test('operator navigation hides management surfaces that the current capability 
   await expect(navigation.getByRole('link', { name: '运行与审计' })).toHaveCount(0)
 })
 
-
-
 test('workspace preserves historical scroll position and exposes a bounded new-message action', async ({ page }) => {
   const messages = Array.from({ length: 36 }, (_, index) => ({
     id: index + 1,
@@ -273,7 +271,6 @@ test('workspace preserves historical scroll position and exposes a bounded new-m
   await expect(newMessages).toHaveCount(0)
 })
 
-
 test('workspace protects an unsent reply before unload and case replacement', async ({ page }) => {
   const first = queueResponse('handoff')
   const second = {
@@ -301,6 +298,7 @@ test('workspace protects an unsent reply before unload and case replacement', as
   await expect(page.getByRole('button', { name: /ticket:11/ })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByLabel('回复客户')).toHaveValue('Draft that must not be lost')
 })
+
 test('queue polling preserves a dirty reply when the selected task leaves the queue', async ({ page }) => {
   await page.clock.install()
   const first = queueResponse('handoff')
@@ -339,4 +337,35 @@ test('queue polling preserves a dirty reply when the selected task leaves the qu
   await expect(discard).toBeVisible()
   await discard.getByRole('button', { name: '取消' }).click()
   await expect(reply).toHaveValue('Draft retained while queue authority changes')
+})
+
+test('queue polling advances to a current task when no reply draft exists', async ({ page }) => {
+  await page.clock.install()
+  const first = queueResponse('handoff')
+  const second = {
+    ...first.items[0],
+    queue_id: 'handoff:22',
+    case_key: 'ticket:12',
+    source_id: 22,
+    ticket_id: 12,
+    updated_at: '2026-07-12T20:31:00Z',
+  }
+  let queueItems = [first.items[0], second]
+  let queueCalls = 0
+  await mockWorkspace(page, 'handoff', {
+    queue: () => {
+      queueCalls += 1
+      return { ...first, items: queueItems }
+    },
+  })
+  await page.goto('/workspace')
+  await expect(page.getByRole('heading', { level: 1, name: 'ticket:11' })).toBeVisible()
+
+  queueItems = [second]
+  await page.clock.fastForward(16_000)
+  await expect.poll(() => queueCalls).toBeGreaterThan(1)
+
+  await expect(page.getByRole('heading', { level: 1, name: 'ticket:12' })).toBeVisible()
+  await expect(page.getByText('当前任务已离开队列，回复草稿仍已保留')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /ticket:12/ })).toHaveAttribute('aria-pressed', 'true')
 })
