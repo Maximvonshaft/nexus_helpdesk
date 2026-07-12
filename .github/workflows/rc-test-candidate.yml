@@ -101,7 +101,7 @@ jobs:
           bash scripts/release/run_rc_test_candidate.sh 2>&1 | tee "${run_log}"
           code=${PIPESTATUS[0]}
           set -e
-          if [[ "${code}" -ne 0 && ! -f artifacts/rc-test/failure-summary.json ]]; then
+          if [[ "${code}" -ne 0 ]]; then
             stage="$(grep -E '^RC_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
             stage="${stage:-unknown}"
             if [[ "${stage}" == "browser-smoke" ]]; then
@@ -120,14 +120,28 @@ jobs:
               stage = "unknown"
           root = Path("artifacts/rc-test")
           root.mkdir(parents=True, exist_ok=True)
-          (root / "failure-summary.json").write_text(json.dumps({
+          summary_path = root / "failure-summary.json"
+          summary = {
               "schema": "nexus.osr.rc-test-failure-summary.v1",
               "status": "failed",
               "stage": stage,
               "exit_code": int(code),
               "reason_code": "candidate_chain_failed",
               "service_states": {},
-          }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          }
+          if summary_path.is_file():
+              try:
+                  current = json.loads(summary_path.read_text(encoding="utf-8"))
+              except (OSError, UnicodeError, json.JSONDecodeError):
+                  current = {}
+              if isinstance(current, dict):
+                  states = current.get("service_states")
+                  if isinstance(states, dict):
+                      summary["service_states"] = states
+                  reason = current.get("reason_code")
+                  if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_-]{1,80}", reason):
+                      summary["reason_code"] = reason
+          summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
           fi
           exit "${code}"
