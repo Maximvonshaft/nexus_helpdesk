@@ -33,9 +33,17 @@ class _Engine:
         yield _Connection()
 
 
-def _ready_dependencies(monkeypatch, *, observed_head: str, metadata_complete: bool = True) -> None:
+def _ready_dependencies(
+    monkeypatch,
+    *,
+    observed_head: str,
+    observed_heads: tuple[str, ...] | None = None,
+    metadata_complete: bool = True,
+) -> None:
+    heads = observed_heads if observed_heads is not None else (observed_head,)
     monkeypatch.setattr(main_module, "engine", _Engine())
-    monkeypatch.setattr(main_module, "_migration_revision", lambda _conn: observed_head)
+    monkeypatch.setattr(main_module, "_migration_revisions", lambda _conn: heads, raising=False)
+    monkeypatch.setattr(main_module, "_migration_revision", lambda _conn: heads[0] if heads else None)
     monkeypatch.setattr(
         main_module,
         "check_storage_readiness",
@@ -97,6 +105,29 @@ def test_readyz_fails_closed_on_migration_mismatch(monkeypatch) -> None:
     assert payload["migration"]["expected"] == "20260712_0060"
     assert payload["migration"]["observed"] == "20260712_0059"
     assert "migration_head_mismatch" in payload["reason_codes"]
+
+
+def test_readyz_fails_closed_on_multiple_observed_migration_heads(monkeypatch) -> None:
+    _ready_dependencies(
+        monkeypatch,
+        observed_head="20260712_0060",
+        observed_heads=("20260712_0060", "unexpected_parallel_head"),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        SimpleNamespace(expected_migration_head="20260712_0060", readiness_require_release_metadata=True),
+    )
+
+    response = main_module.readyz()
+    payload = _response_json(response)
+
+    assert response.status_code == 503
+    assert payload["status"] == "not_ready"
+    assert payload["migration"]["ok"] is False
+    assert payload["migration"]["observed"] is None
+    assert payload["migration"]["observed_heads"] == ["20260712_0060", "unexpected_parallel_head"]
+    assert "migration_heads_multiple" in payload["reason_codes"]
 
 
 def test_readyz_fails_closed_on_incomplete_release_metadata(monkeypatch) -> None:
