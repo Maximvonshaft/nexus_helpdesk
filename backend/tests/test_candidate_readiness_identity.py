@@ -27,6 +27,22 @@ class _Connection:
         return None
 
 
+class _RowsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _MigrationConnection:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def execute(self, _statement):
+        return _RowsResult(self._rows)
+
+
 class _Engine:
     @contextmanager
     def connect(self):
@@ -37,7 +53,7 @@ def _ready_dependencies(
     monkeypatch,
     *,
     observed_head: str,
-    observed_heads: tuple[str, ...] | None = None,
+    observed_heads: tuple[str | None, ...] | None = None,
     metadata_complete: bool = True,
 ) -> None:
     heads = observed_heads if observed_heads is not None else (observed_head,)
@@ -88,6 +104,14 @@ def test_settings_load_candidate_identity_controls(monkeypatch) -> None:
     assert settings.readiness_require_release_metadata is True
 
 
+def test_migration_revision_reader_preserves_blank_and_null_rows() -> None:
+    observed = main_module._migration_revisions(
+        _MigrationConnection([("20260712_0060",), ("",), (None,)])
+    )
+
+    assert observed == ("20260712_0060", None, None)
+
+
 def test_readyz_fails_closed_on_migration_mismatch(monkeypatch) -> None:
     _ready_dependencies(monkeypatch, observed_head="20260712_0059")
     monkeypatch.setattr(
@@ -128,6 +152,29 @@ def test_readyz_fails_closed_on_multiple_observed_migration_heads(monkeypatch) -
     assert payload["migration"]["observed"] is None
     assert payload["migration"]["observed_heads"] == ["20260712_0060", "unexpected_parallel_head"]
     assert "migration_heads_multiple" in payload["reason_codes"]
+
+
+def test_readyz_fails_closed_on_invalid_observed_migration_row(monkeypatch) -> None:
+    _ready_dependencies(
+        monkeypatch,
+        observed_head="20260712_0060",
+        observed_heads=("20260712_0060", None),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        SimpleNamespace(expected_migration_head="20260712_0060", readiness_require_release_metadata=True),
+    )
+
+    response = main_module.readyz()
+    payload = _response_json(response)
+
+    assert response.status_code == 503
+    assert payload["status"] == "not_ready"
+    assert payload["migration"]["ok"] is False
+    assert payload["migration"]["observed"] is None
+    assert payload["migration"]["observed_heads"] == ["20260712_0060", None]
+    assert "migration_head_invalid" in payload["reason_codes"]
 
 
 def test_readyz_fails_closed_on_incomplete_release_metadata(monkeypatch) -> None:
