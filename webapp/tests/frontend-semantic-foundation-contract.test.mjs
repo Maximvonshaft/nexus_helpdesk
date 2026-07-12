@@ -77,7 +77,7 @@ test('Button exposes semantic size and loading behavior', () => {
   assert.match(source, /loading\?: boolean/)
   assert.match(source, /loadingLabel\?: string/)
   assert.ok(source.includes("'nd-button'"))
-  assert.ok(source.includes("'aria-busy'"))
+  assert.ok(source.includes('aria-busy={loading || undefined}'))
   assert.ok(source.includes('disabled={disabled || loading}'))
 })
 
