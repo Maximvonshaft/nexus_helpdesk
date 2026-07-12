@@ -7,7 +7,7 @@ on:
       - "backend/app/model_registry.py"
       - "backend/app/services/webchat_tenant_binding.py"
       - "backend/app/services/webchat_rate_limit.py"
-      - "backend/alembic/versions/20260711_0058_webchat_public_origin_bindings.py"
+      - "backend/alembic/versions/**"
       - "backend/scripts/manage_webchat_origin_binding.py"
       - "backend/tests/test_webchat_public_tenant_binding.py"
       - ".github/workflows/webchat-tenant-binding-gate.yml"
@@ -48,6 +48,7 @@ jobs:
       - name: Checkout immutable
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Python immutable
@@ -68,19 +69,22 @@ jobs:
             backend/app/services/webchat_rate_limit.py \
             backend/scripts/manage_webchat_origin_binding.py \
             backend/tests/test_webchat_public_tenant_binding.py
-      - name: Prove one migration line containing 0058
+      - name: Prove one linear migration chain contains binding revision
         working-directory: backend
         run: |
           python - <<'PY'
           from alembic.config import Config
           from alembic.script import ScriptDirectory
+
           script = ScriptDirectory.from_config(Config("alembic.ini"))
           heads = script.get_heads()
           assert len(heads) == 1, heads
-          assert heads[0] == "20260711_0058", heads
-          revisions = {row.revision for row in script.walk_revisions("base", heads[0])}
-          assert "20260711_0058" in revisions, revisions
-          assert "20260711_0057" in revisions, revisions
+          revisions = list(script.walk_revisions("base", heads[0]))
+          by_revision = {row.revision: row for row in revisions}
+          assert "20260711_0058" in by_revision, sorted(by_revision)
+          assert "20260711_0057" in by_revision, sorted(by_revision)
+          binding = by_revision["20260711_0058"]
+          assert binding.down_revision == "20260711_0057", binding.down_revision
           PY
       - name: PostgreSQL migration round trip
         working-directory: backend
