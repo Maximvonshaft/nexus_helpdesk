@@ -4,33 +4,35 @@
 
 - Work Item: #549
 - Delivery class: controlled test deployment
-- Baseline: `main@9ae6e9f6aa3742e8576dbe7270a6f17d691dc312`
 - Production GO authority: false
 
 ## Problem
 
-Current main can report `/readyz` as ready while the running image identity is incomplete or the database Alembic revision does not match the intended candidate. The FastAPI application also reports the historical literal `20.4.0-round-b` instead of the release-provided `APP_VERSION`.
+The application could report `/readyz` as ready while the running image identity was incomplete or the database Alembic revision did not match the intended candidate. FastAPI also reported the historical literal `20.4.0-round-b` instead of the release-provided `APP_VERSION`.
 
-The candidate environment example additionally defaulted Provider and WhatsApp outbound authority to enabled values. Backend feature flags were not sufficient safety boundaries: the Runtime warmer could still read a token and make HTTP requests, and the sidecar could still start the real Baileys connector and auto-login configured accounts.
+The candidate environment defaulted Provider and WhatsApp outbound authority to enabled values. Backend feature flags were not sufficient safety boundaries: the Runtime warmer could still read a token and make HTTP requests, and the sidecar could still start the real Baileys connector and auto-login configured accounts.
 
-The first isolated RC run after enabling the migration gate correctly failed: the database was upgraded to `20260711_0058`, but the generated RC environment omitted `EXPECTED_MIGRATION_HEAD`. This showed the readiness gate was correct and the RC environment generator was incomplete.
+The first isolated RC run after enabling migration binding correctly failed because PostgreSQL had upgraded to `20260711_0058` while the generated environment omitted `EXPECTED_MIGRATION_HEAD`. Independent review then established four additional boundaries:
 
-Independent review additionally established that the warmer must honor the Provider kill switch, and that one apparent migration Head is insufficient if another disconnected or cyclic revision component exists.
+- Runtime warmup must honor the Provider kill switch;
+- one apparent migration Head cannot mask a disconnected/cyclic tracked revision component;
+- runtime readiness must inspect every `alembic_version` row rather than `LIMIT 1`;
+- existing production environments must not become permanently unhealthy merely because migration binding is a new candidate-only control.
 
 ## Decision
 
 Introduce one bounded candidate identity/readiness contract:
 
 1. `APP_VERSION` is the application/OpenAPI version authority.
-2. `EXPECTED_MIGRATION_HEAD` identifies the exact Alembic head intended for the candidate.
-3. `READINESS_REQUIRE_RELEASE_METADATA` controls whether `/readyz` requires complete `GIT_SHA`, `IMAGE_TAG`, `BUILD_TIME` and `FRONTEND_BUILD_SHA` evidence.
-4. Production defaults require release metadata and an expected migration head; development remains usable without them.
-5. `/readyz` returns bounded migration identity and reason codes and fails closed on missing/mismatched required evidence.
+2. `READINESS_REQUIRE_RELEASE_METADATA` independently controls whether `/readyz` requires complete `GIT_SHA`, `IMAGE_TAG`, `BUILD_TIME` and `FRONTEND_BUILD_SHA` evidence.
+3. `EXPECTED_MIGRATION_HEAD` opts a runtime into exact migration binding. Candidate and isolated RC paths always supply it; existing production paths that have not adopted migration binding remain compatible.
+4. When migration binding is active, `/readyz` reads the complete `alembic_version` set, requires exactly one observed Head and compares it to the expected Head.
+5. Multiple observed database Heads fail closed even if one matches the expected value.
 6. Candidate examples keep Provider Runtime, native WhatsApp and outbound dispatch disabled by default.
 7. Runtime warmup requires `PRIVATE_AI_RUNTIME_ENABLED=true`, a positive Provider canary percentage and `PROVIDER_RUNTIME_KILL_SWITCH=false` before reading credentials or making a request.
-8. The candidate sidecar defaults to the mock connector and an empty auto-start account list.
-9. The isolated RC environment generator statically resolves the unique Alembic head from tracked migration files and writes it into the candidate environment.
-10. Missing, malformed, duplicate, unknown-parent, multiple-head, cyclic or disconnected Alembic graphs fail before container startup.
+8. Both the candidate env and candidate Compose service default the sidecar to the mock connector with an empty auto-start account list.
+9. The isolated RC generator statically resolves the unique Alembic Head from tracked migration files and writes it into the candidate environment.
+10. Missing, malformed, duplicate, unknown-parent, multiple-head, cyclic or disconnected tracked migration graphs fail before container startup.
 11. This slice does not create full Required/Optional/Forbidden business capability profiles and does not authorize deployment or external traffic.
 
 ## Readiness contract
@@ -38,30 +40,32 @@ Introduce one bounded candidate identity/readiness contract:
 `/readyz` evaluates:
 
 - database connectivity;
-- observed Alembic revision;
-- exact expected/observed migration match when required;
+- the complete observed Alembic version-row set;
+- exact expected/observed migration match when `EXPECTED_MIGRATION_HEAD` is supplied;
 - storage readiness;
 - modern frontend build readiness;
 - runtime contract signing readiness;
 - release metadata completeness when required.
 
-Bounded reason codes:
+Bounded migration reason codes:
 
-- `migration_head_required`
+- `migration_heads_multiple`
 - `migration_head_unavailable`
 - `migration_head_mismatch`
-- `release_metadata_incomplete`
-- existing storage/frontend/signing failure logs remain authoritative for those domains.
 
-No credential, database URL, raw exception or release secret is added to the response.
+Other bounded readiness reasons include `release_metadata_incomplete` and the existing storage/frontend/signing failures.
 
-## Alembic head resolution
+The legacy scalar `migration_revision` remains for compatibility only when exactly one database Head exists. Structured `migration.observed_heads` is emitted when the observed set is empty or contains multiple rows. No credential, database URL, raw exception or release secret is added to the response.
+
+## Alembic graph resolution
 
 The RC generator parses tracked Python migration files without importing or executing them. It accepts literal `revision` and `down_revision` assignments, validates every referenced parent, requires exactly one unreferenced revision, walks all parent edges from that Head, rejects reachable cycles, and requires the traversal to cover every parsed revision. This prevents a valid chain from masking a disconnected malformed component.
 
+This static tracked-graph validation is separate from runtime database validation. Runtime readiness queries every row in `alembic_version`; multiple rows cannot be hidden by selecting one matching value.
+
 ## Safe candidate defaults
 
-The candidate example retains optional service definitions for isolated testing but defaults all external authority and connectivity off:
+The candidate retains optional service definitions for isolated testing but defaults external authority and connectivity off:
 
 - `PRIVATE_AI_RUNTIME_ENABLED=false`
 - `PROVIDER_RUNTIME_CANARY_PERCENT=0`
@@ -71,14 +75,14 @@ The candidate example retains optional service definitions for isolated testing 
 - `ENABLE_OUTBOUND_DISPATCH=false`
 - `OUTBOUND_PROVIDER=disabled`
 - `WHATSAPP_DISPATCH_MODE=disabled`
-- `WA_SIDECAR_CONNECTOR_MODE=mock`
-- `WA_SIDECAR_AUTO_START_ACCOUNTS=`
+- candidate env: `WA_SIDECAR_CONNECTOR_MODE=mock`, `WA_SIDECAR_AUTO_START_ACCOUNTS=`
+- candidate Compose fallback: mock connector and empty auto-start account list even without an env override
 
-Enabling any of these requires a separate Work Item, exact candidate review and explicit authorization.
+Enabling any external path requires a separate Work Item, exact candidate review and explicit authorization.
 
 ## Protected scope
 
-No model, schema, migration revision, queue, Provider router, WhatsApp implementation, frontend route or deployment action changes.
+No model, schema, migration revision, queue, Provider router, WhatsApp implementation, frontend route, deployment execution or external resource change.
 
 ## Rollback
 
