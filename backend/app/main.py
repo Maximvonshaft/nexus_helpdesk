@@ -117,31 +117,38 @@ def _runtime_identity() -> dict[str, object]:
     return runtime_identity_status(default_app_version=settings.app_version)
 
 
-def _migration_revision(conn: Connection) -> str | None:
+def _migration_revisions(conn: Connection) -> tuple[str, ...]:
     try:
-        row = conn.execute(text('SELECT version_num FROM alembic_version LIMIT 1')).first()
-        return str(row[0]) if row and row[0] else None
+        rows = conn.execute(text('SELECT version_num FROM alembic_version ORDER BY version_num')).all()
+        return tuple(str(row[0]) for row in rows if row and row[0])
     except Exception:
-        return None
+        return ()
 
 
-def _migration_readiness(observed: str | None) -> tuple[dict[str, object], list[str]]:
+def _migration_readiness(observed_heads: tuple[str, ...]) -> tuple[dict[str, object], list[str]]:
     expected = settings.expected_migration_head
     required = bool(expected)
+    observed = observed_heads[0] if len(observed_heads) == 1 else None
     reason_codes: list[str] = []
     ok = True
-    if expected and not observed:
+    if len(observed_heads) > 1:
+        ok = False
+        reason_codes.append('migration_heads_multiple')
+    elif expected and not observed:
         ok = False
         reason_codes.append('migration_head_unavailable')
     elif expected and observed != expected:
         ok = False
         reason_codes.append('migration_head_mismatch')
-    return {
+    migration: dict[str, object] = {
         'ok': ok,
         'expected': expected,
         'observed': observed,
         'required': required,
-    }, reason_codes
+    }
+    if len(observed_heads) != 1:
+        migration['observed_heads'] = list(observed_heads)
+    return migration, reason_codes
 
 
 def _frontend_readiness() -> dict[str, object]:
@@ -248,9 +255,10 @@ def readyz():
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
-            migration_revision = _migration_revision(conn)
+            migration_revisions = _migration_revisions(conn)
+        migration_revision = migration_revisions[0] if len(migration_revisions) == 1 else None
         identity = _runtime_identity()
-        migration, reason_codes = _migration_readiness(migration_revision)
+        migration, reason_codes = _migration_readiness(migration_revisions)
         release_metadata_ready = not settings.readiness_require_release_metadata or bool(identity.get('release_metadata_complete'))
         if not release_metadata_ready:
             reason_codes.append('release_metadata_incomplete')
