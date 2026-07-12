@@ -26,6 +26,25 @@ FORBIDDEN_MARKERS = tuple(
         ("Please provide your ", "tracking number"),
     )
 )
+SENSITIVE_KEY_FRAGMENTS = (
+    "token",
+    "password",
+    "secret",
+    "authorization",
+    "cookie",
+    "api_key",
+    "contact",
+)
+SENSITIVE_EXACT_KEYS = {
+    "body",
+    "body_text",
+    "metadata_json",
+    "email",
+    "phone",
+    "address",
+    "to_address",
+}
+REDACTED = "[REDACTED]"
 
 
 @dataclass(frozen=True)
@@ -85,10 +104,31 @@ def request(
         raise
 
 
+def _sensitive_key(key: object) -> bool:
+    normalized = str(key).strip().lower()
+    return normalized in SENSITIVE_EXACT_KEYS or any(
+        fragment in normalized for fragment in SENSITIVE_KEY_FRAGMENTS
+    )
+
+
+def redact_sensitive(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): REDACTED if _sensitive_key(key) else redact_sensitive(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    if isinstance(value, tuple):
+        return [redact_sensitive(item) for item in value]
+    return value
+
+
 def write_json(out_dir: Path, name: str, payload: object) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    safe_payload = redact_sensitive(payload)
     (out_dir / name).write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        json.dumps(safe_payload, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
 
@@ -104,6 +144,24 @@ def parse_json_result(result: HttpResult) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def write_endpoint_evidence(
+    out_dir: Path,
+    name: str,
+    result: HttpResult,
+    payload: dict[str, Any],
+) -> None:
+    write_json(
+        out_dir,
+        name,
+        {
+            "http_status": result.status,
+            "elapsed_ms": result.elapsed_ms,
+            "json_valid": bool(payload),
+            "payload": payload if payload else None,
+        },
+    )
 
 
 def summarize_endpoint(result: HttpResult, payload: dict[str, Any]) -> dict[str, Any]:
@@ -325,8 +383,8 @@ def main() -> int:
             timeout=20,
             allow_http_error=True,
         )
-        write_bytes(out_dir, "healthz.json", health.body)
         health_payload = parse_json_result(health)
+        write_endpoint_evidence(out_dir, "healthz.json", health, health_payload)
         summary["healthz"] = summarize_endpoint(health, health_payload)
         if not summary["healthz"]["ok"]:
             errors.append(f"healthz_status={health.status}")
@@ -336,8 +394,8 @@ def main() -> int:
             timeout=20,
             allow_http_error=True,
         )
-        write_bytes(out_dir, "readyz.json", ready.body)
         ready_payload = parse_json_result(ready)
+        write_endpoint_evidence(out_dir, "readyz.json", ready, ready_payload)
         summary["readyz"] = summarize_endpoint(ready, ready_payload)
         if not summary["readyz"]["ok"]:
             errors.append(f"readyz_status={ready.status}")
@@ -369,8 +427,8 @@ def main() -> int:
             payload=init_payload,
             timeout=20,
         )
-        write_bytes(out_dir, "init_response.json", init.body)
         init_json = init.json()
+        write_json(out_dir, "init_response.json", init_json)
         if (
             not isinstance(init_json, dict)
             or not init_json.get("conversation_id")
@@ -399,8 +457,8 @@ def main() -> int:
             payload=send_payload,
             timeout=20,
         )
-        write_bytes(out_dir, "send_response.json", send.body)
         send_json = send.json()
+        write_json(out_dir, "send_response.json", send_json)
         summary["reply_starts_json"] = isinstance(send_json, dict) and (
             send_json.get("ok") is True or bool(send_json.get("ai_pending"))
         )
@@ -428,8 +486,8 @@ def main() -> int:
                 },
                 timeout=20,
             )
-            write_bytes(out_dir, "poll_last_response.json", poll.body)
             payload = poll.json()
+            write_json(out_dir, "poll_last_response.json", payload)
             if isinstance(payload, dict):
                 last_poll = payload
                 messages = payload.get("messages")
@@ -444,12 +502,16 @@ def main() -> int:
 
         if not reply:
             pending_ok = args.allow_pending and not args.require_ai_reply
+            message_count = 0
+            if isinstance(last_poll, dict) and isinstance(last_poll.get("messages"), list):
+                message_count = len(last_poll["messages"])
             summary.update(
                 {
                     "ok": pending_ok,
                     "conversation_id": conversation_id,
                     "pending": True,
-                    "last_poll": last_poll,
+                    "last_poll_observed": last_poll is not None,
+                    "last_poll_message_count": message_count,
                 }
             )
             if pending_ok:
