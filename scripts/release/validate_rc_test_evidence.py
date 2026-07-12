@@ -48,7 +48,12 @@ def main() -> int:
     parser.add_argument("--list-output", type=Path, required=True)
     args = parser.parse_args()
 
+    repository_root = Path.cwd().resolve()
     root = args.root.resolve(strict=True)
+    try:
+        root.relative_to(repository_root)
+    except ValueError as exc:
+        raise SystemExit("RC evidence root must stay inside the repository") from exc
     if not root.is_dir():
         raise SystemExit("RC evidence root must be a directory")
 
@@ -77,10 +82,14 @@ def main() -> int:
         if missing:
             raise SystemExit("missing failure diagnostics: " + ", ".join(missing))
 
-    scan_inputs = [entry for entry in entries if entry.name != "artifact-scan.json"]
+    scan_inputs = [
+        entry.resolve().relative_to(repository_root)
+        for entry in entries
+        if entry.name != "artifact-scan.json"
+    ]
     args.list_output.parent.mkdir(parents=True, exist_ok=True)
     args.list_output.write_text(
-        "".join(str(path) + "\n" for path in scan_inputs),
+        "".join(path.as_posix() + "\n" for path in scan_inputs),
         encoding="utf-8",
     )
     print(f"RC_EVIDENCE_SET_VALID=true mode={'success' if success else 'failure'} files={len(scan_inputs)}")
