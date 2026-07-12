@@ -18,6 +18,7 @@ from scanner import MAX_FILE_BYTES, Finding, load_allowlist, write_report
 
 SCHEMA = "nexus_security_git_history_scan_v1"
 MAX_STORED_FINDINGS = 100
+MAX_STORED_OVERSIZED = 20
 MAX_OBJECTS = 2_000_000
 MAX_PATH_LENGTH = 240
 _OBJECT_FORMATS = {"sha1": 40, "sha256": 64}
@@ -99,18 +100,23 @@ class HistoryFinding:
 
     @property
     def logical_identity(self) -> tuple[str, str, int, str]:
-        # Blob identity is intentionally excluded: the same logical secret in a
-        # changed blob must be counted once.
         return self.path, self.rule, self.line, self.fingerprint
 
     def as_dict(self) -> dict[str, object]:
         return {
             "rule": self.rule,
-            "path": self.path,
+            **_path_evidence(self.path),
             "line": self.line,
             "fingerprint": self.fingerprint,
             "blob_sha": self.blob_sha,
         }
+
+
+def _path_evidence(path: str) -> dict[str, str]:
+    return {
+        "path_sha256": hashlib.sha256(path.encode("utf-8", errors="replace")).hexdigest(),
+        "path_suffix": PurePosixPath(path).suffix.lower()[:24],
+    }
 
 
 def _run_git(root: Path, args: Sequence[str], *, input_bytes: bytes | None = None) -> bytes:
@@ -305,8 +311,6 @@ def _is_known_binary_path(path: str) -> bool:
 
 
 def _iter_secret_findings(relative_path: str, text: str) -> Iterator[Finding]:
-    # Reuse the exact current-tree rules, placeholder policy and fingerprint
-    # contract while avoiding the tree scanner's output cap.
     for line_no, line in enumerate(text.splitlines(), start=1):
         if scanner._is_placeholder(line):
             continue
@@ -403,9 +407,11 @@ def failure_report(reason: str, *, object_id_length: int) -> dict[str, object]:
         "binary_blob_count": 0,
         "oversized_binary_blob_count": 0,
         "unscanned_oversized_blob_count": 0,
+        "unscanned_oversized": [],
+        "unscanned_oversized_truncated": False,
         "finding_count": 0,
         "suppressed_count": 0,
-        "by_rule": {},
+        "by_rule": [],
         "findings": [],
         "findings_truncated": False,
     }
@@ -439,14 +445,14 @@ def scan_repository_history(
 
     eligible: list[ObjectMetadata] = []
     oversized_binary_count = 0
-    unscanned_oversized_count = 0
+    unscanned_oversized: list[ObjectMetadata] = []
     for blob in blobs:
         if blob.size <= max_blob_bytes:
             eligible.append(blob)
         elif _is_known_binary_path(blob.path):
             oversized_binary_count += 1
         else:
-            unscanned_oversized_count += 1
+            unscanned_oversized.append(blob)
 
     allowlist = load_allowlist(allowlist_path)
     allowed = {entry.key for entry in allowlist}
@@ -489,13 +495,18 @@ def scan_repository_history(
         scanned_text_count
         + binary_count
         + oversized_binary_count
-        + unscanned_oversized_count
+        + len(unscanned_oversized)
     )
-    complete = (
-        accounted_blob_count == len(blobs)
-        and unscanned_oversized_count == 0
-    )
+    complete = accounted_blob_count == len(blobs) and not unscanned_oversized
     status = "pass" if complete and total_findings == 0 else "fail"
+    oversized_records = [
+        {
+            **_path_evidence(blob.path),
+            "size_bytes": blob.size,
+            "blob_sha": blob.object_id,
+        }
+        for blob in unscanned_oversized[:MAX_STORED_OVERSIZED]
+    ]
     report = {
         "schema_version": SCHEMA,
         "status": status,
@@ -511,15 +522,18 @@ def scan_repository_history(
         "scanned_text_blob_count": scanned_text_count,
         "binary_blob_count": binary_count,
         "oversized_binary_blob_count": oversized_binary_count,
-        "unscanned_oversized_blob_count": unscanned_oversized_count,
+        "unscanned_oversized_blob_count": len(unscanned_oversized),
+        "unscanned_oversized": oversized_records,
+        "unscanned_oversized_truncated": len(unscanned_oversized) > len(oversized_records),
         "finding_count": total_findings,
         "suppressed_count": suppressed_count,
-        "by_rule": dict(sorted(by_rule.items())),
+        "by_rule": [
+            {"rule": rule, "count": count}
+            for rule, count in sorted(by_rule.items())
+        ],
         "findings": [finding.as_dict() for finding in stored_findings],
         "findings_truncated": total_findings > len(stored_findings),
     }
-    # Enforce the same report-size ceiling used by the existing scanner before
-    # returning an apparently successful result.
     encoded = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     if len(encoded.encode("utf-8")) > 64 * 1024:
         raise HistoryScanError("history_report_too_large")
