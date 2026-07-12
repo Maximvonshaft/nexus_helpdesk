@@ -13,8 +13,15 @@ from typing import Any
 EXIT_BACKEND_ROOT_MISSING = 20
 EXIT_UNSAFE_ENVIRONMENT = 21
 EXIT_DATABASE_INSPECTION = 22
-EXIT_MISSING_TABLES = 23
+EXIT_MISSING_MULTIPLE_TABLES = 23
 EXIT_EXECUTION_RECORDS = 24
+MISSING_TABLE_EXIT_CODES = {
+    "provider_runtime_audit_logs": 31,
+    "provider_auth_sessions": 32,
+    "provider_credentials": 33,
+    "outbound_messages": 34,
+    "operations_dispatch_outbox": 35,
+}
 
 # This helper is executed by absolute path from /app/scripts while the app
 # package is installed as source under /app/backend. Bootstrap that exact root
@@ -56,13 +63,7 @@ EXPECTED_ENV = {
 
 # These are durable execution/transport surfaces, not ordinary synthetic WebChat
 # data. A clean isolated RC journey must leave each at zero rows.
-ZERO_ROW_TABLES = (
-    "provider_runtime_audit_logs",
-    "provider_auth_sessions",
-    "provider_credentials",
-    "outbound_messages",
-    "operations_dispatch_outbox",
-)
+ZERO_ROW_TABLES = tuple(MISSING_TABLE_EXIT_CODES)
 
 FORBIDDEN_SECRET_ENV = (
     "PRIVATE_AI_RUNTIME_TOKEN",
@@ -112,7 +113,9 @@ def main() -> int:
                     reason_code="missing_execution_tables",
                     missing_execution_tables=missing,
                 )
-                return EXIT_MISSING_TABLES
+                if len(missing) == 1:
+                    return MISSING_TABLE_EXIT_CODES[missing[0]]
+                return EXIT_MISSING_MULTIPLE_TABLES
             counts = {
                 table: int(db.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar_one())
                 for table in ZERO_ROW_TABLES
