@@ -1,0 +1,408 @@
+{
+  "schema": "nexus.legacy-surface.registry.v1",
+  "registry_version": "2026-07-12.1",
+  "audited_main_sha": "7f39ff7b215db8092fc0c7c0d48b289171b54e45",
+  "coverage": "bounded_known_legacy_markers_and_protected_history",
+  "enforcement": "fail_closed",
+  "finding_limit": 100,
+  "max_text_bytes": 262144,
+  "allowed_dispositions": [
+    "active_authority",
+    "active_compatibility",
+    "data_migration_dependency",
+    "generated_or_vendor",
+    "historical_evidence",
+    "parallel_implementation",
+    "protected_history",
+    "safe_to_remove",
+    "unknown_fail_closed"
+  ],
+  "domains": [
+    {
+      "id": "external_channel_compatibility",
+      "owner_issue": 572,
+      "disposition": "active_compatibility",
+      "deletion_authorized": false,
+      "rationale": "Retired transport compatibility remains governed by the domain inventory and staged caller/data migration.",
+      "prerequisites": [
+        "caller_migration",
+        "traffic_evidence",
+        "observation_window",
+        "recovery_rehearsal_for_destructive_schema_change"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [
+          "*external_channel*",
+          "**/*external_channel*",
+          "*external-channel*",
+          "**/*external-channel*"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#572",
+        "pr:#597"
+      ]
+    },
+    {
+      "id": "legacy_static_frontend",
+      "owner_issue": 573,
+      "disposition": "active_compatibility",
+      "deletion_authorized": false,
+      "rationale": "The tracked static frontend remains a compatibility fallback until Workspace route parity and production-quality evidence exist.",
+      "prerequisites": [
+        "workspace_route_parity",
+        "accessibility_and_degraded_state_evidence",
+        "release_observation_without_fallback"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [
+          "frontend/**"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#573",
+        "issue:#525",
+        "issue:#564"
+      ]
+    },
+    {
+      "id": "historical_round_artifacts",
+      "owner_issue": 574,
+      "disposition": "historical_evidence",
+      "deletion_authorized": false,
+      "rationale": "Round-named reports, tests and smoke scripts are historical delivery evidence until stable capability replacements and retention policy exist.",
+      "prerequisites": [
+        "workflow_graph_stable",
+        "current_consumer_inventory",
+        "stable_capability_replacement",
+        "historical_retention_policy"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [
+          "ROUND*",
+          "docs/round-*",
+          "docs/round_*",
+          "backend/scripts/smoke_verify_round*.py",
+          "scripts/smoke/smoke_*round*.sh",
+          "backend/tests/test_round*.py"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#574"
+      ]
+    },
+    {
+      "id": "release_identity_and_legacy_worker",
+      "owner_issue": 549,
+      "disposition": "active_compatibility",
+      "deletion_authorized": false,
+      "rationale": "Round-based application identity and the all-queue legacy worker are compatibility surfaces pending release-profile and worker authority.",
+      "prerequisites": [
+        "versioned_release_profile",
+        "canonical_worker_identity",
+        "progress_and_readiness_evidence",
+        "deployment_template_rollout"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [],
+        "content_rules": [
+          {
+            "markers": [
+              "20.4.0-round-b"
+            ],
+            "path_globs": [
+              "backend/app/main.py"
+            ]
+          },
+          {
+            "markers": [
+              "legacy-worker:"
+            ],
+            "path_globs": [
+              "deploy/docker-compose.server.yml"
+            ]
+          }
+        ]
+      },
+      "authoritative_refs": [
+        "issue:#549"
+      ]
+    },
+    {
+      "id": "application_settings_composition",
+      "owner_issue": 570,
+      "disposition": "active_authority",
+      "deletion_authorized": false,
+      "rationale": "Current bootstrap and Settings are active authorities; modularization must preserve runtime contracts before obsolete settings can be removed.",
+      "prerequisites": [
+        "tenant_authority",
+        "release_profile_authority",
+        "characterization_tests",
+        "unused_setting_detection"
+      ],
+      "selectors": {
+        "paths": [
+          "backend/app/main.py",
+          "backend/app/settings.py"
+        ],
+        "globs": [],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#570"
+      ]
+    },
+    {
+      "id": "lite_api_compatibility",
+      "owner_issue": 650,
+      "disposition": "active_compatibility",
+      "deletion_authorized": false,
+      "rationale": "The Lite API and services remain consumed by the modern webapp and require a separate consumer migration before retirement.",
+      "prerequisites": [
+        "consumer_inventory",
+        "domain_router_migration",
+        "compatibility_telemetry",
+        "legacy_response_removal"
+      ],
+      "selectors": {
+        "paths": [
+          "backend/app/api/lite.py"
+        ],
+        "globs": [
+          "backend/app/services/lite_*.py"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#650"
+      ]
+    },
+    {
+      "id": "knowledge_runtime_versioned_authority",
+      "owner_issue": 650,
+      "disposition": "active_authority",
+      "deletion_authorized": false,
+      "rationale": "knowledge_runtime_v2 is a current retrieval implementation; versioned naming alone is not evidence of obsolescence.",
+      "prerequisites": [
+        "retrieval_authority_decision",
+        "fallback_consumer_inventory",
+        "trace_schema_convergence"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [
+          "backend/app/services/knowledge_runtime_v*/**",
+          "backend/tests/test_knowledge_runtime_v*_*.py"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#650"
+      ]
+    },
+    {
+      "id": "protected_alembic_history",
+      "owner_issue": 532,
+      "disposition": "protected_history",
+      "deletion_authorized": false,
+      "rationale": "Historical Alembic revisions are required for deterministic empty-database upgrade, restore and rollback evidence.",
+      "prerequisites": [
+        "approved_migration_squash_strategy",
+        "empty_database_upgrade_proof",
+        "restore_and_rollback_rehearsal"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [
+          "backend/alembic/versions/*.py"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#532",
+        "docs:migration-policy"
+      ]
+    },
+    {
+      "id": "protected_versioned_contracts",
+      "owner_issue": 650,
+      "disposition": "active_authority",
+      "deletion_authorized": false,
+      "rationale": "Machine-readable v1/v2 contract filenames denote schema versions and cannot be treated as obsolete without consumer evidence.",
+      "prerequisites": [
+        "consumer_inventory",
+        "replacement_contract",
+        "backward_compatibility_or_explicit_break"
+      ],
+      "selectors": {
+        "paths": [],
+        "globs": [
+          "config/**/*.v[0-9].json",
+          "webapp/design/*.v[0-9].json",
+          "backend/app/config/*.v[0-9].json",
+          "backend/evals/**/*.v[0-9].json"
+        ],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#650",
+        "issue:#613",
+        "issue:#585"
+      ]
+    },
+    {
+      "id": "protected_reachable_git_history",
+      "owner_issue": 565,
+      "disposition": "protected_history",
+      "deletion_authorized": false,
+      "rationale": "Reachable Git objects require exposure assurance and explicit authorization before any history rewrite.",
+      "prerequisites": [
+        "reachable_blob_scan",
+        "credential_rotation_if_required",
+        "explicit_owner_authorization",
+        "collaborator_recovery_plan"
+      ],
+      "selectors": {
+        "paths": [
+          ".gitignore"
+        ],
+        "globs": [],
+        "content_rules": []
+      },
+      "authoritative_refs": [
+        "issue:#565"
+      ]
+    }
+  ],
+  "discovery_rules": [
+    {
+      "id": "external_channel_path_marker",
+      "path_regex": "(?i)external[_-]channel",
+      "path_globs": [],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "external_channel_compatibility"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "legacy_static_frontend_root",
+      "path_regex": null,
+      "path_globs": [
+        "frontend/**"
+      ],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "legacy_static_frontend"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "round_named_path",
+      "path_regex": null,
+      "path_globs": [
+        "ROUND*",
+        "docs/round-*",
+        "docs/round_*",
+        "backend/scripts/smoke_verify_round*.py",
+        "scripts/smoke/smoke_*round*.sh",
+        "backend/tests/test_round*.py"
+      ],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "historical_round_artifacts"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "round_release_identity",
+      "path_regex": null,
+      "path_globs": [],
+      "content_markers": [
+        "20.4.0-round-b"
+      ],
+      "content_path_globs": [
+        "backend/app/main.py"
+      ],
+      "allowed_domain_ids": [
+        "release_identity_and_legacy_worker",
+        "application_settings_composition"
+      ],
+      "allow_multiple_domains": true
+    },
+    {
+      "id": "legacy_worker_profile",
+      "path_regex": null,
+      "path_globs": [],
+      "content_markers": [
+        "legacy-worker:"
+      ],
+      "content_path_globs": [
+        "deploy/docker-compose.server.yml"
+      ],
+      "allowed_domain_ids": [
+        "release_identity_and_legacy_worker"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "lite_api_path_marker",
+      "path_regex": "(^|/)(lite\\.py|lite_[^/]+\\.py)$",
+      "path_globs": [],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "lite_api_compatibility"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "knowledge_runtime_version_path",
+      "path_regex": null,
+      "path_globs": [
+        "backend/app/services/knowledge_runtime_v*/**",
+        "backend/tests/test_knowledge_runtime_v*_*.py"
+      ],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "knowledge_runtime_versioned_authority"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "alembic_revision_path",
+      "path_regex": null,
+      "path_globs": [
+        "backend/alembic/versions/*.py"
+      ],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "protected_alembic_history"
+      ],
+      "allow_multiple_domains": false
+    },
+    {
+      "id": "versioned_contract_path",
+      "path_regex": "(?i)\\.v[0-9]+\\.json$",
+      "path_globs": [],
+      "content_markers": [],
+      "content_path_globs": [],
+      "allowed_domain_ids": [
+        "protected_versioned_contracts"
+      ],
+      "allow_multiple_domains": false
+    }
+  ]
+}
