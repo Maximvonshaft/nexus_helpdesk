@@ -11,10 +11,35 @@ test.skip(!rcConfigured, 'RC live browser environment is not configured')
 test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
-  console.log('RC_BROWSER_STAGE=public-webchat')
-  await test.step('public WebChat initializes and persists the browser message', async () => {
+  console.log('RC_BROWSER_STAGE=public-page')
+  await test.step('public WebChat widget loads and initializes its server session', async () => {
+    const widgetRequest = page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return url.pathname === '/webchat/widget.js'
+    })
+    const initRequest = page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return response.request().method() === 'POST' && url.pathname === '/api/webchat/init'
+    })
+
     await page.goto('/webchat/demo/')
+
+    console.log('RC_BROWSER_STAGE=public-widget')
+    const widgetResponse = await widgetRequest
+    expect(widgetResponse.ok()).toBeTruthy()
+    await expect.poll(
+      () => page.evaluate(() => typeof (window as typeof window & { NexusDeskWebChat?: unknown }).NexusDeskWebChat === 'object'),
+      { timeout: 20_000 },
+    ).toBe(true)
     await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
+
+    console.log('RC_BROWSER_STAGE=public-init')
+    const initResponse = await initRequest
+    expect(initResponse.ok()).toBeTruthy()
+  })
+
+  console.log('RC_BROWSER_STAGE=public-send')
+  await test.step('public WebChat persists the browser message', async () => {
     const input = page.locator('.nd-webchat-input')
     await expect(input).toBeEnabled()
     await input.fill(message)
@@ -27,6 +52,8 @@ test('RC public WebChat message is visible in the authenticated operator surface
     await page.locator('.nd-webchat-send').click()
     const response = await messageRequest
     expect(response.ok()).toBeTruthy()
+
+    console.log('RC_BROWSER_STAGE=public-persisted')
     await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
   })
 
