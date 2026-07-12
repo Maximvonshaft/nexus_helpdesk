@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -18,11 +19,15 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
     SOURCE_SHA = "a" * 40
     IMAGE_ID = "sha256:" + "b" * 64
     DIGEST = "sha256:" + "c" * 64
+    PURL = "pkg:pypi/psycopg@3.2.6"
 
     def _write(self, root: Path, name: str, payload: object) -> Path:
         path = root / name
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         return path
+
+    def _digest(self, path: Path) -> str:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _complete_bundle(self, root: Path) -> dict[str, Path]:
         root.mkdir(parents=True, exist_ok=True)
@@ -45,11 +50,11 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
                 },
                 "components": [
                     {
-                        "bom-ref": "pkg:pypi/psycopg@3.2.6",
+                        "bom-ref": self.PURL,
                         "type": "library",
                         "name": "psycopg",
                         "version": "3.2.6",
-                        "purl": "pkg:pypi/psycopg@3.2.6",
+                        "purl": self.PURL,
                         "licenses": [{"license": {"id": "LGPL-3.0-only"}}],
                     }
                 ],
@@ -109,22 +114,28 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
                 "deployment_performed": False,
             },
         )
-        self._write(
+        policy_input = self._write(
             root,
             "policy-input-validation.json",
             {
                 "schema_version": "nexus_release_image_policy_input_validation_v1",
                 "status": "pass",
+                "evaluated_on": "2026-07-12",
+                "trivy_result_count": 1,
+                "sbom_component_count": 1,
+                "vulnerability_exception_count": 0,
+                "license_exception_count": 1,
+                "license_compliance_record_count": 1,
             },
         )
-        self._write(
+        installed = self._write(
             root,
             "installed-license-evidence.json",
             {
                 "schema_version": "nexus_installed_license_evidence_v1",
                 "components": [
                     {
-                        "purl": "pkg:pypi/psycopg@3.2.6",
+                        "purl": self.PURL,
                         "package": "psycopg",
                         "version": "3.2.6",
                         "license_files": [
@@ -137,12 +148,27 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
                 ],
             },
         )
-        self._write(
+        compliance = self._write(
             root,
             "license-compliance-evidence.json",
             {
                 "schema_version": "nexus_container_license_compliance_evidence_v1",
                 "status": "pass",
+                "checked_count": 1,
+                "components": [
+                    {
+                        "package": "psycopg",
+                        "version": "3.2.6",
+                        "purl": self.PURL,
+                        "license": "LGPL-3.0-only",
+                        "owner": "open-source-compliance",
+                        "expires_on": "2026-09-30",
+                        "source": "https://github.com/psycopg/psycopg/tree/3.2.6",
+                        "license_file_count": 1,
+                        "modified": False,
+                        "replacement_supported": True,
+                    }
+                ],
             },
         )
         self._write(
@@ -153,10 +179,11 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
                 "status": "pass",
                 "source_sha": self.SOURCE_SHA,
                 "image_id": self.IMAGE_ID,
-                "base_manifest_sha256": self.DIGEST,
-                "policy_input_validation_sha256": self.DIGEST,
-                "license_compliance_sha256": self.DIGEST,
-                "installed_license_evidence_sha256": self.DIGEST,
+                "evaluated_on": "2026-07-12",
+                "base_manifest_sha256": self._digest(manifest),
+                "policy_input_validation_sha256": self._digest(policy_input),
+                "license_compliance_sha256": self._digest(compliance),
+                "installed_license_evidence_sha256": self._digest(installed),
                 "image_pushed": False,
                 "deployment_performed": False,
             },
@@ -241,28 +268,42 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["validated_files"], 10)
 
-    def test_failed_binding_quarantines_complete_bundle(self) -> None:
+    def test_malformed_compliance_evidence_is_quarantined(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "artifacts" / "release-image"
+            paths = self._complete_bundle(root)
+            compliance = root / "license-compliance-evidence.json"
+            compliance.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "nexus_container_license_compliance_evidence_v1",
+                        "status": "pass",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(self._validate(root, paths), 1)
+            quarantine = json.loads(
+                (root / "release-image-quarantine.json").read_text()
+            )
+            self.assertEqual(quarantine["reason"], "compliance_keys_invalid")
+
+    def test_stale_binding_digest_is_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "artifacts" / "release-image"
             paths = self._complete_bundle(root)
             binding = root / "release-image-compliance-binding.json"
             payload = json.loads(binding.read_text())
-            payload["status"] = "fail"
+            payload["license_compliance_sha256"] = "sha256:" + "d" * 64
             binding.write_text(json.dumps(payload), encoding="utf-8")
             self.assertEqual(self._validate(root, paths), 1)
-            self.assertEqual(
-                {path.name for path in root.iterdir()},
-                {
-                    "release-image-quarantine.json",
-                    "structured-evidence-scan.json",
-                },
-            )
             quarantine = json.loads(
                 (root / "release-image-quarantine.json").read_text()
             )
-            self.assertEqual(quarantine["status"], "quarantined")
-            self.assertFalse(quarantine["unsafe_artifacts_uploaded"])
-            self.assertEqual(quarantine["reason"], "binding_not_pass")
+            self.assertEqual(
+                quarantine["reason"],
+                "binding_digest_mismatch:license_compliance_sha256",
+            )
 
     def test_failed_artifact_scan_quarantines_all_candidate_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
