@@ -49,6 +49,7 @@ def _run(
         "CUSTOM_SETTING=keep\n",
         encoding="utf-8",
     )
+    output_path.write_text("STALE_CANDIDATE=true\n", encoding="utf-8")
     env = os.environ.copy()
     env.update(
         {
@@ -86,6 +87,7 @@ def test_canonical_metadata_is_written_atomically_with_mode_0600(
     completed, output_path = _run(tmp_path, _metadata(), host_port="18086")
     assert completed.returncode == 0, completed.stderr
     output = output_path.read_text(encoding="utf-8")
+    assert "STALE_CANDIDATE=true\n" not in output
     assert "CUSTOM_SETTING=keep\n" in output
     assert "ENABLE_OUTBOUND_DISPATCH=false\n" in output
     assert f"GIT_SHA={SHA}\n" in output
@@ -122,6 +124,7 @@ def test_carriage_return_metadata_fails_without_output(tmp_path: Path) -> None:
     output_path = tmp_path / ".env.prod.next"
     metadata_path.write_bytes(_metadata().replace("\n", "\r\n").encode())
     prod_path.write_text("APP_ENV=production\n", encoding="utf-8")
+    output_path.write_text("STALE_CANDIDATE=true\n", encoding="utf-8")
     env = os.environ.copy()
     env.update({"PROD_ENV": str(prod_path), "OUTPUT_ENV": str(output_path)})
     completed = subprocess.run(
