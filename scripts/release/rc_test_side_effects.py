@@ -9,6 +9,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Stable bounded exit codes consumed by the RC failure summary.
+EXIT_BACKEND_ROOT_MISSING = 20
+EXIT_UNSAFE_ENVIRONMENT = 21
+EXIT_DATABASE_INSPECTION = 22
+EXIT_MISSING_TABLES = 23
+EXIT_EXECUTION_RECORDS = 24
+
 # This helper is executed by absolute path from /app/scripts while the app
 # package is installed as source under /app/backend. Bootstrap that exact root
 # before importing the application boundary.
@@ -19,7 +26,7 @@ if not _BACKEND_ROOT.is_dir():
         "status": "failed",
         "reason_code": "backend_root_missing",
     }, sort_keys=True))
-    raise SystemExit(2)
+    raise SystemExit(EXIT_BACKEND_ROOT_MISSING)
 _backend_text = str(_BACKEND_ROOT)
 if _backend_text not in sys.path:
     sys.path.insert(0, _backend_text)
@@ -91,7 +98,7 @@ def main() -> int:
             bad_control_keys=bad_control_keys,
             forbidden_secret_names=present_secret_names,
         )
-        return 2
+        return EXIT_UNSAFE_ENVIRONMENT
 
     try:
         register_all_models()
@@ -105,7 +112,7 @@ def main() -> int:
                     reason_code="missing_execution_tables",
                     missing_execution_tables=missing,
                 )
-                return 2
+                return EXIT_MISSING_TABLES
             counts = {
                 table: int(db.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar_one())
                 for table in ZERO_ROW_TABLES
@@ -114,7 +121,7 @@ def main() -> int:
             db.close()
     except Exception:
         _emit(status="failed", reason_code="database_inspection_failed")
-        return 2
+        return EXIT_DATABASE_INSPECTION
 
     nonzero = {table: count for table, count in counts.items() if count != 0}
     if nonzero:
@@ -124,7 +131,7 @@ def main() -> int:
             execution_row_counts=counts,
             affected_execution_tables=sorted(nonzero),
         )
-        return 2
+        return EXIT_EXECUTION_RECORDS
 
     _emit(
         status="pass",
