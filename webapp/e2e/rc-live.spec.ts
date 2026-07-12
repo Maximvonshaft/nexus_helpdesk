@@ -46,75 +46,64 @@ test.skip(!rcConfigured, 'RC live browser environment is not configured')
 test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
+  // Keep this release acceptance as one explicit sequential journey. Nested
+  // test.step lifecycles add no proof and can mask the underlying fixture or
+  // navigation error before the callback enters.
   console.log('RC_BROWSER_STAGE=public-navigation')
-  await test.step('public WebChat widget loads and initializes its server session', async () => {
-    // Commit the real document first. Creating waitForResponse promises before
-    // navigation introduces a page/context-close rejection race that can mask
-    // the main navigation result. The visible widget, enabled input and real
-    // send below jointly prove that widget.js loaded and /api/webchat/init ran.
-    const navigationResponse = await navigate(page, '/webchat/demo/')
-    console.log('RC_BROWSER_STAGE=public-committed')
-    expect(navigationResponse).not.toBeNull()
-    expect(navigationResponse?.ok()).toBeTruthy()
+  const navigationResponse = await navigate(page, '/webchat/demo/')
+  console.log('RC_BROWSER_STAGE=public-committed')
+  expect(navigationResponse).not.toBeNull()
+  expect(navigationResponse?.ok()).toBeTruthy()
 
-    console.log('RC_BROWSER_STAGE=public-page')
-    await expect(page.locator('script[data-auto-open="true"]')).toHaveCount(1, { timeout: 20_000 })
+  console.log('RC_BROWSER_STAGE=public-page')
+  await expect(page.locator('script[data-auto-open="true"]')).toHaveCount(1, { timeout: 20_000 })
 
-    console.log('RC_BROWSER_STAGE=public-widget')
-    await expect.poll(
-      () => page.evaluate(() => typeof (window as typeof window & { NexusDeskWebChat?: unknown }).NexusDeskWebChat === 'object'),
-      { timeout: 20_000 },
-    ).toBe(true)
-    await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('.nd-webchat-input')).toBeEnabled({ timeout: 20_000 })
-    console.log('RC_BROWSER_STAGE=public-init')
-  })
+  console.log('RC_BROWSER_STAGE=public-widget')
+  await expect.poll(
+    () => page.evaluate(() => typeof (window as typeof window & { NexusDeskWebChat?: unknown }).NexusDeskWebChat === 'object'),
+    { timeout: 20_000 },
+  ).toBe(true)
+  await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
+  const input = page.locator('.nd-webchat-input')
+  await expect(input).toBeEnabled({ timeout: 20_000 })
+  console.log('RC_BROWSER_STAGE=public-init')
 
   console.log('RC_BROWSER_STAGE=public-send')
-  await test.step('public WebChat persists the browser message', async () => {
-    const input = page.locator('.nd-webchat-input')
-    await input.fill(message)
-
-    const messageRequest = page.waitForResponse((response) => {
-      const url = new URL(response.url())
-      return response.request().method() === 'POST'
-        && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
-    })
-    await page.locator('.nd-webchat-send').click()
-    const response = await messageRequest
-    expect(response.ok()).toBeTruthy()
-
-    console.log('RC_BROWSER_STAGE=public-persisted')
-    await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
+  await input.fill(message)
+  const messageRequest = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return response.request().method() === 'POST'
+      && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
   })
+  await page.locator('.nd-webchat-send').click()
+  const response = await messageRequest
+  expect(response.ok()).toBeTruthy()
+  console.log('RC_BROWSER_STAGE=public-persisted')
+  await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
 
   console.log('RC_BROWSER_STAGE=login-navigation')
-  await test.step('isolated operator authentication succeeds', async () => {
-    const loginResponse = await navigate(page, '/login')
-    console.log('RC_BROWSER_STAGE=login-form')
-    expect(loginResponse).not.toBeNull()
-    expect(loginResponse?.ok()).toBeTruthy()
-    await page.getByLabel('账号').fill(adminUsername)
-    await page.getByLabel('密码').fill(adminPassword)
-    await page.getByRole('button', { name: '登录' }).click()
-    await expect(page).not.toHaveURL(/\/login$/)
-  })
+  const loginResponse = await navigate(page, '/login')
+  console.log('RC_BROWSER_STAGE=login-form')
+  expect(loginResponse).not.toBeNull()
+  expect(loginResponse?.ok()).toBeTruthy()
+  await page.getByLabel('账号').fill(adminUsername)
+  await page.getByLabel('密码').fill(adminPassword)
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).not.toHaveURL(/\/login$/)
 
   console.log('RC_BROWSER_STAGE=operator-navigation')
-  await test.step('operator selects the matching conversation and sees the same message', async () => {
-    const operatorResponse = await navigate(page, '/webchat')
-    console.log('RC_BROWSER_STAGE=operator-console')
-    expect(operatorResponse).not.toBeNull()
-    expect(operatorResponse?.ok()).toBeTruthy()
-    await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
+  const operatorResponse = await navigate(page, '/webchat')
+  console.log('RC_BROWSER_STAGE=operator-console')
+  expect(operatorResponse).not.toBeNull()
+  expect(operatorResponse?.ok()).toBeTruthy()
+  await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
 
-    console.log('RC_BROWSER_STAGE=operator-row')
-    const matchingRow = page.locator('button.support-row', { hasText: message }).first()
-    await expect(matchingRow).toBeVisible({ timeout: 25_000 })
-    await matchingRow.click()
-    console.log('RC_BROWSER_STAGE=operator-message')
-    await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 20_000 })
-  })
+  console.log('RC_BROWSER_STAGE=operator-row')
+  const matchingRow = page.locator('button.support-row', { hasText: message }).first()
+  await expect(matchingRow).toBeVisible({ timeout: 25_000 })
+  await matchingRow.click()
+  console.log('RC_BROWSER_STAGE=operator-message')
+  await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 20_000 })
 
   console.log('RC_BROWSER_STAGE=completed')
 })
