@@ -7,18 +7,21 @@ const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const router = read('src/router.tsx')
+const workspaceRoute = read('src/routes/workspace.tsx')
 const webchatRoute = read('src/routes/webchat.tsx')
 const supportConsole = read('src/features/support-console/SupportConsolePage.tsx')
 const supportCss = read('src/features/support-console/support-console.css')
 const routeFiles = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
 
-test('production router only exposes login and support workbench routes', () => {
-  assert.deepEqual(routeFiles, ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx'])
+test('production router exposes canonical workspace and transitional support workbench routes', () => {
+  assert.deepEqual(routeFiles, ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx', 'workspace.tsx'])
   assert.match(router, /LoginRoute/)
   assert.match(router, /IndexRoute/)
+  assert.match(router, /WorkspaceRoute/)
   assert.match(router, /WebchatRoute/)
+  assert.match(workspaceRoute, /path: '\/workspace'/)
+  assert.match(workspaceRoute, /features\/operator-workspace\/lazy/)
   for (const staleRoute of [
-    'WorkspaceRoute',
     'EmailRoute',
     'WebCallRoute',
     'KnowledgeStudioRoute',

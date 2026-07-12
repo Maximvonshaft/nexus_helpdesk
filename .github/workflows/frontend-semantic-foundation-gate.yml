@@ -84,5 +84,23 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          set -Eeuo pipefail
-          git diff --check "${BASE_SHA}"...HEAD
+          set +e
+          if test -f .git/shallow; then
+            git fetch --no-tags --prune --unshallow origin +refs/heads/main:refs/remotes/origin/main
+          else
+            git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          fi
+          test "$(git rev-parse refs/remotes/origin/main)" = "${BASE_SHA}"
+          git diff --check "${BASE_SHA}"...HEAD > exact-diff-check.txt 2>&1
+          status=$?
+          cat exact-diff-check.txt
+          exit "${status}"
+
+      - name: Upload exact diff diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-semantic-exact-diff-check
+          path: exact-diff-check.txt
+          if-no-files-found: error
+          retention-days: 3

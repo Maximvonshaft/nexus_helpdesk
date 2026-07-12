@@ -7,7 +7,7 @@ const authUser = {
   username: 'operator',
   display_name: 'Operations User',
   role: 'agent',
-  capabilities: ['ticket.read'],
+  capabilities: ['ticket.read', 'operator_queue.read'],
 }
 
 async function fulfillAuth(route: Route, options?: { rejectLogin?: boolean }) {
@@ -62,7 +62,7 @@ test('Login exposes semantic form, visible labels, and password reveal', async (
   await expect(page.getByRole('button', { name: '隐藏密码' })).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('Enter submits through one root destination and reaches the protected console', async ({ page }) => {
+test('Enter submits through one root destination and reaches the protected workspace', async ({ page }) => {
   await mockAuth(page)
   await page.goto('/login')
 
@@ -70,7 +70,7 @@ test('Enter submits through one root destination and reaches the protected conso
   await page.getByLabel('密码 必填').fill('correct-password')
   await page.getByLabel('密码 必填').press('Enter')
 
-  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
+  await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/)
   await expect.poll(() => page.evaluate((key) => sessionStorage.getItem(key), TOKEN_KEY)).toBe('operator-token')
 })
 
@@ -111,5 +111,5 @@ test('an existing authenticated session leaves Login through the same root autho
   await mockAuth(page)
   await page.goto('/login')
 
-  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
+  await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/)
 })

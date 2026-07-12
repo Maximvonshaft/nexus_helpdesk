@@ -8,7 +8,7 @@ function authUser() {
     username: 'admin',
     display_name: 'Admin User',
     role: 'admin',
-    capabilities: ['ticket.read', 'runtime.manage', 'channel_account.manage', 'ai_config.read', 'ai_config.manage'],
+    capabilities: ['ticket.read', 'operator_queue.read', 'runtime.manage', 'channel_account.manage', 'ai_config.read', 'ai_config.manage'],
   }
 }
 
@@ -22,6 +22,93 @@ async function fulfillApi(route: Route) {
   })
 
   if (path === '/api/auth/me') return json(authUser())
+  if (path === '/api/admin/operator-queue/unified') {
+    return json({
+      items: [{
+        queue_id: 'handoff:21',
+        case_key: 'ticket:11',
+        source_type: 'handoff',
+        source_id: 21,
+        ticket_id: 11,
+        conversation_id: 1,
+        country_code: 'CH',
+        channel_key: 'webchat',
+        state: 'active',
+        source_status: 'requested',
+        reopened: false,
+        priority: 'high',
+        owner: { kind: 'unassigned', user_id: null, team_id: null },
+        sla: { state: 'at_risk', due_at: '2026-07-04T08:30:00Z', seconds_remaining: 900 },
+        retry: { state: 'not_applicable', attempt_count: 0, max_attempts: 0, next_retry_at: null, error_category: null },
+        created_at: '2026-07-04T08:00:00Z',
+        updated_at: '2026-07-04T08:10:00Z',
+        source_links: {
+          ticket: '/api/tickets/11',
+          conversation: '/api/webchat/admin/tickets/11/thread',
+          handoff: '/api/webchat/admin/handoff/queue',
+          dispatch: null,
+        },
+      }],
+      next_cursor: null,
+      scope: { tenant_hash: 'test-tenant-hash', country_code: 'CH', channel_key: 'webchat' },
+      filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
+    })
+  }
+  if (path === '/api/webchat/admin/tickets/11/thread') {
+    return json({
+      conversation_id: 'conv-1',
+      ticket_id: 11,
+      ticket_no: 'T-11',
+      status: 'in_progress',
+      conversation_state: 'human_review_required',
+      required_action: '核实运单后回复客户',
+      visitor: { name: 'WebChat Visitor', email: 'visitor@example.test', phone: '+41790000000', ref: 'visitor-1' },
+      messages: [
+        { id: 1, direction: 'visitor', body: 'Where is my parcel?', body_text: 'Where is my parcel?', delivery_status: 'sent', created_at: '2026-07-04T08:00:00Z' },
+        { id: 2, direction: 'agent', body: 'We are checking.', body_text: 'We are checking.', delivery_status: 'queued', author_label: 'Admin User', created_at: '2026-07-04T08:01:00Z' },
+      ],
+      actions: [],
+      ai_turns: [],
+      events: [],
+      handoff: {
+        id: 21,
+        ticket_id: 11,
+        status: 'requested',
+        reason_text: 'Customer requested a human',
+        recommended_agent_action: 'Review evidence and reply',
+        waiting_seconds: 240,
+        can_accept: true,
+        can_decline: true,
+        can_force_takeover: true,
+        can_release: false,
+        can_resume_ai: true,
+        can_reply: false,
+      },
+      support_memory: {
+        source: 'derived_support_memory_ledger',
+        ticket: { id: 11, ticket_no: 'T-11', status: 'in_progress', country_code: 'CH' },
+        conversation: { id: 'conv-1', status: 'open', channel_key: 'webchat' },
+        current_intent: 'tracking_status',
+        customer_request: 'Where is my parcel?',
+        required_action: '核实运单后回复客户',
+        missing_fields: ['tracking_number'],
+        tracking: { present: false },
+        ai_state: {},
+        evidence_summary: { outbound_messages: 1 },
+        evidence_timeline: [{
+          kind: 'outbound',
+          label: 'web_chat',
+          status: 'queued',
+          summary: { delivery_status: 'queued', provider_status: 'webchat_agent_reply_queued' },
+          created_at: '2026-07-04T08:01:00Z',
+          source_id: 'outbound:1',
+        }],
+        next_actions: [{ key: 'collect_missing_fields', label: 'Collect missing fields before customer-facing resolution', tone: 'warning' }],
+      },
+      unread_count: 1,
+      marked_unread: false,
+    })
+  }
   if (path === '/api/support/conversations') {
     return json({
       source: 'nexus_support_conversations',
@@ -268,6 +355,11 @@ async function fulfillApi(route: Route) {
 async function mockAuthenticatedConsole(page: Page) {
   await page.addInitScript(([storageKey, token]) => {
     window.sessionStorage.setItem(storageKey, token)
+    window.sessionStorage.setItem('nexus-operator-workspace-scope', JSON.stringify({
+      tenantKey: 'default',
+      countryCode: 'CH',
+      channelKey: 'webchat',
+    }))
   }, [TOKEN_KEY, 'admin-token'])
   await page.route('**/api/**', fulfillApi)
 }
@@ -285,14 +377,20 @@ test('unauthenticated protected route redirects back to login', async ({ page })
   await expect(page.getByText('登录状态只保存在当前浏览器会话中。')).toBeVisible()
 })
 
-test('deleted legacy routes fall back to the support workbench boundary', async ({ page }) => {
+test('canonical workspace renders the unified queue, Case Spine, and delivery truth', async ({ page }) => {
   await mockAuthenticatedConsole(page)
   await page.goto('/workspace')
 
-  await expect(page.getByTestId('legacy-route-retired')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '旧入口已下线' })).toBeVisible()
-  await page.getByRole('link', { name: '进入客服工作台' }).click()
-  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
+  await expect(page.getByTestId('operator-workspace')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Case Spine' })).toBeVisible()
+  const queueRow = page.getByRole('button', { name: /ticket:11/ })
+  const caseStatus = page.getByLabel('案例状态')
+  await expect(queueRow).toBeVisible()
+  await expect(caseStatus.getByText('SLA 即将超时')).toBeVisible()
+  await expect(page.locator('.operator-evidence').getByText('客户主张').first()).toBeVisible()
+  await expect(page.locator('.operator-message').getByText('等待发送')).toBeVisible()
+  await expect(page.locator('.operator-blocker').getByText('尚不能判定安全结案')).toBeVisible()
+  await expect(page.getByText('当前案例没有可用会话')).toHaveCount(0)
 })
 
 test('support workbench renders the consolidated production views', async ({ page }) => {
