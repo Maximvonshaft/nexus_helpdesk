@@ -104,6 +104,24 @@ def _licenses(component: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _license_values(licenses: list[dict[str, Any]]) -> set[str]:
+    values: set[str] = set()
+    for entry in licenses:
+        if set(entry) == {"expression"}:
+            values.add(str(entry["expression"]))
+        elif set(entry) == {"license"} and isinstance(entry["license"], dict):
+            values.add(str(entry["license"].get("id") or ""))
+    return {value for value in values if value}
+
+
+def _override_shape(value: str) -> list[dict[str, Any]]:
+    return (
+        [{"expression": value}]
+        if " AND " in value or " OR " in value
+        else [{"license": {"id": value}}]
+    )
+
+
 def _load_overrides(path: Path) -> dict[str, str]:
     payload = _load(path)
     if (
@@ -159,15 +177,14 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
             raise FinalizationError("sbom_component_identity_invalid")
         licenses = _licenses(component)
         if purl in overrides:
-            if licenses:
-                raise FinalizationError("override_for_licensed_component")
-            applied.add(purl)
             override_value = overrides[purl]
-            licenses = (
-                [{"expression": override_value}]
-                if " AND " in override_value or " OR " in override_value
-                else [{"license": {"id": override_value}}]
-            )
+            if not licenses:
+                licenses = _override_shape(override_value)
+                applied.add(purl)
+            elif _license_values(licenses) == {override_value}:
+                applied.add(purl)
+            else:
+                raise FinalizationError("override_existing_license_conflict")
         if not licenses:
             unresolved.append({"purl": purl, "name": name, "version": version})
         finalized.append(
@@ -186,16 +203,8 @@ def finalize(source: Path, overrides_path: Path, output: Path) -> int:
         )
 
     unused = sorted(set(overrides) - applied)
-    metadata = (
-        payload.get("metadata")
-        if isinstance(payload.get("metadata"), dict)
-        else {}
-    )
-    properties = (
-        metadata.get("properties")
-        if isinstance(metadata.get("properties"), list)
-        else []
-    )
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    properties = metadata.get("properties") if isinstance(metadata.get("properties"), list) else []
     safe_properties = [
         item
         for item in properties
