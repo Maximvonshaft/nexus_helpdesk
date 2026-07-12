@@ -59,6 +59,7 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
                 "schema_version": "nexus_container_license_policy_v1",
                 "exceptions": [
                     {
+                        "purl": self.PURL,
                         "package": "psycopg",
                         "version": "3.2.6",
                         "license": self.LICENSE,
@@ -136,6 +137,7 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
             payload = json.loads(output.read_text())
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["components"][0]["source"], self.SOURCE)
+            self.assertEqual(payload["components"][0]["purl"], self.PURL)
 
     def test_missing_license_file_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -179,6 +181,44 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
             data["components"][1]["purl"] = "pkg:npm/%40radix-ui/primitive"
             sbom.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaisesRegex(ComplianceError, "sbom_purl_invalid"):
+                self._verify(fixture, root / "out.json")
+
+    def test_policy_exception_for_other_ecosystem_does_not_authorize_component(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self._fixture(root)
+            policy = fixture[1]
+            data = json.loads(policy.read_text())
+            data["exceptions"][0]["purl"] = "pkg:npm/psycopg@3.2.6"
+            policy.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ComplianceError, "policy_exception_missing"
+            ):
+                self._verify(fixture, root / "out.json")
+
+    def test_extra_policy_exception_without_compliance_record_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self._fixture(root)
+            policy = fixture[1]
+            data = json.loads(policy.read_text())
+            data["exceptions"].append(
+                {
+                    "purl": "pkg:npm/psycopg@3.2.6",
+                    "package": "psycopg",
+                    "version": "3.2.6",
+                    "license": self.LICENSE,
+                    "owner": "open-source-compliance",
+                    "expires_on": "2026-09-30",
+                    "reason": "A second ecosystem component requires its own compliance record.",
+                }
+            )
+            policy.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ComplianceError, "exception_set_mismatch"
+            ):
                 self._verify(fixture, root / "out.json")
 
 
