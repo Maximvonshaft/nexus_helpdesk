@@ -110,24 +110,42 @@ def _append_unique(errors: list[str], error_code: str) -> None:
         errors.append(error_code)
 
 
+def persisted_traffic_configuration_errors(
+    *,
+    canary_percent: Any,
+    kill_switch: Any,
+) -> list[str]:
+    errors: list[str] = []
+    try:
+        _validated_canary_percent(canary_percent)
+    except ValueError:
+        _append_unique(errors, _CANARY_PERCENT_INVALID)
+    try:
+        _validated_kill_switch(kill_switch)
+    except ValueError:
+        _append_unique(errors, _KILL_SWITCH_INVALID)
+    return errors
+
+
 def safe_traffic_configuration(
     *,
     default_canary_percent: int = 0,
     default_kill_switch: bool = False,
 ) -> dict[str, Any]:
-    errors: list[str] = []
+    errors = persisted_traffic_configuration_errors(
+        canary_percent=default_canary_percent,
+        kill_switch=default_kill_switch,
+    )
 
     try:
         normalized_default_canary: int | None = _validated_canary_percent(default_canary_percent)
     except ValueError:
         normalized_default_canary = None
-        _append_unique(errors, _CANARY_PERCENT_INVALID)
 
     try:
         normalized_default_kill_switch: bool | None = _validated_kill_switch(default_kill_switch)
     except ValueError:
         normalized_default_kill_switch = None
-        _append_unique(errors, _KILL_SWITCH_INVALID)
 
     try:
         mode = configured_traffic_mode()
