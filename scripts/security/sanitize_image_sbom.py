@@ -112,6 +112,18 @@ def _component_licenses(component: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _license_values(licenses: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for entry in licenses:
+        if set(entry) == {"expression"}:
+            result.add(str(entry["expression"]))
+        elif set(entry) == {"license"} and isinstance(entry["license"], dict):
+            value = str(entry["license"].get("id") or "")
+            if value:
+                result.add(value)
+    return result
+
+
 def _load_overrides(path: Path) -> dict[str, dict[str, str]]:
     payload = _load_json(path)
     if (
@@ -133,7 +145,7 @@ def _load_overrides(path: Path) -> dict[str, dict[str, str]]:
         reason = " ".join(str(raw.get("reason") or "").strip().split())
         if not purl.startswith(_APPLICATION_PURL_PREFIXES) or not license_id:
             raise SbomSanitizationError("license_metadata_override_key_invalid")
-        if not (source.startswith("https://") and 12 <= len(reason) <= 240):
+        if not source.startswith("https://") or not 12 <= len(reason) <= 240:
             raise SbomSanitizationError("license_metadata_override_evidence_invalid")
         if purl in result:
             raise SbomSanitizationError("license_metadata_override_duplicate")
@@ -209,23 +221,23 @@ def sanitize_sbom(
                 return
             frontend_runtime_purls.append(purl)
         name = _safe(component.get("name"), limit=200)
-        version = _safe(
-            component.get("version"), fallback="unversioned", limit=120
-        )
+        version = _safe(component.get("version"), fallback="unversioned", limit=120)
         licenses = _component_licenses(component)
         override = overrides.get(purl)
-        if not licenses and override:
-            applied.add(purl)
-            licenses = [{"license": {"id": override["license"]}}]
+        if override:
+            override_license = override["license"]
+            if not licenses:
+                licenses = [{"license": {"id": override_license}}]
+                applied.add(purl)
+            elif _license_values(licenses) == {override_license}:
+                applied.add(purl)
+            else:
+                raise SbomSanitizationError("license_metadata_override_conflict")
         if not licenses:
             unresolved.append({"purl": purl, "name": name, "version": version})
         normalized = {
             "bom-ref": purl,
-            "type": (
-                "application"
-                if component.get("type") == "application"
-                else "library"
-            ),
+            "type": "application" if component.get("type") == "application" else "library",
             "name": name,
             "version": version,
             "purl": purl,
@@ -248,55 +260,22 @@ def sanitize_sbom(
 
     properties = [
         {"name": "nexus:source-sbom-sha256", "value": _sha256(source)},
-        {
-            "name": "nexus:source-component-count",
-            "value": str(len(image_components)),
-        },
-        {
-            "name": "nexus:application-component-count",
-            "value": str(len(selected)),
-        },
-        {
-            "name": "nexus:base-os-package-count",
-            "value": str(len(set(base_purls))),
-        },
-        {
-            "name": "nexus:base-os-purl-set-sha256",
-            "value": _set_digest(base_purls),
-        },
+        {"name": "nexus:source-component-count", "value": str(len(image_components))},
+        {"name": "nexus:application-component-count", "value": str(len(selected))},
+        {"name": "nexus:base-os-package-count", "value": str(len(set(base_purls)))},
+        {"name": "nexus:base-os-purl-set-sha256", "value": _set_digest(base_purls)},
         {"name": "nexus:license-metadata-status", "value": status},
-        {
-            "name": "nexus:license-metadata-unresolved-count",
-            "value": str(len(unresolved)),
-        },
-        {
-            "name": "nexus:license-metadata-applied-override-count",
-            "value": str(len(applied)),
-        },
-        {
-            "name": "nexus:license-metadata-unused-override-count",
-            "value": str(len(unused)),
-        },
+        {"name": "nexus:license-metadata-unresolved-count", "value": str(len(unresolved))},
+        {"name": "nexus:license-metadata-applied-override-count", "value": str(len(applied))},
+        {"name": "nexus:license-metadata-unused-override-count", "value": str(len(unused))},
     ]
     if frontend_source is not None:
         properties.extend(
             [
-                {
-                    "name": "nexus:frontend-source-sbom-sha256",
-                    "value": _sha256(frontend_source),
-                },
-                {
-                    "name": "nexus:frontend-source-component-count",
-                    "value": str(len(frontend_components)),
-                },
-                {
-                    "name": "nexus:frontend-runtime-component-count",
-                    "value": str(len(set(frontend_runtime_purls))),
-                },
-                {
-                    "name": "nexus:frontend-runtime-purl-set-sha256",
-                    "value": _set_digest(frontend_runtime_purls),
-                },
+                {"name": "nexus:frontend-source-sbom-sha256", "value": _sha256(frontend_source)},
+                {"name": "nexus:frontend-source-component-count", "value": str(len(frontend_components))},
+                {"name": "nexus:frontend-runtime-component-count", "value": str(len(set(frontend_runtime_purls)))},
+                {"name": "nexus:frontend-runtime-purl-set-sha256", "value": _set_digest(frontend_runtime_purls)},
             ]
         )
 
@@ -309,15 +288,11 @@ def sanitize_sbom(
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
-        json.dumps(
-            safe_payload, ensure_ascii=True, sort_keys=True, indent=2
-        )
-        + "\n",
+        json.dumps(safe_payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
 
-    summary_path = output.with_suffix(output.suffix + ".summary.json")
-    summary_path.write_text(
+    output.with_suffix(output.suffix + ".summary.json").write_text(
         json.dumps(
             {
                 "schema_version": "nexus_sanitized_image_sbom_v1",
@@ -326,20 +301,14 @@ def sanitize_sbom(
                 "application_component_count": len(selected),
                 "base_os_package_count": len(set(base_purls)),
                 "frontend_source_component_count": len(frontend_components),
-                "frontend_runtime_component_count": len(
-                    set(frontend_runtime_purls)
-                ),
+                "frontend_runtime_component_count": len(set(frontend_runtime_purls)),
                 "unresolved_count": len(unresolved),
                 "applied_override_count": len(applied),
                 "unused_override_count": len(unused),
                 "unresolved": unresolved[:100],
                 "unused_overrides": unused[:100],
                 "source_sbom_sha256": _sha256(source),
-                "frontend_source_sbom_sha256": (
-                    _sha256(frontend_source)
-                    if frontend_source is not None
-                    else None
-                ),
+                "frontend_source_sbom_sha256": _sha256(frontend_source) if frontend_source is not None else None,
                 "sanitized_sbom_sha256": _sha256(output),
             },
             ensure_ascii=True,
