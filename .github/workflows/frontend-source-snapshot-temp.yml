@@ -1,0 +1,40 @@
+name: frontend-source-snapshot-temp
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/frontend-source-snapshot-temp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact proposed head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Create byte-complete source snapshot
+        run: |
+          set -Eeuo pipefail
+          tar \
+            --exclude=.git \
+            --exclude=frontend-source-snapshot.tar.gz \
+            -czf frontend-source-snapshot.tar.gz .
+          test -s frontend-source-snapshot.tar.gz
+          sha256sum frontend-source-snapshot.tar.gz > frontend-source-snapshot.sha256
+
+      - name: Upload temporary source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-source-snapshot-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            frontend-source-snapshot.tar.gz
+            frontend-source-snapshot.sha256
+          if-no-files-found: error
+          retention-days: 1
