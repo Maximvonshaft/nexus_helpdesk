@@ -145,7 +145,33 @@ jobs:
           }
           JSON
 
-      - name: Prove coherent ownership passes without implicit defaults
+      - name: Prove the historical default Provider Rule blocks migration
+        run: |
+          set +e
+          python scripts/qualification/tenant/tenant_principal_preflight.py \
+            --database-url "${DATABASE_URL}" \
+            --mapping artifacts/tenant/mapping-pass.json \
+            --output artifacts/tenant/preflight-legacy-default.json
+          code=$?
+          set -e
+          test "$code" = "1"
+          test "$(jq -r '.status' artifacts/tenant/preflight-legacy-default.json)" = "fail"
+          test "$(jq -r '.issues.counts["tenant.existing_default_forbidden"]' artifacts/tenant/preflight-legacy-default.json)" -ge 1
+
+      - name: Apply one explicit disposable mapping for the historical Provider Rule
+        run: |
+          set -Eeuo pipefail
+          psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -v ON_ERROR_STOP=1 <<'SQL'
+          UPDATE provider_routing_rules
+          SET tenant_id = 'tenant-a', updated_at = clock_timestamp()
+          WHERE tenant_id = 'default'
+            AND channel_key = 'website'
+            AND scenario = 'webchat_fast_reply'
+            AND id = '00000000-0031-4000-8000-000000000031';
+          SQL
+          test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT count(*) FROM provider_routing_rules WHERE tenant_id = 'default'")" = "0"
+
+      - name: Prove coherent ownership passes after explicit remediation
         run: |
           set -Eeuo pipefail
           python scripts/qualification/tenant/tenant_principal_preflight.py \
@@ -253,6 +279,7 @@ jobs:
           python scripts/security/scan_artifacts.py \
             --root . \
             --output artifacts/tenant/artifact-scan.json \
+            artifacts/tenant/preflight-legacy-default.json \
             artifacts/tenant/preflight-pass.json \
             artifacts/tenant/preflight-fail.json
           test "$(jq -r '.status' artifacts/tenant/artifact-scan.json)" = "pass"
@@ -263,6 +290,7 @@ jobs:
         with:
           name: tenant-principal-preflight
           path: |
+            artifacts/tenant/preflight-legacy-default.json
             artifacts/tenant/preflight-pass.json
             artifacts/tenant/preflight-fail.json
             artifacts/tenant/artifact-scan.json
