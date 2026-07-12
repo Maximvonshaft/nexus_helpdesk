@@ -7,12 +7,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SEED_SCRIPT = ROOT / "scripts" / "release" / "seed_rc_test_data.py"
+SIDE_EFFECT_SCRIPT = ROOT / "scripts" / "release" / "rc_test_side_effects.py"
 
 
 class RcSeedContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SEED_SCRIPT.read_text(encoding="utf-8")
+        cls.side_effect_source = SIDE_EFFECT_SCRIPT.read_text(encoding="utf-8")
         cls.tree = ast.parse(cls.source, filename=str(SEED_SCRIPT))
 
     def _seed_function(self) -> ast.FunctionDef:
@@ -20,6 +22,20 @@ class RcSeedContractTest(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.name == "seed_public_origin_binding":
                 return node
         self.fail("seed_public_origin_binding function is missing")
+
+    def test_standalone_helpers_bootstrap_backend_before_app_imports(self) -> None:
+        for name, source in (
+            ("seed", self.source),
+            ("side_effect", self.side_effect_source),
+        ):
+            with self.subTest(helper=name):
+                backend_position = source.index("_BACKEND_ROOT =")
+                path_insert_position = source.index("sys.path.insert")
+                first_app_import = source.index("from app.")
+                self.assertLess(backend_position, path_insert_position)
+                self.assertLess(path_insert_position, first_app_import)
+                self.assertIn('parents[2] / "backend"', source)
+                self.assertIn("_BACKEND_ROOT.is_dir()", source)
 
     def test_canonical_models_are_registered_before_session_creation(self) -> None:
         function = self._seed_function()
@@ -56,6 +72,11 @@ class RcSeedContractTest(unittest.TestCase):
             "RC_TEST_DISPLAY_NAME",
         ):
             self.assertIn(f'"{name}"', self.source)
+
+    def test_seed_failure_surface_is_bounded(self) -> None:
+        self.assertIn("RC_SEED_FAILED reason=invalid_configuration", self.source)
+        self.assertIn("RC_SEED_FAILED reason=database_or_model_boundary", self.source)
+        self.assertNotIn("traceback.print_exc", self.source)
 
 
 if __name__ == "__main__":
