@@ -4,17 +4,28 @@ on:
   push:
     branches:
       - fix/frontend-truth-641
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
+    paths:
+      - .github/workflows/frontend-truth-sync.yml
+      - webapp/e2e/smoke.spec.ts
+      - webapp/src/features/support-console/SupportConsolePage.tsx
+      - webapp/src/features/support-console/support-console.css
+      - webapp/src/lib/supportStatus.ts
+      - webapp/tests/frontend-truth-contract.test.mjs
 
 permissions:
   contents: write
 
 concurrency:
-  group: frontend-truth-sync-${{ github.ref }}
+  group: frontend-truth-sync-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   sync-main-and-verify:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.head_ref == 'fix/frontend-truth-641')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
