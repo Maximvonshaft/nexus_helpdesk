@@ -40,6 +40,50 @@ def _read(path: Path) -> str:
     return value
 
 
+def _revision(path: Path) -> str:
+    return _read(path).split()[0]
+
+
+def _finalize_migration_evidence(root: Path, expected_revision: str) -> None:
+    """Make a silent successful Alembic command independently provable.
+
+    Alembic may emit upgrade progress only to stderr, leaving the stdout
+    transcript empty. Normalize that transcript only when the separately
+    captured head, current revision, and readiness revision all equal the exact
+    expected source-tree head.
+    """
+
+    migration_path = root / "migration.txt"
+    if migration_path.is_symlink() or (migration_path.exists() and not migration_path.is_file()):
+        raise ValueError("migration evidence path is not a regular file")
+    if migration_path.is_file() and migration_path.stat().st_size > 0:
+        return
+
+    recorded_head = _revision(root / "migration-head.txt")
+    recorded_current = _revision(root / "migration-current.txt")
+    try:
+        readiness = json.loads((root / "readyz.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("migration readiness proof invalid") from exc
+    if not isinstance(readiness, dict):
+        raise ValueError("migration readiness proof invalid")
+    readiness_revision = readiness.get("migration_revision")
+    if not (
+        recorded_head == expected_revision
+        and recorded_current == expected_revision
+        and readiness_revision == expected_revision
+    ):
+        raise ValueError("migration revision proof mismatch")
+
+    migration_path.write_text(
+        "RC_MIGRATION_COMPLETED=true\n"
+        f"migration_head={recorded_head}\n"
+        f"migration_current={recorded_current}\n"
+        f"readiness_revision={readiness_revision}\n",
+        encoding="utf-8",
+    )
+
+
 def _finalize_teardown_evidence(root: Path) -> None:
     """Make the command transcript non-empty only after rollback is proven.
 
@@ -91,6 +135,12 @@ def _reason_code(exc: Exception) -> str:
         return "empty_evidence_file"
     if message == "readiness migration revision mismatch":
         return "migration_revision_mismatch"
+    if message.startswith("migration evidence"):
+        return "migration_evidence_invalid"
+    if message.startswith("migration readiness proof"):
+        return "migration_readiness_proof_invalid"
+    if message.startswith("migration revision proof"):
+        return "migration_revision_proof_mismatch"
     if message.startswith("teardown evidence"):
         return "teardown_evidence_invalid"
     if message.startswith("teardown rollback proof"):
@@ -132,6 +182,7 @@ def build_manifest(args: argparse.Namespace) -> None:
     if ready.get("migration_revision") != args.migration_head:
         raise ValueError("readiness migration revision mismatch")
 
+    _finalize_migration_evidence(root, args.migration_head)
     _finalize_teardown_evidence(root)
 
     evidence: dict[str, dict[str, object]] = {}
@@ -206,8 +257,9 @@ def main() -> int:
     try:
         build_manifest(args)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        _write_failure(args.evidence_dir, reason_code=_reason_code(exc))
-        print(f"RC_MANIFEST_BUILT=false reason_code={_reason_code(exc)}")
+        reason_code = _reason_code(exc)
+        _write_failure(args.evidence_dir, reason_code=reason_code)
+        print(f"RC_MANIFEST_BUILT=false reason_code={reason_code}")
         return 2
     print("RC_MANIFEST_BUILT=true")
     return 0
