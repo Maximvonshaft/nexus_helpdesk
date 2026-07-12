@@ -6,6 +6,12 @@ COMPOSE_FILE="${ROOT_DIR}/deploy/docker-compose.rc-test.yml"
 ENV_FILE="${RC_ENV_FILE:-${ROOT_DIR}/deploy/.env.rc-test}"
 EVIDENCE_DIR="${RC_EVIDENCE_DIR:-${ROOT_DIR}/artifacts/rc-test}"
 KEEP_STACK="${KEEP_RC_STACK:-false}"
+CURRENT_STAGE="bootstrap"
+
+set_stage() {
+  CURRENT_STAGE="$1"
+  echo "RC_STAGE=${CURRENT_STAGE}"
+}
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "Missing ${ENV_FILE}; copy deploy/.env.rc-test.example and replace placeholders." >&2
@@ -41,18 +47,100 @@ ALL_SERVICES=(
   worker-outbound-rc worker-background-rc worker-webchat-ai-rc worker-handoff-snapshot-rc
 )
 
+wait_for_health() {
+  local service="$1"
+  local attempts="${2:-60}"
+  local container_id status i
+  for i in $(seq 1 "${attempts}"); do
+    container_id="$(compose ps -q "${service}" 2>/dev/null || true)"
+    if [[ -n "${container_id}" ]]; then
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}" 2>/dev/null || true)"
+      if [[ "${status}" == "healthy" ]]; then
+        return 0
+      fi
+      if [[ "${status}" == "unhealthy" || "${status}" == "exited" || "${status}" == "dead" ]]; then
+        echo "${service} entered ${status}" >&2
+        return 1
+      fi
+    fi
+    sleep 2
+  done
+  echo "Timed out waiting for healthy ${service}" >&2
+  return 1
+}
+
 collect_failure_evidence() {
+  local exit_code="$1"
+  local raw_dir status_file
+  raw_dir="$(mktemp -d)"
+  status_file="${raw_dir}/service-status.tsv"
   set +e
-  compose ps --all > "${EVIDENCE_DIR}/compose-ps-failure.txt" 2>&1
-  compose logs --no-color --tail=250 "${ALL_SERVICES[@]}" \
-    > "${EVIDENCE_DIR}/bounded-failure-logs.txt" 2>&1
+  compose ps --all > "${raw_dir}/compose-ps.txt" 2>&1
+  compose logs --no-color --tail=250 "${ALL_SERVICES[@]}" > "${raw_dir}/logs.txt" 2>&1
+  : > "${status_file}"
+  for service in "${ALL_SERVICES[@]}"; do
+    container_id="$(compose ps -q --all "${service}" 2>/dev/null || true)"
+    if [[ -z "${container_id}" ]]; then
+      printf '%s\t%s\n' "${service}" "missing" >> "${status_file}"
+      continue
+    fi
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}" 2>/dev/null || echo inspect_error)"
+    printf '%s\t%s\n' "${service}" "${status}" >> "${status_file}"
+  done
+  python3 - "${ENV_FILE}" "${raw_dir}/compose-ps.txt" "${EVIDENCE_DIR}/compose-ps-failure.txt" \
+    "${raw_dir}/logs.txt" "${EVIDENCE_DIR}/bounded-failure-logs.txt" <<'PY'
+import sys
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+pairs = []
+for raw in env_path.read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    value = value.strip()
+    if len(value) >= 8:
+        pairs.append((value, f"[REDACTED:{key.strip()}]"))
+pairs.sort(key=lambda item: len(item[0]), reverse=True)
+for source_name, target_name in ((sys.argv[2], sys.argv[3]), (sys.argv[4], sys.argv[5])):
+    text = Path(source_name).read_text(encoding="utf-8", errors="replace")
+    for value, replacement in pairs:
+        text = text.replace(value, replacement)
+    Path(target_name).write_text(text[-512 * 1024 :], encoding="utf-8")
+PY
+  python3 - "${CURRENT_STAGE}" "${exit_code}" "${status_file}" "${EVIDENCE_DIR}/failure-summary.json" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+stage, exit_code, status_path, output_path = sys.argv[1:]
+if not re.fullmatch(r"[a-z0-9_-]{1,64}", stage):
+    stage = "invalid_stage"
+statuses = {}
+for line in Path(status_path).read_text(encoding="utf-8").splitlines():
+    if "\t" not in line:
+        continue
+    service, status = line.split("\t", 1)
+    if re.fullmatch(r"[a-z0-9_-]{1,80}", service) and re.fullmatch(r"[a-z_]{1,40}", status):
+        statuses[service] = status
+Path(output_path).write_text(json.dumps({
+    "schema": "nexus.osr.rc-test-failure-summary.v1",
+    "status": "failed",
+    "stage": stage,
+    "exit_code": int(exit_code),
+    "service_states": statuses,
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  rm -rf "${raw_dir}"
   set -e
 }
 
 cleanup_stack() {
   local exit_code=$?
   if [[ "${exit_code}" -ne 0 ]]; then
-    collect_failure_evidence
+    collect_failure_evidence "${exit_code}"
   fi
   if [[ "${KEEP_STACK,,}" =~ ^(1|true|yes|on)$ ]]; then
     echo "RC stack retained because KEEP_RC_STACK=${KEEP_STACK}"
@@ -69,6 +157,7 @@ cleanup_stack() {
 }
 trap cleanup_stack EXIT
 
+set_stage validate-env
 python3 - "${ENV_FILE}" "${BASE_URL}" "${PUBLIC_ORIGIN}" <<'PY'
 import re
 import sys
@@ -177,17 +266,14 @@ if [[ -n "${RC_SOURCE_SHA:-}" && "${RC_SOURCE_SHA}" != "${SOURCE_SHA}" ]]; then
   echo "RC_SOURCE_SHA does not match GIT_SHA" >&2
   exit 2
 fi
-
 printf '%s\n' "${SOURCE_SHA}" > "${EVIDENCE_DIR}/source-sha.txt"
 printf '%s\n' "${IMAGE_TAG_VALUE}" > "${EVIDENCE_DIR}/image-tag.txt"
 
+set_stage pull-base-images
 docker pull "${RC_POSTGRES_IMAGE}" >/dev/null
 docker pull "${RC_NGINX_IMAGE}" >/dev/null
-docker image inspect "${RC_POSTGRES_IMAGE}" --format '{{index .RepoDigests 0}}' \
-  > "${EVIDENCE_DIR}/postgres-image-digest.txt"
-docker image inspect "${RC_NGINX_IMAGE}" --format '{{index .RepoDigests 0}}' \
-  > "${EVIDENCE_DIR}/nginx-image-digest.txt"
-
+docker image inspect "${RC_POSTGRES_IMAGE}" --format '{{index .RepoDigests 0}}' > "${EVIDENCE_DIR}/postgres-image-digest.txt"
+docker image inspect "${RC_NGINX_IMAGE}" --format '{{index .RepoDigests 0}}' > "${EVIDENCE_DIR}/nginx-image-digest.txt"
 if ! grep -Eq '@sha256:[0-9a-f]{64}$' "${EVIDENCE_DIR}/postgres-image-digest.txt"; then
   echo "PostgreSQL image did not resolve to a RepoDigest" >&2
   exit 2
@@ -197,6 +283,7 @@ if ! grep -Eq '@sha256:[0-9a-f]{64}$' "${EVIDENCE_DIR}/nginx-image-digest.txt"; 
   exit 2
 fi
 
+set_stage build-app-image
 docker build \
   --file "${ROOT_DIR}/Dockerfile" \
   --build-arg "GIT_SHA=${SOURCE_SHA}" \
@@ -208,10 +295,10 @@ docker build \
   "${ROOT_DIR}"
 docker image inspect "${IMAGE_TAG_VALUE}" --format '{{.Id}}' > "${EVIDENCE_DIR}/image-id.txt"
 
+set_stage compose-validation
 compose config --quiet
 compose config --services > "${EVIDENCE_DIR}/compose-services.txt"
 compose config --images > "${EVIDENCE_DIR}/compose-images.txt"
-
 python3 - "${COMPOSE_FILE}" "${EVIDENCE_DIR}/safe-config.json" "${PUBLIC_ORIGIN}" <<'PY'
 import hashlib
 import json
@@ -252,8 +339,11 @@ profile = {
 output.write_text(json.dumps(profile, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
+set_stage start-postgres
 compose up -d postgres-rc
+wait_for_health postgres-rc 60
 
+set_stage resolve-migration-head
 heads_output="$(compose run --rm --no-deps -T migrate-rc sh -ec 'cd /app/backend && alembic heads')"
 printf '%s\n' "${heads_output}" > "${EVIDENCE_DIR}/migration-head.txt"
 mapfile -t migration_heads < <(printf '%s\n' "${heads_output}" | awk 'NF {print $1}')
@@ -267,8 +357,8 @@ if [[ ! "${MIGRATION_HEAD}" =~ ^[0-9]{8}_[0-9]{4}$ ]]; then
   exit 2
 fi
 
-compose run --rm --no-deps -T migrate-rc sh -ec 'cd /app/backend && alembic upgrade head' \
-  | tee "${EVIDENCE_DIR}/migration.txt"
+set_stage migrate-database
+compose run --rm --no-deps -T migrate-rc sh -ec 'cd /app/backend && alembic upgrade head' | tee "${EVIDENCE_DIR}/migration.txt"
 current_output="$(compose run --rm --no-deps -T migrate-rc sh -ec 'cd /app/backend && alembic current')"
 printf '%s\n' "${current_output}" > "${EVIDENCE_DIR}/migration-current.txt"
 MIGRATION_CURRENT="$(printf '%s\n' "${current_output}" | awk 'NF {print $1; exit}')"
@@ -277,6 +367,7 @@ if [[ "${MIGRATION_CURRENT}" != "${MIGRATION_HEAD}" ]]; then
   exit 2
 fi
 
+set_stage seed-webchat-origin
 compose run --rm --no-deps -T seed-rc | tee "${EVIDENCE_DIR}/seed-first.txt"
 compose run --rm --no-deps -T seed-rc | tee "${EVIDENCE_DIR}/seed-second.txt"
 compose run --rm --no-deps -T app-rc python - > "${EVIDENCE_DIR}/seed-verification.json" <<'PY'
@@ -320,6 +411,7 @@ finally:
     db.close()
 PY
 
+set_stage seed-operator
 compose run --rm --no-deps -T app-rc python - <<'PY'
 import os
 from sqlalchemy import func
@@ -355,9 +447,8 @@ finally:
 print("RC_TEST_OPERATOR_READY=true")
 PY
 
-compose up -d \
-  app-rc nginx-rc worker-outbound-rc worker-background-rc \
-  worker-webchat-ai-rc worker-handoff-snapshot-rc
+set_stage start-runtime
+compose up -d app-rc nginx-rc worker-outbound-rc worker-background-rc worker-webchat-ai-rc worker-handoff-snapshot-rc
 
 wait_for_url() {
   local url="$1"
@@ -367,44 +458,18 @@ wait_for_url() {
     if curl -fsS --max-time 5 "${url}" >/dev/null 2>&1; then
       return 0
     fi
-    if [[ "${i}" -eq "${attempts}" ]]; then
-      echo "Timed out waiting for ${url}" >&2
-      return 1
-    fi
     sleep 2
   done
-}
-
-wait_for_health() {
-  local service="$1"
-  local attempts="${2:-60}"
-  local container_id status i
-  container_id="$(compose ps -q "${service}")"
-  if [[ -z "${container_id}" ]]; then
-    echo "Missing container for ${service}" >&2
-    return 1
-  fi
-  for i in $(seq 1 "${attempts}"); do
-    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}")"
-    if [[ "${status}" == "healthy" ]]; then
-      return 0
-    fi
-    if [[ "${status}" == "unhealthy" || "${status}" == "exited" || "${status}" == "dead" ]]; then
-      echo "${service} entered ${status}" >&2
-      return 1
-    fi
-    sleep 2
-  done
-  echo "Timed out waiting for healthy ${service}" >&2
+  echo "Timed out waiting for ${url}" >&2
   return 1
 }
-
 wait_for_url "${BASE_URL%/}/readyz"
 for service in app-rc nginx-rc worker-outbound-rc worker-background-rc worker-webchat-ai-rc worker-handoff-snapshot-rc; do
   wait_for_health "${service}"
 done
 compose ps > "${EVIDENCE_DIR}/compose-ps-healthy.txt"
 
+set_stage http-smoke
 python3 "${ROOT_DIR}/scripts/release/rc_test_http_smoke.py" \
   --base-url "${BASE_URL}" \
   --origin "${PUBLIC_ORIGIN}" \
@@ -413,25 +478,23 @@ python3 "${ROOT_DIR}/scripts/release/rc_test_http_smoke.py" \
   --migration-head "${MIGRATION_HEAD}" \
   --evidence-dir "${EVIDENCE_DIR}"
 
-compose exec -T app-rc python /app/scripts/release/rc_test_side_effects.py \
-  > "${EVIDENCE_DIR}/side-effect-safety.json"
+set_stage side-effect-proof
+compose exec -T app-rc python /app/scripts/release/rc_test_side_effects.py > "${EVIDENCE_DIR}/side-effect-safety.json"
 
+set_stage network-proof
 app_container="$(compose ps -q app-rc)"
 nginx_container="$(compose ps -q nginx-rc)"
 rc_network="${PROJECT_NAME}_rc"
 edge_network="${PROJECT_NAME}_edge"
-python3 - "${app_container}" "${nginx_container}" "${rc_network}" "${edge_network}" \
-  "${EVIDENCE_DIR}/network-safety.json" <<'PY'
+python3 - "${app_container}" "${nginx_container}" "${rc_network}" "${edge_network}" "${EVIDENCE_DIR}/network-safety.json" <<'PY'
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 app_id, nginx_id, rc_network, edge_network, output = sys.argv[1:]
-
 def inspect_json(kind, identity):
     return json.loads(subprocess.check_output(["docker", kind, "inspect", identity], text=True))[0]
-
 app = inspect_json("container", app_id)
 nginx = inspect_json("container", nginx_id)
 rc = inspect_json("network", rc_network)
@@ -456,6 +519,7 @@ Path(output).write_text(json.dumps({
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
+set_stage browser-smoke
 browser_smoke_flag="${RC_RUN_BROWSER_SMOKE:-false}"
 if [[ "${browser_smoke_flag,,}" =~ ^(1|true|yes|on)$ ]]; then
   (
@@ -471,6 +535,7 @@ else
   exit 2
 fi
 
+set_stage teardown
 compose down --volumes --remove-orphans | tee "${EVIDENCE_DIR}/teardown.txt"
 remaining_containers="$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT_NAME}")"
 remaining_volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=${PROJECT_NAME}")"
@@ -493,14 +558,15 @@ Path(sys.argv[1]).write_text(json.dumps({
 PY
 trap - EXIT
 
+set_stage manifest
 python3 "${ROOT_DIR}/scripts/release/build_rc_test_manifest.py" \
   --evidence-dir "${EVIDENCE_DIR}" \
   --source-sha "${SOURCE_SHA}" \
   --image-tag "${IMAGE_TAG_VALUE}" \
   --migration-head "${MIGRATION_HEAD}"
-python3 "${ROOT_DIR}/scripts/release/validate_rc_test_manifest.py" \
-  "${EVIDENCE_DIR}/candidate-manifest.json"
+python3 "${ROOT_DIR}/scripts/release/validate_rc_test_manifest.py" "${EVIDENCE_DIR}/candidate-manifest.json"
 
+set_stage completed
 echo "RC0_TEST_DEPLOYABLE=true"
 echo "PRODUCTION_READY=false"
 echo "FULL_OSR_AUTOMATION=NO_GO"
