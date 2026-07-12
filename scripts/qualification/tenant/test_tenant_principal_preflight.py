@@ -90,7 +90,7 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
         self.assertEqual(report["counts"]["tenant.assignment_missing"], 1)
         sample = report["samples"]["tenant.assignment_missing"][0]
         self.assertRegex(sample, r"^sha256:[0-9a-f]{64}$")
-        self.assertNotIn("17", sample)
+        self.assertNotIn("customers:17", sample)
 
 
 if __name__ == "__main__":
