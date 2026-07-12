@@ -1,0 +1,76 @@
+name: frontend-truth-gate
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - .github/workflows/frontend-truth-gate.yml
+      - webapp/e2e/smoke.spec.ts
+      - webapp/src/features/support-console/SupportConsolePage.tsx
+      - webapp/src/features/support-console/support-console.css
+      - webapp/src/lib/supportStatus.ts
+      - webapp/tests/frontend-truth-contract.test.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-truth-gate-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-truth:
+    name: exact-head operational truth and browser gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact proposed head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert exact checkout identity
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Setup Node immutable
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Verify source contracts and production build
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npm run typecheck
+          npm run lint
+          npm run build
+          npm run size-report
+
+      - name: Install Playwright Chromium
+        working-directory: webapp
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify browser operational truth
+        working-directory: webapp
+        run: npm run e2e
+
+      - name: Verify bounded exact diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          git diff --check "${BASE_SHA}"...HEAD
