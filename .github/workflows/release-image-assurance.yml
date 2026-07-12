@@ -59,15 +59,18 @@ jobs:
             scripts/security/verify_license_compliance.py \
             scripts/security/bind_release_image_compliance.py \
             scripts/security/validate_release_image_evidence.py \
+            scripts/security/validate_release_image_policy_inputs.py \
             scripts/security/tests/test_release_image_assurance.py \
             scripts/security/tests/test_sanitize_image_sbom.py \
             scripts/security/tests/test_finalize_image_sbom.py \
-            scripts/security/tests/test_verify_license_compliance.py
+            scripts/security/tests/test_verify_license_compliance.py \
+            scripts/security/tests/test_release_image_policy_inputs.py
           python -m unittest \
             scripts/security/tests/test_release_image_assurance.py \
             scripts/security/tests/test_sanitize_image_sbom.py \
             scripts/security/tests/test_finalize_image_sbom.py \
-            scripts/security/tests/test_verify_license_compliance.py
+            scripts/security/tests/test_verify_license_compliance.py \
+            scripts/security/tests/test_release_image_policy_inputs.py
 
       - name: Build local candidate image only
         run: |
@@ -162,6 +165,25 @@ jobs:
           PY
           exit 0
 
+      - name: Validate complete release-image policy inputs
+        id: policy_inputs
+        shell: bash
+        run: |
+          set +e
+          policy_date="$(date -u +%F)"
+          printf '%s\n' "${policy_date}" > "${ARTIFACT_DIR}/policy-evaluated-on.txt"
+          python scripts/security/validate_release_image_policy_inputs.py \
+            --trivy "${ARTIFACT_DIR}/trivy.raw.json" \
+            --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
+            --vulnerability-exceptions config/security/container-vulnerability-exceptions.json \
+            --license-policy config/security/container-license-policy.json \
+            --output "${ARTIFACT_DIR}/policy-input-validation.json" \
+            --today "${policy_date}"
+          code=$?
+          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/policy-input-validation-exit-code"
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Extract installed LGPL license evidence from candidate
         shell: bash
         run: |
@@ -180,8 +202,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          policy_date="$(date -u +%F)"
-          printf '%s\n' "${policy_date}" > "${ARTIFACT_DIR}/policy-evaluated-on.txt"
+          policy_date="$(cat "${ARTIFACT_DIR}/policy-evaluated-on.txt")"
           python scripts/security/release_image_assurance.py vulnerabilities \
             --report "${ARTIFACT_DIR}/trivy.raw.json" \
             --exceptions config/security/container-vulnerability-exceptions.json \
@@ -304,6 +325,7 @@ jobs:
           test "$(cat "${ARTIFACT_DIR}/runtime-smoke-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/sbom-preliminary-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/sbom-sanitization-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/policy-input-validation-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/installed-license-evidence-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/vulnerability-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/license-exit-code")" = "0"
@@ -312,6 +334,7 @@ jobs:
           test "$(cat "${ARTIFACT_DIR}/compliance-binding-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/artifact-scan-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/structured-evidence-scan-exit-code")" = "0"
+          test "$(jq -r '.status' "${ARTIFACT_DIR}/policy-input-validation.json")" = "pass"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-manifest.json")" = "pass"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/license-compliance-evidence.json")" = "pass"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "pass"
