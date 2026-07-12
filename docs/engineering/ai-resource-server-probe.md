@@ -33,7 +33,7 @@ The following rules are enforced by code:
 - response evidence contains only status, latency, byte count, digest and bounded structural metadata;
 - output permissions are set to `0600` where supported.
 
-Use separate target entries when LLM, RAG, vector, STT or TTS services are on different origins. Cross-origin endpoint aliases inside one target are rejected.
+Use separate target entries when LLM, RAG, vector, STT or TTS services are on different origins. Cross-origin endpoint aliases inside one target are rejected. Do not place credentials in HTTP or WebSocket URLs; use the configured environment-variable or read-only-file secret source.
 
 ## Passive inventory
 
