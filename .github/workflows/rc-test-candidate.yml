@@ -98,15 +98,28 @@ jobs:
         run: |
           set +e
           run_log="${RUNNER_TEMP}/rc-run.log"
+          browser_stage_file="${RUNNER_TEMP}/rc-browser-stage"
+          rm -f "${browser_stage_file}"
+          export RC_BROWSER_STAGE_FILE="${browser_stage_file}"
           bash scripts/release/run_rc_test_candidate.sh 2>&1 | tee "${run_log}"
           code=${PIPESTATUS[0]}
           set -e
+          browser_stage=""
+          if [[ -s "${browser_stage_file}" ]]; then
+            browser_stage="$(tr -d '\r\n' < "${browser_stage_file}")"
+            if ! [[ "${browser_stage}" =~ ^[a-z0-9_-]{1,56}$ ]]; then
+              browser_stage=""
+            fi
+          fi
+          rm -f "${browser_stage_file}"
           if [[ "${code}" -ne 0 ]]; then
             stage="$(grep -E '^RC_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
             stage="${stage:-unknown}"
             diagnostic_hex=""
             if [[ "${stage}" == "browser-smoke" ]]; then
-              browser_stage="$(grep -E '^RC_BROWSER_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
+              if [[ -z "${browser_stage}" ]]; then
+                browser_stage="$(grep -E 'RC_BROWSER_STAGE=[a-z0-9_-]{1,56}' "${run_log}" | tail -n 1 | sed -E 's/.*RC_BROWSER_STAGE=([a-z0-9_-]{1,56}).*/\1/' || true)"
+              fi
               if [[ -n "${browser_stage}" ]]; then
                 stage="browser-${browser_stage}"
               fi
