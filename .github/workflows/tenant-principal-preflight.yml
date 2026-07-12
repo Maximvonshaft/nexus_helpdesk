@@ -166,8 +166,8 @@ jobs:
           SET tenant_id = 'tenant-a', updated_at = clock_timestamp()
           WHERE tenant_id = 'default'
             AND channel_key = 'website'
-            AND scenario = 'webchat_fast_reply'
-            AND id = '00000000-0031-4000-8000-000000000031';
+            AND scenario = 'webchat_runtime_reply'
+            AND id = '00000000-0050-4000-8000-000000000050';
           SQL
           test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT count(*) FROM provider_routing_rules WHERE tenant_id = 'default'")" = "0"
 
