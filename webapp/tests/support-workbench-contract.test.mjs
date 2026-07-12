@@ -32,9 +32,11 @@ test('production router only exposes login and support workbench routes', () => 
   }
 })
 
-test('webchat route mounts the lightweight support console', () => {
-  assert.match(webchatRoute, /SupportConsolePage/)
-  assert.match(webchatRoute, /support-console\.css/)
+test('webchat route mounts the lightweight support console through an async boundary', () => {
+  assert.match(webchatRoute, /lazy\(\(\) => import\(['"]@\/features\/support-console\/lazy['"]\)\)/)
+  assert.match(webchatRoute, /Suspense/)
+  assert.doesNotMatch(webchatRoute, /import \{ SupportConsolePage \} from/)
+  assert.doesNotMatch(webchatRoute, /support-console\.css/)
   assert.doesNotMatch(webchatRoute, /AppShell/)
   assert.doesNotMatch(webchatRoute, /WebchatInboxV5Page/)
 })
