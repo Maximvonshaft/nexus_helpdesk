@@ -102,9 +102,9 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
                 "status": "pass",
                 "source_sha": self.SOURCE_SHA,
                 "image_id": self.IMAGE_ID,
-                "sbom_sha256": self.DIGEST,
-                "vulnerability_summary_sha256": self.DIGEST,
-                "license_summary_sha256": self.DIGEST,
+                "sbom_sha256": self._digest(sbom),
+                "vulnerability_summary_sha256": self._digest(vulnerabilities),
+                "license_summary_sha256": self._digest(licenses),
                 "vulnerability_status": "pass",
                 "license_status": "pass",
                 "critical_count": 0,
@@ -267,6 +267,42 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
             )
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["validated_files"], 10)
+
+    def test_manifest_digests_are_recomputed_against_bundled_files(self) -> None:
+        cases = (
+            ("sbom", "manifest_digest_mismatch:sbom_sha256"),
+            (
+                "vulnerabilities",
+                "manifest_digest_mismatch:vulnerability_summary_sha256",
+            ),
+            ("licenses", "manifest_digest_mismatch:license_summary_sha256"),
+        )
+        for path_key, expected_reason in cases:
+            with self.subTest(path_key=path_key), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "artifacts" / "release-image"
+                paths = self._complete_bundle(root)
+                payload = json.loads(paths[path_key].read_text())
+                if path_key == "sbom":
+                    payload["components"][0]["version"] = "3.2.7"
+                else:
+                    payload["nexus_test_mutation"] = path_key
+                paths[path_key].write_text(
+                    json.dumps(payload, sort_keys=True), encoding="utf-8"
+                )
+
+                self.assertEqual(self._validate(root, paths), 1)
+                quarantine = json.loads(
+                    (root / "release-image-quarantine.json").read_text()
+                )
+                self.assertEqual(quarantine["reason"], expected_reason)
+                self.assertFalse(quarantine["unsafe_artifacts_uploaded"])
+                self.assertEqual(
+                    {path.name for path in root.iterdir()},
+                    {
+                        "release-image-quarantine.json",
+                        "structured-evidence-scan.json",
+                    },
+                )
 
     def test_malformed_compliance_evidence_is_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
