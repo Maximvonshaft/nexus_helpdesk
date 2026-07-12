@@ -80,7 +80,13 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
                         "version": "3.2.6",
                         "purl": self.PURL,
                         "licenses": [{"license": {"id": self.LICENSE}}],
-                    }
+                    },
+                    {
+                        "name": "@radix-ui/primitive",
+                        "version": "1.1.3",
+                        "purl": "pkg:npm/%40radix-ui/primitive@1.1.3",
+                        "licenses": [{"license": {"id": "MIT"}}],
+                    },
                 ],
             },
         )
@@ -162,6 +168,17 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ComplianceError, "notice_source_missing"
             ):
+                self._verify(fixture, root / "out.json")
+
+    def test_malformed_npm_purl_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self._fixture(root)
+            sbom = fixture[2]
+            data = json.loads(sbom.read_text())
+            data["components"][1]["purl"] = "pkg:npm/%40radix-ui/primitive"
+            sbom.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(ComplianceError, "sbom_purl_invalid"):
                 self._verify(fixture, root / "out.json")
 
 
