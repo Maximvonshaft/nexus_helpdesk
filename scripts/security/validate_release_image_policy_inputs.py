@@ -12,6 +12,12 @@ MAX_BYTES = 32 * 1024 * 1024
 MAX_ITEMS = 2000
 MAX_EXCEPTION_DAYS = 180
 _SAFE_OWNER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@/-]{1,79}$")
+_SAFE_PYTHON_PURL = re.compile(
+    r"^pkg:(?:pypi/[A-Za-z0-9._-]+|generic/python)@[A-Za-z0-9._+!-]{1,100}$"
+)
+_SAFE_NPM_PURL = re.compile(
+    r"^pkg:npm/(?:%40[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+@[A-Za-z0-9._+!~-]{1,120}(?:\?[A-Za-z0-9._~%=&+-]{1,300})?$"
+)
 
 
 class PolicyInputError(ValueError):
@@ -27,6 +33,15 @@ def _load(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise PolicyInputError(f"invalid_json:{path.name}") from exc
+
+
+def _require_purl(value: object) -> str:
+    purl = str(value or "").strip()
+    if not (
+        _SAFE_PYTHON_PURL.fullmatch(purl) or _SAFE_NPM_PURL.fullmatch(purl)
+    ):
+        raise PolicyInputError("license_purl_invalid")
+    return purl
 
 
 def _require_accountable_owner(value: object) -> str:
@@ -79,6 +94,14 @@ def _validate_sbom(payload: Any) -> int:
         raise PolicyInputError("sbom_components_empty")
     if len(payload["components"]) > MAX_ITEMS:
         raise PolicyInputError("sbom_components_excessive")
+    seen: set[str] = set()
+    for component in payload["components"]:
+        if not isinstance(component, dict):
+            raise PolicyInputError("sbom_component_invalid")
+        purl = _require_purl(component.get("purl"))
+        if purl in seen:
+            raise PolicyInputError("sbom_component_purl_duplicate")
+        seen.add(purl)
     return len(payload["components"])
 
 
@@ -116,7 +139,7 @@ def _validate_vulnerability_exceptions(payload: Any, *, today: date) -> int:
 
 def _validate_license_policy(
     payload: Any, *, today: date
-) -> dict[tuple[str, str, str], tuple[str, str]]:
+) -> dict[tuple[str, str, str, str], tuple[str, str]]:
     if not isinstance(payload, dict) or payload.get("schema_version") != "nexus_container_license_policy_v1":
         raise PolicyInputError("license_policy_schema_invalid")
     dispositions: dict[str, set[str]] = {}
@@ -139,21 +162,22 @@ def _validate_license_policy(
     exceptions = payload.get("exceptions")
     if not isinstance(exceptions, list) or len(exceptions) > MAX_ITEMS:
         raise PolicyInputError("license_exception_entries_invalid")
-    expected = {"package", "version", "license", "owner", "expires_on", "reason"}
-    records: dict[tuple[str, str, str], tuple[str, str]] = {}
+    expected = {"purl", "package", "version", "license", "owner", "expires_on", "reason"}
+    records: dict[tuple[str, str, str, str], tuple[str, str]] = {}
     for entry in exceptions:
         if not isinstance(entry, dict) or set(entry) != expected:
             raise PolicyInputError("license_exception_shape_invalid")
         key = (
+            _require_purl(entry["purl"]),
             str(entry["package"] or "").strip(),
             str(entry["version"] or "").strip(),
             str(entry["license"] or "").strip(),
         )
         if not all(key) or key in records:
             raise PolicyInputError("license_exception_key_invalid")
-        if key[2] in dispositions["denied"]:
+        if key[3] in dispositions["denied"]:
             raise PolicyInputError("license_exception_for_denied_license")
-        if key[2] not in dispositions["review"]:
+        if key[3] not in dispositions["review"]:
             raise PolicyInputError("license_exception_not_review_disposition")
         owner = _require_accountable_owner(entry["owner"])
         _require_reason(entry["reason"])
@@ -166,7 +190,7 @@ def _validate_license_compliance(
     payload: Any,
     *,
     today: date,
-    policy_exceptions: dict[tuple[str, str, str], tuple[str, str]],
+    policy_exceptions: dict[tuple[str, str, str, str], tuple[str, str]],
 ) -> int:
     if not isinstance(payload, dict) or payload.get("schema_version") != "nexus_container_license_compliance_v1":
         raise PolicyInputError("license_compliance_schema_invalid")
@@ -186,11 +210,12 @@ def _validate_license_compliance(
         "replacement_supported",
         "obligations",
     }
-    records: dict[tuple[str, str, str], tuple[str, str]] = {}
+    records: dict[tuple[str, str, str, str], tuple[str, str]] = {}
     for entry in entries:
-        if not isinstance(entry, dict) or not required.issubset(entry):
+        if not isinstance(entry, dict) or set(entry) != required:
             raise PolicyInputError("license_compliance_shape_invalid")
         key = (
+            _require_purl(entry["purl"]),
             str(entry["package"] or "").strip(),
             str(entry["version"] or "").strip(),
             str(entry["license"] or "").strip(),
