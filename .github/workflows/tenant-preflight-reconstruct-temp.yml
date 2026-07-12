@@ -7,7 +7,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: write
 
 concurrency:
@@ -45,7 +44,6 @@ jobs:
           test "$(git merge-base HEAD origin/main)" = "cdecaf955a5a04f948b0346815c9be0c5579805d"
           git fetch --no-tags origin audit/p0-tenant-preflight-546-20260712
           for path in \
-            .github/workflows/tenant-principal-preflight.yml \
             docs/architecture/tenant-principal-migration.md \
             scripts/qualification/tenant/tenant_principal_preflight.py \
             scripts/qualification/tenant/test_tenant_principal_preflight.py
@@ -88,19 +86,6 @@ jobs:
           source = doc.read_text(encoding='utf-8')
           preface = '''# Current-main reconstruction\n\nThis migration gate was reconstructed from historical PR #609 against `main@cdecaf955a5a04f948b0346815c9be0c5579805d`. Historical code is evidence only. The accepted baseline is Alembic `20260711_0058`, six core ownership tables without Tenant foreign keys, and eight existing operational `tenant_id`/`tenant_key` columns. No next migration revision is reserved until this preflight is accepted.\n\n'''
           doc.write_text(preface + source, encoding='utf-8')
-
-          workflow = Path('.github/workflows/tenant-principal-preflight.yml')
-          source = workflow.read_text(encoding='utf-8')
-          old = '''      - name: Upgrade disposable PostgreSQL to exact head\n        working-directory: backend\n        run: alembic upgrade head\n'''
-          new = '''      - name: Upgrade disposable PostgreSQL to exact head\n        working-directory: backend\n        run: |\n          set -Eeuo pipefail\n          alembic upgrade head\n          test "$(alembic heads | awk '{print $1}')" = "20260711_0058"\n'''
-          if source.count(old) != 1:
-              raise SystemExit(f'workflow upgrade marker count={source.count(old)}')
-          source = source.replace(old, new, 1)
-          pass_marker = '          test "$(jq -r \'.status\' artifacts/tenant/preflight-pass.json)" = "pass"\n'
-          pass_addition = pass_marker + '''          test "$(jq -r '.schema_version' artifacts/tenant/preflight-pass.json)" = "nexus_tenant_principal_preflight_v2"\n          test "$(jq -r '.schema_baseline.alembic_head' artifacts/tenant/preflight-pass.json)" = "20260711_0058"\n          test "$(jq -r '.schema_baseline.expected_existing_tenant_columns | length' artifacts/tenant/preflight-pass.json)" = "8"\n'''
-          if source.count(pass_marker) != 1:
-              raise SystemExit(f'workflow pass marker count={source.count(pass_marker)}')
-          workflow.write_text(source.replace(pass_marker, pass_addition, 1), encoding='utf-8')
           PY
 
       - name: Verify reconstructed mapping contract
