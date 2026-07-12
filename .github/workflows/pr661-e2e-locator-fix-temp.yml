@@ -1,0 +1,50 @@
+name: pr661-e2e-locator-fix-temp
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/pr661-e2e-locator-fix-temp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 1
+
+      - name: Scope new-message assertion to the conversation region
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('webapp/e2e/operator-workspace.spec.ts')
+          source = path.read_text(encoding='utf-8')
+          old = "await expect(page.getByText('A new message while the operator reads history')).toBeVisible({ timeout: 7000 })"
+          new = "await expect(page.getByLabel('客户沟通').getByText('A new message while the operator reads history')).toBeVisible({ timeout: 7000 })"
+          if source.count(old) != 1:
+              raise SystemExit(f'expected exactly one locator to replace, found {source.count(old)}')
+          path.write_text(source.replace(old, new), encoding='utf-8')
+          PY
+          rm -f .github/workflows/pr661-e2e-locator-fix-temp.yml
+          git diff --check
+
+      - name: Commit and push focused browser-test correction
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "nexus-frontend-agent"
+          git config user.email "nexus-frontend-agent@users.noreply.github.com"
+          git add -A
+          git commit -m "test(frontend): scope new-message assertion to conversation"
+          git push origin "HEAD:${HEAD_BRANCH}"
