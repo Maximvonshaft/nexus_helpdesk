@@ -15,6 +15,10 @@ from verify_license_compliance import ComplianceError, verify  # noqa: E402
 
 
 class VerifyLicenseComplianceTests(unittest.TestCase):
+    SOURCE = "https://github.com/psycopg/psycopg/tree/3.2.6"
+    PURL = "pkg:pypi/psycopg@3.2.6"
+    LICENSE = "LGPL-3.0-only"
+
     def _write(self, root: Path, name: str, payload) -> Path:
         path = root / name
         path.write_text(json.dumps(payload), encoding="utf-8")
@@ -30,11 +34,11 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
                     {
                         "package": "psycopg",
                         "version": "3.2.6",
-                        "purl": "pkg:pypi/psycopg@3.2.6",
-                        "license": "LGPL-3.0-only",
+                        "purl": self.PURL,
+                        "license": self.LICENSE,
                         "owner": "open-source-compliance",
                         "expires_on": "2026-09-30",
-                        "source": "https://github.com/psycopg/psycopg/tree/3.2.6",
+                        "source": self.SOURCE,
                         "notice_path": "THIRD_PARTY_NOTICES.md",
                         "modified": False,
                         "replacement_supported": True,
@@ -57,7 +61,7 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
                     {
                         "package": "psycopg",
                         "version": "3.2.6",
-                        "license": "LGPL-3.0-only",
+                        "license": self.LICENSE,
                         "owner": "open-source-compliance",
                         "expires_on": "2026-09-30",
                         "reason": "Exact machine verified compliance record is required for this component.",
@@ -74,8 +78,8 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
                     {
                         "name": "psycopg",
                         "version": "3.2.6",
-                        "purl": "pkg:pypi/psycopg@3.2.6",
-                        "licenses": [{"license": {"id": "LGPL-3.0-only"}}],
+                        "purl": self.PURL,
+                        "licenses": [{"license": {"id": self.LICENSE}}],
                     }
                 ],
             },
@@ -100,61 +104,65 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
             },
         )
         notice = root / "THIRD_PARTY_NOTICES.md"
-        notice.write_text("pkg:pypi/psycopg@3.2.6 — LGPL-3.0-only", encoding="utf-8")
+        notice.write_text(
+            f"{self.PURL} — {self.LICENSE}\nUpstream source: {self.SOURCE}\n",
+            encoding="utf-8",
+        )
         return compliance, policy, sbom, installed, notice
 
-    def test_exact_evidence_passes(self) -> None:
+    def _verify(self, fixture, output: Path) -> int:
+        compliance, policy, sbom, installed, notice = fixture
+        return verify(
+            compliance_path=compliance,
+            policy_path=policy,
+            sbom_path=sbom,
+            installed_path=installed,
+            notice_path=notice,
+            output_path=output,
+            today=date(2026, 7, 11),
+        )
+
+    def test_exact_evidence_passes_and_records_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            compliance, policy, sbom, installed, notice = self._fixture(root)
             output = root / "out.json"
-            self.assertEqual(
-                verify(
-                    compliance_path=compliance,
-                    policy_path=policy,
-                    sbom_path=sbom,
-                    installed_path=installed,
-                    notice_path=notice,
-                    output_path=output,
-                    today=date(2026, 7, 11),
-                ),
-                0,
-            )
-            self.assertEqual(json.loads(output.read_text())["status"], "pass")
+            self.assertEqual(self._verify(self._fixture(root), output), 0)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["components"][0]["source"], self.SOURCE)
 
     def test_missing_license_file_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            compliance, policy, sbom, installed, notice = self._fixture(root)
+            fixture = self._fixture(root)
+            installed = fixture[3]
             data = json.loads(installed.read_text())
             data["components"][0]["license_files"] = []
             installed.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaisesRegex(ComplianceError, "license_file_missing"):
-                verify(
-                    compliance_path=compliance,
-                    policy_path=policy,
-                    sbom_path=sbom,
-                    installed_path=installed,
-                    notice_path=notice,
-                    output_path=root / "out.json",
-                    today=date(2026, 7, 11),
-                )
+                self._verify(fixture, root / "out.json")
 
-    def test_version_or_notice_mismatch_fails(self) -> None:
+    def test_missing_component_or_license_notice_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            compliance, policy, sbom, installed, notice = self._fixture(root)
-            notice.write_text("missing exact component", encoding="utf-8")
+            fixture = self._fixture(root)
+            fixture[4].write_text(
+                f"Upstream source: {self.SOURCE}\n", encoding="utf-8"
+            )
             with self.assertRaisesRegex(ComplianceError, "notice_missing"):
-                verify(
-                    compliance_path=compliance,
-                    policy_path=policy,
-                    sbom_path=sbom,
-                    installed_path=installed,
-                    notice_path=notice,
-                    output_path=root / "out.json",
-                    today=date(2026, 7, 11),
-                )
+                self._verify(fixture, root / "out.json")
+
+    def test_missing_upstream_source_reference_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self._fixture(root)
+            fixture[4].write_text(
+                f"{self.PURL} — {self.LICENSE}\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                ComplianceError, "notice_source_missing"
+            ):
+                self._verify(fixture, root / "out.json")
 
 
 if __name__ == "__main__":
