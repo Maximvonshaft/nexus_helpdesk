@@ -12,11 +12,32 @@ MAX_COMPONENTS = 2000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:/@%?&=!-]{0,499}$")
-_SAFE_SPDX = re.compile(r"^[A-Za-z0-9.+-]+(?: (?:AND|OR) [A-Za-z0-9.+-]+)*$")
+_SAFE_COMPONENT_NAME = re.compile(
+    r"^[A-Za-z0-9@][A-Za-z0-9._+:/@%?&=!-]{0,199}$"
+)
+_SAFE_SPDX = re.compile(
+    r"^[A-Za-z0-9.+-]+(?: (?:AND|OR) [A-Za-z0-9.+-]+)*$"
+)
 _FORBIDDEN_KEYS = {
-    "address", "api_key", "authorization", "body", "content", "credential",
-    "customer", "email", "message", "password", "payload", "phone", "prompt",
-    "raw_payload", "secret", "text", "token", "tracking_number", "transcript",
+    "address",
+    "api_key",
+    "authorization",
+    "body",
+    "content",
+    "credential",
+    "customer",
+    "email",
+    "message",
+    "password",
+    "payload",
+    "phone",
+    "prompt",
+    "raw_payload",
+    "secret",
+    "text",
+    "token",
+    "tracking_number",
+    "transcript",
 }
 _SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
@@ -54,6 +75,13 @@ def _safe(value: object, *, limit: int = 500) -> str:
     return text
 
 
+def _safe_component_name(value: object) -> str:
+    text = str(value or "")
+    if not _SAFE_COMPONENT_NAME.fullmatch(text):
+        raise EvidenceError("sbom_component_name_invalid")
+    return text
+
+
 def _walk_forbidden(value: object, *, depth: int = 0) -> None:
     if depth > 8:
         raise EvidenceError("evidence_depth_excessive")
@@ -80,8 +108,16 @@ def _walk_forbidden(value: object, *, depth: int = 0) -> None:
 def validate_sbom(value: object) -> None:
     if not isinstance(value, dict):
         raise EvidenceError("sbom_not_object")
-    _exact(value, {"bomFormat", "specVersion", "version", "metadata", "components"}, "sbom")
-    if value["bomFormat"] != "CycloneDX" or value["specVersion"] != "1.6" or value["version"] != 1:
+    _exact(
+        value,
+        {"bomFormat", "specVersion", "version", "metadata", "components"},
+        "sbom",
+    )
+    if (
+        value["bomFormat"] != "CycloneDX"
+        or value["specVersion"] != "1.6"
+        or value["version"] != 1
+    ):
         raise EvidenceError("sbom_identity_invalid")
     metadata = value["metadata"]
     if not isinstance(metadata, dict):
@@ -107,16 +143,25 @@ def validate_sbom(value: object) -> None:
     for component in components:
         if not isinstance(component, dict):
             raise EvidenceError("sbom_component_invalid")
-        _exact(component, {"bom-ref", "type", "name", "version", "purl", "licenses"}, "sbom_component")
+        _exact(
+            component,
+            {"bom-ref", "type", "name", "version", "purl", "licenses"},
+            "sbom_component",
+        )
         purl = _safe(component["purl"])
-        if not purl.startswith(("pkg:pypi/", "pkg:generic/python@")) or component["bom-ref"] != purl:
+        if (
+            not purl.startswith(
+                ("pkg:pypi/", "pkg:generic/python@", "pkg:npm/")
+            )
+            or component["bom-ref"] != purl
+        ):
             raise EvidenceError("sbom_purl_invalid")
         if purl in seen:
             raise EvidenceError("sbom_purl_duplicate")
         seen.add(purl)
         if component["type"] not in {"library", "application"}:
             raise EvidenceError("sbom_component_type_invalid")
-        _safe(component["name"], limit=200)
+        _safe_component_name(component["name"])
         _safe(component["version"], limit=120)
         licenses = component["licenses"]
         if not isinstance(licenses, list) or not licenses or len(licenses) > 8:
@@ -128,9 +173,13 @@ def validate_sbom(value: object) -> None:
                 expression = str(entry["expression"] or "")
                 if not _SAFE_SPDX.fullmatch(expression):
                     raise EvidenceError("sbom_license_expression_invalid")
-            elif set(entry) == {"license"} and isinstance(entry["license"], dict):
+            elif set(entry) == {"license"} and isinstance(
+                entry["license"], dict
+            ):
                 _exact(entry["license"], {"id"}, "sbom_license")
-                if not _SAFE_SPDX.fullmatch(str(entry["license"]["id"] or "")):
+                if not _SAFE_SPDX.fullmatch(
+                    str(entry["license"]["id"] or "")
+                ):
                     raise EvidenceError("sbom_license_id_invalid")
             else:
                 raise EvidenceError("sbom_license_shape_invalid")
@@ -145,31 +194,64 @@ def validate_summary(value: object, schema: str) -> None:
 def validate_raw_digests(value: object) -> None:
     if not isinstance(value, dict):
         raise EvidenceError("raw_digest_not_object")
-    _exact(value, {"schema_version", "trivy_report_sha256", "raw_cyclonedx_sha256"}, "raw_digest")
-    if value["schema_version"] != "nexus_raw_image_evidence_digests_v1":
+    _exact(
+        value,
+        {
+            "schema_version",
+            "trivy_report_sha256",
+            "raw_cyclonedx_sha256",
+            "raw_frontend_cyclonedx_sha256",
+        },
+        "raw_digest",
+    )
+    if value["schema_version"] != "nexus_raw_release_evidence_digests_v2":
         raise EvidenceError("raw_digest_schema_invalid")
-    if not _SHA256.fullmatch(str(value["trivy_report_sha256"])) or not _SHA256.fullmatch(str(value["raw_cyclonedx_sha256"])):
-        raise EvidenceError("raw_digest_value_invalid")
+    for key in (
+        "trivy_report_sha256",
+        "raw_cyclonedx_sha256",
+        "raw_frontend_cyclonedx_sha256",
+    ):
+        if not _SHA256.fullmatch(str(value[key])):
+            raise EvidenceError("raw_digest_value_invalid")
 
 
 def validate_manifest(value: object) -> None:
     if not isinstance(value, dict):
         raise EvidenceError("manifest_not_object")
     expected = {
-        "critical_count", "deployment_performed", "high_count", "image_id", "image_pushed",
-        "license_status", "license_summary_sha256", "sbom_sha256", "schema_version",
-        "source_sha", "status", "unresolved_license_count", "vulnerability_status",
+        "critical_count",
+        "deployment_performed",
+        "high_count",
+        "image_id",
+        "image_pushed",
+        "license_status",
+        "license_summary_sha256",
+        "sbom_sha256",
+        "schema_version",
+        "source_sha",
+        "status",
+        "unresolved_license_count",
+        "vulnerability_status",
         "vulnerability_summary_sha256",
     }
     _exact(value, expected, "manifest")
     if value["schema_version"] != "nexus_release_image_assurance_v1":
         raise EvidenceError("manifest_schema_invalid")
-    if not _SHA40.fullmatch(str(value["source_sha"])) or not _SHA256.fullmatch(str(value["image_id"])):
+    if not _SHA40.fullmatch(str(value["source_sha"])) or not _SHA256.fullmatch(
+        str(value["image_id"])
+    ):
         raise EvidenceError("manifest_identity_invalid")
-    for key in ("license_summary_sha256", "sbom_sha256", "vulnerability_summary_sha256"):
+    for key in (
+        "license_summary_sha256",
+        "sbom_sha256",
+        "vulnerability_summary_sha256",
+    ):
         if not _SHA256.fullmatch(str(value[key])):
             raise EvidenceError("manifest_digest_invalid")
-    if value["image_pushed"] is not False or value["deployment_performed"] is not False:
+    if (
+        value["image_pushed"] is not False
+        or value["deployment_performed"] is not False
+    ):
         raise EvidenceError("manifest_external_effect_invalid")
     _walk_forbidden(value)
 
@@ -186,17 +268,36 @@ def main() -> int:
     args = parser.parse_args()
     try:
         validate_sbom(_load(args.sbom))
-        validate_summary(_load(args.sbom_summary), "nexus_finalized_image_sbom_v1")
+        validate_summary(
+            _load(args.sbom_summary), "nexus_finalized_image_sbom_v1"
+        )
         validate_raw_digests(_load(args.raw_digests))
-        validate_summary(_load(args.vulnerabilities), "nexus_container_vulnerability_assurance_v1")
-        validate_summary(_load(args.licenses), "nexus_container_license_assurance_v1")
+        validate_summary(
+            _load(args.vulnerabilities),
+            "nexus_container_vulnerability_assurance_v1",
+        )
+        validate_summary(
+            _load(args.licenses), "nexus_container_license_assurance_v1"
+        )
         validate_manifest(_load(args.manifest))
     except EvidenceError as exc:
-        payload = {"schema_version": "nexus_release_image_evidence_validation_v1", "status": "fail", "reason": str(exc)[:120]}
-        args.output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        payload = {
+            "schema_version": "nexus_release_image_evidence_validation_v1",
+            "status": "fail",
+            "reason": str(exc)[:120],
+        }
+        args.output.write_text(
+            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+        )
         return 1
-    payload = {"schema_version": "nexus_release_image_evidence_validation_v1", "status": "pass", "validated_files": 6}
-    args.output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    payload = {
+        "schema_version": "nexus_release_image_evidence_validation_v1",
+        "status": "pass",
+        "validated_files": 6,
+    }
+    args.output.write_text(
+        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return 0
 
 
