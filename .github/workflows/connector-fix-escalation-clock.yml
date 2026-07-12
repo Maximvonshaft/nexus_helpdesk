@@ -1,11 +1,11 @@
 name: connector-fix-escalation-clock
 
 on:
-  push:
-    branches:
-      - ci/escalation-clock-612-20260712
+  pull_request:
+    branches: [main]
     paths:
       - ".github/workflows/connector-fix-escalation-clock.yml"
+      - "backend/tests/test_nexus_osr_webchat_escalation_hook.py"
   workflow_dispatch:
 
 permissions:
@@ -13,15 +13,17 @@ permissions:
 
 jobs:
   apply:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Checkout owned branch
+      - name: Checkout exact PR branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ci/escalation-clock-612-20260712
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           persist-credentials: true
+
       - name: Apply deterministic test-only patch
         run: |
           set -Eeuo pipefail
@@ -31,85 +33,86 @@ jobs:
           path = Path('backend/tests/test_nexus_osr_webchat_escalation_hook.py')
           text = path.read_text(encoding='utf-8')
 
-          old = 'import sys\nfrom pathlib import Path\n'
-          new = 'import sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n'
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
+          import_old = 'import sys\nfrom pathlib import Path\n'
+          import_new = 'import sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n'
+          if import_old in text:
+              text = text.replace(import_old, import_new, 1)
+          elif import_new not in text:
               raise SystemExit('IMPORT_BLOCK_NOT_FOUND')
 
-          old = 'from app.services import webchat_ai_safe_service  # noqa: E402\n'
-          new = (
+          policy_old = 'from app.services import webchat_ai_safe_service  # noqa: E402\n'
+          policy_new = (
               'from app.services import webchat_ai_safe_service  # noqa: E402\n'
               'from app.services.nexus_osr.policies import HumanHoursPolicy  # noqa: E402\n'
           )
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
+          if policy_old in text:
+              text = text.replace(policy_old, policy_new, 1)
+          elif policy_new not in text:
               raise SystemExit('POLICY_IMPORT_NOT_FOUND')
 
-          old = '''@pytest.fixture(autouse=True)
-          def reset_webchat_settings(monkeypatch):
-              monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
-              monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", False, raising=False)
-          '''
-          new = '''@pytest.fixture(autouse=True)
-          def reset_webchat_settings(monkeypatch):
-              monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
-              monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", False, raising=False)
-              original_evaluate = HumanHoursPolicy.evaluate
-              fixed_now = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
+          fixture_anchor = 'def _online_hours() -> dict[str, list[list[str]]]:\n'
+          fixture = '''@pytest.fixture(autouse=True)
+def freeze_human_hours_default_clock(monkeypatch):
+    original_evaluate = HumanHoursPolicy.evaluate
+    fixed_now = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
 
-              def evaluate_at_fixed_time(self, now=None):
-                  return original_evaluate(self, fixed_now if now is None else now)
+    def evaluate_at_fixed_time(self, now=None):
+        return original_evaluate(self, fixed_now if now is None else now)
 
-              monkeypatch.setattr(HumanHoursPolicy, "evaluate", evaluate_at_fixed_time)
-          '''
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit('FIXTURE_BLOCK_NOT_FOUND')
-
-          anchor = '''def add_hours(db, *, online: bool, country_code: str = "ZZ", channel: str = "webchat", queue_key: str = "zz-webchat") -> None:
-          '''
-          addition = '''def test_online_hours_boundary_is_explicit_and_not_wall_clock_dependent():
-              policy = HumanHoursPolicy(
-                  queue_key="zz-webchat",
-                  timezone_name="UTC",
-                  weekly_hours={
-                      day: [("00:00", "23:59")]
-                      for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-                  },
-              )
-              assert policy.evaluate(datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)).is_online is True
-              assert policy.evaluate(datetime(2026, 7, 6, 23, 59, 30, tzinfo=timezone.utc)).is_online is False
+    monkeypatch.setattr(HumanHoursPolicy, "evaluate", evaluate_at_fixed_time)
 
 
-          '''
-          if addition not in text:
-              if anchor not in text:
-                  raise SystemExit('TEST_INSERTION_ANCHOR_NOT_FOUND')
-              text = text.replace(anchor, addition + anchor, 1)
+'''
+          if fixture not in text:
+              if fixture_anchor not in text:
+                  raise SystemExit('FIXTURE_ANCHOR_NOT_FOUND')
+              text = text.replace(fixture_anchor, fixture + fixture_anchor, 1)
+
+          test_anchor = 'def add_hours(db, *, online: bool, country_code: str = "ZZ", channel: str = "webchat", queue_key: str = "zz-webchat") -> None:\n'
+          boundary_test = '''def test_online_hours_boundary_is_explicit_and_not_wall_clock_dependent():
+    policy = HumanHoursPolicy(
+        queue_key="zz-webchat",
+        timezone_name="UTC",
+        weekly_hours={
+            day: [("00:00", "23:59")]
+            for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+        },
+    )
+    assert policy.evaluate(datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)).is_online is True
+    assert policy.evaluate(datetime(2026, 7, 6, 23, 59, 30, tzinfo=timezone.utc)).is_online is False
+
+
+'''
+          if boundary_test not in text:
+              if test_anchor not in text:
+                  raise SystemExit('TEST_ANCHOR_NOT_FOUND')
+              text = text.replace(test_anchor, boundary_test + test_anchor, 1)
 
           path.write_text(text, encoding='utf-8')
           PY
           python -m py_compile backend/tests/test_nexus_osr_webchat_escalation_hook.py
           git diff --check
+
       - name: Install focused dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install -r backend/requirements.txt
+
       - name: Run focused regression
         env:
           PYTHONPATH: backend
           APP_ENV: test
           DATABASE_URL: sqlite:////tmp/escalation-clock-612.db
         run: pytest -q backend/tests/test_nexus_osr_webchat_escalation_hook.py
+
       - name: Commit exact test repair
         run: |
           set -Eeuo pipefail
+          if git diff --quiet; then
+            exit 0
+          fi
           git config user.name "nexus-ci-determinism"
           git config user.email "nexus-ci-determinism@users.noreply.github.com"
           git add backend/tests/test_nexus_osr_webchat_escalation_hook.py
           git commit -m "test(osr): freeze Human Hours escalation clock"
-          git push origin HEAD:ci/escalation-clock-612-20260712
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
