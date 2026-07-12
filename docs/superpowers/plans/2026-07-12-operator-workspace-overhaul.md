@@ -4,7 +4,8 @@
 
 - Work Item: #525
 - Owner-authorized frontend-first slice: #525 comment `4952519415`
-- Base: `main@528309deed01f246568867e69cdbd235026cfc61`
+- Original implementation base: `main@528309deed01f246568867e69cdbd235026cfc61`
+- Latest merge-candidate base verified during delivery: `main@9ae6e9f6aa3742e8576dbe7270a6f17d691dc312`
 - Product authority: `webapp/PRODUCT.md`
 - Design authority: `webapp/DESIGN.md`
 - Machine authority: `webapp/design/frontend-product-foundation.v1.json`
@@ -50,9 +51,10 @@ This slice must organize existing server truth. It must not fabricate Tenant own
 
 1. **Scoped queue rail**
    - scope editor;
-   - state/source/owner/SLA/retry filters;
+   - state/source/owner/SLA/sort controls;
    - HMAC cursor paging;
-   - queue row: source, priority, owner, SLA, retry, reopened and source status.
+   - queue row: source, priority, owner, SLA, retry, reopened and source status;
+   - priority and retry are fully visible in task state; dedicated priority/retry filter controls are intentionally left for a bounded follow-up because they are not required for the action/outcome loop to function.
 2. **Case work surface**
    - case identity and source-safe summary;
    - Case Spine;
@@ -110,12 +112,14 @@ Unknown evidence remains `系统记录`; it is never promoted to authoritative f
 Only existing governed server actions are integrated:
 
 - accept/force takeover;
-- release;
+- decline/release;
 - resume AI;
 - customer reply through Support Conversation reply boundary;
 - Speedaf phone lookup, work order, address update and cancel preview/confirm.
 
 Frontend checks are usability hints only. Backend authorization remains final. Every disabled action must expose a bounded reason.
+
+The existing read-state value is shown when supplied by the backend. A manual mark-unread toggle is not claimed as part of this delivery.
 
 ## Test-first sequence
 
