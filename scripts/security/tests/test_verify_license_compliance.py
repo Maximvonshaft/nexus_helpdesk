@@ -98,6 +98,7 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
                 "schema_version": "nexus_installed_license_evidence_v1",
                 "components": [
                     {
+                        "purl": self.PURL,
                         "package": "psycopg",
                         "version": "3.2.6",
                         "license_files": [
@@ -194,6 +195,35 @@ class VerifyLicenseComplianceTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ComplianceError, "policy_exception_missing"
+            ):
+                self._verify(fixture, root / "out.json")
+
+    def test_installed_python_evidence_cannot_authorize_npm_component(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self._fixture(root)
+            npm_purl = "pkg:npm/psycopg@3.2.6"
+            compliance = fixture[0]
+            policy = fixture[1]
+            sbom = fixture[2]
+            notice = fixture[4]
+
+            compliance_data = json.loads(compliance.read_text())
+            compliance_data["entries"][0]["purl"] = npm_purl
+            compliance.write_text(json.dumps(compliance_data), encoding="utf-8")
+            policy_data = json.loads(policy.read_text())
+            policy_data["exceptions"][0]["purl"] = npm_purl
+            policy.write_text(json.dumps(policy_data), encoding="utf-8")
+            sbom_data = json.loads(sbom.read_text())
+            sbom_data["components"][0]["purl"] = npm_purl
+            sbom.write_text(json.dumps(sbom_data), encoding="utf-8")
+            notice.write_text(
+                f"{npm_purl} — {self.LICENSE}\nUpstream source: {self.SOURCE}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ComplianceError, "installed_component_missing"
             ):
                 self._verify(fixture, root / "out.json")
 
