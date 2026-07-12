@@ -62,10 +62,11 @@ jobs:
           from pathlib import Path
           text = Path("docs/ai/remote-skills-registry.yaml").read_text(encoding="utf-8")
           assert text.startswith("schema: nexus.osr.remote-skills-registry.v1\n")
-          assert 'name: test_release_candidate_convergence' in text
-          assert 'auto_upgrade: false' in text
+          assert "name: test_release_candidate_convergence" in text
+          assert "auto_upgrade: false" in text
           PY
           python -m py_compile \
+            scripts/release/generate_rc_test_env.py \
             scripts/release/seed_rc_test_data.py \
             scripts/release/rc_test_http_smoke.py \
             scripts/release/rc_test_side_effects.py \
@@ -80,155 +81,88 @@ jobs:
         run: npm ci
 
       - name: Generate isolated RC environment
-        env:
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
-          import os
-          import secrets
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          sha = os.environ["SOURCE_SHA"].strip()
-          if len(sha) != 40:
-              raise SystemExit("SOURCE_SHA must be an exact commit SHA")
-          pg_password = secrets.token_urlsafe(24)
-          jwt_secret = secrets.token_urlsafe(48)
-          contract_secret = secrets.token_urlsafe(48)
-          admin_password = secrets.token_urlsafe(24)
-          image_tag = f"nexusdesk/helpdesk:rc-test-{sha}"
-          build_time = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-          origin = os.environ["RC_PUBLIC_ORIGIN"].rstrip("/")
-          values = {
-              "COMPOSE_PROJECT_NAME": os.environ["COMPOSE_PROJECT_NAME"],
-              "RC_IMAGE_TAG": image_tag,
-              "IMAGE_TAG": image_tag,
-              "RC_POSTGRES_IMAGE": "pgvector/pgvector:pg16",
-              "RC_NGINX_IMAGE": "nginx:1.27-alpine",
-              "GIT_SHA": sha,
-              "BUILD_TIME": build_time,
-              "APP_VERSION": f"rc-test-{sha[:12]}",
-              "FRONTEND_BUILD_SHA": sha,
-              "RC_APP_PORT": "18083",
-              "RC_BASE_URL": os.environ["RC_BASE_URL"].rstrip("/"),
-              "RC_PUBLIC_ORIGIN": origin,
-              "RC_TEST_TENANT_KEY": "rc-test",
-              "RC_TEST_CHANNEL_KEY": "website",
-              "RC_TEST_DISPLAY_NAME": "RC Test Website",
-              "POSTGRES_DB": "nexus_rc",
-              "POSTGRES_USER": "nexus_rc",
-              "POSTGRES_PASSWORD": pg_password,
-              "DATABASE_URL": f"postgresql+psycopg://nexus_rc:{pg_password}@postgres-rc:5432/nexus_rc",
-              "DATABASE_ECHO": "false",
-              "APP_ENV": "production",
-              "SECRET_KEY": jwt_secret,
-              "RUNTIME_CONTRACT_SIGNING_SECRET": contract_secret,
-              "JWT_ISSUER": "nexusdesk-rc-test",
-              "JWT_AUDIENCE": "nexusdesk-rc-test-users",
-              "ACCESS_TOKEN_EXPIRE_HOURS": "1",
-              "AUTO_INIT_DB": "false",
-              "SEED_DEMO_DATA": "false",
-              "ALLOW_DEV_AUTH": "false",
-              "ALLOW_LEGACY_INTEGRATION_API_KEY": "false",
-              "ALLOWED_ORIGINS": origin,
-              "TRUSTED_PROXY_IPS": "",
-              "WEBCHAT_ALLOWED_ORIGINS": origin,
-              "WEBCHAT_ALLOW_NO_ORIGIN": "false",
-              "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT": "false",
-              "WEBCHAT_RATE_LIMIT_BACKEND": "database",
-              "WEBCHAT_AI_AUTO_REPLY_MODE": "off",
-              "WEBCHAT_AI_ENABLED": "false",
-              "WEBCHAT_AI_RECONCILER_ENABLED": "false",
-              "WEBCHAT_WS_ENABLED": "false",
-              "WEBCHAT_WS_PUBLIC_ENABLED": "false",
-              "WEBCHAT_WS_ADMIN_ENABLED": "false",
-              "WEBCHAT_WS_BROKER": "database",
-              "WEBCHAT_VOICE_ENABLED": "false",
-              "WEBCALL_AI_PRODUCTION_ENABLED": "false",
-              "WEBCALL_AI_AGENT_ENABLED": "false",
-              "STORAGE_BACKEND": "local",
-              "UPLOAD_ROOT": "/app/backend/uploads",
-              "LOCAL_STORAGE_BACKUP_REQUIRED": "true",
-              "LOCAL_STORAGE_BACKUP_PATH": "/var/backups/nexusdesk/uploads",
-              "LOCAL_STORAGE_BACKUP_ACKNOWLEDGED": "true",
-              "REQUIRE_REMOTE_STORAGE_IN_PRODUCTION": "false",
-              "KNOWLEDGE_RUNTIME_VERSION": "legacy",
-              "KNOWLEDGE_EMBEDDINGS_ENABLED": "false",
-              "KNOWLEDGE_EMBEDDING_PROVIDER": "deterministic_hash",
-              "WEBCHAT_KNOWLEDGE_REPLY_MODE": "deterministic_direct_answer",
-              "KNOWLEDGE_VECTOR_FALLBACK_ALLOWED": "true",
-              "PROVIDER_RUNTIME_ENABLED": "false",
-              "PROVIDER_RUNTIME_PRIMARY_PROVIDER": "private_ai_runtime",
-              "PROVIDER_RUNTIME_FALLBACK_PROVIDERS": "[]",
-              "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
-              "PROVIDER_RUNTIME_KILL_SWITCH": "true",
-              "PRIVATE_AI_RUNTIME_ENABLED": "false",
-              "ENABLE_OUTBOUND_DISPATCH": "false",
-              "OUTBOUND_PROVIDER": "disabled",
-              "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED": "false",
-              "WHATSAPP_NATIVE_ENABLED": "false",
-              "WHATSAPP_DISPATCH_MODE": "disabled",
-              "EMAIL_MAILBOX_SYNC_ENABLED": "false",
-              "ALLOW_LEGACY_ORIGINLESS_OUTBOUND": "false",
-              "EXTERNAL_CHANNEL_DEPLOYMENT_MODE": "disabled",
-              "EXTERNAL_CHANNEL_TRANSPORT": "disabled",
-              "EXTERNAL_CHANNEL_SYNC_ENABLED": "false",
-              "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED": "false",
-              "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED": "false",
-              "EXTERNAL_CHANNEL_BRIDGE_ENABLED": "false",
-              "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED": "false",
-              "WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED": "false",
-              "WEBCHAT_TRACKING_FACT_SOURCE": "speedaf_api",
-              "SPEEDAF_MCP_ENABLED": "false",
-              "SPEEDAF_TRACK_QUERY_ENABLED": "false",
-              "SPEEDAF_WORK_ORDER_CREATE_ENABLED": "false",
-              "SPEEDAF_UPDATE_ADDRESS_ENABLED": "false",
-              "SPEEDAF_CANCEL_ENABLED": "false",
-              "SPEEDAF_VOICE_CALLBACK_ENABLED": "false",
-              "OPERATIONS_DISPATCH_MODE": "disabled",
-              "OPERATIONS_DISPATCH_ADAPTER": "disabled",
-              "OPERATIONS_DISPATCH_TENANT_AUTHORITY_READY": "false",
-              "METRICS_ENABLED": "false",
-              "LOG_JSON": "true",
-              "REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION": "true",
-              "WEB_CONCURRENCY": "2",
-              "WEB_TIMEOUT": "30",
-              "WORKER_POLL_SECONDS": "0.5",
-              "WEBCHAT_AI_WORKER_POLL_SECONDS": "0.25",
-              "WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS": "0.05",
-              "RC_TEST_ADMIN_USERNAME": "rc_admin",
-              "RC_TEST_ADMIN_PASSWORD": admin_password,
-          }
-          env_path = Path("deploy/.env.rc-test")
-          env_path.write_text(
-              "".join(f"{key}={value}\n" for key, value in values.items()),
-              encoding="utf-8",
-          )
-          env_path.chmod(0o600)
-          PY
+          python scripts/release/generate_rc_test_env.py \
+            --source-sha "${RC_SOURCE_SHA}" \
+            --compose-project "${COMPOSE_PROJECT_NAME}" \
+            --origin "${RC_PUBLIC_ORIGIN}" \
+            --output "${RC_ENV_FILE}"
+          test "$(stat -c '%a' "${RC_ENV_FILE}")" = "600"
 
       - name: Execute isolated candidate chain
-        run: bash scripts/release/run_rc_test_candidate.sh
+        run: |
+          set +e
+          run_log="${RUNNER_TEMP}/rc-run.log"
+          bash scripts/release/run_rc_test_candidate.sh 2>&1 | tee "${run_log}"
+          code=${PIPESTATUS[0]}
+          set -e
+          if [[ "${code}" -ne 0 && ! -f artifacts/rc-test/failure-summary.json ]]; then
+            stage="$(grep -E '^RC_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
+            stage="${stage:-unknown}"
+            python - "${stage}" "${code}" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          stage, code = sys.argv[1:]
+          if not re.fullmatch(r"[a-z0-9_-]{1,64}", stage):
+              stage = "unknown"
+          root = Path("artifacts/rc-test")
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "failure-summary.json").write_text(json.dumps({
+              "schema": "nexus.osr.rc-test-failure-summary.v1",
+              "status": "failed",
+              "stage": stage,
+              "exit_code": int(code),
+              "reason_code": "candidate_chain_failed",
+              "service_states": {},
+          }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          fi
+          exit "${code}"
 
       - name: Scan exact bounded RC evidence
         id: scan-evidence
         if: always()
         run: |
-          set -Eeuo pipefail
+          set +e
           list_file="${RUNNER_TEMP}/rc-evidence-inputs.txt"
           python scripts/release/validate_rc_test_evidence.py \
             artifacts/rc-test \
             --list-output "${list_file}"
-          mapfile -t evidence_files < "${list_file}"
-          if [[ "${#evidence_files[@]}" -eq 0 ]]; then
-            echo "No RC evidence files selected for scanning" >&2
-            exit 2
+          code=$?
+          if [[ "${code}" -eq 0 ]]; then
+            mapfile -t evidence_files < "${list_file}"
+            if [[ "${#evidence_files[@]}" -eq 0 ]]; then
+              code=2
+            else
+              python scripts/security/scan_artifacts.py \
+                --root . \
+                --output artifacts/rc-test/artifact-scan.json \
+                "${evidence_files[@]}"
+              code=$?
+            fi
           fi
-          python scripts/security/scan_artifacts.py \
-            --root . \
-            --output artifacts/rc-test/artifact-scan.json \
-            "${evidence_files[@]}"
+          set -e
+          if [[ "${code}" -ne 0 && ! -f artifacts/rc-test/failure-summary.json ]]; then
+            python - "${code}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          root = Path("artifacts/rc-test")
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "failure-summary.json").write_text(json.dumps({
+              "schema": "nexus.osr.rc-test-failure-summary.v1",
+              "status": "failed",
+              "stage": "artifact-scan",
+              "exit_code": int(sys.argv[1]),
+              "reason_code": "evidence_validation_or_scan_failed",
+              "service_states": {},
+          }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          fi
+          exit "${code}"
 
       - name: Upload verified-safe bounded RC evidence
         if: ${{ always() && steps.scan-evidence.outcome == 'success' }}
