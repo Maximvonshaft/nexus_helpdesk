@@ -55,12 +55,14 @@ jobs:
             image_name="ghcr.io/${repo_lc}/helpdesk"
           fi
           image_name="$(printf '%s' "$image_name" | tr '[:upper:]' '[:lower:]')"
+          image_leaf="${image_name##*/}"
           if [[ ! "$image_name" =~ ^[a-z0-9][a-z0-9._:/-]{0,255}$ ]] \
             || [[ "$image_name" == *"//"* ]] \
             || [[ "$image_name" == *".."* ]] \
             || [[ "$image_name" == */ ]] \
-            || [[ "$image_name" == *: ]]; then
-            echo "::error::image_name is not a safe OCI image name"
+            || [[ "$image_name" == *: ]] \
+            || [[ "$image_leaf" == *:* ]]; then
+            echo "::error::image_name must be an untagged safe OCI image name"
             exit 2
           fi
 
