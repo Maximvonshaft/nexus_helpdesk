@@ -3,6 +3,7 @@ import { defineConfig } from '@playwright/test'
 const port = Number(process.env.PLAYWRIGHT_PORT || 4173)
 const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL?.replace(/\/+$/, '')
 const baseURL = externalBaseURL || `http://127.0.0.1:${port}`
+const rcBrowser = (process.env.RC_RUN_BROWSER_SMOKE || '').toLowerCase() === 'true'
 
 export default defineConfig({
   testDir: './e2e',
@@ -16,12 +17,16 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    launchOptions: {
-      // RC browser traffic is loopback-only. Do not inherit an ambient runner
-      // proxy for 127.0.0.1. The browser executable is the Playwright-pinned
-      // Chromium installed by the RC workflow, not a rolling system Chrome.
-      args: ['--no-proxy-server'],
-    },
+    launchOptions: rcBrowser
+      ? {
+          // RC browser traffic is loopback-only. The RC workflow installs the
+          // Playwright-pinned Chromium and bypasses ambient runner proxies.
+          args: ['--no-proxy-server'],
+        }
+      : {
+          // Preserve the repository's existing branded-Chrome smoke contract.
+          channel: 'chrome',
+        },
   },
   webServer: externalBaseURL ? undefined : {
     command: `npm run preview -- --host 127.0.0.1 --port ${port}`,
