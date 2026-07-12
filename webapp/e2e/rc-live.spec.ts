@@ -11,7 +11,7 @@ test.skip(!rcConfigured, 'RC live browser environment is not configured')
 test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
-  console.log('RC_BROWSER_STAGE=public-page')
+  console.log('RC_BROWSER_STAGE=public-navigation')
   await test.step('public WebChat widget loads and initializes its server session', async () => {
     const widgetRequest = page.waitForResponse((response) => {
       const url = new URL(response.url())
@@ -22,7 +22,15 @@ test('RC public WebChat message is visible in the authenticated operator surface
       return response.request().method() === 'POST' && url.pathname === '/api/webchat/init'
     })
 
-    await page.goto('/webchat/demo/')
+    const navigationResponse = await page.goto('/webchat/demo/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 20_000,
+    })
+    expect(navigationResponse).not.toBeNull()
+    expect(navigationResponse?.ok()).toBeTruthy()
+
+    console.log('RC_BROWSER_STAGE=public-page')
+    await expect(page.locator('script[data-auto-open="true"]')).toHaveCount(1)
 
     console.log('RC_BROWSER_STAGE=public-widget')
     const widgetResponse = await widgetRequest
@@ -59,7 +67,12 @@ test('RC public WebChat message is visible in the authenticated operator surface
 
   console.log('RC_BROWSER_STAGE=login')
   await test.step('isolated operator authentication succeeds', async () => {
-    await page.goto('/login')
+    const loginResponse = await page.goto('/login', {
+      waitUntil: 'domcontentloaded',
+      timeout: 20_000,
+    })
+    expect(loginResponse).not.toBeNull()
+    expect(loginResponse?.ok()).toBeTruthy()
     await page.getByLabel('账号').fill(adminUsername)
     await page.getByLabel('密码').fill(adminPassword)
     await page.getByRole('button', { name: '登录' }).click()
@@ -68,7 +81,12 @@ test('RC public WebChat message is visible in the authenticated operator surface
 
   console.log('RC_BROWSER_STAGE=operator-visibility')
   await test.step('operator selects the matching conversation and sees the same message', async () => {
-    await page.goto('/webchat')
+    const operatorResponse = await page.goto('/webchat', {
+      waitUntil: 'domcontentloaded',
+      timeout: 20_000,
+    })
+    expect(operatorResponse).not.toBeNull()
+    expect(operatorResponse?.ok()).toBeTruthy()
     await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
 
     // The workbench selects its first queue item by default, which is not a
