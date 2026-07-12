@@ -281,7 +281,13 @@ def validate_raw_digests(value: object) -> None:
             raise EvidenceError("raw_digest_value_invalid")
 
 
-def validate_manifest(value: object) -> None:
+def validate_manifest(
+    value: object,
+    *,
+    sbom_path: Path,
+    vulnerability_summary_path: Path,
+    license_summary_path: Path,
+) -> None:
     if not isinstance(value, dict):
         raise EvidenceError("manifest_not_object")
     expected = {
@@ -310,13 +316,16 @@ def validate_manifest(value: object) -> None:
         str(value["image_id"])
     ):
         raise EvidenceError("manifest_identity_invalid")
-    for key in (
-        "license_summary_sha256",
-        "sbom_sha256",
-        "vulnerability_summary_sha256",
-    ):
-        if not _SHA256.fullmatch(str(value[key])):
+    expected_digests = {
+        "sbom_sha256": _digest(sbom_path),
+        "vulnerability_summary_sha256": _digest(vulnerability_summary_path),
+        "license_summary_sha256": _digest(license_summary_path),
+    }
+    for key, expected_digest in expected_digests.items():
+        if not _SHA256.fullmatch(str(value.get(key) or "")):
             raise EvidenceError("manifest_digest_invalid")
+        if value[key] != expected_digest:
+            raise EvidenceError(f"manifest_digest_mismatch:{key}")
     if (
         value["image_pushed"] is not False
         or value["deployment_performed"] is not False
@@ -474,8 +483,8 @@ def validate_binding(
         "license_compliance_sha256": _digest(compliance_path),
         "installed_license_evidence_sha256": _digest(installed_path),
     }
-    for key, expected in expected_digests.items():
-        if value.get(key) != expected:
+    for key, expected_digest in expected_digests.items():
+        if value.get(key) != expected_digest:
             raise EvidenceError(f"binding_digest_mismatch:{key}")
     _walk_forbidden(value)
 
@@ -568,7 +577,12 @@ def validate_evidence_set(
             "nexus_container_license_assurance_v1",
             require_pass=True,
         )
-        validate_manifest(manifest_value)
+        validate_manifest(
+            manifest_value,
+            sbom_path=sbom,
+            vulnerability_summary_path=vulnerabilities,
+            license_summary_path=licenses,
+        )
         validate_policy_input(policy_input_value)
         validate_installed_evidence(installed_value)
         validate_compliance(compliance_value)
