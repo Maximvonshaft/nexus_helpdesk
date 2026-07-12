@@ -131,7 +131,7 @@ jobs:
       - name: Strict readiness configuration check
         env:
           APP_ENV: development
-          DATABASE_URL: postgresql+psycop://helpdesk@127.0.0.1:5432/helpdesk
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           STORAGE_BACKEND: s3
           EXTERNAL_CHANNEL_TRANSPORT: disabled
           EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled
