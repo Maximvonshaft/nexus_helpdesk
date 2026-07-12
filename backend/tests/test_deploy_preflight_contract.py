@@ -13,6 +13,7 @@ def _run_preflight(
     tmp_path: Path,
     *,
     readiness_exit_code: int,
+    settings_exit_code: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -26,6 +27,9 @@ if [[ "${1:-}" == "scripts/validate_production_readiness.py" ]]; then
     exit "$READINESS_EXIT_CODE"
 fi
 cat >/dev/null
+if [[ "$SETTINGS_EXIT_CODE" -ne 0 ]]; then
+    exit "$SETTINGS_EXIT_CODE"
+fi
 printf 'Preflight OK\\n'
 """,
         encoding="utf-8",
@@ -36,6 +40,7 @@ printf 'Preflight OK\\n'
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["TRACE_FILE"] = str(trace_file)
     env["READINESS_EXIT_CODE"] = str(readiness_exit_code)
+    env["SETTINGS_EXIT_CODE"] = str(settings_exit_code)
 
     completed = subprocess.run(
         ["bash", str(PREFLIGHT)],
@@ -58,6 +63,18 @@ def test_preflight_propagates_readiness_failure_and_stops(tmp_path: Path) -> Non
 
     assert completed.returncode == 23
     assert calls == ["scripts/validate_production_readiness.py"]
+    assert "Preflight OK" not in completed.stdout
+
+
+def test_preflight_propagates_settings_failure(tmp_path: Path) -> None:
+    completed, calls = _run_preflight(
+        tmp_path,
+        readiness_exit_code=0,
+        settings_exit_code=17,
+    )
+
+    assert completed.returncode == 17
+    assert calls == ["scripts/validate_production_readiness.py", "-"]
     assert "Preflight OK" not in completed.stdout
 
 
