@@ -18,7 +18,7 @@ on:
         default: true
         type: boolean
       check_metrics:
-        description: "Check /metrics with X-Metrics-Token from secret STAGING_METRICS_TOKEN"
+        description: "Check /metrics; secret-bearing target must match STAGING_SMOKE_ALLOWED_BASE_URL"
         required: true
         default: false
         type: boolean
@@ -28,12 +28,12 @@ on:
         default: ""
         type: string
       check_outbound_email_admin:
-        description: "Run real admin browser smoke for /outbound-email using staging admin secrets"
+        description: "Run admin browser smoke; target must match STAGING_SMOKE_ALLOWED_BASE_URL"
         required: true
         default: false
         type: boolean
       check_outbound_email_test_send:
-        description: "Send one real SMTP test email after explicit confirmation"
+        description: "Send one real SMTP test email only to the allowlisted staging target"
         required: true
         default: false
         type: boolean
@@ -65,6 +65,9 @@ jobs:
           RAW_CORS_ORIGIN: ${{ inputs.cors_origin }}
           RAW_ACCOUNT_ID: ${{ inputs.outbound_email_account_id }}
           RAW_TEST_SEND_CONFIRM: ${{ inputs.outbound_email_test_send_confirm }}
+          RAW_ALLOWED_SECRET_BASE_URL: ${{ vars.STAGING_SMOKE_ALLOWED_BASE_URL }}
+          CHECK_METRICS: ${{ inputs.check_metrics }}
+          CHECK_ADMIN: ${{ inputs.check_outbound_email_admin }}
           CHECK_TEST_SEND: ${{ inputs.check_outbound_email_test_send }}
         run: |
           set -Eeuo pipefail
@@ -109,6 +112,10 @@ jobs:
 
           base_url = normalize_endpoint("RAW_BASE_URL")
           cors_origin = normalize_endpoint("RAW_CORS_ORIGIN", allow_empty=True)
+          allowed_secret_base_url = normalize_endpoint(
+              "RAW_ALLOWED_SECRET_BASE_URL",
+              allow_empty=True,
+          )
           expected_status = clean_single_line("RAW_EXPECTED_STATUS")
           if re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", expected_status) is None:
               fail("expected_status_format")
@@ -117,7 +124,15 @@ jobs:
           if account_id and (not account_id.isdigit() or int(account_id) <= 0):
               fail("outbound_email_account_id_must_be_positive_integer")
 
+          check_metrics = os.environ.get("CHECK_METRICS", "false").lower() == "true"
+          check_admin = os.environ.get("CHECK_ADMIN", "false").lower() == "true"
           check_test_send = os.environ.get("CHECK_TEST_SEND", "false").lower() == "true"
+          secret_checks = check_metrics or check_admin or check_test_send
+          if secret_checks and not allowed_secret_base_url:
+              fail("STAGING_SMOKE_ALLOWED_BASE_URL_required_for_secret_checks")
+          if secret_checks and base_url != allowed_secret_base_url:
+              fail("secret_bearing_target_not_allowlisted")
+
           confirmation = clean_single_line("RAW_TEST_SEND_CONFIRM", allow_empty=True)
           if check_test_send and confirmation != CONFIRM:
               fail("real_email_confirmation_required")
@@ -127,6 +142,7 @@ jobs:
               "expected_status": expected_status,
               "cors_origin": cors_origin,
               "account_id": account_id,
+              "secret_target_authorized": "true" if secret_checks else "false",
               "test_send_authorized": "true" if check_test_send else "false",
           }
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
@@ -252,7 +268,7 @@ jobs:
 
       - name: Check optional metrics endpoint
         id: metrics_check
-        if: ${{ inputs.check_metrics }}
+        if: ${{ inputs.check_metrics && steps.target.outputs.secret_target_authorized == 'true' }}
         env:
           SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
           STAGING_METRICS_TOKEN: ${{ secrets.STAGING_METRICS_TOKEN }}
@@ -272,7 +288,7 @@ jobs:
 
       - name: Run optional Outbound Email admin browser smoke
         id: outbound_email_admin
-        if: ${{ inputs.check_outbound_email_admin }}
+        if: ${{ inputs.check_outbound_email_admin && steps.target.outputs.secret_target_authorized == 'true' }}
         env:
           PLAYWRIGHT_BASE_URL: ${{ steps.target.outputs.base_url }}
           NEXUS_REAL_ADMIN_SMOKE: "1"
@@ -292,7 +308,7 @@ jobs:
 
       - name: Run optional Outbound Email production test-send gate
         id: outbound_email_send
-        if: ${{ inputs.check_outbound_email_test_send && steps.target.outputs.test_send_authorized == 'true' }}
+        if: ${{ inputs.check_outbound_email_test_send && steps.target.outputs.secret_target_authorized == 'true' && steps.target.outputs.test_send_authorized == 'true' }}
         env:
           NEXUS_BASE_URL: ${{ steps.target.outputs.base_url }}
           NEXUS_ADMIN_USERNAME: ${{ secrets.STAGING_ADMIN_USERNAME }}
@@ -318,6 +334,7 @@ jobs:
         env:
           SUMMARY_TARGET: ${{ steps.target.outputs.base_url }}
           SUMMARY_CORS_ORIGIN: ${{ steps.target.outputs.cors_origin }}
+          SUMMARY_SECRET_TARGET_AUTHORIZED: ${{ steps.target.outputs.secret_target_authorized }}
           SUMMARY_HEALTH_READY: ${{ steps.health_ready.outcome }}
           SUMMARY_SECURITY_HEADERS: ${{ steps.security_headers.outcome }}
           SUMMARY_WEBCHAT_ASSETS: ${{ steps.webchat_assets.outcome }}
@@ -335,6 +352,7 @@ jobs:
               "## Manual staging smoke summary",
               "",
               f"- Target: `{os.environ.get('SUMMARY_TARGET', '[validation-failed]')}`",
+              f"- Secret-bearing target authorized: `{os.environ.get('SUMMARY_SECRET_TARGET_AUTHORIZED', 'false')}`",
               f"- Health/ready: `{os.environ.get('SUMMARY_HEALTH_READY', 'not-run')}`",
               f"- Security headers: `{os.environ.get('SUMMARY_SECURITY_HEADERS', 'not-run')}`",
               f"- WebChat assets: `{os.environ.get('SUMMARY_WEBCHAT_ASSETS', 'not-run')}`",
