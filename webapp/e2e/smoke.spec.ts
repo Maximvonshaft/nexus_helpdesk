@@ -247,7 +247,7 @@ async function fulfillApi(route: Route) {
   }
   if (path === '/api/knowledge-items') {
     return json({
-      total: 1,
+      total: 2,
       limit: 20,
       offset: 0,
       items: [{
@@ -274,6 +274,30 @@ async function fulfillApi(route: Route) {
         evidence: 'ok',
         fact_question: 'Where is my parcel?',
         fact_answer: 'Use the tracking tool before answering delivery status questions.',
+      }, {
+        id: 2,
+        item_key: 'kb-2',
+        title: 'Return policy',
+        status: 'draft',
+        source_type: 'manual',
+        knowledge_kind: 'policy',
+        audience_scope: 'customer',
+        priority: 20,
+        parsing_status: 'ready',
+        fact_status: 'draft',
+        answer_mode: 'guided_answer',
+        published_version: 0,
+        indexed_version: 0,
+        chunk_count: 1,
+        draft_ready: true,
+        publish_ready: true,
+        retrieval_test_ready: true,
+        has_conflict: false,
+        updated_at: '2026-07-04T09:00:00Z',
+        href: '#',
+        evidence: 'draft',
+        fact_question: 'Can I return my parcel?',
+        fact_answer: 'Confirm the applicable return window and merchant policy before answering.',
       }],
     })
   }
@@ -474,4 +498,44 @@ test('mobile navigation and segment controls meet the 44px target floor', async 
   await page.getByRole('button', { name: /WebChat Visitor/ }).click()
   const back = page.getByRole('button', { name: '‹ 会话' })
   expect((await back.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+})
+
+
+
+test('knowledge editing protects drafts and requires an explicit publication review', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.goto('/webchat?tab=knowledge')
+
+  const title = page.getByLabel('知识标题')
+  await expect(title).toHaveValue('Delivery status')
+  await title.fill('Edited delivery status')
+
+  await page.getByRole('button', { name: /Return policy/ }).click()
+  const discard = page.getByRole('dialog', { name: '放弃未保存的修改？' })
+  await expect(discard).toBeVisible()
+  await discard.getByRole('button', { name: '取消' }).click()
+  await expect(discard).toHaveCount(0)
+  await expect(title).toHaveValue('Edited delivery status')
+
+  await page.getByRole('button', { name: /Return policy/ }).click()
+  await expect(discard).toBeVisible()
+  await discard.getByRole('button', { name: '放弃修改' }).click()
+  await expect(discard).toHaveCount(0)
+  await expect(title).toHaveValue('Return policy')
+
+  await title.fill('Return policy — reviewed')
+  await page.getByRole('button', { name: '审核并发布' }).click()
+  const review = page.getByRole('dialog', { name: '审核并发布知识' })
+  await expect(review).toBeVisible()
+  await expect(review.getByText('Return policy — reviewed')).toBeVisible()
+  await expect(review.getByText('Can I return my parcel?')).toBeVisible()
+  await expect(review.getByText(/AI Runtime 只能在后续同步完成后使用/)).toBeVisible()
+  await review.getByRole('button', { name: '取消' }).click()
+  await expect(review).toHaveCount(0)
+  await expect(title).toHaveValue('Return policy — reviewed')
+
+  await expect.poll(() => page.evaluate(() => {
+    const event = new Event('beforeunload', { cancelable: true })
+    return window.dispatchEvent(event)
+  })).toBe(false)
 })
