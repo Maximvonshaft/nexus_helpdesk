@@ -4,6 +4,9 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
+from sqlalchemy.exc import IntegrityError
+
+from app.models import ExternalChannelUnresolvedEvent
 from app.services import external_channel_bridge as bridge
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,13 +56,30 @@ class _FakeDB:
         return _Nested()
 
 
+class _RaceDB(_FakeDB):
+    def __init__(self, winner):
+        super().__init__(None)
+        self.winner = winner
+        self.query_count = 0
+
+    def query(self, _model):
+        self.query_count += 1
+        return _Query(None if self.query_count == 1 else self.winner)
+
+    def flush(self):
+        self.flush_count += 1
+        if self.flush_count == 1:
+            raise IntegrityError("insert", {}, RuntimeError("duplicate"))
+
+
 def test_bridge_owns_the_public_persistence_signature() -> None:
     signature = inspect.signature(bridge.persist_unresolved_external_channel_event)
     assert list(signature.parameters) == ["db", "event", "source", "session_key", "error"]
     assert signature.parameters["event"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
-def test_payload_hash_is_canonical_and_order_independent() -> None:
+def test_payload_hash_is_native_and_canonical() -> None:
+    assert "payload_hash" in ExternalChannelUnresolvedEvent.__table__.c
     left = {"type": "message", "route": {"recipient": "+1", "threadId": "t"}, "value": 7}
     right = {"value": 7, "route": {"threadId": "t", "recipient": "+1"}, "type": "message"}
     assert bridge._external_channel_payload_hash(left) == bridge._external_channel_payload_hash(right)
@@ -129,6 +149,40 @@ def test_new_event_uses_native_hash_field_and_nested_transaction() -> None:
     assert row.replay_count == 0
     assert db.nested_count == 1
     assert db.flush_count == 1
+
+
+def test_unique_race_returns_the_winning_active_row() -> None:
+    winner = SimpleNamespace(
+        id=12,
+        source="legacy",
+        session_key="session-3",
+        event_type=None,
+        recipient=None,
+        source_chat_id=None,
+        preferred_reply_contact=None,
+        payload_hash="winner",
+        payload_json="{}",
+        status="pending",
+        replay_count=0,
+        last_error=None,
+        updated_at=None,
+    )
+    db = _RaceDB(winner)
+    event = {"type": "message", "session_key": "session-3"}
+
+    row = bridge.persist_unresolved_external_channel_event(
+        db,
+        event=event,
+        source="legacy",
+        error="retired-ingest",
+    )
+
+    assert row is winner
+    assert row.event_type == "message"
+    assert row.last_error == "retired-ingest"
+    assert db.nested_count == 1
+    assert db.query_count == 2
+    assert db.flush_count == 2
 
 
 def test_service_package_has_no_external_channel_monkey_patch() -> None:
