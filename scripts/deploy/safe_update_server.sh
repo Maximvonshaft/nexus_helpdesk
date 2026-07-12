@@ -1,35 +1,98 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/.deploy_backups/$STAMP}"
-mkdir -p "$BACKUP_DIR"
+BACKUP_PARENT="$(dirname "$BACKUP_DIR")"
 
-echo "== NexusDesk safe update preflight =="
-echo "repo=$ROOT_DIR"
-echo "backup_dir=$BACKUP_DIR"
+if [ -e "$BACKUP_DIR" ]; then
+  echo "refusing existing backup target: $BACKUP_DIR" >&2
+  exit 2
+fi
+mkdir -p -- "$BACKUP_PARENT"
 
-git status --short || true
+STAGING_DIR="$(mktemp -d "${BACKUP_DIR}.tmp.XXXXXX")"
+chmod 700 "$STAGING_DIR"
+cleanup() {
+  rm -rf -- "$STAGING_DIR"
+}
+trap cleanup EXIT
 
-for f in Dockerfile deploy/.env.prod deploy/docker-compose.server.yml deploy/nginx/default.conf backend/.env; do
-  if [ -f "$f" ]; then
-    mkdir -p "$BACKUP_DIR/$(dirname "$f")"
-    cp -a "$f" "$BACKUP_DIR/$f"
-    echo "backed up $f"
+files=(
+  Dockerfile
+  deploy/.env.prod
+  deploy/docker-compose.server.yml
+  deploy/nginx/default.conf
+  backend/.env
+)
+
+for relative_path in "${files[@]}"; do
+  if [ -L "$relative_path" ]; then
+    echo "refusing symlinked protected file: $relative_path" >&2
+    exit 3
+  fi
+  if [ -e "$relative_path" ] && [ ! -f "$relative_path" ]; then
+    echo "refusing non-regular protected file: $relative_path" >&2
+    exit 3
   fi
 done
 
-echo
-cat <<'EOF'
-Next recommended manual steps:
-1) Review git status and local production files before pulling/applying patches.
-2) Run: bash scripts/deploy/preflight.sh
-3) Run: bash scripts/deploy/backup_postgres.sh ./backups
-4) Run migrations only after backup is confirmed: bash scripts/deploy/run_migrations.sh
-5) Restart app/worker services according to your deployment mode.
+manifest="$STAGING_DIR/SHA256SUMS"
+: > "$manifest"
+chmod 600 "$manifest"
+copied=0
 
-This script intentionally does not run git reset, delete files, or modify the database.
-EOF
+for relative_path in "${files[@]}"; do
+  if [ ! -f "$relative_path" ]; then
+    echo "Missing optional protected file: $relative_path"
+    continue
+  fi
+
+  destination="$STAGING_DIR/$relative_path"
+  mkdir -p -- "$(dirname "$destination")"
+  chmod 700 "$(dirname "$destination")"
+  install -m 600 -- "$relative_path" "$destination"
+  (
+    cd "$STAGING_DIR"
+    sha256sum -- "$relative_path"
+  ) >> "$manifest"
+  copied=$((copied + 1))
+done
+
+if [ "$copied" -eq 0 ]; then
+  echo "no protected files were available to back up" >&2
+  exit 4
+fi
+
+find "$STAGING_DIR" -type d -exec chmod 700 {} +
+find "$STAGING_DIR" -type f -exec chmod 600 {} +
+(
+  cd "$STAGING_DIR"
+  sha256sum --check --strict SHA256SUMS >/dev/null
+)
+
+mv -T -- "$STAGING_DIR" "$BACKUP_DIR"
+trap - EXIT
+chmod 700 "$BACKUP_DIR"
+
+printf 'Configuration backup verified\n'
+printf 'backup_dir=%s\n' "$BACKUP_DIR"
+printf 'protected_files=%s\n' "$copied"
+printf 'manifest=%s\n' "$BACKUP_DIR/SHA256SUMS"
+printf '\nCurrent git status:\n'
+if ! git status --short; then
+  echo "warning: git status could not be read" >&2
+fi
+printf '\nNext steps:\n'
+printf '%s\n' \
+  '1. Confirm deploy/.env.prod is preserved.' \
+  '2. Pull or checkout the approved commit.' \
+  '3. Run the production preflight.' \
+  '4. Back up PostgreSQL.' \
+  '5. Run migrations.' \
+  '6. Build and start the candidate stack.' \
+  '7. Run health, readiness, runtime warmup, and public smoke checks.'
