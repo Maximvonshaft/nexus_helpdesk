@@ -1,4 +1,5 @@
 name: connector-fix-provider-rule-id
+# trigger: current-rule-remediation-v1
 
 on:
   push:
