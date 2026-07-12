@@ -17,17 +17,22 @@ def test_source_release_script_defaults_to_current_release_and_includes_current_
     assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' in script or 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' in script
 
 
-def test_frontend_routes_are_consolidated_into_authenticated_support_workbench():
+def test_frontend_routes_expose_canonical_workspace_and_transitional_webchat():
     router = (PROJECT / 'webapp' / 'src' / 'router.tsx').read_text()
     root = (PROJECT / 'webapp' / 'src' / 'routes' / 'root.tsx').read_text()
+    workspace = (PROJECT / 'webapp' / 'src' / 'routes' / 'workspace.tsx').read_text()
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
     console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
 
+    assert 'WorkspaceRoute' in router
     assert 'WebchatRoute' in router
     assert 'RuntimeRoute' not in router
     assert 'AccountsRoute' not in router
-    assert '旧入口已下线' in root
-    assert "to={getSupportToken() ? '/webchat' : '/login'}" in root
+    assert '当前入口不存在' in root
+    assert "to={getSupportToken() ? '/workspace' : '/login'}" in root
+    assert "path: '/workspace'" in workspace
+    assert 'beforeLoad' in workspace
+    assert 'getSupportToken()' in workspace
     assert "path: '/webchat'" in webchat
     assert 'beforeLoad' in webchat
     assert 'getSupportToken()' in webchat
