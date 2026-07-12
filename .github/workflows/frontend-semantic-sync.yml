@@ -1,0 +1,69 @@
+name: frontend-semantic-sync
+
+on:
+  push:
+    branches:
+      - fix/frontend-semantic-621
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
+    paths:
+      - .github/workflows/frontend-semantic-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync-main-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout current semantic branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/frontend-semantic-621
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge current main without conflict masking
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-ff --no-edit origin/main
+          git diff --check origin/main...HEAD
+
+      - name: Setup Node immutable
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Verify reconciled semantic foundation
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npm run typecheck
+          npm run lint
+          npm run build
+          npm run size-report
+
+      - name: Install Playwright Chromium
+        working-directory: webapp
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify reconciled browser behavior
+        working-directory: webapp
+        run: npm run e2e
+
+      - name: Push verified merge commit
+        run: git push origin HEAD:fix/frontend-semantic-621
