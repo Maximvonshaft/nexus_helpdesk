@@ -1,0 +1,169 @@
+name: ${COMPOSE_PROJECT_NAME:-nexus_rc_test}
+
+x-rc-app: &rc_app
+  image: ${RC_IMAGE_TAG:?set RC_IMAGE_TAG in deploy/.env.rc-test}
+  env_file:
+    - .env.rc-test
+  volumes:
+    - rc_uploads:/app/backend/uploads
+    - rc_upload_backups:/var/backups/nexusdesk/uploads
+  networks:
+    - rc
+  restart: "no"
+
+x-rc-worker-healthcheck: &rc_worker_healthcheck
+  test:
+    - CMD-SHELL
+    - >-
+      python -c "from pathlib import Path;
+      cmd=Path('/proc/1/cmdline').read_text(errors='replace');
+      assert 'scripts/run_worker.py' in cmd, cmd;
+      from sqlalchemy import text;
+      from app.db import SessionLocal;
+      db=SessionLocal();
+      db.execute(text('select 1'));
+      db.close();
+      print('rc-worker-ok')"
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 15s
+
+services:
+  postgres-rc:
+    image: ${RC_POSTGRES_IMAGE:-pgvector/pgvector:pg16}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in deploy/.env.rc-test}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in deploy/.env.rc-test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env.rc-test}
+    volumes:
+      - rc_postgres:/var/lib/postgresql/data
+    networks:
+      - rc
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+  migrate-rc:
+    <<: *rc_app
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        cd /app/backend &&
+        alembic upgrade head &&
+        alembic current
+    depends_on:
+      postgres-rc:
+        condition: service_healthy
+
+  seed-rc:
+    <<: *rc_app
+    command: python /app/scripts/release/seed_rc_test_data.py
+    depends_on:
+      migrate-rc:
+        condition: service_completed_successfully
+
+  app-rc:
+    <<: *rc_app
+    networks:
+      rc:
+        aliases:
+          - app
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        exec gunicorn app.main:app
+        -k uvicorn.workers.UvicornWorker
+        --workers "$${WEB_CONCURRENCY:-2}"
+        --timeout "$${WEB_TIMEOUT:-30}"
+        --bind 0.0.0.0:8080
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      postgres-rc:
+        condition: service_healthy
+      seed-rc:
+        condition: service_completed_successfully
+
+  worker-outbound-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-outbound-rc --queue outbound
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+  worker-background-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-background-rc --queue background
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+      nginx-rc:
+        condition: service_healthy
+
+  worker-webchat-ai-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-webchat-ai-rc --queue webchat-ai
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+  worker-handoff-snapshot-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot-rc --queue handoff-snapshot
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+  nginx-rc:
+    image: ${RC_NGINX_IMAGE:-nginx:1.27-alpine}
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${RC_APP_PORT:-18083}:80"
+    networks:
+      - rc
+      - edge
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1/readyz >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    depends_on:
+      app-rc:
+        condition: service_healthy
+    restart: "no"
+
+networks:
+  rc:
+    internal: true
+  edge:
+
+volumes:
+  rc_postgres:
+  rc_uploads:
+  rc_upload_backups:
