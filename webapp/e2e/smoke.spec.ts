@@ -274,9 +274,9 @@ async function mockAuthenticatedConsole(page: Page) {
 
 test('login page renders', async ({ page }) => {
   await page.goto('/login')
-  await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()
   await expect(page.getByLabel('账号')).toBeVisible()
-  await expect(page.getByRole('button', { name: '登录' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()
 })
 
 test('unauthenticated protected route redirects back to login', async ({ page }) => {
