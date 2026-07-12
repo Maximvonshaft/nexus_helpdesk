@@ -49,7 +49,7 @@ Files such as `*.v1.json` and `*.v2.json` may be current machine contracts. Remo
 
 ### Reachable Git history
 
-Git history is not cleaned as ordinary source. #565 owns secret/exposure assurance, credential rotation and any explicitly authorized rewrite.
+Git history is not cleaned as ordinary source and is intentionally outside the tracked-tree registry. No tracked placeholder may masquerade as history evidence. #565 owns secret/exposure assurance, credential rotation and any explicitly authorized rewrite.
 
 ## Domain routing
 
