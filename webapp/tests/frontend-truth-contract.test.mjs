@@ -39,6 +39,11 @@ test('controlled actions distinguish request acceptance from verified outcome', 
   assert.match(supportStatus, /queued/)
   assert.match(supportStatus, /submitted/)
   assert.match(supportStatus, /等待确认/)
+  assert.match(supportStatus, /business_result_confirmed/)
+  assert.match(supportStatus, /operational_completed/)
+  assert.doesNotMatch(supportStatus, /\n\s*'completed',/)
+  assert.doesNotMatch(supportStatus, /\n\s*'succeeded',/)
+  assert.doesNotMatch(supportStatus, /\n\s*'confirmed',/)
   assert.match(supportConsole, /controlledActionPresentation/)
   assert.match(supportConsole, /TechnicalDetails/)
   assert.doesNotMatch(supportConsole, /support-action-result success[\s\S]{0,260}actionResult/)
@@ -66,9 +71,10 @@ test('current transitional console meets bounded accessibility truth requirement
 })
 
 
-test('conversation state polling stops outside the conversation view', () => {
+test('conversation state polling and visible freshness remain aligned', () => {
   assert.match(
     supportConsole,
     /queryKey: \['supportConversationState'\][\s\S]{0,180}enabled: activeView === 'conversations'/,
   )
+  assert.match(supportConsole, /会话状态暂停刷新/)
 })
