@@ -137,6 +137,26 @@ def test_readyz_accepts_exact_candidate_identity(monkeypatch) -> None:
     assert payload["reason_codes"] == []
 
 
+def test_existing_production_metadata_gate_does_not_implicitly_require_migration_head(monkeypatch) -> None:
+    _ready_dependencies(monkeypatch, observed_head="current-production-head", metadata_complete=True)
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        SimpleNamespace(expected_migration_head=None, readiness_require_release_metadata=True),
+    )
+
+    payload = main_module.readyz()
+
+    assert payload["status"] == "ready"
+    assert payload["migration"] == {
+        "ok": True,
+        "expected": None,
+        "observed": "current-production-head",
+        "required": False,
+    }
+    assert "migration_head_required" not in payload["reason_codes"]
+
+
 def test_development_readiness_can_omit_candidate_identity(monkeypatch) -> None:
     _ready_dependencies(monkeypatch, observed_head="dev-head", metadata_complete=False)
     monkeypatch.setattr(
