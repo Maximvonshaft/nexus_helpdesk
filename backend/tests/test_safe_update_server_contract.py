@@ -37,9 +37,15 @@ def _fake_repo(
     return repo
 
 
-def _run(repo: Path, backup_dir: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    repo: Path,
+    backup_dir: Path,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["BACKUP_DIR"] = str(backup_dir)
+    env.update(extra_env or {})
     return subprocess.run(
         [
             "bash",
@@ -132,6 +138,38 @@ def test_dangling_symlink_target_fails_without_replacement(tmp_path: Path) -> No
     assert os.readlink(backup_dir) == str(missing_target)
     assert not missing_target.exists()
     assert not list(backup_parent.glob(f"{backup_dir.name}.tmp.*"))
+
+
+def test_target_appearing_during_publication_is_not_overwritten(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path)
+    backup_dir = tmp_path / "backups" / "candidate"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_mv = fake_bin / "mv"
+    fake_mv.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+destination="${!#}"
+mkdir -p -- "$destination"
+printf 'attacker-owned\n' > "$destination/existing.txt"
+""",
+        encoding="utf-8",
+    )
+    fake_mv.chmod(0o755)
+
+    completed = _run(
+        repo,
+        backup_dir,
+        extra_env={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+
+    assert completed.returncode == 5
+    assert "backup target appeared during publication" in completed.stderr
+    assert (backup_dir / "existing.txt").read_text(encoding="utf-8") == (
+        "attacker-owned\n"
+    )
+    assert not (backup_dir / "SHA256SUMS").exists()
+    assert not list(backup_dir.parent.glob(f"{backup_dir.name}.tmp.*"))
 
 
 def test_symlinked_protected_source_fails_closed(tmp_path: Path) -> None:
