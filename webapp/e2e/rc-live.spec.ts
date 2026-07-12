@@ -1,9 +1,11 @@
+import { writeFileSync } from 'node:fs'
 import { expect, test, type Page, type Response } from '@playwright/test'
 
 const adminUsername = process.env.RC_TEST_ADMIN_USERNAME || ''
 const adminPassword = process.env.RC_TEST_ADMIN_PASSWORD || ''
 const sourceSha = process.env.RC_SOURCE_SHA || ''
 const baseURL = (process.env.PLAYWRIGHT_BASE_URL || '').replace(/\/+$/, '')
+const browserStageFile = process.env.RC_BROWSER_STAGE_FILE || ''
 const rcConfigured = Boolean(
   adminUsername
   && adminPassword
@@ -13,6 +15,29 @@ const rcConfigured = Boolean(
 
 function rcUrl(path: string): string {
   return new URL(path, `${baseURL}/`).toString()
+}
+
+function markStage(stage: string): void {
+  if (!/^[a-z0-9_-]{1,56}$/.test(stage)) throw new Error('invalid RC browser stage')
+  console.log(`RC_BROWSER_STAGE=${stage}`)
+  if (browserStageFile) {
+    writeFileSync(browserStageFile, `${stage}\n`, { encoding: 'utf8', mode: 0o600 })
+  }
+}
+
+function classifyBrowserError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const networkCode = raw.match(/net::(ERR_[A-Z0-9_]+)/)?.[1]
+  if (networkCode) return networkCode.toLowerCase().replaceAll('_', '-').slice(0, 48)
+  const normalized = raw.toLowerCase()
+  if (normalized.includes('timeout')) return 'navigation-timeout'
+  if (
+    normalized.includes('target page')
+    || normalized.includes('browser has been closed')
+    || normalized.includes('context has been closed')
+  ) return 'target-closed'
+  if (normalized.includes('navigation') && normalized.includes('interrupted')) return 'navigation-interrupted'
+  return 'unknown-navigation-error'
 }
 
 function reportBoundedBrowserError(error: unknown): void {
@@ -25,7 +50,7 @@ function reportBoundedBrowserError(error: unknown): void {
     .slice(0, 400)
   const detailHex = Buffer.from(bounded, 'utf8').toString('hex')
   console.log(`RC_BROWSER_DETAIL_HEX=${detailHex}`)
-  console.log(`RC_BROWSER_STAGE=error-${detailHex.slice(0, 48)}`)
+  markStage(`error-${classifyBrowserError(error)}`)
 }
 
 async function navigate(page: Page, path: string): Promise<Response | null> {
@@ -46,19 +71,16 @@ test.skip(!rcConfigured, 'RC live browser environment is not configured')
 test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
-  // Keep this release acceptance as one explicit sequential journey. Nested
-  // test.step lifecycles add no proof and can mask the underlying fixture or
-  // navigation error before the callback enters.
-  console.log('RC_BROWSER_STAGE=public-navigation')
+  markStage('public-navigation')
   const navigationResponse = await navigate(page, '/webchat/demo/')
-  console.log('RC_BROWSER_STAGE=public-committed')
+  markStage('public-committed')
   expect(navigationResponse).not.toBeNull()
   expect(navigationResponse?.ok()).toBeTruthy()
 
-  console.log('RC_BROWSER_STAGE=public-page')
+  markStage('public-page')
   await expect(page.locator('script[data-auto-open="true"]')).toHaveCount(1, { timeout: 20_000 })
 
-  console.log('RC_BROWSER_STAGE=public-widget')
+  markStage('public-widget')
   await expect.poll(
     () => page.evaluate(() => typeof (window as typeof window & { NexusDeskWebChat?: unknown }).NexusDeskWebChat === 'object'),
     { timeout: 20_000 },
@@ -66,9 +88,9 @@ test('RC public WebChat message is visible in the authenticated operator surface
   await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
   const input = page.locator('.nd-webchat-input')
   await expect(input).toBeEnabled({ timeout: 20_000 })
-  console.log('RC_BROWSER_STAGE=public-init')
+  markStage('public-init')
 
-  console.log('RC_BROWSER_STAGE=public-send')
+  markStage('public-send')
   await input.fill(message)
   const messageRequest = page.waitForResponse((response) => {
     const url = new URL(response.url())
@@ -78,12 +100,12 @@ test('RC public WebChat message is visible in the authenticated operator surface
   await page.locator('.nd-webchat-send').click()
   const response = await messageRequest
   expect(response.ok()).toBeTruthy()
-  console.log('RC_BROWSER_STAGE=public-persisted')
+  markStage('public-persisted')
   await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
 
-  console.log('RC_BROWSER_STAGE=login-navigation')
+  markStage('login-navigation')
   const loginResponse = await navigate(page, '/login')
-  console.log('RC_BROWSER_STAGE=login-form')
+  markStage('login-form')
   expect(loginResponse).not.toBeNull()
   expect(loginResponse?.ok()).toBeTruthy()
   await page.getByLabel('账号').fill(adminUsername)
@@ -91,19 +113,19 @@ test('RC public WebChat message is visible in the authenticated operator surface
   await page.getByRole('button', { name: '登录' }).click()
   await expect(page).not.toHaveURL(/\/login$/)
 
-  console.log('RC_BROWSER_STAGE=operator-navigation')
+  markStage('operator-navigation')
   const operatorResponse = await navigate(page, '/webchat')
-  console.log('RC_BROWSER_STAGE=operator-console')
+  markStage('operator-console')
   expect(operatorResponse).not.toBeNull()
   expect(operatorResponse?.ok()).toBeTruthy()
   await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
 
-  console.log('RC_BROWSER_STAGE=operator-row')
+  markStage('operator-row')
   const matchingRow = page.locator('button.support-row', { hasText: message }).first()
   await expect(matchingRow).toBeVisible({ timeout: 25_000 })
   await matchingRow.click()
-  console.log('RC_BROWSER_STAGE=operator-message')
+  markStage('operator-message')
   await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 20_000 })
 
-  console.log('RC_BROWSER_STAGE=completed')
+  markStage('completed')
 })
