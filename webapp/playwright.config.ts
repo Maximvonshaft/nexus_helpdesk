@@ -17,10 +17,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     launchOptions: {
-      channel: 'chrome',
       // RC browser traffic is loopback-only. Do not inherit an ambient runner
-      // proxy for 127.0.0.1; that can make curl pass while Chrome navigation
-      // fails before the main document commits.
+      // proxy for 127.0.0.1. The browser executable is the Playwright-pinned
+      // Chromium installed by the RC workflow, not a rolling system Chrome.
       args: ['--no-proxy-server'],
     },
   },
