@@ -2,7 +2,7 @@
 
 ## Authority
 
-Point-in-time root delivery reports are not current release, production-readiness, architecture, security or product authority.
+Point-in-time delivery reports, audits, implementation plans and demo scripts are not current release, production-readiness, architecture, security or product authority.
 
 Current governance and delivery authority is maintained through:
 
@@ -10,6 +10,7 @@ Current governance and delivery authority is maintained through:
 - Repository audit remediation: #545
 - Legacy-surface convergence: #650
 - Root-report retirement: #652
+- Round B document retirement: #656
 - Domain-specific Work Items and their accepted Pull Requests
 - Runtime release metadata and exact-head CI evidence
 
@@ -28,7 +29,18 @@ The following historical reports were removed from the active tree under #652:
 - `PRODUCTION_SIGNOFF_REPORT.md`
 - `PATCH_NOTES.md`
 
-Their contents remain available through Git history and the commits that originally introduced or modified them. Restoring any report to the active tree requires a current owner, current consumer, explicit retention rationale and an update to the retirement regression.
+## Retired Round B documents
+
+The following point-in-time Round B documents were removed from the active tree under #656:
+
+- `docs/round-b-delivery-report.md`
+- `docs/round-b-self-audit.md`
+- `docs/round-b-readonly-audit.md`
+- `docs/round-b-implementation-plan.md`
+- `docs/round-b-operator-demo-script.md`
+- `docs/round-b-post-push-audit.md`
+
+Their contents remain available through Git history and the commits that originally introduced or modified them. Restoring any retired artifact to the active tree requires a current owner, current consumer, explicit retention rationale and an update to the retirement regression.
 
 ## Retrieval
 
