@@ -25,6 +25,7 @@ export default defineConfig({
   build: {
     outDir: '../frontend_dist',
     emptyOutDir: true,
+    manifest: true,
     sourcemap: productionSourcemap,
     rollupOptions: {
       output: {
