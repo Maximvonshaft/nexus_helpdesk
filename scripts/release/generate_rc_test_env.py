@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import secrets
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+REVISION_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_MISSING = object()
 
 
 def _normalize_origin(value: str) -> str:
@@ -31,11 +34,107 @@ def _normalize_origin(value: str) -> str:
     return f"{parsed.scheme}://{authority}"
 
 
-def build_values(*, source_sha: str, compose_project: str, origin: str) -> dict[str, str]:
+def _assignment_literal(tree: ast.Module, name: str):
+    value_node: ast.expr | None = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+            value_node = node.value
+    if value_node is None:
+        return _MISSING
+    try:
+        return ast.literal_eval(value_node)
+    except (ValueError, TypeError, SyntaxError) as exc:
+        raise ValueError(f"alembic_{name}_invalid") from exc
+
+
+def _normalize_down_revisions(value) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        values = (value,)
+    elif isinstance(value, (tuple, list)) and all(isinstance(item, str) for item in value):
+        values = tuple(value)
+    else:
+        raise ValueError("alembic_down_revision_invalid")
+    if not values or any(not REVISION_RE.fullmatch(item) for item in values):
+        raise ValueError("alembic_down_revision_invalid")
+    return values
+
+
+def _validate_revision_graph(revisions: dict[str, tuple[str, ...]], head: str) -> None:
+    state: dict[str, int] = {}
+    visited: set[str] = set()
+
+    def visit(revision: str) -> None:
+        current = state.get(revision, 0)
+        if current == 1:
+            raise ValueError("alembic_graph_cycle")
+        if current == 2:
+            return
+        state[revision] = 1
+        for parent in revisions[revision]:
+            visit(parent)
+        state[revision] = 2
+        visited.add(revision)
+
+    visit(head)
+    if visited != set(revisions):
+        raise ValueError("alembic_graph_unreachable")
+
+
+def discover_alembic_head(versions_dir: Path) -> str:
+    if not versions_dir.is_dir():
+        raise ValueError("alembic_versions_dir_missing")
+
+    revisions: dict[str, tuple[str, ...]] = {}
+    for path in sorted(versions_dir.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            raise ValueError("alembic_revision_file_invalid") from exc
+        revision = _assignment_literal(tree, "revision")
+        down_revision = _assignment_literal(tree, "down_revision")
+        if not isinstance(revision, str) or not REVISION_RE.fullmatch(revision):
+            raise ValueError("alembic_revision_invalid")
+        if down_revision is _MISSING:
+            raise ValueError("alembic_down_revision_missing")
+        if revision in revisions:
+            raise ValueError("alembic_revision_duplicate")
+        revisions[revision] = _normalize_down_revisions(down_revision)
+
+    if not revisions:
+        raise ValueError("alembic_revision_set_empty")
+
+    referenced = {parent for parents in revisions.values() for parent in parents}
+    unknown = sorted(referenced - set(revisions))
+    if unknown:
+        raise ValueError("alembic_down_revision_unknown")
+
+    heads = sorted(set(revisions) - referenced)
+    if len(heads) != 1:
+        raise ValueError("alembic_head_count_invalid")
+    head = heads[0]
+    _validate_revision_graph(revisions, head)
+    return head
+
+
+def build_values(
+    *,
+    source_sha: str,
+    compose_project: str,
+    origin: str,
+    expected_migration_head: str,
+) -> dict[str, str]:
     if not SHA_RE.fullmatch(source_sha):
         raise ValueError("source SHA must be exact lowercase 40-character Git SHA")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", compose_project):
         raise ValueError("invalid Compose project name")
+    if not REVISION_RE.fullmatch(expected_migration_head):
+        raise ValueError("expected migration head must be a bounded revision identifier")
     normalized_origin = _normalize_origin(origin)
     pg_password = secrets.token_urlsafe(24)
     jwt_secret = secrets.token_urlsafe(48)
@@ -52,6 +151,8 @@ def build_values(*, source_sha: str, compose_project: str, origin: str) -> dict[
         "GIT_SHA": source_sha,
         "BUILD_TIME": build_time,
         "APP_VERSION": f"rc-test-{source_sha[:12]}",
+        "EXPECTED_MIGRATION_HEAD": expected_migration_head,
+        "READINESS_REQUIRE_RELEASE_METADATA": "true",
         "FRONTEND_BUILD_SHA": source_sha,
         "RC_APP_PORT": "18083",
         "RC_BASE_URL": normalized_origin,
@@ -164,10 +265,13 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        repo_root = Path(__file__).resolve().parents[2]
+        expected_migration_head = discover_alembic_head(repo_root / "backend" / "alembic" / "versions")
         values = build_values(
             source_sha=args.source_sha,
             compose_project=args.compose_project,
             origin=args.origin,
+            expected_migration_head=expected_migration_head,
         )
         write_env(args.output, values)
     except (OSError, ValueError) as exc:

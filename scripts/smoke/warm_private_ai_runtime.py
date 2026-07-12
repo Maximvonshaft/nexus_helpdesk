@@ -14,6 +14,25 @@ def _env(name: str, default: str = "") -> str:
     return (os.getenv(name) or default).strip()
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _provider_authority_enabled() -> bool:
+    if not _env_bool("PRIVATE_AI_RUNTIME_ENABLED", False):
+        return False
+    if _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", False):
+        return False
+    try:
+        canary_percent = int(_env("PROVIDER_RUNTIME_CANARY_PERCENT", "0"))
+    except ValueError:
+        return False
+    return canary_percent > 0
+
+
 def _read_token() -> str:
     token_file = _env("PRIVATE_AI_RUNTIME_TOKEN_FILE")
     inline = _env("PRIVATE_AI_RUNTIME_TOKEN")
@@ -57,6 +76,10 @@ def _usage(payload: dict) -> dict:
 
 
 def main() -> int:
+    if not _provider_authority_enabled():
+        print(json.dumps({"ok": True, "status": "disabled", "reason": "provider_authority_disabled"}, separators=(",", ":")))
+        return 0
+
     base_url = _env("PRIVATE_AI_RUNTIME_BASE_URL").rstrip("/")
     token = _read_token()
     if not base_url or not token:
