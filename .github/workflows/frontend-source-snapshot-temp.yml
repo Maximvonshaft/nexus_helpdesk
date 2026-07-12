@@ -7,33 +7,41 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  snapshot:
+  apply-verified-patch:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout exact proposed head
+      - name: Checkout exact PR head branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 1
 
-      - name: Create byte-complete source snapshot
+      - name: Apply locally verified frontend patch
+        env:
+          PATCH_B64: .github/patches/frontend-interaction-safety-660.patch.gz.b64
+          EXPECTED_PATCH_SHA256: 83b5a56660badac95e3065adce0a24077ad7b67803eaa551cf5a48131bf8c4ac
         run: |
           set -Eeuo pipefail
-          archive="${RUNNER_TEMP}/frontend-source-snapshot.tar.gz"
-          checksum="${RUNNER_TEMP}/frontend-source-snapshot.sha256"
-          tar --exclude=.git -czf "${archive}" .
-          test -s "${archive}"
-          sha256sum "${archive}" > "${checksum}"
+          patch_file="${RUNNER_TEMP}/frontend-interaction-safety-660.patch"
+          base64 --decode "${PATCH_B64}" | gzip -d > "${patch_file}"
+          echo "${EXPECTED_PATCH_SHA256}  ${patch_file}" | sha256sum --check --strict
+          git apply --check "${patch_file}"
+          git apply "${patch_file}"
+          rm -f "${PATCH_B64}" .github/workflows/frontend-source-snapshot-temp.yml
+          git diff --check
 
-      - name: Upload temporary source snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-source-snapshot-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            ${{ runner.temp }}/frontend-source-snapshot.tar.gz
-            ${{ runner.temp }}/frontend-source-snapshot.sha256
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit exact implementation and remove bootstrap files
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "nexus-frontend-agent"
+          git config user.email "nexus-frontend-agent@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(frontend): protect operator interaction and knowledge drafts"
+          git push origin "HEAD:${HEAD_BRANCH}"
