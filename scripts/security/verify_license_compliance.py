@@ -138,15 +138,29 @@ def verify(
     exceptions = policy.get("exceptions")
     if not isinstance(exceptions, list):
         raise ComplianceError("policy_exceptions_invalid")
-    exception_map = {
-        (
-            str(item.get("package")),
-            str(item.get("version")),
-            str(item.get("license")),
-        ): item
-        for item in exceptions
-        if isinstance(item, dict)
+    expected_exception_keys = {
+        "purl",
+        "package",
+        "version",
+        "license",
+        "owner",
+        "expires_on",
+        "reason",
     }
+    exception_map: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for item in exceptions:
+        if not isinstance(item, dict) or set(item) != expected_exception_keys:
+            raise ComplianceError("policy_exception_keys_invalid")
+        key = (
+            _safe_purl(item.get("purl")),
+            _safe(item.get("package"), label="policy_package"),
+            _safe(item.get("version"), label="policy_version"),
+            _safe(item.get("license"), label="policy_license"),
+        )
+        if key in exception_map:
+            raise ComplianceError("policy_exception_duplicate")
+        exception_map[key] = item
+
     sbom_by_purl = _sbom_components(sbom)
     installed_components = installed.get("components")
     if not isinstance(installed_components, list):
@@ -158,7 +172,7 @@ def verify(
     }
     notice = notice_path.read_text(encoding="utf-8")
     checked: list[dict[str, object]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
 
     for raw in entries:
         if not isinstance(raw, dict):
@@ -194,7 +208,7 @@ def verify(
         obligations = raw["obligations"]
         if not isinstance(obligations, list) or set(obligations) != _REQUIRED_OBLIGATIONS:
             raise ComplianceError("compliance_obligations_invalid")
-        key = (package, version, license_id)
+        key = (purl, package, version, license_id)
         if key in seen:
             raise ComplianceError("compliance_entry_duplicate")
         seen.add(key)
@@ -256,6 +270,9 @@ def verify(
                 "replacement_supported": True,
             }
         )
+
+    if set(exception_map) != seen:
+        raise ComplianceError("compliance_policy_exception_set_mismatch")
 
     payload = {
         "schema_version": "nexus_container_license_compliance_evidence_v1",
