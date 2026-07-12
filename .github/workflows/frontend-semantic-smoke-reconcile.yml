@@ -33,26 +33,23 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           path = Path('webapp/e2e/smoke.spec.ts')
-          text = path.read_text(encoding='utf-8')
-          old = (
-              "test('login page renders', async ({ page }) => {\n"
-              "  await page.goto('/login')\n"
-              "  await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()\n"
-              "  await expect(page.getByLabel('账号')).toBeVisible()\n"
-              "  await expect(page.getByRole('button', { name: '登录' })).toBeVisible()\n"
-              "})"
-          )
-          new = (
-              "test('login page renders', async ({ page }) => {\n"
-              "  await page.goto('/login')\n"
-              "  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()\n"
-              "  await expect(page.getByLabel('账号')).toBeVisible()\n"
-              "  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()\n"
-              "})"
-          )
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one legacy Login smoke block, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          lines = path.read_text(encoding='utf-8').splitlines()
+          try:
+              start = lines.index("test('login page renders', async ({ page }) => {")
+          except ValueError as exc:
+              raise SystemExit('login smoke test block not found') from exc
+          end = next((idx for idx in range(start + 1, min(start + 12, len(lines))) if lines[idx] == '})'), None)
+          if end is None:
+              raise SystemExit('login smoke test block end not found')
+          block = lines[start:end + 1]
+          heading_matches = [idx for idx, line in enumerate(block) if "getByRole('heading'" in line]
+          button_matches = [idx for idx, line in enumerate(block) if "getByRole('button'" in line]
+          if heading_matches != [2] or button_matches != [4]:
+              raise SystemExit(f'unexpected login smoke structure: headings={heading_matches}, buttons={button_matches}')
+          block[2] = "  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()"
+          block[4] = "  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()"
+          lines[start:end + 1] = block
+          path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
           git diff --check
 
