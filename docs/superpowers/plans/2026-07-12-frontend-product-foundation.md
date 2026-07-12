@@ -1,7 +1,7 @@
 # Nexus OSR Frontend Product Foundation — Implementation Plan
 
-> **Work Item:** #613  
-> **Design:** `docs/superpowers/specs/2026-07-12-frontend-product-foundation-design.md`  
+> **Work Item:** #613
+> **Design:** `docs/superpowers/specs/2026-07-12-frontend-product-foundation-design.md`
 > **Execution:** Superpowers RED → GREEN → REFACTOR, then specification and code-quality review
 
 ## Goal
