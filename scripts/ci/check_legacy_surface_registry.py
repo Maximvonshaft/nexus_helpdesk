@@ -61,10 +61,19 @@ DISCOVERY_KEYS = {
     "allow_multiple_domains",
 }
 HEX_40_RE = re.compile(r"^[0-9a-f]{40}$")
+DOMAIN_ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 
 
 class RegistryValidationError(ValueError):
     """Raised when the legacy-surface registry is malformed."""
+
+
+def _exact_keys(value: Mapping[str, Any], expected: set[str], *, field: str) -> None:
+    actual = set(value)
+    if actual != expected:
+        missing = ",".join(sorted(expected - actual)) or "-"
+        extra = ",".join(sorted(actual - expected)) or "-"
+        raise RegistryValidationError(f"{field}_keys_invalid:missing={missing}:extra={extra}")
 
 
 def _string_list(value: Any, *, field: str, allow_empty: bool = True) -> list[str]:
@@ -77,41 +86,31 @@ def _string_list(value: Any, *, field: str, allow_empty: bool = True) -> list[st
     return list(value)
 
 
-def _exact_keys(obj: Mapping[str, Any], expected: set[str], *, field: str) -> None:
-    actual = set(obj)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        raise RegistryValidationError(
-            f"{field}_keys_invalid:missing={','.join(missing) or '-'}:extra={','.join(extra) or '-'}"
-        )
-
-
 def _validate_selectors(value: Any, *, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RegistryValidationError(f"{field}_must_be_object")
     _exact_keys(value, SELECTOR_KEYS, field=field)
     paths = _string_list(value["paths"], field=f"{field}.paths")
     globs = _string_list(value["globs"], field=f"{field}.globs")
-    content_rules = value["content_rules"]
-    if not isinstance(content_rules, list):
+    rules = value["content_rules"]
+    if not isinstance(rules, list):
         raise RegistryValidationError(f"{field}.content_rules_must_be_list")
+
     normalized_rules: list[dict[str, list[str]]] = []
-    for index, rule in enumerate(content_rules):
+    for index, rule in enumerate(rules):
+        rule_field = f"{field}.content_rules[{index}]"
         if not isinstance(rule, dict):
-            raise RegistryValidationError(f"{field}.content_rules[{index}]_must_be_object")
-        _exact_keys(rule, CONTENT_RULE_KEYS, field=f"{field}.content_rules[{index}]")
-        markers = _string_list(
-            rule["markers"],
-            field=f"{field}.content_rules[{index}].markers",
-            allow_empty=False,
+            raise RegistryValidationError(f"{rule_field}_must_be_object")
+        _exact_keys(rule, CONTENT_RULE_KEYS, field=rule_field)
+        normalized_rules.append(
+            {
+                "markers": _string_list(rule["markers"], field=f"{rule_field}.markers", allow_empty=False),
+                "path_globs": _string_list(
+                    rule["path_globs"], field=f"{rule_field}.path_globs", allow_empty=False
+                ),
+            }
         )
-        path_globs = _string_list(
-            rule["path_globs"],
-            field=f"{field}.content_rules[{index}].path_globs",
-            allow_empty=False,
-        )
-        normalized_rules.append({"markers": markers, "path_globs": path_globs})
+
     if not paths and not globs and not normalized_rules:
         raise RegistryValidationError(f"{field}_must_have_selector")
     return {"paths": paths, "globs": globs, "content_rules": normalized_rules}
@@ -121,6 +120,7 @@ def validate_registry(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise RegistryValidationError("registry_must_be_object")
     _exact_keys(raw, REQUIRED_TOP_LEVEL, field="registry")
+
     if raw["schema"] != REGISTRY_SCHEMA:
         raise RegistryValidationError("registry_schema_unsupported")
     if not isinstance(raw["registry_version"], str) or not raw["registry_version"].strip():
@@ -131,10 +131,11 @@ def validate_registry(raw: Any) -> dict[str, Any]:
         raise RegistryValidationError("coverage_invalid")
     if raw["enforcement"] not in SUPPORTED_ENFORCEMENT:
         raise RegistryValidationError("enforcement_invalid")
-    if not isinstance(raw["finding_limit"], int) or isinstance(raw["finding_limit"], bool) or not 1 <= raw["finding_limit"] <= 500:
+    if isinstance(raw["finding_limit"], bool) or not isinstance(raw["finding_limit"], int) or not 1 <= raw["finding_limit"] <= 500:
         raise RegistryValidationError("finding_limit_invalid")
-    if not isinstance(raw["max_text_bytes"], int) or isinstance(raw["max_text_bytes"], bool) or not 1024 <= raw["max_text_bytes"] <= 2_000_000:
+    if isinstance(raw["max_text_bytes"], bool) or not isinstance(raw["max_text_bytes"], int) or not 1024 <= raw["max_text_bytes"] <= 2_000_000:
         raise RegistryValidationError("max_text_bytes_invalid")
+
     allowed = set(_string_list(raw["allowed_dispositions"], field="allowed_dispositions", allow_empty=False))
     if allowed != ALLOWED_DISPOSITIONS:
         raise RegistryValidationError("allowed_dispositions_contract_mismatch")
@@ -150,13 +151,14 @@ def validate_registry(raw: Any) -> dict[str, Any]:
             raise RegistryValidationError(f"{field}_must_be_object")
         _exact_keys(domain, DOMAIN_KEYS, field=field)
         domain_id = domain["id"]
-        if not isinstance(domain_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", domain_id):
+        if not isinstance(domain_id, str) or not DOMAIN_ID_RE.fullmatch(domain_id):
             raise RegistryValidationError(f"{field}.id_invalid")
         if domain_id in domain_ids:
             raise RegistryValidationError("domain_id_duplicate")
         domain_ids.add(domain_id)
+
         owner_issue = domain["owner_issue"]
-        if not isinstance(owner_issue, int) or isinstance(owner_issue, bool) or owner_issue <= 0:
+        if isinstance(owner_issue, bool) or not isinstance(owner_issue, int) or owner_issue <= 0:
             raise RegistryValidationError(f"{field}.owner_issue_invalid")
         disposition = domain["disposition"]
         if disposition not in ALLOWED_DISPOSITIONS:
@@ -165,38 +167,33 @@ def validate_registry(raw: Any) -> dict[str, Any]:
             raise RegistryValidationError(f"{field}.deletion_authorized_must_be_false")
         if not isinstance(domain["rationale"], str) or not domain["rationale"].strip():
             raise RegistryValidationError(f"{field}.rationale_invalid")
+
         prerequisites = _string_list(domain["prerequisites"], field=f"{field}.prerequisites")
-        authoritative_refs = _string_list(domain["authoritative_refs"], field=f"{field}.authoritative_refs")
+        refs = _string_list(domain["authoritative_refs"], field=f"{field}.authoritative_refs")
         selectors = _validate_selectors(domain["selectors"], field=f"{field}.selectors")
         if disposition == "safe_to_remove" and not prerequisites:
             raise RegistryValidationError(f"{field}.safe_to_remove_requires_prerequisites")
         if domain_id.startswith("protected_") and disposition not in PROTECTED_DISPOSITIONS:
             raise RegistryValidationError(f"{field}.protected_domain_disposition_invalid")
-        domains.append(
-            {
-                **domain,
-                "prerequisites": prerequisites,
-                "authoritative_refs": authoritative_refs,
-                "selectors": selectors,
-            }
-        )
+        domains.append({**domain, "prerequisites": prerequisites, "authoritative_refs": refs, "selectors": selectors})
 
     rules_raw = raw["discovery_rules"]
     if not isinstance(rules_raw, list) or not rules_raw:
         raise RegistryValidationError("discovery_rules_must_be_non_empty_list")
-    rule_ids: set[str] = set()
     rules: list[dict[str, Any]] = []
+    rule_ids: set[str] = set()
     for index, rule in enumerate(rules_raw):
         field = f"discovery_rules[{index}]"
         if not isinstance(rule, dict):
             raise RegistryValidationError(f"{field}_must_be_object")
         _exact_keys(rule, DISCOVERY_KEYS, field=field)
         rule_id = rule["id"]
-        if not isinstance(rule_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", rule_id):
+        if not isinstance(rule_id, str) or not DOMAIN_ID_RE.fullmatch(rule_id):
             raise RegistryValidationError(f"{field}.id_invalid")
         if rule_id in rule_ids:
             raise RegistryValidationError("discovery_rule_id_duplicate")
         rule_ids.add(rule_id)
+
         path_regex = rule["path_regex"]
         if path_regex is not None:
             if not isinstance(path_regex, str) or not path_regex:
@@ -208,14 +205,12 @@ def validate_registry(raw: Any) -> dict[str, Any]:
         path_globs = _string_list(rule["path_globs"], field=f"{field}.path_globs")
         content_markers = _string_list(rule["content_markers"], field=f"{field}.content_markers")
         content_path_globs = _string_list(rule["content_path_globs"], field=f"{field}.content_path_globs")
-        allowed_domain_ids = _string_list(
-            rule["allowed_domain_ids"],
-            field=f"{field}.allowed_domain_ids",
-            allow_empty=False,
+        allowed_domains = _string_list(
+            rule["allowed_domain_ids"], field=f"{field}.allowed_domain_ids", allow_empty=False
         )
-        unknown_domains = sorted(set(allowed_domain_ids) - domain_ids)
-        if unknown_domains:
-            raise RegistryValidationError(f"{field}.allowed_domain_unknown:{','.join(unknown_domains)}")
+        unknown = sorted(set(allowed_domains) - domain_ids)
+        if unknown:
+            raise RegistryValidationError(f"{field}.allowed_domain_unknown:{','.join(unknown)}")
         if not isinstance(rule["allow_multiple_domains"], bool):
             raise RegistryValidationError(f"{field}.allow_multiple_domains_invalid")
         if not path_regex and not path_globs and not content_markers:
@@ -228,16 +223,11 @@ def validate_registry(raw: Any) -> dict[str, Any]:
                 "path_globs": path_globs,
                 "content_markers": content_markers,
                 "content_path_globs": content_path_globs,
-                "allowed_domain_ids": allowed_domain_ids,
+                "allowed_domain_ids": allowed_domains,
             }
         )
 
-    return {
-        **raw,
-        "allowed_dispositions": sorted(allowed),
-        "domains": domains,
-        "discovery_rules": rules,
-    }
+    return {**raw, "allowed_dispositions": sorted(allowed), "domains": domains, "discovery_rules": rules}
 
 
 def load_registry(path: Path) -> dict[str, Any]:
@@ -267,9 +257,8 @@ def collect_tracked_files(repo_root: Path) -> list[str]:
             path = raw_path.decode("utf-8")
         except (ValueError, UnicodeError) as exc:
             raise RuntimeError("git_index_record_invalid") from exc
-        if mode not in {"100644", "100755"}:
-            continue
-        paths.append(path)
+        if mode in {"100644", "100755"}:
+            paths.append(path)
     return sorted(set(paths))
 
 
@@ -282,9 +271,8 @@ def _path_matches(path: str, *, exact: Sequence[str], globs: Sequence[str]) -> b
 
 
 def _read_text_bounded(repo_root: Path, path: str, *, max_bytes: int) -> str | None:
-    file_path = repo_root / path
     try:
-        with file_path.open("rb") as handle:
+        with (repo_root / path).open("rb") as handle:
             data = handle.read(max_bytes + 1)
     except OSError:
         return None
@@ -296,12 +284,7 @@ def _read_text_bounded(repo_root: Path, path: str, *, max_bytes: int) -> str | N
         return None
 
 
-def _domain_matches(
-    domain: Mapping[str, Any],
-    path: str,
-    *,
-    read_text: Callable[[str], str | None],
-) -> bool:
+def _domain_matches(domain: Mapping[str, Any], path: str, *, read_text: Callable[[str], str | None]) -> bool:
     selectors = domain["selectors"]
     if _path_matches(path, exact=selectors["paths"], globs=selectors["globs"]):
         return True
@@ -313,23 +296,14 @@ def _domain_matches(
     return False
 
 
-def _discovery_matches(
-    rule: Mapping[str, Any],
-    path: str,
-    *,
-    read_text: Callable[[str], str | None],
-) -> bool:
-    path_regex = rule["path_regex"]
-    if path_regex and re.search(path_regex, path):
+def _discovery_matches(rule: Mapping[str, Any], path: str, *, read_text: Callable[[str], str | None]) -> bool:
+    if rule["path_regex"] and re.search(rule["path_regex"], path):
         return True
     if any(_glob_matches(path, pattern) for pattern in rule["path_globs"]):
         return True
-    if rule["content_markers"] and any(
-        _glob_matches(path, pattern) for pattern in rule["content_path_globs"]
-    ):
+    if rule["content_markers"] and any(_glob_matches(path, pattern) for pattern in rule["content_path_globs"]):
         text = read_text(path)
-        if text is not None and any(marker in text for marker in rule["content_markers"]):
-            return True
+        return text is not None and any(marker in text for marker in rule["content_markers"])
     return False
 
 
@@ -353,13 +327,12 @@ def scan_registry(
     overlap_count = 0
 
     for path in files:
-        matched_domain_ids = [
-            domain["id"]
-            for domain in domains
-            if _domain_matches(domain, path, read_text=read_text)
-        ]
+        matched_domain_ids = sorted(
+            domain["id"] for domain in domains if _domain_matches(domain, path, read_text=read_text)
+        )
+        matched_set = set(matched_domain_ids)
         for domain in domains:
-            if domain["id"] in matched_domain_ids:
+            if domain["id"] in matched_set:
                 disposition_counts[domain["disposition"]] += 1
                 owner_issue_counts[str(domain["owner_issue"])] += 1
                 matched_paths.add(path)
@@ -367,12 +340,17 @@ def scan_registry(
         for rule in registry["discovery_rules"]:
             if not _discovery_matches(rule, path, read_text=read_text):
                 continue
-            allowed_matches = sorted(set(matched_domain_ids) & set(rule["allowed_domain_ids"]))
+            allowed_set = set(rule["allowed_domain_ids"])
+            allowed_matches = sorted(matched_set & allowed_set)
+            unexpected_matches = sorted(matched_set - allowed_set)
             reason_codes: list[str] = []
             if not allowed_matches:
                 unowned_count += 1
                 reason_codes.append("legacy_surface_unowned")
-            elif len(allowed_matches) > 1 and not rule["allow_multiple_domains"]:
+            elif unexpected_matches:
+                overlap_count += 1
+                reason_codes.append("legacy_surface_owner_outside_rule")
+            elif len(matched_domain_ids) > 1 and not rule["allow_multiple_domains"]:
                 overlap_count += 1
                 reason_codes.append("legacy_surface_owner_overlap")
             if reason_codes and len(findings) < registry["finding_limit"]:
@@ -381,17 +359,19 @@ def scan_registry(
                         "path": path,
                         "path_sha256": _path_fingerprint(path),
                         "discovery_rule": rule["id"],
-                        "matched_domain_ids": allowed_matches,
+                        "matched_domain_ids": matched_domain_ids,
+                        "allowed_domain_ids": sorted(allowed_set),
+                        "unexpected_domain_ids": unexpected_matches,
                         "reason_codes": reason_codes,
                     }
                 )
 
     classification_complete = unowned_count == 0 and overlap_count == 0
     enforcement = registry["enforcement"]
-    ok = classification_complete or enforcement == "inventory_only"
+    finding_count = unowned_count + overlap_count
     return {
         "schema": RESULT_SCHEMA,
-        "ok": ok,
+        "ok": classification_complete or enforcement == "inventory_only",
         "classification_complete": classification_complete,
         "enforcement": enforcement,
         "registry_version": registry["registry_version"],
@@ -399,9 +379,9 @@ def scan_registry(
         "coverage": registry["coverage"],
         "tracked_file_count": len(files),
         "matched_file_count": len(matched_paths),
-        "finding_count": unowned_count + overlap_count,
+        "finding_count": finding_count,
         "reported_finding_count": len(findings),
-        "findings_truncated": (unowned_count + overlap_count) > len(findings),
+        "findings_truncated": finding_count > len(findings),
         "unowned_count": unowned_count,
         "overlap_count": overlap_count,
         "disposition_match_counts": dict(sorted(disposition_counts.items())),
@@ -418,11 +398,7 @@ def run(repo_root: Path, registry_path: Path) -> tuple[int, dict[str, Any]]:
 
         def read_text(path: str) -> str | None:
             if path not in cache:
-                cache[path] = _read_text_bounded(
-                    repo_root,
-                    path,
-                    max_bytes=registry["max_text_bytes"],
-                )
+                cache[path] = _read_text_bounded(repo_root, path, max_bytes=registry["max_text_bytes"])
             return cache[path]
 
         result = scan_registry(registry, tracked, read_text=read_text)
@@ -439,16 +415,10 @@ def run(repo_root: Path, registry_path: Path) -> tuple[int, dict[str, Any]]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate and scan the Nexus legacy-surface registry.")
     parser.add_argument("--repo-root", type=Path, default=Path("."))
-    parser.add_argument(
-        "--registry",
-        type=Path,
-        default=Path("config/governance/legacy-surface-domains.v1.json"),
-    )
+    parser.add_argument("--registry", type=Path, default=Path("config/governance/legacy-surface-domains.v1.json"))
     args = parser.parse_args(argv)
     repo_root = args.repo_root.resolve()
-    registry_path = args.registry
-    if not registry_path.is_absolute():
-        registry_path = repo_root / registry_path
+    registry_path = args.registry if args.registry.is_absolute() else repo_root / args.registry
     status, result = run(repo_root, registry_path)
     print(json.dumps(result, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
     return status
