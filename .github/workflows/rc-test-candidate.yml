@@ -104,6 +104,12 @@ jobs:
           if [[ "${code}" -ne 0 && ! -f artifacts/rc-test/failure-summary.json ]]; then
             stage="$(grep -E '^RC_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
             stage="${stage:-unknown}"
+            if [[ "${stage}" == "browser-smoke" ]]; then
+              browser_stage="$(grep -E '^RC_BROWSER_STAGE=[a-z0-9_-]{1,64}$' "${run_log}" | tail -n 1 | cut -d= -f2 || true)"
+              if [[ -n "${browser_stage}" ]]; then
+                stage="browser-${browser_stage}"
+              fi
+            fi
             python - "${stage}" "${code}" <<'PY'
           import json
           import re
