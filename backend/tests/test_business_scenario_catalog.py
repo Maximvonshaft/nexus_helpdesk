@@ -20,6 +20,7 @@ from app.services.nexus_osr.business_scenarios import (
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend" / "app" / "config" / "business_scenarios.v1.json"
 VALIDATOR_PATH = ROOT / "backend" / "scripts" / "validate_business_scenario_catalog.py"
+CATALOG_AT = datetime(2026, 7, 12, tzinfo=timezone.utc)
 EXPECTED_KEYS = {
     "tracking_status_inquiry",
     "delivery_eta_delay_inquiry",
@@ -44,15 +45,18 @@ def _parse(payload: dict):
     return parse_business_scenario_catalog(payload, source_sha256="fixture")
 
 
+def _load():
+    """Load the checked-in catalog against a fixed acceptance instant."""
+
+    return load_business_scenario_catalog(CATALOG_PATH, at=CATALOG_AT)
+
+
 def _scenario(payload: dict, key: str) -> dict:
     return next(item for item in payload["scenarios"] if item["scenario_key"] == key)
 
 
 def test_production_catalog_is_active_bounded_and_complete() -> None:
-    catalog = load_business_scenario_catalog(
-        CATALOG_PATH,
-        at=datetime(2026, 7, 12, tzinfo=timezone.utc),
-    )
+    catalog = _load()
     assert catalog.schema == "nexus.business-scenario-catalog.v1"
     assert {item.scenario_key for item in catalog.scenarios} == EXPECTED_KEYS
     assert len(catalog.scenarios) == 12
@@ -62,7 +66,7 @@ def test_production_catalog_is_active_bounded_and_complete() -> None:
 
 
 def test_safe_summary_contains_no_scenario_body_or_customer_data() -> None:
-    summary = load_business_scenario_catalog(CATALOG_PATH).safe_summary()
+    summary = _load().safe_summary()
     assert summary["scenario_count"] == 12
     assert set(summary["scenario_keys"]) == EXPECTED_KEYS
     rendered = json.dumps(summary, sort_keys=True)
@@ -71,7 +75,7 @@ def test_safe_summary_contains_no_scenario_body_or_customer_data() -> None:
 
 
 def test_exact_alias_resolution_is_deterministic_and_no_fuzzy_match_exists() -> None:
-    catalog = load_business_scenario_catalog(CATALOG_PATH)
+    catalog = _load()
     assert resolve_business_scenario(catalog, issue_type="parcel_status").scenario_key == "tracking_status_inquiry"
     assert resolve_business_scenario(catalog, scenario_key="cod_payment_anomaly").scenario_key == "cod_payment_anomaly"
     with pytest.raises(BusinessScenarioCatalogError, match="scenario_not_found"):
@@ -99,7 +103,7 @@ def test_duplicate_json_key_fails_closed(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(BusinessScenarioCatalogError, match="scenario_catalog_duplicate_json_key"):
-        load_business_scenario_catalog(path)
+        load_business_scenario_catalog(path, at=CATALOG_AT)
 
 
 def test_alias_conflict_and_repeated_key_fail_closed() -> None:
@@ -159,7 +163,7 @@ def test_required_notification_has_no_silent_bypass() -> None:
 
 
 def test_required_capabilities_use_authoritative_permission_vocabulary() -> None:
-    catalog = load_business_scenario_catalog(CATALOG_PATH)
+    catalog = _load()
     for item in catalog.scenarios:
         assert set(item.required_capabilities).issubset(AUTHORITATIVE_CAPABILITIES)
     address = resolve_business_scenario(catalog, scenario_key="address_contact_correction")
@@ -206,7 +210,7 @@ def test_conditional_notification_cannot_require_unconditional_action_or_outcome
 
 def test_tracking_readiness_requires_fact_action_notification_and_business_result() -> None:
     scenario = resolve_business_scenario(
-        load_business_scenario_catalog(CATALOG_PATH),
+        _load(),
         scenario_key="tracking_status_inquiry",
     )
     blocked = evaluate_scenario_readiness(
@@ -236,7 +240,7 @@ def test_tracking_readiness_requires_fact_action_notification_and_business_resul
 
 def test_valid_conditional_notification_waiver_satisfies_policy_without_false_outcome() -> None:
     scenario = resolve_business_scenario(
-        load_business_scenario_catalog(CATALOG_PATH),
+        _load(),
         scenario_key="return_refusal_flow",
     )
     result = evaluate_scenario_readiness(
@@ -256,7 +260,7 @@ def test_valid_conditional_notification_waiver_satisfies_policy_without_false_ou
 
 def test_invalid_or_unapproved_notification_waiver_is_rejected() -> None:
     scenario = resolve_business_scenario(
-        load_business_scenario_catalog(CATALOG_PATH),
+        _load(),
         scenario_key="return_refusal_flow",
     )
     kwargs = dict(
@@ -280,7 +284,7 @@ def test_invalid_or_unapproved_notification_waiver_is_rejected() -> None:
 
 def test_observation_repair_and_high_risk_state_block_closure() -> None:
     scenario = resolve_business_scenario(
-        load_business_scenario_catalog(CATALOG_PATH),
+        _load(),
         scenario_key="failed_repeated_delivery_attempt",
     )
     kwargs = {
@@ -313,7 +317,7 @@ def test_observation_repair_and_high_risk_state_block_closure() -> None:
 
 
 def test_escalate_and_reclassify_scenarios_cannot_be_falsely_closed() -> None:
-    catalog = load_business_scenario_catalog(CATALOG_PATH)
+    catalog = _load()
     legal = resolve_business_scenario(catalog, scenario_key="legal_privacy_high_risk")
     intake = resolve_business_scenario(catalog, scenario_key="missing_information_intake")
 
