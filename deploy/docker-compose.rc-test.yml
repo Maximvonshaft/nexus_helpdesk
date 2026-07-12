@@ -76,9 +76,11 @@ services:
     healthcheck:
       test:
         - CMD
-        - curl
-        - -fsS
-        - http://127.0.0.1:8080/readyz
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()
       interval: 10s
       timeout: 5s
       retries: 12
