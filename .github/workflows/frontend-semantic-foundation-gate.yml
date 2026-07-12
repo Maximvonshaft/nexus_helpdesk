@@ -85,6 +85,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set +e
+          git fetch --no-tags origin "${BASE_SHA}"
           git diff --check "${BASE_SHA}"...HEAD > exact-diff-check.txt 2>&1
           status=$?
           cat exact-diff-check.txt
