@@ -273,14 +273,19 @@ def collect_tracked_files(repo_root: Path) -> list[str]:
     return sorted(set(paths))
 
 
+def _glob_matches(path: str, pattern: str) -> bool:
+    return fnmatch.fnmatchcase(path.casefold(), pattern.casefold())
+
+
 def _path_matches(path: str, *, exact: Sequence[str], globs: Sequence[str]) -> bool:
-    return path in exact or any(fnmatch.fnmatchcase(path, pattern) for pattern in globs)
+    return path in exact or any(_glob_matches(path, pattern) for pattern in globs)
 
 
 def _read_text_bounded(repo_root: Path, path: str, *, max_bytes: int) -> str | None:
     file_path = repo_root / path
     try:
-        data = file_path.read_bytes()
+        with file_path.open("rb") as handle:
+            data = handle.read(max_bytes + 1)
     except OSError:
         return None
     if len(data) > max_bytes or b"\0" in data:
@@ -301,7 +306,7 @@ def _domain_matches(
     if _path_matches(path, exact=selectors["paths"], globs=selectors["globs"]):
         return True
     for rule in selectors["content_rules"]:
-        if any(fnmatch.fnmatchcase(path, pattern) for pattern in rule["path_globs"]):
+        if any(_glob_matches(path, pattern) for pattern in rule["path_globs"]):
             text = read_text(path)
             if text is not None and any(marker in text for marker in rule["markers"]):
                 return True
@@ -317,10 +322,10 @@ def _discovery_matches(
     path_regex = rule["path_regex"]
     if path_regex and re.search(path_regex, path):
         return True
-    if any(fnmatch.fnmatchcase(path, pattern) for pattern in rule["path_globs"]):
+    if any(_glob_matches(path, pattern) for pattern in rule["path_globs"]):
         return True
     if rule["content_markers"] and any(
-        fnmatch.fnmatchcase(path, pattern) for pattern in rule["content_path_globs"]
+        _glob_matches(path, pattern) for pattern in rule["content_path_globs"]
     ):
         text = read_text(path)
         if text is not None and any(marker in text for marker in rule["content_markers"]):
