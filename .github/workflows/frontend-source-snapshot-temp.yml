@@ -21,18 +21,24 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 1
 
-      - name: Apply locally verified frontend patch
+      - name: Reassemble and apply locally verified frontend patch
         env:
-          PATCH_B64: .github/patches/frontend-interaction-safety-660.patch.gz.b64
+          CHUNK_DIR: .github/patches/frontend-interaction-safety-660
+          EXPECTED_B64_SHA256: cb135d0aa902a77ca3eac3af720065dacb66354ea36f978bfc128992d673eb79
           EXPECTED_PATCH_SHA256: 83b5a56660badac95e3065adce0a24077ad7b67803eaa551cf5a48131bf8c4ac
         run: |
           set -Eeuo pipefail
+          combined_b64="${RUNNER_TEMP}/frontend-interaction-safety-660.patch.gz.b64"
           patch_file="${RUNNER_TEMP}/frontend-interaction-safety-660.patch"
-          base64 --decode "${PATCH_B64}" | gzip -d > "${patch_file}"
+          cat "${CHUNK_DIR}"/*.b64 > "${combined_b64}"
+          echo "${EXPECTED_B64_SHA256}  ${combined_b64}" | sha256sum --check --strict
+          base64 --decode "${combined_b64}" | gzip -d > "${patch_file}"
           echo "${EXPECTED_PATCH_SHA256}  ${patch_file}" | sha256sum --check --strict
           git apply --check "${patch_file}"
           git apply "${patch_file}"
-          rm -f "${PATCH_B64}" .github/workflows/frontend-source-snapshot-temp.yml
+          rm -f .github/patches/frontend-interaction-safety-660.patch.gz.b64
+          rm -rf "${CHUNK_DIR}"
+          rm -f .github/workflows/frontend-source-snapshot-temp.yml
           git diff --check
 
       - name: Commit exact implementation and remove bootstrap files
