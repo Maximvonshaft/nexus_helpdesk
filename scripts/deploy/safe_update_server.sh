@@ -9,7 +9,7 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/.deploy_backups/$STAMP}"
 BACKUP_PARENT="$(dirname "$BACKUP_DIR")"
 
-if [ -e "$BACKUP_DIR" ]; then
+if [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; then
   echo "refusing existing backup target: $BACKUP_DIR" >&2
   exit 2
 fi
