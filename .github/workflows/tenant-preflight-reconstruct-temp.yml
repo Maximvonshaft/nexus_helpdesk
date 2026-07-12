@@ -119,7 +119,32 @@ jobs:
           rm -f .github/workflows/tenant-preflight-reconstruct-temp.yml
           git add -A
           git diff --cached --check
-          test "$(git diff --cached --name-only | wc -l)" -eq 5
+          python - <<'PY'
+          import subprocess
+
+          allowed = {
+              '.github/workflows/tenant-preflight-reconstruct-temp.yml',
+              '.github/workflows/tenant-principal-preflight.yml',
+              'docs/architecture/tenant-principal-migration.md',
+              'scripts/qualification/tenant/tenant_principal_preflight.py',
+              'scripts/qualification/tenant/test_tenant_principal_preflight.py',
+          }
+          actual = set(subprocess.check_output(
+              ['git', 'diff', '--cached', '--name-only'],
+              text=True,
+          ).splitlines())
+          if not {
+              '.github/workflows/tenant-principal-preflight.yml',
+              'docs/architecture/tenant-principal-migration.md',
+              'scripts/qualification/tenant/tenant_principal_preflight.py',
+              'scripts/qualification/tenant/test_tenant_principal_preflight.py',
+          }.issubset(actual):
+              raise SystemExit(f'missing required staged paths: {sorted(actual)}')
+          unexpected = actual - allowed
+          if unexpected:
+              raise SystemExit(f'unexpected staged paths: {sorted(unexpected)}')
+          print('staged_paths=' + ','.join(sorted(actual)))
+          PY
           git config user.name 'nexus-osr-tenant-bot'
           git config user.email 'nexus-osr-tenant-bot@users.noreply.github.com'
           git commit -m 'test(tenant): reconstruct current-main ownership preflight (#546)'
