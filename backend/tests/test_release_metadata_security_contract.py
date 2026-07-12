@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -80,6 +81,17 @@ def test_workflow_does_not_paste_dispatch_inputs_into_shell() -> None:
     )
     assert "persist-credentials: false" in workflow
 
+    uses_lines = [
+        line.strip()
+        for line in workflow.splitlines()
+        if line.strip().startswith("uses:")
+    ]
+    assert uses_lines
+    assert all(
+        re.fullmatch(r"uses: [^@]+@[0-9a-f]{40}(?: # .+)?", line)
+        for line in uses_lines
+    )
+
 
 def test_canonical_metadata_is_written_atomically_with_mode_0600(
     tmp_path: Path,
@@ -106,6 +118,11 @@ def test_canonical_metadata_is_written_atomically_with_mode_0600(
         _metadata() + f"GIT_SHA={SHA}\n",
         _metadata() + "UNEXPECTED_KEY=value\n",
         _metadata(APP_IMAGE_TAG="ghcr.io/example/other:bad"),
+        _metadata(
+            IMAGE_TAG=(
+                f"ghcr.io/example/nexus:old:{APP_VERSION}-{BUILD_TIME}"
+            )
+        ),
     ],
 )
 def test_invalid_metadata_fails_without_output(
