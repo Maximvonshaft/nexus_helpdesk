@@ -80,6 +80,10 @@ jobs:
         working-directory: webapp
         run: npm ci
 
+      - name: Install Playwright Chrome runtime
+        working-directory: webapp
+        run: npx playwright install --with-deps chrome
+
       - name: Generate isolated RC environment
         run: |
           set -Eeuo pipefail
