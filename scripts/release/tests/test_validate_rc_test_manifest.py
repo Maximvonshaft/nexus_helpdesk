@@ -146,6 +146,7 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         cls.runner = (cls.root / "scripts" / "release" / "run_rc_test_candidate.sh").read_text(encoding="utf-8")
         cls.workflow = (cls.root / ".github" / "workflows" / "rc-test-candidate.yml").read_text(encoding="utf-8")
         cls.seed = (cls.root / "scripts" / "release" / "seed_rc_test_data.py").read_text(encoding="utf-8")
+        cls.browser = (cls.root / "webapp" / "e2e" / "rc-live.spec.ts").read_text(encoding="utf-8")
 
     def test_postgres_receives_only_database_environment(self):
         block = self.compose.split("  postgres-rc:\n", 1)[1].split("\n  migrate-rc:\n", 1)[0]
@@ -181,6 +182,17 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
             "worker-handoff-snapshot-rc",
         ):
             self.assertIn(service, self.runner)
+
+    def test_browser_selects_the_exact_conversation_before_asserting_message_body(self):
+        row_selector = "page.locator('button.support-row', { hasText: message }).first()"
+        click_selector = "await matchingRow.click()"
+        body_selector = "page.locator('.support-message-body', { hasText: message }).first()"
+        self.assertIn(row_selector, self.browser)
+        self.assertIn(click_selector, self.browser)
+        self.assertIn(body_selector, self.browser)
+        self.assertLess(self.browser.index(row_selector), self.browser.index(click_selector))
+        self.assertLess(self.browser.index(click_selector), self.browser.index(body_selector))
+        self.assertNotIn("page.getByText(message, { exact: false }).first()", self.browser)
 
     def test_workflow_scans_explicit_files_and_uploads_only_after_success(self):
         self.assertIn("validate_rc_test_evidence.py", self.workflow)
