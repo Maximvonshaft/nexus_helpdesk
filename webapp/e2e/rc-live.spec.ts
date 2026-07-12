@@ -11,6 +11,7 @@ test.skip(!rcConfigured, 'RC live browser environment is not configured')
 test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
+  console.log('RC_BROWSER_STAGE=public-webchat')
   await test.step('public WebChat initializes and persists the browser message', async () => {
     await page.goto('/webchat/demo/')
     await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
@@ -29,6 +30,7 @@ test('RC public WebChat message is visible in the authenticated operator surface
     await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
   })
 
+  console.log('RC_BROWSER_STAGE=login')
   await test.step('isolated operator authentication succeeds', async () => {
     await page.goto('/login')
     await page.getByLabel('账号').fill(adminUsername)
@@ -37,6 +39,7 @@ test('RC public WebChat message is visible in the authenticated operator surface
     await expect(page).not.toHaveURL(/\/login$/)
   })
 
+  console.log('RC_BROWSER_STAGE=operator-visibility')
   await test.step('operator selects the matching conversation and sees the same message', async () => {
     await page.goto('/webchat')
     await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
@@ -50,4 +53,6 @@ test('RC public WebChat message is visible in the authenticated operator surface
     await matchingRow.click()
     await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 20_000 })
   })
+
+  console.log('RC_BROWSER_STAGE=completed')
 })
