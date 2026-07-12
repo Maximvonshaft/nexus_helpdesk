@@ -92,11 +92,12 @@ class RcSeedContractTest(unittest.TestCase):
             "provider_runtime_audit_logs": "31",
             "provider_auth_sessions": "32",
             "provider_credentials": "33",
-            "outbound_messages": "34",
+            "ticket_outbound_messages": "34",
             "operations_dispatch_outbox": "35",
         }
         for table, code in expected_table_codes.items():
             self.assertIn(f'"{table}": {code}', self.side_effect_source)
+        self.assertNotIn('"outbound_messages": 34', self.side_effect_source)
         for reason in (
             "backend_root_missing",
             "unsafe_environment_controls",
