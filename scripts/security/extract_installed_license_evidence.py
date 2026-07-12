@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 _SAFE_PACKAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+!-]{0,119}$")
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 
 
@@ -18,8 +19,19 @@ def _hash_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _pypi_purl(name: str, version: str) -> str:
+    normalized_name = name.strip().lower().replace("_", "-")
+    normalized_version = version.strip()
+    if not _SAFE_PACKAGE.fullmatch(normalized_name) or not _SAFE_VERSION.fullmatch(
+        normalized_version
+    ):
+        raise ValueError("installed_component_identity_invalid")
+    return f"pkg:pypi/{normalized_name}@{normalized_version}"
+
+
 def extract(packages: list[str]) -> dict[str, object]:
     components: list[dict[str, object]] = []
+    seen_purls: set[str] = set()
     for raw_name in packages:
         name = str(raw_name or "").strip()
         if not _SAFE_PACKAGE.fullmatch(name):
@@ -29,11 +41,17 @@ def extract(packages: list[str]) -> dict[str, object]:
         except importlib.metadata.PackageNotFoundError as exc:
             raise ValueError(f"package_not_installed:{name}") from exc
         version = str(distribution.version or "").strip()
+        purl = _pypi_purl(name, version)
+        if purl in seen_purls:
+            raise ValueError("installed_component_purl_duplicate")
+        seen_purls.add(purl)
         files: list[dict[str, str]] = []
         for relative in distribution.files or []:
             relative_text = str(relative)
             basename = Path(relative_text).name.lower()
-            if not any(token in basename for token in ("license", "copying", "notice")):
+            if not any(
+                token in basename for token in ("license", "copying", "notice")
+            ):
                 continue
             resolved = Path(distribution.locate_file(relative)).resolve()
             files.append(
@@ -45,6 +63,7 @@ def extract(packages: list[str]) -> dict[str, object]:
         files.sort(key=lambda item: item["path"])
         components.append(
             {
+                "purl": purl,
                 "package": name,
                 "version": version[:120],
                 "license_files": files[:20],
