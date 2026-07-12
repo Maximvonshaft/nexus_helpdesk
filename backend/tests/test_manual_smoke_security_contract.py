@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -17,7 +18,10 @@ PUBLIC_SMOKE = REPO_ROOT / "scripts" / "smoke" / "public_webchat_smoke.py"
 
 
 def _load_public_smoke() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("public_webchat_smoke_contract", PUBLIC_SMOKE)
+    spec = importlib.util.spec_from_file_location(
+        "public_webchat_smoke_contract",
+        PUBLIC_SMOKE,
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -114,8 +118,12 @@ def test_workflows_use_immutable_actions_and_least_privilege() -> None:
             re.fullmatch(r"uses: [^@]+@[0-9a-f]{40}(?: # .+)?", line)
             for line in uses_lines
         )
-    assert "persist-credentials: false" in MANUAL_WORKFLOW.read_text(encoding="utf-8")
-    assert "persist-credentials: false" in PUBLIC_WORKFLOW.read_text(encoding="utf-8")
+    assert "persist-credentials: false" in MANUAL_WORKFLOW.read_text(
+        encoding="utf-8"
+    )
+    assert "persist-credentials: false" in PUBLIC_WORKFLOW.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_dispatch_strings_are_not_pasted_into_shell_or_python_source() -> None:
@@ -128,6 +136,17 @@ def test_dispatch_strings_are_not_pasted_into_shell_or_python_source() -> None:
     assert '"- Expected git SHA: `${{ inputs.expected_git_sha }}`"' not in public
     assert "RAW_BASE_URL: ${{ inputs.base_url }}" in manual
     assert "RAW_BASE_URL: ${{ inputs.base_url }}" in public
+    assert "if: ${{ steps.target.outputs.cors_origin != '' }}" in manual
+    assert "if: ${{ inputs.cors_origin != '' }}" not in manual
+
+
+def test_summaries_report_actual_step_outcomes() -> None:
+    manual = MANUAL_WORKFLOW.read_text(encoding="utf-8")
+    public = PUBLIC_WORKFLOW.read_text(encoding="utf-8")
+    assert "SUMMARY_HEALTH_READY: ${{ steps.health_ready.outcome }}" in manual
+    assert "SUMMARY_EMAIL_SEND: ${{ steps.outbound_email_send.outcome }}" in manual
+    assert "SUMMARY_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}" in public
+    assert '"- Health/ready: checked"' not in manual
 
 
 def test_manual_validator_normalizes_safe_values(tmp_path: Path) -> None:
@@ -222,6 +241,7 @@ def test_public_validator_normalizes_safe_values(tmp_path: Path) -> None:
         {"RAW_ORIGIN": "https://example.test/path"},
         {"RAW_EXPECTED_GIT_SHA": "not-a-sha"},
         {"RAW_EXPECTED_IMAGE_TAG": "tag with spaces"},
+        {"RAW_EXPECTED_IMAGE_TAG": "ghcr.io/example/`markdown`"},
         {"RAW_MAX_LATENCY_MS": "0"},
         {"RAW_MAX_LATENCY_MS": "999999"},
         {"REQUIRE_AI_REPLY_INPUT": "true", "SKIP_AI_REPLY_INPUT": "true"},
@@ -289,6 +309,38 @@ def test_public_smoke_rejects_unsafe_endpoints(value: str) -> None:
         smoke.normalize_http_endpoint(value, name="target")
 
 
+def test_public_evidence_is_recursively_redacted(tmp_path: Path) -> None:
+    smoke = _load_public_smoke()
+    payload = {
+        "visitor_token": "visitor-secret",
+        "message": {
+            "body": "tracking ME020000000001",
+            "metadata_json": {"reply_source": "private_ai_runtime"},
+        },
+        "nested": [
+            {
+                "authorization": "Bearer secret",
+                "email": "customer@example.test",
+                "safe_id": 17,
+            }
+        ],
+    }
+    safe = smoke.redact_sensitive(payload)
+    assert safe["visitor_token"] == smoke.REDACTED
+    assert safe["message"]["body"] == smoke.REDACTED
+    assert safe["message"]["metadata_json"] == smoke.REDACTED
+    assert safe["nested"][0]["authorization"] == smoke.REDACTED
+    assert safe["nested"][0]["email"] == smoke.REDACTED
+    assert safe["nested"][0]["safe_id"] == 17
+
+    smoke.write_json(tmp_path, "evidence.json", payload)
+    raw = (tmp_path / "evidence.json").read_text(encoding="utf-8")
+    assert "visitor-secret" not in raw
+    assert "tracking ME020000000001" not in raw
+    assert "customer@example.test" not in raw
+    assert json.loads(raw)["nested"][0]["safe_id"] == 17
+
+
 def test_workflow_wires_require_ai_reply_and_pending_conflict() -> None:
     public = PUBLIC_WORKFLOW.read_text(encoding="utf-8")
     manual = MANUAL_WORKFLOW.read_text(encoding="utf-8")
@@ -299,3 +351,4 @@ def test_workflow_wires_require_ai_reply_and_pending_conflict() -> None:
     assert "pending_ok = args.allow_pending and not args.require_ai_reply" in smoke
     assert "outbound_email_test_send_confirm" in manual
     assert "test_send_authorized == 'true'" in manual
+    assert "Upload redacted public smoke evidence immutable" in public
