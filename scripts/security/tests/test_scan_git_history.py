@@ -68,7 +68,7 @@ def _scan(root: Path, *, max_blob_bytes: int = scanner.MAX_FILE_BYTES):
 
 
 class GitHistorySecretAssuranceTests(unittest.TestCase):
-    def test_secret_removed_from_head_is_still_detected_without_raw_value(self) -> None:
+    def test_secret_removed_from_head_is_still_detected_without_raw_value_or_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _init_repo(root)
@@ -83,15 +83,40 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
             report = _scan(root)
             encoded = json.dumps(report, sort_keys=True)
 
+        finding = report["findings"][0]
         self.assertEqual(report["status"], "fail")
         self.assertTrue(report["complete"])
         self.assertEqual(report["finding_count"], 1)
-        self.assertEqual(report["findings"][0]["rule"], "github_token")
-        self.assertEqual(report["findings"][0]["path"], "runtime.py")
-        self.assertIn(len(report["findings"][0]["blob_sha"]), {40, 64})
+        self.assertEqual(finding["rule"], "github_token")
+        self.assertEqual(len(finding["path_sha256"]), 64)
+        self.assertEqual(finding["path_suffix"], ".py")
+        self.assertIn(len(finding["blob_sha"]), {40, 64})
+        self.assertNotIn("path", finding)
         self.assertNotIn(token, encoded)
+        self.assertNotIn("runtime.py", encoded)
         self.assertNotIn("add historical token", encoded)
         self.assertNotIn("refs/heads", encoded)
+
+    def test_finding_report_passes_generic_artifact_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            (root / "runtime.py").write_text(
+                "TOKEN = " + json.dumps(_github_token()) + "\n",
+                encoding="utf-8",
+            )
+            _commit_all(root, "add token")
+            report = _scan(root)
+            report_path = root / "history-report.json"
+            report_path.write_text(
+                json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            artifact_findings = scanner.scan_artifact_files(root, ["history-report.json"])
+
+        self.assertEqual(artifact_findings, [])
+        self.assertIsInstance(report["by_rule"], list)
+        self.assertEqual(report["by_rule"], [{"rule": "github_token", "count": 1}])
 
     def test_placeholder_history_is_not_a_finding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -159,7 +184,7 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
         self.assertTrue(report["findings_truncated"])
         self.assertEqual(len(tree_findings), scanner.MAX_FINDINGS)
 
-    def test_unknown_oversized_blob_makes_scan_incomplete(self) -> None:
+    def test_unknown_oversized_blob_makes_scan_incomplete_with_safe_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _init_repo(root)
@@ -171,6 +196,12 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
         self.assertFalse(report["complete"])
         self.assertEqual(report["unscanned_oversized_blob_count"], 1)
         self.assertEqual(report["accounted_blob_count"], report["reachable_blob_count"])
+        self.assertEqual(len(report["unscanned_oversized"]), 1)
+        item = report["unscanned_oversized"][0]
+        self.assertEqual(len(item["path_sha256"]), 64)
+        self.assertEqual(item["path_suffix"], ".txt")
+        self.assertEqual(item["size_bytes"], 128)
+        self.assertNotIn("path", item)
 
     def test_known_oversized_binary_is_accounted_without_incomplete_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -203,7 +234,7 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
                         "schema_version": "nexus_secret_scan_allowlist_v1",
                         "entries": [
                             {
-                                "path": finding["path"],
+                                "path": "runtime.py",
                                 "rule": finding["rule"],
                                 "fingerprint": finding["fingerprint"],
                                 "reason": "Synthetic history scanner fixture only.",
