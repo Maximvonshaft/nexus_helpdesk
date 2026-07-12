@@ -1,38 +1,57 @@
 /*
- * NexusDesk semantic design tokens.
+ * Nexus OSR semantic design tokens.
  *
- * These tokens are imported before the legacy stylesheet so new shared
- * primitives can use stable semantic values while existing pages keep their
- * current visual contract.
+ * This is the accepted token authority for shared UI primitives. Feature
+ * surfaces consume semantic roles rather than creating route-local palettes.
  */
 
 :root {
+  color-scheme: light;
+
   --nd-color-bg: #f5f7fb;
   --nd-color-surface: #ffffff;
-  --nd-color-surface-raised: #ffffff;
-  --nd-color-border: #e5e7eb;
-  --nd-color-border-strong: #cbd5e1;
-  --nd-color-text: #101828;
-  --nd-color-text-muted: #667085;
+  --nd-color-surface-subdued: #f8fafc;
+  --nd-color-surface-hover: #f1f5f9;
+  --nd-color-surface-disabled: #e9eef4;
+  --nd-color-border: #d7dee7;
+  --nd-color-border-strong: #aab8c8;
+  --nd-color-text: #172033;
+  --nd-color-text-muted: #526174;
+  --nd-color-text-subtle: #667085;
+  --nd-color-text-inverse: #ffffff;
 
-  --nd-color-brand: #101828;
-  --nd-color-accent: #2563eb;
+  --nd-color-brand: #172033;
+  --nd-color-brand-hover: #25324a;
+  --nd-color-brand-active: #0f172a;
+  --nd-color-accent: #1d4ed8;
+  --nd-color-accent-hover: #1e40af;
+  --nd-color-accent-soft: #eff6ff;
+  --nd-color-context: #172033;
+  --nd-color-context-raised: #22304a;
+  --nd-color-context-muted: #cbd5e1;
+  --nd-color-context-line: #40506a;
+
   --nd-color-success: #067647;
-  --nd-color-warning: #b54708;
-  --nd-color-danger: #b42318;
-  --nd-color-info: #175cd3;
-  --nd-color-ai: #6d28d9;
-
   --nd-color-success-bg: #ecfdf3;
-  --nd-color-warning-bg: #fffaeb;
+  --nd-color-success-border: #86d5b3;
+  --nd-color-warning: #9a5b00;
+  --nd-color-warning-bg: #fff8e6;
+  --nd-color-warning-border: #e9c46a;
+  --nd-color-danger: #b42318;
+  --nd-color-danger-hover: #912018;
   --nd-color-danger-bg: #fef3f2;
+  --nd-color-danger-border: #f2aaa3;
+  --nd-color-info: #175cd3;
   --nd-color-info-bg: #eff8ff;
+  --nd-color-info-border: #9cc7f2;
+  --nd-color-ai: #6d28d9;
   --nd-color-ai-bg: #f5f3ff;
+  --nd-color-ai-border: #c7b9f7;
 
   --nd-radius-sm: 6px;
   --nd-radius-md: 8px;
   --nd-radius-lg: 12px;
-  --nd-radius-xl: 16px;
+  --nd-radius-pill: 999px;
 
   --nd-space-1: 4px;
   --nd-space-2: 8px;
@@ -41,9 +60,37 @@
   --nd-space-5: 20px;
   --nd-space-6: 24px;
   --nd-space-8: 32px;
+  --nd-space-10: 40px;
+  --nd-space-12: 48px;
 
-  --nd-shadow-panel: 0 16px 40px rgba(15, 23, 42, 0.08);
-  --nd-shadow-popover: 0 24px 70px rgba(15, 23, 42, 0.18);
+  --nd-text-xs: 0.75rem;
+  --nd-text-sm: 0.8125rem;
+  --nd-text-body: 0.875rem;
+  --nd-text-form: 1rem;
+  --nd-text-title-sm: 1.125rem;
+  --nd-text-title: 1.5rem;
+  --nd-text-display: 1.875rem;
 
-  --nd-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --nd-control-height-sm: 36px;
+  --nd-control-height-md: 44px;
+  --nd-control-height-lg: 48px;
+
+  --nd-motion-fast: 160ms;
+  --nd-motion-standard: 220ms;
+  --nd-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --nd-focus-ring: 0 0 0 3px rgba(29, 78, 216, 0.28);
+  --nd-focus-outline: #1d4ed8;
+  --nd-shadow-panel: 0 12px 32px rgba(15, 23, 42, 0.09);
+  --nd-shadow-popover: 0 24px 64px rgba(15, 23, 42, 0.18);
+
+  --nd-z-base: 0;
+  --nd-z-sticky: 20;
+  --nd-z-dropdown: 40;
+  --nd-z-backdrop: 60;
+  --nd-z-dialog: 70;
+  --nd-z-toast: 80;
+  --nd-z-tooltip: 90;
+
+  --nd-font-sans: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
