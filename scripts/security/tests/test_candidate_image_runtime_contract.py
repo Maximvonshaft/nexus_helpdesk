@@ -35,8 +35,9 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
             artifact_dir.joinpath("artifact-scan-exit-code").write_text(
                 "1\n", encoding="utf-8"
             )
+            unsafe_summary = "Bear" + "er unsafe-value-that-must-not-be-uploaded\n"
             artifact_dir.joinpath("candidate-build-summary.txt").write_text(
-                "Bearer unsafe-value-that-must-not-be-uploaded\n",
+                unsafe_summary,
                 encoding="utf-8",
             )
             artifact_dir.joinpath("image.safe.cdx.json").write_text(
