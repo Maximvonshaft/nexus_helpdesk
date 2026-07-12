@@ -49,6 +49,8 @@ Each domain has:
 - exact, glob or path-scoped content selectors;
 - references to authoritative Issues, PRs or documents.
 
+Reachable Git history is intentionally not represented by a tracked-file selector. Its authority remains #565; a tracked placeholder such as `.gitignore` would be false evidence.
+
 Discovery rules are separate from domain selectors. A discovery rule identifies a high-confidence legacy marker and declares which domain IDs are allowed to own it. This separation permits an orphan marker to fail closed instead of silently assigning ownership.
 
 ## Security and privacy
