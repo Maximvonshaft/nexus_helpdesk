@@ -32,27 +32,41 @@ jobs:
       app_version: ${{ steps.release_meta.outputs.app_version }}
       frontend_build_sha: ${{ steps.release_meta.outputs.frontend_build_sha }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout immutable
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+        with:
+          persist-credentials: false
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx immutable
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
 
       - name: Compute release metadata
         id: release_meta
         shell: bash
+        env:
+          RELEASE_IMAGE_NAME_INPUT: ${{ inputs.image_name }}
+          RELEASE_APP_VERSION_PREFIX_INPUT: ${{ inputs.app_version_prefix }}
         run: |
           set -Eeuo pipefail
 
           repo_lc="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-          image_name="${{ inputs.image_name }}"
+          image_name="$RELEASE_IMAGE_NAME_INPUT"
           if [ -z "$image_name" ]; then
             image_name="ghcr.io/${repo_lc}/helpdesk"
           fi
           image_name="$(printf '%s' "$image_name" | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "$image_name" =~ ^[a-z0-9][a-z0-9._:/-]{0,255}$ ]] \
+            || [[ "$image_name" == *"//"* ]] \
+            || [[ "$image_name" == *".."* ]] \
+            || [[ "$image_name" == */ ]] \
+            || [[ "$image_name" == *: ]]; then
+            echo "::error::image_name is not a safe OCI image name"
+            exit 2
+          fi
 
-          prefix="${{ inputs.app_version_prefix }}"
-          prefix="$(printf '%s' "$prefix" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+|-+$//g')"
+          prefix="$RELEASE_APP_VERSION_PREFIX_INPUT"
+          prefix="$(printf '%s' "$prefix" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^[^a-z0-9_]+//; s/[^a-z0-9_]+$//')"
+          prefix="${prefix:0:96}"
           if [ -z "$prefix" ]; then
             prefix="candidate"
           fi
@@ -87,16 +101,16 @@ jobs:
 
           cat release-metadata.env >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Log in to GHCR
+      - name: Log in to GHCR immutable
         if: startsWith(steps.release_meta.outputs.image_tag, 'ghcr.io/')
-        uses: docker/login-action@v3
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build release image
-        uses: docker/build-push-action@v6
+      - name: Build release image immutable
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
         with:
           context: .
           file: Dockerfile
@@ -112,8 +126,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Upload release metadata
-        uses: actions/upload-artifact@v4
+      - name: Upload release metadata immutable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-metadata
           path: release-metadata.env
