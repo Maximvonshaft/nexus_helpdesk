@@ -203,14 +203,16 @@ test('dispatch-only work remains actionable without fabricating a conversation o
   await mockWorkspace(page, 'dispatch')
   await page.goto('/workspace')
 
-  await expect(page.getByRole('button', { name: /ticket:42/ })).toBeVisible()
-  await expect(page.getByText('重试已耗尽')).toBeVisible()
-  await expect(page.getByText('SLA 已超时')).toBeVisible()
-  await expect(page.getByText('已重新打开')).toBeVisible()
+  const queueRow = page.getByRole('button', { name: /ticket:42/ })
+  const caseStatus = page.getByLabel('案例状态')
+  await expect(queueRow).toBeVisible()
+  await expect(queueRow.getByText('重试已耗尽')).toBeVisible()
+  await expect(caseStatus.getByText('SLA 已超时')).toBeVisible()
+  await expect(caseStatus.getByText('已重新打开')).toBeVisible()
   await expect(page.getByRole('heading', { name: '来源记录摘要' })).toBeVisible()
-  await expect(page.getByText('当前案例没有可用会话')).toBeVisible()
-  await expect(page.getByText('尚不能判定安全结案')).toBeVisible()
-  await expect(page.getByText('业务结果已确认')).toHaveCount(1)
+  await expect(page.getByText('当前案例没有可用会话').first()).toBeVisible()
+  await expect(page.locator('.operator-blocker').getByText('尚不能判定安全结案')).toBeVisible()
+  await expect(page.locator('.operator-outcome-list').getByText('业务结果已确认')).toHaveCount(0)
 })
 
 test('operator navigation hides management surfaces that the current capability set cannot use', async ({ page }) => {
