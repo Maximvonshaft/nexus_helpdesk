@@ -238,3 +238,26 @@ jobs:
           path: artifacts/rc-test
           if-no-files-found: error
           retention-days: 7
+
+      - name: Validate safe failure summary
+        id: scan-failure-summary
+        if: ${{ always() && steps.scan-evidence.outcome == 'failure' }}
+        run: |
+          set -Eeuo pipefail
+          test -f artifacts/rc-test/failure-summary.json
+          rm -rf artifacts/rc-test-safe
+          mkdir -p artifacts/rc-test-safe
+          cp artifacts/rc-test/failure-summary.json artifacts/rc-test-safe/failure-summary.json
+          python scripts/security/scan_artifacts.py \
+            --root . \
+            --output artifacts/rc-test-safe/failure-summary-scan.json \
+            artifacts/rc-test-safe/failure-summary.json
+
+      - name: Upload safe RC failure summary only
+        if: ${{ always() && steps.scan-failure-summary.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rc-test-failure-summary-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/rc-test-safe
+          if-no-files-found: error
+          retention-days: 7
