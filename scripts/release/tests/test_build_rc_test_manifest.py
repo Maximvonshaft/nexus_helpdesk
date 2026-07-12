@@ -28,6 +28,48 @@ class BuildRcTestManifestTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_migration_proofs(
+        self,
+        root: Path,
+        *,
+        head: str = "20260711_0058",
+        current: str = "20260711_0058",
+        readiness: str = "20260711_0058",
+    ) -> None:
+        (root / "migration-head.txt").write_text(f"{head} (head)\n", encoding="utf-8")
+        (root / "migration-current.txt").write_text(f"{current} (head)\n", encoding="utf-8")
+        (root / "readyz.json").write_text(
+            json.dumps({"status": "ready", "migration_revision": readiness}) + "\n",
+            encoding="utf-8",
+        )
+
+    def test_empty_migration_transcript_requires_three_matching_revision_proofs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "migration.txt").write_text("", encoding="utf-8")
+            self._write_migration_proofs(root)
+
+            MODULE._finalize_migration_evidence(root, "20260711_0058")
+
+            self.assertEqual(
+                (root / "migration.txt").read_text(encoding="utf-8"),
+                "RC_MIGRATION_COMPLETED=true\n"
+                "migration_head=20260711_0058\n"
+                "migration_current=20260711_0058\n"
+                "readiness_revision=20260711_0058\n",
+            )
+
+    def test_migration_revision_drift_fails_closed_without_pass_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "migration.txt").write_text("", encoding="utf-8")
+            self._write_migration_proofs(root, current="20260711_0057")
+
+            with self.assertRaisesRegex(ValueError, "revision proof mismatch"):
+                MODULE._finalize_migration_evidence(root, "20260711_0058")
+
+            self.assertEqual((root / "migration.txt").read_text(encoding="utf-8"), "")
+
     def test_empty_teardown_transcript_is_normalized_only_after_zero_resource_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -55,15 +97,19 @@ class BuildRcTestManifestTests(unittest.TestCase):
 
             self.assertEqual((root / "teardown.txt").read_text(encoding="utf-8"), "")
 
-    def test_nonempty_command_transcript_is_preserved(self) -> None:
+    def test_nonempty_command_transcripts_are_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            transcript = root / "teardown.txt"
-            transcript.write_text("container removed\n", encoding="utf-8")
+            migration = root / "migration.txt"
+            teardown = root / "teardown.txt"
+            migration.write_text("upgrade completed\n", encoding="utf-8")
+            teardown.write_text("container removed\n", encoding="utf-8")
 
+            MODULE._finalize_migration_evidence(root, "20260711_0058")
             MODULE._finalize_teardown_evidence(root)
 
-            self.assertEqual(transcript.read_text(encoding="utf-8"), "container removed\n")
+            self.assertEqual(migration.read_text(encoding="utf-8"), "upgrade completed\n")
+            self.assertEqual(teardown.read_text(encoding="utf-8"), "container removed\n")
 
 
 if __name__ == "__main__":
