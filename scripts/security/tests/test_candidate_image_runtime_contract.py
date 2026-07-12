@@ -282,7 +282,10 @@ class CandidateImageRuntimeContractTests(unittest.TestCase):
                 root = Path(directory) / "artifacts" / "release-image"
                 paths = self._complete_bundle(root)
                 payload = json.loads(paths[path_key].read_text())
-                payload["nexus_test_mutation"] = path_key
+                if path_key == "sbom":
+                    payload["components"][0]["version"] = "3.2.7"
+                else:
+                    payload["nexus_test_mutation"] = path_key
                 paths[path_key].write_text(
                     json.dumps(payload, sort_keys=True), encoding="utf-8"
                 )
