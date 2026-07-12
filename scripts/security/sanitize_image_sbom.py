@@ -11,6 +11,7 @@ from typing import Any
 MAX_INPUT_BYTES = 32 * 1024 * 1024
 MAX_COMPONENTS = 2000
 _ALLOWED_PURL_PREFIXES = ("pkg:pypi/", "pkg:generic/python@")
+_BASE_OS_PURL_PREFIXES = ("pkg:deb/", "pkg:apk/")
 _SAFE_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:/?&=@%~-]{0,499}$")
 _SAFE_LICENSE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+() -]{0,199}$")
 _LICENSE_ALIASES = {
@@ -136,7 +137,7 @@ def sanitize_sbom(source: Path, overrides_path: Path, output: Path) -> int:
         if purl == "unknown":
             continue
         if not purl.startswith(_ALLOWED_PURL_PREFIXES):
-            if purl.startswith("pkg:deb/"):
+            if purl.startswith(_BASE_OS_PURL_PREFIXES):
                 base_purls.append(purl)
             continue
         name = _safe(component.get("name"), limit=200)
