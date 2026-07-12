@@ -37,15 +37,30 @@ select:focus-visible,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+
   .button,
+  .nd-button,
+  .nd-field-control,
   .queue-card,
   .command-item {
     transition-duration: 0.01ms !important;
   }
 
   .button:hover,
+  .nd-button:hover,
   .queue-card:hover,
   .command-item:hover {
     transform: none !important;
+  }
+
+  .nd-button__spinner,
+  .skeleton-line {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
