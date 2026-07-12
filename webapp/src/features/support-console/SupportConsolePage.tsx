@@ -1388,9 +1388,15 @@ export function SupportConsolePage() {
           <h1>客服工作台</h1>
         </div>
         <div className="support-head-status" aria-label="实时状态">
-          <Badge tone="default">{state.data?.open ?? 0} 个打开会话</Badge>
-          <Badge tone="danger">{state.data?.requested_handoffs ?? 0} 个待人工</Badge>
-          <Badge tone="default">{state.data?.my_handoffs ?? 0} 个我的接管</Badge>
+          {activeView === 'conversations' ? (
+            <>
+              <Badge tone="default">{state.data?.open ?? 0} 个打开会话</Badge>
+              <Badge tone="danger">{state.data?.requested_handoffs ?? 0} 个待人工</Badge>
+              <Badge tone="default">{state.data?.my_handoffs ?? 0} 个我的接管</Badge>
+            </>
+          ) : (
+            <Badge tone="default">会话状态暂停刷新</Badge>
+          )}
           <span className="support-user">{session.data?.display_name || session.data?.username || '客服'}</span>
           <Button variant="ghost" onClick={handleLogout}>退出</Button>
         </div>

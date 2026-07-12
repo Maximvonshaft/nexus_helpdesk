@@ -306,6 +306,8 @@ test('support workbench renders the consolidated production views', async ({ pag
 
   await page.getByRole('button', { name: '知识' }).click()
   await expect(page.getByRole('button', { name: /Delivery status/ })).toBeVisible()
+  await expect(page.getByText('会话状态暂停刷新', { exact: true })).toBeVisible()
+  await expect(page.getByText('1 个打开会话', { exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: '渠道' }).click()
   await expect(page.getByText('WhatsApp Native +41798559737')).toBeVisible()
