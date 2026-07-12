@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { Field, Input, Select, Textarea } from '@/components/ui/Field'
 import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import {
   channelPresentation,
   controlledActionPresentation,
@@ -48,6 +49,10 @@ type KnowledgeDraft = {
   priority: string
   knowledge_kind: string
   answer_mode: string
+}
+
+function serializeKnowledgeDraft(draft: KnowledgeDraft) {
+  return JSON.stringify(draft)
 }
 
 const viewOptions: Array<{ value: InboxView; label: string }> = [
@@ -92,7 +97,7 @@ function readSupportWorkbenchSearch() {
     activeView: oneOf(params.get('tab'), workbenchViews.map((item) => item.value), 'conversations'),
     view: oneOf(params.get('view'), viewOptions.map((item) => item.value), 'open'),
     channel: oneOf(params.get('channel'), channelOptions.map((item) => item.value), 'all'),
-    query: '',
+    query: params.get('q') || '',
     sessionKey: params.get('session'),
   }
 }
@@ -118,13 +123,6 @@ function compactLatency(value: number | null | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '暂无'
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s`
   return `${Math.max(0, Math.round(value))}ms`
-}
-
-function knowledgeStatusLabel(status: string | null | undefined) {
-  if (status === 'active') return '已上线'
-  if (status === 'draft') return '草稿'
-  if (status === 'archived') return '已归档'
-  return sanitizeDisplayText(status || '未知')
 }
 
 function knowledgeKindLabel(kind: string | null | undefined) {
@@ -641,18 +639,28 @@ function OverviewPanel({
   )
 }
 
-function KnowledgeView() {
+function KnowledgeView({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const queryClient = useQueryClient()
+  const initialDraft = useMemo(() => knowledgeDraftFromItem(), [])
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [statusFilter, setStatusFilter] = useState<KnowledgeStatusFilter>('active')
   const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>('all')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [isCreating, setIsCreating] = useState(false)
-  const [draft, setDraft] = useState<KnowledgeDraft>(() => knowledgeDraftFromItem())
+  const [draft, setDraft] = useState<KnowledgeDraft>(initialDraft)
+  const [savedDraft, setSavedDraft] = useState<KnowledgeDraft>(initialDraft)
   const [savedMessage, setSavedMessage] = useState('')
   const [retrievalQuery, setRetrievalQuery] = useState('')
+  const [publishReviewOpen, setPublishReviewOpen] = useState(false)
+  const [discardDraftOpen, setDiscardDraftOpen] = useState(false)
+  const pendingDraftActionRef = useRef<(() => void) | null>(null)
   const editorRef = useRef<HTMLDivElement | null>(null)
+  const loadedItemIdRef = useRef<number | null>(null)
+  const isDirty = useMemo(
+    () => serializeKnowledgeDraft(draft) !== serializeKnowledgeDraft(savedDraft),
+    [draft, savedDraft],
+  )
 
   const studio = useQuery({
     queryKey: ['supportWorkbenchKnowledge'],
@@ -676,8 +684,29 @@ function KnowledgeView() {
   )
 
   useEffect(() => {
-    if (!isCreating && selectedItem) setDraft(knowledgeDraftFromItem(selectedItem))
+    if (isCreating || !selectedItem || loadedItemIdRef.current === selectedItem.id) return
+    const nextDraft = knowledgeDraftFromItem(selectedItem)
+    loadedItemIdRef.current = selectedItem.id
+    setDraft(nextDraft)
+    setSavedDraft(nextDraft)
+    setSavedMessage('')
   }, [isCreating, selectedItem])
+
+  useEffect(() => {
+    onDirtyChange(isDirty)
+  }, [isDirty, onDirtyChange])
+
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+
+  useEffect(() => {
+    if (!isDirty) return
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [isDirty])
 
   useEffect(() => {
     if (isCreating || selectedId !== null) return
@@ -685,16 +714,50 @@ function KnowledgeView() {
     if (firstItem) setSelectedId(firstItem.id)
   }, [isCreating, items.data?.items, selectedId])
 
-  const resetForNew = () => {
-    setSelectedId(null)
-    setIsCreating(true)
-    setDraft(knowledgeDraftFromItem())
-    setSavedMessage('')
+  const scrollEditorIntoView = () => {
     window.setTimeout(() => {
       if (window.matchMedia('(max-width: 980px)').matches) {
         editorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
       }
     }, 0)
+  }
+
+  const runWithDraftGuard = (action: () => void) => {
+    if (!isDirty) {
+      action()
+      return
+    }
+    pendingDraftActionRef.current = action
+    setDiscardDraftOpen(true)
+  }
+
+  const confirmDraftDiscard = () => {
+    const action = pendingDraftActionRef.current
+    pendingDraftActionRef.current = null
+    setDiscardDraftOpen(false)
+    action?.()
+  }
+
+  const resetForNew = () => runWithDraftGuard(() => {
+    const nextDraft = knowledgeDraftFromItem()
+    loadedItemIdRef.current = null
+    setSelectedId(null)
+    setIsCreating(true)
+    setDraft(nextDraft)
+    setSavedDraft(nextDraft)
+    setSavedMessage('')
+    scrollEditorIntoView()
+  })
+
+  const selectKnowledgeItem = (itemId: number) => {
+    if (itemId === selectedId && !isCreating) return
+    runWithDraftGuard(() => {
+      loadedItemIdRef.current = null
+      setSelectedId(itemId)
+      setIsCreating(false)
+      setSavedMessage('')
+      scrollEditorIntoView()
+    })
   }
 
   const invalidateKnowledge = async () => {
@@ -723,9 +786,14 @@ function KnowledgeView() {
       return item
     },
     onSuccess: async (item, publish) => {
+      const committedDraft = knowledgeDraftFromItem(item)
+      loadedItemIdRef.current = item.id
       setSelectedId(item.id)
       setIsCreating(false)
-      setSavedMessage(publish ? '已保存并上线，AI Runtime 会在同步后用于回答。' : '草稿已保存。')
+      setDraft(committedDraft)
+      setSavedDraft(committedDraft)
+      setPublishReviewOpen(false)
+      setSavedMessage(publish ? '已提交发布。AI Runtime 只能在后续同步完成后使用该版本。' : '草稿已保存。')
       await invalidateKnowledge()
     },
   })
@@ -737,8 +805,12 @@ function KnowledgeView() {
       return await supportApi.updateKnowledgeItem(selectedId, { status: 'active', fact_status: 'approved' })
     },
     onSuccess: async (item) => {
-      setDraft(knowledgeDraftFromItem(item))
-      setSavedMessage('已上线。')
+      const committedDraft = knowledgeDraftFromItem(item)
+      loadedItemIdRef.current = item.id
+      setDraft(committedDraft)
+      setSavedDraft(committedDraft)
+      setPublishReviewOpen(false)
+      setSavedMessage('已提交发布。AI Runtime 只能在后续同步完成后使用该版本。')
       await invalidateKnowledge()
     },
   })
@@ -756,8 +828,19 @@ function KnowledgeView() {
   const busy = saveMutation.isPending || publishMutation.isPending
   const saveError = saveMutation.error || publishMutation.error
   const retrievalHits = retrievalMutation.data?.hits ?? []
+  const publicationReady = Boolean(
+    draft.title.trim()
+    && (draft.fact_question.trim() || draft.fact_answer.trim()),
+  )
+
+  const confirmPublication = () => {
+    if (!publicationReady || busy) return
+    if (isDirty || isCreating || !selectedId) saveMutation.mutate(true)
+    else publishMutation.mutate()
+  }
 
   return (
+    <>
     <section className="support-knowledge-workbench" aria-label="知识库维护">
       <div className="support-panel support-knowledge-list">
         <div className="support-panel-head">
@@ -808,16 +891,7 @@ function KnowledgeView() {
                 type="button"
                 className={`support-knowledge-item${selectedId === item.id ? ' active' : ''}`}
                 key={item.id}
-                onClick={() => {
-                  setSelectedId(item.id)
-                  setIsCreating(false)
-                  setSavedMessage('')
-                  window.setTimeout(() => {
-                    if (window.matchMedia('(max-width: 980px)').matches) {
-                      editorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-                    }
-                  }, 0)
-                }}
+                onClick={() => selectKnowledgeItem(item.id)}
               >
                 <span>
                   <strong>{sanitizeDisplayText(item.title)}</strong>
@@ -841,7 +915,7 @@ function KnowledgeView() {
           <Badge tone={knowledgeStatusPresentation(draft.status).tone}>{knowledgeStatusPresentation(draft.status).label}</Badge>
         </div>
         {saveError ? <ErrorSummary title="保存失败" errors={[errorCopy(saveError, '请稍后重试')]} /> : null}
-        {savedMessage ? <div className="support-action-result success"><strong>{savedMessage}</strong></div> : null}
+        {savedMessage ? <div className="support-action-result success" role="status" aria-live="polite"><strong>{savedMessage}</strong></div> : null}
         <div className="support-knowledge-form">
           <Field label="知识标题" required>
             <Input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="例如：末派失败怎么处理" autoComplete="off" />
@@ -904,11 +978,22 @@ function KnowledgeView() {
             <small>优先级数字越小越靠前。建议：规则政策 10-49，处理流程 50-99，普通客服问答 100，导入资料 200 以上。身份、人设和语言风格属于助手设定，不写成客户知识模板。</small>
           </div>
           <div className="support-composer-actions">
-            <Button disabled={busy} onClick={() => saveMutation.mutate(false)}>{saveMutation.isPending ? '保存中…' : '保存草稿'}</Button>
-            {selectedId && !isCreating ? (
-              <Button disabled={busy} onClick={() => publishMutation.mutate()}>{publishMutation.isPending ? '上线中…' : '上线当前草稿'}</Button>
-            ) : null}
-            <Button variant="primary" disabled={busy} onClick={() => saveMutation.mutate(true)}>{busy ? '处理中…' : '保存并上线'}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || !isDirty}
+              loading={saveMutation.isPending && !publishReviewOpen}
+              loadingLabel="保存中…"
+              onClick={() => saveMutation.mutate(false)}
+            >
+              保存草稿
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy || !publicationReady}
+              onClick={() => setPublishReviewOpen(true)}
+            >
+              审核并发布
+            </Button>
           </div>
         </div>
       </div>
@@ -957,6 +1042,38 @@ function KnowledgeView() {
         )}
       </div>
     </section>
+    <ConfirmDialog
+      open={discardDraftOpen}
+      title="放弃未保存的修改？"
+      description="当前知识草稿还没有保存。继续后，这些修改将不会被保留。"
+      confirmLabel="放弃修改"
+      destructive
+      onOpenChange={(open) => {
+        setDiscardDraftOpen(open)
+        if (!open) pendingDraftActionRef.current = null
+      }}
+      onConfirm={confirmDraftDiscard}
+    />
+    <ConfirmDialog
+      open={publishReviewOpen}
+      title="审核并发布知识"
+      description="确认客户可见范围和答案事实后再发布。发布请求成功不代表 Runtime 已完成同步。"
+      confirmLabel="确认发布"
+      busy={busy}
+      onOpenChange={setPublishReviewOpen}
+      onConfirm={confirmPublication}
+    >
+      <dl className="support-publish-review">
+        <div><dt>知识标题</dt><dd>{sanitizeDisplayText(draft.title || '未填写')}</dd></div>
+        <div><dt>客户问题</dt><dd>{sanitizeDisplayText(draft.fact_question || '未填写')}</dd></div>
+        <div><dt>答案事实</dt><dd>{sanitizeDisplayText(draft.fact_answer || '未填写')}</dd></div>
+        <div><dt>受众</dt><dd>{draft.audience_scope === 'internal' ? '内部参考' : '客户问答'}</dd></div>
+        <div><dt>渠道</dt><dd>{draft.channel === 'all' ? '全部渠道' : sanitizeDisplayText(draft.channel)}</dd></div>
+        <div><dt>语言</dt><dd>{sanitizeDisplayText(draft.language || '自动匹配')}</dd></div>
+      </dl>
+      <p className="support-publish-warning">发布后，AI Runtime 只能在后续同步完成后使用该版本；本确认不表示客户回答已经更新。</p>
+    </ConfirmDialog>
+    </>
   )
 }
 
@@ -1213,6 +1330,9 @@ export function SupportConsolePage() {
   const [mobileThreadOpen, setMobileThreadOpen] = useState(Boolean(initialSearch.sessionKey))
   const [reply, setReply] = useState('')
   const [confirmReview, setConfirmReview] = useState(false)
+  const [knowledgeDirty, setKnowledgeDirty] = useState(false)
+  const [knowledgeLeaveOpen, setKnowledgeLeaveOpen] = useState(false)
+  const pendingKnowledgeLeaveActionRef = useRef<(() => void) | null>(null)
   const messagesRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => { document.title = '客服工作台 · Nexus Support' }, [])
@@ -1227,7 +1347,8 @@ export function SupportConsolePage() {
     else params.set('view', view)
     if (channel === 'all') params.delete('channel')
     else params.set('channel', channel)
-    params.delete('q')
+    if (query.trim()) params.set('q', query.trim())
+    else params.delete('q')
     if (selectedSessionKey) params.set('session', selectedSessionKey)
     else params.delete('session')
     const next = `${url.pathname}${params.toString() ? `?${params.toString()}` : ''}${url.hash}`
@@ -1370,10 +1491,32 @@ export function SupportConsolePage() {
     replyMutation.mutate({ sessionKey: activeConversation.session_key, body: reply.trim(), confirmReview })
   }
 
-  const handleLogout = () => {
+  const runWithKnowledgeLeaveGuard = (action: () => void) => {
+    if (activeView !== 'knowledge' || !knowledgeDirty) {
+      action()
+      return
+    }
+    pendingKnowledgeLeaveActionRef.current = action
+    setKnowledgeLeaveOpen(true)
+  }
+
+  const confirmKnowledgeLeave = () => {
+    const action = pendingKnowledgeLeaveActionRef.current
+    pendingKnowledgeLeaveActionRef.current = null
+    setKnowledgeLeaveOpen(false)
+    setKnowledgeDirty(false)
+    action?.()
+  }
+
+  const requestActiveView = (nextView: WorkbenchView) => {
+    if (nextView === activeView) return
+    runWithKnowledgeLeaveGuard(() => setActiveView(nextView))
+  }
+
+  const handleLogout = () => runWithKnowledgeLeaveGuard(() => {
     logout()
     navigate({ to: '/login', replace: true })
-  }
+  })
 
   const consoleClassName = [
     'support-console',
@@ -1409,7 +1552,7 @@ export function SupportConsolePage() {
             type="button"
             className={activeView === item.value ? 'active' : ''}
             aria-pressed={activeView === item.value}
-            onClick={() => setActiveView(item.value)}
+            onClick={() => requestActiveView(item.value)}
           >
             {item.label}
           </button>
@@ -1494,9 +1637,21 @@ export function SupportConsolePage() {
         </section>
       ) : null}
 
-      {activeView === 'knowledge' ? <KnowledgeView /> : null}
+      {activeView === 'knowledge' ? <KnowledgeView onDirtyChange={setKnowledgeDirty} /> : null}
       {activeView === 'channels' ? <ChannelsView /> : null}
       {activeView === 'runtime' ? <RuntimeView /> : null}
+      <ConfirmDialog
+        open={knowledgeLeaveOpen}
+        title="放弃未保存的修改？"
+        description="离开知识维护或退出后，当前草稿修改将不会被保留。"
+        confirmLabel="放弃并离开"
+        destructive
+        onOpenChange={(open) => {
+          setKnowledgeLeaveOpen(open)
+          if (!open) pendingKnowledgeLeaveActionRef.current = null
+        }}
+        onConfirm={confirmKnowledgeLeave}
+      />
     </main>
   )
 }

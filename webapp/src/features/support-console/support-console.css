@@ -1139,3 +1139,49 @@
     font-weight: 750;
   }
 }
+
+.support-publish-review {
+  display: grid;
+  gap: var(--nd-space-3);
+  margin: 0;
+}
+
+.support-publish-review > div {
+  border-bottom: 1px solid var(--nd-color-border);
+  display: grid;
+  gap: var(--nd-space-1);
+  padding-bottom: var(--nd-space-3);
+}
+
+.support-publish-review > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.support-publish-review dt {
+  color: var(--nd-color-text-muted);
+  font-size: var(--nd-font-size-xs);
+  font-weight: 700;
+}
+
+.support-publish-review dd {
+  color: var(--nd-color-text);
+  font-size: var(--nd-font-size-sm);
+  line-height: var(--nd-line-height-body);
+  margin: 0;
+  max-height: 10rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.support-publish-warning {
+  background: var(--nd-color-warning-bg);
+  border: 1px solid var(--nd-color-warning);
+  border-radius: var(--nd-radius-md);
+  color: var(--nd-color-warning);
+  font-size: var(--nd-font-size-sm);
+  line-height: var(--nd-line-height-body);
+  margin: var(--nd-space-3) 0 0;
+  padding: var(--nd-space-3);
+}

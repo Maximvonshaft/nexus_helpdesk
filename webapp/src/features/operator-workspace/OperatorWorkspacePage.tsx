@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { ApiError, supportApi } from '@/lib/supportApi'
@@ -35,6 +35,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { Field, Input, Select, Textarea } from '@/components/ui/Field'
 import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 type SpeedafActionKind = 'none' | 'waybill_lookup' | 'work_order' | 'address_update' | 'cancel'
 type ActionResultEnvelope = { kind: SpeedafActionKind; result: Record<string, unknown> }
@@ -96,6 +97,16 @@ function directionLabel(direction: string) {
 
 function isOutboundMessage(message: WebchatMessage) {
   return message.direction === 'agent' || message.direction === 'ai'
+}
+
+const MESSAGE_BOTTOM_THRESHOLD = 96
+
+function isNearMessageBottom(node: HTMLElement) {
+  return node.scrollHeight - node.scrollTop - node.clientHeight <= MESSAGE_BOTTOM_THRESHOLD
+}
+
+function reducedMotionPreferred() {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 function supportMemoryFromThread(thread?: WebchatThread | null) {
@@ -511,6 +522,7 @@ function ConversationPanel({
   error,
   capabilities,
   onRefresh,
+  onReplyDirtyChange,
 }: {
   item: UnifiedOperatorQueueItem
   thread: WebchatThread | null
@@ -518,10 +530,15 @@ function ConversationPanel({
   error: unknown
   capabilities: Set<string>
   onRefresh: () => Promise<void>
+  onReplyDirtyChange: (dirty: boolean) => void
 }) {
   const [reply, setReply] = useState('')
   const [confirmReview, setConfirmReview] = useState(false)
+  const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
+  const followsLatestRef = useRef(true)
+  const lastQueueIdRef = useRef<string | null>(null)
+  const lastMessageCountRef = useRef(0)
   const canReply = Boolean(thread && item.ticket_id && hasCapability(capabilities, 'outbound.send') && thread.handoff?.can_reply !== false)
   const replyMutation = useMutation({
     mutationFn: () => {
@@ -537,11 +554,63 @@ function ConversationPanel({
       if (replyMutationSafety(mutationError)) setConfirmReview(true)
     },
   })
+  const resetReplyMutationRef = useRef(replyMutation.reset)
 
   useEffect(() => {
-    if (!messagesRef.current) return
-    messagesRef.current.scrollTop = messagesRef.current.scrollHeight
-  }, [thread?.messages.length])
+    resetReplyMutationRef.current = replyMutation.reset
+  }, [replyMutation.reset])
+
+  useEffect(() => {
+    const dirty = Boolean(reply.trim())
+    onReplyDirtyChange(dirty)
+    if (!dirty) return
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [onReplyDirtyChange, reply])
+
+  useEffect(() => {
+    setReply('')
+    setConfirmReview(false)
+    setNewMessageCount(0)
+    followsLatestRef.current = true
+    resetReplyMutationRef.current()
+  }, [item.queue_id])
+
+  const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const node = messagesRef.current
+    if (!node) return
+    node.scrollTo({
+      top: node.scrollHeight,
+      behavior: reducedMotionPreferred() ? 'auto' : behavior,
+    })
+    followsLatestRef.current = true
+    setNewMessageCount(0)
+  }, [])
+
+  useLayoutEffect(() => {
+    const count = thread?.messages.length ?? 0
+    const queueChanged = lastQueueIdRef.current !== item.queue_id
+    const added = Math.max(0, count - lastMessageCountRef.current)
+    lastQueueIdRef.current = item.queue_id
+    lastMessageCountRef.current = count
+
+    if (queueChanged) {
+      followsLatestRef.current = true
+      setNewMessageCount(0)
+      window.requestAnimationFrame(() => scrollToLatest('auto'))
+      return
+    }
+    if (!added) return
+    if (followsLatestRef.current) {
+      window.requestAnimationFrame(() => scrollToLatest('smooth'))
+    } else {
+      setNewMessageCount((current) => current + added)
+    }
+  }, [item.queue_id, scrollToLatest, thread?.messages.length])
 
   const mutationSafety = replyMutationSafety(replyMutation.error)
   const disabledReason = !thread
@@ -555,7 +624,7 @@ function ConversationPanel({
           : ''
 
   return (
-    <section id="workspace-conversation" className="operator-conversation" aria-labelledby="operator-conversation-title">
+    <section id="workspace-conversation" className="operator-conversation" aria-labelledby="operator-conversation-title" tabIndex={-1}>
       <div className="operator-section-head compact">
         <div>
           <h2 id="operator-conversation-title">客户沟通</h2>
@@ -573,7 +642,15 @@ function ConversationPanel({
       ) : null}
       {thread ? (
         <>
-          <div className="operator-messages" ref={messagesRef} aria-live="polite">
+          <div
+            className="operator-messages"
+            ref={messagesRef}
+            onScroll={(event) => {
+              const following = isNearMessageBottom(event.currentTarget)
+              followsLatestRef.current = following
+              if (following) setNewMessageCount(0)
+            }}
+          >
             {thread.messages.map((message) => {
               const delivery = messageDeliveryPresentation(message.delivery_status)
               return (
@@ -594,6 +671,13 @@ function ConversationPanel({
             })}
             {!thread.messages.length ? <EmptyState title="暂无消息" description="该会话尚无可显示内容。" /> : null}
           </div>
+          {newMessageCount > 0 ? (
+            <div className="operator-new-messages" role="status" aria-live="polite">
+              <Button size="sm" variant="secondary" onClick={() => scrollToLatest('smooth')}>
+                {newMessageCount} 条新消息，查看最新
+              </Button>
+            </div>
+          ) : null}
           {mutationSafety ? (
             <ErrorSummary
               title="回复需要人工复核"
@@ -614,6 +698,7 @@ function ConversationPanel({
               disabledReason={disabledReason || undefined}
             >
               <Textarea
+                name="operator-reply-body"
                 value={reply}
                 onChange={(event) => {
                   setReply(event.target.value)
@@ -621,6 +706,7 @@ function ConversationPanel({
                 }}
                 rows={4}
                 placeholder="输入清晰、可验证的客户回复…"
+                autoComplete="off"
               />
             </Field>
             <Button
@@ -803,7 +889,7 @@ function ActionPanel({
   ) ? '' : '当前权限不允许接管或恢复会话'
 
   return (
-    <section id="workspace-actions" className="operator-actions-panel" aria-labelledby="operator-actions-title">
+    <section id="workspace-actions" className="operator-actions-panel" aria-labelledby="operator-actions-title" tabIndex={-1}>
       <div className="operator-section-head compact">
         <div>
           <h2 id="operator-actions-title">下一步动作</h2>
@@ -1071,6 +1157,9 @@ export function OperatorWorkspacePage() {
   const [filters, setFilters] = useState<WorkspaceFilters>(defaultFilters)
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(() => initialQueueId())
   const [mobileView, setMobileView] = useState<WorkspaceMobileView>('queue')
+  const [replyDraftDirty, setReplyDraftDirty] = useState(false)
+  const [replyDiscardOpen, setReplyDiscardOpen] = useState(false)
+  const pendingReplyActionRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     document.title = '操作员工作台 · Nexus OSR'
@@ -1133,7 +1222,24 @@ export function OperatorWorkspacePage() {
     ])
   }
 
-  const applyScope = () => {
+  const runWithReplyDraftGuard = (action: () => void) => {
+    if (!replyDraftDirty) {
+      action()
+      return
+    }
+    pendingReplyActionRef.current = action
+    setReplyDiscardOpen(true)
+  }
+
+  const confirmReplyDiscard = () => {
+    const action = pendingReplyActionRef.current
+    pendingReplyActionRef.current = null
+    setReplyDiscardOpen(false)
+    setReplyDraftDirty(false)
+    action?.()
+  }
+
+  const applyScope = () => runWithReplyDraftGuard(() => {
     const normalizedScope = {
       tenantKey: scopeDraft.tenantKey.trim(),
       countryCode: scopeDraft.countryCode.trim().toUpperCase(),
@@ -1143,17 +1249,39 @@ export function OperatorWorkspacePage() {
     setScope(normalizedScope)
     setSelectedQueueId(null)
     setMobileView('queue')
-  }
+  })
 
   const selectItem = (item: UnifiedOperatorQueueItem) => {
-    setSelectedQueueId(item.queue_id)
-    setMobileView('case')
+    if (item.queue_id === selectedItem?.queue_id) {
+      setMobileView('case')
+      return
+    }
+    runWithReplyDraftGuard(() => {
+      setSelectedQueueId(item.queue_id)
+      setMobileView('case')
+    })
   }
 
-  const handleLogout = () => {
+  const showMobileView = (view: WorkspaceMobileView) => {
+    setMobileView(view)
+    const targetId = view === 'queue'
+      ? 'workspace-queue'
+      : view === 'case'
+        ? 'workspace-case'
+        : view === 'conversation'
+          ? 'workspace-conversation'
+          : 'workspace-actions'
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(targetId)
+      target?.scrollIntoView({ block: 'start', behavior: reducedMotionPreferred() ? 'auto' : 'smooth' })
+      target?.focus({ preventScroll: true })
+    })
+  }
+
+  const handleLogout = () => runWithReplyDraftGuard(() => {
     logout()
     navigate({ to: '/login', replace: true })
-  }
+  })
 
   const memory = supportMemoryFromThread(thread.data)
   const appliedScopeMatches = Boolean(
@@ -1184,17 +1312,7 @@ export function OperatorWorkspacePage() {
             type="button"
             className={mobileView === view.value ? 'is-active' : ''}
             aria-pressed={mobileView === view.value}
-            onClick={() => {
-              setMobileView(view.value)
-              const targetId = view.value === 'queue'
-                ? 'workspace-queue'
-                : view.value === 'case'
-                  ? 'workspace-case'
-                  : view.value === 'conversation'
-                    ? 'workspace-conversation'
-                    : 'workspace-actions'
-              window.requestAnimationFrame(() => document.getElementById(targetId)?.scrollIntoView({ block: 'start' }))
-            }}
+            onClick={() => showMobileView(view.value)}
           >
             {view.label}
           </button>
@@ -1217,14 +1335,20 @@ export function OperatorWorkspacePage() {
 
       {session.data && canReadQueue ? (
         <div className="operator-layout">
-          <aside id="workspace-queue" className="operator-queue-pane">
+          <aside id="workspace-queue" className="operator-queue-pane" tabIndex={-1}>
             <ScopeEditor
               draft={scopeDraft}
               onChange={setScopeDraft}
               onApply={applyScope}
               applied={appliedScopeMatches}
             />
-            <QueueFilters filters={filters} onChange={(next) => { setFilters(next); setSelectedQueueId(null) }} />
+            <QueueFilters
+              filters={filters}
+              onChange={(next) => runWithReplyDraftGuard(() => {
+                setFilters(next)
+                setSelectedQueueId(null)
+              })}
+            />
             {scopeReady ? (
               <>
                 {queue.isError ? (
@@ -1251,7 +1375,7 @@ export function OperatorWorkspacePage() {
             )}
           </aside>
 
-          <section id="workspace-case" className="operator-case-pane" aria-label="当前案例">
+          <section id="workspace-case" className="operator-case-pane" aria-label="当前案例" tabIndex={-1}>
             {selectedItem ? (
               <>
                 <CaseHeader item={selectedItem} currentUserId={session.data.id} />
@@ -1280,6 +1404,7 @@ export function OperatorWorkspacePage() {
                   error={thread.error}
                   capabilities={capabilities}
                   onRefresh={refreshSelected}
+                  onReplyDirtyChange={setReplyDraftDirty}
                 />
               </>
             ) : (
@@ -1325,6 +1450,18 @@ export function OperatorWorkspacePage() {
           </aside>
         </div>
       ) : null}
+      <ConfirmDialog
+        open={replyDiscardOpen}
+        title="放弃未发送的回复？"
+        description="切换案例、筛选、工作范围或退出后，这段回复不会被保留。"
+        confirmLabel="放弃回复"
+        destructive
+        onOpenChange={(open) => {
+          setReplyDiscardOpen(open)
+          if (!open) pendingReplyActionRef.current = null
+        }}
+        onConfirm={confirmReplyDiscard}
+      />
     </main>
   )
 }

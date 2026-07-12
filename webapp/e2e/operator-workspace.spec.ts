@@ -86,7 +86,14 @@ function queueResponse(scenario: Scenario) {
   }
 }
 
-function threadResponse() {
+function defaultThreadMessages() {
+  return [
+    { id: 1, direction: 'visitor', body: 'Where is parcel?', body_text: 'Where is parcel?', delivery_status: 'sent', created_at: '2026-07-12T20:00:00Z' },
+    { id: 2, direction: 'agent', body: 'We are checking.', body_text: 'We are checking.', delivery_status: 'failed', author_label: 'Operations Agent', created_at: '2026-07-12T20:01:00Z' },
+  ]
+}
+
+function threadResponse(messages?: ReturnType<typeof defaultThreadMessages>) {
   return {
     conversation_id: 'conv-1',
     ticket_id: 11,
@@ -95,10 +102,7 @@ function threadResponse() {
     conversation_state: 'human_review_required',
     required_action: '核实运单后回复客户',
     visitor: { name: 'Customer', email: null, phone: '+41790000000', ref: 'customer-1' },
-    messages: [
-      { id: 1, direction: 'visitor', body: 'Where is parcel?', body_text: 'Where is parcel?', delivery_status: 'sent', created_at: '2026-07-12T20:00:00Z' },
-      { id: 2, direction: 'agent', body: 'We are checking.', body_text: 'We are checking.', delivery_status: 'failed', author_label: 'Operations Agent', created_at: '2026-07-12T20:01:00Z' },
-    ],
+    messages: messages ?? defaultThreadMessages(),
     actions: [],
     ai_turns: [],
     events: [],
@@ -142,7 +146,7 @@ function threadResponse() {
   }
 }
 
-async function mockWorkspace(page: Page, scenario: Scenario) {
+async function mockWorkspace(page: Page, scenario: Scenario, overrides?: { queue?: () => ReturnType<typeof queueResponse>; thread?: () => ReturnType<typeof threadResponse> }) {
   const channelKey = scenario === 'dispatch' ? 'whatsapp' : 'webchat'
   await page.addInitScript(([tokenKey, scopeKey, channel]) => {
     sessionStorage.setItem(tokenKey, 'operator-token')
@@ -161,9 +165,9 @@ async function mockWorkspace(page: Page, scenario: Scenario) {
       expect(route.request().headers()['x-nexus-tenant']).toBe('default')
       expect(url.searchParams.get('country_code')).toBe('CH')
       expect(url.searchParams.get('channel_key')).toBe(channelKey)
-      return json(queueResponse(scenario))
+      return json(overrides?.queue?.() ?? queueResponse(scenario))
     }
-    if (url.pathname === '/api/webchat/admin/tickets/11/thread') return json(threadResponse())
+    if (url.pathname === '/api/webchat/admin/tickets/11/thread') return json(overrides?.thread?.() ?? threadResponse())
     if (url.pathname === '/api/tickets/42') {
       return json({ id: 42, ticket_no: 'T-42', title: 'WhatsApp dispatch repair', status: 'in_progress', priority: 'urgent' })
     }
@@ -191,11 +195,13 @@ test('375px workspace keeps all four task surfaces reachable and explains disabl
 
   await page.getByRole('button', { name: '动作', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: '下一步动作' })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('workspace-actions')
   await page.getByLabel('选择动作').selectOption('work_order')
   await expect(page.getByText(/不可执行原因：缺少运单/)).toBeVisible()
 
   await page.getByRole('button', { name: '沟通', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: '客户沟通' })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('workspace-conversation')
   await expect(page.getByText('发送失败', { exact: true }).first()).toBeVisible()
 })
 
@@ -224,4 +230,74 @@ test('operator navigation hides management surfaces that the current capability 
   await expect(navigation.getByRole('link', { name: '知识' })).toHaveCount(0)
   await expect(navigation.getByRole('link', { name: '渠道管理' })).toHaveCount(0)
   await expect(navigation.getByRole('link', { name: '运行与审计' })).toHaveCount(0)
+})
+
+
+
+test('workspace preserves historical scroll position and exposes a bounded new-message action', async ({ page }) => {
+  const messages = Array.from({ length: 36 }, (_, index) => ({
+    id: index + 1,
+    direction: index % 3 === 0 ? 'visitor' : 'agent',
+    body: `History message ${index + 1} `.repeat(8),
+    body_text: `History message ${index + 1} `.repeat(8),
+    delivery_status: 'sent',
+    created_at: `2026-07-12T20:${String(index).padStart(2, '0')}:00Z`,
+  }))
+  await mockWorkspace(page, 'handoff', { thread: () => threadResponse(messages) })
+  await page.goto('/workspace')
+
+  const timeline = page.locator('.operator-messages')
+  await expect(timeline).toBeVisible()
+  await expect.poll(() => timeline.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true)
+  await expect.poll(() => timeline.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight <= 4)).toBe(true)
+
+  await timeline.evaluate((node) => {
+    node.scrollTop = 0
+    node.dispatchEvent(new Event('scroll'))
+  })
+  messages.push({
+    id: 100,
+    direction: 'visitor',
+    body: 'A new message while the operator reads history',
+    body_text: 'A new message while the operator reads history',
+    delivery_status: 'sent',
+    created_at: '2026-07-12T21:00:00Z',
+  })
+
+  await expect(page.getByLabel('客户沟通').getByText('A new message while the operator reads history')).toBeVisible({ timeout: 7000 })
+  expect(await timeline.evaluate((node) => node.scrollTop)).toBeLessThan(20)
+  const newMessages = page.getByRole('button', { name: '1 条新消息，查看最新' })
+  await expect(newMessages).toBeVisible()
+  await newMessages.click()
+  await expect.poll(() => timeline.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight <= 4)).toBe(true)
+  await expect(newMessages).toHaveCount(0)
+})
+
+
+test('workspace protects an unsent reply before unload and case replacement', async ({ page }) => {
+  const first = queueResponse('handoff')
+  const second = {
+    ...first.items[0],
+    queue_id: 'handoff:22',
+    case_key: 'ticket:12',
+    source_id: 22,
+    ticket_id: 12,
+    updated_at: '2026-07-12T20:31:00Z',
+  }
+  await mockWorkspace(page, 'handoff', { queue: () => ({ ...first, items: [first.items[0], second] }) })
+  await page.goto('/workspace')
+  await page.getByLabel('回复客户').fill('Draft that must not be lost')
+
+  await expect.poll(() => page.evaluate(() => {
+    const event = new Event('beforeunload', { cancelable: true })
+    return window.dispatchEvent(event)
+  })).toBe(false)
+
+  await page.getByRole('button', { name: /ticket:12/ }).click()
+  const discard = page.getByRole('dialog', { name: '放弃未发送的回复？' })
+  await expect(discard).toBeVisible()
+  await discard.getByRole('button', { name: '取消' }).click()
+  await expect(discard).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /ticket:11/ })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByLabel('回复客户')).toHaveValue('Draft that must not be lost')
 })
