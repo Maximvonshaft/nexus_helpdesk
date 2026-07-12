@@ -310,6 +310,7 @@ jobs:
           test ! -e "${ARTIFACT_DIR}/frontend.raw.cdx.json"
 
       - name: Scan bounded free-text evidence
+        if: always()
         id: artifact_scan
         shell: bash
         run: |
@@ -326,6 +327,7 @@ jobs:
           exit 0
 
       - name: Validate structured evidence schemas
+        if: always()
         id: structured_scan
         shell: bash
         run: |
