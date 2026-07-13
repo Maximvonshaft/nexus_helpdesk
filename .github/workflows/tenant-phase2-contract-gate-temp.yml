@@ -38,7 +38,9 @@ jobs:
           set -Eeuo pipefail
           test "$(git hash-object .github/workflows/tenant-principal-backfill-gate.yml)" = "aed19b2ea541a416d6f730644f442ca808073fb9"
           test "$(git hash-object docs/architecture/tenant-principal-migration.md)" = "48c58cb37a39cbc29caf88f2a0257548f14e434a"
-          base64 --decode .github/patches/tenant-phase2-contract-gate.patch.gz.b64 > "${RUNNER_TEMP}/contract.patch.gz"
+          tr -d '\r\n ' < .github/patches/tenant-phase2-contract-gate.patch.gz.b64 \
+            | sed 's/=*$//' \
+            | base64 --decode > "${RUNNER_TEMP}/contract.patch.gz"
           test "$(sha256sum "${RUNNER_TEMP}/contract.patch.gz" | awk '{print $1}')" = "8af7b682ee1497b2282d3eef44aefc425316de8ecf4f3478004be1bba8f1f678"
           gzip --decompress --stdout "${RUNNER_TEMP}/contract.patch.gz" > "${RUNNER_TEMP}/contract.patch"
           test "$(sha256sum "${RUNNER_TEMP}/contract.patch" | awk '{print $1}')" = "25bef2403eaeb32efcd1d579e21723dc0710c71d697c24c7d5087bc08e117d00"
