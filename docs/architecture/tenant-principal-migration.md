@@ -181,3 +181,10 @@ foundation:
 This revision is not a rollout authorization. Phase 2 still requires an
 approved deployment mapping, dry-run receipt, bounded apply command and explicit
 handling of every unresolved or cross-Tenant record.
+
+## Phase 1 verification posture
+
+The Phase 1 proposal is accepted only when the exact PR Head passes the
+relational preflight, additive-schema PostgreSQL upgrade/downgrade/re-upgrade,
+migration-drift, model-registration, full applicable CI and independent review.
+Evidence from temporary transfer commits or an earlier Head is non-authoritative.
