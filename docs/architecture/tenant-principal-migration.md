@@ -182,3 +182,67 @@ foundation:
 This revision is not a rollout authorization. Phase 2 still requires an
 approved deployment mapping, dry-run receipt, bounded apply command and explicit
 handling of every unresolved or cross-Tenant record.
+
+## Phase 2 implementation contract — approved bounded backfill
+
+Phase 2 is an offline administrative qualification and migration tool. It is
+not imported by application startup, API routes, Workers or deployment hooks.
+The command is:
+
+```bash
+PYTHONPATH=backend:scripts/qualification/tenant \
+python scripts/qualification/tenant/tenant_principal_backfill.py \
+  --database-url "$DATABASE_URL" \
+  --mapping /secure/change-custody/tenant-mapping.json \
+  --output /secure/change-custody/tenant-backfill-dry-run.json
+```
+
+Dry-run is the default and performs no database mutation. A write execution
+requires every explicit authority below:
+
+```bash
+PYTHONPATH=backend:scripts/qualification/tenant \
+python scripts/qualification/tenant/tenant_principal_backfill.py \
+  --database-url "$DATABASE_URL" \
+  --mapping /secure/change-custody/tenant-mapping.json \
+  --output /secure/change-custody/tenant-backfill-receipt.json \
+  --apply \
+  --expected-mapping-digest "sha256:<approved-64-hex-digest>" \
+  --receipt-hmac-key-file /secure/change-custody/receipt-hmac.key \
+  --receipt-key-id "<approved-key-id>" \
+  --batch-size 200
+```
+
+Controls:
+
+- the database Alembic revision must be exactly `20260713_0059`;
+- the mapping is normalized before its SHA-256 digest is calculated, so key
+  ordering and display-name whitespace do not change an approved identity;
+- an apply run refuses a missing, malformed or mismatched approved digest;
+- signing material is read from a file, is never accepted as a command-line
+  secret and is never copied into a receipt or artifact;
+- apply receipts are bound with `hmac-sha256` and include a bounded signing-key
+  identifier, counts, reason codes and hashed samples only;
+- `batch_size` is limited to 5,000 records and `max_batches` supports an
+  explicitly bounded partial execution followed by an idempotent resume;
+- PostgreSQL apply uses `SERIALIZABLE` isolation and a fail-fast advisory
+  transaction lock, and any row-count or relationship drift rolls the whole
+  execution transaction back;
+- an existing assignment is accepted only when Tenant ID, assignment source
+  and exact mapping digest all match; partial or contradictory provenance
+  blocks before mutation;
+- every non-core persisted `tenant_id` or `tenant_key` is scanned first;
+  null, empty, `default`, unknown or unknown relational principals block core
+  backfill rather than being hidden by it;
+- inactive Tenant principals are rejected and cannot receive historical ownership;
+- the same shared ownership resolver is used by preflight and backfill for
+  Market, Team, User, ChannelAccount, Ticket and Customer assignments;
+- rerunning a completed apply reports all rows as already applied and performs
+  zero mutation;
+- a receipt is bounded to 512 KiB and must pass the repository artifact scanner.
+
+`--max-batches` is a controlled maintenance boundary, not automatic scheduling.
+No repository workflow invokes apply against production, and no manifest or
+signing key is committed to this repository. A production execution still
+requires an independently approved change record, backup/restore evidence,
+post-backfill preflight and retained signed receipt.
