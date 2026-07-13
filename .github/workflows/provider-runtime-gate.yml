@@ -12,6 +12,7 @@ on:
       - "backend/app/services/webcall_ai_production/providers/router.py"
       - "backend/app/services/webcall_ai_production/config.py"
       - "backend/app/services/webcall_ai_production/orchestrator.py"
+      - "backend/app/services/webchat_runtime_output_parser.py"
       - "backend/app/services/webchat_runtime_ai_service.py"
       - "backend/app/services/webchat_rate_limit.py"
       - "backend/tests/test_admin_provider_runtime_routing_api.py"
@@ -51,7 +52,8 @@ jobs:
             backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
             backend/tests/test_provider_runtime_traffic_selection.py \
-            backend/tests/test_provider_runtime_review_regressions.py
+            backend/tests/test_provider_runtime_review_regressions.py \
+            backend/tests/test_provider_runtime_audit_contract.py
 
   provider-runtime-webcall-adapter:
     runs-on: ubuntu-latest
