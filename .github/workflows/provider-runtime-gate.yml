@@ -52,10 +52,12 @@ jobs:
             echo 'ERROR: .venv/ must be ignored.'
             exit 1
           fi
-          # Limit retired-provider markers to executable product/runtime paths.
-          # Read-only capability probes under scripts/ legitimately identify
-          # protocol names such as openai_responses and are governed separately.
-          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src; then
+          # Continue scanning production and operational scripts. Exclude only
+          # the bounded read-only capability probe whose protocol test name
+          # legitimately includes openai_responses.
+          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- \
+            backend/app backend/scripts deploy webapp/src scripts \
+            ':(exclude)scripts/ai/probe_ai_resource_server.py'; then
             echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
             exit 1
           fi
