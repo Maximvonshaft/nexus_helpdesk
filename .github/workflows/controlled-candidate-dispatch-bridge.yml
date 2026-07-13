@@ -1,0 +1,71 @@
+name: controlled-candidate-dispatch-bridge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/controlled-candidate-request.json
+
+permissions: {}
+
+concurrency:
+  group: controlled-candidate-dispatch-bridge-main
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Validate exact-main bounded request
+        env:
+          REQUEST_PATH: .github/controlled-candidate-request.json
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_EVENT_NAME" = "push"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+
+          parent_sha="$(git rev-parse "${SOURCE_SHA}^1")"
+          test "$(git diff --name-only "$parent_sha" "$SOURCE_SHA" -- "$REQUEST_PATH")" = "$REQUEST_PATH"
+          test "$(jq -er '.schema' "$REQUEST_PATH")" = "nexus.osr.controlled-candidate-request.v1"
+          test "$(jq -er '.intent' "$REQUEST_PATH")" = "dispatch-controlled-candidate"
+          test "$(jq -er '.candidate_workflow' "$REQUEST_PATH")" = "controlled-candidate-convergence.yml"
+          test "$(jq -er '.requested_ref' "$REQUEST_PATH")" = "main"
+          test "$(jq -er '.base_sha' "$REQUEST_PATH")" = "$parent_sha"
+          test "$(jq -er '.issue_533' "$REQUEST_PATH")" = "NO_GO"
+          jq -e '
+            (.request_id | type == "string" and test("^[a-z0-9][a-z0-9._-]{7,63}$")) and
+            (.deployment_authorized == false) and
+            (.production_authority == false) and
+            (.external_actions_authorized == false)
+          ' "$REQUEST_PATH" >/dev/null
+
+      - name: Dispatch exact-main candidate workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          gh api \
+            --method POST \
+            "repos/${GH_REPO}/actions/workflows/controlled-candidate-convergence.yml/dispatches" \
+            --raw-field ref=main
