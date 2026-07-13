@@ -49,7 +49,7 @@ def upgrade() -> None:
         op.create_table(
             _TENANT_TABLE,
             sa.Column("id", sa.Integer(), nullable=False),
-            sa.Column("tenant_key", sa.String(length=120), nullable=False),
+            sa.Column("tenant_key", sa.String(length=80), nullable=False),
             sa.Column("display_name", sa.String(length=160), nullable=False),
             sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column(

@@ -52,6 +52,7 @@ def _assert_additive_schema(connection) -> None:
         "updated_at",
     }
     assert tenant_columns["tenant_key"]["nullable"] is False
+    assert tenant_columns["tenant_key"]["type"].length == 80
     assert tenant_columns["display_name"]["nullable"] is False
     assert {item["name"] for item in inspector.get_unique_constraints("tenants")} >= {
         "uq_tenants_tenant_key"
@@ -87,6 +88,7 @@ def test_model_metadata_exposes_nullable_relational_tenant_principal() -> None:
     register_all_models()
     assert Tenant.__table__.name == "tenants"
     assert Tenant.__table__.c.tenant_key.nullable is False
+    assert Tenant.__table__.c.tenant_key.type.length == 80
     assert Tenant.__table__.c.tenant_key.default is None
     assert {
         constraint.name for constraint in Tenant.__table__.constraints
