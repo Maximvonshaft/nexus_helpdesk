@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW = (ROOT / ".github/workflows/controlled-candidate-convergence.yml").read_text(encoding="utf-8")
+COMPOSE = (ROOT / "deploy/docker-compose.controlled.yml").read_text(encoding="utf-8")
+ENV_EXAMPLE = (ROOT / "deploy/.env.controlled.example").read_text(encoding="utf-8")
+
+
+class ControlledCandidateWorkflowContractTests(unittest.TestCase):
+    def test_manual_main_only_and_least_privilege(self) -> None:
+        self.assertIn("workflow_dispatch:", WORKFLOW)
+        self.assertNotIn("pull_request:", WORKFLOW)
+        self.assertNotIn("push:\n", WORKFLOW)
+        self.assertIn("permissions: {}", WORKFLOW)
+        self.assertIn("if: github.ref == 'refs/heads/main'", WORKFLOW)
+        self.assertIn("packages: write", WORKFLOW)
+        self.assertIn("attestations: write", WORKFLOW)
+        self.assertIn("id-token: write", WORKFLOW)
+
+    def test_actions_are_pinned_and_no_mutable_action_tags(self) -> None:
+        uses = re.findall(r"(?m)^\s*uses:\s*([^\s]+)", WORKFLOW)
+        self.assertGreaterEqual(len(uses), 8)
+        for reference in uses:
+            if reference.startswith("./"):
+                continue
+            self.assertRegex(reference, r"@[0-9a-f]{40}$")
+        for mutable in ("@main", "@master", "@v1", "@v2", "@v3", "@v4"):
+            self.assertNotIn(mutable, WORKFLOW)
+
+    def test_existing_rc_build_is_reused_and_no_second_build_exists(self) -> None:
+        self.assertIn("scripts/release/run_rc_test_candidate.sh", WORKFLOW)
+        self.assertNotIn("docker build ", WORKFLOW)
+        self.assertIn("docker tag \"$CANDIDATE_IMAGE\"", WORKFLOW)
+        self.assertIn("docker push \"$registry_image:$tag\"", WORKFLOW)
+        self.assertIn("test \"$pulled_image_id\" = \"$local_image_id\"", WORKFLOW)
+
+    def test_same_binary_is_scanned_published_and_attested(self) -> None:
+        self.assertIn("image-ref: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
+        self.assertIn("image: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
+        self.assertIn("release-image-manifest.json", WORKFLOW)
+        self.assertIn("registry-publish-receipt.json", WORKFLOW)
+        self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
+        self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
+        self.assertIn("push-to-registry: true", WORKFLOW)
+
+    def test_recovery_and_external_effect_safety_are_required(self) -> None:
+        self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW)
+        self.assertIn("controlled-recovery-${{ github.sha }}", WORKFLOW)
+        for marker in (
+            "PROVIDER_RUNTIME_KILL_SWITCH=true",
+            "PROVIDER_RUNTIME_CANARY_PERCENT=0",
+            "ENABLE_OUTBOUND_DISPATCH=false",
+            "WHATSAPP_NATIVE_ENABLED=false",
+            "SPEEDAF_WORK_ORDER_CREATE_ENABLED=false",
+            "OPERATIONS_DISPATCH_MODE=disabled",
+        ):
+            self.assertIn(marker, ENV_EXAMPLE)
+
+    def test_controlled_compose_is_digest_only_and_has_no_external_sidecars(self) -> None:
+        self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
+        self.assertNotRegex(COMPOSE, r"(?m)^\s*build\s*:")
+        self.assertNotIn(":latest", COMPOSE)
+        self.assertNotIn("external: true", COMPOSE)
+        self.assertNotIn("production_runtime", COMPOSE)
+        self.assertNotIn("whatsapp-sidecar", COMPOSE)
+        for service in (
+            "migrate-controlled:",
+            "app-controlled:",
+            "worker-outbound-controlled:",
+            "worker-background-controlled:",
+            "worker-webchat-ai-controlled:",
+            "worker-handoff-snapshot-controlled:",
+        ):
+            self.assertIn(service, COMPOSE)
+
+
+if __name__ == "__main__":
+    unittest.main()
