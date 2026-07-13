@@ -9,6 +9,7 @@ from typing import Any, Coroutine
 from app.db import SessionLocal
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
+from app.services.provider_runtime.traffic_selection import ProviderTrafficPath, ProviderTrafficSelection
 from sqlalchemy.orm import Session
 
 from .base import LLMProvider, LLMResult, ProviderError
@@ -44,13 +45,26 @@ async def _route_request(db: Session, request: ProviderRequest) -> ProviderResul
     provider_alias = _env("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", _DEFAULT_PROVIDER)
     router = ProviderRuntimeRouter(db)
     if provider_alias not in _ROUTER_ALIASES:
+        selection = ProviderTrafficSelection(
+            configured_mode="control",
+            path=ProviderTrafficPath.CONTROL,
+            canary_percent=0,
+            bucket=None,
+            execute_candidate=False,
+            authoritative=False,
+            reason="provider_alias_invalid",
+            configuration_errors=("provider_runtime_provider_alias_invalid",),
+        )
         router._write_audit(
             request,
             "generate",
             "skipped",
             "router",
             0,
-            {"provider_alias_valid": False},
+            {
+                "provider_alias_valid": False,
+                "traffic_selection": selection.safe_summary(fallback_result="candidate_not_selected"),
+            },
             "provider_runtime_provider_alias_invalid",
         )
         return ProviderResult.unavailable(
