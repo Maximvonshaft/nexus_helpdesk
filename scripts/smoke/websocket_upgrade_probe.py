@@ -78,6 +78,10 @@ def _parse_headers(header_bytes: bytes) -> tuple[int, dict[str, str]]:
     return status_code, headers
 
 
+def _header_tokens(value: str) -> set[str]:
+    return {token.strip().lower() for token in value.split(",") if token.strip()}
+
+
 def probe_websocket_upgrade(
     *,
     base_url: str,
@@ -128,7 +132,7 @@ def probe_websocket_upgrade(
         raise RuntimeError(f"websocket upgrade failed with HTTP {status_code}")
     if upgrade_header.lower() != "websocket":
         raise RuntimeError("websocket Upgrade response header is invalid")
-    if "upgrade" not in connection_header.lower():
+    if "upgrade" not in _header_tokens(connection_header):
         raise RuntimeError("websocket Connection response header is invalid")
 
     expected_accept = base64.b64encode(
@@ -147,7 +151,9 @@ def probe_websocket_upgrade(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Verify an HTTP WebSocket 101 upgrade without external dependencies.")
+    parser = argparse.ArgumentParser(
+        description="Verify an HTTP WebSocket 101 upgrade without external dependencies."
+    )
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--path", default="/webchat/live/ws")
     parser.add_argument("--query", default="")
