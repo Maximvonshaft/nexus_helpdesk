@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.permissions import ensure_can_manage_runtime
-from ..services.provider_runtime.traffic_selection import safe_traffic_configuration
+from ..services.provider_runtime.traffic_selection import (
+    ALLOWED_CANARY_PERCENTS,
+    safe_traffic_configuration,
+)
 from ..services.provider_runtime_status import get_provider_runtime_status
 from .deps import get_current_user
 
@@ -23,6 +26,13 @@ _WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
 _WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 _CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
 _KILL_SWITCH_INVALID = "provider_runtime_kill_switch_invalid"
+_ROUTING_UPDATE_ERROR_CODES = frozenset(
+    {
+        "primary_provider_not_allowed",
+        "fallback_provider_not_allowed",
+        _CANARY_PERCENT_INVALID,
+    }
+)
 
 
 class WebchatRuntimeRoutingUpdate(BaseModel):
@@ -40,6 +50,8 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
             raise ValueError("primary_provider_not_allowed")
         if self.fallback_providers:
             raise ValueError("fallback_provider_not_allowed")
+        if self.canary_percent not in ALLOWED_CANARY_PERCENTS:
+            raise ValueError(_CANARY_PERCENT_INVALID)
 
 
 def _database_configuration_errors(selection: dict[str, Any]) -> list[str]:
@@ -193,12 +205,10 @@ def update_webchat_runtime_routing(
     ensure_can_manage_runtime(current_user, db)
     try:
         payload.validate_allowed()
-    except ValueError:
-        error_code = (
-            "primary_provider_not_allowed"
-            if payload.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS
-            else "fallback_provider_not_allowed"
-        )
+    except ValueError as exc:
+        error_code = str(exc)
+        if error_code not in _ROUTING_UPDATE_ERROR_CODES:
+            error_code = "provider_runtime_routing_update_invalid"
         raise HTTPException(status_code=400, detail={"error_code": error_code}) from None
 
     existing = db.execute(
