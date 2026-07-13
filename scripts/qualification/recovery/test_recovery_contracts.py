@@ -56,7 +56,13 @@ def _env(fake_bin: Path, **updates: str) -> dict[str, str]:
     return value
 
 
-def _write_bundle(root: Path, *, source_database: str = "nexus_source", head: str = "20260713_0059") -> Path:
+def _write_bundle(
+    root: Path,
+    *,
+    source_database: str = "nexus_source",
+    head: str = "20260713_0059",
+    vector_version: str = "0.8.0",
+) -> Path:
     bundle = root / "bundle"
     bundle.mkdir()
     archive = bundle / "database.dump"
@@ -72,6 +78,7 @@ def _write_bundle(root: Path, *, source_database: str = "nexus_source", head: st
                 "archive_size_bytes": len(archive_bytes),
                 "source_database_sha256": hashlib.sha256(source_database.encode()).hexdigest(),
                 "alembic_head": head,
+                "preinstalled_extensions": [{"name": "vector", "version": vector_version}],
                 "created_at": "2026-07-13T00:00:00Z",
             },
             sort_keys=True,
@@ -94,6 +101,8 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             "sha256sum",
             "backup_manifest",
             "source_database_sha256",
+            "preinstalled_extensions",
+            "VECTOR_VERSION",
             "mv -T --",
             "postgres_native_url_user_required",
             "postgres_native_url_query_not_allowed",
@@ -105,10 +114,9 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             "POSTGRES_NATIVE_URL",
             "ON_ERROR_STOP=1",
             "--single-transaction",
-            "source_database_sha256",
-            "archive_size_bytes",
-            "ROLLBACK_ALLOW_IN_PLACE",
-            "INSTRUCTIONS_ONLY",
+            "--use-list=",
+            "backup_restore_vector_toc_invalid",
+            "preinstalled_extensions",
             "DATABASE_RESTORE_APPLIED",
             "DATABASE_RESTORED",
             "IMAGE_RESTARTED",
@@ -214,7 +222,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 self.assertIn(expected, completed.stderr)
                 self.assertFalse(marker.exists())
 
-    def test_database_post_verify_failure_records_applied_restore(self) -> None:
+    def test_restore_preserves_manifest_bound_vector_and_records_post_verify_failure(self) -> None:
         rollback = ROOT / "scripts" / "deploy" / "rollback_release.sh"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -222,17 +230,30 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             fake_bin = root / "bin"
             fake_bin.mkdir()
             restore_marker = root / "restore-applied"
+            list_marker = root / "list-filtered"
             _write_executable(
                 fake_bin / "pg_restore",
                 "#!/usr/bin/env bash\n"
-                "if [[ \"${1:-}\" == \"--list\" ]]; then exit 0; fi\n"
-                f"touch {restore_marker!s}\nexit 0\n",
+                "if [[ \"${1:-}\" == \"--list\" ]]; then\n"
+                "  printf '; archive\\n1; 3079 100 EXTENSION - vector nexus_recovery_admin\\n2; 0 0 COMMENT - EXTENSION vector nexus_recovery_admin\\n3; 1259 101 TABLE public sample nexus_recovery_source\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "list=''\n"
+                "for arg in \"$@\"; do case \"$arg\" in --use-list=*) list=\"${arg#--use-list=}\" ;; esac; done\n"
+                "test -n \"$list\"\n"
+                "grep -q '^;1; .* EXTENSION - vector ' \"$list\"\n"
+                "grep -q '^;2; .* COMMENT - EXTENSION vector ' \"$list\"\n"
+                "grep -q '^3; .* TABLE public sample ' \"$list\"\n"
+                f"touch {list_marker!s}\n"
+                f"touch {restore_marker!s}\n"
+                "exit 0\n",
             )
             _write_executable(
                 fake_bin / "psql",
                 "#!/usr/bin/env bash\n"
                 "case \"$*\" in\n"
                 "  *'SELECT current_database()'*) printf 'nexus_restore\\n' ;;\n"
+                "  *\"SELECT extversion FROM pg_extension WHERE extname = 'vector'\"*) printf '0.8.0\\n' ;;\n"
                 "  *'SELECT version_num FROM alembic_version'*) printf '20260713_0058\\n' ;;\n"
                 "  *) exit 1 ;;\n"
                 "esac\n",
@@ -249,6 +270,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 ),
             )
             payload = json.loads(status.read_text(encoding="utf-8"))
+            self.assertTrue(list_marker.exists())
             self.assertTrue(restore_marker.exists())
         self.assertEqual(completed.returncode, 7)
         self.assertEqual(payload["failure_stage"], "DATABASE_POST_VERIFY")
@@ -256,6 +278,38 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertNotIn("DATABASE_RESTORED", payload["states"])
         self.assertTrue(payload["database_restore_applied"])
         self.assertFalse(payload["database_restored"])
+
+    def test_restore_refuses_missing_preinstalled_vector_before_pg_restore(self) -> None:
+        rollback = ROOT / "scripts" / "deploy" / "rollback_release.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = _write_bundle(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            restore_marker = root / "restore-called"
+            _write_executable(fake_bin / "pg_restore", f"#!/usr/bin/env bash\ntouch {restore_marker!s}\nexit 0\n")
+            _write_executable(
+                fake_bin / "psql",
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'SELECT current_database()'*) printf 'nexus_restore\\n' ;;\n"
+                "  *\"SELECT extversion FROM pg_extension WHERE extname = 'vector'\"*) printf '\\n' ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n",
+            )
+            completed = _run(
+                rollback,
+                str(bundle),
+                env=_env(
+                    fake_bin,
+                    ROLLBACK_CONFIRM="I_UNDERSTAND",
+                    POSTGRES_NATIVE_URL="postgresql://nexus_recovery_restore:restore-test@db-a:5432/nexus_restore",
+                    ROLLBACK_STATUS_FILE=str(root / "rollback-result.json"),
+                ),
+            )
+            self.assertFalse(restore_marker.exists())
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("Target vector extension version does not match backup manifest", completed.stderr)
 
     def test_health_requires_2xx_and_writes_partial_state(self) -> None:
         rollback = ROOT / "scripts" / "deploy" / "rollback_release.sh"
@@ -283,15 +337,17 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 self.assertIn("IMAGE_RESTARTED", payload["states"])
                 self.assertNotIn("HEALTH_VERIFIED", payload["states"])
 
-    def test_workflow_proves_role_separation_and_quarantines_unsafe_evidence(self) -> None:
+    def test_workflow_proves_role_extension_separation_and_quarantine(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "osr-recovery-qualification.yml").read_text(encoding="utf-8")
         runner = (ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh").read_text(encoding="utf-8")
         self.assertIn("POSTGRES_USER: nexus_recovery_admin", workflow)
         self.assertIn("CREATE ROLE nexus_recovery_source", workflow)
         self.assertIn("CREATE ROLE nexus_recovery_restore", workflow)
         self.assertNotIn("PGUSER:", workflow)
-        self.assertIn("CREATE DATABASE nexus_source OWNER nexus_recovery_source", runner)
-        self.assertIn("CREATE DATABASE nexus_restore OWNER nexus_recovery_restore", runner)
+        self.assertIn("CREATE DATABASE nexus_source WITH OWNER nexus_recovery_source TEMPLATE template0", runner)
+        self.assertIn("CREATE DATABASE nexus_restore WITH OWNER nexus_recovery_restore TEMPLATE template0", runner)
+        self.assertIn("CREATE EXTENSION vector", runner)
+        self.assertIn("recovery_vector_preinstall_proof_failed", runner)
         self.assertIn("recovery_role_identity_collision", runner)
         clean = workflow.index("- name: Upload clean bounded qualification evidence")
         failure = workflow.index("- name: Upload sanitized recovery failure status")
