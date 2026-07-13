@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -238,22 +239,55 @@ def verify_receipt_signature(payload: dict[str, Any], signing_key: bytes) -> boo
     return hmac.compare_digest(signature, _receipt_signature(unsigned, signing_key))
 
 
-def _write_receipt(
+def _render_receipt(
+    payload: dict[str, Any],
+    *,
+    signing_key: bytes | None = None,
+    signing_key_id: str | None = None,
+) -> bytes:
+    rendered = dict(payload)
+    if signing_key is not None:
+        rendered["receipt_signing_key_id"] = signing_key_id
+        rendered["receipt_signature"] = _receipt_signature(rendered, signing_key)
+    encoded = (json.dumps(rendered, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(encoded) > MAX_RECEIPT_BYTES:
+        raise TenantBackfillError("tenant_backfill_receipt_excessive")
+    return encoded
+
+
+def _prepare_receipt(
     output_path: Path,
     payload: dict[str, Any],
     *,
     signing_key: bytes | None = None,
     signing_key_id: str | None = None,
-) -> None:
-    rendered = dict(payload)
-    if signing_key is not None:
-        rendered["receipt_signing_key_id"] = signing_key_id
-        rendered["receipt_signature"] = _receipt_signature(rendered, signing_key)
-    encoded = json.dumps(rendered, sort_keys=True, indent=2) + "\n"
-    if len(encoded.encode("utf-8")) > MAX_RECEIPT_BYTES:
-        raise TenantBackfillError("tenant_backfill_receipt_excessive")
+) -> Path:
+    encoded = _render_receipt(
+        payload,
+        signing_key=signing_key,
+        signing_key_id=signing_key_id,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(encoded, encoding="utf-8")
+    pending_path = output_path.with_name(output_path.name + ".pending")
+    with pending_path.open("wb") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return pending_path
+
+
+def _publish_receipt(pending_path: Path, output_path: Path) -> None:
+    try:
+        os.replace(pending_path, output_path)
+        directory_fd = os.open(output_path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        raise TenantBackfillError(
+            f"tenant_backfill_receipt_publish_failed:{pending_path}"
+        ) from exc
 
 
 def run_backfill(
@@ -302,6 +336,8 @@ def run_backfill(
     status = "fail"
 
     engine = create_engine(database_url, future=True)
+    pending_receipt: Path | None = None
+    payload: dict[str, Any] | None = None
     try:
         transaction_context = engine.begin() if apply else engine.connect()
         with transaction_context as connection:
@@ -397,29 +433,33 @@ def run_backfill(
             else:
                 status = "pass"
 
-        payload = {
-            "schema_version": RECEIPT_SCHEMA,
-            "source_schema_revision": SOURCE_SCHEMA_REVISION,
-            "mapping_digest": digest,
-            "mode": "apply" if apply else "dry_run",
-            "status": status,
-            "batch_size": batch_size,
-            "max_batches": max_batches,
-            "tenant_count": len(manifest["tenant_keys"]),
-            "record_counts": record_counts,
-            "planned_counts": planned_counts,
-            "already_applied_counts": already_counts,
-            "applied_counts": applied_counts,
-            "remaining_counts": remaining_counts,
-            "issues": findings.as_dict(),
-            "production_mutation_performed": mutation_performed,
-        }
-        _write_receipt(
-            output_path,
-            payload,
-            signing_key=receipt_signing_key,
-            signing_key_id=receipt_signing_key_id,
-        )
+            payload = {
+                "schema_version": RECEIPT_SCHEMA,
+                "source_schema_revision": SOURCE_SCHEMA_REVISION,
+                "mapping_digest": digest,
+                "mode": "apply" if apply else "dry_run",
+                "status": status,
+                "batch_size": batch_size,
+                "max_batches": max_batches,
+                "tenant_count": len(manifest["tenant_keys"]),
+                "record_counts": record_counts,
+                "planned_counts": planned_counts,
+                "already_applied_counts": already_counts,
+                "applied_counts": applied_counts,
+                "remaining_counts": remaining_counts,
+                "issues": issue_data,
+                "production_mutation_performed": mutation_performed,
+            }
+            pending_receipt = _prepare_receipt(
+                output_path,
+                payload,
+                signing_key=receipt_signing_key,
+                signing_key_id=receipt_signing_key_id,
+            )
+
+        if pending_receipt is None or payload is None:
+            raise TenantBackfillError("tenant_backfill_receipt_prepare_missing")
+        _publish_receipt(pending_receipt, output_path)
         return 0 if status in {"pass", "partial"} else 1
     finally:
         engine.dispose()

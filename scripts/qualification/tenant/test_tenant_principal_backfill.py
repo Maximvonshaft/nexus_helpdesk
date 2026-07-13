@@ -467,3 +467,59 @@ def test_postgresql_apply_contract_is_serializable_and_fail_fast_locked() -> Non
     assert "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE" in source
     assert "pg_try_advisory_xact_lock(7140059)" in source
     assert "tenant_backfill_lock_unavailable" in source
+
+
+def test_receipt_prepare_failure_rolls_back_apply(tmp_path: Path, monkeypatch) -> None:
+    url = _create_schema(tmp_path / "receipt-prepare-failure.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+
+    def fail_prepare(*args, **kwargs):
+        raise OSError("synthetic receipt prepare failure")
+
+    monkeypatch.setattr(backfill, "_prepare_receipt", fail_prepare)
+    with pytest.raises(OSError, match="receipt prepare failure"):
+        backfill.run_backfill(
+            url,
+            mapping,
+            tmp_path / "receipt.json",
+            apply=True,
+            **_approved_apply_kwargs(mapping),
+        )
+
+    engine = sa.create_engine(url, future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(sa.text("SELECT count(*) FROM tenants")).scalar_one() == 0
+        assert all(value == (None, None, None) for value in _core_state(url).values())
+    finally:
+        engine.dispose()
+
+
+def test_receipt_publish_failure_preserves_signed_pending_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    url = _create_schema(tmp_path / "receipt-publish-failure.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+    output = tmp_path / "receipt.json"
+
+    def fail_replace(source, destination):
+        raise OSError("synthetic publish failure")
+
+    monkeypatch.setattr(backfill.os, "replace", fail_replace)
+    with pytest.raises(backfill.TenantBackfillError, match="receipt_publish_failed"):
+        backfill.run_backfill(
+            url,
+            mapping,
+            output,
+            apply=True,
+            **_approved_apply_kwargs(mapping),
+        )
+
+    pending = output.with_name(output.name + ".pending")
+    assert output.exists() is False
+    assert pending.is_file()
+    receipt = json.loads(pending.read_text(encoding="utf-8"))
+    assert receipt["status"] == "pass"
+    assert receipt["production_mutation_performed"] is True
+    assert backfill.verify_receipt_signature(receipt, SIGNING_KEY) is True
+    assert all(value[0] == 1 for value in _core_state(url).values())
