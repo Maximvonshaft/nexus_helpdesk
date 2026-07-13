@@ -15,12 +15,18 @@ from sqlalchemy.orm import Session
 from ..auth_service import ALGORITHM
 from ..db import get_db
 from ..enums import EventType
-from ..models import Ticket, TicketEvent
-from ..settings import get_settings
-from .deps import get_current_user
+from ..models import Ticket
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
-from ..services.permissions import CAP_SPEEDAF_CANCEL_WRITE, ensure_ticket_visible, resolve_capabilities
-from ..services.speedaf.action_service import SpeedafActionDisabled, SpeedafActionService, _enabled as speedaf_action_enabled
+from ..services.permissions import (
+    CAP_SPEEDAF_CANCEL_WRITE,
+    ensure_ticket_visible,
+    resolve_capabilities,
+)
+from ..services.speedaf.action_service import (
+    SpeedafActionDisabled,
+    SpeedafActionService,
+)
+from ..services.speedaf.action_service import _enabled as speedaf_action_enabled
 from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import (
@@ -30,8 +36,11 @@ from ..services.speedaf.status_map import (
     safe_cancel_reason_label,
     safe_order_status_label,
 )
+from ..services.ticket_event_writer import TicketEventClass, TicketEventWriter
 from ..services.tool_governance import record_tool_call
+from ..settings import get_settings
 from ..utils.time import utc_now
+from .deps import get_current_user
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
 
@@ -341,27 +350,22 @@ def _append_cancel_event(
     dedupe_key: str,
     safe_payload: dict[str, Any],
 ) -> None:
-    db.add(
-        TicketEvent(
-            ticket_id=ticket_id,
-            actor_id=actor_id,
-            event_type=EventType.field_updated,
-            field_name="speedaf_cancel",
-            new_value="cancel_requested",
-            note="Speedaf cancel request submitted; Nexus ticket remains open for human confirmation.",
-            payload_json=json.dumps(
-                {
-                    "dedupe_key": dedupe_key,
-                    "reason_code": reason_code,
-                    "reason_label": safe_cancel_reason_label(reason_code),
-                    **safe_waybill_payload(waybill_code),
-                    "speedaf_safe_payload": safe_payload,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            ),
-        )
+    TicketEventWriter.add(
+        db,
+        ticket_id=ticket_id,
+        actor_id=actor_id,
+        event_type=EventType.field_updated,
+        event_class=TicketEventClass.TOOL,
+        field_name="speedaf_cancel",
+        new_value="cancel_requested",
+        note="Speedaf cancel request submitted; Nexus ticket remains open for human confirmation.",
+        payload={
+            "dedupe_key": dedupe_key,
+            "reason_code": reason_code,
+            "reason_label": safe_cancel_reason_label(reason_code),
+            **safe_waybill_payload(waybill_code),
+            "speedaf_safe_payload": safe_payload,
+        },
     )
 
 

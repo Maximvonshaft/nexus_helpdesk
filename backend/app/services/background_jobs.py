@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import uuid
 from datetime import timedelta
 
@@ -10,12 +10,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
-from ..models import BackgroundJob, ExternalChannelConversationLink, ExternalChannelTranscriptMessage, TicketEvent, TicketOutboundMessage
+from ..models import (
+    BackgroundJob,
+    ExternalChannelConversationLink,
+    ExternalChannelTranscriptMessage,
+    TicketOutboundMessage,
+)
 from ..settings import get_settings
 from ..utils.time import utc_now
 from . import external_channel_bridge
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
-from .speedaf.redactor import mask_phone, safe_caller_payload, safe_waybill_payload, sha256_prefix, suffix
+from .speedaf.redactor import (
+    mask_phone,
+    safe_caller_payload,
+    safe_waybill_payload,
+    sha256_prefix,
+    suffix,
+)
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
@@ -282,8 +294,17 @@ def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: Sourc
 
 
 def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dict, field_name: str = 'speedaf_work_order', new_value: str | None = None) -> None:
-    db.add(TicketEvent(ticket_id=ticket_id, event_type=EventType.field_updated, field_name=field_name, new_value=new_value, note=note, payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), created_at=utc_now()))
-    db.flush()
+    TicketEventWriter.add(
+        db,
+        ticket_id=ticket_id,
+        event_type=EventType.field_updated,
+        event_class=TicketEventClass.TOOL,
+        field_name=field_name,
+        new_value=new_value,
+        note=note,
+        payload=payload,
+        created_at=utc_now(),
+    )
 
 
 def _int_or_none(value) -> int | None:
@@ -387,9 +408,9 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
     payload = json.loads(job.payload_json or '{}')
     try:
         if job.job_type == AUTO_REPLY_JOB:
-            from .ticket_service import get_ticket_or_404, get_user_or_404
-            from .llm_service import polish_reply_text
             from .bulletin_service import build_bulletin_context
+            from .llm_service import polish_reply_text
+            from .ticket_service import get_ticket_or_404, get_user_or_404
             ticket = get_ticket_or_404(db, int(payload['ticket_id']))
             user = get_user_or_404(db, int(payload['user_id']))
             if not ticket.preferred_reply_contact and ticket.external_channel_link is None:
@@ -431,7 +452,9 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
         if job.job_type == WEBCHAT_HANDOFF_SNAPSHOT_JOB:
-            from .webchat_handoff_snapshot_service import process_webchat_handoff_snapshot_job
+            from .webchat_handoff_snapshot_service import (
+                process_webchat_handoff_snapshot_job,
+            )
             snapshot = payload.get('snapshot')
             if not isinstance(snapshot, dict):
                 raise RuntimeError('webchat handoff snapshot payload is required')

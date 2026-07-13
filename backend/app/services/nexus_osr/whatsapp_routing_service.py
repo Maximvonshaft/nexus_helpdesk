@@ -9,8 +9,9 @@ from typing import Any, Mapping, Protocol
 from sqlalchemy.orm import Session
 
 from ...enums import EventType
-from ...models import Ticket, TicketEvent
+from ...models import Ticket
 from ...models_osr import WhatsAppRoutingRuleRecord
+from ..ticket_event_writer import TicketEventClass, TicketEventWriter
 from .case_context import CaseContext
 from .operations_dispatch_outbox import (
     build_operations_dispatch_key,
@@ -269,13 +270,15 @@ def _audit_routing_decision(
         "event": "operations_dispatch_routing",
         "routing": result.as_safe_dict(),
     }
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket_id,
         actor_id=None,
         event_type=EventType.field_updated,
+        event_class=TicketEventClass.DISPATCH,
         note=f"Nexus OSR operations routing {result.status.value}",
-        payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
-    ))
+        payload=payload,
+    )
     db.flush()
 
 

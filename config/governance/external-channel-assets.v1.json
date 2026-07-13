@@ -1,7 +1,7 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-13.4",
-  "audited_main_sha": "df4863d4e4c77b47d694d4eca3f655fa93a8e67b",
+  "inventory_version": "2026-07-13.5",
+  "audited_main_sha": "085936554bc1213fed22ab5557b04ad45600985d",
   "discovery_tokens": [
     "ExternalChannel",
     "external_channel",
@@ -139,6 +139,7 @@
         "backend/app/services/outbound_safety.py",
         "backend/app/services/outbound_semantics.py",
         "backend/app/services/provider_runtime/output_contracts.py",
+        "backend/app/services/ticket_event_classification.py",
         "backend/app/services/tool_governance.py",
         "backend/app/services/webchat_ai_decision_runtime/prompt_builder.py",
         "backend/app/services/webchat_ai_reconciler.py",

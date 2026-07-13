@@ -9,14 +9,35 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, JobStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import BackgroundJob, ChannelAccount, Customer, Ticket, TicketComment, TicketEvent, WhatsAppInboundMessage
+from ..enums import (
+    ConversationState,
+    EventType,
+    JobStatus,
+    NoteVisibility,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+)
+from ..models import (
+    BackgroundJob,
+    ChannelAccount,
+    Customer,
+    Ticket,
+    TicketComment,
+    WhatsAppInboundMessage,
+)
 from ..settings import get_settings
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
 from .ticket_service import generate_ticket_no
-from .webchat_ai_turn_service import ai_snapshot, safe_write_webchat_event, schedule_webchat_ai_turn
+from .webchat_ai_turn_service import (
+    ai_snapshot,
+    safe_write_webchat_event,
+    schedule_webchat_ai_turn,
+)
 
 
 class WhatsAppNativeAuthError(ValueError):
@@ -248,13 +269,19 @@ def _conversation_for_message(db: Session, *, account: ChannelAccount, chat_jid:
     )
     db.add(conversation)
     db.flush()
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.ticket_created,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
         note="Native WhatsApp conversation created",
-        payload_json=_metadata(public_conversation_id=conversation.public_id, channel_account_id=account.id, chat_jid=chat_jid),
-    ))
+        payload={
+            "public_conversation_id": conversation.public_id,
+            "channel_account_id": account.id,
+            "chat_jid": chat_jid,
+        },
+    )
     return ticket, conversation, customer
 
 
@@ -415,18 +442,20 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
     conversation.last_seen_at = utc_now()
     conversation.updated_at = utc_now()
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=body_text, visibility=NoteVisibility.external))
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.comment_added,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
         note="Native WhatsApp inbound message received",
-        payload_json=_metadata(
-            whatsapp_inbound_message_id=inbound.id,
-            webchat_message_id=message.id,
-            public_conversation_id=conversation.public_id,
-            chat_jid=chat_jid,
-        ),
-    ))
+        payload={
+            "whatsapp_inbound_message_id": inbound.id,
+            "webchat_message_id": message.id,
+            "public_conversation_id": conversation.public_id,
+            "chat_jid": chat_jid,
+        },
+    )
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,

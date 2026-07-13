@@ -12,27 +12,41 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketStatus
-from ..models import Ticket, TicketEvent
+from ..enums import (
+    ConversationState,
+    EventType,
+    MessageStatus,
+    SourceChannel,
+    TicketStatus,
+)
+from ..models import Ticket
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
+from .ai_reply_contract import build_ai_reply_contract
+from .ai_runtime_context import build_webchat_runtime_context
+from .background_jobs import enqueue_speedaf_work_order_create_job
 from .customer_language import detect_customer_language
 from .customer_visible_message_service import create_customer_visible_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
-from .background_jobs import enqueue_speedaf_work_order_create_job
 from .sla_service import evaluate_sla, update_first_response
 from .speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from .speedaf.status_map import is_auto_work_order_type_allowed
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
 from .tracking_fact_schema import TrackingFactResult
 from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from .webchat_ai_decision_runtime.tool_registry import canonical_tool_name
-from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event, suppress_stale_reply_if_needed
+from .webchat_ai_turn_service import (
+    is_ai_suspended_for_handoff,
+    safe_write_webchat_event,
+    suppress_stale_reply_if_needed,
+)
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .webchat_handoff_service import request_webchat_handoff
-from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
-from .ai_runtime_context import build_webchat_runtime_context
-from .ai_reply_contract import build_ai_reply_contract
+from .webchat_runtime_ai_service import (
+    WebchatRuntimeReplyResult,
+    generate_webchat_runtime_reply,
+)
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
@@ -75,12 +89,14 @@ def _mark_ai_review_required(
     # so the next customer message can retry the unified runtime instead of going silent.
     ticket.updated_at = now
     conversation.updated_at = now
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.internal_note_added,
+        event_class=TicketEventClass.PROVIDER,
         note="AI reply suppressed without customer-visible fallback",
-        payload_json=json.dumps({
+        payload={
             "conversation_id": conversation.id,
             "public_conversation_id": conversation.public_id,
             "visitor_message_id": visitor_message.id,
@@ -91,8 +107,8 @@ def _mark_ai_review_required(
             "customer_visible_reply": False,
             "runtime_trace": runtime_trace,
             "bridge_elapsed_ms": bridge_elapsed_ms,
-        }, ensure_ascii=False),
-    ))
+        },
+    )
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
@@ -262,15 +278,17 @@ def _maybe_enqueue_auto_speedaf_work_order(
         **safe_waybill_payload(waybill_code),
         **safe_caller_payload(caller_id),
     }
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.field_updated,
+        event_class=TicketEventClass.TOOL,
         field_name="speedaf_work_order",
         new_value="queued",
         note="Speedaf delivery follow-up work order queued by AI policy.",
-        payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
-    ))
+        payload=payload,
+    )
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
@@ -613,13 +631,19 @@ def process_webchat_ai_reply_job(
     event_payload["webchat_message_id"] = message.id
     event_payload["outbound_message_id"] = outbound_message.id
     if tracking_fact:
-        db.add(TicketEvent(
+        TicketEventWriter.add(
+            db,
             ticket_id=ticket.id,
             actor_id=None,
             event_type=EventType.field_updated,
+            event_class=TicketEventClass.TRACKING,
             note="Webchat tracking fact evaluated",
-            payload_json=json.dumps({
-                "event": "webchat_tracking_fact_used" if fact_evidence_present else "webchat_tracking_fact_not_used",
+            payload={
+                "event": (
+                    "webchat_tracking_fact_used"
+                    if fact_evidence_present
+                    else "webchat_tracking_fact_not_used"
+                ),
                 "conversation_id": conversation.id,
                 "ticket_id": ticket.id,
                 "tool_name": tracking_fact.tool_name,
@@ -628,10 +652,12 @@ def process_webchat_ai_reply_job(
                 "pii_redacted": tracking_fact.pii_redacted,
                 "checked_at": tracking_fact.checked_at,
                 "external_send": is_external_whatsapp,
-                "tracking_number_hash": tracking_fact_metadata.get("tracking_number_hash"),
+                "tracking_number_hash": tracking_fact_metadata.get(
+                    "tracking_number_hash"
+                ),
                 "failure_reason": tracking_fact.failure_reason,
-            }, ensure_ascii=False),
-        ))
+            },
+        )
     evaluate_sla(ticket, db)
     LOGGER.info(
         "webchat_ai_reply_sent",

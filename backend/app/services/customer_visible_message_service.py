@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -10,9 +10,13 @@ from ..enums import EventType, MessageStatus, NoteVisibility, SourceChannel
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
-from .ai_reply_contract import AIReplyContract, AI_REPLY_CONTRACT_V3
-from .message_dispatch import _enforce_customer_visible_origin, _normalize_customer_visible_origin, queue_outbound_message
-from .ticket_event_sanitizer import serialize_ticket_event_payload
+from .ai_reply_contract import AI_REPLY_CONTRACT_V3, AIReplyContract
+from .message_dispatch import (
+    _enforce_customer_visible_origin,
+    _normalize_customer_visible_origin,
+    queue_outbound_message,
+)
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
 
 
 @dataclass(frozen=True)
@@ -197,15 +201,15 @@ def create_customer_visible_message(
             payload.setdefault("webchat_message_id", webchat_message.id)
         if outbound_result.outbound_message is not None:
             payload.setdefault("outbound_message_id", outbound_result.outbound_message.id)
-        ticket_event = TicketEvent(
+        ticket_event = TicketEventWriter.add(
+            db,
             ticket_id=ticket.id,
             actor_id=created_by,
             event_type=event_type,
+            event_class=TicketEventClass.CUSTOMER_VISIBLE,
             note=event_note,
-            payload_json=serialize_ticket_event_payload(payload),
+            payload=payload,
         )
-        db.add(ticket_event)
-        db.flush()
 
     return CustomerVisibleMessageResult(
         outbound_message=outbound_result.outbound_message,

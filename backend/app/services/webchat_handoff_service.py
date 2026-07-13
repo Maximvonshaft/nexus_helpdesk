@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, TicketStatus, UserRole
-from ..models import Ticket, TicketEvent, User
+from ..models import Ticket, User
 from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..webchat_models import (
@@ -19,15 +19,20 @@ from ..webchat_models import (
 from .audit_service import log_admin_audit
 from .operator_queue import create_webchat_handoff_task
 from .permissions import (
-    CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_DECLINE,
+    CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
     CAP_WEBCHAT_HANDOFF_RELEASE,
     CAP_WEBCHAT_HANDOFF_RESUME_AI,
     ensure_ticket_visible,
     resolve_capabilities,
 )
-from .webchat_ai_turn_service import ai_snapshot, cancel_open_ai_turns_for_handoff, safe_write_webchat_event
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
+from .webchat_ai_turn_service import (
+    ai_snapshot,
+    cancel_open_ai_turns_for_handoff,
+    safe_write_webchat_event,
+)
 from .webchat_inbox_read_state import webchat_read_state_payload
 
 OPEN_HANDOFF_STATUSES = {"requested", "accepted"}
@@ -133,14 +138,14 @@ def _write_ticket_event(
     note: str,
     payload: dict[str, Any],
 ) -> None:
-    db.add(
-        TicketEvent(
-            ticket_id=ticket_id,
-            actor_id=actor_id,
-            event_type=event_type,
-            note=note,
-            payload_json=json.dumps(payload, ensure_ascii=False, default=str),
-        )
+    TicketEventWriter.add(
+        db,
+        ticket_id=ticket_id,
+        actor_id=actor_id,
+        event_type=event_type,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
+        note=note,
+        payload=payload,
     )
 
 

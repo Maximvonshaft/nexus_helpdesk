@@ -8,11 +8,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import BackgroundJob, Customer, Ticket, TicketEvent
+from ..enums import (
+    ConversationState,
+    EventType,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+)
+from ..models import BackgroundJob, Customer, Ticket
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .background_jobs import enqueue_background_job
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
 from .ticket_service import generate_ticket_no
 
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = "webchat.handoff_snapshot"
@@ -251,7 +259,15 @@ def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]
             event_payload = dict(snapshot)
             event_payload["public_conversation_id"] = conversation.public_id
             event_payload["customer_id"] = ticket.customer_id
-            db.add(TicketEvent(ticket_id=ticket.id, actor_id=None, event_type=EventType.ticket_created, note="WebChat AI handoff snapshot created", payload_json=json.dumps(event_payload, ensure_ascii=False)))
+            TicketEventWriter.add(
+                db,
+                ticket_id=ticket.id,
+                actor_id=None,
+                event_type=EventType.ticket_created,
+                event_class=TicketEventClass.INTERNAL_AUDIT,
+                note="WebChat AI handoff snapshot created",
+                payload=event_payload,
+            )
             db.flush()
     except IntegrityError:
         existing = _existing_ticket(db, snapshot, source_dedupe_key)

@@ -9,19 +9,32 @@ from typing import Any, Iterable
 from sqlalchemy.orm import Session
 
 from ...enums import EventType, SourceChannel, TicketPriority
-from ...models import Customer, Ticket, TicketEvent
+from ...models import Customer, Ticket
 from ...tool_models import ToolCallLog
 from ...utils.time import utc_now
 from ...webchat_models import WebchatConversation
-from ..webchat_ai_decision_runtime.policy_gate import PolicyGateResult, validate_ai_decision
+from ..ticket_event_writer import TicketEventClass, TicketEventWriter
+from ..webchat_ai_decision_runtime.policy_gate import (
+    PolicyGateResult,
+    validate_ai_decision,
+)
 from ..webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionToolCall
 from ..webchat_ai_decision_runtime.tool_registry import canonical_tool_name
 from ..webchat_ai_turn_service import safe_write_webchat_event
 from ..webchat_handoff_service import request_webchat_handoff
 from .auto_ticket_service import create_or_reuse_ticket_from_case_context
 from .case_context import CaseContext, redact_case_text
-from .controlled_action_executor import ActionExecutionRequest, ActionExecutionResult, ActionHandler, ControlledActionExecutor
-from .persistence import audit_runtime_decision, resolve_tool_execution_policy, save_case_context
+from .controlled_action_executor import (
+    ActionExecutionRequest,
+    ActionExecutionResult,
+    ActionHandler,
+    ControlledActionExecutor,
+)
+from .persistence import (
+    audit_runtime_decision,
+    resolve_tool_execution_policy,
+    save_case_context,
+)
 from .runtime_decision_contract import (
     BusinessReplyType,
     RuntimeAction,
@@ -254,15 +267,15 @@ def _production_handlers(
         }
         event_id = None
         if ticket is not None:
-            row = TicketEvent(
+            row = TicketEventWriter.add(
+                db,
                 ticket_id=ticket.id,
                 actor_id=None,
                 event_type=EventType.internal_note_added,
+                event_class=TicketEventClass.TOOL,
                 note=summary,
-                payload_json=json.dumps(payload, ensure_ascii=False, default=str),
+                payload=payload,
             )
-            db.add(row)
-            db.flush()
             event_id = row.id
         if conversation is not None and ticket is not None:
             safe_write_webchat_event(

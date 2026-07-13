@@ -14,10 +14,12 @@ from sqlalchemy.orm import Session
 from ..api.deps import get_current_user
 from ..db import get_db
 from ..enums import EventType
-from ..models import Ticket, TicketEvent
-from ..settings import get_settings
+from ..models import Ticket
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
-from ..services.background_jobs import enqueue_speedaf_address_update_job, enqueue_speedaf_work_order_create_job
+from ..services.background_jobs import (
+    enqueue_speedaf_address_update_job,
+    enqueue_speedaf_work_order_create_job,
+)
 from ..services.permissions import (
     CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
     CAP_SPEEDAF_WORK_ORDER_WRITE,
@@ -28,6 +30,8 @@ from ..services.permissions import (
 from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import is_auto_work_order_type_allowed
+from ..services.ticket_event_writer import TicketEventClass, TicketEventWriter
+from ..settings import get_settings
 from ..utils.time import utc_now
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
@@ -120,17 +124,17 @@ def _load_visible_ticket(db: Session, *, ticket_id: int, user) -> Ticket:
 
 
 def _append_event(db: Session, *, ticket_id: int, actor_id: int | None, field_name: str, new_value: str, note: str, payload: dict[str, Any]) -> None:
-    db.add(
-        TicketEvent(
-            ticket_id=ticket_id,
-            actor_id=actor_id,
-            event_type=EventType.field_updated,
-            field_name=field_name,
-            new_value=new_value,
-            note=note,
-            payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
-            created_at=utc_now(),
-        )
+    TicketEventWriter.add(
+        db,
+        ticket_id=ticket_id,
+        actor_id=actor_id,
+        event_type=EventType.field_updated,
+        event_class=TicketEventClass.TOOL,
+        field_name=field_name,
+        new_value=new_value,
+        note=note,
+        payload=payload,
+        created_at=utc_now(),
     )
 
 

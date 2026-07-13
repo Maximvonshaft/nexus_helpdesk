@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..enums import EventType
-from ..models import Ticket, TicketEvent
+from ..models import Ticket
 from ..models_osr import CaseContextRecord, RuntimeDecisionAuditRecord
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .knowledge_retrieval_service import KnowledgeChunkHit
@@ -19,6 +19,7 @@ from .nexus_osr.runtime_bridge import (
     build_runtime_decision_from_existing_runtime,
 )
 from .nexus_osr.runtime_decision_contract import BusinessReplyType, RuntimeAction
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
 from .tracking_fact_schema import TrackingFactResult
 from .webchat_ai_turn_service import safe_write_webchat_event
 
@@ -218,13 +219,15 @@ def _record_osr_ticket_event(db: Session, *, ticket: Ticket, conversation: Webch
         "ai_turn_id": turn.id,
         **summary,
     }
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.field_updated,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
         note="OSR runtime decision audit recorded",
-        payload_json=_dumps_json(payload),
-    ))
+        payload=payload,
+    )
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,

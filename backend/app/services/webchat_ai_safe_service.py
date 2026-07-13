@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..enums import EventType
-from ..models import Ticket, TicketEvent
+from ..models import Ticket
 from ..settings import get_settings
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .nexus_osr.case_context import CaseContext
@@ -20,9 +20,9 @@ from .nexus_osr.escalation_orchestration_service import (
 )
 from .nexus_osr.persistence import load_case_context, load_escalation_policies
 from .nexus_osr.policies import evaluate_escalation
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
+from .webchat_ai_service import AI_AUTHOR_LABEL, _mark_ai_review_required
 from .webchat_ai_service import (
-    AI_AUTHOR_LABEL,
-    _mark_ai_review_required,
     process_webchat_ai_reply_job as _legacy_process_webchat_ai_reply_job,
 )
 from .webchat_ai_turn_service import (
@@ -356,13 +356,19 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
 
     mode = (settings.webchat_ai_auto_reply_mode or "safe_ai").lower()
     if mode == "off":
-        db.add(TicketEvent(
+        TicketEventWriter.add(
+            db,
             ticket_id=ticket.id,
             actor_id=None,
             event_type=EventType.internal_note_added,
+            event_class=TicketEventClass.PROVIDER,
             note="Webchat AI auto reply skipped because WEBCHAT_AI_AUTO_REPLY_MODE=off",
-            payload_json=json.dumps({"conversation_id": conversation.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None}, ensure_ascii=False),
-        ))
+            payload={
+                "conversation_id": conversation.id,
+                "visitor_message_id": visitor_message.id,
+                "ai_turn_id": turn.id if turn else None,
+            },
+        )
         result = {"status": "skipped", "reason": "webchat_ai_auto_reply_off", "reply_source": "off"}
         _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result)
         return result

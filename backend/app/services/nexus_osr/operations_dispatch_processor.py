@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ...enums import EventType
 from ...models import TicketEvent
 from ...models_operations_dispatch import OperationsDispatchOutboxRecord
+from ..ticket_event_writer import TicketEventClass, TicketEventWriter
 from .operations_dispatch_outbox import (
     OperationsDispatchLeaseLostError,
     claim_next_operations_dispatch,
@@ -160,11 +161,13 @@ def _audit_timeline(db: Session, *, record: OperationsDispatchOutboxRecord, phas
         "phase": phase,
         "dispatch": safe_operations_dispatch_reference(record),
     }
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=record.ticket_id,
         actor_id=None,
         event_type=EventType.field_updated,
+        event_class=TicketEventClass.DISPATCH,
         note=f"Nexus OSR operations dispatch {phase}",
-        payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
-    ))
+        payload=payload,
+    )
     db.flush()

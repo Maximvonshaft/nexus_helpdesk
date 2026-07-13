@@ -10,14 +10,29 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ...enums import EventType, SourceChannel, TicketPriority
-from ...models import Customer, Ticket, TicketEvent
+from ...models import Customer, Ticket
 from ...webchat_models import WebchatConversation, WebchatHandoffRequest
+from ..ticket_event_writer import TicketEventClass, TicketEventWriter
 from ..webchat_ai_turn_service import safe_write_webchat_event
 from ..webchat_handoff_service import request_webchat_handoff
-from .auto_ticket_service import AutoTicketResult, create_or_reuse_ticket_from_case_context
+from .auto_ticket_service import (
+    AutoTicketResult,
+    create_or_reuse_ticket_from_case_context,
+)
 from .case_context import CaseContext, redact_case_text
-from .persistence import audit_runtime_decision, load_escalation_policies, resolve_human_hours_policy, save_case_context
-from .policies import EscalationAction, EscalationDecision, HumanAvailabilityDecision, HumanAvailabilityStatus, evaluate_escalation
+from .persistence import (
+    audit_runtime_decision,
+    load_escalation_policies,
+    resolve_human_hours_policy,
+    save_case_context,
+)
+from .policies import (
+    EscalationAction,
+    EscalationDecision,
+    HumanAvailabilityDecision,
+    HumanAvailabilityStatus,
+    evaluate_escalation,
+)
 from .queue_key_resolver import QueueKeyResolution, resolve_queue_key
 from .runtime_decision_contract import (
     BusinessReplyType,
@@ -27,7 +42,10 @@ from .runtime_decision_contract import (
     RuntimeToolAction,
     evaluate_runtime_decision,
 )
-from .whatsapp_routing_service import WhatsAppRoutingResult, route_ticket_to_whatsapp_group
+from .whatsapp_routing_service import (
+    WhatsAppRoutingResult,
+    route_ticket_to_whatsapp_group,
+)
 
 
 class EscalationOrchestrationAction(StrEnum):
@@ -353,7 +371,15 @@ def _event_payload(*, action: EscalationOrchestrationAction, human: HumanAvailab
 
 
 def _write_orchestration_events(db: Session, *, ticket: Ticket, conversation: WebchatConversation, payload: dict[str, Any]) -> None:
-    db.add(TicketEvent(ticket_id=ticket.id, actor_id=None, event_type=EventType.field_updated, note="Nexus OSR escalation orchestration", payload_json=json.dumps(payload, ensure_ascii=False, default=str)))
+    TicketEventWriter.add(
+        db,
+        ticket_id=ticket.id,
+        actor_id=None,
+        event_type=EventType.field_updated,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
+        note="Nexus OSR escalation orchestration",
+        payload=payload,
+    )
     safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=ticket.id, event_type="nexus_osr.escalation_orchestrated", payload=payload)
     db.flush()
 

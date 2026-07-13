@@ -10,10 +10,18 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
-from ...enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ...models import Customer, Ticket, TicketEvent
+from ...enums import (
+    ConversationState,
+    EventType,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+)
+from ...models import Customer, Ticket
 from ...utils.time import utc_now
 from ...webchat_models import WebchatConversation
+from ..ticket_event_writer import TicketEventClass, TicketEventWriter
 from .case_context import CaseContext, CaseContextStatus
 from .persistence import close_case_context, save_case_context
 
@@ -589,23 +597,15 @@ def _write_ticket_event(
     }
     if changed_fields:
         payload["changed_fields"] = sorted(changed_fields)
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.field_updated,
-        note=(
-            "Nexus OSR auto ticket created"
-            if created
-            else "Nexus OSR ticket reused"
-        ),
-        payload_json=json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ),
-    ))
+        event_class=TicketEventClass.INTERNAL_AUDIT,
+        note="Nexus OSR auto ticket created" if created else "Nexus OSR ticket reused",
+        payload=payload,
+    )
 
 
 def _enum_value(value: Any) -> Any:

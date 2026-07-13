@@ -4,28 +4,52 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import timezone, timedelta
 from dataclasses import asdict
+from datetime import timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket, TicketComment, TicketEvent, User
-from ..utils.time import utc_now
+from ..enums import (
+    ConversationState,
+    EventType,
+    MessageStatus,
+    NoteVisibility,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+)
+from ..models import Customer, Ticket, TicketComment, User
 from ..settings import get_settings
-from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
+from ..utils.time import utc_now
+from ..webchat_models import (
+    WebchatAITurn,
+    WebchatCardAction,
+    WebchatConversation,
+    WebchatEvent,
+    WebchatHandoffRequest,
+    WebchatMessage,
+)
 from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
-from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
-from .server_fact_evidence import resolve_server_fact_evidence
-from .permissions import ensure_ticket_visible
-from .sla_service import update_first_response, evaluate_sla
-from .ticket_service import generate_ticket_no, get_ticket_or_404
 from .customer_visible_message_service import create_customer_visible_message
-from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
-from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
+from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
+from .permissions import ensure_ticket_visible
+from .server_fact_evidence import resolve_server_fact_evidence
+from .sla_service import evaluate_sla, update_first_response
+from .ticket_event_writer import TicketEventClass, TicketEventWriter
+from .ticket_service import generate_ticket_no, get_ticket_or_404
+from .webchat_ai_turn_service import (
+    is_ai_suspended_for_handoff,
+    safe_write_webchat_event,
+)
+from .webchat_handoff_service import (
+    ensure_can_reply_in_handoff,
+    request_webchat_handoff,
+    serialize_handoff_request,
+)
 from .webchat_inbox_read_state import webchat_read_state_payload
 from .webchat_public_payload import public_webchat_metadata
 
@@ -309,13 +333,19 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     db.add(conversation)
     db.flush()
 
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.ticket_created,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
         note="Webchat conversation created",
-        payload_json=json.dumps({"public_conversation_id": public_id, "origin": origin, "page_url": page_url}, ensure_ascii=False),
-    ))
+        payload={
+            "public_conversation_id": public_id,
+            "origin": origin,
+            "page_url": page_url,
+        },
+    )
     WEBCHAT_LOGGER.info("webchat_session_created", extra={"event_payload": {"conversation_id": public_id, "ticket_id": ticket.id, "origin": origin}})
     db.flush()
 
@@ -392,13 +422,15 @@ def _maybe_resume_stale_requested_handoff(
         event_type="ai.resumed",
         payload=event_payload,
     )
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.conversation_state_changed,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
         note="Stale WebChat handoff resumed by AI",
-        payload_json=json.dumps({"public_conversation_id": conversation.public_id, **event_payload}, ensure_ascii=False),
-    ))
+        payload={"public_conversation_id": conversation.public_id, **event_payload},
+    )
     db.flush()
     return True
 
@@ -450,13 +482,19 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
         elif ticket.conversation_state != ConversationState.human_review_required and not is_ai_suspended_for_handoff(conversation):
             ticket.conversation_state = ConversationState.human_owned
         db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=normalized_body, visibility=NoteVisibility.external))
-        db.add(TicketEvent(
+        TicketEventWriter.add(
+            db,
             ticket_id=ticket.id,
             actor_id=None,
             event_type=EventType.comment_added,
+            event_class=TicketEventClass.INTERNAL_AUDIT,
             note="Webchat visitor message received",
-            payload_json=json.dumps({"public_conversation_id": public_id, "webchat_message_id": message.id, "client_message_id": normalized_client_id}, ensure_ascii=False),
-        ))
+            payload={
+                "public_conversation_id": public_id,
+                "webchat_message_id": message.id,
+                "client_message_id": normalized_client_id,
+            },
+        )
 
     conversation.last_seen_at = utc_now()
     conversation.updated_at = utc_now()
@@ -592,13 +630,20 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     )
     card_message.action_status = "submitted"
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=action_text, visibility=NoteVisibility.external))
-    db.add(TicketEvent(
+    TicketEventWriter.add(
+        db,
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.comment_added,
+        event_class=TicketEventClass.INTERNAL_AUDIT,
         note="Webchat card action submitted",
-        payload_json=json.dumps({"public_conversation_id": conversation.public_id, "webchat_card_action_id": action.id, "external_send": False, **action_payload}, ensure_ascii=False),
-    ))
+        payload={
+            "public_conversation_id": conversation.public_id,
+            "webchat_card_action_id": action.id,
+            "external_send": False,
+            **action_payload,
+        },
+    )
     handoff_triggered = payload.action_type == "handoff_request" or card_payload.card_type == "handoff" or payload.action_id == "talk_to_human"
     if handoff_triggered:
         ticket.required_action = "WebChat customer requested human support"
@@ -616,13 +661,19 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
             trigger_message_id=action_message.id,
             requested_by_actor_type="visitor",
         )
-        db.add(TicketEvent(
+        TicketEventWriter.add(
+            db,
             ticket_id=ticket.id,
             actor_id=None,
             event_type=EventType.conversation_state_changed,
+            event_class=TicketEventClass.INTERNAL_AUDIT,
             note="Webchat handoff requested",
-            payload_json=json.dumps({"public_conversation_id": conversation.public_id, "required_action": ticket.required_action, "external_send": False}, ensure_ascii=False),
-        ))
+            payload={
+                "public_conversation_id": conversation.public_id,
+                "required_action": ticket.required_action,
+                "external_send": False,
+            },
+        )
         WEBCHAT_LOGGER.info("webchat_handoff_triggered", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "action_id": action.id}})
     conversation.updated_at = utc_now()
     conversation.last_seen_at = utc_now()
