@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,14 @@ class LegacySurfaceVersionContractTests(unittest.TestCase):
         self.assertEqual(result["unowned_count"], 0, result)
         self.assertEqual(result["overlap_count"], 0, result)
         self.assertEqual(result["owner_issue_match_counts"].get("650"), len(paths), result)
+
+    def test_invalid_domain_path_regex_is_rejected(self) -> None:
+        raw = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        domain = next(item for item in raw["domains"] if item["id"] == "protected_versioned_contracts")
+        domain["selectors"]["path_regexes"] = ["("]
+
+        with self.assertRaisesRegex(legacy.RegistryValidationError, r"path_regexes\[0\]_invalid"):
+            legacy.validate_registry(raw)
 
 
 if __name__ == "__main__":
