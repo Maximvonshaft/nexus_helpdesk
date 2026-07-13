@@ -6,7 +6,7 @@
 
 **Work Item:** #532
 
-**Baseline:** `main@df367f951051bfb99d6cbb0392505ff068ebaa15`
+**Baseline:** `main@7b46e48e5cd26fc400728cb84dfe04b57d5fa855`
 
 ## Global boundaries
 
@@ -23,8 +23,10 @@
 - Create `.github/workflows/osr-recovery-qualification.yml` in RED form
 
 - Assert native URL separation.
-- Assert temporary/archive/manifest/checksum/atomic backup behavior.
+- Assert explicit admin database authority before destructive setup.
+- Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
+- Assert partial rollback status is written after image restart/health failure.
 - Assert bounded snapshot/compare/RTO/RPO contracts.
 - Run the dedicated gate and record the expected test-only failure.
 
@@ -36,12 +38,13 @@
 
 - Normalize only known SQLAlchemy PostgreSQL prefixes to libpq form.
 - Create a custom archive in a mode-restricted temporary bundle.
-- Validate archive listing, one Alembic head, SHA-256 and source identity.
-- Atomically publish archive plus manifest.
-- Verify manifest and digest before restore.
+- Validate archive listing, one Alembic head, SHA-256, size and source identity.
+- Atomically publish archive plus manifest with no-target-directory semantics.
+- Verify manifest, digest, size, source identity and exact head before restore.
+- Refuse in-place restore unless separately acknowledged.
 - Use `pg_restore --exit-on-error --single-transaction`.
 - Execute old-image restart only with an explicit health URL.
-- Emit structured rollback states.
+- Write structured success or partial-failure rollback states from an EXIT trap.
 
 ## Task 3 — Add bounded recovery evidence
 
@@ -52,14 +55,17 @@
 - Compare source and restore exactly.
 - Calculate bounded RTO/RPO.
 - Generate deterministic migration repair plans.
-- Reject multiple/invalid heads and unsafe digests.
+- Reject missing/multiple/invalid heads and unsafe digests.
 - Keep reports below 256 KiB and free of business rows.
 
 ## Task 4 — Run disposable PostgreSQL rehearsal
 
-**File:**
+**Files:**
+- Create `scripts/qualification/recovery/run_recovery_qualification.sh`
 - Expand `.github/workflows/osr-recovery-qualification.yml`
 
+- Require explicit admin/source/restore URLs and recreate confirmation.
+- Prove all URLs target one disposable cluster before `DROP DATABASE`.
 - Use pgvector PostgreSQL 16.
 - Upgrade, downgrade one revision, plan repair and re-upgrade.
 - Seed a synthetic Market/Team relationship.
@@ -68,6 +74,7 @@
 - Compare source/restore evidence and RTO/RPO.
 - Remove backup bytes before artifact processing.
 - Scan all JSON evidence before upload.
+- Upload full evidence only after a clean scan; otherwise upload sanitized status only.
 - Fail closed through one final gate.
 
 ## Task 5 — Document and verify
@@ -77,7 +84,7 @@
 - Create `docs/superpowers/specs/2026-07-13-recovery-qualification-design.md`
 - Create this plan
 
-- Run dedicated exact-head recovery qualification.
+- Run dedicated exact-head recovery qualification on Alembic `20260713_0059`.
 - Run all applicable repository checks.
 - Inspect the bounded artifact only; never publish connection strings or data rows.
 - Obtain independent review and resolve every actionable thread.
