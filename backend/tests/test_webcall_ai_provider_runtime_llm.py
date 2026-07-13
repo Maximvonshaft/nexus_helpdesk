@@ -69,6 +69,9 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", "default")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", "webcall_ai")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", "webcall_ai_decision")
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "100")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     monkeypatch.setattr("app.services.provider_runtime.bootstrap_provider_runtime", lambda: None)
     get_webcall_ai_production_settings.cache_clear()
     yield
@@ -150,7 +153,10 @@ def test_session_turn_persists_provider_runtime_evidence(db):
 
     turn = db.query(WebchatVoiceAITurn).one()
     action = db.query(WebchatVoiceAIAction).one()
-    event_types = [row.event_type for row in db.query(WebchatEvent).filter(WebchatEvent.conversation_id == session.conversation_id).all()]
+    event_types = [
+        row.event_type
+        for row in db.query(WebchatEvent).filter(WebchatEvent.conversation_id == session.conversation_id).all()
+    ]
 
     assert turn_result["handoff_required"] is False
     assert turn.provider == "provider_runtime:private_ai_runtime"
