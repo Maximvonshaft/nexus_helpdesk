@@ -37,6 +37,7 @@ payload = {
     "outcome": os.environ["OUTCOME"],
     "failure_stage": failure_stage,
     "states": states,
+    "database_restore_applied": "DATABASE_RESTORE_APPLIED" in states,
     "database_restored": "DATABASE_RESTORED" in states,
     "image_restarted": "IMAGE_RESTARTED" in states,
     "health_verified": "HEALTH_VERIFIED" in states,
@@ -158,6 +159,7 @@ PY
     --no-owner \
     --no-privileges \
     "$ARCHIVE"
+  append_state "DATABASE_RESTORE_APPLIED"
   FAILURE_STAGE="DATABASE_POST_VERIFY"
   RESTORED_HEADS="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version ORDER BY version_num')"
   mapfile -t HEAD_ROWS <<< "$RESTORED_HEADS"
