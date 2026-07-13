@@ -6,7 +6,7 @@
 
 **Work Item:** #532
 
-**Baseline:** `main@e857132fc040b0fc324df922b52e5d84a64a93e0`
+**Baseline:** `main@7006af1e88d7681713cfd5ad4b540a3964d780f1`
 
 ## Global boundaries
 
@@ -27,6 +27,7 @@
 - Assert libpq query/fragment overrides are rejected before any `psql` call.
 - Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
+- Assert a committed restore is recorded before post-restore identity verification.
 - Assert partial rollback status is written after image restart/health failure.
 - Assert redirects are not accepted as health verification.
 - Assert bounded snapshot/compare/RTO/RPO contracts.
@@ -45,6 +46,7 @@
 - Verify manifest, digest, size, source identity and exact head before restore.
 - Refuse in-place restore unless separately acknowledged.
 - Use `pg_restore --exit-on-error --single-transaction`.
+- Record `DATABASE_RESTORE_APPLIED` immediately after successful restore and `DATABASE_RESTORED` only after post-verification.
 - Execute old-image restart only with an explicit health URL.
 - Require explicit HTTP 2xx from `/healthz` and `/readyz`; reject redirects.
 - Write structured success or partial-failure rollback states from an EXIT trap.
@@ -96,6 +98,6 @@
 
 ## Decision boundary
 
-- **Clean qualification:** merge the recovery foundation; do not claim final production recovery readiness.
+- **Clean qualification:** mark the recovery foundation Ready for unified acceptance; do not claim final production recovery readiness.
 - **Migration/restore/evidence failure:** keep Draft and fix the reproduced cause.
 - **Tenant retention/DSAR request:** defer to #546 rather than creating parallel ownership.
