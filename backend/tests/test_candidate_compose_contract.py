@@ -31,6 +31,13 @@ def test_candidate_compose_joins_external_runtime_network() -> None:
     )
 
 
+def test_candidate_compose_requires_exact_release_and_migration_identity() -> None:
+    compose = (ROOT / "deploy" / "docker-compose.candidate.yml").read_text(encoding="utf-8")
+
+    assert 'EXPECTED_MIGRATION_HEAD: "${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}"' in compose
+    assert 'READINESS_REQUIRE_RELEASE_METADATA: "true"' in compose
+
+
 def test_candidate_compose_includes_native_whatsapp_sidecar_path() -> None:
     compose = (ROOT / "deploy" / "docker-compose.candidate.yml").read_text(encoding="utf-8")
     sidecar_overlay = (ROOT / "deploy" / "docker-compose.whatsapp-sidecar.example.yml").read_text(encoding="utf-8")
@@ -40,18 +47,23 @@ def test_candidate_compose_includes_native_whatsapp_sidecar_path() -> None:
     assert "python scripts/run_worker.py --worker-id worker-outbound-candidate --queue outbound" in compose
     assert 'NEXUS_BACKEND_URL: "${CANDIDATE_NEXUS_BACKEND_URL:-http://app-candidate:8080}"' in compose
     assert 'WHATSAPP_SESSION_ROOT: "/data/whatsapp-sessions"' in compose
+    assert 'WA_SIDECAR_CONNECTOR_MODE: "${WA_SIDECAR_CONNECTOR_MODE:-mock}"' in compose
+    assert 'WA_SIDECAR_AUTO_START_ACCOUNTS: "${WA_SIDECAR_AUTO_START_ACCOUNTS:-}"' in compose
     assert "CANDIDATE_WHATSAPP_SESSION_ROOT" in compose
     assert "http://app:8080" not in compose
     assert 'NEXUS_BACKEND_URL: "${NEXUS_BACKEND_URL:?set NEXUS_BACKEND_URL to the intended Nexus backend service}"' in sidecar_overlay
 
 
-def test_candidate_env_example_documents_external_network() -> None:
+def test_candidate_env_example_is_exact_and_safe_by_default() -> None:
     env_example = (ROOT / "deploy" / ".env.candidate.example").read_text(encoding="utf-8")
 
     assert "CANDIDATE_APP_PORT=18082" in env_example
     assert "CANDIDATE_EXTERNAL_NETWORK=deploy_default" in env_example
     assert "CANDIDATE_WA_SIDECAR_PORT=18795" in env_example
     assert "CANDIDATE_NEXUS_BACKEND_URL=http://app-candidate:8080" in env_example
+    assert "APP_VERSION=main-<git-sha-short>" in env_example
+    assert "EXPECTED_MIGRATION_HEAD=<alembic-head>" in env_example
+    assert "READINESS_REQUIRE_RELEASE_METADATA=true" in env_example
     assert "PRIVATE_AI_RUNTIME_TOKEN_FILE=/run/nexus/ai_runtime_token" in env_example
     assert "PRIVATE_AI_RUNTIME_DIRECT_PATH=/api/chat" in env_example
     assert "PRIVATE_AI_RUNTIME_RAG_PATH=/api/chat" in env_example
@@ -60,9 +72,15 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "PRIVATE_AI_RUNTIME_WARMUP_INTERVAL_SECONDS=60" in env_example
     assert "PROVIDER_RUNTIME_TIMEOUT_MS=30000" in env_example
     assert "PROVIDER_RUNTIME_PRIMARY_PROVIDER=private_ai_runtime" in env_example
-    assert "WHATSAPP_NATIVE_ENABLED=true" in env_example
-    assert "WHATSAPP_DISPATCH_MODE=native_sidecar" in env_example
+    assert "PRIVATE_AI_RUNTIME_ENABLED=false" in env_example
+    assert "PROVIDER_RUNTIME_CANARY_PERCENT=0" in env_example
+    assert "WHATSAPP_NATIVE_ENABLED=false" in env_example
+    assert "ENABLE_OUTBOUND_DISPATCH=false" in env_example
+    assert "OUTBOUND_PROVIDER=disabled" in env_example
+    assert "WHATSAPP_DISPATCH_MODE=disabled" in env_example
     assert "WHATSAPP_SIDECAR_URL=http://whatsapp-sidecar-candidate:18793" in env_example
+    assert "WA_SIDECAR_CONNECTOR_MODE=mock" in env_example
+    assert re.search(r"(?m)^WA_SIDECAR_AUTO_START_ACCOUNTS=$", env_example)
     assert "SPEEDAF_MCP_ENABLED=false" in env_example
     assert "SPEEDAF_CANCEL_ENABLED=false" in env_example
 

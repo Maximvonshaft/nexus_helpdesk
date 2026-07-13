@@ -1,0 +1,66 @@
+{
+  "schema": "nexus.ai_resource_probe.config.v1",
+  "mode": "passive",
+  "timeout_seconds": 8,
+  "max_response_bytes": 262144,
+  "verify_tls": true,
+  "output": "artifacts/ai-resource-probe.json",
+  "targets": [
+    {
+      "name": "private-ai-runtime",
+      "base_url": "https://ai-runtime.example.internal",
+      "profiles": ["common", "openai", "ollama", "nexus_runtime"],
+      "auth": {
+        "type": "bearer",
+        "env": "AI_RUNTIME_PROBE_TOKEN"
+      },
+      "active_tests": [],
+      "models": {
+        "llm": "qwen3:8b",
+        "embedding": "bge-m3",
+        "embedding_dimension": "1024"
+      },
+      "endpoints": {
+        "nexus_llm": "/v1/respond",
+        "nexus_rag": "/chat/rag",
+        "rag_upsert_declared": "/rag/upsert"
+      }
+    },
+    {
+      "name": "voice-provider-bridge",
+      "base_url": "https://voice-bridge.example.internal",
+      "profiles": ["common", "openai", "voice"],
+      "auth": {
+        "type": "bearer",
+        "file": "/run/secrets/ai_voice_probe_token"
+      },
+      "active_tests": [],
+      "models": {
+        "llm": "qwen3:8b",
+        "stt": "whisper-large-v3",
+        "tts": "kokoro-tts",
+        "tts_voice": "default"
+      },
+      "endpoints": {
+        "voice_health": "/health",
+        "nexus_llm": "/v1/respond",
+        "nexus_stt": "/v1/transcribe",
+        "nexus_tts": "/v1/speech"
+      },
+      "websocket_url": "wss://voice-bridge.example.internal/ws",
+      "stt_sample_file": null
+    },
+    {
+      "name": "vector-store",
+      "base_url": "https://vector.example.internal",
+      "profiles": ["common", "vector"],
+      "auth": {
+        "type": "header",
+        "header_name": "X-API-Key",
+        "env": "VECTOR_PROBE_API_KEY",
+        "prefix": ""
+      },
+      "active_tests": []
+    }
+  ]
+}

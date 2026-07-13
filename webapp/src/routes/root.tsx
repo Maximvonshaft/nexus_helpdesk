@@ -3,12 +3,11 @@ import { getSupportToken } from '@/lib/supportApi'
 
 export function NotFoundBoundary() {
   return (
-    <main className="support-console">
-      <section className="support-panel support-not-found" data-testid="legacy-route-retired">
-        <div className="support-eyebrow">Nexus Support</div>
-        <h1>旧入口已下线</h1>
-        <p>当前生产后台已收敛到客服工作台。</p>
-        <Link className="button primary" to={getSupportToken() ? '/webchat' : '/login'}>进入客服工作台</Link>
+    <main className="content">
+      <section className="empty-state" data-testid="unknown-route-boundary">
+        <strong>当前入口不存在</strong>
+        <p>操作员工作已收敛到统一案例工作台；旧 WebChat 入口仅保留兼容访问。</p>
+        <Link className="button primary" to={getSupportToken() ? '/workspace' : '/login'}>进入操作员工作台</Link>
       </section>
     </main>
   )

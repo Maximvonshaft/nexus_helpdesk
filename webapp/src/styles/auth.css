@@ -1,0 +1,210 @@
+.auth-shell {
+  align-items: center;
+  background: var(--nd-color-canvas);
+  display: grid;
+  min-height: 100dvh;
+  padding: var(--nd-space-6);
+}
+
+.auth-frame {
+  background: var(--nd-color-surface);
+  border: 1px solid var(--nd-color-border);
+  border-radius: var(--nd-radius-lg);
+  box-shadow: var(--nd-shadow-panel);
+  display: grid;
+  grid-template-columns: minmax(320px, .9fr) minmax(380px, 1fr);
+  margin: 0 auto;
+  max-width: 980px;
+  min-height: 600px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.auth-context {
+  background: var(--nd-color-ink);
+  color: var(--nd-color-on-ink);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--nd-space-10);
+}
+
+.auth-context__brand {
+  display: grid;
+  gap: var(--nd-space-3);
+}
+
+.auth-context__kicker {
+  color: var(--nd-color-text-subtle);
+  font-size: var(--nd-font-size-xs);
+  font-weight: 700;
+  letter-spacing: .04em;
+  margin: 0;
+}
+
+.auth-context h2 {
+  color: var(--nd-color-on-ink);
+  font-size: clamp(26px, 3vw, 34px);
+  line-height: 1.18;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.auth-context__description {
+  color: var(--nd-color-border-strong);
+  line-height: var(--nd-line-height-body);
+  margin: 0;
+  max-width: 44ch;
+  text-wrap: pretty;
+}
+
+.auth-sequence {
+  display: grid;
+  gap: var(--nd-space-3);
+  list-style: none;
+  margin: var(--nd-space-10) 0 0;
+  padding: 0;
+}
+
+.auth-sequence li {
+  align-items: start;
+  border-top: 1px solid var(--nd-color-text-muted);
+  display: grid;
+  gap: var(--nd-space-3);
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-top: var(--nd-space-3);
+}
+
+.auth-sequence__index {
+  color: var(--nd-color-text-subtle);
+  font-size: var(--nd-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.auth-sequence li div {
+  display: grid;
+  gap: var(--nd-space-1);
+}
+
+.auth-sequence strong {
+  color: var(--nd-color-on-ink);
+  font-size: var(--nd-font-size-md);
+}
+
+.auth-sequence li div span,
+.auth-context__boundary {
+  color: var(--nd-color-border-strong);
+  font-size: var(--nd-font-size-sm);
+  line-height: var(--nd-line-height-body);
+}
+
+.auth-context__boundary {
+  border-top: 1px solid var(--nd-color-text-muted);
+  margin: var(--nd-space-8) 0 0;
+  padding-top: var(--nd-space-4);
+}
+
+.auth-card {
+  align-content: center;
+  background: var(--nd-color-surface);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  display: grid;
+  gap: var(--nd-space-6);
+  padding: var(--nd-space-12);
+  width: 100%;
+}
+
+.auth-card .nd-page-header {
+  display: block;
+}
+
+.auth-form {
+  display: grid;
+  gap: var(--nd-space-4);
+}
+
+.auth-password-row {
+  align-items: end;
+  display: grid;
+  gap: var(--nd-space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.auth-password-row .nd-button {
+  min-width: 112px;
+}
+
+.auth-error {
+  background: var(--nd-color-danger-bg);
+  border: 1px solid var(--nd-color-danger);
+  border-radius: var(--nd-radius-md);
+  color: var(--nd-color-danger);
+  font-size: var(--nd-font-size-sm);
+  font-weight: 700;
+  line-height: var(--nd-line-height-body);
+  padding: var(--nd-space-3);
+}
+
+.auth-helper {
+  background: var(--nd-color-surface-subdued);
+  border: 1px solid var(--nd-color-border);
+  border-radius: var(--nd-radius-md);
+  color: var(--nd-color-text-muted);
+  font-size: var(--nd-font-size-xs);
+  line-height: var(--nd-line-height-body);
+  padding: var(--nd-space-3);
+}
+
+.auth-submit {
+  justify-self: stretch;
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .auth-shell {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .auth-frame {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    grid-template-columns: 1fr;
+    min-height: 100dvh;
+  }
+
+  .auth-context {
+    gap: var(--nd-space-5);
+    min-height: auto;
+    padding: var(--nd-space-6);
+  }
+
+  .auth-sequence {
+    margin-top: var(--nd-space-6);
+  }
+
+  .auth-context__boundary {
+    margin-top: var(--nd-space-4);
+  }
+
+  .auth-card {
+    align-content: start;
+    padding: var(--nd-space-6);
+  }
+}
+
+@media (max-width: 440px) {
+  .auth-password-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .auth-password-row .nd-button {
+    justify-self: start;
+    min-width: 0;
+  }
+}

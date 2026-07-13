@@ -17,6 +17,16 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { Field, Input, Select, Textarea } from '@/components/ui/Field'
+import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import {
+  channelPresentation,
+  controlledActionPresentation,
+  healthPresentation,
+  knowledgeStatusPresentation,
+  runtimePresentation,
+  sourceConversationPresentation,
+} from '@/lib/supportStatus'
 
 type InboxView = 'open' | 'needs_human' | 'mine' | 'all'
 type ChannelFilter = 'all' | 'webchat' | 'whatsapp'
@@ -39,6 +49,10 @@ type KnowledgeDraft = {
   priority: string
   knowledge_kind: string
   answer_mode: string
+}
+
+function serializeKnowledgeDraft(draft: KnowledgeDraft) {
+  return JSON.stringify(draft)
 }
 
 const viewOptions: Array<{ value: InboxView; label: string }> = [
@@ -94,35 +108,6 @@ function safeTone(value: string | undefined | null, fallback: BadgeTone = 'defau
     : fallback
 }
 
-function toneForChannel(channel: string): BadgeTone {
-  if (channel === 'whatsapp') return 'success'
-  if (channel === 'webchat') return 'warning'
-  return 'default'
-}
-
-function toneForHealth(value: string | null | undefined): BadgeTone {
-  const normalized = String(value || '').toLowerCase()
-  if (['connected', 'healthy', 'ok', 'ready', 'online', 'pass', 'success'].some((token) => normalized.includes(token))) return 'success'
-  if (['offline', 'failed', 'error', 'dead', 'blocked'].some((token) => normalized.includes(token))) return 'danger'
-  if (['degraded', 'warning', 'pending', 'unknown', 'review'].some((token) => normalized.includes(token))) return 'warning'
-  return 'default'
-}
-
-function stateLabel(item: SupportConversation) {
-  if (item.needs_human) return '待人工'
-  if (item.handoff_status === 'accepted') return '人工中'
-  if (item.ai_pending) return 'AI中'
-  if (item.status === 'closed' || item.status === 'resolved') return '已结束'
-  return '打开'
-}
-
-function toneForConversation(item: SupportConversation): BadgeTone {
-  if (item.needs_human) return 'danger'
-  if (item.handoff_status === 'accepted') return 'success'
-  if (item.ai_pending) return 'warning'
-  return 'default'
-}
-
 function authorLabel(author: string | null | undefined) {
   if (author === 'customer') return '客户'
   if (author === 'agent') return '客服'
@@ -138,13 +123,6 @@ function compactLatency(value: number | null | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '暂无'
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s`
   return `${Math.max(0, Math.round(value))}ms`
-}
-
-function knowledgeStatusLabel(status: string | null | undefined) {
-  if (status === 'active') return '已上线'
-  if (status === 'draft') return '草稿'
-  if (status === 'archived') return '已归档'
-  return sanitizeDisplayText(status || '未知')
 }
 
 function knowledgeKindLabel(kind: string | null | undefined) {
@@ -262,18 +240,20 @@ function errorCopy(error: unknown, fallback: string) {
 }
 
 function ConversationRow({ item, active, onSelect }: { item: SupportConversation; active: boolean; onSelect: () => void }) {
+  const channelState = channelPresentation(item.channel)
+  const conversationState = sourceConversationPresentation(item)
   return (
     <button type="button" className={`support-row${active ? ' active' : ''}`} onClick={onSelect} aria-pressed={active}>
       <span className="support-row-top">
         <span className="support-row-title">{sanitizeDisplayText(item.display_name || item.customer_contact || '客户')}</span>
-        <Badge tone={toneForChannel(item.channel)}>{item.channel === 'whatsapp' ? 'WhatsApp' : 'WebChat'}</Badge>
+        <Badge tone={channelState.tone}>{channelState.label}</Badge>
       </span>
       <span className="support-row-preview">
         {item.latest_author ? `${authorLabel(item.latest_author)}：` : null}
         {sanitizeDisplayText(item.latest_message || item.title || '暂无消息')}
       </span>
       <span className="support-row-bottom">
-        <Badge tone={toneForConversation(item)}>{stateLabel(item)}</Badge>
+        <Badge tone={conversationState.tone}>{conversationState.label}</Badge>
         <span>{item.updated_at ? formatDateTime(item.updated_at) : '未更新'}</span>
       </span>
     </button>
@@ -303,7 +283,7 @@ function MetricTile({ label, value, tone = 'default' }: { label: string; value: 
 
 function SupportMemoryPanel({ ledger }: { ledger?: SupportMemoryLedger | null }) {
   if (!ledger) {
-    return <EmptyState title="暂无记忆证据" description="当前会话还没有可展示的知识、工具或接管证据。" />
+    return <EmptyState title="暂无案例证据" description="当前会话还没有可展示的事实、知识、工具或接管依据。" />
   }
   const latestTurnSummary = ledger.ai_state?.last_turn?.summary as { runtime_trace?: Record<string, unknown> } | undefined
   const runtimeTrace = latestTurnSummary?.runtime_trace
@@ -332,8 +312,7 @@ function SupportMemoryPanel({ ledger }: { ledger?: SupportMemoryLedger | null })
         </div>
       </div>
       {runtimeTrace ? (
-        <div className="support-side-note">
-          <span>Runtime trace</span>
+        <TechnicalDetails title="技术详情" summary="AI Runtime 诊断">
           <div className="support-runtime-trace">
             <strong>{sanitizeDisplayText(String(runtimeTrace.latency_class || 'standard'))}</strong>
             <small>{sanitizeDisplayText(String(runtimeTrace.model || 'model unknown'))}</small>
@@ -342,7 +321,7 @@ function SupportMemoryPanel({ ledger }: { ledger?: SupportMemoryLedger | null })
               {promptElapsed !== null ? ` · prompt ${compactLatency(promptElapsed)}` : ''}
             </small>
           </div>
-        </div>
+        </TechnicalDetails>
       ) : null}
       {ledger.current_intent ? (
         <div className="support-side-note">
@@ -478,6 +457,9 @@ function SpeedafControlledActionsPanel({
     || (action === 'address_update' && !whatsAppPhone.trim())
   const actionError = waybillLookupMutation.error || workOrderMutation.error || addressMutation.error || cancelPreviewMutation.error || cancelConfirmMutation.error
   const actionResult = workOrderMutation.data || addressMutation.data || cancelConfirmMutation.data
+  const actionPresentation = actionResult
+    ? controlledActionPresentation(actionResult.status, actionResult.message)
+    : null
   const lookupResult = waybillLookupMutation.data
 
   return (
@@ -526,10 +508,15 @@ function SpeedafControlledActionsPanel({
           </Field>
         ) : null}
         {actionError ? <ErrorSummary title="Speedaf 动作失败" errors={[errorCopy(actionError, '请稍后重试')]} /> : null}
-        {actionResult ? (
-          <div className="support-action-result success">
-            <strong>{sanitizeDisplayText(actionResult.message || actionResult.status)}</strong>
-            {actionResult.jobId ? <small>Job #{actionResult.jobId}</small> : null}
+        {actionResult && actionPresentation ? (
+          <div className={`support-action-result ${actionPresentation.tone}`} role="status" aria-live="polite">
+            <strong>{actionPresentation.label}</strong>
+            {actionPresentation.detail ? <small>{sanitizeDisplayText(actionPresentation.detail)}</small> : null}
+            {actionResult.jobId ? (
+              <TechnicalDetails title="技术详情" summary="请求追踪信息">
+                <code translate="no">Job #{actionResult.jobId}</code>
+              </TechnicalDetails>
+            ) : null}
           </div>
         ) : null}
         {action === 'waybill_lookup' && lookupResult ? (
@@ -556,7 +543,7 @@ function SpeedafControlledActionsPanel({
           </div>
         ) : null}
         {cancelPreview ? (
-          <div className={`support-action-result ${cancelPreview.cancelAllowed ? 'success' : 'warning'}`}>
+          <div className={`support-action-result ${cancelPreview.cancelAllowed ? 'default' : 'warning'}`} role="status" aria-live="polite">
             <strong>{cancelPreview.cancelAllowed ? '可取消' : '不可取消'}</strong>
             <small>{sanitizeDisplayText(cancelPreview.currentStatusLabel || cancelPreview.reasonLabel || '')}</small>
           </div>
@@ -601,12 +588,13 @@ function OverviewPanel({
   supportMemory?: SupportMemoryLedger | null
   onDone: () => Promise<void>
 }) {
+  const conversationState = activeConversation ? sourceConversationPresentation(activeConversation) : null
   return (
     <aside className="support-context" aria-label="会话上下文">
       <section className="support-panel">
         <div className="support-panel-head">
           <span>会话状态</span>
-          {activeConversation ? <Badge tone={toneForConversation(activeConversation)}>{stateLabel(activeConversation)}</Badge> : null}
+          {conversationState ? <Badge tone={conversationState.tone}>{conversationState.label}</Badge> : null}
         </div>
         {activeConversation ? (
           <div className="support-side-stack">
@@ -651,18 +639,28 @@ function OverviewPanel({
   )
 }
 
-function KnowledgeView() {
+function KnowledgeView({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const queryClient = useQueryClient()
+  const initialDraft = useMemo(() => knowledgeDraftFromItem(), [])
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [statusFilter, setStatusFilter] = useState<KnowledgeStatusFilter>('active')
   const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>('all')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [isCreating, setIsCreating] = useState(false)
-  const [draft, setDraft] = useState<KnowledgeDraft>(() => knowledgeDraftFromItem())
+  const [draft, setDraft] = useState<KnowledgeDraft>(initialDraft)
+  const [savedDraft, setSavedDraft] = useState<KnowledgeDraft>(initialDraft)
   const [savedMessage, setSavedMessage] = useState('')
   const [retrievalQuery, setRetrievalQuery] = useState('')
+  const [publishReviewOpen, setPublishReviewOpen] = useState(false)
+  const [discardDraftOpen, setDiscardDraftOpen] = useState(false)
+  const pendingDraftActionRef = useRef<(() => void) | null>(null)
   const editorRef = useRef<HTMLDivElement | null>(null)
+  const loadedItemIdRef = useRef<number | null>(null)
+  const isDirty = useMemo(
+    () => serializeKnowledgeDraft(draft) !== serializeKnowledgeDraft(savedDraft),
+    [draft, savedDraft],
+  )
 
   const studio = useQuery({
     queryKey: ['supportWorkbenchKnowledge'],
@@ -686,8 +684,29 @@ function KnowledgeView() {
   )
 
   useEffect(() => {
-    if (!isCreating && selectedItem) setDraft(knowledgeDraftFromItem(selectedItem))
+    if (isCreating || !selectedItem || loadedItemIdRef.current === selectedItem.id) return
+    const nextDraft = knowledgeDraftFromItem(selectedItem)
+    loadedItemIdRef.current = selectedItem.id
+    setDraft(nextDraft)
+    setSavedDraft(nextDraft)
+    setSavedMessage('')
   }, [isCreating, selectedItem])
+
+  useEffect(() => {
+    onDirtyChange(isDirty)
+  }, [isDirty, onDirtyChange])
+
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+
+  useEffect(() => {
+    if (!isDirty) return
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [isDirty])
 
   useEffect(() => {
     if (isCreating || selectedId !== null) return
@@ -695,16 +714,50 @@ function KnowledgeView() {
     if (firstItem) setSelectedId(firstItem.id)
   }, [isCreating, items.data?.items, selectedId])
 
-  const resetForNew = () => {
-    setSelectedId(null)
-    setIsCreating(true)
-    setDraft(knowledgeDraftFromItem())
-    setSavedMessage('')
+  const scrollEditorIntoView = () => {
     window.setTimeout(() => {
       if (window.matchMedia('(max-width: 980px)').matches) {
         editorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
       }
     }, 0)
+  }
+
+  const runWithDraftGuard = (action: () => void) => {
+    if (!isDirty) {
+      action()
+      return
+    }
+    pendingDraftActionRef.current = action
+    setDiscardDraftOpen(true)
+  }
+
+  const confirmDraftDiscard = () => {
+    const action = pendingDraftActionRef.current
+    pendingDraftActionRef.current = null
+    setDiscardDraftOpen(false)
+    action?.()
+  }
+
+  const resetForNew = () => runWithDraftGuard(() => {
+    const nextDraft = knowledgeDraftFromItem()
+    loadedItemIdRef.current = null
+    setSelectedId(null)
+    setIsCreating(true)
+    setDraft(nextDraft)
+    setSavedDraft(nextDraft)
+    setSavedMessage('')
+    scrollEditorIntoView()
+  })
+
+  const selectKnowledgeItem = (itemId: number) => {
+    if (itemId === selectedId && !isCreating) return
+    runWithDraftGuard(() => {
+      loadedItemIdRef.current = null
+      setSelectedId(itemId)
+      setIsCreating(false)
+      setSavedMessage('')
+      scrollEditorIntoView()
+    })
   }
 
   const invalidateKnowledge = async () => {
@@ -733,9 +786,14 @@ function KnowledgeView() {
       return item
     },
     onSuccess: async (item, publish) => {
+      const committedDraft = knowledgeDraftFromItem(item)
+      loadedItemIdRef.current = item.id
       setSelectedId(item.id)
       setIsCreating(false)
-      setSavedMessage(publish ? '已保存并上线，AI Runtime 会在同步后用于回答。' : '草稿已保存。')
+      setDraft(committedDraft)
+      setSavedDraft(committedDraft)
+      setPublishReviewOpen(false)
+      setSavedMessage(publish ? '已提交发布。AI Runtime 只能在后续同步完成后使用该版本。' : '草稿已保存。')
       await invalidateKnowledge()
     },
   })
@@ -747,8 +805,12 @@ function KnowledgeView() {
       return await supportApi.updateKnowledgeItem(selectedId, { status: 'active', fact_status: 'approved' })
     },
     onSuccess: async (item) => {
-      setDraft(knowledgeDraftFromItem(item))
-      setSavedMessage('已上线。')
+      const committedDraft = knowledgeDraftFromItem(item)
+      loadedItemIdRef.current = item.id
+      setDraft(committedDraft)
+      setSavedDraft(committedDraft)
+      setPublishReviewOpen(false)
+      setSavedMessage('已提交发布。AI Runtime 只能在后续同步完成后使用该版本。')
       await invalidateKnowledge()
     },
   })
@@ -766,8 +828,19 @@ function KnowledgeView() {
   const busy = saveMutation.isPending || publishMutation.isPending
   const saveError = saveMutation.error || publishMutation.error
   const retrievalHits = retrievalMutation.data?.hits ?? []
+  const publicationReady = Boolean(
+    draft.title.trim()
+    && (draft.fact_question.trim() || draft.fact_answer.trim()),
+  )
+
+  const confirmPublication = () => {
+    if (!publicationReady || busy) return
+    if (isDirty || isCreating || !selectedId) saveMutation.mutate(true)
+    else publishMutation.mutate()
+  }
 
   return (
+    <>
     <section className="support-knowledge-workbench" aria-label="知识库维护">
       <div className="support-panel support-knowledge-list">
         <div className="support-panel-head">
@@ -818,23 +891,14 @@ function KnowledgeView() {
                 type="button"
                 className={`support-knowledge-item${selectedId === item.id ? ' active' : ''}`}
                 key={item.id}
-                onClick={() => {
-                  setSelectedId(item.id)
-                  setIsCreating(false)
-                  setSavedMessage('')
-                  window.setTimeout(() => {
-                    if (window.matchMedia('(max-width: 980px)').matches) {
-                      editorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-                    }
-                  }, 0)
-                }}
+                onClick={() => selectKnowledgeItem(item.id)}
               >
                 <span>
                   <strong>{sanitizeDisplayText(item.title)}</strong>
                   <small>{sanitizeDisplayText(item.fact_question || item.summary || item.item_key)}</small>
                 </span>
                 <span>
-                  <Badge tone={toneForHealth(item.status)}>{knowledgeStatusLabel(item.status)}</Badge>
+                  <Badge tone={knowledgeStatusPresentation(item.status).tone}>{knowledgeStatusPresentation(item.status).label}</Badge>
                   <small>{knowledgeKindLabel(item.knowledge_kind)} · 优先级 {item.priority ?? 100} · v{item.published_version || 0}</small>
                 </span>
               </button>
@@ -848,10 +912,10 @@ function KnowledgeView() {
       <div className="support-panel support-knowledge-editor" ref={editorRef}>
         <div className="support-panel-head">
           <span>{selectedId && !isCreating ? '编辑知识' : '新建知识'}</span>
-          <Badge tone={toneForHealth(draft.status)}>{knowledgeStatusLabel(draft.status)}</Badge>
+          <Badge tone={knowledgeStatusPresentation(draft.status).tone}>{knowledgeStatusPresentation(draft.status).label}</Badge>
         </div>
         {saveError ? <ErrorSummary title="保存失败" errors={[errorCopy(saveError, '请稍后重试')]} /> : null}
-        {savedMessage ? <div className="support-action-result success"><strong>{savedMessage}</strong></div> : null}
+        {savedMessage ? <div className="support-action-result success" role="status" aria-live="polite"><strong>{savedMessage}</strong></div> : null}
         <div className="support-knowledge-form">
           <Field label="知识标题" required>
             <Input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="例如：末派失败怎么处理" autoComplete="off" />
@@ -914,11 +978,22 @@ function KnowledgeView() {
             <small>优先级数字越小越靠前。建议：规则政策 10-49，处理流程 50-99，普通客服问答 100，导入资料 200 以上。身份、人设和语言风格属于助手设定，不写成客户知识模板。</small>
           </div>
           <div className="support-composer-actions">
-            <Button disabled={busy} onClick={() => saveMutation.mutate(false)}>{saveMutation.isPending ? '保存中…' : '保存草稿'}</Button>
-            {selectedId && !isCreating ? (
-              <Button disabled={busy} onClick={() => publishMutation.mutate()}>{publishMutation.isPending ? '上线中…' : '上线当前草稿'}</Button>
-            ) : null}
-            <Button variant="primary" disabled={busy} onClick={() => saveMutation.mutate(true)}>{busy ? '处理中…' : '保存并上线'}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || !isDirty}
+              loading={saveMutation.isPending && !publishReviewOpen}
+              loadingLabel="保存中…"
+              onClick={() => saveMutation.mutate(false)}
+            >
+              保存草稿
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy || !publicationReady}
+              onClick={() => setPublishReviewOpen(true)}
+            >
+              审核并发布
+            </Button>
           </div>
         </div>
       </div>
@@ -967,6 +1042,38 @@ function KnowledgeView() {
         )}
       </div>
     </section>
+    <ConfirmDialog
+      open={discardDraftOpen}
+      title="放弃未保存的修改？"
+      description="当前知识草稿还没有保存。继续后，这些修改将不会被保留。"
+      confirmLabel="放弃修改"
+      destructive
+      onOpenChange={(open) => {
+        setDiscardDraftOpen(open)
+        if (!open) pendingDraftActionRef.current = null
+      }}
+      onConfirm={confirmDraftDiscard}
+    />
+    <ConfirmDialog
+      open={publishReviewOpen}
+      title="审核并发布知识"
+      description="确认客户可见范围和答案事实后再发布。发布请求成功不代表 Runtime 已完成同步。"
+      confirmLabel="确认发布"
+      busy={busy}
+      onOpenChange={setPublishReviewOpen}
+      onConfirm={confirmPublication}
+    >
+      <dl className="support-publish-review">
+        <div><dt>知识标题</dt><dd>{sanitizeDisplayText(draft.title || '未填写')}</dd></div>
+        <div><dt>客户问题</dt><dd>{sanitizeDisplayText(draft.fact_question || '未填写')}</dd></div>
+        <div><dt>答案事实</dt><dd>{sanitizeDisplayText(draft.fact_answer || '未填写')}</dd></div>
+        <div><dt>受众</dt><dd>{draft.audience_scope === 'internal' ? '内部参考' : '客户问答'}</dd></div>
+        <div><dt>渠道</dt><dd>{draft.channel === 'all' ? '全部渠道' : sanitizeDisplayText(draft.channel)}</dd></div>
+        <div><dt>语言</dt><dd>{sanitizeDisplayText(draft.language || '自动匹配')}</dd></div>
+      </dl>
+      <p className="support-publish-warning">发布后，AI Runtime 只能在后续同步完成后使用该版本；本确认不表示客户回答已经更新。</p>
+    </ConfirmDialog>
+    </>
   )
 }
 
@@ -1003,31 +1110,44 @@ function ChannelsView() {
         {accounts.isError ? (
           <ErrorSummary title="渠道账号不可用" errors={[errorCopy(accounts.error, '请稍后重试')]} />
         ) : (
-          <div className="support-table">
-            <div className="support-table-row head">
-              <span>渠道</span>
-              <span>账号</span>
-              <span>状态</span>
-              <span>优先级</span>
-            </div>
-            {activeAccounts.slice(0, 12).map((item: ChannelAccount) => (
-              <div className="support-table-row" key={item.id}>
-                <span data-label="渠道">{item.provider}</span>
-                <span data-label="账号">{sanitizeDisplayText(item.display_name || item.account_id)}</span>
-                <span data-label="状态"><Badge tone={toneForHealth(item.health_status)}>{item.health_status}</Badge></span>
-                <span data-label="优先级">{item.priority}</span>
-              </div>
-            ))}
-            {!activeAccounts.length ? <EmptyState title="暂无渠道账号" description="当前没有可展示的发送线路。" /> : null}
+          <div className="support-table-wrap">
+            <table className="support-table">
+              <caption className="sr-only">当前启用的渠道账号</caption>
+              <thead>
+                <tr>
+                  <th scope="col">渠道</th>
+                  <th scope="col">账号</th>
+                  <th scope="col">状态</th>
+                  <th scope="col">优先级</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeAccounts.slice(0, 12).map((item: ChannelAccount) => {
+                  const health = healthPresentation(item.health_status)
+                  return (
+                    <tr key={item.id}>
+                      <td data-label="渠道">{sanitizeDisplayText(item.provider)}</td>
+                      <td data-label="账号">{sanitizeDisplayText(item.display_name || item.account_id)}</td>
+                      <td data-label="状态"><Badge tone={health.tone}>{sanitizeDisplayText(health.label)}</Badge></td>
+                      <td data-label="优先级">{item.priority}</td>
+                    </tr>
+                  )
+                })}
+                {!activeAccounts.length ? (
+                  <tr><td colSpan={4}><EmptyState title="暂无渠道账号" description="当前没有可展示的发送线路。" /></td></tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
       <div className="support-panel">
         <div className="support-panel-head">
           <span>WhatsApp Native</span>
-          <Badge tone={toneForHealth(whatsappStatus.data?.status || whatsappAccount?.health_status)}>
-            {whatsappStatus.data?.status || whatsappAccount?.health_status || 'unknown'}
-          </Badge>
+          {(() => {
+            const health = healthPresentation(whatsappStatus.data?.status || whatsappAccount?.health_status)
+            return <Badge tone={health.tone}>{sanitizeDisplayText(health.label)}</Badge>
+          })()}
         </div>
         {whatsappStatus.isError ? (
           <ErrorSummary title="WhatsApp 状态不可用" errors={[errorCopy(whatsappStatus.error, '请稍后重试')]} />
@@ -1080,15 +1200,19 @@ function RuntimeView() {
   const privateRuntime = runtime.data?.providers?.find((item) => item.name === 'private_ai_runtime')
   const runtimeDiagnostics = privateRuntime?.diagnostics ?? {}
   const latency = metrics.data?.runtime_latency
+  const runtimeState = runtimePresentation({
+    isLoading: runtime.isLoading,
+    isError: runtime.isError,
+    ok: runtime.data?.ok,
+    warnings: runtime.data?.warnings,
+  })
 
   return (
     <section className="support-overview-grid" aria-label="运行">
       <div className="support-panel wide">
         <div className="support-panel-head">
           <span>AI Runtime</span>
-          <Badge tone={(runtime.data?.warnings?.length ?? 0) ? 'warning' : 'success'}>
-            {(runtime.data?.warnings?.length ?? 0) ? '需要关注' : '正常'}
-          </Badge>
+          <Badge tone={runtimeState.tone}>{runtimeState.label}</Badge>
         </div>
         {runtime.isError ? (
           <ErrorSummary title="运行状态不可用" errors={[errorCopy(runtime.error, '请稍后重试')]} />
@@ -1206,6 +1330,9 @@ export function SupportConsolePage() {
   const [mobileThreadOpen, setMobileThreadOpen] = useState(Boolean(initialSearch.sessionKey))
   const [reply, setReply] = useState('')
   const [confirmReview, setConfirmReview] = useState(false)
+  const [knowledgeDirty, setKnowledgeDirty] = useState(false)
+  const [knowledgeLeaveOpen, setKnowledgeLeaveOpen] = useState(false)
+  const pendingKnowledgeLeaveActionRef = useRef<(() => void) | null>(null)
   const messagesRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => { document.title = '客服工作台 · Nexus Support' }, [])
@@ -1250,7 +1377,8 @@ export function SupportConsolePage() {
   const state = useQuery({
     queryKey: ['supportConversationState'],
     queryFn: () => supportApi.supportConversationState(),
-    refetchInterval: 10000,
+    enabled: activeView === 'conversations',
+    refetchInterval: activeView === 'conversations' ? 10000 : false,
   })
 
   const selected = useMemo(
@@ -1363,10 +1491,32 @@ export function SupportConsolePage() {
     replyMutation.mutate({ sessionKey: activeConversation.session_key, body: reply.trim(), confirmReview })
   }
 
-  const handleLogout = () => {
+  const runWithKnowledgeLeaveGuard = (action: () => void) => {
+    if (activeView !== 'knowledge' || !knowledgeDirty) {
+      action()
+      return
+    }
+    pendingKnowledgeLeaveActionRef.current = action
+    setKnowledgeLeaveOpen(true)
+  }
+
+  const confirmKnowledgeLeave = () => {
+    const action = pendingKnowledgeLeaveActionRef.current
+    pendingKnowledgeLeaveActionRef.current = null
+    setKnowledgeLeaveOpen(false)
+    setKnowledgeDirty(false)
+    action?.()
+  }
+
+  const requestActiveView = (nextView: WorkbenchView) => {
+    if (nextView === activeView) return
+    runWithKnowledgeLeaveGuard(() => setActiveView(nextView))
+  }
+
+  const handleLogout = () => runWithKnowledgeLeaveGuard(() => {
     logout()
     navigate({ to: '/login', replace: true })
-  }
+  })
 
   const consoleClassName = [
     'support-console',
@@ -1381,9 +1531,15 @@ export function SupportConsolePage() {
           <h1>客服工作台</h1>
         </div>
         <div className="support-head-status" aria-label="实时状态">
-          <Badge tone="default">{state.data?.open ?? 0} 个打开会话</Badge>
-          <Badge tone="danger">{state.data?.requested_handoffs ?? 0} 个待人工</Badge>
-          <Badge tone="success">{state.data?.my_handoffs ?? 0} 个我的接管</Badge>
+          {activeView === 'conversations' ? (
+            <>
+              <Badge tone="default">{state.data?.open ?? 0} 个打开会话</Badge>
+              <Badge tone="danger">{state.data?.requested_handoffs ?? 0} 个待人工</Badge>
+              <Badge tone="default">{state.data?.my_handoffs ?? 0} 个我的接管</Badge>
+            </>
+          ) : (
+            <Badge tone="default">会话状态暂停刷新</Badge>
+          )}
           <span className="support-user">{session.data?.display_name || session.data?.username || '客服'}</span>
           <Button variant="ghost" onClick={handleLogout}>退出</Button>
         </div>
@@ -1396,7 +1552,7 @@ export function SupportConsolePage() {
             type="button"
             className={activeView === item.value ? 'active' : ''}
             aria-pressed={activeView === item.value}
-            onClick={() => setActiveView(item.value)}
+            onClick={() => requestActiveView(item.value)}
           >
             {item.label}
           </button>
@@ -1441,9 +1597,9 @@ export function SupportConsolePage() {
                   <div className="support-thread-title">
                     <h2>{sanitizeDisplayText(activeConversation.display_name || activeConversation.customer_contact || '客户')}</h2>
                     <div className="support-thread-subtitle">
-                      <Badge tone={toneForChannel(activeConversation.channel)}>{activeConversation.channel === 'whatsapp' ? 'WhatsApp' : 'WebChat'}</Badge>
+                      <Badge tone={channelPresentation(activeConversation.channel).tone}>{channelPresentation(activeConversation.channel).label}</Badge>
                       <span>{sanitizeDisplayText(activeConversation.customer_contact || '未提供联系方式')}</span>
-                      <span>{stateLabel(activeConversation)}</span>
+                      <span>{sourceConversationPresentation(activeConversation).label}</span>
                     </div>
                   </div>
                   <div className="support-actions">
@@ -1481,9 +1637,21 @@ export function SupportConsolePage() {
         </section>
       ) : null}
 
-      {activeView === 'knowledge' ? <KnowledgeView /> : null}
+      {activeView === 'knowledge' ? <KnowledgeView onDirtyChange={setKnowledgeDirty} /> : null}
       {activeView === 'channels' ? <ChannelsView /> : null}
       {activeView === 'runtime' ? <RuntimeView /> : null}
+      <ConfirmDialog
+        open={knowledgeLeaveOpen}
+        title="放弃未保存的修改？"
+        description="离开知识维护或退出后，当前草稿修改将不会被保留。"
+        confirmLabel="放弃并离开"
+        destructive
+        onOpenChange={(open) => {
+          setKnowledgeLeaveOpen(open)
+          if (!open) pendingKnowledgeLeaveActionRef.current = null
+        }}
+        onConfirm={confirmKnowledgeLeave}
+      />
     </main>
   )
 }

@@ -8,7 +8,7 @@ function authUser() {
     username: 'admin',
     display_name: 'Admin User',
     role: 'admin',
-    capabilities: ['ticket.read', 'runtime.manage', 'channel_account.manage', 'ai_config.read', 'ai_config.manage'],
+    capabilities: ['ticket.read', 'operator_queue.read', 'runtime.manage', 'channel_account.manage', 'ai_config.read', 'ai_config.manage'],
   }
 }
 
@@ -22,6 +22,93 @@ async function fulfillApi(route: Route) {
   })
 
   if (path === '/api/auth/me') return json(authUser())
+  if (path === '/api/admin/operator-queue/unified') {
+    return json({
+      items: [{
+        queue_id: 'handoff:21',
+        case_key: 'ticket:11',
+        source_type: 'handoff',
+        source_id: 21,
+        ticket_id: 11,
+        conversation_id: 1,
+        country_code: 'CH',
+        channel_key: 'webchat',
+        state: 'active',
+        source_status: 'requested',
+        reopened: false,
+        priority: 'high',
+        owner: { kind: 'unassigned', user_id: null, team_id: null },
+        sla: { state: 'at_risk', due_at: '2026-07-04T08:30:00Z', seconds_remaining: 900 },
+        retry: { state: 'not_applicable', attempt_count: 0, max_attempts: 0, next_retry_at: null, error_category: null },
+        created_at: '2026-07-04T08:00:00Z',
+        updated_at: '2026-07-04T08:10:00Z',
+        source_links: {
+          ticket: '/api/tickets/11',
+          conversation: '/api/webchat/admin/tickets/11/thread',
+          handoff: '/api/webchat/admin/handoff/queue',
+          dispatch: null,
+        },
+      }],
+      next_cursor: null,
+      scope: { tenant_hash: 'test-tenant-hash', country_code: 'CH', channel_key: 'webchat' },
+      filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
+    })
+  }
+  if (path === '/api/webchat/admin/tickets/11/thread') {
+    return json({
+      conversation_id: 'conv-1',
+      ticket_id: 11,
+      ticket_no: 'T-11',
+      status: 'in_progress',
+      conversation_state: 'human_review_required',
+      required_action: '核实运单后回复客户',
+      visitor: { name: 'WebChat Visitor', email: 'visitor@example.test', phone: '+41790000000', ref: 'visitor-1' },
+      messages: [
+        { id: 1, direction: 'visitor', body: 'Where is my parcel?', body_text: 'Where is my parcel?', delivery_status: 'sent', created_at: '2026-07-04T08:00:00Z' },
+        { id: 2, direction: 'agent', body: 'We are checking.', body_text: 'We are checking.', delivery_status: 'queued', author_label: 'Admin User', created_at: '2026-07-04T08:01:00Z' },
+      ],
+      actions: [],
+      ai_turns: [],
+      events: [],
+      handoff: {
+        id: 21,
+        ticket_id: 11,
+        status: 'requested',
+        reason_text: 'Customer requested a human',
+        recommended_agent_action: 'Review evidence and reply',
+        waiting_seconds: 240,
+        can_accept: true,
+        can_decline: true,
+        can_force_takeover: true,
+        can_release: false,
+        can_resume_ai: true,
+        can_reply: false,
+      },
+      support_memory: {
+        source: 'derived_support_memory_ledger',
+        ticket: { id: 11, ticket_no: 'T-11', status: 'in_progress', country_code: 'CH' },
+        conversation: { id: 'conv-1', status: 'open', channel_key: 'webchat' },
+        current_intent: 'tracking_status',
+        customer_request: 'Where is my parcel?',
+        required_action: '核实运单后回复客户',
+        missing_fields: ['tracking_number'],
+        tracking: { present: false },
+        ai_state: {},
+        evidence_summary: { outbound_messages: 1 },
+        evidence_timeline: [{
+          kind: 'outbound',
+          label: 'web_chat',
+          status: 'queued',
+          summary: { delivery_status: 'queued', provider_status: 'webchat_agent_reply_queued' },
+          created_at: '2026-07-04T08:01:00Z',
+          source_id: 'outbound:1',
+        }],
+        next_actions: [{ key: 'collect_missing_fields', label: 'Collect missing fields before customer-facing resolution', tone: 'warning' }],
+      },
+      unread_count: 1,
+      marked_unread: false,
+    })
+  }
   if (path === '/api/support/conversations') {
     return json({
       source: 'nexus_support_conversations',
@@ -160,7 +247,7 @@ async function fulfillApi(route: Route) {
   }
   if (path === '/api/knowledge-items') {
     return json({
-      total: 1,
+      total: 2,
       limit: 20,
       offset: 0,
       items: [{
@@ -187,6 +274,30 @@ async function fulfillApi(route: Route) {
         evidence: 'ok',
         fact_question: 'Where is my parcel?',
         fact_answer: 'Use the tracking tool before answering delivery status questions.',
+      }, {
+        id: 2,
+        item_key: 'kb-2',
+        title: 'Return policy',
+        status: 'draft',
+        source_type: 'manual',
+        knowledge_kind: 'policy',
+        audience_scope: 'customer',
+        priority: 20,
+        parsing_status: 'ready',
+        fact_status: 'draft',
+        answer_mode: 'guided_answer',
+        published_version: 0,
+        indexed_version: 0,
+        chunk_count: 1,
+        draft_ready: true,
+        publish_ready: true,
+        retrieval_test_ready: true,
+        has_conflict: false,
+        updated_at: '2026-07-04T09:00:00Z',
+        href: '#',
+        evidence: 'draft',
+        fact_question: 'Can I return my parcel?',
+        fact_answer: 'Confirm the applicable return window and merchant policy before answering.',
       }],
     })
   }
@@ -209,7 +320,7 @@ async function fulfillApi(route: Route) {
         display_name: 'WhatsApp Native +41798559737',
         is_active: true,
         priority: 10,
-        health_status: 'healthy',
+        health_status: 'offline',
         updated_at: '2026-07-04T08:00:00Z',
       },
     ])
@@ -217,12 +328,12 @@ async function fulfillApi(route: Route) {
   if (path === '/api/admin/whatsapp/accounts/wa-test-41798559737/status') {
     return json({
       account_id: 'wa-test-41798559737',
-      status: 'connected',
+      status: 'disconnected',
       qr_status: 'linked',
       phone_number: '+41790000000',
       reconnect_count: 0,
       channel_account_id: 8,
-      channel_health_status: 'healthy',
+      channel_health_status: 'offline',
     })
   }
   if (path === '/api/admin/external_channel/runtime-health') {
@@ -268,15 +379,20 @@ async function fulfillApi(route: Route) {
 async function mockAuthenticatedConsole(page: Page) {
   await page.addInitScript(([storageKey, token]) => {
     window.sessionStorage.setItem(storageKey, token)
+    window.sessionStorage.setItem('nexus-operator-workspace-scope', JSON.stringify({
+      tenantKey: 'default',
+      countryCode: 'CH',
+      channelKey: 'webchat',
+    }))
   }, [TOKEN_KEY, 'admin-token'])
   await page.route('**/api/**', fulfillApi)
 }
 
 test('login page renders', async ({ page }) => {
   await page.goto('/login')
-  await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()
   await expect(page.getByLabel('账号')).toBeVisible()
-  await expect(page.getByRole('button', { name: '登录' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()
 })
 
 test('unauthenticated protected route redirects back to login', async ({ page }) => {
@@ -285,14 +401,20 @@ test('unauthenticated protected route redirects back to login', async ({ page })
   await expect(page.getByText('登录状态只保存在当前浏览器会话中。')).toBeVisible()
 })
 
-test('deleted legacy routes fall back to the support workbench boundary', async ({ page }) => {
+test('canonical workspace renders the unified queue, Case Spine, and delivery truth', async ({ page }) => {
   await mockAuthenticatedConsole(page)
   await page.goto('/workspace')
 
-  await expect(page.getByTestId('legacy-route-retired')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '旧入口已下线' })).toBeVisible()
-  await page.getByRole('link', { name: '进入客服工作台' }).click()
-  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
+  await expect(page.getByTestId('operator-workspace')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Case Spine' })).toBeVisible()
+  const queueRow = page.getByRole('button', { name: /ticket:11/ })
+  const caseStatus = page.getByLabel('案例状态')
+  await expect(queueRow).toBeVisible()
+  await expect(caseStatus.getByText('SLA 即将超时')).toBeVisible()
+  await expect(page.locator('.operator-evidence').getByText('客户主张').first()).toBeVisible()
+  await expect(page.locator('.operator-message').getByText('等待发送')).toBeVisible()
+  await expect(page.locator('.operator-blocker').getByText('尚不能判定安全结案')).toBeVisible()
+  await expect(page.getByText('当前案例没有可用会话')).toHaveCount(0)
 })
 
 test('support workbench renders the consolidated production views', async ({ page }) => {
@@ -306,13 +428,114 @@ test('support workbench renders the consolidated production views', async ({ pag
 
   await page.getByRole('button', { name: '知识' }).click()
   await expect(page.getByRole('button', { name: /Delivery status/ })).toBeVisible()
+  await expect(page.getByText('会话状态暂停刷新', { exact: true })).toBeVisible()
+  await expect(page.getByText('1 个打开会话', { exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: '渠道' }).click()
   await expect(page.getByText('WhatsApp Native +41798559737')).toBeVisible()
   await expect(page.getByText('WhatsApp Default (disabled history)')).toHaveCount(0)
-  await expect(page.getByText('connected')).toBeVisible()
+  const disconnected = page.getByText('disconnected', { exact: true })
+  await expect(disconnected).toBeVisible()
+  await expect(disconnected).toHaveClass(/danger/)
+  await expect(page.getByRole('table', { name: '当前启用的渠道账号' })).toBeVisible()
 
   await page.getByRole('button', { name: '运行' }).click()
   await expect(page.getByText('AI Runtime')).toBeVisible()
   await expect(page.getByText('正常')).toBeVisible()
+})
+
+
+test('runtime failure never presents normal operation', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.route('**/api/admin/provider-runtime/status', (route) => route.fulfill({
+    status: 503,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify({ detail: 'runtime unavailable' }),
+  }))
+  await page.goto('/webchat')
+  await page.getByRole('button', { name: '运行' }).click()
+  await expect(page.getByText('不可用', { exact: true })).toBeVisible()
+  await expect(page.getByText('正常', { exact: true })).toHaveCount(0)
+})
+
+test('queued controlled action remains pending and hides technical id by default', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.route('**/api/tickets/11/speedaf/work-orders', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify({
+      ok: true,
+      status: 'queued',
+      message: 'Speedaf work order queued.',
+      jobId: 91,
+      dedupeKey: 'bounded-test-key',
+    }),
+  }))
+  await page.goto('/webchat')
+  await page.getByLabel('运单').fill('WB123456')
+  await page.getByLabel('Caller ID').fill('+41790000000')
+  await page.getByLabel('说明').fill('Follow up delivery')
+  await page.getByRole('button', { name: '创建工单' }).click()
+
+  const result = page.locator('.support-action-result').filter({ hasText: '请求已排队' })
+  await expect(result).toBeVisible()
+  await expect(result).not.toHaveClass(/success/)
+  await expect(page.getByText('Job #91')).not.toBeVisible()
+  await result.getByText('技术详情').click()
+  await expect(page.getByText('Job #91')).toBeVisible()
+})
+
+test('mobile navigation and segment controls meet the 44px target floor', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await mockAuthenticatedConsole(page)
+  await page.goto('/webchat')
+
+  const topTab = page.getByTestId('support-workbench-tabs').getByRole('button').first()
+  const segment = page.locator('.support-segments').first().getByRole('button').first()
+  expect((await topTab.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  expect((await segment.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+
+  await page.getByRole('button', { name: /WebChat Visitor/ }).click()
+  const back = page.getByRole('button', { name: '‹ 会话' })
+  expect((await back.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+})
+
+
+
+test('knowledge editing protects drafts and requires an explicit publication review', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.goto('/webchat?tab=knowledge')
+
+  const title = page.getByLabel('知识标题')
+  await expect(title).toHaveValue('Delivery status')
+  await title.fill('Edited delivery status')
+
+  await page.getByRole('button', { name: /Return policy/ }).click()
+  const discard = page.getByRole('dialog', { name: '放弃未保存的修改？' })
+  await expect(discard).toBeVisible()
+  await discard.getByRole('button', { name: '取消' }).click()
+  await expect(discard).toHaveCount(0)
+  await expect(title).toHaveValue('Edited delivery status')
+
+  await page.getByRole('button', { name: /Return policy/ }).click()
+  await expect(discard).toBeVisible()
+  await discard.getByRole('button', { name: '放弃修改' }).click()
+  await expect(discard).toHaveCount(0)
+  await expect(title).toHaveValue('Return policy')
+
+  await title.fill('Return policy — reviewed')
+  await page.getByRole('button', { name: '审核并发布' }).click()
+  const review = page.getByRole('dialog', { name: '审核并发布知识' })
+  await expect(review).toBeVisible()
+  await expect(review.getByText('Return policy — reviewed')).toBeVisible()
+  await expect(review.getByText('Can I return my parcel?')).toBeVisible()
+  await expect(review.getByText(/AI Runtime 只能在后续同步完成后使用/)).toBeVisible()
+  await review.getByRole('button', { name: '取消' }).click()
+  await expect(review).toHaveCount(0)
+  await expect(title).toHaveValue('Return policy — reviewed')
+
+  await expect.poll(() => page.evaluate(() => {
+    const event = new Event('beforeunload', { cancelable: true })
+    return window.dispatchEvent(event)
+  })).toBe(false)
 })

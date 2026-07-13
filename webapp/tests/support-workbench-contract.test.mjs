@@ -7,18 +7,23 @@ const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const router = read('src/router.tsx')
+const workspaceRoute = read('src/routes/workspace.tsx')
 const webchatRoute = read('src/routes/webchat.tsx')
 const supportConsole = read('src/features/support-console/SupportConsolePage.tsx')
 const supportCss = read('src/features/support-console/support-console.css')
+const confirmDialog = read('src/components/ui/ConfirmDialog.tsx')
+const componentCss = read('src/styles/components.css')
 const routeFiles = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
 
-test('production router only exposes login and support workbench routes', () => {
-  assert.deepEqual(routeFiles, ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx'])
+test('production router exposes canonical workspace and transitional support workbench routes', () => {
+  assert.deepEqual(routeFiles, ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx', 'workspace.tsx'])
   assert.match(router, /LoginRoute/)
   assert.match(router, /IndexRoute/)
+  assert.match(router, /WorkspaceRoute/)
   assert.match(router, /WebchatRoute/)
+  assert.match(workspaceRoute, /path: '\/workspace'/)
+  assert.match(workspaceRoute, /features\/operator-workspace\/lazy/)
   for (const staleRoute of [
-    'WorkspaceRoute',
     'EmailRoute',
     'WebCallRoute',
     'KnowledgeStudioRoute',
@@ -32,9 +37,11 @@ test('production router only exposes login and support workbench routes', () => 
   }
 })
 
-test('webchat route mounts the lightweight support console', () => {
-  assert.match(webchatRoute, /SupportConsolePage/)
-  assert.match(webchatRoute, /support-console\.css/)
+test('webchat route mounts the lightweight support console through an async boundary', () => {
+  assert.match(webchatRoute, /lazy\(\(\) => import\(['"]@\/features\/support-console\/lazy['"]\)\)/)
+  assert.match(webchatRoute, /Suspense/)
+  assert.doesNotMatch(webchatRoute, /import \{ SupportConsolePage \} from/)
+  assert.doesNotMatch(webchatRoute, /support-console\.css/)
   assert.doesNotMatch(webchatRoute, /AppShell/)
   assert.doesNotMatch(webchatRoute, /WebchatInboxV5Page/)
 })
@@ -142,8 +149,9 @@ test('knowledge workbench is operator-maintainable instead of a read-only dashbo
   assert.match(supportConsole, /优先级数字越小越靠前/)
   assert.match(supportConsole, /身份、人设和语言风格属于助手设定/)
   assert.match(supportConsole, /保存草稿/)
-  assert.match(supportConsole, /上线当前草稿/)
-  assert.match(supportConsole, /保存并上线/)
+  assert.match(supportConsole, /审核并发布/)
+  assert.doesNotMatch(supportConsole, />上线当前草稿</)
+  assert.doesNotMatch(supportConsole, />保存并上线</)
   assert.match(supportConsole, /测试知识命中/)
   assert.match(supportConsole, /让 AI 组织语言/)
   assert.match(supportConsole, /不写固定话术/)
@@ -163,4 +171,22 @@ test('support workbench keeps stable desktop and mobile zones', () => {
   assert.match(supportCss, /\.support-knowledge-grid/)
   assert.match(supportCss, /@media \(max-width: 980px\)/)
   assert.match(supportCss, /@media \(max-width: 640px\)/)
+})
+
+
+
+test('knowledge drafts are guarded and publication crosses an explicit review boundary', () => {
+  assert.match(supportConsole, /serializeKnowledgeDraft/)
+  assert.match(supportConsole, /knowledgeDirty/)
+  assert.match(supportConsole, /beforeunload/)
+  assert.match(supportConsole, /放弃未保存的修改/)
+  assert.match(supportConsole, /审核并发布知识/)
+  assert.match(supportConsole, /发布后，AI Runtime 只能在后续同步完成后使用/)
+  assert.match(supportConsole, /role="status"/)
+  assert.match(supportConsole, /aria-live="polite"/)
+  assert.match(confirmDialog, /@radix-ui\/react-dialog/)
+  assert.match(confirmDialog, /Dialog\.Title/)
+  assert.match(confirmDialog, /Dialog\.Description/)
+  assert.match(componentCss, /\.nd-dialog__overlay/)
+  assert.match(componentCss, /\.nd-dialog__content/)
 })

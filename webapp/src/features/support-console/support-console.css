@@ -67,7 +67,7 @@
   color: #475569;
   cursor: pointer;
   font: 750 13px/20px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  min-height: 34px;
+  min-height: 44px;
   padding: 7px 12px;
   touch-action: manipulation;
 }
@@ -148,7 +148,7 @@
   color: #475569;
   cursor: pointer;
   font: 650 13px/20px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  min-height: 32px;
+  min-height: 44px;
   min-width: 0;
   overflow: hidden;
   padding: 6px 8px;
@@ -244,7 +244,7 @@
   cursor: pointer;
   display: none;
   font: 750 13px/20px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  min-height: 34px;
+  min-height: 44px;
   padding: 6px 10px;
   touch-action: manipulation;
 }
@@ -306,7 +306,7 @@
 
 .support-message.agent {
   align-self: flex-end;
-  background: #f06423;
+  background: #9a3412;
   color: #ffffff;
 }
 
@@ -896,7 +896,7 @@
 
   .support-console.mobile-thread-page .support-thread-back {
     flex: 0 0 auto;
-    min-height: 32px;
+    min-height: 44px;
     padding: 5px 9px;
   }
 
@@ -920,7 +920,7 @@
   }
 
   .support-console.mobile-thread-page .support-actions button {
-    min-height: 32px;
+    min-height: 44px;
     padding: 6px 10px;
   }
 
@@ -953,7 +953,7 @@
   }
 
   .support-console.mobile-thread-page .support-composer-actions .button {
-    min-height: 42px;
+    min-height: 44px;
     padding: 8px 18px;
   }
 
@@ -1040,4 +1040,148 @@
     font-size: 12px;
     font-weight: 750;
   }
+}
+
+
+/* Operational truth and semantic table hardening (#641). */
+.support-action-result.default {
+  background: #f8fafc;
+  border-color: #dbe3ef;
+}
+
+.support-action-result.danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.support-action-result .technical-details {
+  margin-top: 6px;
+}
+
+.support-action-result code {
+  color: #475569;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.support-table-wrap {
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.support-table {
+  border: 0;
+  border-collapse: collapse;
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.support-table th,
+.support-table td {
+  border-bottom: 1px solid #dbe3ef;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 11px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.support-table th {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.support-table tr:last-child td {
+  border-bottom: 0;
+}
+
+@media (max-width: 640px) {
+  .support-table-wrap {
+    border: 0;
+    overflow: visible;
+  }
+
+  .support-table,
+  .support-table tbody,
+  .support-table tr,
+  .support-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .support-table thead {
+    display: none;
+  }
+
+  .support-table tr {
+    background: #ffffff;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    padding: 10px;
+  }
+
+  .support-table td {
+    border: 0;
+    display: grid;
+    gap: 4px;
+    padding: 4px 0;
+  }
+
+  .support-table td::before {
+    color: #64748b;
+    content: attr(data-label);
+    font-size: 12px;
+    font-weight: 750;
+  }
+}
+
+.support-publish-review {
+  display: grid;
+  gap: var(--nd-space-3);
+  margin: 0;
+}
+
+.support-publish-review > div {
+  border-bottom: 1px solid var(--nd-color-border);
+  display: grid;
+  gap: var(--nd-space-1);
+  padding-bottom: var(--nd-space-3);
+}
+
+.support-publish-review > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.support-publish-review dt {
+  color: var(--nd-color-text-muted);
+  font-size: var(--nd-font-size-xs);
+  font-weight: 700;
+}
+
+.support-publish-review dd {
+  color: var(--nd-color-text);
+  font-size: var(--nd-font-size-sm);
+  line-height: var(--nd-line-height-body);
+  margin: 0;
+  max-height: 10rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.support-publish-warning {
+  background: var(--nd-color-warning-bg);
+  border: 1px solid var(--nd-color-warning);
+  border-radius: var(--nd-radius-md);
+  color: var(--nd-color-warning);
+  font-size: var(--nd-font-size-sm);
+  line-height: var(--nd-line-height-body);
+  margin: var(--nd-space-3) 0 0;
+  padding: var(--nd-space-3);
 }

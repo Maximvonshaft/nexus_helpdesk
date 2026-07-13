@@ -21,6 +21,8 @@ x-candidate-app: &candidate_app
     BUILD_TIME: ${BUILD_TIME:?set release BUILD_TIME}
     IMAGE_TAG: ${IMAGE_TAG:?set release IMAGE_TAG}
     APP_VERSION: ${APP_VERSION:?set release APP_VERSION}
+    EXPECTED_MIGRATION_HEAD: "${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}"
+    READINESS_REQUIRE_RELEASE_METADATA: "true"
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set release FRONTEND_BUILD_SHA}
   volumes: &candidate_app_volumes
     - /run/secrets:/run/secrets:ro
@@ -138,11 +140,11 @@ services:
     command: sh -lc "npm ci && npm run build && npm run start"
     environment:
       WA_SIDECAR_PORT: "18793"
-      WA_SIDECAR_CONNECTOR_MODE: "${WA_SIDECAR_CONNECTOR_MODE:-baileys}"
+      WA_SIDECAR_CONNECTOR_MODE: "${WA_SIDECAR_CONNECTOR_MODE:-mock}"
       WA_SIDECAR_ALLOW_FROM_ME_INBOUND: "${WA_SIDECAR_ALLOW_FROM_ME_INBOUND:-false}"
       WA_SIDECAR_FROM_ME_MODE: "${WA_SIDECAR_FROM_ME_MODE:-ignore}"
       WA_SIDECAR_FROM_ME_TEST_PREFIX: "${WA_SIDECAR_FROM_ME_TEST_PREFIX:-NEXUS_SELF_INBOUND_TEST}"
-      WA_SIDECAR_AUTO_START_ACCOUNTS: "${WA_SIDECAR_AUTO_START_ACCOUNTS:-wa-main}"
+      WA_SIDECAR_AUTO_START_ACCOUNTS: "${WA_SIDECAR_AUTO_START_ACCOUNTS:-}"
       WA_SIDECAR_INTERNAL_TOKEN: "${WA_SIDECAR_INTERNAL_TOKEN:?set WA_SIDECAR_INTERNAL_TOKEN outside this file}"
       WHATSAPP_SESSION_ROOT: "/data/whatsapp-sessions"
       NEXUS_BACKEND_URL: "${CANDIDATE_NEXUS_BACKEND_URL:-http://app-candidate:8080}"

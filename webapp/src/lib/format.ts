@@ -13,6 +13,26 @@ const textReplacements: Array<[RegExp, string]> = [
   [/sync/gi, '同步'],
 ]
 
+const displayTextLabels: Record<string, string> = {
+  private_ai_runtime: '统一 AI Runtime',
+  none: '无',
+  tracking_status: '查件与物流状态',
+  tracking_number: '运单号',
+  routing_unavailable: '运营路由不可用',
+  provider_unavailable: '外部服务暂不可用',
+  operator_takeover: '客服主动接管',
+  'customer requested a human': '客户要求转人工',
+  'customer asked for a human': '客户要求转人工',
+  'review evidence and reply': '核实证据后回复客户',
+  'verify parcel evidence': '核实运单证据',
+  'collect tracking number': '向客户收集运单号',
+  'collect missing fields before customer-facing resolution': '补齐缺失信息后再向客户说明结果',
+  'check latest speedaf evidence before quoting parcel status': '查询最新 Speedaf 证据后再说明物流状态',
+  'review latest message and evidence before replying': '核实最新消息和证据后回复',
+  'handle active customer handoff': '处理当前人工接管请求',
+  'ai paused; review handoff and decide reply/resume': 'AI 已暂停，请核实接管原因并决定人工回复或恢复 AI',
+}
+
 const valueLabels: Record<string, string> = {
   all: '全部',
   active: '启用中',
@@ -102,7 +122,10 @@ export function formatDateTime(value?: string | null) {
 
 export function sanitizeDisplayText(value?: string | number | boolean | null) {
   if (value === undefined || value === null || value === '') return '—'
-  let text = String(value)
+  const source = String(value)
+  const exact = displayTextLabels[source.trim().toLowerCase()]
+  if (exact) return exact
+  let text = source
   for (const [pattern, replacement] of textReplacements) {
     text = text.replace(pattern, replacement)
   }

@@ -58,7 +58,7 @@ from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runt
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
-app = FastAPI(title='NexusDesk Helpdesk', version='20.4.0-round-b')
+app = FastAPI(title='NexusDesk Helpdesk', version=settings.app_version)
 
 
 def _validate_admin_password_or_http(password: str) -> None:
@@ -114,15 +114,48 @@ DEFAULT_CSP = f"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsa
 
 
 def _runtime_identity() -> dict[str, object]:
-    return runtime_identity_status(default_app_version=app.version)
+    return runtime_identity_status(default_app_version=settings.app_version)
 
 
-def _migration_revision(conn: Connection) -> str | None:
+def _migration_revisions(conn: Connection) -> tuple[str | None, ...]:
     try:
-        row = conn.execute(text('SELECT version_num FROM alembic_version LIMIT 1')).first()
-        return str(row[0]) if row and row[0] else None
+        rows = conn.execute(text('SELECT version_num FROM alembic_version ORDER BY version_num')).all()
+        return tuple(
+            (str(row[0]).strip() or None) if row and row[0] is not None else None
+            for row in rows
+        )
     except Exception:
-        return None
+        return ()
+
+
+def _migration_readiness(observed_heads: tuple[str | None, ...]) -> tuple[dict[str, object], list[str]]:
+    expected = settings.expected_migration_head
+    required = bool(expected)
+    invalid = any(head is None for head in observed_heads)
+    observed = observed_heads[0] if len(observed_heads) == 1 and observed_heads[0] is not None else None
+    reason_codes: list[str] = []
+    ok = True
+    if invalid:
+        ok = False
+        reason_codes.append('migration_head_invalid')
+    elif len(observed_heads) > 1:
+        ok = False
+        reason_codes.append('migration_heads_multiple')
+    elif expected and not observed:
+        ok = False
+        reason_codes.append('migration_head_unavailable')
+    elif expected and observed != expected:
+        ok = False
+        reason_codes.append('migration_head_mismatch')
+    migration: dict[str, object] = {
+        'ok': ok,
+        'expected': expected,
+        'observed': observed,
+        'required': required,
+    }
+    if len(observed_heads) != 1 or invalid:
+        migration['observed_heads'] = list(observed_heads)
+    return migration, reason_codes
 
 
 def _frontend_readiness() -> dict[str, object]:
@@ -229,17 +262,48 @@ def readyz():
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
-            migration_revision = _migration_revision(conn)
-        ready = storage_readiness.ok and bool(frontend_readiness['ok']) and bool(runtime_contract_readiness['ok'])
+            migration_revisions = _migration_revisions(conn)
+        migration_revision = (
+            migration_revisions[0]
+            if len(migration_revisions) == 1 and migration_revisions[0] is not None
+            else None
+        )
+        identity = _runtime_identity()
+        migration, reason_codes = _migration_readiness(migration_revisions)
+        release_metadata_ready = not settings.readiness_require_release_metadata or bool(identity.get('release_metadata_complete'))
+        if not release_metadata_ready:
+            reason_codes.append('release_metadata_incomplete')
+        if not storage_readiness.ok:
+            reason_codes.append('storage_not_ready')
+        if not frontend_readiness['ok']:
+            reason_codes.append('frontend_not_ready')
+        if not runtime_contract_readiness['ok']:
+            reason_codes.append('runtime_contract_signing_not_ready')
+        ready = (
+            storage_readiness.ok
+            and bool(frontend_readiness['ok'])
+            and bool(runtime_contract_readiness['ok'])
+            and bool(migration['ok'])
+            and release_metadata_ready
+        )
         payload = {
             'status': 'ready' if ready else 'not_ready',
             'database': 'ok',
             'migration_revision': migration_revision,
+            'migration': migration,
+            'release_metadata_ready': release_metadata_ready,
+            'reason_codes': reason_codes,
             'storage': storage_readiness.as_dict(),
             'frontend': frontend_readiness,
             'runtime_contract_signing': runtime_contract_readiness,
-            **_runtime_identity(),
+            **identity,
         }
+        if not migration['ok']:
+            app_log_event(40, 'readiness_migration_identity_failed', migration=migration, reason_codes=reason_codes)
+            return JSONResponse(status_code=503, content=payload)
+        if not release_metadata_ready:
+            app_log_event(40, 'readiness_release_metadata_incomplete', missing=identity.get('release_metadata_missing', []))
+            return JSONResponse(status_code=503, content=payload)
         if not storage_readiness.ok:
             app_log_event(40, 'readiness_storage_check_failed', storage=storage_readiness.as_dict())
             return JSONResponse(status_code=503, content=payload)
@@ -253,7 +317,7 @@ def readyz():
             app_log_event(30, 'readiness_storage_warning', storage=storage_readiness.as_dict())
         return payload
     except Exception as exc:
-        app_log_event(40, 'readiness_check_failed', error=str(exc), storage=storage_readiness.as_dict())
+        app_log_event(40, 'readiness_check_failed', error_type=type(exc).__name__, storage=storage_readiness.as_dict())
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
