@@ -13,9 +13,17 @@
 
 The pre-existing RC workflow and release-image assurance workflow independently rebuilt the same source, so source identity matched while binary image identity did not. This implementation retains the merged RC orchestration as the single build authority, then scans, licenses, publishes, pulls back and attests that same binary.
 
+## Review remediation
+
+Exact-head review additionally required:
+
+- image-embedded build time and application version to survive GHCR push/pullback and be bound into the final manifest;
+- Swiss preflight to verify that metadata, PostgreSQL port `5432`, deployment secrets, local backup controls and host mounts;
+- non-main manual workflow dispatches to fail explicitly rather than succeeding through skipped jobs.
+
 ## Local contract evidence
 
-The following checks passed before opening the Draft PR:
+The current controlled release slice executes:
 
 ```text
 python -m unittest -v \
@@ -23,10 +31,12 @@ python -m unittest -v \
   scripts.release.tests.test_controlled_candidate_workflow_contract \
   scripts.deploy.tests.test_validate_controlled_server_preflight
 
-14 tests passed
-YAML parse passed
-bash -n passed for all controlled release helpers
+19 focused tests
+YAML parse
+bash -n for all controlled release helpers
 ```
+
+GitHub workflow evidence is valid only for the exact PR Head on which every applicable check completes successfully. Earlier-head evidence is stale.
 
 ## Safety disposition
 
