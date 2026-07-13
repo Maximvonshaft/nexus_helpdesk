@@ -297,7 +297,7 @@ if (
     or public_schema_count > 1
     or public_schema_comment_count > 1
 ):
-    raise SystemExit("backup_restore_toc_invalid")
+    raise SystemExit("backup_restore_vector_toc_invalid")
 filtered_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
 PY
   rm -f -- "$RESTORE_LIST_RAW_FILE"
