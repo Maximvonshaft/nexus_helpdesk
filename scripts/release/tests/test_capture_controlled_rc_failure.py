@@ -54,6 +54,37 @@ class ControlledRCFailureEvidenceTests(unittest.TestCase):
             self.assertEqual(payload["service_states"], {"app-rc": "unhealthy"})
             self.assertEqual(payload["diagnostic_hex"], "41")
 
+    def test_capture_preserves_scanner_stage_rules_and_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            existing = {
+                "schema": MODULE.SCHEMA,
+                "status": "failed",
+                "stage": "artifact-scan",
+                "exit_code": 1,
+                "reason_code": "artifact_scan_findings",
+                "service_states": {},
+                "finding_rules": ["artifact:tracking"],
+                "finding_paths": ["artifacts/rc-test/network-safety.json"],
+            }
+            (evidence / "failure-summary.json").write_text(json.dumps(existing), encoding="utf-8")
+            log = root / "run.log"
+            log.write_text("RC_STAGE=completed\n", encoding="utf-8")
+
+            output = MODULE.capture_failure(log_path=log, evidence_dir=evidence, exit_code=1)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(payload["stage"], "artifact-scan")
+            self.assertEqual(payload["reason_code"], "artifact_scan_findings")
+            self.assertEqual(payload["finding_rules"], ["artifact:tracking"])
+            self.assertEqual(
+                payload["finding_paths"],
+                ["artifacts/rc-test/network-safety.json"],
+            )
+            self.assertEqual(MODULE.validate_file(output), payload)
+
     def test_validate_rejects_unknown_fields(self) -> None:
         payload = {
             "schema": MODULE.SCHEMA,
@@ -65,6 +96,19 @@ class ControlledRCFailureEvidenceTests(unittest.TestCase):
             "raw_log": "forbidden",
         }
         with self.assertRaisesRegex(MODULE.FailureEvidenceError, "summary_fields_invalid"):
+            MODULE.validate_summary(payload)
+
+    def test_validate_rejects_finding_path_outside_rc_root(self) -> None:
+        payload = {
+            "schema": MODULE.SCHEMA,
+            "status": "failed",
+            "stage": "artifact-scan",
+            "exit_code": 1,
+            "reason_code": "artifact_scan_findings",
+            "service_states": {},
+            "finding_paths": ["other/raw-log.txt"],
+        }
+        with self.assertRaisesRegex(MODULE.FailureEvidenceError, "summary_finding_paths_invalid"):
             MODULE.validate_summary(payload)
 
     def test_validate_rejects_symlink(self) -> None:
