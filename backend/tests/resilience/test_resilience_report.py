@@ -11,6 +11,7 @@ REQUIRED_TEST_NAMES = (
     "test_concurrent_enqueue_keeps_one_active_dedupe_record",
     "test_expired_processing_lock_is_reclaimed_after_worker_crash",
 )
+PARAMETER_MARKER = "private-parameter-marker"
 
 
 def _load_module():
@@ -100,7 +101,7 @@ def test_report_fails_closed_when_an_unrelated_test_replaces_a_required_scenario
 def test_report_accepts_pytest_parameter_suffixes_without_emitting_names(tmp_path: Path) -> None:
     module = _load_module()
     junit = tmp_path / "junit.xml"
-    parameterized_names = tuple(f"{name}[postgresql]" for name in REQUIRED_TEST_NAMES)
+    parameterized_names = tuple(f"{name}[{PARAMETER_MARKER}]" for name in REQUIRED_TEST_NAMES)
     _write_junit(junit, names=parameterized_names)
 
     report = module.build_report(junit, pytest_exit_code=0, source_sha="d" * 40)
@@ -108,7 +109,7 @@ def test_report_accepts_pytest_parameter_suffixes_without_emitting_names(tmp_pat
     assert report["status"] == "pass"
     assert report["required_scenarios"] == {"expected": 3, "observed": 3, "missing": 0}
     encoded = json.dumps(report, sort_keys=True)
-    assert "postgresql" not in encoded
+    assert PARAMETER_MARKER not in encoded
     assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
 
 
