@@ -16,6 +16,8 @@ HELPERS = "\n".join(
         "scripts/release/finalize_controlled_candidate.sh",
         "scripts/release/run_controlled_rc_gate.sh",
         "scripts/release/run_controlled_recovery_gate.sh",
+        "scripts/release/build_controlled_candidate_manifest.py",
+        "scripts/deploy/validate_controlled_server_preflight.py",
     )
 )
 
@@ -49,11 +51,17 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn('docker push "${registry_image}:${tag}"', combined)
         self.assertIn('test "${pulled_image_id}" = "${local_image_id}"', combined)
 
-    def test_same_binary_is_scanned_published_and_attested(self) -> None:
+    def test_same_binary_and_build_metadata_are_bound(self) -> None:
+        combined = WORKFLOW + "\n" + HELPERS
         self.assertIn("image-ref: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
         self.assertIn("image: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
-        self.assertIn("release-image-manifest.json", WORKFLOW + "\n" + HELPERS)
+        self.assertIn("release-image-manifest.json", combined)
         self.assertIn("registry-publish-receipt.json", WORKFLOW)
+        self.assertIn("LOCAL_IMAGE_ENV_JSON", combined)
+        self.assertIn("PULLED_IMAGE_ENV_JSON", combined)
+        self.assertIn('"build_time": local_env["BUILD_TIME"]', combined)
+        self.assertIn('"app_version": local_env["APP_VERSION"]', combined)
+        self.assertIn("publish_receipt_build_time_invalid", combined)
         self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
         self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
         self.assertIn("push-to-registry: true", WORKFLOW)
@@ -68,11 +76,14 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             "WHATSAPP_NATIVE_ENABLED=false",
             "SPEEDAF_WORK_ORDER_CREATE_ENABLED=false",
             "OPERATIONS_DISPATCH_MODE=disabled",
+            "ALLOW_DEV_AUTH=false",
+            "LOCAL_STORAGE_BACKUP_REQUIRED=true",
         ):
             self.assertIn(marker, ENV_EXAMPLE)
 
     def test_controlled_compose_is_digest_only_and_has_no_external_sidecars(self) -> None:
         self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
+        self.assertIn("${NEXUS_RUNTIME_SECRETS_HOST_PATH:?", COMPOSE)
         self.assertNotRegex(COMPOSE, r"(?m)^\s*build\s*:")
         self.assertNotIn(":latest", COMPOSE)
         self.assertNotIn("external: true", COMPOSE)
