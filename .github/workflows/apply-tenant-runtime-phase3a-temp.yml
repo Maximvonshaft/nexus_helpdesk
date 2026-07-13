@@ -88,25 +88,25 @@ jobs:
             backend/tests/test_ticket_timeline_pagination.py
           git diff --check
 
-      - name: Remove all bootstrap files and commit formal implementation
+      - name: Commit verified non-workflow implementation
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
           set -Eeuo pipefail
+          # Workflow writes are finalized through the Connector after this commit.
+          git checkout -- .github/workflows/tenant-runtime-source-snapshot-temp.yml
+          rm -f .github/workflows/tenant-runtime-authority-gate.yml
           rm -f \
-            .github/workflows/apply-tenant-runtime-phase3a-temp.yml \
             .github/patches/tenant-runtime-phase3a.part00 \
             .github/patches/tenant-runtime-phase3a.part01 \
             .github/patches/tenant-runtime-phase3a.part02 \
             .github/patches/tenant-runtime-phase3a.part03
           git add -A
           git diff --cached --check
+          git diff --cached --name-status
           python - <<'PY'
           import subprocess
           expected = {
-              '.github/workflows/apply-tenant-runtime-phase3a-temp.yml',
-              '.github/workflows/tenant-runtime-source-snapshot-temp.yml',
-              '.github/workflows/tenant-runtime-authority-gate.yml',
               '.github/patches/tenant-runtime-phase3a.part00',
               '.github/patches/tenant-runtime-phase3a.part01',
               '.github/patches/tenant-runtime-phase3a.part02',
@@ -124,7 +124,9 @@ jobs:
               ['git', 'diff', '--cached', '--name-only'], text=True,
           ).splitlines())
           if actual != expected:
-              raise SystemExit(f'unexpected staged paths: {sorted(actual)}')
+              raise SystemExit(
+                  f'unexpected staged paths: actual={sorted(actual)} expected={sorted(expected)}'
+              )
           PY
           git config user.name 'nexus-osr-tenant-runtime-bot'
           git config user.email 'nexus-osr-tenant-runtime-bot@users.noreply.github.com'
