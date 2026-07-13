@@ -148,6 +148,7 @@ def _neutral_non_authoritative_result(error_code: str) -> LLMResult:
         handoff_required=False,
         handoff_reason=None,
         provider_name=f"provider_runtime:{error_code}",
+        authoritative=False,
     )
 
 
@@ -222,7 +223,7 @@ def _env(name: str, default: str) -> str:
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
+        value = int((os.getenv(name) or str(default)).strip())
+    except (TypeError, ValueError):
         value = default
     return max(minimum, min(value, maximum))
