@@ -245,10 +245,10 @@
         "paths": [],
         "globs": [],
         "path_regexes": [
-          "(?i)^config/(?:.*/)?[^/]+\\.v[0-9]+\\.json$",
-          "(?i)^webapp/design/[^/]+\\.v[0-9]+\\.json$",
-          "(?i)^backend/app/config/[^/]+\\.v[0-9]+\\.json$",
-          "(?i)^backend/evals/(?:.*/)?[^/]+\\.v[0-9]+\\.json$"
+          "(?i)^config/(?:[^/]+/)*[^/]+\\.v[0-9]+\\.json$",
+          "(?i)^webapp/design/(?:[^/]+/)*[^/]+\\.v[0-9]+\\.json$",
+          "(?i)^backend/app/config/(?:[^/]+/)*[^/]+\\.v[0-9]+\\.json$",
+          "(?i)^backend/evals/(?:[^/]+/)*[^/]+\\.v[0-9]+\\.json$"
         ],
         "content_rules": []
       },
