@@ -17,17 +17,32 @@ The disposable runner additionally requires `RECOVERY_ADMIN_NATIVE_URL` and `REC
 - all URLs share the same host and port;
 - source/restore database names are exactly `nexus_source` and `nexus_restore`;
 - the admin URL targets a third database;
-- the source/restore roles exist, can log in and have no SUPERUSER, CREATEDB or CREATEROLE privilege;
-- the admin role has CREATEDB authority.
+- the source/restore roles exist, can log in, inherit database-owner privileges and have no SUPERUSER, CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS privilege;
+- the bootstrap admin is the explicit superuser/CREATEDB authority needed for database creation and installation of the untrusted `vector` extension.
 
-The admin creates each disposable database with its corresponding non-admin role as owner, and the runner verifies those owners before Alembic starts. Ambient `PGHOST`, `PGUSER`, `PGPASSWORD` or default-database state is not destructive authority.
+The admin creates each disposable database from `template0` with its corresponding non-admin role as owner, and the runner verifies those owners before Alembic starts. Ambient `PGHOST`, `PGUSER`, `PGPASSWORD` or default-database state is not destructive authority.
+
+## Preinstalled PostgreSQL extension
+
+The existing Alembic chain contains `CREATE EXTENSION IF NOT EXISTS vector`, but a fresh non-superuser owner cannot perform the first installation of an untrusted extension. The qualification therefore uses a narrow bootstrap boundary:
+
+1. `nexus_recovery_admin` installs `vector` into both empty disposable databases;
+2. source and restore roles prove the same extension version and admin ownership through `pg_extension`;
+3. the backup manifest records exactly one preinstalled extension, `vector`, and its version;
+4. restore fails before mutation unless the target already contains the same version;
+5. a restore TOC is generated from the checksum-validated archive and comments out exactly the `EXTENSION - vector` entry and at most one extension comment entry;
+6. any missing, duplicate or unrecognized vector extension TOC entry fails closed;
+7. all remaining objects still restore with `--clean --if-exists --single-transaction --no-owner --no-privileges` as `nexus_recovery_restore`;
+8. post-restore verification rechecks the exact vector version.
+
+The filtered TOC is temporary, mode-restricted and deleted on success or failure. It is not uploaded.
 
 ## Backup bundle
 
 `scripts/deploy/backup_postgres.sh` creates one mode-restricted temporary directory containing:
 
 - `database.dump` — custom-format, compressed, owner/privilege-free PostgreSQL archive;
-- `backup_manifest.json` — schema version, archive digest and size, hashed source-database identity, exact Alembic head and creation time.
+- `backup_manifest.json` — schema version, archive digest and size, hashed source-database identity, exact Alembic head, exact preinstalled vector version and creation time.
 
 The archive is non-empty and must pass `pg_restore --list`. The manifest and SHA-256 are generated before the temporary directory is atomically renamed to its final bundle path. Publication uses `mv -T`, so a concurrent bundle with the same final name fails instead of being nested inside an existing directory. Failed backups are removed by the exit trap and cannot remain under a plausible final name.
 
@@ -39,43 +54,44 @@ Possible states are:
 
 - `INSTRUCTIONS_ONLY` — no mutation input was provided;
 - `DATABASE_RESTORE_APPLIED` — the single-transaction `pg_restore` completed, so the target database was mutated even if post-restore identity verification later fails;
-- `DATABASE_RESTORED` — the applied restore subsequently passed exact Alembic-head verification;
+- `DATABASE_RESTORED` — the applied restore subsequently passed exact Alembic-head and vector-version verification;
 - `IMAGE_RESTARTED` — the requested old image tag was applied through Docker Compose;
 - `HEALTH_VERIFIED` — both `/healthz` and `/readyz` returned explicit HTTP 2xx responses after restart.
 
 The result also includes `outcome`, a fixed `failure_stage`, and Boolean fields that distinguish restore application from verified restoration. An EXIT trap writes partial state when a later operation fails. For example, if `pg_restore` commits but the Alembic post-check fails, the result records `DATABASE_RESTORE_APPLIED`, `outcome=fail`, `failure_stage=DATABASE_POST_VERIFY`, and `database_restored=false`. If the image restarts but a health check fails or redirects, it records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
 
-The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair and exact checksum match.
+The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair, exact checksum and matching preinstalled vector version.
 
 ## Disposable CI topology
 
 The dedicated gate uses pgvector PostgreSQL 16 with three isolated login roles:
 
-- `nexus_recovery_admin` — bootstrap role used only for role/database creation and ownership proof;
+- `nexus_recovery_admin` — bootstrap superuser used only for role/database creation, ownership proof and vector installation;
 - `nexus_recovery_source` — non-admin owner/client for `nexus_source`;
 - `nexus_recovery_restore` — non-admin owner/client for `nexus_restore`.
 
 The sequence is:
 
 1. Validate explicit URL authority and pairwise-distinct role identity.
-2. Prove source/restore are non-admin and admin has database-creation authority.
-3. Recreate `nexus_source` and `nexus_restore` with different owners and verify ownership.
-4. Upgrade source to the single current Alembic head.
-5. Downgrade one revision to simulate an interrupted/outdated state.
-6. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
-7. Re-upgrade and verify the exact expected head.
-8. Insert one synthetic Market/Team referential marker.
-9. Snapshot every public table count, Alembic head, marker count, unvalidated-FK count and a deterministic SHA-256 signature for every public foreign-key definition.
-10. Create and validate the real operator backup bundle as the source role.
-11. Restore through the real rollback script into the restore-owned database.
-12. Compare exact head, complete table/count set, marker and FK state.
-13. Measure synthetic RPO and restore RTO.
-14. Remove all backup bytes.
-15. Scan bounded JSON evidence before upload.
+2. Prove source/restore are non-admin and admin has the required bootstrap authority.
+3. Recreate `nexus_source` and `nexus_restore` from `template0` with different owners and verify ownership.
+4. Preinstall and prove the same admin-owned vector version in both databases.
+5. Upgrade source to the single current Alembic head as the source role.
+6. Downgrade one revision to simulate an interrupted/outdated state.
+7. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
+8. Re-upgrade and verify the exact expected head.
+9. Insert one synthetic Market/Team referential marker.
+10. Snapshot every public table count, Alembic head, marker count, unvalidated-FK count and a deterministic SHA-256 signature for every public foreign-key definition.
+11. Create and validate the real operator backup bundle as the source role.
+12. Restore through the real rollback script as the restore role while preserving the manifest-bound preinstalled extension.
+13. Compare exact head, complete table/count set, marker and FK state.
+14. Measure synthetic RPO and restore RTO.
+15. Remove all backup bytes and temporary TOC files.
+16. Scan bounded JSON evidence before upload.
 
 ## Evidence
 
-Uploaded JSON may contain only source SHA, Alembic revision, public table names and aggregate counts, hashed foreign-key definitions, backup digest, bounded durations, Boolean integrity results and fixed reason codes. It excludes raw constraint definitions, backup bytes, connection strings and business rows. Timestamp order is validated before RTO/RPO acceptance; reversed timestamps fail closed rather than becoming zero-second evidence.
+Uploaded JSON may contain only source SHA, Alembic revision, public table names and aggregate counts, hashed foreign-key definitions, backup digest, bounded durations, Boolean integrity results and fixed reason codes. It excludes raw constraint definitions, extension TOC contents, backup bytes, connection strings and business rows. Timestamp order is validated before RTO/RPO acceptance; reversed timestamps fail closed rather than becoming zero-second evidence.
 
 The disposable thresholds are:
 
@@ -84,13 +100,14 @@ The disposable thresholds are:
 - row-count mismatch: zero;
 - unvalidated foreign keys: zero;
 - foreign-key definition signatures: exact source/restore match;
-- Alembic heads: exactly one matching head.
+- Alembic heads: exactly one matching head;
+- vector version: exact source/target/post-restore match.
 
 These are CI qualification thresholds, not production SLOs.
 
 ## Failure semantics
 
-The gate fails closed on missing/ambient user identity, role collision or privilege mismatch, database-owner mismatch, migration/restore errors, missing/multiple/invalid heads, cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
+The gate fails closed on missing/ambient user identity, role collision or privilege mismatch, database-owner mismatch, vector bootstrap/version/TOC mismatch, migration/restore errors, missing/multiple/invalid heads, cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes and temporary TOC files are deleted even when qualification fails.
 
 ## Remaining work
 
