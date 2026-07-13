@@ -34,6 +34,12 @@
   var LEGACY_POLL_IDLE_MS = Number(script.getAttribute('data-poll-ms') || 4000);
   var LEGACY_POLL_PENDING_MS = Number(script.getAttribute('data-pending-poll-ms') || 350);
 
+var LIVE_VOICE_WORKLET_URL = new URL('/webchat/live-voice-capture-worklet.js?v=1', scriptUrl.origin).toString();
+var LIVE_VOICE_PROCESSOR_NAME = 'nexus-live-voice-capture-v1';
+var LIVE_VOICE_FRAME_SAMPLES = 320;
+var MAX_CAPTURE_PACKET_BYTES = 4096;
+// Legacy createScriptProcessor capture was removed; AudioWorklet is mandatory.
+
   var state = {
     open: false,
     busy: false,
@@ -201,10 +207,18 @@
   if (welcome) appendMessage('agent', welcome);
 
   button.addEventListener('click', function () { openPanel(); });
-  close.addEventListener('click', function () { openPanel(false); });
+  close.addEventListener('click', function () { stopLiveVoice('Voice stopped.'); openPanel(false); });
   voiceBtn.addEventListener('click', function () { toggleVoicePanel(); });
   var voiceStartBtn = voicePanel.querySelector('.nd-webchat-voice-start');
   if (voiceStartBtn) voiceStartBtn.addEventListener('click', startLiveVoice);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden' && state.liveVoice) {
+      stopLiveVoice('Voice stopped while the page is hidden.');
+    }
+  });
+  window.addEventListener('pagehide', function () {
+    if (state.liveVoice) stopLiveVoice('Voice stopped.');
+  });
   inputEl.addEventListener('compositionstart', function () { state.composing = true; });
   inputEl.addEventListener('compositionend', function () { state.composing = false; });
   messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
@@ -451,6 +465,7 @@
     openPanel(true);
     state.voiceOpen = typeof force === 'boolean' ? force : !state.voiceOpen;
     voicePanel.setAttribute('data-open', state.voiceOpen ? 'true' : 'false');
+    if (!state.voiceOpen && state.liveVoice) stopLiveVoice('Voice stopped.');
   }
 
   function voiceStatus(text) {
@@ -469,14 +484,17 @@
     wrap.scrollTop = wrap.scrollHeight;
   }
 
-  function stopLivePlayback() {
-    var live = state.liveVoice;
+  function stopLivePlayback(liveOverride) {
+    var live = liveOverride || state.liveVoice;
     if (!live) return;
     (live.playingSources || []).forEach(function (sourceNode) {
       try { sourceNode.stop(); } catch (err) {}
+      try { sourceNode.disconnect(); } catch (err) {}
     });
     live.playingSources = [];
-    if (live.audioContext) live.nextPlayTime = live.audioContext.currentTime + 0.03;
+    if (live.audioContext && live.audioContext.state !== 'closed') {
+      live.nextPlayTime = live.audioContext.currentTime + 0.03;
+    }
   }
 
   function resetLiveVoice(statusText) {
@@ -489,17 +507,46 @@
     if (statusText) voiceStatus(statusText);
   }
 
-  function stopLiveVoice() {
-    var live = state.liveVoice;
-    if (!live) return;
-    try { if (live.ws) live.ws.close(); } catch (err) {}
-    try { if (live.processor) live.processor.disconnect(); } catch (err) {}
+  function releaseLiveVoice(live, statusText, closeSocket) {
+    if (!live || live.released) {
+      if (statusText && !state.liveVoice) resetLiveVoice(statusText);
+      return;
+    }
+    live.released = true;
+    stopLivePlayback(live);
+    if (state.liveVoice === live) state.liveVoice = null;
+
+    if (live.captureNode) {
+      try { live.captureNode.port.onmessage = null; } catch (err) {}
+      try { live.captureNode.port.postMessage({ type: 'stop' }); } catch (err) {}
+      try { live.captureNode.port.close(); } catch (err) {}
+      try { live.captureNode.disconnect(); } catch (err) {}
+    }
     try { if (live.source) live.source.disconnect(); } catch (err) {}
-    try { if (live.silentGain) live.silentGain.disconnect(); } catch (err) {}
-    try { if (live.stream) live.stream.getTracks().forEach(function (track) { track.stop(); }); } catch (err) {}
-    stopLivePlayback();
-    state.liveVoice = null;
-    resetLiveVoice('Voice stopped.');
+    try {
+      if (live.stream) live.stream.getTracks().forEach(function (track) { track.stop(); });
+    } catch (err) {}
+
+    if (live.ws) {
+      live.ws.onopen = null;
+      live.ws.onmessage = null;
+      live.ws.onerror = null;
+      live.ws.onclose = null;
+      if (closeSocket) {
+        try {
+if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
+        } catch (err) {}
+      }
+    }
+
+    if (live.audioContext && live.audioContext.state !== 'closed') {
+      try { Promise.resolve(live.audioContext.close()).catch(function () {}); } catch (err) {}
+    }
+    resetLiveVoice(statusText || 'Voice stopped.');
+  }
+
+  function stopLiveVoice(statusText) {
+    releaseLiveVoice(state.liveVoice, statusText || 'Voice stopped.', true);
   }
 
   function safeLiveVoicePath(path) {
@@ -517,37 +564,6 @@
     url.searchParams.set('voice', voice);
     url.searchParams.set('speed', speed);
     return url.toString();
-  }
-
-  function floatTo16BitPcm(float32Array) {
-    var out = new Int16Array(float32Array.length);
-    for (var index = 0; index < float32Array.length; index += 1) {
-      var sample = Math.max(-1, Math.min(1, float32Array[index]));
-      out[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-    }
-    return out;
-  }
-
-  function downsampleBuffer(buffer, inputRate, outputRate) {
-    if (outputRate === inputRate) return buffer;
-    var ratio = inputRate / outputRate;
-    var newLength = Math.round(buffer.length / ratio);
-    var result = new Float32Array(newLength);
-    var offsetResult = 0;
-    var offsetBuffer = 0;
-    while (offsetResult < result.length) {
-      var nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-      var accum = 0;
-      var count = 0;
-      for (var i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
-        accum += buffer[i];
-        count += 1;
-      }
-      result[offsetResult] = count ? accum / count : 0;
-      offsetResult += 1;
-      offsetBuffer = nextOffsetBuffer;
-    }
-    return result;
   }
 
   function playPcm16(arrayBuffer, sampleRate) {
@@ -606,17 +622,56 @@
     return Promise.resolve();
   }
 
+  function openLiveVoiceSocket(live, langCode, voice, speed) {
+    return new Promise(function (resolve, reject) {
+      if (live.released || state.liveVoice !== live) {
+        reject(new Error('Voice start was cancelled.'));
+        return;
+      }
+      var socket;
+      try {
+        socket = new WebSocket(buildLiveWsUrl(langCode, voice, speed));
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      live.ws = socket;
+      socket.binaryType = 'arraybuffer';
+      socket.onmessage = function (event) { handleLiveMessage(event); };
+      socket.onopen = function () {
+        if (live.released || state.liveVoice !== live) {
+try { socket.close(1000, 'cancelled'); } catch (err) {}
+reject(new Error('Voice start was cancelled.'));
+return;
+        }
+        resolve(socket);
+      };
+      socket.onerror = function () {
+        reject(new Error('Voice connection failed.'));
+      };
+      socket.onclose = function () {
+        if (!live.released) releaseLiveVoice(live, 'Voice disconnected.', false);
+      };
+    });
+  }
+
   function startLiveVoice() {
     if (liveVoiceMode !== 'edge-card') return;
     toggleVoicePanel(true);
-    if (state.liveVoice && state.liveVoice.ws && state.liveVoice.ws.readyState === WebSocket.OPEN) {
-      stopLiveVoice();
+    if (state.liveVoice) {
+      stopLiveVoice('Voice stopped.');
       return;
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       voiceStatus('Microphone is not available in this browser.');
       return;
     }
+    var AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor || !window.AudioWorkletNode) {
+      voiceStatus('AudioWorklet support is required for voice capture.');
+      return;
+    }
+
     var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
     var presetEl = voicePanel.querySelector('.nd-webchat-voice-select');
     var preset = (presetEl && presetEl.value ? presetEl.value : 'de|de_DE-thorsten-medium|1.0').split('|');
@@ -627,54 +682,82 @@
       ws: null,
       audioContext: null,
       source: null,
-      processor: null,
-      silentGain: null,
+      captureNode: null,
       stream: null,
       playingSources: [],
       currentTtsSampleRate: 24000,
-      nextPlayTime: 0
+      nextPlayTime: 0,
+      released: false
     };
     state.liveVoice = live;
-    voiceStatus('Connecting voice support...');
-    live.ws = new WebSocket(buildLiveWsUrl(langCode, voice, speed));
-    live.ws.binaryType = 'arraybuffer';
-    live.ws.onopen = function () {
-      Promise.resolve().then(function () {
-        voiceBtn.classList.add('is-live');
-        if (startBtn) {
-          startBtn.classList.add('stop');
-          startBtn.textContent = 'Stop';
-        }
-        voiceStatus('Connected. Requesting microphone access...');
-        live.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        return live.audioContext.resume();
-      }).then(function () {
-        return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      }).then(function (mediaStream) {
-        live.stream = mediaStream;
-        voiceStatus('Listening...');
-        live.source = live.audioContext.createMediaStreamSource(mediaStream);
-        live.processor = live.audioContext.createScriptProcessor(4096, 1, 1);
-        live.silentGain = live.audioContext.createGain();
-        live.silentGain.gain.value = 0;
-        live.processor.onaudioprocess = function (audioEvent) {
-          if (!live.ws || live.ws.readyState !== WebSocket.OPEN) return;
-          var input = audioEvent.inputBuffer.getChannelData(0);
-          var down = downsampleBuffer(input, live.audioContext.sampleRate, 16000);
-          var pcm16 = floatTo16BitPcm(down);
-          live.ws.send(pcm16.buffer);
-        };
-        live.source.connect(live.processor);
-        live.processor.connect(live.silentGain);
-        live.silentGain.connect(live.audioContext.destination);
-      }).catch(function (err) {
-        voiceStatus('Microphone error: ' + (err && err.message ? err.message : String(err)));
-        stopLiveVoice();
+    voiceStatus('Preparing secure voice capture...');
+
+    Promise.resolve().then(function () {
+      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
+      live.audioContext = new AudioContextConstructor();
+      if (!live.audioContext.audioWorklet || !live.audioContext.audioWorklet.addModule) {
+        throw new Error('AudioWorklet support is unavailable.');
+      }
+      return live.audioContext.resume();
+    }).then(function () {
+      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
+      return live.audioContext.audioWorklet.addModule(LIVE_VOICE_WORKLET_URL);
+    }).then(function () {
+      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
+      return openLiveVoiceSocket(live, langCode, voice, speed);
+    }).then(function () {
+      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
+      voiceStatus('Connected. Requesting microphone access...');
+      return navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
-    };
-    live.ws.onmessage = function (event) { handleLiveMessage(event); };
-    live.ws.onerror = function () { voiceStatus('WebSocket error.'); };
-    live.ws.onclose = function () { resetLiveVoice('Voice disconnected.'); };
+    }).then(function (mediaStream) {
+      if (live.released || state.liveVoice !== live) {
+        mediaStream.getTracks().forEach(function (track) { track.stop(); });
+        throw new Error('Voice start was cancelled.');
+      }
+      live.stream = mediaStream;
+      live.source = live.audioContext.createMediaStreamSource(mediaStream);
+      live.captureNode = new AudioWorkletNode(live.audioContext, LIVE_VOICE_PROCESSOR_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: {
+outputSampleRate: 16000,
+frameSamples: LIVE_VOICE_FRAME_SAMPLES
+        }
+      });
+      live.captureNode.port.onmessage = function (event) {
+        if (live.released || state.liveVoice !== live) return;
+        var data = event && event.data;
+        var packet = data && data.type === 'pcm16' ? data.buffer : null;
+        if (!(packet instanceof ArrayBuffer) || packet.byteLength === 0) return;
+        if (packet.byteLength > MAX_CAPTURE_PACKET_BYTES) {
+releaseLiveVoice(live, 'Voice capture stopped because an audio packet exceeded the safety limit.', true);
+return;
+        }
+        if (live.ws && live.ws.readyState === WebSocket.OPEN) live.ws.send(packet);
+      };
+      live.source.connect(live.captureNode);
+      live.captureNode.connect(live.audioContext.destination);
+      voiceBtn.classList.add('is-live');
+      if (startBtn) {
+        startBtn.classList.add('stop');
+        startBtn.textContent = 'Stop';
+      }
+      voiceStatus('Listening...');
+    }).catch(function (err) {
+      if (live.released && state.liveVoice !== live) return;
+      var errorName = err && err.name ? String(err.name) : '';
+      var message = err && err.message ? String(err.message) : String(err || 'unknown');
+      var status = 'Voice start failed: ' + message;
+      if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+        status = 'Microphone access was denied.';
+      } else if (message.indexOf('AudioWorklet') !== -1) {
+        status = 'AudioWorklet support is unavailable.';
+      }
+      releaseLiveVoice(live, status, true);
+    });
   }
 
   function api(path, options, timeoutMs) {
