@@ -102,8 +102,8 @@ jobs:
             backend/tests/test_ticket_event_classification.py \
             backend/tests/test_ticket_event_repair.py \
             backend/tests/test_ticket_event_writer.py \
-            backend/tests/test_webchat_ai_service.py \
-            backend/tests/test_webchat_ai_safe_service.py
+            backend/tests/test_webchat_ai_turn_runtime.py \
+            backend/tests/test_webchat_ai_decision_runtime.py
           git diff --check
 
       - name: Commit verified non-workflow correction
