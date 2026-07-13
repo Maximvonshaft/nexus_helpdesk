@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +22,11 @@ def _load_evidence_module():
     return module
 
 
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
 class OperatorRecoveryContractTests(unittest.TestCase):
     def test_backup_uses_native_libpq_url_and_atomic_finalization(self) -> None:
         script = (ROOT / "scripts" / "deploy" / "backup_postgres.sh").read_text(encoding="utf-8")
@@ -30,7 +37,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("sha256sum", script)
         self.assertIn("backup_manifest", script)
         self.assertIn("source_database_sha256", script)
-        self.assertIn("mv --", script)
+        self.assertIn("mv -T --", script)
 
     def test_rollback_fails_fast_and_reports_explicit_states(self) -> None:
         script = (ROOT / "scripts" / "deploy" / "rollback_release.sh").read_text(encoding="utf-8")
@@ -44,7 +51,78 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("DATABASE_RESTORED", script)
         self.assertIn("IMAGE_RESTARTED", script)
         self.assertIn("HEALTH_VERIFIED", script)
+        self.assertIn("failure_stage", script)
         self.assertNotIn("Rollback helper completed.", script)
+
+    def test_runner_refuses_mismatched_admin_cluster_before_psql(self) -> None:
+        runner = ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "psql-called"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            _write_executable(
+                fake_bin / "psql",
+                f"#!/usr/bin/env bash\ntouch {marker!s}\nexit 0\n",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+                    "SOURCE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_source",
+                    "SOURCE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_source",
+                    "RESTORE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_restore",
+                    "RESTORE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_restore",
+                    "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus@db-b:5432/postgres",
+                    "RECOVERY_ALLOW_DATABASE_RECREATE": "I_UNDERSTAND",
+                    "SOURCE_SHA": "a" * 40,
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(runner)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertFalse(marker.exists())
+        self.assertIn("recovery_admin_cluster_mismatch", completed.stderr)
+
+    def test_health_failure_writes_partial_rollback_status(self) -> None:
+        script = ROOT / "scripts" / "deploy" / "rollback_release.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            _write_executable(fake_bin / "docker", "#!/usr/bin/env bash\nexit 0\n")
+            _write_executable(fake_bin / "curl", "#!/usr/bin/env bash\nexit 22\n")
+            status = root / "rollback-result.json"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+                    "ROLLBACK_CONFIRM": "I_UNDERSTAND",
+                    "OLD_IMAGE_TAG": "nexus:test-old",
+                    "ROLLBACK_HEALTH_URL": "http://127.0.0.1:18082",
+                    "ROLLBACK_STATUS_FILE": str(status),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(script)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            payload = json.loads(status.read_text(encoding="utf-8"))
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(payload["outcome"], "fail")
+        self.assertEqual(payload["failure_stage"], "HEALTH_VERIFICATION")
+        self.assertIn("IMAGE_RESTARTED", payload["states"])
+        self.assertFalse(payload["health_verified"])
 
     def test_workflow_quarantines_unsafe_evidence(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "osr-recovery-qualification.yml").read_text(encoding="utf-8")
