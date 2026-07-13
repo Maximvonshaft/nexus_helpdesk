@@ -118,3 +118,16 @@ def test_probes_enforce_health_200_and_reviewed_websocket_handshake() -> None:
     for marker in required:
         assert marker in text
     assert "WS_KEY=" not in text
+
+
+def test_zero_secret_proof_scans_public_health_body_with_in_memory_credentials() -> None:
+    text = _read()
+    required = [
+        "`/webchat/live/health` response body",
+        "loads the predecessor and replacement only from restricted secret references",
+        "compares raw and approved encoded forms in memory",
+        "emits only pass/fail and a finding count",
+        "must not emit credential values, hashes, prefixes, suffixes, or lengths",
+    ]
+    for marker in required:
+        assert marker in text
