@@ -104,16 +104,17 @@ jobs:
           psql "$RECOVERY_ADMIN_NATIVE_URL" -X --set ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE nexus_recovery_source
             LOGIN PASSWORD 'nexus_recovery_source'
-            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
           CREATE ROLE nexus_recovery_restore
             LOGIN PASSWORD 'nexus_recovery_restore'
-            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
           SQL
           test "$(psql "$RECOVERY_ADMIN_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c "
             SELECT count(*)
             FROM pg_roles
             WHERE rolname IN ('nexus_recovery_source', 'nexus_recovery_restore')
               AND rolcanlogin
+              AND rolinherit
               AND NOT rolsuper
               AND NOT rolcreatedb
               AND NOT rolcreaterole
