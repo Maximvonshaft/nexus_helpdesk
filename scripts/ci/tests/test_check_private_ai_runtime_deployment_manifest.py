@@ -210,6 +210,7 @@ def test_commands_reject_secret_environment_assignments():
         ("acceptance", ["bash", "-c", "python3 scripts/acceptance/check_runtime.py"]),
         ("acceptance", ["/bin/sh", "-c", "python3 scripts/acceptance/check_runtime.py"]),
         ("acceptance", ["env", "bash", "-c", "python3 scripts/acceptance/check_runtime.py"]),
+        ("acceptance", ["env", "-S", "bash -c python3 scripts/acceptance/check_runtime.py"]),
         ("rollback", ["powershell.exe", "-Command", "python scripts/rollback/activate.py"]),
     ],
 )
