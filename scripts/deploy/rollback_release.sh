@@ -20,8 +20,13 @@ append_state() {
 }
 
 cleanup_restore_list() {
-  [[ -n "${RESTORE_LIST_FILE:-}" && -f "$RESTORE_LIST_FILE" ]] && rm -f -- "$RESTORE_LIST_FILE"
-  [[ -n "${RESTORE_LIST_RAW_FILE:-}" && -f "$RESTORE_LIST_RAW_FILE" ]] && rm -f -- "$RESTORE_LIST_RAW_FILE"
+  if [[ -n "${RESTORE_LIST_FILE:-}" && -f "$RESTORE_LIST_FILE" ]]; then
+    rm -f -- "$RESTORE_LIST_FILE"
+  fi
+  if [[ -n "${RESTORE_LIST_RAW_FILE:-}" && -f "$RESTORE_LIST_RAW_FILE" ]]; then
+    rm -f -- "$RESTORE_LIST_RAW_FILE"
+  fi
+  return 0
 }
 
 write_status() {
