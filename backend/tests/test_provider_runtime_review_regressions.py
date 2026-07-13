@@ -114,15 +114,15 @@ def test_admin_rejects_boolean_canary_percent(value):
 
 
 def test_admin_snapshot_sanitizer_removes_exception_derived_text():
-    secret = "postgresql://user:secret@private-host/runtime"
+    marker = "STATUS-ERROR-MARKER"
     sanitized = _sanitize_provider_runtime_snapshot({
         "ok": False,
-        "config_error": f"RuntimeError: {secret}",
-        "human_webcall": {"warnings": [f"human_webcall status unavailable: RuntimeError {secret}"]},
+        "config_error": f"RuntimeError: {marker}",
+        "human_webcall": {"warnings": [f"human_webcall status unavailable: RuntimeError {marker}"]},
     })
     assert sanitized["config_error"] == "provider_runtime_settings_invalid"
     assert sanitized["human_webcall"]["warnings"] == ["human_webcall status unavailable"]
-    assert secret not in repr(sanitized)
+    assert marker not in repr(sanitized)
 
 
 @pytest.mark.asyncio
@@ -178,6 +178,7 @@ def test_webcall_orchestrator_does_not_convert_control_outcome_to_handoff(monkey
     result = orchestrator._safe_llm_response(
         SimpleNamespace(llm_provider="provider_runtime"),
         STTResult(text="hello", language="en", provider_name="fake"),
+        session_id="review-voice-session",
     )
 
     assert result.intent == "provider_runtime_non_authoritative"

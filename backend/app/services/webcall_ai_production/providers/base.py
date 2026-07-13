@@ -60,6 +60,24 @@ class LLMProvider:
     def respond(self, text: str, *, language: str | None = None) -> LLMResult:
         raise NotImplementedError
 
+    def respond_for_session(
+        self,
+        text: str,
+        *,
+        language: str | None = None,
+        session_id: str,
+    ) -> LLMResult:
+        """Respond with server-owned session scope when the provider supports it.
+
+        Existing providers remain source-compatible: the default implementation
+        deliberately ignores routing scope and delegates to the established
+        ``respond`` contract. Providers that use session identity for traffic
+        authority override this method.
+        """
+
+        del session_id
+        return self.respond(text, language=language)
+
 
 class TTSProvider:
     provider_name = "base"

@@ -16,6 +16,9 @@ from .webchat_runtime_config import get_webchat_runtime_settings
 
 HUMAN_WEBCALL_RINGING_STATUSES = {"created", "ringing"}
 HUMAN_WEBCALL_ACTIVE_STATUSES = {"accepted", "active"}
+_HUMAN_WEBCALL_CONFIGURATION_INVALID = "human_webcall_configuration_invalid"
+_HUMAN_WEBCALL_STATUS_UNAVAILABLE = "human_webcall_status_unavailable"
+_PROVIDER_RUNTIME_CONFIGURATION_INVALID = "provider_runtime_configuration_invalid"
 
 
 def _provider_capabilities(*, webchat_runtime_reply: bool, handoff_decision: bool = True) -> dict[str, bool]:
@@ -137,24 +140,24 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
             warnings.append("human_webcall recording is enabled")
         if transcription_enabled:
             warnings.append("human_webcall transcription is enabled")
-    except RuntimeError as exc:
+    except RuntimeError:
         webchat_voice_enabled = False
         provider = "unknown"
         recording_enabled = False
         transcription_enabled = False
-        warnings.append(str(exc))
+        warnings.append(_HUMAN_WEBCALL_CONFIGURATION_INVALID)
 
     try:
         active_session_count = _human_webcall_count(db, {"active"})
         ringing_session_count = _human_webcall_count(db, HUMAN_WEBCALL_RINGING_STATUSES)
         stale_active_session_count = _human_webcall_count(db, HUMAN_WEBCALL_ACTIVE_STATUSES, stale=True)
         stale_ringing_session_count = _human_webcall_count(db, HUMAN_WEBCALL_RINGING_STATUSES, stale=True)
-    except (AttributeError, TypeError, SQLAlchemyError) as exc:
+    except (AttributeError, TypeError, SQLAlchemyError):
         active_session_count = 0
         ringing_session_count = 0
         stale_active_session_count = 0
         stale_ringing_session_count = 0
-        warnings.append(f"human_webcall status unavailable: {type(exc).__name__}")
+        warnings.append(_HUMAN_WEBCALL_STATUS_UNAVAILABLE)
 
     if not webchat_voice_enabled:
         readiness_verdict = "disabled"
@@ -187,11 +190,11 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
 
     try:
         settings = get_webchat_runtime_settings()
-    except RuntimeError as exc:
+    except RuntimeError:
         return {
             "ok": False,
             "status": "misconfigured",
-            "config_error": str(exc),
+            "config_error": _PROVIDER_RUNTIME_CONFIGURATION_INVALID,
             "providers": [],
             "boundary": {
                 "secret_values_exposed": False,
