@@ -1,0 +1,126 @@
+name: ${COMPOSE_PROJECT_NAME:-nexusdesk_controlled}
+
+x-controlled-app: &controlled_app
+  image: ${CONTROLLED_IMAGE:?set immutable ghcr.io/...@sha256:... CONTROLLED_IMAGE}
+  env_file:
+    - .env.controlled
+  environment: &controlled_environment
+    APP_ENV: production
+    AUTO_INIT_DB: "false"
+    SEED_DEMO_DATA: "false"
+    RELEASE_CANDIDATE: "true"
+    GIT_SHA: ${GIT_SHA:?set exact candidate GIT_SHA}
+    BUILD_TIME: ${BUILD_TIME:?set candidate BUILD_TIME}
+    IMAGE_TAG: ${IMAGE_TAG:?set IMAGE_TAG equal to CONTROLLED_IMAGE}
+    APP_VERSION: ${APP_VERSION:?set APP_VERSION}
+    FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set exact frontend SHA}
+    EXPECTED_MIGRATION_HEAD: ${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}
+    READINESS_REQUIRE_RELEASE_METADATA: "true"
+  volumes: &controlled_volumes
+    - ${NEXUS_RUNTIME_SECRETS_HOST_PATH:?set runtime secrets host path}:/run/secrets:ro
+    - ${AI_RUNTIME_TOKEN_HOST_PATH:?set AI runtime token host path}:/run/nexus/ai_runtime_token:ro
+    - ${NEXUS_UPLOADS_HOST_PATH:?set uploads host path}:/app/backend/uploads:rw
+    - ${NEXUS_UPLOAD_BACKUP_HOST_PATH:?set upload backup host path}:/var/backups/nexusdesk/uploads:ro
+  networks:
+    - controlled
+
+x-worker-healthcheck: &worker_healthcheck
+  test:
+    - CMD-SHELL
+    - >-
+      python -c "from pathlib import Path;
+      cmd=Path('/proc/1/cmdline').read_text(errors='replace');
+      assert 'scripts/run_worker.py' in cmd, cmd;
+      from sqlalchemy import text;
+      from app.db import SessionLocal;
+      db=SessionLocal();
+      db.execute(text('select 1'));
+      db.close();
+      print('controlled-worker-ok')"
+  interval: 20s
+  timeout: 8s
+  retries: 6
+  start_period: 20s
+
+services:
+  migrate-controlled:
+    <<: *controlled_app
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        cd /app/backend &&
+        alembic upgrade head &&
+        alembic current
+
+  app-controlled:
+    <<: *controlled_app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CONTROLLED_APP_PORT:-18095}:8080"
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        exec gunicorn app.main:app
+        -k uvicorn.workers.UvicornWorker
+        --workers "$${WEB_CONCURRENCY:-2}"
+        --timeout "$${WEB_TIMEOUT:-30}"
+        --bind 0.0.0.0:8080
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          response=urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4);
+          assert response.status == 200
+      interval: 15s
+      timeout: 6s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      migrate-controlled:
+        condition: service_completed_successfully
+
+  worker-outbound-controlled:
+    <<: *controlled_app
+    restart: unless-stopped
+    command: python scripts/run_worker.py --worker-id worker-outbound-controlled --queue outbound
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+
+  worker-background-controlled:
+    <<: *controlled_app
+    restart: unless-stopped
+    command: python scripts/run_worker.py --worker-id worker-background-controlled --queue background
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+
+  worker-webchat-ai-controlled:
+    <<: *controlled_app
+    restart: unless-stopped
+    command: python scripts/run_worker.py --worker-id worker-webchat-ai-controlled --queue webchat-ai
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+
+  worker-handoff-snapshot-controlled:
+    <<: *controlled_app
+    restart: unless-stopped
+    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot-controlled --queue handoff-snapshot
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+
+networks:
+  controlled:
+    driver: bridge
