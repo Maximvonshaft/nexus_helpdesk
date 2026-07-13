@@ -30,19 +30,23 @@ class ControlledImageAssuranceOrderTests(unittest.TestCase):
             "image.preliminary.cdx.json.summary.json",
         ):
             self.assertIn(raw_name, cleanup_block)
+        self.assertIn('rm -f "${raw_files[@]}"', cleanup_block)
         self.assertIn('test "${cleanup_code}" = "0"', cleanup_block)
 
     def test_bounded_artifact_scan_precedes_structured_validation(self) -> None:
         scan_index = SCRIPT.index("python scripts/security/scan_artifacts.py")
         validation_index = SCRIPT.index("python scripts/security/validate_release_image_evidence.py")
+        required_scan_pass = '''test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/artifact-scan.json")" = "pass"'''
+
         self.assertLess(scan_index, validation_index)
         self.assertIn('"${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt"', SCRIPT)
         self.assertIn("THIRD_PARTY_NOTICES.md", SCRIPT)
-        self.assertIn('test "$(jq -r \' .status\' ', SCRIPT.replace("'.status'", "' .status'"))
+        self.assertIn(required_scan_pass, SCRIPT)
+        self.assertLess(SCRIPT.index(required_scan_pass), validation_index)
 
     def test_structure_pass_is_required_after_validation(self) -> None:
         validation_index = SCRIPT.index("python scripts/security/validate_release_image_evidence.py")
-        required = 'test "$(jq -r \'.status\' "${RELEASE_IMAGE_DIR}/structured-evidence-scan.json")" = "pass"'
+        required = '''test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/structured-evidence-scan.json")" = "pass"'''
         self.assertIn(required, SCRIPT)
         self.assertLess(validation_index, SCRIPT.index(required))
 
