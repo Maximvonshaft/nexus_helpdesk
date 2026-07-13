@@ -21,6 +21,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: provider-runtime-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   provider-runtime-gate:
     runs-on: ubuntu-latest
