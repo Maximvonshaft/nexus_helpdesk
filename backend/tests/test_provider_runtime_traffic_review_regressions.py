@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 from app.services import provider_runtime as provider_runtime_module
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
@@ -16,7 +17,7 @@ from app.services.provider_runtime.traffic_selection import (
 )
 
 
-class _Adapter(ProviderAdapter):
+class _FailingAdapter(ProviderAdapter):
     name = "private_ai_runtime"
 
     def __init__(self) -> None:
@@ -24,17 +25,11 @@ class _Adapter(ProviderAdapter):
 
     async def generate(self, db, request):
         self.calls += 1
-        return ProviderResult(
-            ok=True,
-            provider=self.name,
-            elapsed_ms=1,
-            structured_output={
-                "customer_reply": "safe response",
-                "language": "en",
-                "intent": "greeting",
-                "handoff_required": False,
-                "ticket_should_create": False,
-            },
+        return ProviderResult.unavailable(
+            self.name,
+            "synthetic_candidate_failure",
+            1,
+            fallback_allowed=False,
         )
 
 
@@ -62,36 +57,69 @@ def _request() -> ProviderRequest:
         tenant_key="tenant-key-1",
         channel_key="website",
         session_id="session-1",
-        scenario="webchat_runtime_reply",
+        scenario="review_traffic_test",
         body="hello",
-        output_contract="nexus_webchat_runtime_reply_v1",
+        output_contract="synthetic_contract",
         timeout_ms=1000,
     )
 
 
-def _db_with_rule(*, kill_switch):
-    rule = {
-        "primary_provider": "private_ai_runtime",
-        "fallback_providers": [],
-        "output_contract": "nexus_webchat_runtime_reply_v1",
-        "timeout_ms": 3000,
-        "kill_switch": kill_switch,
-        "canary_percent": 100,
-    }
-    db = Mock()
-    rule_result = Mock()
-    rule_result.mappings.return_value.first.return_value = rule
-    audit_rows: list[dict] = []
-
-    def execute(statement, params, *args, **kwargs):
-        if "insert into provider_runtime_audit_logs" in str(statement).lower():
-            audit_rows.append(dict(params))
-            return Mock()
-        return rule_result
-
-    db.execute.side_effect = execute
-    db.audit_rows = audit_rows
-    return db
+def _sqlite_session(*, kill_switch: int) -> Session:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE provider_routing_rules (
+                    primary_provider TEXT NOT NULL,
+                    fallback_providers TEXT NOT NULL,
+                    output_contract TEXT NOT NULL,
+                    timeout_ms INTEGER NOT NULL,
+                    kill_switch BOOLEAN NOT NULL,
+                    canary_percent INTEGER NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    channel_key TEXT NOT NULL,
+                    scenario TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE provider_runtime_audit_logs (
+                    id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    channel_key TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    safe_summary TEXT NOT NULL,
+                    error_code TEXT,
+                    elapsed_ms INTEGER NOT NULL,
+                    created_at TIMESTAMP NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO provider_routing_rules (
+                    primary_provider, fallback_providers, output_contract, timeout_ms,
+                    kill_switch, canary_percent, tenant_id, channel_key, scenario, enabled
+                ) VALUES (
+                    'private_ai_runtime', '[]', 'synthetic_contract', 3000,
+                    :kill_switch, 100, 'tenant-1', 'website', 'review_traffic_test', 1
+                )
+                """
+            ),
+            {"kill_switch": kill_switch},
+        )
+    return Session(engine)
 
 
 @pytest.mark.parametrize("value", [2, 50, 99, "2"])
@@ -122,28 +150,42 @@ def test_unsupported_canary_environment_override_fails_closed(monkeypatch, value
 
 
 @pytest.mark.asyncio
-async def test_sqlite_false_boolean_is_normalized_before_strict_validation():
-    db = _db_with_rule(kill_switch=0)
-    adapter = _Adapter()
+async def test_sqlite_false_boolean_is_typed_before_strict_validation():
+    db = _sqlite_session(kill_switch=0)
+    adapter = _FailingAdapter()
     ProviderRegistry.register(adapter.name, lambda _db: adapter)
 
-    result = await ProviderRuntimeRouter(db).route(_request())
+    try:
+        result = await ProviderRuntimeRouter(db).route(_request())
+        audit_summary = json.loads(
+            db.execute(
+                text("SELECT safe_summary FROM provider_runtime_audit_logs ORDER BY created_at DESC LIMIT 1")
+            ).scalar_one()
+        )
+    finally:
+        db.close()
 
-    assert result.ok is True
+    assert result.error_code == "synthetic_candidate_failure"
     assert adapter.calls == 1
-    assert json.loads(db.audit_rows[-1]["safe_summary"])["traffic_selection"]["path"] == "canary_authoritative"
+    assert audit_summary["traffic_selection"]["path"] == "canary_authoritative"
 
 
 @pytest.mark.asyncio
 async def test_sqlite_true_boolean_keeps_kill_switch_precedence():
-    db = _db_with_rule(kill_switch=1)
-    adapter = _Adapter()
+    db = _sqlite_session(kill_switch=1)
+    adapter = _FailingAdapter()
     ProviderRegistry.register(adapter.name, lambda _db: adapter)
 
-    result = await ProviderRuntimeRouter(db).route(_request())
+    try:
+        result = await ProviderRuntimeRouter(db).route(_request())
+        audit_summary = json.loads(
+            db.execute(
+                text("SELECT safe_summary FROM provider_runtime_audit_logs ORDER BY created_at DESC LIMIT 1")
+            ).scalar_one()
+        )
+    finally:
+        db.close()
 
-    assert result.ok is False
     assert result.error_code == "kill_switch_active"
     assert adapter.calls == 0
-    traffic = json.loads(db.audit_rows[-1]["safe_summary"])["traffic_selection"]
-    assert traffic["path"] == "kill_switch"
+    assert audit_summary["traffic_selection"]["path"] == "kill_switch"
