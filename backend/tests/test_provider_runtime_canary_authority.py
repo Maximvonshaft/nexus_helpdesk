@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -65,32 +66,42 @@ def _request(*, scenario: str = "webchat_runtime_reply") -> ProviderRequest:
     )
 
 
+def _rule(*, canary_percent=100, kill_switch=False) -> dict:
+    return {
+        "primary_provider": "private_ai_runtime",
+        "fallback_providers": [],
+        "output_contract": "nexus_webchat_runtime_reply_v1",
+        "timeout_ms": 3000,
+        "kill_switch": kill_switch,
+        "canary_percent": canary_percent,
+    }
+
+
 def _mock_db(rule: dict):
     db = Mock()
     query_result = Mock()
     query_result.mappings.return_value.first.return_value = rule
+    audit_params: list[dict] = []
 
     def execute(statement, params=None, *args, **kwargs):
         if "insert into provider_runtime_audit_logs" in str(statement).lower():
+            audit_params.append(dict(params or {}))
             return Mock()
         return query_result
 
     db.execute.side_effect = execute
+    db.audit_params = audit_params
     return db
+
+
+def _last_audit(db) -> tuple[dict, dict]:
+    params = db.audit_params[-1]
+    return params, json.loads(params["safe_summary"])
 
 
 @pytest.mark.asyncio
 async def test_zero_percent_never_calls_candidate_provider():
-    db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 0,
-        }
-    )
+    db = _mock_db(_rule(canary_percent=0))
     adapter = _RecordingAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
 
@@ -99,6 +110,82 @@ async def test_zero_percent_never_calls_candidate_provider():
     assert adapter.calls == 0
     assert result.ok is False
     assert result.error_code == "provider_runtime_control_path"
+    audit, safe_summary = _last_audit(db)
+    assert audit["status"] == "skipped"
+    assert safe_summary["traffic_selection"]["reason"] == "canary_percent_zero"
+    assert safe_summary["traffic_selection"]["fallback_result"] == "candidate_not_selected"
+
+
+@pytest.mark.asyncio
+async def test_unsupported_persisted_stage_fails_closed_without_candidate_call():
+    db = _mock_db(_rule(canary_percent=2, kill_switch=0))
+    adapter = _RecordingAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert adapter.calls == 0
+    assert result.error_code == "provider_runtime_traffic_configuration_invalid"
+    _, safe_summary = _last_audit(db)
+    assert safe_summary["traffic_selection"]["configuration_errors"] == [
+        "provider_runtime_canary_percent_invalid"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_kill_switch_overrides_canary_and_suppresses_candidate():
+    db = _mock_db(_rule(canary_percent=100, kill_switch=1))
+    adapter = _RecordingAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert adapter.calls == 0
+    assert result.error_code == "kill_switch_active"
+    audit, safe_summary = _last_audit(db)
+    assert audit["status"] == "skipped"
+    assert safe_summary["traffic_selection"]["path"] == "kill_switch"
+    assert safe_summary["traffic_selection"]["fallback_result"] == "suppressed_by_kill_switch"
+
+
+@pytest.mark.asyncio
+async def test_shadow_executes_candidate_but_discards_customer_output(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
+    db = _mock_db(_rule(canary_percent=100))
+    adapter = _RecordingAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert adapter.calls == 1
+    assert result.ok is False
+    assert result.structured_output is None
+    assert result.error_code == "provider_runtime_shadow_only"
+    audit, safe_summary = _last_audit(db)
+    assert audit["status"] == "shadow_ok"
+    assert safe_summary["traffic_selection"]["path"] == "shadow_only"
+    assert safe_summary["traffic_selection"]["authoritative"] is False
+    assert safe_summary["traffic_selection"]["fallback_result"] == "shadow_output_discarded"
+
+
+@pytest.mark.asyncio
+async def test_authoritative_success_records_bounded_selection_evidence():
+    db = _mock_db(_rule(canary_percent=100))
+    adapter = _RecordingAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.ok is True
+    assert adapter.calls == 1
+    audit, safe_summary = _last_audit(db)
+    assert audit["status"] == "ok"
+    traffic = safe_summary["traffic_selection"]
+    assert traffic["schema_version"] == "nexus.provider_runtime.traffic_selection.v1"
+    assert traffic["path"] == "canary_authoritative"
+    assert traffic["authoritative"] is True
+    assert traffic["fallback_result"] == "primary_succeeded"
+    assert "customer_reply" not in safe_summary
 
 
 @pytest.mark.asyncio
