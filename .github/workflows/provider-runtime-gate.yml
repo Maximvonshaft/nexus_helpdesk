@@ -9,6 +9,7 @@ on:
       - "backend/app/services/provider_runtime/**"
       - "backend/app/services/provider_runtime_status.py"
       - "backend/app/services/webcall_ai/demo_lab.py"
+      - "backend/app/services/webcall_ai_production/agent_worker.py"
       - "backend/app/services/webcall_ai_production/providers/base.py"
       - "backend/app/services/webcall_ai_production/providers/provider_runtime_llm.py"
       - "backend/app/services/webcall_ai_production/providers/router.py"
@@ -22,6 +23,7 @@ on:
       - "backend/tests/test_webcall_ai_demo_status_safety.py"
       - "backend/tests/test_webcall_ai_provider_runtime_llm.py"
       - "backend/tests/test_webcall_ai_production.py"
+      - "backend/tests/test_webcall_ai_voice_loop.py"
       - "backend/tests/test_webchat_structured_runtime.py"
       - "backend/tests/test_webchat_runtime_ai_service.py"
       - "backend/tests/test_webchat_rate_limit_bucket.py"
@@ -95,6 +97,11 @@ jobs:
         run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_partial_canary_is_stable_per_voice_session
       - name: Shadow failure remains neutral
         run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_shadow_failure_is_neutral_and_non_authoritative
+      - name: Neutral turns have zero voice effects
+        run: |
+          pytest -q \
+            backend/tests/test_webcall_ai_provider_runtime_llm.py::test_session_turn_rolls_back_non_authoritative_provider_outcome_before_tts_and_evidence \
+            backend/tests/test_webcall_ai_voice_loop.py::test_agent_loop_skips_all_voice_effects_for_non_authoritative_turn
       - name: Parse rejection audit is bounded
         run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_parse_reject_audit_uses_fixed_code_without_provider_marker
       - name: Kill switch remains authoritative
