@@ -218,7 +218,7 @@ def _internal_note_evidence(
     *,
     field_name: str,
     payload: Mapping[str, Any],
-) -> TicketEventClass:
+) -> TicketEventClass | None:
     keys = {str(key).lower() for key in payload}
     candidates: set[TicketEventClass] = set()
     if keys & _TOOL_KEYS or field_name.startswith("tool."):
@@ -233,9 +233,7 @@ def _internal_note_evidence(
         candidates.add(TicketEventClass.PROVIDER)
     if len(candidates) > 1:
         raise TicketEventClassificationError("ticket_event_internal_note_ambiguous")
-    if candidates:
-        return next(iter(candidates))
-    return TicketEventClass.INTERNAL_AUDIT
+    return next(iter(candidates)) if candidates else None
 
 
 def _explicit_evidence_class(
@@ -321,6 +319,10 @@ def resolve_ticket_event_class(
                 raise TicketEventClassificationError(
                     "ticket_event_field_update_unclassified"
                 )
+            if event_type is EventType.internal_note_added:
+                raise TicketEventClassificationError(
+                    "ticket_event_internal_note_evidence_missing"
+                )
         elif governed is not evidence:
             raise TicketEventClassificationError(
                 "ticket_event_class_conflicts_with_evidence"
@@ -341,10 +343,11 @@ def resolve_ticket_event_class(
         raise TicketEventClassificationError("ticket_event_comment_visibility_missing")
 
     if event_type is EventType.internal_note_added:
-        return _internal_note_evidence(
+        evidence = _internal_note_evidence(
             field_name=normalized_field,
             payload=source,
         )
+        return evidence or TicketEventClass.INTERNAL_AUDIT
 
     if event_type is EventType.field_updated:
         evidence = _single_field_update_evidence(

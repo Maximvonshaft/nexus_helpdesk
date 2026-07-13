@@ -230,16 +230,20 @@ def test_governed_metadata_requires_evidence_for_ambiguous_event_types() -> None
         resolve_ticket_event_class(EventType.field_updated, payload=governed)
 
 
-def test_governed_internal_notes_use_event_type_default_and_specialized_evidence() -> None:
+def test_governed_internal_notes_require_evidence_and_accept_specialized_evidence() -> None:
     base = {
         "event_contract": "nexus.ticket_event.writer.v1",
         "schema_version": 1,
     }
 
-    assert resolve_ticket_event_class(
-        EventType.internal_note_added,
-        payload={**base, "event_class": "internal_audit"},
-    ) is TicketEventClass.INTERNAL_AUDIT
+    with pytest.raises(
+        TicketEventClassificationError,
+        match="internal_note_evidence_missing",
+    ):
+        resolve_ticket_event_class(
+            EventType.internal_note_added,
+            payload={**base, "event_class": "internal_audit"},
+        )
     assert resolve_ticket_event_class(
         EventType.internal_note_added,
         payload={**base, "event_class": "internal_audit", "note_id": 42},
@@ -274,7 +278,7 @@ def test_governed_internal_notes_use_event_type_default_and_specialized_evidence
         ):
             resolve_ticket_event_class(
                 EventType.internal_note_added,
-                payload={**base, "event_class": conflicting_class},
+                payload={**base, "event_class": conflicting_class, "note_id": 43},
             )
 
 
