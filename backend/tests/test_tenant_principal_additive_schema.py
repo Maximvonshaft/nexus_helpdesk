@@ -52,6 +52,7 @@ def _assert_additive_schema(connection) -> None:
         "updated_at",
     }
     assert tenant_columns["tenant_key"]["nullable"] is False
+    assert tenant_columns["tenant_key"]["type"].length == 80
     assert tenant_columns["display_name"]["nullable"] is False
     assert {item["name"] for item in inspector.get_unique_constraints("tenants")} >= {
         "uq_tenants_tenant_key"
@@ -70,6 +71,7 @@ def _assert_additive_schema(connection) -> None:
         assert columns["tenant_id"]["nullable"] is True
         assert columns["tenant_assignment_source"]["nullable"] is True
         assert columns["tenant_assignment_version"]["nullable"] is True
+        assert columns["tenant_assignment_version"]["type"].length == 80
         assert f"ix_{table_name}_tenant_id" in {
             item["name"] for item in inspector.get_indexes(table_name)
         }
@@ -86,6 +88,7 @@ def test_model_metadata_exposes_nullable_relational_tenant_principal() -> None:
     register_all_models()
     assert Tenant.__table__.name == "tenants"
     assert Tenant.__table__.c.tenant_key.nullable is False
+    assert Tenant.__table__.c.tenant_key.type.length == 80
     assert Tenant.__table__.c.tenant_key.default is None
     assert {
         constraint.name for constraint in Tenant.__table__.constraints
@@ -105,6 +108,7 @@ def test_model_metadata_exposes_nullable_relational_tenant_principal() -> None:
         assert {fk.target_fullname for fk in tenant_id.foreign_keys} == {"tenants.id"}
         assert table.c.tenant_assignment_source.nullable is True
         assert table.c.tenant_assignment_version.nullable is True
+        assert table.c.tenant_assignment_version.type.length == 80
 
 
 def test_additive_migration_preserves_rows_across_downgrade_and_reupgrade(tmp_path) -> None:
@@ -159,7 +163,7 @@ def test_additive_migration_preserves_rows_across_downgrade_and_reupgrade(tmp_pa
                 sa.text(
                     f"UPDATE {table_name} SET tenant_id = 1, "
                     "tenant_assignment_source = 'mapping_manifest', "
-                    "tenant_assignment_version = 'sha256:test' WHERE id = 1"
+                    "tenant_assignment_version = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = 1"
                 )
             )
 
