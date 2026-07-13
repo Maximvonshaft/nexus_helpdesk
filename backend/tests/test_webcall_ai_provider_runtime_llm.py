@@ -248,7 +248,8 @@ def test_private_runtime_alias_routes_through_authoritative_router(db):
     assert adapter.requests[0].scenario == "webcall_ai_decision"
     assert adapter.requests[0].output_contract == "nexus_webchat_runtime_reply_v1"
     assert adapter.requests[0].body == "where is my parcel?"
-    assert adapter.requests[0].session_id == "webcall-ai-production"
+    assert adapter.requests[0].session_id.startswith("webcall-request-")
+    assert "where" not in adapter.requests[0].session_id
     audits = _provider_audits(db)
     assert len(audits) == 1
     traffic = audits[0]["safe_summary"]["traffic_selection"]
@@ -358,7 +359,8 @@ def test_webcall_kill_switch_suppresses_alias_even_with_invalid_lower_settings(m
 
 
 def test_webcall_rejects_unapproved_provider_alias_without_adapter_call(monkeypatch, db):
-    monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", "unapproved")
+    marker = "unapproved-provider-marker"
+    monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", marker)
     adapter = RuntimeDecisionAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
 
@@ -367,7 +369,12 @@ def test_webcall_rejects_unapproved_provider_alias_without_adapter_call(monkeypa
 
     assert caught.value.code == "provider_runtime_provider_not_allowed"
     assert adapter.requests == []
-    assert _provider_audits(db) == []
+    audits = _provider_audits(db)
+    assert len(audits) == 1
+    assert audits[0]["operation"] == "traffic_select"
+    assert audits[0]["error_code"] == "provider_runtime_provider_not_allowed"
+    assert audits[0]["safe_summary"]["fallback_result"] == "blocked"
+    assert marker not in json.dumps(audits)
 
 
 def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db):
