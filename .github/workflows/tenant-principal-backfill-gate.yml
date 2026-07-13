@@ -143,7 +143,10 @@ jobs:
           cat > /tmp/tenant-mapping.json <<'JSON'
           {
             "schema_version": "nexus_tenant_backfill_mapping_v1",
-            "tenants": [{"tenant_key": "tenant-a", "display_name": "Tenant A"}],
+            "tenants": [
+              {"tenant_key": "tenant-a", "display_name": "Tenant A"},
+              {"tenant_key": "tenant-b", "display_name": "Tenant B"}
+            ],
             "market_codes": {"ME": "tenant-a"},
             "team_ids": {},
             "user_ids": {},
@@ -202,6 +205,10 @@ jobs:
           test "$(jq -r '.status' artifacts/tenant-backfill/dry-run.json)" = "pass"
           test "$(jq '[.planned_counts[]] | add' artifacts/tenant-backfill/dry-run.json)" = "6"
           test "$(jq -r '.production_mutation_performed' artifacts/tenant-backfill/dry-run.json)" = "false"
+          test "$(jq -r '.database_commit_state' artifacts/tenant-backfill/dry-run.json)" = "not_applicable"
+          test "$(jq -r '.principal_counts.declared' artifacts/tenant-backfill/dry-run.json)" = "2"
+          test "$(jq -r '.principal_counts.planned_create' artifacts/tenant-backfill/dry-run.json)" = "2"
+          test "$(jq -r '.principal_counts.created' artifacts/tenant-backfill/dry-run.json)" = "0"
           test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc 'SELECT count(*) FROM tenants')" = "0"
 
       - name: Prove wrong approval digest and concurrent executor fail closed
@@ -256,6 +263,9 @@ jobs:
           test "$(jq -r '.status' artifacts/tenant-backfill/partial.json)" = "partial"
           test "$(jq '[.applied_counts[]] | add' artifacts/tenant-backfill/partial.json)" = "2"
           test "$(jq '[.remaining_counts[]] | add' artifacts/tenant-backfill/partial.json)" = "4"
+          test "$(jq -r '.database_commit_state' artifacts/tenant-backfill/partial.json)" = "committed"
+          test "$(jq -r '.principal_counts.created' artifacts/tenant-backfill/partial.json)" = "2"
+          test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc 'SELECT count(*) FROM tenants')" = "2"
           python - <<'PY'
           import json
           from pathlib import Path
@@ -283,6 +293,9 @@ jobs:
           test "$(jq -r '.status' artifacts/tenant-backfill/complete.json)" = "pass"
           test "$(jq '[.already_applied_counts[]] | add' artifacts/tenant-backfill/complete.json)" = "2"
           test "$(jq '[.applied_counts[]] | add' artifacts/tenant-backfill/complete.json)" = "4"
+          test "$(jq -r '.database_commit_state' artifacts/tenant-backfill/complete.json)" = "committed"
+          test "$(jq -r '.principal_counts.accepted_existing' artifacts/tenant-backfill/complete.json)" = "2"
+          test "$(jq -r '.principal_counts.created' artifacts/tenant-backfill/complete.json)" = "0"
           for table in markets teams users channel_accounts customers tickets; do
             test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT count(*) FROM ${table} WHERE tenant_id IS NOT NULL AND tenant_assignment_source='mapping_manifest' AND length(tenant_assignment_version)=71")" -ge "1"
           done
@@ -299,6 +312,9 @@ jobs:
           test "$(jq -r '.production_mutation_performed' artifacts/tenant-backfill/idempotent.json)" = "false"
           test "$(jq '[.already_applied_counts[]] | add' artifacts/tenant-backfill/idempotent.json)" = "6"
           test "$(jq '[.applied_counts[]] | add' artifacts/tenant-backfill/idempotent.json)" = "0"
+          test "$(jq -r '.database_commit_state' artifacts/tenant-backfill/idempotent.json)" = "committed"
+          test "$(jq -r '.principal_counts.accepted_existing' artifacts/tenant-backfill/idempotent.json)" = "2"
+          test "$(jq -r '.principal_counts.created' artifacts/tenant-backfill/idempotent.json)" = "0"
 
       - name: Prove post-backfill preflight passes
         run: |
@@ -309,6 +325,7 @@ jobs:
             --output artifacts/tenant-backfill/post-preflight.json
           test "$(jq -r '.status' artifacts/tenant-backfill/post-preflight.json)" = "pass"
           test "$(jq -r '.issues.issue_count' artifacts/tenant-backfill/post-preflight.json)" = "0"
+          test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc 'SELECT count(*) FROM tenants')" = "2"
 
       - name: Scan bounded receipts and remove signing material
         run: |
