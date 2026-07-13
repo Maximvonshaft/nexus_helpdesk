@@ -12,6 +12,11 @@
 
 The current-tree secret scanner enumerates tracked files in one checkout. A credential can be removed from HEAD while remaining reachable in an earlier Blob through a branch or tag. Historical #603 attempted to close this gap, but its scanner tests failed, the real scan was skipped, and evidence upload failed. That failure sequence did not establish either a clean history or a confirmed active credential.
 
+Two additional path/match boundaries are mandatory:
+
+- identical Blob content may be reachable under multiple historical paths, and a path-specific allowlist must not suppress other aliases;
+- one source line may contain multiple values matching the same credential rule, and every match must be evaluated.
+
 ## Constraints
 
 The implementation must:
@@ -20,6 +25,8 @@ The implementation must:
 - use the current Nexus credential rules, placeholder handling and fingerprints;
 - retain the current-tree scanner's existing 200-finding boundary;
 - count every logical history finding without a 200-finding blind spot;
+- evaluate every reachable historical path alias independently;
+- evaluate every match for every credential rule;
 - output only bounded redacted metadata;
 - reject shallow or incomplete history;
 - account for every reachable Blob;
@@ -28,23 +35,27 @@ The implementation must:
 
 ## Selected architecture
 
-### Unique reachable blobs
+### Unique reachable Blobs and complete aliases
 
 Use Git plumbing rather than checking out every commit:
 
-- `rev-list --objects --all` enumerates reachable object IDs and internal paths;
+- `rev-list --objects --all` enumerates reachable object IDs and one fallback path;
 - `cat-file --batch-check` resolves type and size;
-- `cat-file --batch` streams eligible Blobs;
+- `git log --all --format=%T` enumerates unique reachable commit root Trees;
+- `ls-tree -r -z --full-tree` enumerates every `(Blob, path)` pair in those Trees;
+- `cat-file --batch` streams each eligible unique Blob once;
 - `for-each-ref` provides object IDs only for a reference-set digest;
 - `rev-parse --show-object-format` supports SHA-1 and SHA-256 repositories.
 
-Every unique eligible Blob is read once.
+`rev-list --objects` alone is insufficient because it may retain only one representative path for identical Blob content. The scanner therefore deduplicates root Trees and `(Blob, path)` pairs separately.
+
+Every unique eligible Blob is read once. Its decoded content is then evaluated independently under every historical path alias. A strict path allowlist cannot become a wildcard for identical content copied or renamed elsewhere.
 
 ### Shared detection semantics
 
-The history scanner imports the current `scanner.py` pattern table, placeholder predicate and fingerprint function. It performs an uncapped internal iteration over those rules. The public current-tree `scan_secret_files()` remains unchanged and capped at 200.
+The history scanner imports the current `scanner.py` pattern table, placeholder predicate and fingerprint function. It performs an uncapped internal iteration over those rules. Each regular expression uses `finditer`, so repeated same-rule credential values on one line are separately fingerprinted and counted.
 
-This avoids changing the current report contract while preventing history totals from being silently truncated.
+The public current-tree `scan_secret_files()` remains unchanged and capped at 200. This avoids changing the current report contract while preventing history totals from being silently truncated.
 
 ### Logical deduplication
 
@@ -55,6 +66,8 @@ path + rule + line + fingerprint
 ```
 
 Blob object ID is not part of the logical identity. Therefore an unchanged credential in a file that gains unrelated content is reported once.
+
+Path remains part of identity. The same Blob at two paths produces two independent logical findings and two independent allowlist decisions.
 
 The raw path is retained only inside scanner memory for fingerprint and exact allowlist matching. The emitted report replaces it with a SHA-256 path digest and bounded suffix.
 
@@ -67,7 +80,9 @@ Each reachable Blob is classified exactly once as:
 - known oversized binary;
 - unknown oversized and unscanned.
 
-`accounted_blob_count` must equal `reachable_blob_count`. Any unknown oversized Blob makes `complete=false` and blocks the result.
+`accounted_blob_count` must equal `reachable_blob_count`. `reachable_blob_path_count` records the independently evaluated Blob-path pairs. Any unknown oversized Blob makes `complete=false` and blocks the result.
+
+A Blob is treated as a known oversized binary only when all of its observed paths have known binary suffixes. A mixed binary/text alias cannot be silently excluded.
 
 The dedicated Workflow scans up to 8 MiB. This evidence-driven ceiling covered the observed 5.9 MiB non-binary Blob. Future unknown Blobs over 8 MiB remain blocking rather than being silently classified.
 
@@ -85,7 +100,7 @@ The current-main scan identified only known synthetic test fixtures and historic
 exact internal path + exact rule + exact fingerprint + reason + expiry
 ```
 
-No wildcard, non-expiring or rule-only exception is accepted. Raw paths remain absent from evidence.
+No wildcard, non-expiring or rule-only exception is accepted. A matching Blob at another path is not suppressed. Raw paths remain absent from evidence.
 
 ### Failure evidence
 
@@ -101,6 +116,7 @@ This prevents evidence-upload failure from masking the original failure.
 - Scanner stdout contains only safe counts and status.
 - Generated evidence is scanned before upload.
 - Report size is limited to 64 KiB.
+- Blob path-pair enumeration is bounded and fails closed on overflow.
 - A finding blocks merge but triggers no remediation action.
 - Allowlist entries are exact and time-bounded.
 
@@ -109,6 +125,14 @@ This prevents evidence-upload failure from masking the original failure.
 ### Re-checkout every commit
 
 Rejected because it repeatedly scans identical Blobs, increases runtime and creates a larger temporary working-tree surface.
+
+### One representative path per Blob
+
+Rejected because it turns an exact path allowlist into a content-level wildcard over all aliases of the same Blob.
+
+### First match per rule and line
+
+Rejected because a second same-rule credential on the same line would not be fingerprinted or counted.
 
 ### External scanner action
 
@@ -129,11 +153,13 @@ One exact final Head must prove:
 - all focused and existing security tests pass;
 - a removed historical secret is detected without raw disclosure;
 - same logical finding across changed Blobs is deduplicated;
+- identical content at multiple paths receives independent allowlist decisions;
+- multiple same-rule values on one line are all counted;
 - more than 200 history findings are fully counted;
 - shallow repositories and incomplete coverage fail closed;
 - the real Nexus non-shallow history scan completes;
-- every reachable Blob is accounted for;
+- every reachable Blob is accounted for and every historical alias is evaluated;
 - the bounded evidence artifact passes leak scanning;
-- all repository checks and independent review pass.
+- all repository checks, CodeQL and independent review pass.
 
 A real finding or incomplete scan is valid blocking evidence. Credential triage, rotation/revocation and history rewriting remain separately authorized #565 work.
