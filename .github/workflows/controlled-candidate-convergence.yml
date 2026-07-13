@@ -33,6 +33,7 @@ jobs:
       RC_SOURCE_SHA: ${{ github.sha }}
       RC_ENV_FILE: deploy/.env.rc-test
       RC_EVIDENCE_DIR: artifacts/rc-test
+      RC_FAILURE_DIR: artifacts/controlled-rc-failure
       RC_RUN_BROWSER_SMOKE: "true"
       RC_BASE_URL: http://127.0.0.1:18083
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
@@ -78,7 +79,47 @@ jobs:
           npm sbom --sbom-format=cyclonedx > ../artifacts/release-image/frontend.raw.cdx.json
 
       - name: Execute existing one-build RC chain
-        run: bash scripts/release/run_controlled_rc_gate.sh
+        id: controlled_rc
+        run: |
+          set +e
+          run_log="${RUNNER_TEMP}/controlled-rc-run.log"
+          rm -f "${run_log}"
+          bash scripts/release/run_controlled_rc_gate.sh 2>&1 | tee "${run_log}"
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "${code}" -ne 0 ]; then
+            python scripts/release/capture_controlled_rc_failure.py \
+              --capture \
+              --log "${run_log}" \
+              --evidence-dir "${RC_EVIDENCE_DIR}" \
+              --exit-code "${code}"
+          fi
+          exit "${code}"
+
+      - name: Validate and scan bounded RC failure evidence
+        id: rc_failure_scan
+        if: ${{ always() && steps.controlled_rc.outcome == 'failure' }}
+        run: |
+          set -Eeuo pipefail
+          summary="${RC_EVIDENCE_DIR}/failure-summary.json"
+          python scripts/release/capture_controlled_rc_failure.py --validate "${summary}"
+          rm -rf "${RC_FAILURE_DIR}"
+          mkdir -p "${RC_FAILURE_DIR}"
+          cp "${summary}" "${RC_FAILURE_DIR}/failure-summary.json"
+          python scripts/security/scan_artifacts.py \
+            --root . \
+            --output "${RC_FAILURE_DIR}/artifact-scan.json" \
+            "${RC_FAILURE_DIR}/failure-summary.json"
+          test "$(jq -r '.status' "${RC_FAILURE_DIR}/artifact-scan.json")" = "pass"
+
+      - name: Upload bounded RC failure evidence
+        if: ${{ always() && steps.rc_failure_scan.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: controlled-rc-failure-${{ github.sha }}
+          path: artifacts/controlled-rc-failure
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Verify runtime imports
         run: |
