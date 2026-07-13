@@ -26,6 +26,34 @@ _WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
 _WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 _CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
 _KILL_SWITCH_INVALID = "provider_runtime_kill_switch_invalid"
+_PROVIDER_SETTINGS_INVALID = "provider_runtime_settings_invalid"
+_HUMAN_WEBCALL_RECORDING_WARNING = "human_webcall recording is enabled"
+_HUMAN_WEBCALL_TRANSCRIPTION_WARNING = "human_webcall transcription is enabled"
+_HUMAN_WEBCALL_STATUS_UNAVAILABLE = "human_webcall status unavailable"
+_HUMAN_WEBCALL_CONFIG_INVALID = "human_webcall runtime configuration invalid"
+
+
+def _sanitize_provider_runtime_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(snapshot or {})
+    if "config_error" in sanitized:
+        sanitized["config_error"] = _PROVIDER_SETTINGS_INVALID
+
+    human = sanitized.get("human_webcall")
+    if isinstance(human, dict):
+        safe_human = dict(human)
+        safe_warnings: list[str] = []
+        for warning in human.get("warnings") or []:
+            if warning == _HUMAN_WEBCALL_RECORDING_WARNING:
+                safe_warnings.append(_HUMAN_WEBCALL_RECORDING_WARNING)
+            elif warning == _HUMAN_WEBCALL_TRANSCRIPTION_WARNING:
+                safe_warnings.append(_HUMAN_WEBCALL_TRANSCRIPTION_WARNING)
+            elif isinstance(warning, str) and warning.startswith(_HUMAN_WEBCALL_STATUS_UNAVAILABLE):
+                safe_warnings.append(_HUMAN_WEBCALL_STATUS_UNAVAILABLE)
+            else:
+                safe_warnings.append(_HUMAN_WEBCALL_CONFIG_INVALID)
+        safe_human["warnings"] = list(dict.fromkeys(safe_warnings))
+        sanitized["human_webcall"] = safe_human
+    return sanitized
 
 
 class WebchatRuntimeRoutingUpdate(BaseModel):
@@ -47,7 +75,7 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
             raise ValueError(_CANARY_PERCENT_INVALID)
 
 
-def _database_configuration_errors(selection: dict[str, Any]) -> list[str]:
+def _database_configuration_errors(selection: dict[str, Any]) -> list[str, Any]:
     errors: list[str] = []
     if selection.get("default_canary_percent") is None:
         errors.append(_CANARY_PERCENT_INVALID)
@@ -75,7 +103,7 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
     except Exception:
         return {
             "status": "unavailable",
-            "reason_code": "provider_runtime_routing_rules_unavailable",
+            "reason_code": "provider_runtime_routing_rules_unavaile",
             "items": [],
             "truncated": False,
         }
@@ -114,7 +142,7 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
 @router.get("/status")
 def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    snapshot = get_provider_runtime_status(db)
+    snapshot = _sanitize_provider_runtime_snapshot(get_provider_runtime_status(db))
     traffic = safe_traffic_configuration()
     traffic["scope"] = "global_defaults_and_environment_overrides"
     traffic["webchat_runtime_rules"] = _traffic_routing_rules(db)

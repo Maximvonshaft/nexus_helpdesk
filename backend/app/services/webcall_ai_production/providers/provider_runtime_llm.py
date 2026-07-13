@@ -19,6 +19,7 @@ _DEFAULT_SCENARIO = "webcall_ai_decision"
 _DEFAULT_CHANNEL = "webcall_ai"
 _DEFAULT_TENANT = "default"
 _ALLOWED_PROVIDER_ALIASES = frozenset({"router", "private_ai_runtime"})
+_NEUTRAL_ROUTER_OUTCOMES = frozenset({"provider_canary_control_path", "provider_shadow_completed"})
 
 
 class ProviderRuntimeLLMProvider(LLMProvider):
@@ -30,6 +31,8 @@ class ProviderRuntimeLLMProvider(LLMProvider):
         try:
             result = _run_async(_route_request(db, request))
             if not result.ok or not result.structured_output:
+                if result.error_code in _NEUTRAL_ROUTER_OUTCOMES:
+                    return _neutral_non_authoritative_result(result.error_code)
                 raise ProviderError(self.provider_name, result.error_code or "provider_runtime_unavailable")
             return _to_llm_result(result)
         except ProviderError:
@@ -80,6 +83,16 @@ def _build_request(*, text: str, language: str | None) -> ProviderRequest:
         output_contract=_env("WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT", _DEFAULT_CONTRACT),
         timeout_ms=_int_env("WEBCALL_AI_PROVIDER_RUNTIME_TIMEOUT_MS", 10000, minimum=500, maximum=30000),
         metadata=metadata,
+    )
+
+
+def _neutral_non_authoritative_result(error_code: str) -> LLMResult:
+    return LLMResult(
+        response_text="",
+        intent="provider_runtime_non_authoritative",
+        handoff_required=False,
+        handoff_reason=None,
+        provider_name=f"provider_runtime:{error_code}",
     )
 
 

@@ -103,7 +103,10 @@ def effective_kill_switch(default: bool) -> bool:
     if normalized in _TRUE_VALUES:
         return True
     if normalized in _FALSE_VALUES:
-        return False
+        # A global false is a safe default, not authority to clear a persisted
+        # tenant/channel kill switch. Clearing that switch requires an explicit
+        # governed routing-rule mutation.
+        return _validated_kill_switch(default)
     raise ValueError(_KILL_SWITCH_INVALID)
 
 
@@ -170,7 +173,7 @@ def safe_traffic_configuration(
         kill_switch = normalized_default_kill_switch
     else:
         try:
-            kill_switch = effective_kill_switch(False)
+            kill_switch = effective_kill_switch(default_kill_switch)
         except ValueError:
             kill_switch = None
             _append_unique(errors, _KILL_SWITCH_INVALID)
