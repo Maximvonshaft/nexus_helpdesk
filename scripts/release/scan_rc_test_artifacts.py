@@ -31,9 +31,9 @@ from scanner import (  # noqa: E402
 )
 
 RC_EVIDENCE_PREFIX = "artifacts/rc-test/"
-SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._/-]{1,180}$")
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_./-]{1,180}$")
 CONVERSATION_RE = re.compile(r"^wc_[A-Za-z0-9_-]{8,120}$")
-NETWORK_RE = re.compile(r"^nexus_rc_test_[0-9]+_(?:rc|edge)$")
+NETWORK_RE = re.compile(r"^nexus_(?:rc_test|controlled)_[0-9]+_(?:rc|edge)$")
 APP_VERSION_RE = re.compile(r"^(?:rc-test|controlled)-[0-9a-f]{12}$")
 IMAGE_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,127}:rc-test-[0-9a-f]{40}$")
 BUILD_TIME_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")

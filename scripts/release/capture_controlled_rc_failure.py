@@ -15,10 +15,13 @@ SCHEMA = "nexus.osr.rc-test-failure-summary.v1"
 MAX_LOG_BYTES = 2 * 1024 * 1024
 MAX_SUMMARY_BYTES = 64 * 1024
 MAX_SERVICE_STATES = 64
+MAX_FINDING_ITEMS = 10
 _STAGE_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 _REASON_RE = re.compile(r"^[a-z0-9_-]{1,80}$")
 _SERVICE_RE = re.compile(r"^[a-z0-9_-]{1,80}$")
 _STATE_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+_FINDING_RULE_RE = re.compile(r"^[a-z0-9_:.-]{2,80}$")
+_FINDING_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]{1,240}$")
 _DIAGNOSTIC_HEX_RE = re.compile(r"^[0-9a-f]{2,800}$")
 _STAGE_LINE_RE = re.compile(r"(?m)^RC_STAGE=([a-z0-9_-]{1,64})$")
 
@@ -64,6 +67,32 @@ def _bounded_service_states(value: object) -> dict[str, str]:
     return dict(sorted(result.items()))
 
 
+def _bounded_finding_rules(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > MAX_FINDING_ITEMS:
+        return []
+    result: list[str] = []
+    for raw in value:
+        item = str(raw)
+        if _FINDING_RULE_RE.fullmatch(item) and item not in result:
+            result.append(item)
+    return sorted(result)
+
+
+def _bounded_finding_paths(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > MAX_FINDING_ITEMS:
+        return []
+    result: list[str] = []
+    for raw in value:
+        item = str(raw)
+        if (
+            item.startswith("artifacts/rc-test/")
+            and _FINDING_PATH_RE.fullmatch(item)
+            and item not in result
+        ):
+            result.append(item)
+    return sorted(result)
+
+
 def validate_summary(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise FailureEvidenceError("summary_object_required")
@@ -85,13 +114,31 @@ def validate_summary(payload: object) -> dict[str, Any]:
     if not isinstance(states, dict) or states != _bounded_service_states(states):
         raise FailureEvidenceError("summary_service_states_invalid")
 
-    allowed = {"schema", "status", "stage", "exit_code", "reason_code", "service_states", "diagnostic_hex"}
+    allowed = {
+        "schema",
+        "status",
+        "stage",
+        "exit_code",
+        "reason_code",
+        "service_states",
+        "diagnostic_hex",
+        "finding_rules",
+        "finding_paths",
+    }
     if set(payload) - allowed:
         raise FailureEvidenceError("summary_fields_invalid")
     if "diagnostic_hex" in payload:
         diagnostic = str(payload["diagnostic_hex"])
         if not _DIAGNOSTIC_HEX_RE.fullmatch(diagnostic):
             raise FailureEvidenceError("summary_diagnostic_invalid")
+    if "finding_rules" in payload:
+        rules = payload["finding_rules"]
+        if not isinstance(rules, list) or rules != _bounded_finding_rules(rules):
+            raise FailureEvidenceError("summary_finding_rules_invalid")
+    if "finding_paths" in payload:
+        paths = payload["finding_paths"]
+        if not isinstance(paths, list) or paths != _bounded_finding_paths(paths):
+            raise FailureEvidenceError("summary_finding_paths_invalid")
     return dict(payload)
 
 
@@ -112,7 +159,9 @@ def capture_failure(*, log_path: Path, evidence_dir: Path, exit_code: int) -> Pa
     if not _REASON_RE.fullmatch(reason):
         reason = "candidate_chain_failed"
     existing_stage = str(existing.get("stage") or "")
-    if stage == "unknown" and _STAGE_RE.fullmatch(existing_stage):
+    if _STAGE_RE.fullmatch(existing_stage) and (
+        stage == "unknown" or reason != "candidate_chain_failed"
+    ):
         stage = existing_stage
 
     payload: dict[str, Any] = {
@@ -126,6 +175,12 @@ def capture_failure(*, log_path: Path, evidence_dir: Path, exit_code: int) -> Pa
     diagnostic = str(existing.get("diagnostic_hex") or "")
     if _DIAGNOSTIC_HEX_RE.fullmatch(diagnostic):
         payload["diagnostic_hex"] = diagnostic
+    finding_rules = _bounded_finding_rules(existing.get("finding_rules"))
+    if finding_rules:
+        payload["finding_rules"] = finding_rules
+    finding_paths = _bounded_finding_paths(existing.get("finding_paths"))
+    if finding_paths:
+        payload["finding_paths"] = finding_paths
     validate_summary(payload)
 
     encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
