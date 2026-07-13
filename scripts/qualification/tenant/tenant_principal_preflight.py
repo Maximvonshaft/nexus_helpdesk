@@ -7,9 +7,15 @@ import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from sqlalchemy import create_engine, inspect, text
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+import tenant_principal_resolution as resolution
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_MAPPING_ENTRIES = 200_000
@@ -34,31 +40,8 @@ CURRENT_TENANT_COLUMNS = frozenset({
 })
 _TENANT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,79}$")
 _MARKET_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,31}$")
-_MAPPING_SECTIONS = (
-    "market_codes",
-    "team_ids",
-    "user_ids",
-    "channel_account_ids",
-    "ticket_ids",
-    "customer_ids",
-)
-_CORE_TABLE_COLUMNS = {
-    "markets": ("id", "code", "tenant_id"),
-    "teams": ("id", "market_id", "tenant_id"),
-    "users": ("id", "team_id", "tenant_id"),
-    "channel_accounts": ("id", "market_id", "tenant_id"),
-    "customers": ("id", "tenant_id"),
-    "tickets": (
-        "id",
-        "customer_id",
-        "market_id",
-        "team_id",
-        "channel_account_id",
-        "assignee_id",
-        "created_by",
-        "tenant_id",
-    ),
-}
+_MAPPING_SECTIONS = resolution.MAPPING_SECTIONS
+_CORE_TABLE_COLUMNS = resolution.CORE_RELATION_COLUMNS
 
 
 class TenantPreflightError(ValueError):
@@ -142,47 +125,15 @@ class Findings:
         }
 
 
-def _fetch_rows(connection, inspector, table_name: str, columns: Iterable[str]) -> list[dict[str, Any]]:
-    if table_name not in inspector.get_table_names(schema="public"):
-        return []
-    available = {item["name"] for item in inspector.get_columns(table_name, schema="public")}
-    requested = tuple(columns)
-    if not set(requested).issubset(available):
-        return []
-    preparer = connection.dialect.identifier_preparer
-    selected = ", ".join(preparer.quote(name) for name in requested)
-    table = preparer.quote(table_name)
-    return [dict(row._mapping) for row in connection.execute(text(f"SELECT {selected} FROM {table}"))]
-
-
-def _resolve_relation(
-    *,
-    kind: str,
-    record_id: int,
-    relation_candidates: set[str],
-    explicit: str | None,
-    findings: Findings,
-) -> str | None:
-    candidates = set(relation_candidates)
-    if explicit:
-        candidates.add(explicit)
-    if len(relation_candidates) > 1:
-        findings.add("tenant.relation_conflict", kind=kind, record_id=record_id)
-        return None
-    if explicit and relation_candidates and explicit not in relation_candidates:
-        findings.add("tenant.explicit_relation_conflict", kind=kind, record_id=record_id)
-        return None
-    if not candidates:
-        findings.add("tenant.assignment_missing", kind=kind, record_id=record_id)
-        return None
-    return next(iter(candidates))
+_fetch_rows = resolution.fetch_rows
+_resolve_relation = resolution.resolve_relation
 
 
 def _load_tenant_principals(connection, inspector, tenant_keys: set[str], findings: Findings) -> dict[int, str]:
-    if "tenants" not in inspector.get_table_names(schema="public"):
+    if "tenants" not in resolution.table_names(inspector):
         findings.add("tenant.principal_table_missing", kind="schema", record_id="tenants")
         return {}
-    rows = _fetch_rows(connection, inspector, "tenants", ("id", "tenant_key"))
+    rows = _fetch_rows(connection, inspector, "tenants", ("id", "tenant_key", "is_active"))
     principals: dict[int, str] = {}
     observed_keys: set[str] = set()
     for row in rows:
@@ -197,6 +148,9 @@ def _load_tenant_principals(connection, inspector, tenant_keys: set[str], findin
         if tenant_key not in tenant_keys:
             findings.add("tenant.principal_key_unknown", kind="tenants", record_id=principal_id)
             continue
+        if not bool(row.get("is_active")):
+            findings.add("tenant.principal_inactive", kind="tenants", record_id=principal_id)
+            continue
         principals[principal_id] = tenant_key
         observed_keys.add(tenant_key)
     for tenant_key in sorted(tenant_keys - observed_keys):
@@ -206,7 +160,7 @@ def _load_tenant_principals(connection, inspector, tenant_keys: set[str], findin
 
 def _relational_tenant_id_columns(inspector, table_name: str) -> set[str]:
     columns: set[str] = set()
-    for foreign_key in inspector.get_foreign_keys(table_name, schema="public"):
+    for foreign_key in resolution.foreign_keys(inspector, table_name):
         if foreign_key.get("referred_table") != "tenants":
             continue
         if foreign_key.get("referred_columns") != ["id"]:
@@ -241,8 +195,8 @@ def _scan_existing_tenant_columns(
 ) -> dict[str, int]:
     scanned: dict[str, int] = {}
     preparer = connection.dialect.identifier_preparer
-    for table_name in sorted(inspector.get_table_names(schema="public")):
-        reflected = inspector.get_columns(table_name, schema="public")
+    for table_name in sorted(resolution.table_names(inspector)):
+        reflected = resolution.columns(inspector, table_name)
         columns = {item["name"] for item in reflected}
         relational_columns = _relational_tenant_id_columns(inspector, table_name)
         for column_name in sorted(columns & {"tenant_id", "tenant_key"}):
@@ -353,7 +307,6 @@ def run_preflight(database_url: str, manifest_path: Path, output_path: Path) -> 
     manifest = _load_manifest(manifest_path)
     tenant_keys: set[str] = manifest["tenant_keys"]
     findings = Findings()
-    used: dict[str, set[str]] = {section: set() for section in _MAPPING_SECTIONS}
     assignments: dict[str, dict[int, str]] = {kind: {} for kind in _CORE_TABLE_COLUMNS}
     record_counts: dict[str, int] = {}
 
@@ -362,98 +315,12 @@ def run_preflight(database_url: str, manifest_path: Path, output_path: Path) -> 
         inspector = inspect(engine)
         public_tables = set(inspector.get_table_names(schema="public"))
         with engine.connect() as connection:
-            for table_name, columns in _CORE_TABLE_COLUMNS.items():
-                if table_name not in public_tables:
-                    findings.add("tenant.core_table_missing", kind=table_name, record_id=0)
-                    record_counts[table_name] = 0
-                    continue
-                rows = _fetch_rows(connection, inspector, table_name, columns)
-                record_counts[table_name] = len(rows)
-                if rows or set(columns).issubset({item["name"] for item in inspector.get_columns(table_name)}):
-                    continue
-                findings.add("tenant.core_columns_missing", kind=table_name, record_id=0)
-
-            market_rows = _fetch_rows(connection, inspector, "markets", _CORE_TABLE_COLUMNS["markets"])
-            for row in market_rows:
-                record_id = int(row["id"])
-                code = str(row["code"] or "").strip()
-                tenant = manifest["market_codes"].get(code)
-                if tenant:
-                    assignments["markets"][record_id] = tenant
-                    used["market_codes"].add(code)
-                else:
-                    findings.add("tenant.market_mapping_missing", kind="markets", record_id=record_id)
-
-            team_rows = _fetch_rows(connection, inspector, "teams", _CORE_TABLE_COLUMNS["teams"])
-            for row in team_rows:
-                record_id = int(row["id"])
-                relation = {assignments["markets"][int(row["market_id"])]} if row.get("market_id") in assignments["markets"] else set()
-                explicit = manifest["team_ids"].get(str(record_id))
-                if explicit:
-                    used["team_ids"].add(str(record_id))
-                tenant = _resolve_relation(kind="teams", record_id=record_id, relation_candidates=relation, explicit=explicit, findings=findings)
-                if tenant:
-                    assignments["teams"][record_id] = tenant
-
-            user_rows = _fetch_rows(connection, inspector, "users", _CORE_TABLE_COLUMNS["users"])
-            for row in user_rows:
-                record_id = int(row["id"])
-                relation = {assignments["teams"][int(row["team_id"])]} if row.get("team_id") in assignments["teams"] else set()
-                explicit = manifest["user_ids"].get(str(record_id))
-                if explicit:
-                    used["user_ids"].add(str(record_id))
-                tenant = _resolve_relation(kind="users", record_id=record_id, relation_candidates=relation, explicit=explicit, findings=findings)
-                if tenant:
-                    assignments["users"][record_id] = tenant
-
-            channel_rows = _fetch_rows(connection, inspector, "channel_accounts", _CORE_TABLE_COLUMNS["channel_accounts"])
-            for row in channel_rows:
-                record_id = int(row["id"])
-                relation = {assignments["markets"][int(row["market_id"])]} if row.get("market_id") in assignments["markets"] else set()
-                explicit = manifest["channel_account_ids"].get(str(record_id))
-                if explicit:
-                    used["channel_account_ids"].add(str(record_id))
-                tenant = _resolve_relation(kind="channel_accounts", record_id=record_id, relation_candidates=relation, explicit=explicit, findings=findings)
-                if tenant:
-                    assignments["channel_accounts"][record_id] = tenant
-
-            customer_candidates: dict[int, set[str]] = defaultdict(set)
-            ticket_rows = _fetch_rows(connection, inspector, "tickets", _CORE_TABLE_COLUMNS["tickets"])
-            for row in ticket_rows:
-                record_id = int(row["id"])
-                relations: set[str] = set()
-                links = (
-                    ("markets", row.get("market_id")),
-                    ("teams", row.get("team_id")),
-                    ("channel_accounts", row.get("channel_account_id")),
-                    ("users", row.get("assignee_id")),
-                    ("users", row.get("created_by")),
-                )
-                for target, raw_id in links:
-                    if raw_id is not None and int(raw_id) in assignments[target]:
-                        relations.add(assignments[target][int(raw_id)])
-                explicit = manifest["ticket_ids"].get(str(record_id))
-                if explicit:
-                    used["ticket_ids"].add(str(record_id))
-                tenant = _resolve_relation(kind="tickets", record_id=record_id, relation_candidates=relations, explicit=explicit, findings=findings)
-                if tenant:
-                    assignments["tickets"][record_id] = tenant
-                    if row.get("customer_id") is not None:
-                        customer_candidates[int(row["customer_id"])].add(tenant)
-
-            customer_rows = _fetch_rows(connection, inspector, "customers", _CORE_TABLE_COLUMNS["customers"])
-            for row in customer_rows:
-                record_id = int(row["id"])
-                relations = customer_candidates.get(record_id, set())
-                explicit = manifest["customer_ids"].get(str(record_id))
-                if explicit:
-                    used["customer_ids"].add(str(record_id))
-                if len(relations) > 1:
-                    findings.add("tenant.customer_cross_tenant_conflict", kind="customers", record_id=record_id)
-                    continue
-                tenant = _resolve_relation(kind="customers", record_id=record_id, relation_candidates=set(relations), explicit=explicit, findings=findings)
-                if tenant:
-                    assignments["customers"][record_id] = tenant
+            assignments, record_counts, _used = resolution.resolve_assignments(
+                connection,
+                inspector,
+                manifest,
+                findings,
+            )
 
             principal_keys = _load_tenant_principals(connection, inspector, tenant_keys, findings)
             scanned_tenant_columns = _scan_existing_tenant_columns(
@@ -471,10 +338,6 @@ def run_preflight(database_url: str, manifest_path: Path, output_path: Path) -> 
                     kind="schema",
                     record_id=missing_column,
                 )
-
-        for section in _MAPPING_SECTIONS:
-            for key in sorted(set(manifest[section]) - used[section]):
-                findings.add("tenant.mapping_unused", kind=section, record_id=key)
 
         issue_data = findings.as_dict()
         payload = {
