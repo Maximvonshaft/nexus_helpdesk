@@ -30,6 +30,8 @@
 - Reproduce fresh-Alembic failure when the restricted source owner must install `vector`.
 - Assert the manifest binds the preinstalled vector version and restore refuses a missing/mismatched target extension before mutation.
 - Assert the restore TOC excludes exactly the vector extension records without broadly excluding application objects.
+- Assert a target-only schema or relation rejects restore before any `pg_restore` invocation.
+- Assert image rollback uses the requested registry artifact without local build fallback.
 - Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
 - Assert a committed restore is recorded before post-restore identity verification.
@@ -53,6 +55,8 @@
 - Atomically publish archive plus manifest with no-target-directory semantics.
 - Verify manifest, digest, size, source identity, exact head and exact target vector version before restore.
 - Refuse in-place restore unless separately acknowledged.
+- Prove the target has no non-system schema and no public relation outside the preinstalled extension dependency graph.
+- Fail with `rollback_target_not_empty` before mutation when the clean-target contract is not met.
 - Generate a temporary TOC from the validated archive and comment exactly one `EXTENSION - vector` entry plus at most one matching extension comment.
 - Fail closed on missing, duplicate or unrecognized vector TOC entries.
 - Use `pg_restore --exit-on-error --single-transaction --clean --if-exists --use-list` for all remaining objects.
@@ -60,6 +64,7 @@
 - Record `DATABASE_RESTORE_APPLIED` immediately after successful restore and `DATABASE_RESTORED` only after post-verification.
 - Delete temporary TOC files on success and failure.
 - Execute old-image restart only with an explicit health URL.
+- Use Docker Compose `--no-build --pull always` so an unavailable old image fails instead of building locally.
 - Require explicit HTTP 2xx from `/healthz` and `/readyz`; reject redirects.
 - Write structured success or partial-failure rollback states from an EXIT trap.
 
@@ -92,6 +97,7 @@
 - Upgrade, downgrade one revision, plan repair and re-upgrade as the source role.
 - Seed a synthetic Market/Team relationship.
 - Invoke the real backup script as the source role.
+- Prove the restore database is clean except for the preinstalled extension.
 - Invoke the real rollback script as the restore role while preserving the preinstalled vector extension.
 - Compare source/restore evidence and RTO/RPO.
 - Remove backup bytes and temporary TOC files before artifact processing.
@@ -116,5 +122,5 @@
 ## Decision boundary
 
 - **Clean qualification:** mark the recovery foundation Ready for unified acceptance; do not claim final production recovery readiness.
-- **Migration/restore/evidence/role/extension-isolation failure:** keep Draft and fix the reproduced cause.
+- **Migration/restore/evidence/role/extension/target-cleanliness/exact-image failure:** keep Draft and fix the reproduced cause.
 - **Tenant retention/DSAR request:** defer to #546 rather than creating parallel ownership.
