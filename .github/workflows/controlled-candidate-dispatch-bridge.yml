@@ -109,6 +109,6 @@ jobs:
             '- #533 GO: `false`')"
           gh api \
             --method POST \
-            "repos/${GH_REPO}/issues/714/comments" \
+            "repos/${GH_REPO}/issues/724/comments" \
             --raw-field body="$body" \
             >/dev/null
