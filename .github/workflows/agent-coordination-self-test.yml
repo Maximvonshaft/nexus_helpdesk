@@ -6,7 +6,7 @@ on:
     types: [opened, reopened, synchronize, edited, ready_for_review]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: agent-coordination-self-test-${{ github.repository }}-${{ github.event.pull_request.number }}
@@ -69,37 +69,3 @@ jobs:
           path: artifacts/agent-coordination/tests.xml
           if-no-files-found: warn
           retention-days: 7
-
-  synchronize-pr685-latest-main:
-    if: github.event.pull_request.head.ref == 'agent/webchat-live-voice-423-20260713'
-    name: synchronize-pr685-latest-main
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout exact PR branch with push authority
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: agent/webchat-live-voice-423-20260713
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Merge exact latest main and restore workflow authority
-        env:
-          MAIN_SHA: 6fdfc71888fd0d6d95f1165d234e57d73da92ac3
-          BRANCH_NAME: agent/webchat-live-voice-423-20260713
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
-          git config user.name "Maximvonshaft"
-          git config user.email "202882752+Maximvonshaft@users.noreply.github.com"
-          git fetch origin "$MAIN_SHA"
-          if ! git merge --no-commit --no-ff "$MAIN_SHA"; then
-            git status --short
-            exit 1
-          fi
-          git checkout "$MAIN_SHA" -- .github/workflows/agent-coordination-self-test.yml
-          git diff --check
-          git add -A
-          git commit -m "chore: sync PR685 with latest main"
-          git push origin "HEAD:${BRANCH_NAME}"
