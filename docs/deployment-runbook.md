@@ -34,11 +34,16 @@ bash scripts/deploy/safe_update_server.sh
 bash scripts/deploy/preflight.sh
 bash scripts/deploy/backup_postgres.sh ./backups
 bash scripts/deploy/run_migrations.sh
-docker compose -f deploy/docker-compose.server.yml up -d postgres app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot nginx
+docker compose -f deploy/docker-compose.server.yml up -d postgres app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot runtime-warmer nginx
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/readyz
 docker compose -f deploy/docker-compose.server.yml exec -T app python /app/scripts/smoke/warm_private_ai_runtime.py
 ```
+
+`backup_postgres.sh` publishes an atomic directory bundle under `./backups/`.
+Each bundle contains `database.dump` and `backup_manifest.json`; retain the complete
+directory and its permissions. A legacy standalone `.sql.gz` file is not a valid
+input to the current rollback helper.
 
 Run the Runtime warmup after every app/worker restart and before public smoke.
 It keeps the first real customer turn from paying Ollama cold-load latency.
@@ -51,12 +56,21 @@ Keep `ENABLE_OUTBOUND_DISPATCH=false`, `OUTBOUND_PROVIDER=disabled`, and `OUTBOU
 
 ## Rollback flow
 
+Select the exact bundle directory produced by the backup step. Do not pass a
+standalone dump or `.sql.gz` file.
+
 ```bash
 export ROLLBACK_CONFIRM=I_UNDERSTAND
-export DATABASE_URL='postgresql+psycopg://USER:PASSWORD@HOST:5432/helpdesk'
+export POSTGRES_NATIVE_URL='postgresql://USER:PASSWORD@HOST:5432/helpdesk_restore'
 export OLD_IMAGE_TAG='nexusdesk/helpdesk:previous'
-bash scripts/deploy/rollback_release.sh ./backups/helpdesk_YYYYMMDD_HHMMSS.sql.gz
+export ROLLBACK_HEALTH_URL='http://127.0.0.1'
+bash scripts/deploy/rollback_release.sh ./backups/helpdesk_YYYYMMDDTHHMMSSZ
 ```
+
+The rollback helper validates the bundle manifest and archive before mutation,
+restores only to an approved clean target, restarts the exact old image without
+building from the current checkout, waits for the default image-backed services,
+and verifies `/healthz` plus `/readyz` before reporting success.
 
 ## Termius / phone operation
 

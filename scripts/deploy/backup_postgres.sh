@@ -1,11 +1,118 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-: "${DATABASE_URL:?DATABASE_URL is required}"
+normalize_native_url() {
+  local value="${POSTGRES_NATIVE_URL:-${DATABASE_URL:-}}"
+  case "$value" in
+    postgresql+psycopg://*) value="postgresql://${value#postgresql+psycopg://}" ;;
+    postgresql+psycopg2://*) value="postgresql://${value#postgresql+psycopg2://}" ;;
+    postgres+psycopg://*) value="postgresql://${value#postgres+psycopg://}" ;;
+  esac
+  POSTGRES_URL_CANDIDATE="$value" python - <<'PYURL'
+import os
+from urllib.parse import unquote, urlsplit
+
+value = os.environ["POSTGRES_URL_CANDIDATE"]
+parsed = urlsplit(value)
+if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
+    raise SystemExit("postgres_native_url_invalid")
+if not parsed.username:
+    raise SystemExit("postgres_native_url_user_required")
+host_authority = unquote(parsed.netloc.rsplit("@", 1)[-1])
+if "," in host_authority:
+    raise SystemExit("postgres_native_url_multi_host_not_allowed")
+if parsed.query:
+    raise SystemExit("postgres_native_url_query_not_allowed")
+if parsed.fragment:
+    raise SystemExit("postgres_native_url_fragment_not_allowed")
+try:
+    parsed.port
+except ValueError as exc:
+    raise SystemExit("postgres_native_url_port_invalid") from exc
+database = parsed.path.lstrip("/")
+if not database or "/" in database:
+    raise SystemExit("postgres_native_url_database_invalid")
+print(value, end="")
+PYURL
+}
+
+POSTGRES_NATIVE_URL="$(normalize_native_url)"
 OUT_DIR="${1:-./backups}"
-mkdir -p "$OUT_DIR"
-STAMP="$(date +%Y%m%d_%H%M%S)"
-OUT_FILE="$OUT_DIR/helpdesk_${STAMP}.sql.gz"
+umask 077
+mkdir -p -- "$OUT_DIR"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+FINAL_BUNDLE="$OUT_DIR/helpdesk_${STAMP}"
+TMP_BUNDLE="$(mktemp -d "$OUT_DIR/.helpdesk_${STAMP}.XXXXXX")"
+ARCHIVE="$TMP_BUNDLE/database.dump"
+MANIFEST="$TMP_BUNDLE/backup_manifest.json"
 
-pg_dump "$DATABASE_URL" | gzip > "$OUT_FILE"
-echo "Backup written to $OUT_FILE"
+cleanup() {
+  if [[ -n "${TMP_BUNDLE:-}" && -d "$TMP_BUNDLE" ]]; then
+    rm -rf -- "$TMP_BUNDLE"
+  fi
+}
+trap cleanup EXIT
+
+pg_dump \
+  --dbname="$POSTGRES_NATIVE_URL" \
+  --format=custom \
+  --compress=9 \
+  --no-owner \
+  --no-privileges \
+  --file="$ARCHIVE"
+
+test -s "$ARCHIVE"
+pg_restore --list "$ARCHIVE" >/dev/null
+BACKUP_SHA256="sha256:$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+BACKUP_SIZE_BYTES="$(wc -c < "$ARCHIVE" | tr -d ' ')"
+SOURCE_DATABASE="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT current_database()')"
+ALEMBIC_OUTPUT="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version ORDER BY version_num')"
+mapfile -t ALEMBIC_HEADS <<< "$ALEMBIC_OUTPUT"
+if [[ "${#ALEMBIC_HEADS[@]}" -ne 1 || -z "${ALEMBIC_HEADS[0]}" ]]; then
+  echo "Expected exactly one Alembic head before backup" >&2
+  exit 3
+fi
+VECTOR_VERSION="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c "SELECT extversion FROM pg_extension WHERE extname = 'vector'")"
+if [[ ! "$VECTOR_VERSION" =~ ^[A-Za-z0-9._+-]{1,80}$ ]]; then
+  echo "Required preinstalled vector extension is missing or has an invalid version" >&2
+  exit 4
+fi
+
+MANIFEST="$MANIFEST" \
+BACKUP_SHA256="$BACKUP_SHA256" \
+BACKUP_SIZE_BYTES="$BACKUP_SIZE_BYTES" \
+SOURCE_DATABASE="$SOURCE_DATABASE" \
+ALEMBIC_HEAD="${ALEMBIC_HEADS[0]}" \
+VECTOR_VERSION="$VECTOR_VERSION" \
+CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+python - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+source_identity = hashlib.sha256(os.environ["SOURCE_DATABASE"].encode("utf-8")).hexdigest()
+payload = {
+    "schema_version": "nexus_postgres_backup_manifest_v1",
+    "format": "postgres_custom",
+    "archive": "database.dump",
+    "archive_sha256": os.environ["BACKUP_SHA256"],
+    "archive_size_bytes": int(os.environ["BACKUP_SIZE_BYTES"]),
+    "source_database_sha256": source_identity,
+    "alembic_head": os.environ["ALEMBIC_HEAD"],
+    "preinstalled_extensions": [
+        {"name": "vector", "version": os.environ["VECTOR_VERSION"]},
+    ],
+    "created_at": os.environ["CREATED_AT"],
+}
+encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+Path(os.environ["MANIFEST"]).write_text(encoded, encoding="utf-8")
+PY
+
+test -s "$MANIFEST"
+test ! -e "$FINAL_BUNDLE"
+mv -T -- "$TMP_BUNDLE" "$FINAL_BUNDLE"
+TMP_BUNDLE=""
+trap - EXIT
+
+echo "Backup bundle written to $FINAL_BUNDLE"
