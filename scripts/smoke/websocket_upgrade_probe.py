@@ -48,6 +48,23 @@ def _host_header(parsed: SplitResult) -> tuple[str, str, int]:
     return host_header, host, port
 
 
+def _secure_ssl_context(context: ssl.SSLContext | None = None) -> ssl.SSLContext:
+    try:
+        tls_v1_2 = ssl.TLSVersion.TLSv1_2
+    except AttributeError as exc:
+        raise RuntimeError("TLS 1.2 support is required for HTTPS websocket probes") from exc
+
+    secure_context = context or ssl.create_default_context()
+    try:
+        if secure_context.minimum_version < tls_v1_2:
+            secure_context.minimum_version = tls_v1_2
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise RuntimeError("unable to enforce TLS 1.2 minimum for HTTPS websocket probe") from exc
+    if secure_context.minimum_version < tls_v1_2:
+        raise RuntimeError("HTTPS websocket probe TLS minimum is below TLS 1.2")
+    return secure_context
+
+
 def _read_headers(connection: socket.socket) -> bytes:
     response = b""
     while b"\r\n\r\n" not in response and len(response) < _MAX_HEADER_BYTES:
@@ -114,7 +131,7 @@ def probe_websocket_upgrade(
         raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
         connection = raw_socket
         if parsed.scheme == "https":
-            context = ssl_context or ssl.create_default_context()
+            context = _secure_ssl_context(ssl_context)
             connection = context.wrap_socket(raw_socket, server_hostname=host)
         connection.settimeout(timeout_seconds)
         connection.sendall(request)
