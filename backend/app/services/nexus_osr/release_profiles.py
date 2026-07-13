@@ -354,7 +354,8 @@ def _sensitive_key(key: str) -> bool:
         return True
     if segments[-1] == "tokens":
         return len(segments) == 1 or segments[-2] not in _NONSECRET_TOKEN_COUNT_PREFIXES
-    return len(segments) >= 2 and (segments[-2], segments[-1]) in _SENSITIVE_KEY_PAIRS
+    pair_terminal = "key" if segments[-1] in {"key", "keys"} else segments[-1]
+    return len(segments) >= 2 and (segments[-2], pair_terminal) in _SENSITIVE_KEY_PAIRS
 
 
 def _validate_configuration_shape(value: Any, *, depth: int) -> None:
