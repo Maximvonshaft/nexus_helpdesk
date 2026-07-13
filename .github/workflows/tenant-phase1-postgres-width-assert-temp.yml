@@ -1,0 +1,57 @@
+name: tenant-phase1-postgres-width-assert-temp
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tenant-phase1-postgres-width-assert-temp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Add PostgreSQL physical width assertions
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/tenant-principal-schema-gate.yml')
+          source = path.read_text(encoding='utf-8')
+          marker = '''          alembic upgrade head
+          test "$(alembic heads | awk '{print $1}')" = "20260713_0059"
+'''
+          addition = marker + '''          test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='tenants' AND column_name='tenant_key'")" = "80"
+          for table in markets teams users channel_accounts customers tickets; do
+            test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' AND column_name='tenant_assignment_version'")" = "80"
+          done
+'''
+          if source.count(marker) != 1:
+              raise SystemExit(f'upgrade marker count={source.count(marker)}')
+          path.write_text(source.replace(marker, addition, 1), encoding='utf-8')
+          PY
+          rm -f .github/workflows/tenant-phase1-postgres-width-assert-temp.yml
+          git add -A
+          git diff --cached --check
+
+      - name: Commit physical schema assertions
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'nexus-osr-tenant-bot'
+          git config user.email 'nexus-osr-tenant-bot@users.noreply.github.com'
+          git commit -m 'test(tenant): assert PostgreSQL Tenant field widths (#546)'
+          git push origin HEAD:"${HEAD_BRANCH}"
