@@ -9,7 +9,7 @@ Work Item #572 owns the complete decommission. PR #680 is the current non-destru
 Current reconciliation baseline:
 
 - audited main: `e96dac837b4f02a297602259953d7c274b9c2063`;
-- inventory version: `2026-07-13.2`;
+- inventory version: `2026-07-13.3`;
 - current PR: #680;
 - migration/schema/runtime changes: none.
 
@@ -23,7 +23,7 @@ The machine-readable authority is:
 - focused tests: `scripts/ci/tests/test_check_external_channel_retirement.py`;
 - CI workflow/check: `external-channel-retirement-gate`.
 
-The workflow runs for every pull request to `main`, every push to `main`, and manual dispatch. It is intentionally not path-filtered: a new reference in an unanticipated directory must not bypass classification. Repository administrators still own branch-protection configuration outside this repository.
+The workflow runs for every pull request to `main`, every push to `main`, and manual dispatch. It is intentionally not path-filtered: a new reference in an unanticipated directory must not bypass the gate. Repository administrators still own branch-protection configuration outside this repository.
 
 ## Discovery and classification contract
 
@@ -35,7 +35,16 @@ The checker recognizes five marker variants:
 - `externalChannel`;
 - `external-channel`.
 
-A regular tracked file is discovered when a marker appears in its repository path or non-binary contents. Git entries are enumerated through `git ls-files -z --stage`; only regular `100644` and `100755` blobs are scanned. Symlinks and gitlinks are excluded explicitly, while malformed index records and unsupported modes fail closed.
+A regular tracked file is discovered when a marker appears in its repository path or bounded non-binary contents. Git entries are enumerated through `git ls-files -z --stage`; only regular `100644` and `100755` blobs are scanned. Symlinks and gitlinks are excluded explicitly, while malformed index records and unsupported modes fail closed.
+
+Content scanning is streaming and bounded:
+
+- maximum content scan per tracked file: 8 MiB;
+- chunk size: 64 KiB;
+- marker matching is preserved across chunk boundaries;
+- a NUL byte classifies contents as binary and discards any earlier content marker;
+- a non-binary candidate exceeding the limit fails closed as `inventory_tracked_file_oversized`;
+- a marker in the tracked path remains authoritative without loading the file body.
 
 Inventory selectors are limited to:
 
@@ -45,13 +54,19 @@ Inventory selectors are limited to:
 
 Grouped paths expand into individual exact rules before evaluation. Production-capable roots cannot be covered by globs.
 
+## Schema migration boundary
+
+`backend/alembic/versions/` is production/schema-capable and is therefore a production root, not an allowed historical-glob root.
+
+Every current migration containing an ExternalChannel marker is exact-listed. A future migration cannot inherit a blanket historical classification: it will fail as an uncovered reference until reviewed and assigned an explicit disposition. Historical migrations remain `data_migration_dependency`; this classification does not authorize deletion or squashing.
+
 ## Asset dispositions
 
 | Disposition | Meaning | Removal authority |
 |---|---|---|
 | `active_compatibility` | A current consumer, API, worker, frontend, registry or workflow still exposes compatibility behavior. | Requires consumer migration and observation evidence. |
 | `historical_evidence` | Documentation, report or test evidence with no runtime authority. | Archive or remove only through separately reviewed hygiene work. |
-| `data_migration_dependency` | Model, schema, enum, migration or bootstrap needed to interpret historical data. | Requires data-read proof and #532 recovery rehearsal before destructive change. |
+| `data_migration_dependency` | Model, schema, enum or exact-listed migration needed to interpret historical data. | Requires data-read proof and #532 recovery rehearsal before destructive change. |
 | `safe_to_remove` | No intended long-term authority, but prerequisites are not yet proven. | Requires the listed prerequisites and a bounded removal PR. |
 | `retirement_control` | Manifest, checker, tests and CI workflow enforcing this process. | Retain until #572 is closed or a successor control is accepted. |
 
@@ -62,7 +77,7 @@ The July 13 current-main reconciliation removed stale inventory entries for asse
 - `backend/app/services/external_channel_unresolved_store.py`;
 - `backend/app/services/external_channel_payload_hash.py`.
 
-It also removed `backend/app/services/__init__.py` from the inventory because the current file no longer contains an ExternalChannel marker or installs the retired unresolved-store patch.
+It also removed `backend/app/services/__init__.py` because the current file no longer contains an ExternalChannel marker or installs the retired unresolved-store patch.
 
 The remaining explicitly classified write-capable surfaces are:
 
@@ -98,9 +113,10 @@ The checker fails closed when:
 - an exact path no longer contains a discovery marker;
 - a discovered file has no rule;
 - a discovered file matches multiple rules;
-- a glob can classify a production-capable root;
+- a glob can classify a production-capable root, including Alembic versions;
 - a historical glob matches no current reference;
 - a write surface is not exact or lacks stop-new-writes controls;
+- a non-binary content candidate exceeds 8 MiB;
 - tracked-file enumeration or file reading fails.
 
 Success output is bounded to aggregate counts, inventory metadata and a SHA-256 digest. It does not emit paths, source contents, customer data, Provider payloads, credentials, endpoints or raw operational payloads.
@@ -114,7 +130,8 @@ PR #680 owns the current-main reconciliation of this phase:
 1. classify every currently discovered reference;
 2. identify remaining write-capable surfaces;
 3. prevent new unclassified path or content references;
-4. produce exact-head bounded CI evidence.
+4. require exact review for schema-capable migrations;
+5. produce exact-head bounded CI evidence.
 
 No runtime behavior changes in this phase.
 

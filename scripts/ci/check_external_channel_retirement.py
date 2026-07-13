@@ -10,7 +10,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, Sequence
+from typing import Any, BinaryIO, Mapping, Sequence
 
 SCHEMA = "nexus.external-channel-retirement.inventory.v1"
 EXPECTED_DISCOVERY_TOKENS = (
@@ -62,6 +62,8 @@ NON_FILE_GIT_MODES = frozenset({"120000", "160000"})
 MAX_RULES = 500
 MAX_LIST_ITEMS = 100
 MAX_TEXT_LENGTH = 500
+MAX_SCANNED_FILE_BYTES = 8 * 1024 * 1024
+SCAN_CHUNK_BYTES = 64 * 1024
 
 
 class InventoryError(ValueError):
@@ -318,7 +320,7 @@ def _validate_historical_glob(
 
 
 def parse_tracked_file_index(raw: bytes) -> tuple[str, ...]:
-    """Parse `git ls-files -z --stage`, retaining only regular tracked files."""
+    """Parse ``git ls-files -z --stage``, retaining only regular tracked files."""
     try:
         decoded = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -362,12 +364,49 @@ def list_tracked_files(repo_root: Path) -> tuple[str, ...]:
     return parse_tracked_file_index(completed.stdout)
 
 
+def _stream_contains_token(
+    handle: BinaryIO,
+    token_bytes: Sequence[bytes],
+    *,
+    path: str,
+    max_file_bytes: int,
+    chunk_size: int,
+) -> bool:
+    if max_file_bytes <= 0 or chunk_size <= 0:
+        raise InventoryError("inventory_scan_bound_invalid")
+    overlap_size = max((len(token) for token in token_bytes), default=1) - 1
+    tail = b""
+    token_seen = False
+    total = 0
+
+    while True:
+        remaining = max_file_bytes - total
+        read_size = min(chunk_size, remaining + 1)
+        chunk = handle.read(read_size)
+        if not chunk:
+            return token_seen
+        total += len(chunk)
+        if total > max_file_bytes:
+            raise InventoryError("inventory_tracked_file_oversized", path)
+        if b"\x00" in chunk:
+            return False
+        window = tail + chunk
+        if any(token in window for token in token_bytes):
+            token_seen = True
+        tail = window[-overlap_size:] if overlap_size else b""
+
+
 def discover_token_paths(
     repo_root: Path,
     tracked_paths: Sequence[str],
     tokens: Sequence[str],
+    *,
+    max_file_bytes: int = MAX_SCANNED_FILE_BYTES,
+    chunk_size: int = SCAN_CHUNK_BYTES,
 ) -> tuple[str, ...]:
     root = repo_root.resolve()
+    if max_file_bytes <= 0 or chunk_size <= 0:
+        raise InventoryError("inventory_scan_bound_invalid")
     token_bytes = tuple(token.encode("utf-8") for token in tokens)
     matches: list[str] = []
     for raw_path in tracked_paths:
@@ -376,14 +415,23 @@ def discover_token_paths(
         try:
             if candidate.is_symlink() or not candidate.is_file():
                 raise InventoryError("inventory_tracked_file_type_invalid", path)
-            data = candidate.read_bytes()
+            path_match = any(token in path for token in tokens)
+            if path_match:
+                matches.append(path)
+                continue
+            with candidate.open("rb") as handle:
+                content_match = _stream_contains_token(
+                    handle,
+                    token_bytes,
+                    path=path,
+                    max_file_bytes=max_file_bytes,
+                    chunk_size=chunk_size,
+                )
         except InventoryError:
             raise
         except OSError as exc:
             raise InventoryError("inventory_tracked_file_unavailable", path) from exc
-        path_match = any(token in path for token in tokens)
-        content_match = b"\x00" not in data and any(token in data for token in token_bytes)
-        if path_match or content_match:
+        if content_match:
             matches.append(path)
     return tuple(sorted(matches))
 

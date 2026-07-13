@@ -1,6 +1,6 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-13.2",
+  "inventory_version": "2026-07-13.3",
   "audited_main_sha": "e96dac837b4f02a297602259953d7c274b9c2063",
   "discovery_tokens": [
     "ExternalChannel",
@@ -11,6 +11,7 @@
   ],
   "production_roots": [
     ".github/workflows/",
+    "backend/alembic/versions/",
     "backend/app/",
     "backend/scripts/",
     "deploy/",
@@ -19,7 +20,6 @@
     "webapp/src/"
   ],
   "allowed_historical_glob_roots": [
-    "backend/alembic/versions/",
     "backend/tests/",
     "docs/",
     "webapp/e2e/"
@@ -278,6 +278,39 @@
     },
     {
       "path": null,
+      "paths": [
+        "backend/alembic/versions/20260630_0048_external_channel_rename.py",
+        "backend/alembic/versions/20260410_0008_round12_external_channel_max.py",
+        "backend/alembic/versions/20260510_0021_external_channel_payload_hash.py",
+        "backend/alembic/versions/20260410_0006_round9_external_channel_queue_ops.py",
+        "backend/alembic/versions/20260410_0009_round13_external_channel_event_media.py",
+        "backend/alembic/versions/20260501_0012_external_channel_inbound_channel_enum.py",
+        "backend/alembic/versions/20260410_0005_round8_external_channel_markets.py",
+        "backend/alembic/versions/20260506_0019_operator_tasks.py",
+        "backend/alembic/versions/20260421_governance_overlay_round4.py",
+        "backend/alembic/versions/20260520_0026_audit_reality_closure.py",
+        "backend/alembic/versions/20260410_0007_round10_signoff_indexes.py",
+        "backend/alembic/versions/20260410_0011_round23_schema_governance.py",
+        "backend/alembic/versions/20260506_0018_tool_governance.py",
+        "backend/alembic/versions/20260522_0031_seed_provider_runtime_webchat_fast_reply.py",
+        "backend/alembic/versions/20260426_control_plane_db_foundation.py",
+        "backend/alembic/versions/20260523_0032_provider_runtime_sss_defaults.py",
+        "backend/alembic/versions/20260501_0013_merge_heads.py"
+      ],
+      "glob": null,
+      "asset_type": "migration",
+      "disposition": "data_migration_dependency",
+      "owner": "database-recovery",
+      "rationale": "Each currently known historical migration is exact-listed because schema-capable paths cannot use a wildcard reintroduction bypass.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": [
+        "data_read_evidence",
+        "recovery_rehearsal"
+      ]
+    },
+    {
+      "path": null,
       "paths": null,
       "glob": "docs/*.md",
       "asset_type": "documentation",
@@ -311,21 +344,6 @@
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": []
-    },
-    {
-      "path": null,
-      "paths": null,
-      "glob": "backend/alembic/versions/*.py",
-      "asset_type": "migration",
-      "disposition": "data_migration_dependency",
-      "owner": "database-recovery",
-      "rationale": "Historical migrations remain necessary to reconstruct and interpret persisted ExternalChannel schema state.",
-      "write_surface": false,
-      "stop_new_writes_required": false,
-      "prerequisites": [
-        "data_read_evidence",
-        "recovery_rehearsal"
-      ]
     }
   ]
 }
