@@ -1,6 +1,7 @@
 name: Apply Tenant ORM constraint correction
 
 # One-shot trusted branch repair for PR #673. The target Head lock prevents replay.
+# This comment-only child commit is merged to create a real push event.
 on:
   push:
     branches:
