@@ -21,10 +21,13 @@ python scripts/ci/check_legacy_surface_registry.py \
 Run focused tests:
 
 ```bash
-python -m unittest -v scripts.ci.tests.test_check_legacy_surface_registry
+python -m unittest -v \
+  scripts.ci.tests.test_check_legacy_surface_registry \
+  scripts.ci.tests.test_legacy_surface_version_contract
 python -m py_compile \
   scripts/ci/check_legacy_surface_registry.py \
-  scripts/ci/tests/test_check_legacy_surface_registry.py
+  scripts/ci/tests/test_check_legacy_surface_registry.py \
+  scripts/ci/tests/test_legacy_surface_version_contract.py
 ```
 
 ## Result interpretation
@@ -35,7 +38,7 @@ python -m py_compile \
 - exit `2`: registry, Git index or input evidence is malformed; treat the scan as unavailable.
 - `findings_truncated=true`: the full count is retained but the output list is capped.
 
-Registry path globs are case-insensitive; exact paths remain exact. Content-marker reads request at most the configured byte limit plus one sentinel byte.
+Registry path globs are case-insensitive; exact paths remain exact. Optional domain `path_regexes` are compiled during registry validation and should be root-anchored to their intended contract locations. Content-marker reads request at most the configured byte limit plus one sentinel byte.
 
 The output never includes matched source lines or values. A finding contains a repository path, a truncated SHA-256 path fingerprint, the discovery rule and reason codes.
 
@@ -47,7 +50,7 @@ Files under `backend/alembic/versions/` are migration history. Date, round or `v
 
 ### Versioned contracts
 
-Files such as `*.v1.json` and `*.v2.json` may be current machine contracts. Removal requires a consumer inventory, replacement contract and explicit compatibility decision.
+Files such as `*.v1.json`, `*.v2.json` and `*.v10.json` may be current machine contracts. Removal requires a consumer inventory, replacement contract and explicit compatibility decision.
 
 ### Reachable Git history
 
