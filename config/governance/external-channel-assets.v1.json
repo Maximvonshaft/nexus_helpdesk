@@ -1,7 +1,7 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-12.4",
-  "audited_main_sha": "e761bcfd9850451bcba7ffe679c4b83f87ec91bf",
+  "inventory_version": "2026-07-13.1",
+  "audited_main_sha": "e96dac837b4f02a297602259953d7c274b9c2063",
   "discovery_tokens": [
     "ExternalChannel",
     "external_channel",
@@ -28,9 +28,7 @@
     {
       "path": null,
       "paths": [
-        "backend/app/services/__init__.py",
-        "backend/app/services/external_channel_bridge.py",
-        "backend/app/services/external_channel_unresolved_store.py"
+        "backend/app/services/external_channel_bridge.py"
       ],
       "glob": null,
       "asset_type": "legacy_write_service",
@@ -70,7 +68,6 @@
     {
       "path": null,
       "paths": [
-        "backend/app/services/external_channel_payload_hash.py",
         "backend/app/settings.py"
       ],
       "glob": null,
@@ -228,18 +225,10 @@
       "path": null,
       "paths": [
         "LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md",
-        "NEXT_PHASE_MAX_PUSH_REPORT.md",
         "PATCH_MANIFEST.md",
-        "PATCH_NOTES.md",
-        "PRODUCTION_HARDENING_FIX_REPORT.md",
-        "PRODUCTION_SIGNOFF_REPORT.md",
         "README.md",
-        "ROUND25_HARDENING_REPORT.md",
         "ROUND26_FRONTEND_HARDENING_REPORT.md",
         "ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md",
-        "ROUND_A_DELIVERY_REPORT.md",
-        "ROUND_A_VERIFY_RESULTS.md",
-        "ROUND_B_VERIFY_RESULTS.md",
         "VERIFY_RESULTS.md",
         "pr_body.md"
       ],
@@ -248,6 +237,20 @@
       "disposition": "historical_evidence",
       "owner": "m12-production-readiness",
       "rationale": "Root-level delivery and audit reports are retained as historical evidence and have no runtime authority.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        "config/governance/legacy-surface-domains.v1.json"
+      ],
+      "glob": null,
+      "asset_type": "cross_domain_governance_registry",
+      "disposition": "active_compatibility",
+      "owner": "release-governance",
+      "rationale": "The current cross-domain legacy registry explicitly coordinates ExternalChannel compatibility ownership and must remain classified with this domain inventory.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": []
