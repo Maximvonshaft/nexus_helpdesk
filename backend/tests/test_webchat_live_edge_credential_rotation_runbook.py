@@ -131,3 +131,15 @@ def test_zero_secret_proof_scans_public_health_body_with_in_memory_credentials()
     ]
     for marker in required:
         assert marker in text
+
+
+def test_in_memory_secret_scan_covers_git_history_artifacts_and_logs() -> None:
+    text = _read()
+    required = [
+        "exact release tree and reachable Git history",
+        "generated browser artifacts",
+        "sanitized evidence artifacts",
+        "bounded log window",
+    ]
+    for marker in required:
+        assert marker in text
