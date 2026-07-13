@@ -80,6 +80,19 @@ class LegacySurfaceRegistryTests(unittest.TestCase):
         self.assertGreaterEqual(result['disposition_match_counts']['protected_history'], 2)
         self.assertGreaterEqual(result['disposition_match_counts']['active_authority'], 2)
 
+    def test_multi_digit_versioned_contracts_remain_owned(self):
+        files = [
+            'config/governance/example.v10.json',
+            'webapp/design/example.v12.json',
+            'backend/app/config/example.v123.json',
+            'backend/evals/contracts/example.v99.json',
+        ]
+        result = legacy.scan_registry(self.registry, files, read_text=lambda _: '')
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['unowned_count'], 0)
+        self.assertEqual(result['overlap_count'], 0)
+        self.assertEqual(result['owner_issue_match_counts']['650'], 4)
+
     def test_external_channel_path_matching_is_case_insensitive(self):
         result = legacy.scan_registry(
             self.registry,
