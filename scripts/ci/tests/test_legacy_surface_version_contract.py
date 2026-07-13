@@ -16,8 +16,11 @@ spec.loader.exec_module(legacy)
 
 
 class LegacySurfaceVersionContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.registry = legacy.load_registry(REGISTRY_PATH)
+
     def test_multi_digit_versioned_contracts_are_owned(self) -> None:
-        registry = legacy.load_registry(REGISTRY_PATH)
         paths = [
             "config/governance/example.v10.json",
             "webapp/design/example.v12.json",
@@ -25,13 +28,39 @@ class LegacySurfaceVersionContractTests(unittest.TestCase):
             "backend/evals/runtime/example.v42.json",
         ]
 
-        result = legacy.scan_registry(registry, paths, read_text=lambda _path: "")
+        result = legacy.scan_registry(self.registry, paths, read_text=lambda _path: "")
 
         self.assertTrue(result["ok"], result)
         self.assertTrue(result["classification_complete"], result)
         self.assertEqual(result["unowned_count"], 0, result)
         self.assertEqual(result["overlap_count"], 0, result)
         self.assertEqual(result["owner_issue_match_counts"].get("650"), len(paths), result)
+
+    def test_versioned_contract_outside_allowed_roots_fails_closed(self) -> None:
+        path = "outside/example.v10.json"
+
+        result = legacy.scan_registry(self.registry, [path], read_text=lambda _path: "")
+
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(result["classification_complete"], result)
+        self.assertEqual(result["unowned_count"], 1, result)
+        self.assertEqual(result["matched_file_count"], 0, result)
+        self.assertEqual(result["findings"][0]["path"], path)
+        self.assertIn("legacy_surface_unowned", result["findings"][0]["reason_codes"])
+
+    def test_non_numeric_version_suffixes_are_not_contract_markers(self) -> None:
+        paths = [
+            "config/governance/example.v12draft.json",
+            "webapp/design/example.v.json",
+            "backend/app/config/example.v-1.json",
+        ]
+
+        result = legacy.scan_registry(self.registry, paths, read_text=lambda _path: "")
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["classification_complete"], result)
+        self.assertEqual(result["matched_file_count"], 0, result)
+        self.assertEqual(result["finding_count"], 0, result)
 
     def test_invalid_domain_path_regex_is_rejected(self) -> None:
         raw = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
