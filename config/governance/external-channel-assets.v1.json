@@ -1,0 +1,347 @@
+{
+  "schema": "nexus.external-channel-retirement.inventory.v1",
+  "inventory_version": "2026-07-13.4",
+  "audited_main_sha": "df4863d4e4c77b47d694d4eca3f655fa93a8e67b",
+  "discovery_tokens": [
+    "ExternalChannel",
+    "external_channel",
+    "EXTERNAL_CHANNEL",
+    "externalChannel",
+    "external-channel"
+  ],
+  "production_roots": [
+    ".github/workflows/",
+    "backend/alembic/versions/",
+    "backend/app/",
+    "backend/scripts/",
+    "deploy/",
+    "frontend/",
+    "scripts/",
+    "webapp/src/"
+  ],
+  "allowed_historical_glob_roots": [
+    "backend/tests/",
+    "docs/",
+    "webapp/e2e/"
+  ],
+  "rules": [
+    {
+      "path": null,
+      "paths": [
+        "backend/app/services/external_channel_bridge.py"
+      ],
+      "glob": null,
+      "asset_type": "legacy_write_service",
+      "disposition": "safe_to_remove",
+      "owner": "m6-channel-gateway",
+      "rationale": "Retired persistence activation and legacy write services require caller migration, traffic evidence and observation before removal.",
+      "write_surface": true,
+      "stop_new_writes_required": true,
+      "prerequisites": [
+        "caller_migration",
+        "traffic_evidence",
+        "observation_window"
+      ]
+    },
+    {
+      "path": null,
+      "paths": [
+        "backend/app/api/admin.py",
+        "backend/app/api/operator_queue.py",
+        "backend/app/api/tickets.py",
+        "backend/app/services/background_jobs.py",
+        "backend/app/services/message_dispatch.py"
+      ],
+      "glob": null,
+      "asset_type": "compatibility_write_path",
+      "disposition": "active_compatibility",
+      "owner": "m6-channel-gateway",
+      "rationale": "Current API or worker paths can still invoke legacy writes and must be migrated through a separately reviewed stop-new-writes slice.",
+      "write_surface": true,
+      "stop_new_writes_required": true,
+      "prerequisites": [
+        "caller_migration",
+        "traffic_evidence",
+        "observation_window"
+      ]
+    },
+    {
+      "path": null,
+      "paths": [
+        "backend/app/settings.py"
+      ],
+      "glob": null,
+      "asset_type": "legacy_runtime_support",
+      "disposition": "safe_to_remove",
+      "owner": "m6-channel-gateway",
+      "rationale": "Retired helper and disabled-only setting references have no long-term authority after caller migration.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": [
+        "caller_migration",
+        "observation_window"
+      ]
+    },
+    {
+      "path": null,
+      "paths": [
+        "backend/app/services/external_channel_runtime_service.py"
+      ],
+      "glob": null,
+      "asset_type": "compatibility_status_service",
+      "disposition": "active_compatibility",
+      "owner": "m6-channel-gateway",
+      "rationale": "Read-only disabled-status compatibility remains callable until all consumers are proven migrated.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        "backend/alembic/env.py",
+        "backend/app/enums.py",
+        "backend/app/models.py",
+        "backend/app/models_control_plane.py",
+        "backend/app/operator_models.py",
+        "backend/app/operator_schemas.py",
+        "backend/app/schemas.py",
+        "backend/app/schemas_channel_control.py",
+        "backend/app/tool_models.py",
+        "backend/app/webchat_schemas.py"
+      ],
+      "glob": null,
+      "asset_type": "historical_data_contract",
+      "disposition": "data_migration_dependency",
+      "owner": "database-recovery",
+      "rationale": "Models, schemas, enums and migration bootstrap remain necessary to read or reconstruct historical ExternalChannel data.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": [
+        "data_read_evidence",
+        "recovery_rehearsal"
+      ]
+    },
+    {
+      "path": null,
+      "paths": [
+        "backend/app/api/admin_outbound_semantics.py",
+        "backend/app/api/ticket_perf.py",
+        "backend/app/services/ai_runtime/__init__.py",
+        "backend/app/services/ai_runtime_context.py",
+        "backend/app/services/background_job_transaction_boundary.py",
+        "backend/app/services/channel_control_service.py",
+        "backend/app/services/observability.py",
+        "backend/app/services/operator_queue.py",
+        "backend/app/services/outbound_adapters/whatsapp.py",
+        "backend/app/services/outbound_adapters/whatsapp_native.py",
+        "backend/app/services/outbound_channel_registry.py",
+        "backend/app/services/outbound_safety.py",
+        "backend/app/services/outbound_semantics.py",
+        "backend/app/services/provider_runtime/output_contracts.py",
+        "backend/app/services/tool_governance.py",
+        "backend/app/services/webchat_ai_decision_runtime/prompt_builder.py",
+        "backend/app/services/webchat_ai_reconciler.py",
+        "backend/app/services/webchat_ai_service.py",
+        "backend/app/services/webchat_runtime_output_parser.py"
+      ],
+      "glob": null,
+      "asset_type": "runtime_compatibility",
+      "disposition": "active_compatibility",
+      "owner": "m6-channel-gateway",
+      "rationale": "Governed runtime code still imports or exposes compatibility symbols and requires explicit consumer migration.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        ".gitignore",
+        "backend/.env.example",
+        "backend/scripts/postgres_cutover_rehearsal.py",
+        "backend/scripts/smoke_verify_round27.py",
+        "backend/scripts/validate_production_readiness.py",
+        "check_bridge.py",
+        "deploy/.env.prod.example",
+        "deploy/.env.prod.external-postgres.example",
+        "deploy/.env.prod.local-postgres.example",
+        "deploy/.env.rc-test.example",
+        "deploy/docker-compose.operations-dispatch.yml",
+        "deploy/docker-compose.server.yml",
+        "deploy/nginx/nexusdesk.edge.conf.template",
+        "scripts/deploy/check_deploy_contract.sh",
+        "scripts/deploy/preflight.sh",
+        "scripts/probe_nexus_runtime.sh",
+        "scripts/release/generate_rc_test_env.py",
+        "scripts/smoke/browser_bundle_secret_scan.py",
+        "scripts/smoke/worker_daemon_readiness_probe.py"
+      ],
+      "glob": null,
+      "asset_type": "deployment_script_compatibility",
+      "disposition": "safe_to_remove",
+      "owner": "m12-production-readiness",
+      "rationale": "Executable, readiness and environment compatibility references require migration and observation before cleanup.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": [
+        "caller_migration",
+        "observation_window"
+      ]
+    },
+    {
+      "path": null,
+      "paths": [
+        "frontend/app.js",
+        "frontend/index.html",
+        "webapp/src/lib/api.ts",
+        "webapp/src/lib/format.ts",
+        "webapp/src/lib/types.ts"
+      ],
+      "glob": null,
+      "asset_type": "frontend_compatibility",
+      "disposition": "active_compatibility",
+      "owner": "frontend-compatibility",
+      "rationale": "Operator and legacy frontend references remain visible until consumer migration and replacement proof are complete.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        ".github/workflows/backend-ci.yml",
+        ".github/workflows/postgres-migration.yml",
+        ".github/workflows/pr-webcall-guard.yml",
+        ".github/workflows/production-readiness.yml"
+      ],
+      "glob": null,
+      "asset_type": "workflow_compatibility",
+      "disposition": "active_compatibility",
+      "owner": "release-governance",
+      "rationale": "Existing required workflows still verify legacy compatibility assumptions during the migration window.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        "LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md",
+        "README.md",
+        "ROUND26_FRONTEND_HARDENING_REPORT.md",
+        "ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md",
+        "pr_body.md"
+      ],
+      "glob": null,
+      "asset_type": "historical_report",
+      "disposition": "historical_evidence",
+      "owner": "m12-production-readiness",
+      "rationale": "Root-level delivery and audit reports are retained as historical evidence and have no runtime authority.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        "config/governance/legacy-surface-domains.v1.json",
+        "scripts/ci/tests/test_check_legacy_surface_registry.py"
+      ],
+      "glob": null,
+      "asset_type": "cross_domain_governance_registry",
+      "disposition": "active_compatibility",
+      "owner": "release-governance",
+      "rationale": "Current cross-domain legacy controls explicitly coordinate ExternalChannel compatibility ownership and must remain classified with this domain inventory.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        ".github/workflows/external-channel-retirement-gate.yml",
+        "config/governance/external-channel-assets.v1.json",
+        "scripts/ci/check_external_channel_retirement.py",
+        "scripts/ci/tests/test_check_external_channel_retirement.py"
+      ],
+      "glob": null,
+      "asset_type": "retirement_control",
+      "disposition": "retirement_control",
+      "owner": "release-governance",
+      "rationale": "Additive inventory, checker, test and workflow controls prevent unreviewed retired transport reintroduction.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": [
+        "backend/alembic/versions/20260630_0048_external_channel_rename.py",
+        "backend/alembic/versions/20260410_0008_round12_external_channel_max.py",
+        "backend/alembic/versions/20260510_0021_external_channel_payload_hash.py",
+        "backend/alembic/versions/20260410_0006_round9_external_channel_queue_ops.py",
+        "backend/alembic/versions/20260410_0009_round13_external_channel_event_media.py",
+        "backend/alembic/versions/20260501_0012_external_channel_inbound_channel_enum.py",
+        "backend/alembic/versions/20260410_0005_round8_external_channel_markets.py",
+        "backend/alembic/versions/20260506_0019_operator_tasks.py",
+        "backend/alembic/versions/20260421_governance_overlay_round4.py",
+        "backend/alembic/versions/20260520_0026_audit_reality_closure.py",
+        "backend/alembic/versions/20260410_0007_round10_signoff_indexes.py",
+        "backend/alembic/versions/20260410_0011_round23_schema_governance.py",
+        "backend/alembic/versions/20260506_0018_tool_governance.py",
+        "backend/alembic/versions/20260522_0031_seed_provider_runtime_webchat_fast_reply.py",
+        "backend/alembic/versions/20260426_control_plane_db_foundation.py",
+        "backend/alembic/versions/20260523_0032_provider_runtime_sss_defaults.py",
+        "backend/alembic/versions/20260501_0013_merge_heads.py"
+      ],
+      "glob": null,
+      "asset_type": "migration",
+      "disposition": "data_migration_dependency",
+      "owner": "database-recovery",
+      "rationale": "Each currently known historical migration is exact-listed because schema-capable paths cannot use a wildcard reintroduction bypass.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": [
+        "data_read_evidence",
+        "recovery_rehearsal"
+      ]
+    },
+    {
+      "path": null,
+      "paths": null,
+      "glob": "docs/*.md",
+      "asset_type": "documentation",
+      "disposition": "historical_evidence",
+      "owner": "m12-production-readiness",
+      "rationale": "Documentation references remain bounded migration, operations or audit evidence with no runtime authority.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": null,
+      "glob": "backend/tests/*.py",
+      "asset_type": "test",
+      "disposition": "historical_evidence",
+      "owner": "m12-production-readiness",
+      "rationale": "Tests preserve compatibility and historical behavior evidence while runtime consumers are migrated.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": null,
+      "glob": "webapp/e2e/*.ts",
+      "asset_type": "test",
+      "disposition": "historical_evidence",
+      "owner": "frontend-compatibility",
+      "rationale": "End-to-end compatibility tests preserve retired ExternalChannel behavior evidence without runtime authority.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    }
+  ]
+}

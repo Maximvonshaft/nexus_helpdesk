@@ -21,9 +21,9 @@ The target model is:
 ```text
 Tenant
  ├─ Market
- │   ├─ Team
- │   │   └─ User
- │   └─ ChannelAccount
+ │  ├─ Team
+ │  │  └─ User
+ │  └─ ChannelAccount
  ├─ Customer
  └─ Ticket
 ```
@@ -53,7 +53,8 @@ Schema: `nexus_tenant_backfill_mapping_v1`
 
 Rules:
 
-- Tenant keys are stable lowercase identifiers and cannot be `default`.
+- Tenant keys are stable lowercase identifiers, are at most 80 characters, and cannot be `default`.
+- A persisted Tenant key must already equal `lower(trim(value))`; leading or trailing whitespace is rejected rather than silently normalized.
 - Every Market requires an explicit code mapping.
 - Team, User and ChannelAccount normally inherit through organization links;
   explicit ID mappings are allowed only for disconnected records and must not
@@ -155,3 +156,29 @@ is true:
 
 No document, PR or green CI in this migration stream authorizes production
 backfill, deployment, Provider enablement or real outbound.
+
+## Phase 1 implementation contract (`20260713_0059`)
+
+The first structural revision is intentionally limited to a reversible schema
+foundation:
+
+- `tenants` stores an internal integer identity, immutable unique `tenant_key`,
+  display name, active state and audit timestamps;
+- `tenant_key` is bounded to 80 characters and must already equal `lower(trim(value))`; empty, padded, mixed-case and padded-`default` values fail closed;
+- Market, Team, User, ChannelAccount, Customer and Ticket receive nullable
+  `tenant_id` foreign keys with `RESTRICT` deletion and dedicated indexes;
+- each core table receives nullable `tenant_assignment_source` and
+  80-character `tenant_assignment_version` fields so a full `sha256:<64hex>` receipt fits without truncation;
+- ORM relationships expose the principal but no runtime authorization path is
+  switched to it in this phase;
+- the migration inserts no Tenant, applies no default and updates no historical
+  row;
+- downgrade removes only the new ownership structure while preserving all core
+  records; re-upgrade recreates empty nullable ownership fields;
+- the preflight resolves relational integer IDs through `tenants.tenant_key`
+  and compares them with manifest-derived ownership instead of treating IDs as
+  client-provided Tenant strings.
+
+This revision is not a rollout authorization. Phase 2 still requires an
+approved deployment mapping, dry-run receipt, bounded apply command and explicit
+handling of every unresolved or cross-Tenant record.
