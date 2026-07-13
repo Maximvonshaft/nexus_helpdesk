@@ -88,10 +88,13 @@ def fetch_rows(
     preparer = connection.dialect.identifier_preparer
     selected = ", ".join(preparer.quote(name) for name in requested)
     table = preparer.quote(table_name)
+    order = f" ORDER BY {preparer.quote('id')}" if "id" in requested else ""
     suffix = " FOR UPDATE" if lock_rows and connection.dialect.name == "postgresql" else ""
     return [
         dict(row._mapping)
-        for row in connection.execute(text(f"SELECT {selected} FROM {table}{suffix}"))
+        for row in connection.execute(
+            text(f"SELECT {selected} FROM {table}{order}{suffix}")
+        )
     ]
 
 

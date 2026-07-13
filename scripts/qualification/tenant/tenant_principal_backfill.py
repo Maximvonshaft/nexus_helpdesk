@@ -119,24 +119,47 @@ def _resolve_assignments(
     return assignments, record_counts
 
 
-def _load_existing_principals(connection, manifest: dict[str, Any], findings: preflight.Findings) -> dict[str, int]:
-    rows = connection.execute(text("SELECT id, tenant_key, display_name, is_active FROM tenants")).mappings().all()
-    expected = {item["tenant_key"]: item["display_name"] for item in manifest["tenants"]}
+def _load_existing_principals(
+    connection,
+    manifest: dict[str, Any],
+    findings: preflight.Findings,
+) -> tuple[dict[str, int], set[str]]:
+    rows = connection.execute(
+        text("SELECT id, tenant_key, display_name, is_active FROM tenants")
+    ).mappings().all()
+    expected = {
+        item["tenant_key"]: item["display_name"]
+        for item in manifest["tenants"]
+    }
     result: dict[str, int] = {}
+    observed_expected_keys: set[str] = set()
     for row in rows:
         key = str(row["tenant_key"] or "")
         display = str(row["display_name"] or "")
         if key not in expected:
-            findings.add("tenant.principal_key_unknown", kind="tenants", record_id=row["id"])
+            findings.add(
+                "tenant.principal_key_unknown",
+                kind="tenants",
+                record_id=row["id"],
+            )
             continue
+        observed_expected_keys.add(key)
         if display != expected[key]:
-            findings.add("tenant.principal_display_conflict", kind="tenants", record_id=row["id"])
+            findings.add(
+                "tenant.principal_display_conflict",
+                kind="tenants",
+                record_id=row["id"],
+            )
             continue
         if not bool(row.get("is_active")):
-            findings.add("tenant.principal_inactive", kind="tenants", record_id=row["id"])
+            findings.add(
+                "tenant.principal_inactive",
+                kind="tenants",
+                record_id=row["id"],
+            )
             continue
         result[key] = int(row["id"])
-    return result
+    return result, observed_expected_keys
 
 
 def _is_relational_tenant_id(inspector, table_name: str, column_name: str) -> bool:
@@ -200,13 +223,16 @@ def _lock_tenant_scope_tables(connection, inspector) -> None:
         if table_name in CORE_ORDER or table_name == "tenants" or available & {"tenant_id", "tenant_key"}:
             lock_tables.append(preparer.quote(table_name))
     if lock_tables:
-        connection.execute(
-            text(
-                "LOCK TABLE "
-                + ", ".join(lock_tables)
-                + " IN SHARE ROW EXCLUSIVE MODE NOWAIT"
+        try:
+            connection.execute(
+                text(
+                    "LOCK TABLE "
+                    + ", ".join(lock_tables)
+                    + " IN SHARE ROW EXCLUSIVE MODE NOWAIT"
+                )
             )
-        )
+        except sa.exc.OperationalError as exc:
+            raise TenantBackfillError("tenant_backfill_scope_lock_unavailable") from exc
 
 
 def _classify_core_state(
@@ -301,9 +327,42 @@ def _prepare_receipt(
     return pending_path
 
 
+def _confirm_pending_receipt(
+    pending_path: Path,
+    payload: dict[str, Any],
+    *,
+    signing_key: bytes | None = None,
+    signing_key_id: str | None = None,
+) -> None:
+    encoded = _render_receipt(
+        payload,
+        signing_key=signing_key,
+        signing_key_id=signing_key_id,
+    )
+    confirmed_path = pending_path.with_name(pending_path.name + ".confirmed")
+    if confirmed_path.exists():
+        raise TenantBackfillError("tenant_backfill_receipt_confirmation_path_exists")
+    try:
+        with confirmed_path.open("xb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(confirmed_path, pending_path)
+    except OSError as exc:
+        confirmed_path.unlink(missing_ok=True)
+        raise TenantBackfillError(
+            f"tenant_backfill_receipt_confirmation_failed:{pending_path}"
+        ) from exc
+
+
 def _publish_receipt(pending_path: Path, output_path: Path) -> None:
     try:
         os.replace(pending_path, output_path)
+    except OSError as exc:
+        raise TenantBackfillError(
+            f"tenant_backfill_receipt_publish_failed:{pending_path}"
+        ) from exc
+    try:
         directory_fd = os.open(output_path.parent, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
@@ -311,7 +370,7 @@ def _publish_receipt(pending_path: Path, output_path: Path) -> None:
             os.close(directory_fd)
     except OSError as exc:
         raise TenantBackfillError(
-            f"tenant_backfill_receipt_publish_failed:{pending_path}"
+            f"tenant_backfill_receipt_directory_sync_failed:{output_path}"
         ) from exc
 
 
@@ -357,6 +416,13 @@ def run_backfill(
     planned_counts = {table: 0 for table in CORE_ORDER}
     remaining_counts = {table: 0 for table in CORE_ORDER}
     record_counts: dict[str, int] = {}
+    principal_counts = {
+        "declared": len(manifest["tenant_keys"]),
+        "observed_existing": 0,
+        "accepted_existing": 0,
+        "planned_create": 0,
+        "created": 0,
+    }
     mutation_performed = False
     status = "fail"
 
@@ -364,8 +430,12 @@ def run_backfill(
     pending_receipt: Path | None = None
     payload: dict[str, Any] | None = None
     try:
-        transaction_context = engine.begin() if apply else engine.connect()
+        transaction_context = engine.begin()
         with transaction_context as connection:
+            if connection.dialect.name == "postgresql" and not apply:
+                connection.execute(
+                    text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                )
             if apply and connection.dialect.name == "postgresql":
                 connection.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
                 lock_acquired = connection.execute(
@@ -384,7 +454,16 @@ def run_backfill(
                 findings,
                 lock_rows=apply,
             )
-            existing_principals = _load_existing_principals(connection, manifest, findings)
+            (
+                existing_principals,
+                observed_principal_keys,
+            ) = _load_existing_principals(connection, manifest, findings)
+            declared_keys = sorted(manifest["tenant_keys"])
+            principal_counts["observed_existing"] = len(observed_principal_keys)
+            principal_counts["accepted_existing"] = len(existing_principals)
+            principal_counts["planned_create"] = len(
+                set(declared_keys) - observed_principal_keys
+            )
             _validate_non_core_tenant_columns(
                 connection,
                 inspector,
@@ -413,9 +492,11 @@ def run_backfill(
             remaining_counts = dict(planned_counts)
 
             if findings.as_dict()["issue_count"] == 0 and apply:
-                used_keys = sorted({key for values in assignments.values() for key in values.values()})
-                display_names = {item["tenant_key"]: item["display_name"] for item in manifest["tenants"]}
-                for tenant_key in used_keys:
+                display_names = {
+                    item["tenant_key"]: item["display_name"]
+                    for item in manifest["tenants"]
+                }
+                for tenant_key in declared_keys:
                     if tenant_key not in existing_principals:
                         result = connection.execute(
                             text(
@@ -425,6 +506,7 @@ def run_backfill(
                             {"tenant_key": tenant_key, "display_name": display_names[tenant_key]},
                         )
                         existing_principals[tenant_key] = int(result.scalar_one())
+                        principal_counts["created"] += 1
                         mutation_performed = True
 
                 batches_used = 0
@@ -481,6 +563,7 @@ def run_backfill(
                 "batch_size": batch_size,
                 "max_batches": max_batches,
                 "tenant_count": len(manifest["tenant_keys"]),
+                "principal_counts": principal_counts,
                 "record_counts": record_counts,
                 "planned_counts": planned_counts,
                 "already_applied_counts": already_counts,
@@ -488,6 +571,9 @@ def run_backfill(
                 "remaining_counts": remaining_counts,
                 "issues": issue_data,
                 "production_mutation_performed": mutation_performed,
+                "database_commit_state": (
+                    "prepared_uncommitted" if apply else "not_applicable"
+                ),
             }
             pending_receipt = _prepare_receipt(
                 output_path,
@@ -498,6 +584,14 @@ def run_backfill(
 
         if pending_receipt is None or payload is None:
             raise TenantBackfillError("tenant_backfill_receipt_prepare_missing")
+        if apply:
+            payload["database_commit_state"] = "committed"
+            _confirm_pending_receipt(
+                pending_receipt,
+                payload,
+                signing_key=receipt_signing_key,
+                signing_key_id=receipt_signing_key_id,
+            )
         _publish_receipt(pending_receipt, output_path)
         return 0 if status in {"pass", "partial"} else 1
     finally:

@@ -502,8 +502,12 @@ def test_receipt_publish_failure_preserves_signed_pending_receipt(
     mapping = _write_manifest(tmp_path, _manifest_payload())
     output = tmp_path / "receipt.json"
 
+    real_replace = backfill.os.replace
+
     def fail_replace(source, destination):
-        raise OSError("synthetic publish failure")
+        if Path(source) == output.with_name(output.name + ".pending") and Path(destination) == output:
+            raise OSError("synthetic publish failure")
+        return real_replace(source, destination)
 
     monkeypatch.setattr(backfill.os, "replace", fail_replace)
     with pytest.raises(backfill.TenantBackfillError, match="receipt_publish_failed"):
@@ -521,6 +525,7 @@ def test_receipt_publish_failure_preserves_signed_pending_receipt(
     receipt = json.loads(pending.read_text(encoding="utf-8"))
     assert receipt["status"] == "pass"
     assert receipt["production_mutation_performed"] is True
+    assert receipt["database_commit_state"] == "committed"
     assert backfill.verify_receipt_signature(receipt, SIGNING_KEY) is True
     assert all(value[0] == 1 for value in _core_state(url).values())
 
@@ -566,3 +571,171 @@ def test_postgresql_apply_locks_all_tenant_scope_tables_and_relationship_rows() 
     source = Path(backfill.__file__).read_text(encoding="utf-8")
     assert "IN SHARE ROW EXCLUSIVE MODE NOWAIT" in source
     assert "lock_rows=apply" in source
+
+
+def test_dry_run_uses_one_read_only_repeatable_postgresql_snapshot() -> None:
+    source = Path(backfill.__file__).read_text(encoding="utf-8")
+    assert "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY" in source
+    assert "transaction_context = engine.begin()" in source
+
+
+def test_directory_sync_failure_preserves_final_signed_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    url = _create_schema(tmp_path / "receipt-directory-sync-failure.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+    output = tmp_path / "receipt.json"
+    real_open = backfill.os.open
+
+    def fail_directory_open(path, flags, *args, **kwargs):
+        if Path(path) == output.parent:
+            raise OSError("synthetic directory sync failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(backfill.os, "open", fail_directory_open)
+    with pytest.raises(backfill.TenantBackfillError, match="directory_sync_failed"):
+        backfill.run_backfill(
+            url,
+            mapping,
+            output,
+            apply=True,
+            **_approved_apply_kwargs(mapping),
+        )
+
+    assert output.is_file()
+    assert output.with_name(output.name + ".pending").exists() is False
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    assert receipt["production_mutation_performed"] is True
+    assert backfill.verify_receipt_signature(receipt, SIGNING_KEY) is True
+    assert all(value[0] == 1 for value in _core_state(url).values())
+
+
+def test_scope_table_lock_failure_has_a_bounded_reason() -> None:
+    source = Path(backfill.__file__).read_text(encoding="utf-8")
+    assert "tenant_backfill_scope_lock_unavailable" in source
+
+
+def test_apply_creates_every_declared_principal_and_reports_counts(tmp_path: Path) -> None:
+    url = _create_schema(tmp_path / "all-declared-principals.db")
+    payload = _manifest_payload()
+    payload["tenants"].append(
+        {"tenant_key": "tenant-b", "display_name": "Tenant B"}
+    )
+    mapping = _write_manifest(tmp_path, payload)
+    output = tmp_path / "all-declared-principals.json"
+
+    assert backfill.run_backfill(
+        url,
+        mapping,
+        output,
+        apply=True,
+        **_approved_apply_kwargs(mapping),
+    ) == 0
+
+    receipt = _receipt(output)
+    assert receipt["principal_counts"] == {
+        "declared": 2,
+        "observed_existing": 0,
+        "accepted_existing": 0,
+        "planned_create": 2,
+        "created": 2,
+    }
+    assert receipt["database_commit_state"] == "committed"
+    engine = sa.create_engine(url, future=True)
+    try:
+        with engine.connect() as connection:
+            keys = connection.execute(
+                sa.text("SELECT tenant_key FROM tenants ORDER BY tenant_key")
+            ).scalars().all()
+        assert keys == ["tenant-a", "tenant-b"]
+    finally:
+        engine.dispose()
+
+
+def test_dry_run_reports_uncreated_principals_without_commit_claim(tmp_path: Path) -> None:
+    url = _create_schema(tmp_path / "dry-principals.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+    output = tmp_path / "dry-principals.json"
+
+    assert backfill.run_backfill(url, mapping, output) == 0
+    receipt = _receipt(output)
+    assert receipt["principal_counts"] == {
+        "declared": 1,
+        "observed_existing": 0,
+        "accepted_existing": 0,
+        "planned_create": 1,
+        "created": 0,
+    }
+    assert receipt["database_commit_state"] == "not_applicable"
+
+
+def test_shared_resolver_fetches_rows_in_primary_key_order() -> None:
+    engine = sa.create_engine("sqlite:///:memory:", future=True)
+    metadata = sa.MetaData()
+    sa.Table(
+        "ordered_records",
+        metadata,
+        sa.Column("id", sa.String(10), primary_key=True),
+    )
+    metadata.create_all(engine)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text("INSERT INTO ordered_records (id) VALUES ('b'), ('a')")
+            )
+            rows = backfill.resolution.fetch_rows(
+                connection,
+                sa.inspect(connection),
+                "ordered_records",
+                ("id",),
+            )
+        assert [row["id"] for row in rows] == ["a", "b"]
+    finally:
+        engine.dispose()
+
+
+def test_receipt_confirmation_failure_keeps_uncommitted_marker_for_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    url = _create_schema(tmp_path / "receipt-confirmation-failure.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+    output = tmp_path / "receipt.json"
+
+    def fail_confirmation(*args, **kwargs):
+        raise backfill.TenantBackfillError("synthetic confirmation failure")
+
+    monkeypatch.setattr(backfill, "_confirm_pending_receipt", fail_confirmation)
+    with pytest.raises(backfill.TenantBackfillError, match="confirmation failure"):
+        backfill.run_backfill(
+            url,
+            mapping,
+            output,
+            apply=True,
+            **_approved_apply_kwargs(mapping),
+        )
+
+    pending = output.with_name(output.name + ".pending")
+    assert pending.is_file()
+    receipt = json.loads(pending.read_text(encoding="utf-8"))
+    assert receipt["database_commit_state"] == "prepared_uncommitted"
+    assert backfill.verify_receipt_signature(receipt, SIGNING_KEY) is True
+    # The database may already be committed. The pending marker is deliberately
+    # conservative and requires an idempotent reconciliation run before custody.
+    assert all(value[0] == 1 for value in _core_state(url).values())
+
+
+def test_published_apply_receipt_confirms_database_commit(tmp_path: Path) -> None:
+    url = _create_schema(tmp_path / "confirmed-receipt.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+    output = tmp_path / "confirmed-receipt.json"
+
+    assert backfill.run_backfill(
+        url,
+        mapping,
+        output,
+        apply=True,
+        **_approved_apply_kwargs(mapping),
+    ) == 0
+    receipt = _receipt(output)
+    assert receipt["database_commit_state"] == "committed"
+    assert backfill.verify_receipt_signature(receipt, SIGNING_KEY) is True
