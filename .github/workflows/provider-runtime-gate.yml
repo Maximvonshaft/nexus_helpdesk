@@ -52,7 +52,10 @@ jobs:
             echo 'ERROR: .venv/ must be ignored.'
             exit 1
           fi
-          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts; then
+          # Limit retired-provider markers to executable product/runtime paths.
+          # Read-only capability probes under scripts/ legitimately identify
+          # protocol names such as openai_responses and are governed separately.
+          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src; then
             echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
             exit 1
           fi
@@ -94,6 +97,7 @@ jobs:
           python -m alembic upgrade head
 
       - name: Execute Provider Runtime targeted tests
+        id: provider_targeted
         env:
           PYTHONPATH: backend
         run: |
@@ -122,7 +126,7 @@ jobs:
           exit 0
 
       - name: Upload Provider Runtime targeted evidence
-        if: always()
+        if: always() && steps.provider_targeted.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: provider-runtime-targeted-evidence
