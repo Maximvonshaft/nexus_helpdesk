@@ -46,7 +46,6 @@ jobs:
       DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
       AUTO_INIT_DB: "false"
       SEED_DEMO_DATA: "false"
-      TENANT_RUNTIME_AUTHORITY_MODE: "enforce"
     steps:
       - name: Checkout exact proposed head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -98,6 +97,8 @@ jobs:
           test "$(alembic current | awk '{print $1}')" = "20260713_0059"
 
       - name: Prove privileged cross-Tenant access fails and same-Tenant dual-write succeeds
+        env:
+          TENANT_RUNTIME_AUTHORITY_MODE: "enforce"
         run: |
           set -Eeuo pipefail
           python - <<'PY'
@@ -217,7 +218,7 @@ jobs:
           test "$(jq -r '.status' artifacts/tenant-runtime/artifact-scan.json)" = "pass"
 
       - name: Upload bounded authority evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tenant-runtime-authority-${{ github.event.pull_request.head.sha || github.sha }}
