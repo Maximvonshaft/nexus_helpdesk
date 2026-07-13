@@ -1,7 +1,7 @@
 {
   "schema": "nexus.legacy-surface.registry.v1",
-  "registry_version": "2026-07-12.5",
-  "audited_main_sha": "a18e9b3009e979c4dfc0dbf563ef9f27bf507bba",
+  "registry_version": "2026-07-13.1",
+  "audited_main_sha": "e96dac837b4f02a297602259953d7c274b9c2063",
   "coverage": "bounded_known_legacy_markers_and_protected_history",
   "enforcement": "fail_closed",
   "finding_limit": 100,
@@ -243,13 +243,14 @@
       ],
       "selectors": {
         "paths": [],
-        "globs": [
-          "config/**/*.v[0-9].json",
-          "webapp/design/*.v[0-9].json",
-          "backend/app/config/*.v[0-9].json",
-          "backend/evals/**/*.v[0-9].json"
-        ],
-        "content_rules": []
+        "globs": [],
+        "content_rules": [],
+        "path_regexes": [
+          "(?i)^config/.+\\.v[0-9]+\\.json$",
+          "(?i)^webapp/design/[^/]+\\.v[0-9]+\\.json$",
+          "(?i)^backend/app/config/[^/]+\\.v[0-9]+\\.json$",
+          "(?i)^backend/evals/.+\\.v[0-9]+\\.json$"
+        ]
       },
       "authoritative_refs": [
         "issue:#650",
