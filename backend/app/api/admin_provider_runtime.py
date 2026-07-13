@@ -153,20 +153,17 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
         statement = (
             text(
                 """
-                SELECT tenant_id, channel_key, primary_provider, fallback_providers,
-                       canary_percent, kill_switch, enabled, updated_at
+                SELECT scenario, tenant_id, channel_key, primary_provider,
+                       fallback_providers, canary_percent, kill_switch,
+                       enabled, updated_at
                 FROM provider_routing_rules
-                WHERE scenario = :scenario
-                ORDER BY tenant_id ASC, channel_key ASC
+                ORDER BY scenario ASC, tenant_id ASC, channel_key ASC
                 """
             )
             .columns(kill_switch=Boolean(), enabled=Boolean())
             .execution_options(stream_results=True, yield_per=500)
         )
-        rows = db.execute(
-            statement,
-            {"scenario": _WEBCHAT_RUNTIME_SCENARIO},
-        ).mappings()
+        rows = db.execute(statement).mappings()
 
         output: list[dict[str, Any]] = []
         invalid_rule_found = False
@@ -192,6 +189,7 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
 
             output.append(
                 {
+                    "scenario": str(row["scenario"] or "")[:120],
                     "tenant_id": str(row["tenant_id"] or "")[:120],
                     "channel_key": str(row["channel_key"] or "")[:120],
                     "primary_provider": (
