@@ -9,12 +9,7 @@
   })();
   var sourceUrl = new URL(source.src, window.location.href);
 
-  if (window.__NEXUSDESK_WEBCHAT_LOADED__) {
-    if (window.NexusDeskWebChat && typeof window.NexusDeskWebChat.open === 'function') {
-      window.NexusDeskWebChat.open();
-    }
-    return;
-  }
+  if (window.__NEXUSDESK_WEBCHAT_LOADED__) return;
 
   var widget = document.createElement('script');
   widget.src = new URL('/webchat/widget.js', sourceUrl.origin).toString();
@@ -46,8 +41,7 @@
   if (!widget.getAttribute('data-title')) widget.setAttribute('data-title', 'Speedaf Support');
   if (!widget.getAttribute('data-subtitle')) widget.setAttribute('data-subtitle', 'AI support · human handoff when needed');
   if (!widget.getAttribute('data-button-label')) widget.setAttribute('data-button-label', 'Chat with Speedaf');
-  if (!widget.getAttribute('data-live-voice-mode')) widget.setAttribute('data-live-voice-mode', 'edge-card');
-  if (!widget.getAttribute('data-live-voice-ws-path')) widget.setAttribute('data-live-voice-ws-path', '/webchat/live/ws');
+  if (!widget.getAttribute('data-live-voice-mode')) widget.setAttribute('data-live-voice-mode', 'off');
   if (!widget.getAttribute('data-live-voice-label')) {
     widget.setAttribute('data-live-voice-label', source.getAttribute('data-voice-label') || 'VOIP Call');
   }
