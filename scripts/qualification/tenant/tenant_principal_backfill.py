@@ -190,6 +190,25 @@ def _validate_non_core_tenant_columns(
                         findings.counts[reason] += count - preflight.MAX_ISSUE_SAMPLES
 
 
+def _lock_tenant_scope_tables(connection, inspector) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    preparer = connection.dialect.identifier_preparer
+    lock_tables: list[str] = []
+    for table_name in sorted(resolution.table_names(inspector)):
+        available = {item["name"] for item in resolution.columns(inspector, table_name)}
+        if table_name in CORE_ORDER or table_name == "tenants" or available & {"tenant_id", "tenant_key"}:
+            lock_tables.append(preparer.quote(table_name))
+    if lock_tables:
+        connection.execute(
+            text(
+                "LOCK TABLE "
+                + ", ".join(lock_tables)
+                + " IN SHARE ROW EXCLUSIVE MODE NOWAIT"
+            )
+        )
+
+
 def _classify_core_state(
     rows_by_table: dict[str, list[dict[str, Any]]],
     assignments: dict[str, dict[int, str]],
@@ -269,10 +288,16 @@ def _prepare_receipt(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pending_path = output_path.with_name(output_path.name + ".pending")
-    with pending_path.open("wb") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
+    if output_path.exists() or pending_path.exists():
+        raise TenantBackfillError("tenant_backfill_receipt_path_exists")
+    try:
+        with pending_path.open("xb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        pending_path.unlink(missing_ok=True)
+        raise
     return pending_path
 
 
@@ -350,7 +375,15 @@ def run_backfill(
                     raise TenantBackfillError("tenant_backfill_lock_unavailable")
             _schema_revision(connection)
             inspector = inspect(connection)
-            assignments, record_counts = _resolve_assignments(connection, inspector, manifest, findings)
+            if apply:
+                _lock_tenant_scope_tables(connection, inspector)
+            assignments, record_counts = _resolve_assignments(
+                connection,
+                inspector,
+                manifest,
+                findings,
+                lock_rows=apply,
+            )
             existing_principals = _load_existing_principals(connection, manifest, findings)
             _validate_non_core_tenant_columns(
                 connection,
@@ -360,7 +393,13 @@ def run_backfill(
                 findings,
             )
             rows_by_table = {
-                table: _fetch_rows(connection, inspector, table, CORE_COLUMNS[table])
+                table: _fetch_rows(
+                    connection,
+                    inspector,
+                    table,
+                    CORE_COLUMNS[table],
+                    lock_rows=apply,
+                )
                 for table in CORE_ORDER
             }
             planned, already_counts = _classify_core_state(

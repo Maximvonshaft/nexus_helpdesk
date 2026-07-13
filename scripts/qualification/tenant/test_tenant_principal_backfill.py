@@ -523,3 +523,46 @@ def test_receipt_publish_failure_preserves_signed_pending_receipt(
     assert receipt["production_mutation_performed"] is True
     assert backfill.verify_receipt_signature(receipt, SIGNING_KEY) is True
     assert all(value[0] == 1 for value in _core_state(url).values())
+
+
+def test_existing_receipt_or_pending_path_is_not_overwritten(tmp_path: Path) -> None:
+    url = _create_schema(tmp_path / "receipt-path-exists.db")
+    mapping = _write_manifest(tmp_path, _manifest_payload())
+    output = tmp_path / "receipt.json"
+    output.write_text("preserve-me", encoding="utf-8")
+
+    with pytest.raises(backfill.TenantBackfillError, match="receipt_path_exists"):
+        backfill.run_backfill(
+            url,
+            mapping,
+            output,
+            apply=True,
+            **_approved_apply_kwargs(mapping),
+        )
+    assert output.read_text(encoding="utf-8") == "preserve-me"
+    engine = sa.create_engine(url, future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(sa.text("SELECT count(*) FROM tenants")).scalar_one() == 0
+        assert all(value == (None, None, None) for value in _core_state(url).values())
+    finally:
+        engine.dispose()
+
+    output.unlink()
+    pending = output.with_name(output.name + ".pending")
+    pending.write_text("pending-evidence", encoding="utf-8")
+    with pytest.raises(backfill.TenantBackfillError, match="receipt_path_exists"):
+        backfill.run_backfill(
+            url,
+            mapping,
+            output,
+            apply=True,
+            **_approved_apply_kwargs(mapping),
+        )
+    assert pending.read_text(encoding="utf-8") == "pending-evidence"
+
+
+def test_postgresql_apply_locks_all_tenant_scope_tables_and_relationship_rows() -> None:
+    source = Path(backfill.__file__).read_text(encoding="utf-8")
+    assert "IN SHARE ROW EXCLUSIVE MODE NOWAIT" in source
+    assert "lock_rows=apply" in source
