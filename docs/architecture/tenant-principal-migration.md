@@ -21,9 +21,9 @@ The target model is:
 ```text
 Tenant
  ├─ Market
- │   ├─ Team
- │   │   └─ User
- │   └─ ChannelAccount
+ │  ├─ Team
+ │  │  └─ User
+ │  └─ ChannelAccount
  ├─ Customer
  └─ Ticket
 ```
@@ -53,7 +53,8 @@ Schema: `nexus_tenant_backfill_mapping_v1`
 
 Rules:
 
-- Tenant keys are stable lowercase identifiers and cannot be `default`.
+- Tenant keys are stable lowercase identifiers, are at most 80 characters, and cannot be `default`.
+- A persisted Tenant key must already equal `lower(trim(value))`; leading or trailing whitespace is rejected rather than silently normalized.
 - Every Market requires an explicit code mapping.
 - Team, User and ChannelAccount normally inherit through organization links;
   explicit ID mappings are allowed only for disconnected records and must not
@@ -163,11 +164,11 @@ foundation:
 
 - `tenants` stores an internal integer identity, immutable unique `tenant_key`,
   display name, active state and audit timestamps;
-- `tenant_key` is non-empty, lowercase and cannot equal `default`;
+- `tenant_key` is bounded to 80 characters and must already equal `lower(trim(value))`; empty, padded, mixed-case and padded-`default` values fail closed;
 - Market, Team, User, ChannelAccount, Customer and Ticket receive nullable
   `tenant_id` foreign keys with `RESTRICT` deletion and dedicated indexes;
 - each core table receives nullable `tenant_assignment_source` and
-  `tenant_assignment_version` fields for the later reviewed backfill receipt;
+  80-character `tenant_assignment_version` fields so a full `sha256:<64hex>` receipt fits without truncation;
 - ORM relationships expose the principal but no runtime authorization path is
   switched to it in this phase;
 - the migration inserts no Tenant, applies no default and updates no historical
