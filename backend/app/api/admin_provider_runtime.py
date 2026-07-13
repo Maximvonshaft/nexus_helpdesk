@@ -36,10 +36,10 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
     enabled: bool = True
     timeout_ms: int = Field(default=10000, ge=1000, le=30000)
 
-    @field_validator("canary_percent")
+    @field_validator("canary_percent", mode="before")
     @classmethod
-    def validate_canary_stage(cls, value: int) -> int:
-        if value not in ALLOWED_CANARY_PERCENTAGES:
+    def validate_canary_stage(cls, value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value not in ALLOWED_CANARY_PERCENTAGES:
             raise ValueError("provider_runtime_canary_percent_invalid")
         return value
 
