@@ -182,7 +182,7 @@ def test_cli_rejects_oversized_manifest_before_json_parse(tmp_path: Path):
 
 def test_cli_rejects_deeply_nested_json_with_bounded_result(tmp_path: Path):
     manifest_path, result_path = tmp_path / "manifest.json", tmp_path / "result.json"
-    manifest_path.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+    manifest_path.write_text("[" * 10000 + "0" + "]" * 10000, encoding="utf-8")
     command = [sys.executable, str(SCRIPT), "--manifest", str(manifest_path), "--output", str(result_path)]
 
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
