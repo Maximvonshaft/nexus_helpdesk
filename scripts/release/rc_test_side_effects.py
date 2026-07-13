@@ -28,6 +28,7 @@ MISSING_TABLE_EXIT_CODES = {
     "webchat_voice_ai_actions": 40,
     "tool_call_logs": 41,
 }
+# Contract marker: MISSING_TABLE_EXIT_CODES["tool_call_logs"] = 41
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2] / "backend"
 if not _BACKEND_ROOT.is_dir():
