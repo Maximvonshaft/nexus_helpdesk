@@ -58,6 +58,31 @@ class RuntimeDecisionAdapter(ProviderAdapter):
         )
 
 
+class RuntimeFailureAdapter(ProviderAdapter):
+    name = "private_ai_runtime"
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, db, request):
+        self.requests.append(request)
+        return ProviderResult.unavailable(
+            self.name,
+            "synthetic_shadow_failure",
+            12,
+            fallback_allowed=False,
+        )
+
+
+class RuntimeParseRejectAdapter(RuntimeDecisionAdapter):
+    marker = "secret.invalid.intent.marker"
+
+    async def generate(self, db, request):
+        result = await super().generate(db, request)
+        result.structured_output["intent"] = self.marker
+        return result
+
+
 def _drop_provider_runtime_tables() -> None:
     with engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS provider_runtime_audit_logs"))
@@ -224,14 +249,53 @@ def test_webcall_control_mode_suppresses_direct_alias_candidate(monkeypatch, db)
     adapter = RuntimeDecisionAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
 
-    with pytest.raises(ProviderError) as caught:
-        ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+    result = ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
 
-    assert caught.value.code == "provider_canary_control_path"
+    assert result.response_text == ""
+    assert result.intent == "provider_runtime_non_authoritative"
+    assert result.handoff_required is False
+    assert result.handoff_reason is None
+    assert result.provider_name == "provider_runtime:provider_canary_control_path"
     assert adapter.requests == []
     audits = _provider_audits(db)
     assert audits[-1]["operation"] == "traffic_select"
     assert audits[-1]["safe_summary"]["traffic_selection"]["path"] == "control"
+
+
+def test_webcall_shadow_failure_is_neutral_and_non_authoritative(monkeypatch, db):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
+    adapter = RuntimeFailureAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    result = ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert result.response_text == ""
+    assert result.intent == "provider_runtime_non_authoritative"
+    assert result.handoff_required is False
+    assert result.handoff_reason is None
+    assert result.provider_name == "provider_runtime:provider_shadow_failed"
+    assert len(adapter.requests) == 1
+    audits = _provider_audits(db)
+    assert audits[-1]["error_code"] == "provider_shadow_failed"
+    assert audits[-1]["safe_summary"]["traffic_selection"]["path"] == "shadow_only"
+    assert audits[-1]["safe_summary"]["traffic_selection"]["authoritative"] is False
+
+
+def test_parse_reject_audit_uses_fixed_code_without_provider_marker(db):
+    adapter = RuntimeParseRejectAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    with pytest.raises(ProviderError) as caught:
+        ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert caught.value.code == "all_providers_failed"
+    audits = _provider_audits(db)
+    parse_audit = next(item for item in audits if item["operation"] == "parse_reject")
+    summary = parse_audit["safe_summary"]
+    assert parse_audit["error_code"] == "parse_reject"
+    assert "parse_error" not in summary
+    assert summary["parse_error_code"] == "output_contract_rejected"
+    assert RuntimeParseRejectAdapter.marker not in json.dumps(summary)
 
 
 def test_webcall_kill_switch_suppresses_alias_even_with_invalid_lower_settings(monkeypatch, db):

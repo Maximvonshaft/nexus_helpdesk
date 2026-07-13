@@ -141,7 +141,7 @@ async def test_false_environment_default_cannot_clear_persisted_router_kill_swit
     assert result.raw_payload_safe_summary["traffic_selection"]["path"] == "kill_switch"
 
 
-@pytest.mark.parametrize("error_code", ["provider_canary_control_path", "provider_shadow_completed"])
+@pytest.mark.parametrize("error_code", ["provider_canary_control_path", "provider_shadow_completed", "provider_shadow_failed"])
 def test_webcall_non_authoritative_router_outcomes_are_neutral(monkeypatch, error_code):
     session = _FakeSession()
     monkeypatch.setattr(webcall_provider_module, "SessionLocal", lambda: session)
@@ -163,7 +163,7 @@ def test_webcall_non_authoritative_router_outcomes_are_neutral(monkeypatch, erro
 
 def test_webcall_orchestrator_does_not_convert_control_outcome_to_handoff(monkeypatch):
     session = _FakeSession()
-    monkeypatch.setattr(webcall_provider_module, "SessionLocal", lambda: session())
+    monkeypatch.setattr(webcall_provider_module, "SessionLocal", lambda: session)
 
     async def control_route(db, request):
         return ProviderResult.unavailable(

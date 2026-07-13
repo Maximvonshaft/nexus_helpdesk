@@ -19,7 +19,7 @@ _DEFAULT_SCENARIO = "webcall_ai_decision"
 _DEFAULT_CHANNEL = "webcall_ai"
 _DEFAULT_TENANT = "default"
 _ALLOWED_PROVIDER_ALIASES = frozenset({"router", "private_ai_runtime"})
-_NEUTRAL_ROUTER_OUTCOMES = frozenset({"provider_canary_control_path", "provider_shadow_completed"})
+_NEUTRAL_ROUTER_OUTCOMES = frozenset({"provider_canary_control_path", "provider_shadow_completed", "provider_shadow_failed"})
 
 
 class ProviderRuntimeLLMProvider(LLMProvider):
