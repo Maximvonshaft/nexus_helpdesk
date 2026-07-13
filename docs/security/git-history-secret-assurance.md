@@ -24,26 +24,30 @@ The scanner:
 2. detects the repository object format;
 3. enumerates every object reachable from local branch, remote-tracking and tag references;
 4. resolves object type and declared size through Git batch metadata;
-5. scans each eligible unique blob once;
-6. accounts for every blob as scanned text, binary/unreadable, known oversized binary, or unknown oversized;
-7. fails closed if any unknown oversized blob remains unscanned;
-8. uses the same credential patterns, placeholder policy and fingerprint algorithm as the current-tree scanner.
+5. enumerates every `(Blob, path)` pair from all unique reachable commit root Trees;
+6. reads each eligible unique Blob once, but evaluates every historical path alias independently;
+7. evaluates every match produced by every credential rule, including repeated same-rule values on one line;
+8. accounts for every Blob as scanned text, binary/unreadable, known oversized binary, or unknown oversized;
+9. fails closed if any unknown oversized Blob remains unscanned;
+10. uses the same credential patterns, placeholder policy and fingerprint algorithm as the current-tree scanner.
+
+A path-specific allowlist therefore applies only to that exact path/rule/fingerprint tuple. Copying or renaming identical Blob content to another path creates a separate allowlist decision; one fixture path cannot suppress a non-fixture alias.
 
 The current-tree scanner retains its existing 200-record contract. The history scanner counts all logical findings while storing no more than 100 redacted records.
 
-The dedicated Workflow scans blobs up to 8 MiB. This ceiling covered every non-binary reachable Blob at the accepted current-main run. Any future unknown Blob above the ceiling makes the result incomplete and blocks the gate.
+The dedicated Workflow scans Blobs up to 8 MiB. This ceiling covered every non-binary reachable Blob at the accepted current-main run. Any future unknown Blob above the ceiling makes the result incomplete and blocks the gate.
 
 ## Evidence boundary
 
 Evidence may contain only:
 
 - bounded repository source and reference digests;
-- object/blob/accounting counts;
+- object, Blob, Blob-path and accounting counts;
 - bounded counts by rule;
 - SHA-256 of the historical path and its bounded suffix;
 - line number;
 - truncated one-way finding fingerprint;
-- Git blob object ID.
+- Git Blob object ID.
 
 Evidence must not contain:
 
@@ -64,7 +68,8 @@ Generated reports are limited to 64 KiB and scanned again before upload. Artifac
 
 `status=pass` and `complete=true` means:
 
-- every reachable blob was accounted for;
+- every reachable Blob was accounted for;
+- every reachable historical path alias was independently evaluated;
 - no unsuppressed credential-shaped finding was detected;
 - generated evidence passed artifact scanning.
 
@@ -78,7 +83,7 @@ Credential rotation or revocation must occur before any history-cleanup decision
 
 ### Incomplete
 
-`status=fail` and `complete=false` means the scanner could not make a complete assurance claim. Causes include a shallow repository, malformed Git metadata, object read mismatch, invalid allowlist, unknown oversized Blob or missing evidence.
+`status=fail` and `complete=false` means the scanner could not make a complete assurance claim. Causes include a shallow repository, malformed Git metadata, incomplete path-alias enumeration, object read mismatch, invalid allowlist, unknown oversized Blob or missing evidence.
 
 Incomplete is blocking evidence, not a clean result.
 
