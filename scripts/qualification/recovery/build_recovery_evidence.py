@@ -64,16 +64,14 @@ def sha256_file(path: Path) -> str:
 def migration_plan(*, observed_heads: tuple[str, ...], expected_head: str, output: Path) -> int:
     expected = _validate_revision(expected_head, reason="expected_head_invalid")
     normalized = tuple(_validate_revision(item, reason="observed_head_invalid") for item in observed_heads)
+    if not normalized:
+        raise RecoveryEvidenceError("migration_head_missing")
     if len(normalized) > 1:
         raise RecoveryEvidenceError("migration_heads_multiple")
-    if len(normalized) == 1 and normalized[0] == expected:
+    if normalized[0] == expected:
         status = "current"
         action = "none"
         code = 0
-    elif len(normalized) == 1:
-        status = "repair_required"
-        action = "alembic_upgrade_head"
-        code = 1
     else:
         status = "repair_required"
         action = "alembic_upgrade_head"
