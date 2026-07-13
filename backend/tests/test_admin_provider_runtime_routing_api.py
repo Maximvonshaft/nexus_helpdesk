@@ -78,17 +78,21 @@ def test_admin_provider_runtime_routing_api_inserts_rule_without_granting_defaul
     [
         (WebchatRuntimeRoutingUpdate(primary_provider="unexpected"), "primary_provider_not_allowed"),
         (WebchatRuntimeRoutingUpdate(fallback_providers=["unexpected"]), "fallback_provider_not_allowed"),
+        (WebchatRuntimeRoutingUpdate(canary_percent=2), "provider_runtime_canary_percent_invalid"),
     ],
 )
 def test_admin_routing_rejection_exposes_only_fixed_error_codes(monkeypatch, payload, expected_error):
     monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
+    db = Mock()
 
     with pytest.raises(HTTPException) as caught:
-        update_webchat_runtime_routing(payload, db=Mock(), current_user=Mock())
+        update_webchat_runtime_routing(payload, db=db, current_user=Mock())
 
     assert caught.value.status_code == 400
     assert caught.value.detail == {"error_code": expected_error}
     assert "traceback" not in str(caught.value.detail).lower()
+    db.execute.assert_not_called()
+    db.commit.assert_not_called()
 
 
 def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monkeypatch):
@@ -144,6 +148,7 @@ def test_admin_provider_runtime_status_reports_database_rule_under_safe_control_
     ("canary_percent", "kill_switch", "expected_error"),
     [
         (101, False, "provider_runtime_canary_percent_invalid"),
+        (2, False, "provider_runtime_canary_percent_invalid"),
         (True, False, "provider_runtime_canary_percent_invalid"),
         (5, "false", "provider_runtime_kill_switch_invalid"),
     ],
