@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from pydantic import ValidationError
 
 from app.services import provider_runtime as provider_runtime_module
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
@@ -12,7 +13,7 @@ from app.services.webcall_ai_production import orchestrator
 from app.services.webcall_ai_production.providers.base import STTResult
 from app.services.webcall_ai_production.providers import provider_runtime_llm as webcall_provider_module
 from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider
-from app.api.admin_provider_runtime import _sanitize_provider_runtime_snapshot
+from app.api.admin_provider_runtime import WebchatRuntimeRoutingUpdate, _sanitize_provider_runtime_snapshot
 
 
 class _DummyAdapter(ProviderAdapter):
@@ -106,6 +107,12 @@ def test_false_environment_default_preserves_persisted_kill_switch(monkeypatch):
     assert summary["kill_switch_env_override"] is True
 
 
+@pytest.mark.parametrize("value", [True, False])
+def test_admin_rejects_boolean_canary_percent(value):
+    with pytest.raises(ValidationError):
+        WebchatRuntimeRoutingUpdate(canary_percent=value)
+
+
 def test_admin_snapshot_sanitizer_removes_exception_derived_text():
     secret = "postgresql://user:secret@private-host/runtime"
     sanitized = _sanitize_provider_runtime_snapshot({
@@ -156,7 +163,7 @@ def test_webcall_non_authoritative_router_outcomes_are_neutral(monkeypatch, erro
 
 def test_webcall_orchestrator_does_not_convert_control_outcome_to_handoff(monkeypatch):
     session = _FakeSession()
-    monkeypatch.setattr(webcall_provider_module, "SessionLocal", lambda: session)
+    monkeypatch.setattr(webcall_provider_module, "SessionLocal", lambda: session())
 
     async def control_route(db, request):
         return ProviderResult.unavailable(

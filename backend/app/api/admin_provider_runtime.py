@@ -5,7 +5,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from sqlalchemy import Boolean, text
 from sqlalchemy.orm import Session
 
@@ -61,7 +61,7 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
     channel_key: str = Field(default="website", min_length=1, max_length=100)
     primary_provider: str = Field(default="private_ai_runtime", min_length=1, max_length=100)
     fallback_providers: list[str] = Field(default_factory=list, max_length=3)
-    canary_percent: int = Field(default=0, ge=0, le=100)
+    canary_percent: StrictInt = Field(default=0, ge=0, le=100)
     kill_switch: bool = False
     enabled: bool = True
     timeout_ms: int = Field(default=10000, ge=1000, le=30000)
@@ -76,7 +76,7 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
 
 
 def _database_configuration_errors(selection: dict[str, Any]) -> list[str, Any]:
-    errors: list[str] = []
+    errors: list[str, Any] = []
     if selection.get("default_canary_percent") is None:
         errors.append(_CANARY_PERCENT_INVALID)
     if selection.get("default_kill_switch") is None:
@@ -103,7 +103,7 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
     except Exception:
         return {
             "status": "unavailable",
-            "reason_code": "provider_runtime_routing_rules_unavaile",
+            "reason_code": "provider_runtime_routing_rules_unavailable",
             "items": [],
             "truncated": False,
         }
@@ -306,7 +306,7 @@ def update_webchat_runtime_routing(
     return {
         "ok": True,
         "routing_rule": {
-            **params,
+            *(params),
             "fallback_providers": payload.fallback_providers,
             "traffic_selection": safe_traffic_configuration(
                 default_canary_percent=payload.canary_percent,
