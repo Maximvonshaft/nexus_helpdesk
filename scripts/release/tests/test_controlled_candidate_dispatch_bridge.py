@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import unittest
 from pathlib import Path
 
@@ -21,6 +20,7 @@ class ControlledCandidateDispatchBridgeTests(unittest.TestCase):
         self.assertIn("permissions: {}", BRIDGE)
         self.assertIn("actions: write", BRIDGE)
         self.assertIn("contents: read", BRIDGE)
+        self.assertIn("issues: write", BRIDGE)
         self.assertNotIn("packages: write", BRIDGE)
         self.assertNotIn("attestations: write", BRIDGE)
         self.assertNotIn("id-token: write", BRIDGE)
@@ -56,6 +56,21 @@ class ControlledCandidateDispatchBridgeTests(unittest.TestCase):
         self.assertNotIn("docker build", BRIDGE)
         self.assertNotIn("docker push", BRIDGE)
         self.assertNotIn("gh release", BRIDGE)
+
+    def test_bridge_reports_only_the_exact_dispatched_source_run(self) -> None:
+        for marker in (
+            "controlled-candidate-convergence.yml/runs?branch=main&event=workflow_dispatch&per_page=20",
+            'select(.head_sha == $sha and .event == "workflow_dispatch" and .head_branch == "main")',
+            '[[ "$run_id" =~ ^[0-9]+$ ]]',
+            '"repos/${GH_REPO}/issues/714/comments"',
+            "## CONTROLLED_CANDIDATE_RUN",
+            "- Deployment performed: `false`",
+            "- External actions authorized: `false`",
+            "- #533 GO: `false`",
+        ):
+            self.assertIn(marker, BRIDGE)
+        self.assertIn("for _attempt in $(seq 1 45)", BRIDGE)
+        self.assertIn("sleep 2", BRIDGE)
 
     def test_request_is_bounded_and_preserves_no_go(self) -> None:
         self.assertEqual(REQUEST["schema"], "nexus.osr.controlled-candidate-request.v1")
