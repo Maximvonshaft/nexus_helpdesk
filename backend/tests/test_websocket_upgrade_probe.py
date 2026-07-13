@@ -82,6 +82,7 @@ def _switching_protocols_response(
     *,
     accept_override: str | None = None,
     connection_override: str | None = None,
+    connection_headers: tuple[str, ...] | None = None,
 ) -> bytes:
     websocket_key = _request_headers(request)["sec-websocket-key"]
     expected_accept = base64.b64encode(
@@ -90,11 +91,16 @@ def _switching_protocols_response(
         ).digest()
     ).decode("ascii")
     accept = expected_accept if accept_override is None else accept_override
-    connection = "Upgrade" if connection_override is None else connection_override
+    connection_values = (
+        connection_headers
+        if connection_headers is not None
+        else ("Upgrade" if connection_override is None else connection_override,)
+    )
+    connection_lines = "".join(f"Connection: {value}\r\n" for value in connection_values)
     return (
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
-        f"Connection: {connection}\r\n"
+        f"{connection_lines}"
         f"Sec-WebSocket-Accept: {accept}\r\n"
         "\r\n"
     ).encode("ascii")
@@ -120,6 +126,29 @@ def test_probe_accepts_valid_websocket_upgrade_and_preserves_base_path():
     assert b"Sec-WebSocket-Version: 13\r\n" in request
     assert result.status_code == 101
     assert result.request_path == "/candidate/webchat/live/ws"
+
+
+@pytest.mark.parametrize(
+    "connection_headers",
+    [
+        ("Upgrade", "keep-alive"),
+        ("keep-alive", "Upgrade"),
+    ],
+)
+def test_probe_accepts_repeated_connection_headers_in_any_order(
+    connection_headers: tuple[str, ...],
+):
+    base_url, capture, thread = _start_server(
+        lambda request: _switching_protocols_response(
+            request,
+            connection_headers=connection_headers,
+        )
+    )
+
+    result = PROBE.probe_websocket_upgrade(base_url=base_url, timeout_seconds=1)
+    _join_server(capture, thread)
+
+    assert result.connection_header == ", ".join(connection_headers)
 
 
 def test_secure_ssl_context_enforces_tls_1_2_minimum():
@@ -184,6 +213,19 @@ def test_probe_rejects_connection_header_with_upgrade_substring_only():
         lambda request: _switching_protocols_response(
             request,
             connection_override="keep-alive, x-upgrade",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="Connection response header"):
+        PROBE.probe_websocket_upgrade(base_url=base_url, timeout_seconds=1)
+    _join_server(capture, thread)
+
+
+def test_probe_rejects_repeated_connection_headers_without_exact_upgrade():
+    base_url, capture, thread = _start_server(
+        lambda request: _switching_protocols_response(
+            request,
+            connection_headers=("keep-alive", "x-upgrade"),
         )
     )
 
