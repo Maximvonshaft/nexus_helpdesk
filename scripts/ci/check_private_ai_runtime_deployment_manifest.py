@@ -47,6 +47,25 @@ REQUIRED_ACCEPTANCE_CHECKS = {
     "metrics",
     "model_identity",
 }
+FORBIDDEN_SHELL_EXECUTABLES = frozenset(
+    {
+        "sh",
+        "bash",
+        "dash",
+        "ash",
+        "zsh",
+        "ksh",
+        "fish",
+        "csh",
+        "tcsh",
+        "pwsh",
+        "pwsh.exe",
+        "powershell",
+        "powershell.exe",
+        "cmd",
+        "cmd.exe",
+    }
+)
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ID_RE = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
@@ -175,6 +194,10 @@ def _scan_for_inline_secret_fields(value: Any, *, path: str = "$") -> None:
             _scan_for_inline_secret_fields(child, path=f"{path}[{index}]")
 
 
+def _command_token_basename(value: str) -> str:
+    return PurePosixPath(value.replace("\\", "/")).name.lower()
+
+
 def _argv_commands(value: Any, *, field: str) -> list[list[str]]:
     if not isinstance(value, list) or not value:
         _fail(f"{field}_must_be_non_empty_list", field)
@@ -193,6 +216,8 @@ def _argv_commands(value: Any, *, field: str) -> list[list[str]]:
             for arg in argv
         ):
             _fail(f"{command_field}_inline_secret_argument_forbidden", command_field)
+        if any(_command_token_basename(arg) in FORBIDDEN_SHELL_EXECUTABLES for arg in argv):
+            _fail(f"{command_field}_shell_execution_forbidden", command_field)
         commands.append(argv)
     return commands
 
