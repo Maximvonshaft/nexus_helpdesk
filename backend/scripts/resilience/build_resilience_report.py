@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -46,12 +47,24 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
     skipped = sum(_bounded_int(suite.attrib.get("skipped")) for suite in suites)
     duration_ms = sum(_duration_ms(suite.attrib.get("time")) for suite in suites)
 
-    observed_test_names = {
+    observed_test_counts = Counter(
         _normalized_test_name(testcase.attrib.get("name"))
         for testcase in root.iter("testcase")
+    )
+    observed_required = {
+        name for name in REQUIRED_SCENARIO_TESTS if observed_test_counts[name] > 0
     }
-    observed_required = REQUIRED_SCENARIO_TESTS.intersection(observed_test_names)
     missing_required = REQUIRED_SCENARIO_TESTS.difference(observed_required)
+    duplicated_required = {
+        name for name in REQUIRED_SCENARIO_TESTS if observed_test_counts[name] > 1
+    }
+    unexpected_testcases = sum(
+        count
+        for name, count in observed_test_counts.items()
+        if name not in REQUIRED_SCENARIO_TESTS
+    )
+    actual_tests = sum(observed_test_counts.values())
+    expected_tests = len(REQUIRED_SCENARIO_TESTS)
 
     normalized_sha = str(source_sha or "").strip().lower()
     if not _SHA_RE.fullmatch(normalized_sha):
@@ -61,11 +74,15 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
         "pass"
         if (
             pytest_exit_code == 0
-            and tests >= len(REQUIRED_SCENARIO_TESTS)
+            and tests == expected_tests
+            and actual_tests == expected_tests
+            and tests == actual_tests
             and failures == 0
             and errors == 0
             and skipped == 0
             and not missing_required
+            and not duplicated_required
+            and unexpected_testcases == 0
             and normalized_sha != "unknown"
         )
         else "fail"
@@ -76,9 +93,11 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
         "source_sha": normalized_sha,
         "database": "postgresql",
         "required_scenarios": {
-            "expected": len(REQUIRED_SCENARIO_TESTS),
+            "expected": expected_tests,
             "observed": len(observed_required),
             "missing": len(missing_required),
+            "duplicated": len(duplicated_required),
+            "unexpected": unexpected_testcases,
         },
         "counts": {
             "tests": tests,
