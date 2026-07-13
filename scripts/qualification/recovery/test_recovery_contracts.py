@@ -95,6 +95,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             "backup_manifest",
             "source_database_sha256",
             "mv -T --",
+            "postgres_native_url_user_required",
             "postgres_native_url_query_not_allowed",
             "postgres_native_url_fragment_not_allowed",
         ):
@@ -114,36 +115,35 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             "HEALTH_VERIFIED",
             "failure_stage",
             "http_code",
+            "postgres_native_url_user_required",
             "postgres_native_url_query_not_allowed",
             "postgres_native_url_fragment_not_allowed",
         ):
             self.assertIn(token, rollback)
         self.assertNotIn("Rollback helper completed.", rollback)
 
-    def test_operator_scripts_reject_url_overrides_before_native_clients(self) -> None:
+    def test_operator_scripts_reject_ambient_user_and_url_overrides_before_native_clients(self) -> None:
         backup = ROOT / "scripts" / "deploy" / "backup_postgres.sh"
         rollback = ROOT / "scripts" / "deploy" / "rollback_release.sh"
         cases = (
-            ("?host=db-b", "postgres_native_url_query_not_allowed"),
-            ("#host=db-b", "postgres_native_url_fragment_not_allowed"),
+            ("postgresql://nexus@db-a:5432/nexus_restore?host=db-b", "postgres_native_url_query_not_allowed"),
+            ("postgresql://nexus@db-a:5432/nexus_restore#host=db-b", "postgres_native_url_fragment_not_allowed"),
+            ("postgresql://db-a:5432/nexus_restore", "postgres_native_url_user_required"),
         )
-        for suffix, reason in cases:
-            with self.subTest(script="backup", suffix=suffix), tempfile.TemporaryDirectory() as directory:
+        for native_url, reason in cases:
+            with self.subTest(script="backup", reason=reason), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 marker = root / "native-called"
                 fake_bin = _fake_commands(root, ("pg_dump", "pg_restore", "psql"), marker)
                 completed = _run(
                     backup,
                     str(root / "backups"),
-                    env=_env(
-                        fake_bin,
-                        POSTGRES_NATIVE_URL=f"postgresql://nexus@db-a:5432/nexus_source{suffix}",
-                    ),
+                    env=_env(fake_bin, POSTGRES_NATIVE_URL=native_url.replace("nexus_restore", "nexus_source")),
                 )
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIn(reason, completed.stderr)
                 self.assertFalse(marker.exists())
-            with self.subTest(script="rollback", suffix=suffix), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(script="rollback", reason=reason), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 marker = root / "native-called"
                 fake_bin = _fake_commands(root, ("pg_restore", "psql"), marker)
@@ -153,7 +153,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                     env=_env(
                         fake_bin,
                         ROLLBACK_CONFIRM="I_UNDERSTAND",
-                        POSTGRES_NATIVE_URL=f"postgresql://nexus@db-a:5432/nexus_restore{suffix}",
+                        POSTGRES_NATIVE_URL=native_url,
                         ROLLBACK_STATUS_FILE=str(root / "rollback-result.json"),
                     ),
                 )
@@ -164,34 +164,51 @@ class OperatorRecoveryContractTests(unittest.TestCase):
     def _runner_env(self, fake_bin: Path) -> dict[str, str]:
         return _env(
             fake_bin,
-            SOURCE_APP_URL="postgresql+psycopg://nexus@db-a:5432/nexus_source",
-            SOURCE_NATIVE_URL="postgresql://nexus@db-a:5432/nexus_source",
-            RESTORE_APP_URL="postgresql+psycopg://nexus@db-a:5432/nexus_restore",
-            RESTORE_NATIVE_URL="postgresql://nexus@db-a:5432/nexus_restore",
-            RECOVERY_ADMIN_NATIVE_URL="postgresql://nexus@db-b:5432/postgres",
+            SOURCE_APP_URL="postgresql+psycopg://nexus_recovery_source:source-test@db-a:5432/nexus_source",
+            SOURCE_NATIVE_URL="postgresql://nexus_recovery_source:source-test@db-a:5432/nexus_source",
+            RESTORE_APP_URL="postgresql+psycopg://nexus_recovery_restore:restore-test@db-a:5432/nexus_restore",
+            RESTORE_NATIVE_URL="postgresql://nexus_recovery_restore:restore-test@db-a:5432/nexus_restore",
+            RECOVERY_ADMIN_NATIVE_URL="postgresql://nexus_recovery_admin:admin-test@db-b:5432/postgres",
             RECOVERY_ALLOW_DATABASE_RECREATE="I_UNDERSTAND",
             SOURCE_SHA="a" * 40,
         )
 
     def test_runner_refuses_unsafe_authority_before_psql(self) -> None:
         runner = ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh"
-        for query_override, expected in (
-            (False, "recovery_admin_cluster_mismatch"),
-            (True, "recovery_url_query_not_allowed"),
-        ):
-            with self.subTest(query_override=query_override), tempfile.TemporaryDirectory() as directory:
+        cases = (
+            ({}, "recovery_admin_cluster_mismatch"),
+            (
+                {
+                    "SOURCE_APP_URL": "postgresql+psycopg://nexus_recovery_source:source-test@db-a:5432/nexus_source?host=db-b",
+                    "SOURCE_NATIVE_URL": "postgresql://nexus_recovery_source:source-test@db-a:5432/nexus_source?host=db-b",
+                    "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus_recovery_admin:admin-test@db-a:5432/postgres",
+                },
+                "recovery_url_query_not_allowed",
+            ),
+            (
+                {
+                    "SOURCE_APP_URL": "postgresql+psycopg://db-a:5432/nexus_source",
+                    "SOURCE_NATIVE_URL": "postgresql://db-a:5432/nexus_source",
+                    "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus_recovery_admin:admin-test@db-a:5432/postgres",
+                },
+                "recovery_url_user_required",
+            ),
+            (
+                {
+                    "SOURCE_APP_URL": "postgresql+psycopg://nexus_recovery_admin:admin-test@db-a:5432/nexus_source",
+                    "SOURCE_NATIVE_URL": "postgresql://nexus_recovery_admin:admin-test@db-a:5432/nexus_source",
+                    "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus_recovery_admin:admin-test@db-a:5432/postgres",
+                },
+                "recovery_user_name_mismatch",
+            ),
+        )
+        for updates, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 marker = root / "psql-called"
                 fake_bin = _fake_commands(root, ("psql",), marker)
                 env = self._runner_env(fake_bin)
-                if query_override:
-                    env.update(
-                        {
-                            "SOURCE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_source?host=db-b",
-                            "SOURCE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_source?host=db-b",
-                            "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus@db-a:5432/postgres",
-                        }
-                    )
+                env.update(updates)
                 completed = _run(runner, env=env)
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIn(expected, completed.stderr)
@@ -227,7 +244,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 env=_env(
                     fake_bin,
                     ROLLBACK_CONFIRM="I_UNDERSTAND",
-                    POSTGRES_NATIVE_URL="postgresql://nexus@db-a:5432/nexus_restore",
+                    POSTGRES_NATIVE_URL="postgresql://nexus_recovery_restore:restore-test@db-a:5432/nexus_restore",
                     ROLLBACK_STATUS_FILE=str(status),
                 ),
             )
@@ -266,8 +283,16 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 self.assertIn("IMAGE_RESTARTED", payload["states"])
                 self.assertNotIn("HEALTH_VERIFIED", payload["states"])
 
-    def test_workflow_quarantines_unsafe_evidence(self) -> None:
+    def test_workflow_proves_role_separation_and_quarantines_unsafe_evidence(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "osr-recovery-qualification.yml").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh").read_text(encoding="utf-8")
+        self.assertIn("POSTGRES_USER: nexus_recovery_admin", workflow)
+        self.assertIn("CREATE ROLE nexus_recovery_source", workflow)
+        self.assertIn("CREATE ROLE nexus_recovery_restore", workflow)
+        self.assertNotIn("PGUSER:", workflow)
+        self.assertIn("CREATE DATABASE nexus_source OWNER nexus_recovery_source", runner)
+        self.assertIn("CREATE DATABASE nexus_restore OWNER nexus_recovery_restore", runner)
+        self.assertIn("recovery_role_identity_collision", runner)
         clean = workflow.index("- name: Upload clean bounded qualification evidence")
         failure = workflow.index("- name: Upload sanitized recovery failure status")
         enforce = workflow.index("- name: Enforce recovery qualification")
