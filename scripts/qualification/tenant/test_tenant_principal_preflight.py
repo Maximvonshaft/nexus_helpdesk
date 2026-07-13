@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import sqlalchemy as sa
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import tenant_principal_resolution as resolution
 
 MODULE_PATH = Path(__file__).with_name("tenant_principal_preflight.py")
 SPEC = importlib.util.spec_from_file_location("tenant_principal_preflight", MODULE_PATH)
@@ -94,12 +100,39 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
         self.assertRegex(sample, r"^sha256:[0-9a-f]{64}$")
         self.assertNotIn("customers:17", sample)
 
+    def test_preflight_uses_shared_assignment_resolution_authority(self) -> None:
+        self.assertIs(MODULE._resolve_relation, resolution.resolve_relation)
+        self.assertEqual(MODULE._CORE_TABLE_COLUMNS, resolution.CORE_RELATION_COLUMNS)
+
     def test_current_schema_baseline_is_explicit_and_bounded(self) -> None:
         self.assertEqual(MODULE.CURRENT_ALEMBIC_HEAD, "20260713_0059")
         self.assertEqual(len(MODULE.CURRENT_TENANT_COLUMNS), 15)
         self.assertIn("tenants.tenant_key", MODULE.CURRENT_TENANT_COLUMNS)
         self.assertIn("tickets.tenant_id", MODULE.CURRENT_TENANT_COLUMNS)
         self.assertNotIn("default", MODULE.CURRENT_TENANT_COLUMNS)
+
+    def test_inactive_tenant_principal_fails_closed(self) -> None:
+        engine = sa.create_engine("sqlite:///:memory:", future=True)
+        metadata = sa.MetaData()
+        sa.Table(
+            "tenants",
+            metadata,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("tenant_key", sa.String(80), nullable=False),
+            sa.Column("is_active", sa.Boolean(), nullable=False),
+        )
+        metadata.create_all(engine)
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "INSERT INTO tenants (id, tenant_key, is_active) VALUES (3, 'tenant-a', 0)"
+            ))
+            findings = MODULE.Findings()
+            principals = MODULE._load_tenant_principals(
+                connection, sa.inspect(connection), {"tenant-a"}, findings
+            )
+            self.assertEqual(principals, {})
+            self.assertEqual(findings.counts["tenant.principal_inactive"], 1)
+        engine.dispose()
 
     def test_relational_tenant_id_resolves_to_manifest_key_and_detects_drift(self) -> None:
         engine = sa.create_engine("sqlite:///:memory:", future=True)
@@ -109,6 +142,7 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
             metadata,
             sa.Column("id", sa.Integer(), primary_key=True),
             sa.Column("tenant_key", sa.String(80), nullable=False),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         )
         sa.Table(
             "markets",
@@ -132,7 +166,7 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
                 return self._inspector.get_foreign_keys(table_name)
 
         with engine.begin() as connection:
-            connection.execute(sa.text("INSERT INTO tenants (id, tenant_key) VALUES (7, 'tenant-a')"))
+            connection.execute(sa.text("INSERT INTO tenants (id, tenant_key, is_active) VALUES (7, 'tenant-a', 1)"))
             connection.execute(sa.text("INSERT INTO markets (id, tenant_id) VALUES (3, 7)"))
             inspector = PublicInspector(connection)
             findings = MODULE.Findings()
