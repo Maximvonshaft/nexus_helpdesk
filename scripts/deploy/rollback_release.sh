@@ -7,6 +7,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.server.yml}"
 ROLLBACK_HEALTH_URL="${ROLLBACK_HEALTH_URL:-}"
 ROLLBACK_STATUS_FILE="${ROLLBACK_STATUS_FILE:-./rollback-result.json}"
 ROLLBACK_ALLOW_IN_PLACE="${ROLLBACK_ALLOW_IN_PLACE:-}"
+ROLLBACK_WAIT_TIMEOUT_SECONDS="${ROLLBACK_WAIT_TIMEOUT_SECONDS:-180}"
 SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot runtime-warmer)
 STATES=()
 OUTCOME="fail"
@@ -19,12 +20,8 @@ append_state() {
 }
 
 cleanup_restore_list() {
-  if [[ -n "${RESTORE_LIST_FILE:-}" && -f "$RESTORE_LIST_FILE" ]]; then
-    rm -f -- "$RESTORE_LIST_FILE"
-  fi
-  if [[ -n "${RESTORE_LIST_RAW_FILE:-}" && -f "$RESTORE_LIST_RAW_FILE" ]]; then
-    rm -f -- "$RESTORE_LIST_RAW_FILE"
-  fi
+  [[ -n "${RESTORE_LIST_FILE:-}" && -f "$RESTORE_LIST_FILE" ]] && rm -f -- "$RESTORE_LIST_FILE"
+  [[ -n "${RESTORE_LIST_RAW_FILE:-}" && -f "$RESTORE_LIST_RAW_FILE" ]] && rm -f -- "$RESTORE_LIST_RAW_FILE"
 }
 
 write_status() {
@@ -32,21 +29,16 @@ write_status() {
   states_json="$(printf '%s\n' "${STATES[@]}" | python -c 'import json,sys; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))')"
   status_dir="$(dirname "$ROLLBACK_STATUS_FILE")"
   mkdir -p -- "$status_dir"
-  STATES_JSON="$states_json" \
-  STATUS_FILE="$ROLLBACK_STATUS_FILE" \
-  OUTCOME="$OUTCOME" \
-  FAILURE_STAGE="$FAILURE_STAGE" \
-  python - <<'PY'
+  STATES_JSON="$states_json" STATUS_FILE="$ROLLBACK_STATUS_FILE" OUTCOME="$OUTCOME" FAILURE_STAGE="$FAILURE_STAGE" python - <<'PY'
 import json
 import os
 from pathlib import Path
 
 states = json.loads(os.environ["STATES_JSON"])
-failure_stage = os.environ.get("FAILURE_STAGE") or None
 payload = {
     "schema_version": "nexus_operator_rollback_result_v1",
     "outcome": os.environ["OUTCOME"],
-    "failure_stage": failure_stage,
+    "failure_stage": os.environ.get("FAILURE_STAGE") or None,
     "states": states,
     "database_restore_applied": "DATABASE_RESTORE_APPLIED" in states,
     "database_restored": "DATABASE_RESTORED" in states,
@@ -76,6 +68,11 @@ trap on_exit EXIT
 if [[ "$ROLLBACK_CONFIRM" != "I_UNDERSTAND" ]]; then
   echo "ROLLBACK_CONFIRM must equal I_UNDERSTAND" >&2
   exit 2
+fi
+if ! [[ "$ROLLBACK_WAIT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] \
+  || (( ROLLBACK_WAIT_TIMEOUT_SECONDS < 1 || ROLLBACK_WAIT_TIMEOUT_SECONDS > 600 )); then
+  echo "ROLLBACK_WAIT_TIMEOUT_SECONDS must be an integer between 1 and 600" >&2
+  exit 13
 fi
 
 normalize_native_url() {
@@ -200,8 +197,7 @@ WITH RECURSIVE extension_owned(classid, objid) AS (
   JOIN pg_extension AS extension
     ON d.refclassid = 'pg_extension'::regclass
    AND d.refobjid = extension.oid
-  WHERE extension.extname = 'vector'
-    AND d.deptype = 'e'
+  WHERE extension.extname = 'vector' AND d.deptype = 'e'
   UNION
   SELECT dependency.classid, dependency.objid
   FROM pg_depend AS dependency
@@ -211,50 +207,18 @@ WITH RECURSIVE extension_owned(classid, objid) AS (
   WHERE dependency.deptype IN ('i', 'a')
 ),
 public_objects AS (
-  SELECT 'pg_class'::regclass::oid AS classid, c.oid AS objid
-  FROM pg_class AS c
-  JOIN pg_namespace AS n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public'
-  UNION ALL
-  SELECT 'pg_proc'::regclass::oid, p.oid
-  FROM pg_proc AS p
-  JOIN pg_namespace AS n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public'
-  UNION ALL
-  SELECT 'pg_type'::regclass::oid, t.oid
-  FROM pg_type AS t
-  JOIN pg_namespace AS n ON n.oid = t.typnamespace
-  WHERE n.nspname = 'public'
-  UNION ALL
-  SELECT 'pg_operator'::regclass::oid, o.oid
-  FROM pg_operator AS o
-  JOIN pg_namespace AS n ON n.oid = o.oprnamespace
-  WHERE n.nspname = 'public'
-  UNION ALL
-  SELECT 'pg_collation'::regclass::oid, c.oid
-  FROM pg_collation AS c
-  JOIN pg_namespace AS n ON n.oid = c.collnamespace
-  WHERE n.nspname = 'public'
-  UNION ALL
-  SELECT 'pg_conversion'::regclass::oid, c.oid
-  FROM pg_conversion AS c
-  JOIN pg_namespace AS n ON n.oid = c.connamespace
-  WHERE n.nspname = 'public'
+  SELECT 'pg_class'::regclass::oid AS classid, c.oid AS objid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
+  UNION ALL SELECT 'pg_proc'::regclass::oid, p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
+  UNION ALL SELECT 'pg_type'::regclass::oid, t.oid FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public'
+  UNION ALL SELECT 'pg_operator'::regclass::oid, o.oid FROM pg_operator o JOIN pg_namespace n ON n.oid=o.oprnamespace WHERE n.nspname='public'
+  UNION ALL SELECT 'pg_collation'::regclass::oid, c.oid FROM pg_collation c JOIN pg_namespace n ON n.oid=c.collnamespace WHERE n.nspname='public'
+  UNION ALL SELECT 'pg_conversion'::regclass::oid, c.oid FROM pg_conversion c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public'
 )
 SELECT
-  (SELECT count(*)
-   FROM pg_namespace
-   WHERE nspname <> 'public'
-     AND nspname <> 'information_schema'
-     AND nspname NOT LIKE 'pg_%'),
-  (SELECT count(*)
-   FROM public_objects AS object
-   WHERE NOT EXISTS (
-     SELECT 1
-     FROM extension_owned AS extension
-     WHERE extension.classid = object.classid
-       AND extension.objid = object.objid
-   ));
+  (SELECT count(*) FROM pg_namespace WHERE nspname <> 'public' AND nspname <> 'information_schema' AND nspname NOT LIKE 'pg_%'),
+  (SELECT count(*) FROM public_objects AS object WHERE NOT EXISTS (
+     SELECT 1 FROM extension_owned AS extension
+     WHERE extension.classid=object.classid AND extension.objid=object.objid));
 ")"
   if [[ "$TARGET_USER_FOOTPRINT" != "0|0" ]]; then
     echo "rollback_target_not_empty" >&2
@@ -277,37 +241,24 @@ public_schema_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+SCHEMA\s+-\s+public(?:\s+
 public_schema_comment_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+COMMENT\s+-\s+SCHEMA\s+public(?:\s+.*)?$")
 vector_toc = re.compile(r"^\d+;.*\bEXTENSION\b.*\bvector\b", re.IGNORECASE)
 public_schema_toc = re.compile(r"^\d+;.*\b(?:SCHEMA|COMMENT)\b.*\bpublic\b", re.IGNORECASE)
-lines = raw_path.read_text(encoding="utf-8").splitlines()
-filtered: list[str] = []
-extension_count = 0
-extension_comment_count = 0
-public_schema_count = 0
-public_schema_comment_count = 0
-for line in lines:
+filtered = []
+counts = {"extension": 0, "extension_comment": 0, "public": 0, "public_comment": 0}
+for line in raw_path.read_text(encoding="utf-8").splitlines():
     if extension_entry.fullmatch(line):
-        extension_count += 1
-        filtered.append(";" + line)
+        counts["extension"] += 1; filtered.append(";" + line)
     elif extension_comment_entry.fullmatch(line):
-        extension_comment_count += 1
-        filtered.append(";" + line)
+        counts["extension_comment"] += 1; filtered.append(";" + line)
     elif public_schema_entry.fullmatch(line):
-        public_schema_count += 1
-        filtered.append(";" + line)
+        counts["public"] += 1; filtered.append(";" + line)
     elif public_schema_comment_entry.fullmatch(line):
-        public_schema_comment_count += 1
-        filtered.append(";" + line)
+        counts["public_comment"] += 1; filtered.append(";" + line)
     elif vector_toc.search(line):
         raise SystemExit("backup_restore_vector_toc_unrecognized")
     elif public_schema_toc.search(line):
         raise SystemExit("backup_restore_public_schema_toc_unrecognized")
     else:
         filtered.append(line)
-if (
-    extension_count != 1
-    or extension_comment_count > 1
-    or public_schema_count > 1
-    or public_schema_comment_count > 1
-):
+if counts["extension"] != 1 or counts["extension_comment"] > 1 or counts["public"] > 1 or counts["public_comment"] > 1:
     raise SystemExit("backup_restore_vector_toc_invalid")
 filtered_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
 PY
@@ -347,7 +298,9 @@ if [[ -n "$OLD_IMAGE_TAG" ]]; then
     exit 8
   fi
   FAILURE_STAGE="IMAGE_RESTART"
-  IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up -d --no-build --pull always "${SERVICES[@]}"
+  IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up \
+    -d --no-build --pull always --wait --wait-timeout "$ROLLBACK_WAIT_TIMEOUT_SECONDS" \
+    "${SERVICES[@]}"
   append_state "IMAGE_RESTARTED"
   FAILURE_STAGE="HEALTH_VERIFICATION"
   require_health_2xx "$ROLLBACK_HEALTH_URL/healthz"
