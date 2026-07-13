@@ -3,7 +3,10 @@ name: tenant-phase2-apply-temp
 on:
   pull_request:
     paths:
-      - .github/patches/tenant-phase2.patch.gz.b64
+      - .github/patches/tenant-phase2.part00
+      - .github/patches/tenant-phase2.part01
+      - .github/patches/tenant-phase2.part02
+      - .github/patches/tenant-phase2.part03
       - .github/workflows/tenant-phase2-apply-temp.yml
   workflow_dispatch:
 
@@ -33,7 +36,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Decode and apply verified Phase 2 patch
+      - name: Reassemble and apply verified Phase 2 patch
         run: |
           set -Eeuo pipefail
           python - <<'PY'
@@ -42,16 +45,29 @@ jobs:
           import hashlib
           from pathlib import Path
 
-          encoded = Path('.github/patches/tenant-phase2.patch.gz.b64').read_text(encoding='ascii').strip()
+          part_paths = [
+              Path(f'.github/patches/tenant-phase2.part{index:02d}')
+              for index in range(4)
+          ]
+          encoded = ''.join(
+              path.read_text(encoding='ascii').strip()
+              for path in part_paths
+          )
+          if len(encoded) != 23400:
+              raise SystemExit(f'tenant_phase2_encoded_size_mismatch:{len(encoded)}')
           archive = base64.b64decode(encoded, validate=True)
-          if hashlib.sha256(archive).hexdigest() != '86481bb570f61fd5ff4d90b56a5b766cbfa981c7ec80b2852c8b996c13243dfd':
-              raise SystemExit('tenant_phase2_archive_digest_mismatch')
+          archive_digest = hashlib.sha256(archive).hexdigest()
+          if archive_digest != '0d79c64d95b2b98f0cfa12e01567427cb8b4819a557b39b8629106feff68c722':
+              raise SystemExit(f'tenant_phase2_archive_digest_mismatch:{archive_digest}')
           patch = gzip.decompress(archive)
-          if hashlib.sha256(patch).hexdigest() != '32787d3a19c51edf9154f452c5ba01139861204bfd8f2bbaf0ac9df57159c16c':
-              raise SystemExit('tenant_phase2_patch_digest_mismatch')
+          patch_digest = hashlib.sha256(patch).hexdigest()
+          if patch_digest != 'd0e233a3c20c6f4b4def7486bd136d3a8e1f2569c0c008a45170b2f932358560':
+              raise SystemExit(f'tenant_phase2_patch_digest_mismatch:{patch_digest}')
           if patch.count(b'diff --git ') != 9:
               raise SystemExit('tenant_phase2_patch_file_count_mismatch')
           Path('/tmp/tenant-phase2.patch').write_bytes(patch)
+          print(f'archive_sha256={archive_digest}')
+          print(f'patch_sha256={patch_digest}')
           PY
           git apply --check --whitespace=error-all /tmp/tenant-phase2.patch
           git apply --index --whitespace=error-all /tmp/tenant-phase2.patch
@@ -94,6 +110,10 @@ jobs:
           set -Eeuo pipefail
           rm -f \
             .github/patches/tenant-phase2.patch.gz.b64 \
+            .github/patches/tenant-phase2.part00 \
+            .github/patches/tenant-phase2.part01 \
+            .github/patches/tenant-phase2.part02 \
+            .github/patches/tenant-phase2.part03 \
             .github/workflows/tenant-phase2-apply-temp.yml \
             helpdesk.db
           rm -rf .pytest_cache
@@ -103,11 +123,16 @@ jobs:
           git diff --cached --check
           python - <<'PY'
           import subprocess
+
           expected = {
               '.github/workflows/tenant-phase2-source-snapshot-temp.yml',
               '.github/workflows/tenant-principal-backfill-gate.yml',
               '.github/workflows/tenant-principal-preflight.yml',
               '.github/patches/tenant-phase2.patch.gz.b64',
+              '.github/patches/tenant-phase2.part00',
+              '.github/patches/tenant-phase2.part01',
+              '.github/patches/tenant-phase2.part02',
+              '.github/patches/tenant-phase2.part03',
               '.github/workflows/tenant-phase2-apply-temp.yml',
               'docs/architecture/tenant-principal-migration.md',
               'scripts/qualification/tenant/tenant_principal_resolution.py',
