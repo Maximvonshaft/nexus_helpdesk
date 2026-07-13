@@ -17,6 +17,7 @@ HELPERS = "\n".join(
         "scripts/release/run_controlled_rc_gate.sh",
         "scripts/release/run_controlled_recovery_gate.sh",
         "scripts/release/build_controlled_candidate_manifest.py",
+        "scripts/release/capture_controlled_image_assurance_failure.py",
         "scripts/deploy/validate_controlled_server_preflight.py",
     )
 )
@@ -71,6 +72,30 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         )[0]
         self.assertNotIn("RUNNER_TEMP", failure_upload_block)
         self.assertNotIn("controlled-rc-run.log", failure_upload_block)
+
+    def test_failed_image_assurance_is_bounded_and_blocks_publication(self) -> None:
+        self.assertIn("id: image_assurance", WORKFLOW)
+        self.assertIn("capture_controlled_image_assurance_failure.py", WORKFLOW)
+        self.assertIn("steps.image_assurance.outcome == 'failure'", WORKFLOW)
+        self.assertIn("controlled-image-assurance-failure-${{ github.sha }}", WORKFLOW)
+        self.assertIn("steps.assurance_failure_scan.outcome == 'success'", WORKFLOW)
+        self.assertIn("path: artifacts/controlled-image-assurance-failure", WORKFLOW)
+        self.assertLess(
+            WORKFLOW.index("Upload bounded image-assurance failure evidence"),
+            WORKFLOW.index("Publish and pull back the assured binary"),
+        )
+        failure_block = WORKFLOW.split("- name: Build and scan bounded image-assurance failure evidence", 1)[1].split(
+            "- name: Publish and pull back the assured binary", 1
+        )[0]
+        for forbidden in (
+            "trivy.raw.json",
+            "image.raw.cdx.json",
+            "frontend.raw.cdx.json",
+            "installed-license-evidence.json",
+            "release-image-manifest.json",
+        ):
+            self.assertNotIn(forbidden, failure_block)
+        self.assertIn('exit "${code}"', WORKFLOW)
 
     def test_same_binary_and_build_metadata_are_bound(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
