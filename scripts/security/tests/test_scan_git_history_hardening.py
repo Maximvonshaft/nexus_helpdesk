@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -88,6 +89,25 @@ class GitHistoryFinalHardeningTests(unittest.TestCase):
         self.assertIn("steps.artifact_scan.outputs.exit_code != '0'", workflow[failure_step:enforce_step])
         self.assertIn("security-git-history-exit-status.json", workflow[failure_step:enforce_step])
         self.assertNotIn("security-git-history-scan.json", workflow[failure_step:enforce_step])
+
+    def test_pull_request_target_uses_trusted_base_code_against_untrusted_target(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "git-history-secret-assurance.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertRegex(workflow, r"(?m)^  pull_request_target:\s*$")
+        self.assertIsNone(re.search(r"(?m)^  pull_request:\s*$", workflow))
+        self.assertIn("- name: Checkout trusted assurance code", workflow)
+        self.assertIn("path: .trusted", workflow)
+        self.assertIn("- name: Checkout exact target full history", workflow)
+        self.assertIn("path: target", workflow)
+        self.assertGreaterEqual(workflow.count("persist-credentials: false"), 2)
+        self.assertIn("python ../.trusted/scripts/security/scan_git_history.py", workflow)
+        self.assertIn("python ../.trusted/scripts/security/scan_artifacts.py", workflow)
+        self.assertIn("--allowlist ../.trusted/config/security/secret-scan-allowlist.json", workflow)
+        self.assertIn("working-directory: target", workflow)
+        self.assertNotIn("python scripts/security/scan_git_history.py", workflow)
+        self.assertNotIn("python scripts/security/scan_artifacts.py", workflow)
 
 
 if __name__ == "__main__":
