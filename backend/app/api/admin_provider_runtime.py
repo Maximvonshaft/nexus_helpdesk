@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.permissions import ensure_can_manage_runtime
-from ..services.provider_runtime.router import persisted_provider_alias_errors
+from ..services.provider_runtime.router import (
+    persisted_output_contract_configuration_errors,
+    persisted_provider_alias_errors,
+)
 from ..services.provider_runtime.traffic_selection import (
     ALLOWED_CANARY_PERCENTS,
     safe_traffic_configuration,
@@ -27,6 +30,7 @@ _WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 _CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
 _KILL_SWITCH_INVALID = "provider_runtime_kill_switch_invalid"
 _PROVIDER_ALIAS_INVALID = "provider_runtime_provider_alias_invalid"
+_OUTPUT_CONTRACT_INVALID = "provider_runtime_output_contract_invalid"
 _PROVIDER_SETTINGS_INVALID = "provider_runtime_settings_invalid"
 _HUMAN_WEBCALL_RECORDING_WARNING = "human_webcall recording is enabled"
 _HUMAN_WEBCALL_TRANSCRIPTION_WARNING = "human_webcall transcription is enabled"
@@ -61,6 +65,7 @@ _ALLOWED_TRAFFIC_REASONS = {
     "provider_runtime_kill_switch_invalid",
     "provider_runtime_primary_provider_invalid",
     "provider_runtime_provider_alias_invalid",
+    "provider_runtime_output_contract_invalid",
     "provider_runtime_provider_not_allowed",
     "provider_runtime_traffic_configuration_invalid",
     "control_mode_configured",
@@ -81,6 +86,7 @@ _ALLOWED_AUDIT_ERROR_CODES = {
     "provider_runtime_kill_switch_invalid",
     "provider_runtime_primary_provider_invalid",
     "provider_runtime_provider_alias_invalid",
+    "provider_runtime_output_contract_invalid",
     "provider_runtime_provider_failed",
     "provider_runtime_provider_not_allowed",
     "provider_runtime_traffic_configuration_invalid",
@@ -154,8 +160,8 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
             text(
                 """
                 SELECT scenario, tenant_id, channel_key, primary_provider,
-                       fallback_providers, canary_percent, kill_switch,
-                       enabled, updated_at
+                       fallback_providers, output_contract, canary_percent,
+                       kill_switch, enabled, updated_at
                 FROM provider_routing_rules
                 ORDER BY tenant_id ASC, channel_key ASC, scenario ASC
                 """
@@ -178,8 +184,13 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
                 primary_provider=row["primary_provider"],
                 fallback_providers=row["fallback_providers"],
             )
+            output_contract_errors = persisted_output_contract_configuration_errors(
+                row["output_contract"]
+            )
             if alias_errors:
                 database_errors.append(_PROVIDER_ALIAS_INVALID)
+            if output_contract_errors:
+                database_errors.append(_OUTPUT_CONTRACT_INVALID)
             database_errors = list(dict.fromkeys(database_errors))
             invalid_rule_found = invalid_rule_found or bool(database_errors)
 
@@ -195,6 +206,11 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
                     "primary_provider": (
                         str(row["primary_provider"] or "")[:100]
                         if not alias_errors
+                        else "invalid"
+                    ),
+                    "output_contract": (
+                        str(row["output_contract"] or "")[:100]
+                        if not output_contract_errors
                         else "invalid"
                     ),
                     "enabled": bool(row["enabled"]),
