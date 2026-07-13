@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -33,8 +34,8 @@ def _load_history_module():
 history = _load_history_module()
 
 
-def _github_token() -> str:
-    return bytes((103, 104, 112, 95)).decode("ascii") + ("A" * 36)
+def _github_token(fill: str = "A") -> str:
+    return bytes((103, 104, 112, 95)).decode("ascii") + (fill * 36)
 
 
 def _run(root: Path, *args: str) -> str:
@@ -65,6 +66,28 @@ def _scan(root: Path, *, max_blob_bytes: int = scanner.MAX_FILE_BYTES):
         allowlist_path=root / "missing-allowlist.json",
         max_blob_bytes=max_blob_bytes,
     )
+
+
+def _write_allowlist(root: Path, entries: list[dict[str, str]]) -> Path:
+    path = root / "allowlist.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "nexus_secret_scan_allowlist_v1",
+                "entries": entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _fingerprint_for(rule: str, path: str, line_no: int, line: str) -> str:
+    pattern = dict(scanner._PATTERNS)[rule]
+    match = pattern.search(line)
+    if match is None:
+        raise AssertionError(f"fixture did not match {rule}")
+    return scanner._fingerprint(rule, path, line_no, match.group(0))
 
 
 class GitHistorySecretAssuranceTests(unittest.TestCase):
@@ -166,6 +189,49 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
         self.assertEqual(report["finding_count"], 1)
         self.assertEqual(len(report["findings"]), 1)
 
+    def test_allowlisting_one_path_does_not_suppress_a_same_blob_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            line = "TOKEN = " + json.dumps(_github_token())
+            (root / "fixture.py").write_text(line + "\n", encoding="utf-8")
+            (root / "runtime.py").write_text(line + "\n", encoding="utf-8")
+            _commit_all(root, "add identical fixture and runtime blobs")
+            allowlist_path = _write_allowlist(
+                root,
+                [
+                    {
+                        "path": "fixture.py",
+                        "rule": "github_token",
+                        "fingerprint": _fingerprint_for("github_token", "fixture.py", 1, line),
+                        "reason": "Synthetic fixture path only.",
+                        "expires_on": "2099-12-31",
+                    }
+                ],
+            )
+            report = history.scan_repository_history(root, allowlist_path=allowlist_path)
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["suppressed_count"], 1)
+        self.assertEqual(report["finding_count"], 1)
+        self.assertEqual(
+            report["findings"][0]["path_sha256"],
+            hashlib.sha256(b"runtime.py").hexdigest(),
+        )
+
+    def test_all_same_rule_matches_on_one_line_are_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            line = f'FIRST = "{_github_token("A")}"; SECOND = "{_github_token("B")}"'
+            (root / "runtime.py").write_text(line + "\n", encoding="utf-8")
+            _commit_all(root, "add two same-rule values")
+            report = _scan(root)
+
+        self.assertEqual(report["finding_count"], 2)
+        self.assertEqual(report["by_rule"], [{"rule": "github_token", "count": 2}])
+        self.assertEqual(len({finding["fingerprint"] for finding in report["findings"]}), 2)
+
     def test_history_counts_all_findings_while_tree_scan_keeps_existing_cap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -220,30 +286,20 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _init_repo(root)
-            (root / "runtime.py").write_text(
-                "TOKEN = " + json.dumps(_github_token()) + "\n",
-                encoding="utf-8",
-            )
+            line = "TOKEN = " + json.dumps(_github_token())
+            (root / "runtime.py").write_text(line + "\n", encoding="utf-8")
             _commit_all(root, "add token")
-            first = _scan(root)
-            finding = first["findings"][0]
-            allowlist_path = root / "allowlist.json"
-            allowlist_path.write_text(
-                json.dumps(
+            allowlist_path = _write_allowlist(
+                root,
+                [
                     {
-                        "schema_version": "nexus_secret_scan_allowlist_v1",
-                        "entries": [
-                            {
-                                "path": "runtime.py",
-                                "rule": finding["rule"],
-                                "fingerprint": finding["fingerprint"],
-                                "reason": "Synthetic history scanner fixture only.",
-                                "expires_on": "2099-12-31",
-                            }
-                        ],
+                        "path": "runtime.py",
+                        "rule": "github_token",
+                        "fingerprint": _fingerprint_for("github_token", "runtime.py", 1, line),
+                        "reason": "Synthetic history scanner fixture only.",
+                        "expires_on": "2099-12-31",
                     }
-                ),
-                encoding="utf-8",
+                ],
             )
             report = history.scan_repository_history(root, allowlist_path=allowlist_path)
 
