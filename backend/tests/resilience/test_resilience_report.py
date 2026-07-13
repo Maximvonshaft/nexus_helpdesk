@@ -97,6 +97,21 @@ def test_report_fails_closed_when_an_unrelated_test_replaces_a_required_scenario
     assert report["required_scenarios"] == {"expected": 3, "observed": 2, "missing": 1}
 
 
+def test_report_accepts_pytest_parameter_suffixes_without_emitting_names(tmp_path: Path) -> None:
+    module = _load_module()
+    junit = tmp_path / "junit.xml"
+    parameterized_names = tuple(f"{name}[postgresql]" for name in REQUIRED_TEST_NAMES)
+    _write_junit(junit, names=parameterized_names)
+
+    report = module.build_report(junit, pytest_exit_code=0, source_sha="d" * 40)
+
+    assert report["status"] == "pass"
+    assert report["required_scenarios"] == {"expected": 3, "observed": 3, "missing": 0}
+    encoded = json.dumps(report, sort_keys=True)
+    assert "postgresql" not in encoded
+    assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
+
+
 def test_report_fails_closed_without_exact_source_identity(tmp_path: Path) -> None:
     module = _load_module()
     junit = tmp_path / "junit.xml"
