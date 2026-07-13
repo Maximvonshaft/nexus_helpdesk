@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -18,9 +18,12 @@ _BUCKET_CONTRACT = "sha256(tenant_id,tenant_key,channel_key,session_id,scenario)
 
 
 def _db_with_routing_rows(rows):
+    rows = list(rows)
     db = Mock()
-    result = Mock()
-    result.mappings.return_value.all.return_value = list(rows)
+    result = MagicMock()
+    mappings = result.mappings.return_value
+    mappings.all.return_value = rows
+    mappings.__iter__.side_effect = lambda: iter(rows)
     db.execute.return_value = result
     return db
 
@@ -249,6 +252,34 @@ def test_admin_status_marks_unsupported_persisted_alias_without_echoing_value(mo
     assert item["database_configuration_errors"] == [
         "provider_runtime_provider_alias_invalid"
     ]
+    assert marker not in repr(response)
+
+
+def test_admin_status_validates_invalid_101st_rule_beyond_bounded_output(monkeypatch):
+    _stub_admin_dependencies(monkeypatch)
+    marker = "CUSTOMER-CONTROLLED-PROVIDER-ALIAS-AFTER-DISPLAY-LIMIT"
+    rows = [_routing_row() for _ in range(100)]
+    rows.append(
+        _routing_row(
+            primary_provider=marker,
+            fallback_providers='["private_ai_runtime"]',
+        )
+    )
+    db = _db_with_routing_rows(rows)
+
+    response = provider_runtime_status(db=db, current_user=Mock())
+
+    assert response["ok"] is False
+    assert response["status"] == "misconfigured"
+    routing_state = response["traffic_selection"]["webchat_runtime_rules"]
+    assert routing_state["status"] == "misconfigured"
+    assert routing_state["reason_code"] == "provider_runtime_routing_rule_invalid"
+    assert routing_state["truncated"] is True
+    assert len(routing_state["items"]) == 100
+    assert all(
+        item["database_configuration_errors"] == []
+        for item in routing_state["items"]
+    )
     assert marker not in repr(response)
 
 
