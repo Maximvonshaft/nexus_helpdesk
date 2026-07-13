@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..enums import EventType, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketStatus, UserRole
 from ..models import (
     Customer,
+    Market,
     SLAPolicy,
     Tag,
     Team,
@@ -73,6 +74,14 @@ from .sla_service import (
     update_first_response,
     update_pause_state_for_status,
 )
+from .tenant_authority import (
+    ensure_resource_tenant,
+    ensure_team_tenant,
+    ensure_ticket_tenant_authority,
+    ensure_user_tenant,
+    resolve_actor_tenant_id,
+    stamp_runtime_tenant,
+)
 from .state_machine import is_terminal, requires_note, validate_transition
 
 MAX_OUTBOUND_ATTACHMENTS = 10
@@ -125,23 +134,45 @@ def _apply_customer_normalization(customer: Customer) -> None:
     customer.phone_normalized = normalize_phone(customer.phone)
 
 
-def _customer_match_query(db: Session, *, email: Optional[str], phone: Optional[str], external_ref: Optional[str]):
+def _customer_match_query(
+    db: Session,
+    *,
+    email: Optional[str],
+    phone: Optional[str],
+    external_ref: Optional[str],
+    tenant_id: int | None,
+):
     email_norm = normalize_email(email)
     phone_norm = normalize_phone(phone)
     if external_ref:
-        matches = db.query(Customer).filter(Customer.external_ref == external_ref).all()
+        query = db.query(Customer).filter(Customer.external_ref == external_ref)
+        if tenant_id is not None:
+            query = query.filter(Customer.tenant_id == tenant_id)
+        else:
+            query = query.filter(Customer.tenant_id.is_(None))
+        matches = query.all()
         if len(matches) > 1:
             raise HTTPException(status_code=409, detail="Multiple customers matched external_ref")
         if matches:
             return matches[0]
     if phone_norm:
-        matches = db.query(Customer).filter(Customer.phone_normalized == phone_norm).all()
+        query = db.query(Customer).filter(Customer.phone_normalized == phone_norm)
+        if tenant_id is not None:
+            query = query.filter(Customer.tenant_id == tenant_id)
+        else:
+            query = query.filter(Customer.tenant_id.is_(None))
+        matches = query.all()
         if len(matches) > 1:
             raise HTTPException(status_code=409, detail="Multiple customers matched phone")
         if matches:
             return matches[0]
     if email_norm:
-        matches = db.query(Customer).filter(Customer.email_normalized == email_norm).all()
+        query = db.query(Customer).filter(Customer.email_normalized == email_norm)
+        if tenant_id is not None:
+            query = query.filter(Customer.tenant_id == tenant_id)
+        else:
+            query = query.filter(Customer.tenant_id.is_(None))
+        matches = query.all()
         if len(matches) > 1:
             raise HTTPException(status_code=409, detail="Multiple customers matched email")
         if matches:
@@ -149,11 +180,22 @@ def _customer_match_query(db: Session, *, email: Optional[str], phone: Optional[
     return None
 
 
-def resolve_customer(db: Session, payload: TicketCreate) -> Optional[Customer]:
+def resolve_customer(
+    db: Session,
+    payload: TicketCreate,
+    *,
+    actor_tenant_id: int | None,
+) -> Optional[Customer]:
     if payload.customer_id:
         customer = db.query(Customer).filter(Customer.id == payload.customer_id).first()
         if not customer:
             raise HTTPException(status_code=404, detail="Customer not found")
+        ensure_resource_tenant(
+            db,
+            actor_tenant_id,
+            customer,
+            resource_kind="Customer",
+        )
         return customer
 
     if not payload.customer:
@@ -164,6 +206,7 @@ def resolve_customer(db: Session, payload: TicketCreate) -> Optional[Customer]:
         email=payload.customer.email,
         phone=payload.customer.phone,
         external_ref=payload.customer.external_ref,
+        tenant_id=actor_tenant_id,
     )
     if existing:
         if payload.customer.name:
@@ -184,6 +227,7 @@ def resolve_customer(db: Session, payload: TicketCreate) -> Optional[Customer]:
         external_ref=payload.customer.external_ref,
     )
     _apply_customer_normalization(customer)
+    stamp_runtime_tenant(customer, actor_tenant_id)
     db.add(customer)
     db.flush()
     return customer
@@ -209,6 +253,7 @@ def validate_assignee_team(
     team_id: Optional[int],
     *,
     fallback_team_id: Optional[int] = None,
+    actor_tenant_id: int | None = None,
 ):
     assignee = None
     team = None
@@ -217,16 +262,32 @@ def validate_assignee_team(
         team = get_team_or_404(db, effective_team_id)
     if assignee_id is not None:
         assignee = get_user_or_404(db, assignee_id)
+    if team is not None:
+        ensure_team_tenant(db, actor_tenant_id, team)
+    if assignee is not None:
+        ensure_user_tenant(db, actor_tenant_id, assignee)
     if assignee and team and assignee.team_id != team.id and assignee.role not in {UserRole.admin, UserRole.manager}:
         raise HTTPException(status_code=400, detail="Assignee does not belong to selected team")
     return assignee, team
 
 
 def create_ticket(db: Session, payload: TicketCreate, current_user: User) -> Ticket:
-    if payload.team_id or payload.assignee_id:
-        validate_assignee_team(db, payload.assignee_id, payload.team_id, fallback_team_id=payload.team_id or current_user.team_id)
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    if payload.team_id or payload.assignee_id or current_user.team_id:
+        validate_assignee_team(
+            db,
+            payload.assignee_id,
+            payload.team_id,
+            fallback_team_id=payload.team_id or current_user.team_id,
+            actor_tenant_id=actor_tenant_id,
+        )
+    if payload.market_id is not None:
+        market = db.query(Market).filter(Market.id == payload.market_id, Market.is_active.is_(True)).first()
+        if market is None:
+            raise HTTPException(status_code=404, detail="Market not found")
+        ensure_resource_tenant(db, actor_tenant_id, market, resource_kind="Market")
 
-    customer = resolve_customer(db, payload)
+    customer = resolve_customer(db, payload, actor_tenant_id=actor_tenant_id)
     ticket = Ticket(
         ticket_no=generate_ticket_no(),
         title=payload.title,
@@ -262,8 +323,10 @@ def create_ticket(db: Session, payload: TicketCreate, current_user: User) -> Tic
         preferred_reply_channel=payload.preferred_reply_channel,
         preferred_reply_contact=payload.preferred_reply_contact,
     )
+    stamp_runtime_tenant(ticket, actor_tenant_id)
     db.add(ticket)
     db.flush()
+    ensure_ticket_tenant_authority(db, current_user, ticket)
 
     policy = get_policy_for_priority(db, ticket.priority)
     if policy:
@@ -325,7 +388,19 @@ def list_tickets(
     limit: int = 50,
     skip: int = 0,
 ) -> list[Ticket]:
-    query = db.query(Ticket).options(joinedload(Ticket.customer), joinedload(Ticket.assignee), joinedload(Ticket.team))
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    query = db.query(Ticket).options(
+        joinedload(Ticket.customer),
+        joinedload(Ticket.assignee),
+        joinedload(Ticket.creator),
+        joinedload(Ticket.team),
+        joinedload(Ticket.market),
+        joinedload(Ticket.channel_account),
+    )
+    if actor_tenant_id is not None:
+        query = query.filter(Ticket.tenant_id == actor_tenant_id)
+    else:
+        query = query.filter(Ticket.tenant_id.is_(None))
     if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
         query = query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
@@ -353,6 +428,13 @@ def list_tickets(
     if overdue is True:
         query = query.filter(Ticket.resolution_due_at.is_not(None), Ticket.resolution_due_at < utc_now(), Ticket.status.notin_([TicketStatus.closed, TicketStatus.canceled]))
     tickets = query.order_by(Ticket.updated_at.desc()).offset(skip).limit(limit).all()
+    for ticket in tickets:
+        ensure_ticket_tenant_authority(
+            db,
+            current_user,
+            ticket,
+            actor_tenant_id=actor_tenant_id,
+        )
     return tickets
 
 
@@ -360,6 +442,12 @@ def update_ticket(db: Session, ticket_id: int, payload: TicketUpdate, current_us
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     ensure_can_update_core_fields(current_user, db)
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    if payload.market_id is not None:
+        market = db.query(Market).filter(Market.id == payload.market_id, Market.is_active.is_(True)).first()
+        if market is None:
+            raise HTTPException(status_code=404, detail="Market not found")
+        ensure_resource_tenant(db, actor_tenant_id, market, resource_kind="Market")
 
     changed = False
     for field in [
@@ -429,7 +517,14 @@ def assign_ticket(db: Session, ticket_id: int, payload: TicketAssignRequest, cur
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
 
-    assignee, team = validate_assignee_team(db, payload.assignee_id, payload.team_id, fallback_team_id=ticket.team_id)
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    assignee, team = validate_assignee_team(
+        db,
+        payload.assignee_id,
+        payload.team_id,
+        fallback_team_id=ticket.team_id,
+        actor_tenant_id=actor_tenant_id,
+    )
     old_assignee_id = ticket.assignee_id
     old_team_id = ticket.team_id
 
@@ -504,6 +599,7 @@ def escalate_ticket(db: Session, ticket_id: int, payload: TicketEscalateRequest,
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     team = get_team_or_404(db, payload.team_id)
+    ensure_team_tenant(db, resolve_actor_tenant_id(db, current_user), team)
     old_team_id = ticket.team_id
     old_status = ticket.status
 
@@ -832,14 +928,32 @@ def add_ai_intake(db: Session, ticket_id: int, payload: AIIntakeCreate, current_
 
 def get_customer_history(db: Session, customer_id: int, current_user: User):
     ensure_can_read_customer_profile(current_user, db)
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    customer_query = db.query(Customer).filter(Customer.id == customer_id)
+    if actor_tenant_id is not None:
+        customer_query = customer_query.filter(Customer.tenant_id == actor_tenant_id)
+    else:
+        customer_query = customer_query.filter(Customer.tenant_id.is_(None))
+    customer = customer_query.first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    ensure_resource_tenant(db, actor_tenant_id, customer, resource_kind="Customer")
     ticket_query = db.query(Ticket).filter(Ticket.customer_id == customer.id)
+    if actor_tenant_id is not None:
+        ticket_query = ticket_query.filter(Ticket.tenant_id == actor_tenant_id)
+    else:
+        ticket_query = ticket_query.filter(Ticket.tenant_id.is_(None))
     privileged_roles = {UserRole.admin, UserRole.manager, UserRole.auditor}
     if current_user.role not in privileged_roles:
         ticket_query = ticket_query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
     tickets = ticket_query.order_by(Ticket.updated_at.desc()).limit(10).all()
+    for ticket in tickets:
+        ensure_ticket_tenant_authority(
+            db,
+            current_user,
+            ticket,
+            actor_tenant_id=actor_tenant_id,
+        )
     total = ticket_query.count()
     if current_user.role not in privileged_roles and total == 0:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -853,7 +967,12 @@ def get_ticket_events(db: Session, ticket_id: int, current_user: User) -> list[T
 
 
 def get_ticket_stats(db: Session, current_user: User):
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
     base_query = db.query(Ticket)
+    if actor_tenant_id is not None:
+        base_query = base_query.filter(Ticket.tenant_id == actor_tenant_id)
+    else:
+        base_query = base_query.filter(Ticket.tenant_id.is_(None))
     if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
         base_query = base_query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
