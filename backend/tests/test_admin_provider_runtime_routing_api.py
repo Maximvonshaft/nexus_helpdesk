@@ -37,6 +37,7 @@ def _routing_row(
     kill_switch=False,
     primary_provider="private_ai_runtime",
     fallback_providers=None,
+    output_contract="nexus_webchat_runtime_reply_v1",
 ):
     return {
         "scenario": scenario,
@@ -44,6 +45,7 @@ def _routing_row(
         "channel_key": "website",
         "primary_provider": primary_provider,
         "fallback_providers": [] if fallback_providers is None else fallback_providers,
+        "output_contract": output_contract,
         "canary_percent": canary_percent,
         "kill_switch": kill_switch,
         "enabled": True,
@@ -192,6 +194,7 @@ def test_admin_provider_runtime_status_reports_database_rule_under_safe_control_
     rule = routing_state["items"][0]
     assert rule["scenario"] == "webchat_runtime_reply"
     assert rule["tenant_id"] == "tenant-a"
+    assert rule["output_contract"] == "nexus_webchat_runtime_reply_v1"
     assert rule["database_canary_percent"] == 5
     assert rule["database_kill_switch"] is False
     assert rule["database_configuration_errors"] == []
@@ -260,6 +263,25 @@ def test_admin_status_marks_unsupported_persisted_alias_without_echoing_value(mo
     assert marker not in repr(response)
 
 
+def test_admin_status_marks_unsupported_output_contract_without_echoing_value(monkeypatch):
+    _stub_admin_dependencies(monkeypatch)
+    marker = "CUSTOMER-CONTROLLED-OUTPUT-CONTRACT"
+    db = _db_with_routing_rows([_routing_row(output_contract=marker)])
+
+    response = provider_runtime_status(db=db, current_user=Mock())
+
+    assert response["ok"] is False
+    assert response["status"] == "misconfigured"
+    routing_state = response["traffic_selection"]["webchat_runtime_rules"]
+    assert routing_state["status"] == "misconfigured"
+    item = routing_state["items"][0]
+    assert item["output_contract"] == "invalid"
+    assert item["database_configuration_errors"] == [
+        "provider_runtime_output_contract_invalid"
+    ]
+    assert marker not in repr(response)
+
+
 def test_admin_status_validates_invalid_101st_rule_beyond_bounded_output(monkeypatch):
     _stub_admin_dependencies(monkeypatch)
     marker = "CUSTOMER-CONTROLLED-PROVIDER-ALIAS-AFTER-DISPLAY-LIMIT"
@@ -288,9 +310,9 @@ def test_admin_status_validates_invalid_101st_rule_beyond_bounded_output(monkeyp
     assert marker not in repr(response)
 
 
-def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch):
+def test_admin_status_validates_invalid_101st_contract_across_scenarios(monkeypatch):
     _stub_admin_dependencies(monkeypatch)
-    marker = "PROVIDER-ALIAS-IN-101ST-WEBCALL-RULE"
+    marker = "OUTPUT-CONTRACT-IN-101ST-WEBCALL-RULE"
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as connection:
         connection.execute(
@@ -302,6 +324,7 @@ def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch)
                     channel_key VARCHAR(100) NOT NULL,
                     primary_provider VARCHAR(100) NOT NULL,
                     fallback_providers JSON,
+                    output_contract VARCHAR(100),
                     canary_percent INTEGER,
                     kill_switch BOOLEAN,
                     enabled BOOLEAN,
@@ -316,12 +339,12 @@ def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch)
                     """
                     INSERT INTO provider_routing_rules (
                         scenario, tenant_id, channel_key, primary_provider,
-                        fallback_providers, canary_percent, kill_switch,
-                        enabled, updated_at
+                        fallback_providers, output_contract, canary_percent,
+                        kill_switch, enabled, updated_at
                     ) VALUES (
                         :scenario, :tenant_id, :channel_key, :primary_provider,
-                        :fallback_providers, :canary_percent, :kill_switch,
-                        :enabled, CURRENT_TIMESTAMP
+                        :fallback_providers, :output_contract, :canary_percent,
+                        :kill_switch, :enabled, CURRENT_TIMESTAMP
                     )
                     """
                 ),
@@ -331,6 +354,7 @@ def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch)
                     "channel_key": "website",
                     "primary_provider": "private_ai_runtime",
                     "fallback_providers": "[]",
+                    "output_contract": "nexus_webchat_runtime_reply_v1",
                     "canary_percent": 5,
                     "kill_switch": False,
                     "enabled": True,
@@ -341,12 +365,12 @@ def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch)
                 """
                 INSERT INTO provider_routing_rules (
                     scenario, tenant_id, channel_key, primary_provider,
-                    fallback_providers, canary_percent, kill_switch,
-                    enabled, updated_at
+                    fallback_providers, output_contract, canary_percent,
+                    kill_switch, enabled, updated_at
                 ) VALUES (
                     :scenario, :tenant_id, :channel_key, :primary_provider,
-                    :fallback_providers, :canary_percent, :kill_switch,
-                    :enabled, CURRENT_TIMESTAMP
+                    :fallback_providers, :output_contract, :canary_percent,
+                    :kill_switch, :enabled, CURRENT_TIMESTAMP
                 )
                 """
             ),
@@ -354,8 +378,9 @@ def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch)
                 "scenario": "webcall_ai_decision",
                 "tenant_id": "tenant-z",
                 "channel_key": "webcall_ai",
-                "primary_provider": marker,
-                "fallback_providers": '["private_ai_runtime"]',
+                "primary_provider": "private_ai_runtime",
+                "fallback_providers": "[]",
+                "output_contract": marker,
                 "canary_percent": 5,
                 "kill_switch": False,
                 "enabled": True,
@@ -379,6 +404,10 @@ def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch)
     assert len(routing_state["items"]) == 100
     assert all(
         item["scenario"] == "webchat_runtime_reply"
+        for item in routing_state["items"]
+    )
+    assert all(
+        item["output_contract"] == "nexus_webchat_runtime_reply_v1"
         for item in routing_state["items"]
     )
     assert marker not in repr(response)
