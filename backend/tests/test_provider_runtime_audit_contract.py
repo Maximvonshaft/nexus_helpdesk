@@ -205,6 +205,40 @@ async def test_primary_failure_then_fallback_success_is_audited_as_pending_then_
 
 
 @pytest.mark.asyncio
+async def test_authoritative_nonfallback_failure_returns_router_owned_bounded_result(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    marker = "CUSTOMER-OR-EXCEPTION-CONTROLLED-ERROR-MARKER"
+    db = _mock_db(_rule(canary_percent=100))
+    adapter = _Adapter(
+        "private_ai_runtime",
+        ProviderResult(
+            ok=False,
+            provider="private_ai_runtime",
+            elapsed_ms=7,
+            error_code=marker,
+            fallback_allowed=False,
+            raw_payload_safe_summary={"provider_body": marker},
+        ),
+    )
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.ok is False
+    assert result.provider == "router"
+    assert result.raw_provider == "router"
+    assert result.reply_source == "router"
+    assert result.error_code == "provider_runtime_provider_failed"
+    assert result.elapsed_ms == 7
+    assert result.raw_payload_safe_summary["fallback_result"] == "blocked"
+    assert result.raw_payload_safe_summary["provider_result"] == "failed"
+    assert marker not in repr(result)
+    assert adapter.calls == 1
+    assert db.audit_rows[-1]["error_code"] == "provider_runtime_provider_failed"
+    assert marker not in repr(db.audit_rows)
+
+
+@pytest.mark.asyncio
 async def test_shadow_failure_with_fallback_disallowed_never_calls_fallback(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
     backup_name = "private_ai_runtime_backup"
