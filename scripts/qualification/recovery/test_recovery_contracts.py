@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -48,6 +49,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("archive_size_bytes", script)
         self.assertIn("ROLLBACK_ALLOW_IN_PLACE", script)
         self.assertIn("INSTRUCTIONS_ONLY", script)
+        self.assertIn("DATABASE_RESTORE_APPLIED", script)
         self.assertIn("DATABASE_RESTORED", script)
         self.assertIn("IMAGE_RESTARTED", script)
         self.assertIn("HEALTH_VERIFIED", script)
@@ -156,6 +158,86 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             )
             payload = json.loads(status.read_text(encoding="utf-8"))
         return completed, payload
+
+    def test_database_post_verify_failure_records_applied_restore(self) -> None:
+        script = ROOT / "scripts" / "deploy" / "rollback_release.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            bundle = root / "bundle"
+            bundle.mkdir()
+            archive = bundle / "database.dump"
+            archive_bytes = b"synthetic custom-format archive"
+            archive.write_bytes(archive_bytes)
+            (bundle / "backup_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "nexus_postgres_backup_manifest_v1",
+                        "format": "postgres_custom",
+                        "archive": "database.dump",
+                        "archive_sha256": "sha256:" + hashlib.sha256(archive_bytes).hexdigest(),
+                        "archive_size_bytes": len(archive_bytes),
+                        "source_database_sha256": hashlib.sha256(b"nexus_source").hexdigest(),
+                        "alembic_head": "20260713_0059",
+                        "created_at": "2026-07-13T00:00:00Z",
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            restore_marker = root / "restore-applied"
+            _write_executable(
+                fake_bin / "pg_restore",
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == \"--list\" ]]; then exit 0; fi\n"
+                f"touch {restore_marker!s}\n"
+                "exit 0\n",
+            )
+            _write_executable(
+                fake_bin / "psql",
+                "#!/usr/bin/env bash\n"
+                "args=\"$*\"\n"
+                "if [[ \"$args\" == *\"SELECT current_database()\"* ]]; then\n"
+                "  printf 'nexus_restore\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"$args\" == *\"SELECT version_num FROM alembic_version\"* ]]; then\n"
+                "  printf '20260713_0058\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+            )
+            status = root / "rollback-result.json"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+                    "ROLLBACK_CONFIRM": "I_UNDERSTAND",
+                    "POSTGRES_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_restore",
+                    "ROLLBACK_STATUS_FILE": str(status),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(script), str(bundle)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            payload = json.loads(status.read_text(encoding="utf-8"))
+            self.assertTrue(restore_marker.exists())
+
+        self.assertEqual(completed.returncode, 7)
+        self.assertEqual(payload["outcome"], "fail")
+        self.assertEqual(payload["failure_stage"], "DATABASE_POST_VERIFY")
+        self.assertIn("DATABASE_RESTORE_APPLIED", payload["states"])
+        self.assertNotIn("DATABASE_RESTORED", payload["states"])
+        self.assertTrue(payload["database_restore_applied"])
+        self.assertFalse(payload["database_restored"])
 
     def test_health_failure_writes_partial_rollback_status(self) -> None:
         completed, payload = self._run_image_health_fixture(curl_script="#!/usr/bin/env bash\nexit 22\n")
