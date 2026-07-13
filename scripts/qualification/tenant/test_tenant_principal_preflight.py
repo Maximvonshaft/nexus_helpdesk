@@ -108,7 +108,7 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
             "tenants",
             metadata,
             sa.Column("id", sa.Integer(), primary_key=True),
-            sa.Column("tenant_key", sa.String(120), nullable=False),
+            sa.Column("tenant_key", sa.String(80), nullable=False),
         )
         sa.Table(
             "markets",
@@ -162,7 +162,6 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
             )
             self.assertEqual(drift.counts["tenant.relational_assignment_conflict"], 1)
         engine.dispose()
-
 
 
 if __name__ == "__main__":
