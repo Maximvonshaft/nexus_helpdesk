@@ -28,12 +28,17 @@ python scripts/release/generate_rc_test_env.py \
   --compose-project "${COMPOSE_PROJECT_NAME}" \
   --origin "${RC_PUBLIC_ORIGIN}" \
   --output "${RC_ENV_FILE}"
-python - "${RC_ENV_FILE}" "${RC_POSTGRES_IMAGE_PIN}" "${RC_NGINX_IMAGE_PIN}" <<'PY'
+controlled_app_version="controlled-${SOURCE_SHA:0:12}"
+python - "${RC_ENV_FILE}" "${RC_POSTGRES_IMAGE_PIN}" "${RC_NGINX_IMAGE_PIN}" "${controlled_app_version}" <<'PY'
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-replacements = {"RC_POSTGRES_IMAGE": sys.argv[2], "RC_NGINX_IMAGE": sys.argv[3]}
+replacements = {
+    "RC_POSTGRES_IMAGE": sys.argv[2],
+    "RC_NGINX_IMAGE": sys.argv[3],
+    "APP_VERSION": sys.argv[4],
+}
 lines, seen = [], set()
 for raw in path.read_text(encoding="utf-8").splitlines():
     key, value = raw.split("=", 1)
@@ -42,7 +47,7 @@ for raw in path.read_text(encoding="utf-8").splitlines():
         seen.add(key)
     lines.append(f"{key}={value}")
 if seen != set(replacements):
-    raise SystemExit("RC infra image keys missing")
+    raise SystemExit("controlled RC replacement keys missing")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 path.chmod(0o600)
 PY
