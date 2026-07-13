@@ -33,6 +33,10 @@ def parse(name: str, *, expected_db: str | None = None, native: bool = False):
     allowed = {"postgresql", "postgres"} if native else {"postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
     if parsed.scheme not in allowed or not parsed.hostname:
         raise SystemExit(f"recovery_url_invalid:{name}")
+    if parsed.query:
+        raise SystemExit(f"recovery_url_query_not_allowed:{name}")
+    if parsed.fragment:
+        raise SystemExit(f"recovery_url_fragment_not_allowed:{name}")
     database = parsed.path.lstrip("/")
     if not database or "/" in database:
         raise SystemExit(f"recovery_database_invalid:{name}")
