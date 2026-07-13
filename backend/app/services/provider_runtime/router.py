@@ -463,12 +463,14 @@ class ProviderRuntimeRouter:
                             traffic,
                             elapsed_ms=result.elapsed_ms,
                             summary=shadow_summary,
+                            fallback_allowed=False,
                         )
                     return _unavailable_with_traffic(
                         fixed_error_code,
                         traffic,
                         elapsed_ms=result.elapsed_ms,
                         summary=safe_summary,
+                        fallback_allowed=False,
                     )
                 continue
 
@@ -665,11 +667,13 @@ def _unavailable_with_traffic(
     *,
     elapsed_ms: int = 0,
     summary: dict | None = None,
+    fallback_allowed: bool = True,
 ) -> ProviderResult:
     result = ProviderResult.unavailable(
         "router",
         error_code,
         elapsed_ms,
+        fallback_allowed=fallback_allowed,
     )
     safe_summary = dict(summary or {})
     safe_summary["unavailable"] = True
