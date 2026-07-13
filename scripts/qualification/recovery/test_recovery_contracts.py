@@ -29,6 +29,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("pg_restore --list", script)
         self.assertIn("sha256sum", script)
         self.assertIn("backup_manifest", script)
+        self.assertIn("source_database_sha256", script)
         self.assertIn("mv --", script)
 
     def test_rollback_fails_fast_and_reports_explicit_states(self) -> None:
@@ -36,11 +37,27 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("POSTGRES_NATIVE_URL", script)
         self.assertIn("ON_ERROR_STOP=1", script)
         self.assertIn("--single-transaction", script)
+        self.assertIn("source_database_sha256", script)
+        self.assertIn("archive_size_bytes", script)
+        self.assertIn("ROLLBACK_ALLOW_IN_PLACE", script)
         self.assertIn("INSTRUCTIONS_ONLY", script)
         self.assertIn("DATABASE_RESTORED", script)
         self.assertIn("IMAGE_RESTARTED", script)
         self.assertIn("HEALTH_VERIFIED", script)
         self.assertNotIn("Rollback helper completed.", script)
+
+    def test_workflow_quarantines_unsafe_evidence(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "osr-recovery-qualification.yml").read_text(encoding="utf-8")
+        clean = workflow.index("- name: Upload clean bounded qualification evidence")
+        failure = workflow.index("- name: Upload sanitized recovery failure status")
+        enforce = workflow.index("- name: Enforce recovery qualification")
+        self.assertLess(clean, failure)
+        self.assertLess(failure, enforce)
+        self.assertIn("steps.artifact_scan.outputs.exit_code == '0'", workflow[clean:failure])
+        self.assertIn("artifacts/recovery/*.json", workflow[clean:failure])
+        self.assertIn("steps.artifact_scan.outputs.exit_code != '0'", workflow[failure:enforce])
+        self.assertIn("qualification-status.json", workflow[failure:enforce])
+        self.assertNotIn("artifacts/recovery/*.json", workflow[failure:enforce])
 
 
 class RecoveryEvidenceTests(unittest.TestCase):
@@ -136,6 +153,12 @@ class RecoveryEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(self.module.RecoveryEvidenceError, "migration_heads_multiple"):
                 self.module.migration_plan(
                     observed_heads=("20260710_0057", "20260711_0058"),
+                    expected_head="20260711_0058",
+                    output=output,
+                )
+            with self.assertRaisesRegex(self.module.RecoveryEvidenceError, "migration_head_missing"):
+                self.module.migration_plan(
+                    observed_heads=(),
                     expected_head="20260711_0058",
                     output=output,
                 )
