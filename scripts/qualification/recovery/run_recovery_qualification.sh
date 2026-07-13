@@ -5,15 +5,60 @@ set -Eeuo pipefail
 : "${SOURCE_NATIVE_URL:?SOURCE_NATIVE_URL is required}"
 : "${RESTORE_APP_URL:?RESTORE_APP_URL is required}"
 : "${RESTORE_NATIVE_URL:?RESTORE_NATIVE_URL is required}"
+: "${RECOVERY_ADMIN_NATIVE_URL:?RECOVERY_ADMIN_NATIVE_URL is required}"
+: "${RECOVERY_ALLOW_DATABASE_RECREATE:?RECOVERY_ALLOW_DATABASE_RECREATE is required}"
 : "${SOURCE_SHA:?SOURCE_SHA is required}"
 : "${QUALIFICATION_MARKER:=QUAL-RCV-001}"
 : "${RTO_TARGET_SECONDS:=120}"
 : "${RPO_TARGET_SECONDS:=60}"
 
+if [[ "$RECOVERY_ALLOW_DATABASE_RECREATE" != "I_UNDERSTAND" ]]; then
+  echo "RECOVERY_ALLOW_DATABASE_RECREATE must equal I_UNDERSTAND" >&2
+  exit 2
+fi
+
+SOURCE_APP_URL="$SOURCE_APP_URL" \
+SOURCE_NATIVE_URL="$SOURCE_NATIVE_URL" \
+RESTORE_APP_URL="$RESTORE_APP_URL" \
+RESTORE_NATIVE_URL="$RESTORE_NATIVE_URL" \
+RECOVERY_ADMIN_NATIVE_URL="$RECOVERY_ADMIN_NATIVE_URL" \
+python - <<'PY'
+import os
+from urllib.parse import urlsplit
+
+
+def parse(name: str, *, expected_db: str | None = None, native: bool = False):
+    value = os.environ[name]
+    parsed = urlsplit(value)
+    allowed = {"postgresql", "postgres"} if native else {"postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
+    if parsed.scheme not in allowed or not parsed.hostname:
+        raise SystemExit(f"recovery_url_invalid:{name}")
+    database = parsed.path.lstrip("/")
+    if not database or "/" in database:
+        raise SystemExit(f"recovery_database_invalid:{name}")
+    if expected_db is not None and database != expected_db:
+        raise SystemExit(f"recovery_database_name_mismatch:{name}")
+    return parsed.hostname.lower(), parsed.port or 5432, database
+
+
+source_app = parse("SOURCE_APP_URL", expected_db="nexus_source")
+source_native = parse("SOURCE_NATIVE_URL", expected_db="nexus_source", native=True)
+restore_app = parse("RESTORE_APP_URL", expected_db="nexus_restore")
+restore_native = parse("RESTORE_NATIVE_URL", expected_db="nexus_restore", native=True)
+admin = parse("RECOVERY_ADMIN_NATIVE_URL", native=True)
+
+if source_app[:2] != source_native[:2] or restore_app[:2] != restore_native[:2]:
+    raise SystemExit("recovery_application_native_cluster_mismatch")
+if source_native[:2] != restore_native[:2] or source_native[:2] != admin[:2]:
+    raise SystemExit("recovery_admin_cluster_mismatch")
+if admin[2] in {source_native[2], restore_native[2]}:
+    raise SystemExit("recovery_admin_database_not_isolated")
+PY
+
 EVIDENCE_ROOT="${EVIDENCE_ROOT:-artifacts/recovery}"
 mkdir -p -- "$EVIDENCE_ROOT"
 
-psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+psql "$RECOVERY_ADMIN_NATIVE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 DROP DATABASE IF EXISTS nexus_source;
 DROP DATABASE IF EXISTS nexus_restore;
 CREATE DATABASE nexus_source;
