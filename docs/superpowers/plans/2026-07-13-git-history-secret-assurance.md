@@ -14,7 +14,8 @@
 - No history rewrite, force-push, branch/tag deletion or visibility change.
 - No deployment, Provider, outbound, database or production-data action.
 - No raw matched values, source lines, paths, unsafe suffixes, commit messages, author identities, emails or ref names in evidence.
-- A finding, incomplete result, failed artifact scan or failed CodeQL result blocks merge.
+- No PR Head scanner, allowlist, workflow, dependency or script may execute in the pull-request assurance job.
+- A finding, incomplete result, failed artifact scan or failed CodeQL result blocks closure.
 
 ## Task 1 — Establish adversarial RED contracts
 
@@ -35,7 +36,8 @@ Prove failure before each implementation for:
 - oversized binary-looking paths;
 - credential-shaped path suffixes;
 - shallow and malformed repositories;
-- missing reports and tainted evidence upload ordering.
+- missing reports and tainted evidence upload ordering;
+- execution of PR-controlled scanner/policy rather than trusted base code.
 
 ## Task 2 — Implement complete history scanning
 
@@ -59,14 +61,17 @@ Prove failure before each implementation for:
 - Emit path digests and only safe bounded suffixes.
 - Store at most 100 findings while counting all findings.
 
-## Task 3 — Add reliable CI evidence
+## Task 3 — Establish trusted CI execution
 
 **File:** `.github/workflows/git-history-secret-assurance.yml`
 
-- Use immutable Action SHAs and read-only permissions.
-- Checkout exact Head with full history and tags.
-- Compile and run every security test.
-- Run the complete history scan only after tests pass.
+- Use `pull_request_target`, immutable Action SHAs and read-only permissions.
+- Checkout trusted base code/policy into `.trusted`.
+- Checkout exact PR Head full history into `target` with credentials not persisted.
+- Verify exact target SHA and non-shallow state.
+- Compile and run only `.trusted` security tests.
+- Run `.trusted` history and artifact scanners against `target` data.
+- Never execute target Python, scripts, workflows, dependencies or allowlist.
 - Always create bounded scan and numeric status reports.
 - Run artifact scanning before full evidence upload.
 - Upload the complete report set only when artifact scan exit is zero.
@@ -83,6 +88,8 @@ Prove failure before each implementation for:
 
 Document:
 
+- trusted base versus untrusted target execution;
+- bootstrap and post-merge assurance boundary;
 - pass, finding and incomplete states;
 - exact untrimmed path/occurrence allowlist semantics;
 - commit-root and ref-peeled Tree coverage;
@@ -91,27 +98,44 @@ Document:
 - separate owner authority for credential/history remediation;
 - rollback.
 
-## Task 5 — Exact-head verification
+## Task 5 — Bootstrap PR verification
 
-One final Head must prove:
+The bootstrap PR must prove on one exact Head:
 
-- all current and focused security tests pass;
+- all current and focused security tests pass through existing trusted repository CI;
+- dual-checkout workflow text prevents target-code execution;
+- current-tree scan and dependency/SBOM gates pass;
+- Python and JavaScript CodeQL pass;
+- Backend, Migration, Readiness, Release Image, Webapp, Smoke, Integration, WebCall and coordination checks pass;
+- independent review reports no remaining Critical/Important issue;
+- latest `main` is unchanged or safely synchronized and the branch is `0 behind`;
+- merge uses expected Head.
+
+The PR must not claim authoritative tamper-resistant history assurance from a workflow definition that is not yet on the trusted base branch.
+
+## Task 6 — Post-merge trusted assurance
+
+After the bootstrap merge, the trusted `main` push run must prove:
+
+- trusted tests execute successfully;
+- the real non-shallow Nexus history scan completes;
 - one fixture allowlist cannot suppress another Blob alias;
 - direct Tree tags and whitespace paths remain independent;
 - all distinct and repeated identical values on one line are counted;
 - oversized `.png`/`.zip`-style paths remain incomplete unless actually scanned;
 - credential-shaped suffixes are not emitted;
 - an artifact-scan failure cannot upload the history report;
-- the real non-shallow Nexus history scan completes;
 - `accounted_blob_count == reachable_blob_count`;
 - `reachable_blob_path_count` is positive and bounded;
 - report size is at most 64 KiB;
-- clean evidence passes artifact scanning before upload;
-- current-tree scan, repository checks, Python/JS CodeQL and independent review pass;
-- latest `main` is unchanged or safely synchronized and the branch is `0 behind`.
+- clean evidence passes artifact scanning before full upload;
+- unsuppressed finding count is zero.
+
+Only after this trusted post-merge run passes may #565's scanner/evidence acceptance be closed.
 
 ## Decision boundary
 
-- **Clean and complete:** mark Ready and merge with expected Head.
-- **Findings:** keep Draft; publish only bounded counts and request separately authorized credential triage.
-- **Incomplete or tainted evidence:** keep Draft; correct coverage or evidence handling before any assurance claim.
+- **Bootstrap checks pass:** merge infrastructure with expected Head, then wait for trusted main push assurance.
+- **Post-merge clean and complete:** close scanner/evidence acceptance.
+- **Findings:** keep #565 open; publish only bounded counts and request separately authorized credential triage.
+- **Incomplete or tainted evidence:** keep #565 open; correct coverage or evidence handling before any assurance claim.
