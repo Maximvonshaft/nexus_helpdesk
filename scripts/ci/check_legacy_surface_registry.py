@@ -326,7 +326,7 @@ def _domain_matches(domain: Mapping[str, Any], path: str, *, read_text: Callable
     selectors = domain["selectors"]
     if _path_matches(path, exact=selectors["paths"], globs=selectors["globs"]):
         return True
-    if any(re.search(pattern, path) for pattern in selectors["path_regexes"]):
+    if any(re.fullmatch(pattern, path) for pattern in selectors["path_regexes"]):
         return True
     for rule in selectors["content_rules"]:
         if any(_glob_matches(path, pattern) for pattern in rule["path_globs"]):
