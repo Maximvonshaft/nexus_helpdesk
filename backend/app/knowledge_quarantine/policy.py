@@ -110,6 +110,8 @@ def evaluate_publication_eligibility(record: KnowledgeIngestionRecord) -> Public
         reasons.append("quarantine.parser_not_passed")
     if not record.parser_identity or not record.parser_version:
         reasons.append("quarantine.parser_identity_missing")
+    if len(str(record.parsed_text_sha256 or "")) != 64:
+        reasons.append("quarantine.publication_content_hash_invalid")
     if record.malware_status != "clean":
         reasons.append("quarantine.malware_not_clean")
     # This slice does not persist a separate CDR-derived artifact. A sanitized
@@ -133,6 +135,7 @@ def evaluate_publication_eligibility(record: KnowledgeIngestionRecord) -> Public
         "record_id": record.id,
         "knowledge_item_id": record.knowledge_item_id,
         "content_sha256": str(record.content_sha256 or "")[:64],
+        "publication_content_sha256": str(record.parsed_text_sha256 or "")[:64],
         "lifecycle_status": str(record.lifecycle_status or "")[:40],
         "signature_status": str(record.signature_status or "")[:40],
         "parser_status": str(record.parser_status or "")[:40],
@@ -156,10 +159,16 @@ def is_exact_published_version_eligible(record: KnowledgeIngestionRecord, *, ver
         and record.review_status == "approved"
         and record.signature_status == "match"
         and record.parser_status == "passed"
+        and bool(record.parser_identity)
+        and bool(record.parser_version)
+        and len(str(record.content_sha256 or "")) == 64
+        and len(str(record.parsed_text_sha256 or "")) == 64
         and record.malware_status == "clean"
         and record.cdr_status == "clean"
         and record.prompt_risk_status == "clear"
         and record.source_trust in {"internal_reviewed", "external_verified"}
+        and record.reviewed_by is not None
+        and record.reviewed_at is not None
         and record.published_version == int(version)
         and record.rolled_back_at is None
     )
