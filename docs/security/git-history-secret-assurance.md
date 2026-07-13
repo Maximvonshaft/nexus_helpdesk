@@ -28,11 +28,12 @@ The scanner:
 6. preserves Git path bytes after UTF-8 decoding, including leading and trailing whitespace;
 7. reads each eligible unique Blob once, but evaluates every historical path alias independently;
 8. evaluates every match produced by every credential rule, including repeated same-rule values on one line;
-9. accounts for every Blob as scanned text, binary/unreadable, or oversized and unscanned;
-10. fails closed if any oversized Blob remains unscanned, regardless of filename suffix;
-11. uses the same credential patterns, placeholder policy and fingerprint algorithm as the current-tree scanner.
+9. gives repeated identical values on one line distinct occurrence fingerprints, while preserving the first occurrence's existing fingerprint contract;
+10. accounts for every Blob as scanned text, binary/unreadable, or oversized and unscanned;
+11. fails closed if any oversized Blob remains unscanned, regardless of filename suffix;
+12. uses the same credential patterns, placeholder policy and base fingerprint algorithm as the current-tree scanner.
 
-A path-specific allowlist therefore applies only to that exact path/rule/fingerprint tuple. Copying or renaming identical Blob content to another path creates a separate allowlist decision; one fixture path cannot suppress a non-fixture alias. Paths that differ only by whitespace are also distinct.
+A path-specific allowlist applies only to the exact, untrimmed path/rule/fingerprint tuple. Copying or renaming identical Blob content to another path creates a separate allowlist decision. Paths that differ only by whitespace are distinct. One allowlisted occurrence also cannot suppress a second identical value on the same line.
 
 The current-tree scanner retains its existing 200-record contract. The history scanner counts all logical findings while storing no more than 100 redacted records.
 
@@ -45,14 +46,15 @@ Evidence may contain only:
 - bounded repository source and reference digests;
 - object, Blob, Blob-path and accounting counts;
 - bounded counts by rule;
-- SHA-256 of the historical path and its bounded suffix;
+- SHA-256 of the historical path;
+- a suffix only when it matches the safe form `.[a-z0-9]{1,16}`; otherwise the suffix is empty;
 - line number;
 - truncated one-way finding fingerprint;
 - Git Blob object ID.
 
 Evidence must not contain:
 
-- raw historical paths;
+- raw historical paths or unsafe suffix text;
 - matched values or source lines;
 - commit messages;
 - author names or email addresses;
@@ -61,7 +63,7 @@ Evidence must not contain:
 - customer, Provider or tool payloads;
 - raw Git stderr.
 
-Generated reports are limited to 64 KiB and scanned again before upload. Artifact retention is 14 days.
+Generated reports are limited to 64 KiB and scanned again before upload. Full reports are uploaded only when that second scan returns clean. If it fails, only the numeric sanitized status report is uploaded. Artifact retention is 14 days.
 
 ## Result interpretation
 
@@ -70,10 +72,10 @@ Generated reports are limited to 64 KiB and scanned again before upload. Artifac
 `status=pass` and `complete=true` means:
 
 - every reachable Blob was accounted for;
-- every reachable historical path alias was independently evaluated;
+- every reachable historical path alias and credential occurrence was independently evaluated;
 - no Blob was skipped solely because of its suffix;
 - no unsuppressed credential-shaped finding was detected;
-- generated evidence passed artifact scanning.
+- generated evidence passed artifact scanning before upload.
 
 It does not authorize making the repository public or prove that credentials were never exposed through another system.
 
@@ -91,7 +93,7 @@ Incomplete is blocking evidence, not a clean result.
 
 ## Allowlist policy
 
-An allowlist entry is valid only for the exact internal path, rule and fingerprint tuple, with a concrete reason and an unexpired date. The raw path is used only inside the scanner for exact matching and is not emitted in evidence.
+An allowlist entry is valid only for the exact internal path, rule and fingerprint tuple, with a concrete reason and an unexpired date. The raw path is preserved exactly inside the scanner for matching and is not emitted in evidence.
 
 Allowlisting is intended for proven synthetic fixtures or third-party example material. A real credential must not be allowlisted as remediation. Every accepted historical tuple remains time-bounded and must be re-reviewed before expiry.
 
@@ -99,7 +101,7 @@ Allowlisting is intended for proven synthetic fixtures or third-party example ma
 
 The Workflow uses immutable Action SHAs, read-only repository permission, full-history checkout and non-persisted checkout credentials.
 
-Tests, the history scan and the artifact scan have separate exit evidence. If tests or scanning fail before a normal report is produced, the Workflow creates a minimal bounded failure report before uploading evidence. Upload failure can no longer hide the original scanner failure.
+Tests, the history scan and the artifact scan have separate exit evidence. If tests or scanning fail before a normal report is produced, the Workflow creates a minimal bounded failure report. A clean artifact scan permits upload of the complete bounded evidence set. A non-clean artifact scan uploads only sanitized numeric status and blocks the final gate, so a tainted report never becomes an artifact.
 
 ## Remediation authority
 
