@@ -69,6 +69,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python -m py_compile \
+            scripts/qualification/tenant/tenant_principal_resolution.py \
             scripts/qualification/tenant/tenant_principal_preflight.py \
             scripts/qualification/tenant/test_tenant_principal_preflight.py
           python -m unittest scripts/qualification/tenant/test_tenant_principal_preflight.py
