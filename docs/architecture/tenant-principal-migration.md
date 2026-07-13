@@ -218,11 +218,24 @@ Controls:
 - the database Alembic revision must be exactly `20260713_0059`;
 - the mapping is normalized before its SHA-256 digest is calculated, so key
   ordering and display-name whitespace do not change an approved identity;
+- every Tenant principal declared by the approved manifest is created or
+  matched, even when it currently owns no core row or is referenced only by a
+  non-core Tenant-scoped record; principal creation counts are included in the
+  receipt;
+- shared resolver reads are ordered by primary key before optional row locking,
+  making partial batch boundaries deterministic and resumable;
 - an apply run refuses a missing, malformed or mismatched approved digest;
 - signing material is read from a file, is never accepted as a command-line
   secret and is never copied into a receipt or artifact;
 - apply receipts are bound with `hmac-sha256` and include a bounded signing-key
   identifier, counts, reason codes and hashed samples only;
+- dry-run uses one PostgreSQL `REPEATABLE READ, READ ONLY` snapshot; apply
+  uses one serializable transaction and fail-fast table/advisory locks;
+- a final apply receipt is published only after the database transaction commits
+  and carries `database_commit_state=committed`; a `.pending` receipt marked
+  `prepared_uncommitted` is conservative recovery evidence and must never be
+  treated as proof of commit; an idempotent reconciliation run to a new output
+  path is required before custody;
 - `batch_size` is limited to 5,000 records and `max_batches` supports an
   explicitly bounded partial execution followed by an idempotent resume;
 - PostgreSQL apply uses `SERIALIZABLE` isolation and a fail-fast advisory
@@ -239,7 +252,11 @@ Controls:
   Market, Team, User, ChannelAccount, Ticket and Customer assignments;
 - rerunning a completed apply reports all rows as already applied and performs
   zero mutation;
-- a receipt is bounded to 512 KiB and must pass the repository artifact scanner.
+- a receipt is bounded to 512 KiB and must pass the repository artifact scanner;
+- if final rename fails after commit, the signed `.pending` receipt remains with
+  `database_commit_state=committed`; if directory sync fails after rename, the
+  final signed receipt remains in place and the command returns a distinct
+  bounded durability error.
 
 `--max-batches` is a controlled maintenance boundary, not automatic scheduling.
 No repository workflow invokes apply against production, and no manifest or
