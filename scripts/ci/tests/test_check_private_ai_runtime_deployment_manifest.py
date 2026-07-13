@@ -152,3 +152,29 @@ def test_cli_exit_status_and_bounded_output(tmp_path: Path):
     assert subprocess.run(command, check=False, capture_output=True, text=True).returncode == 1
     result = json.loads(result_path.read_text(encoding="utf-8"))
     assert result["findings"][0]["code"] == "image_reference_requires_digest"
+
+
+def test_service_definition_hash_must_match_immutable_artifact():
+    module = load_module()
+    manifest = valid_manifest()
+    manifest["services"][0]["sha256"] = "9" * 64
+    with pytest.raises(module.ManifestValidationError, match="service.definition_sha256_mismatch"):
+        module.validate_manifest(manifest)
+
+
+def test_commands_cannot_embed_secret_arguments():
+    module = load_module()
+    manifest = valid_manifest()
+    manifest["acceptance"]["commands"][0].append("--token=inline-secret")
+    with pytest.raises(module.ManifestValidationError, match=r"acceptance.commands\[0\]_inline_secret_argument_forbidden"):
+        module.validate_manifest(manifest)
+
+
+def test_cli_rejects_oversized_manifest_before_json_parse(tmp_path: Path):
+    module = load_module()
+    manifest_path, result_path = tmp_path / "manifest.json", tmp_path / "result.json"
+    manifest_path.write_bytes(b"{" + b" " * module.MAX_MANIFEST_BYTES + b"}")
+    command = [sys.executable, str(SCRIPT), "--manifest", str(manifest_path), "--output", str(result_path)]
+    assert subprocess.run(command, check=False, capture_output=True, text=True).returncode == 1
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["findings"] == [{"code": "manifest_too_large", "path": "$"}]
