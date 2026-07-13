@@ -326,6 +326,13 @@ jobs:
           echo "local_id=$local_id" >> "$GITHUB_OUTPUT"
           echo "pulled_id=$pulled_id" >> "$GITHUB_OUTPUT"
 
+      - name: Authenticate GHCR for registry attestation
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
       - name: Attest exact registry digest
         id: attest
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
@@ -333,6 +340,12 @@ jobs:
           subject-name: ${{ steps.identity.outputs.image }}
           subject-digest: ${{ steps.identity.outputs.digest }}
           push-to-registry: true
+          # Storage records are organization-only; provenance remains GitHub-hosted and GHCR-bound.
+          create-storage-record: false
+
+      - name: Clear GHCR registry credentials
+        if: ${{ always() }}
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
 
       - name: Build final evidence-bound candidate
         env:
