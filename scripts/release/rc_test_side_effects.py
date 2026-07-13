@@ -21,6 +21,11 @@ MISSING_TABLE_EXIT_CODES = {
     "provider_credentials": 33,
     "ticket_outbound_messages": 34,
     "operations_dispatch_outbox": 35,
+    "runtime_decision_audits": 36,
+    "webchat_ai_turns": 37,
+    "webchat_messages": 38,
+    "webchat_voice_ai_turns": 39,
+    "webchat_voice_ai_actions": 40,
 }
 
 # This helper is executed by absolute path from /app/scripts while the app
@@ -61,9 +66,20 @@ EXPECTED_ENV = {
     "OPERATIONS_DISPATCH_ADAPTER": "disabled",
 }
 
-# These are durable execution/transport surfaces, not ordinary synthetic WebChat
-# data. A clean isolated RC journey must leave each at zero rows.
-ZERO_ROW_TABLES = tuple(MISSING_TABLE_EXIT_CODES)
+# These are durable transport/execution surfaces where any row is an external
+# side effect in the isolated RC journey.
+ZERO_ROW_TABLES = (
+    "provider_runtime_audit_logs",
+    "provider_auth_sessions",
+    "provider_credentials",
+    "ticket_outbound_messages",
+    "operations_dispatch_outbox",
+)
+
+# These additional durable tables are queried semantically below. Audit rows or
+# denied actions are allowed, but executed tools and customer-visible AI/TTS
+# output are not.
+REQUIRED_EVIDENCE_TABLES = tuple(MISSING_TABLE_EXIT_CODES)
 
 FORBIDDEN_SECRET_ENV = (
     "PRIVATE_AI_RUNTIME_TOKEN",
@@ -83,6 +99,63 @@ def _emit(*, status: str, reason_code: str | None = None, **details: Any) -> Non
         payload["reason_code"] = reason_code
     payload.update(details)
     print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _count(db: Any, statement: str) -> int:
+    return int(db.execute(text(statement)).scalar_one())
+
+
+def _collect_semantic_execution_counts(db: Any) -> dict[str, int]:
+    runtime_tool_action_execution_count = _count(
+        db,
+        """
+        SELECT COUNT(*)
+        FROM runtime_decision_audits AS audit
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE
+                WHEN jsonb_typeof((audit.decision_json)::jsonb -> 'tool_actions') = 'array'
+                THEN (audit.decision_json)::jsonb -> 'tool_actions'
+                ELSE '[]'::jsonb
+            END
+        ) AS action
+        WHERE lower(COALESCE(action ->> 'executed', 'false')) = 'true'
+        """,
+    )
+    voice_tool_action_execution_count = _count(
+        db,
+        """
+        SELECT COUNT(*)
+        FROM webchat_voice_ai_actions
+        WHERE tool_call_log_id IS NOT NULL
+           OR background_job_id IS NOT NULL
+        """,
+    )
+    webchat_ai_turn_count = _count(db, "SELECT COUNT(*) FROM webchat_ai_turns")
+    webchat_ai_message_count = _count(
+        db,
+        "SELECT COUNT(*) FROM webchat_messages WHERE direction = 'ai'",
+    )
+    tts_provider_customer_output_count = _count(
+        db,
+        """
+        SELECT COUNT(*)
+        FROM webchat_voice_ai_turns
+        WHERE NULLIF(BTRIM(COALESCE(ai_response_text_redacted, '')), '') IS NOT NULL
+           OR NULLIF(BTRIM(COALESCE(provider, '')), '') IS NOT NULL
+           OR NULLIF(BTRIM(COALESCE(tts_provider, '')), '') IS NOT NULL
+        """,
+    )
+    return {
+        "runtime_tool_action_execution_count": runtime_tool_action_execution_count,
+        "voice_tool_action_execution_count": voice_tool_action_execution_count,
+        "external_tool_execution_count": (
+            runtime_tool_action_execution_count + voice_tool_action_execution_count
+        ),
+        "webchat_ai_turn_count": webchat_ai_turn_count,
+        "webchat_ai_message_count": webchat_ai_message_count,
+        "provider_customer_output_count": webchat_ai_message_count,
+        "tts_provider_customer_output_count": tts_provider_customer_output_count,
+    }
 
 
 def main() -> int:
@@ -106,7 +179,7 @@ def main() -> int:
         db = SessionLocal()
         try:
             table_names = set(inspect(db.get_bind()).get_table_names(schema="public"))
-            missing = sorted(set(ZERO_ROW_TABLES) - table_names)
+            missing = sorted(set(REQUIRED_EVIDENCE_TABLES) - table_names)
             if missing:
                 _emit(
                     status="failed",
@@ -120,19 +193,27 @@ def main() -> int:
                 table: int(db.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar_one())
                 for table in ZERO_ROW_TABLES
             }
+            semantic_counts = _collect_semantic_execution_counts(db)
         finally:
             db.close()
     except Exception:
         _emit(status="failed", reason_code="database_inspection_failed")
         return EXIT_DATABASE_INSPECTION
 
-    nonzero = {table: count for table, count in counts.items() if count != 0}
-    if nonzero:
+    nonzero_rows = {table: count for table, count in counts.items() if count != 0}
+    nonzero_semantic = {
+        name: count
+        for name, count in semantic_counts.items()
+        if count != 0
+    }
+    if nonzero_rows or nonzero_semantic:
         _emit(
             status="failed",
             reason_code="execution_records_detected",
             execution_row_counts=counts,
-            affected_execution_tables=sorted(nonzero),
+            semantic_execution_counts=semantic_counts,
+            affected_execution_tables=sorted(nonzero_rows),
+            affected_semantic_counts=sorted(nonzero_semantic),
         )
         return EXIT_EXECUTION_RECORDS
 
@@ -149,6 +230,7 @@ def main() -> int:
         },
         forbidden_secret_env_present=[],
         execution_row_counts=counts,
+        semantic_execution_counts=semantic_counts,
     )
     return 0
 
