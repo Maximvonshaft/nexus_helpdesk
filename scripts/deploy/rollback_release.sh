@@ -194,10 +194,21 @@ PY
   fi
 
   TARGET_USER_FOOTPRINT="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "
-WITH extension_owned AS (
+WITH RECURSIVE extension_owned(classid, objid) AS (
   SELECT d.classid, d.objid
   FROM pg_depend AS d
-  WHERE d.deptype = 'e'
+  JOIN pg_extension AS extension
+    ON d.refclassid = 'pg_extension'::regclass
+   AND d.refobjid = extension.oid
+  WHERE extension.extname = 'vector'
+    AND d.deptype = 'e'
+  UNION
+  SELECT dependency.classid, dependency.objid
+  FROM pg_depend AS dependency
+  JOIN extension_owned AS parent
+    ON dependency.refclassid = parent.classid
+   AND dependency.refobjid = parent.objid
+  WHERE dependency.deptype IN ('i', 'a')
 ),
 public_objects AS (
   SELECT 'pg_class'::regclass::oid AS classid, c.oid AS objid
