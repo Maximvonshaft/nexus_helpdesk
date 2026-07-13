@@ -228,6 +228,25 @@ async function openAndStart(page: Page) {
   await page.locator('.nd-webchat-voice-start').click()
 }
 
+test('synchronous double activation cancels before allocating browser resources', async ({ page }) => {
+  await installVoiceFakes(page)
+  await page.goto(baseURL)
+  await page.locator('.nd-webchat-button').click()
+  await page.locator('.nd-webchat-voice').click()
+
+  await page.evaluate(() => {
+    const start = document.querySelector('.nd-webchat-voice-start') as HTMLButtonElement
+    start.click()
+    start.click()
+  })
+
+  await expect(page.locator('.nd-webchat-voice-status')).toHaveText('Voice stopped.')
+  const events = await page.evaluate(() => (window as any).__VOICE_EVENTS__ as string[])
+  expect(events.some((event) => (
+    event === 'context:create' || event === 'getUserMedia' || event.startsWith('socket:')
+  ))).toBe(false)
+})
+
 test('explicit start streams bounded PCM and hidden cleanup is deterministic', async ({ page }) => {
   await installVoiceFakes(page)
   await openAndStart(page)

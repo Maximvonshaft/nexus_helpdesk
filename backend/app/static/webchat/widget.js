@@ -693,6 +693,7 @@ return;
     voiceStatus('Preparing secure voice capture...');
 
     Promise.resolve().then(function () {
+      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
       live.audioContext = new AudioContextConstructor();
       if (!live.audioContext.audioWorklet || !live.audioContext.audioWorklet.addModule) {
         throw new Error('AudioWorklet support is unavailable.');
