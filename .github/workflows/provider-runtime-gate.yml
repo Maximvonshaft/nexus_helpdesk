@@ -103,6 +103,7 @@ jobs:
             backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
             backend/tests/test_provider_runtime_traffic_selection.py \
+            backend/tests/test_provider_runtime_traffic_review_regressions.py \
             backend/tests/test_provider_runtime_status.py \
             backend/tests/test_provider_runtime_token_leakage.py \
             backend/tests/test_admin_provider_runtime_routing_api.py \
