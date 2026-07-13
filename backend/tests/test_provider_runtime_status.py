@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.api.admin_provider_runtime import _sanitize_provider_runtime_snapshot
 import app.services.provider_runtime_status as provider_runtime_status_module
 from app.services.provider_runtime_status import get_human_webcall_runtime_status, get_provider_runtime_status
 from app.services.webchat_runtime_config import get_webchat_runtime_settings
@@ -167,5 +168,30 @@ def test_human_webcall_status_masks_runtime_configuration_exception(monkeypatch)
     status = get_human_webcall_runtime_status()
 
     assert status["readiness_verdict"] == "disabled"
-    assert status["warnings"] == ["human_webcall_configuration_invalid"]
+    assert status["warnings"] == ["human_webcall runtime configuration invalid"]
     assert sensitive_exception not in str(status)
+
+
+def test_human_webcall_status_unavailable_survives_admin_sanitization(monkeypatch):
+    sensitive_exception = "database failure includes private status details"
+
+    class VoiceConfig:
+        enabled = True
+        provider = "livekit"
+        recording_enabled = False
+        transcription_enabled = False
+
+    def raise_status_error(*args, **kwargs):
+        raise TypeError(sensitive_exception)
+
+    monkeypatch.setattr(provider_runtime_status_module, "load_webchat_voice_runtime_config", lambda: VoiceConfig())
+    monkeypatch.setattr(provider_runtime_status_module, "_human_webcall_count", raise_status_error)
+
+    status = get_human_webcall_runtime_status(object())
+    sanitized = _sanitize_provider_runtime_snapshot({"human_webcall": status})
+
+    assert status["readiness_verdict"] == "warning"
+    assert status["warnings"] == ["human_webcall status unavailable"]
+    assert sanitized["human_webcall"]["warnings"] == ["human_webcall status unavailable"]
+    assert sensitive_exception not in str(status)
+    assert sensitive_exception not in str(sanitized)
