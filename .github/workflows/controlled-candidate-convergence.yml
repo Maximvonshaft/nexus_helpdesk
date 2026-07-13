@@ -34,6 +34,7 @@ jobs:
       RC_ENV_FILE: deploy/.env.rc-test
       RC_EVIDENCE_DIR: artifacts/rc-test
       RC_FAILURE_DIR: artifacts/controlled-rc-failure
+      ASSURANCE_FAILURE_DIR: artifacts/controlled-image-assurance-failure
       RC_RUN_BROWSER_SMOKE: "true"
       RC_BASE_URL: http://127.0.0.1:18083
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
@@ -149,7 +150,45 @@ jobs:
           upload-artifact: false
 
       - name: Evaluate image assurance and compliance
-        run: bash scripts/release/run_controlled_image_assurance.sh
+        id: image_assurance
+        run: |
+          set +e
+          bash scripts/release/run_controlled_image_assurance.sh
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit "${code}"
+
+      - name: Build and scan bounded image-assurance failure evidence
+        id: assurance_failure_scan
+        if: ${{ always() && steps.image_assurance.outcome == 'failure' }}
+        env:
+          ASSURANCE_EXIT_CODE: ${{ steps.image_assurance.outputs.exit_code }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf "${ASSURANCE_FAILURE_DIR}"
+          mkdir -p "${ASSURANCE_FAILURE_DIR}"
+          summary="${ASSURANCE_FAILURE_DIR}/failure-summary.json"
+          python scripts/release/capture_controlled_image_assurance_failure.py \
+            --capture \
+            --release-image-dir "${RELEASE_IMAGE_DIR}" \
+            --source-sha "${SOURCE_SHA}" \
+            --exit-code "${ASSURANCE_EXIT_CODE:-1}" \
+            --output "${summary}"
+          python scripts/release/capture_controlled_image_assurance_failure.py --validate "${summary}"
+          python scripts/security/scan_artifacts.py \
+            --root . \
+            --output "${ASSURANCE_FAILURE_DIR}/artifact-scan.json" \
+            "${summary}"
+          test "$(jq -r '.status' "${ASSURANCE_FAILURE_DIR}/artifact-scan.json")" = "pass"
+
+      - name: Upload bounded image-assurance failure evidence
+        if: ${{ always() && steps.assurance_failure_scan.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: controlled-image-assurance-failure-${{ github.sha }}
+          path: artifacts/controlled-image-assurance-failure
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Publish and pull back the assured binary
         env:
