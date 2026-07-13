@@ -27,37 +27,97 @@ import os
 from urllib.parse import urlsplit
 
 
-def parse(name: str, *, expected_db: str | None = None, native: bool = False):
+def parse(
+    name: str,
+    *,
+    expected_db: str | None = None,
+    expected_user: str,
+    native: bool = False,
+):
     value = os.environ[name]
     parsed = urlsplit(value)
     allowed = {"postgresql", "postgres"} if native else {"postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
     if parsed.scheme not in allowed or not parsed.hostname:
         raise SystemExit(f"recovery_url_invalid:{name}")
+    if not parsed.username:
+        raise SystemExit(f"recovery_url_user_required:{name}")
+    if parsed.username != expected_user:
+        raise SystemExit(f"recovery_user_name_mismatch:{name}")
     if parsed.query:
         raise SystemExit(f"recovery_url_query_not_allowed:{name}")
     if parsed.fragment:
         raise SystemExit(f"recovery_url_fragment_not_allowed:{name}")
+    try:
+        port = parsed.port or 5432
+    except ValueError as exc:
+        raise SystemExit(f"recovery_url_port_invalid:{name}") from exc
     database = parsed.path.lstrip("/")
     if not database or "/" in database:
         raise SystemExit(f"recovery_database_invalid:{name}")
     if expected_db is not None and database != expected_db:
         raise SystemExit(f"recovery_database_name_mismatch:{name}")
-    return parsed.hostname.lower(), parsed.port or 5432, database
+    return parsed.hostname.lower(), port, database, parsed.username
 
 
-source_app = parse("SOURCE_APP_URL", expected_db="nexus_source")
-source_native = parse("SOURCE_NATIVE_URL", expected_db="nexus_source", native=True)
-restore_app = parse("RESTORE_APP_URL", expected_db="nexus_restore")
-restore_native = parse("RESTORE_NATIVE_URL", expected_db="nexus_restore", native=True)
-admin = parse("RECOVERY_ADMIN_NATIVE_URL", native=True)
+source_app = parse(
+    "SOURCE_APP_URL",
+    expected_db="nexus_source",
+    expected_user="nexus_recovery_source",
+)
+source_native = parse(
+    "SOURCE_NATIVE_URL",
+    expected_db="nexus_source",
+    expected_user="nexus_recovery_source",
+    native=True,
+)
+restore_app = parse(
+    "RESTORE_APP_URL",
+    expected_db="nexus_restore",
+    expected_user="nexus_recovery_restore",
+)
+restore_native = parse(
+    "RESTORE_NATIVE_URL",
+    expected_db="nexus_restore",
+    expected_user="nexus_recovery_restore",
+    native=True,
+)
+admin = parse(
+    "RECOVERY_ADMIN_NATIVE_URL",
+    expected_user="nexus_recovery_admin",
+    native=True,
+)
 
-if source_app[:2] != source_native[:2] or restore_app[:2] != restore_native[:2]:
-    raise SystemExit("recovery_application_native_cluster_mismatch")
+if source_app != source_native or restore_app != restore_native:
+    raise SystemExit("recovery_application_native_identity_mismatch")
 if source_native[:2] != restore_native[:2] or source_native[:2] != admin[:2]:
     raise SystemExit("recovery_admin_cluster_mismatch")
 if admin[2] in {source_native[2], restore_native[2]}:
     raise SystemExit("recovery_admin_database_not_isolated")
+if len({source_native[3], restore_native[3], admin[3]}) != 3:
+    raise SystemExit("recovery_role_identity_collision")
 PY
+
+ROLE_PROOF="$(psql "$RECOVERY_ADMIN_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "
+SELECT
+  count(*) FILTER (
+    WHERE rolname = 'nexus_recovery_source'
+      AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+  ),
+  count(*) FILTER (
+    WHERE rolname = 'nexus_recovery_restore'
+      AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+  ),
+  count(*) FILTER (
+    WHERE rolname = 'nexus_recovery_admin'
+      AND rolcanlogin AND rolcreatedb
+  )
+FROM pg_roles
+WHERE rolname IN ('nexus_recovery_source', 'nexus_recovery_restore', 'nexus_recovery_admin');
+")"
+if [[ "$ROLE_PROOF" != "1|1|1" ]]; then
+  echo "recovery_role_privilege_proof_failed" >&2
+  exit 3
+fi
 
 EVIDENCE_ROOT="${EVIDENCE_ROOT:-artifacts/recovery}"
 mkdir -p -- "$EVIDENCE_ROOT"
@@ -65,9 +125,19 @@ mkdir -p -- "$EVIDENCE_ROOT"
 psql "$RECOVERY_ADMIN_NATIVE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 DROP DATABASE IF EXISTS nexus_source;
 DROP DATABASE IF EXISTS nexus_restore;
-CREATE DATABASE nexus_source;
-CREATE DATABASE nexus_restore;
+CREATE DATABASE nexus_source OWNER nexus_recovery_source;
+CREATE DATABASE nexus_restore OWNER nexus_recovery_restore;
 SQL
+
+DATABASE_OWNER_PROOF="$(psql "$RECOVERY_ADMIN_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "
+SELECT string_agg(datname || ':' || pg_get_userbyid(datdba), ',' ORDER BY datname)
+FROM pg_database
+WHERE datname IN ('nexus_source', 'nexus_restore');
+")"
+if [[ "$DATABASE_OWNER_PROOF" != "nexus_restore:nexus_recovery_restore,nexus_source:nexus_recovery_source" ]]; then
+  echo "recovery_database_owner_proof_failed" >&2
+  exit 4
+fi
 
 (cd backend && DATABASE_URL="$SOURCE_APP_URL" alembic upgrade head)
 EXPECTED_HEAD="$(psql "$SOURCE_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version')"
