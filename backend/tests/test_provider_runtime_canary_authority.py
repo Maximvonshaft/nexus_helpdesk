@@ -149,6 +149,39 @@ async def test_sqlite_kill_switch_overrides_canary_and_suppresses_candidate():
 
 
 @pytest.mark.asyncio
+async def test_kill_switch_precedes_invalid_primary_provider_environment(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "retired_provider")
+    db = _mock_db(_rule(canary_percent=100, kill_switch=1))
+    adapter = _RecordingAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert adapter.calls == 0
+    assert result.error_code == "kill_switch_active"
+    _, safe_summary = _last_audit(db)
+    assert safe_summary["traffic_selection"]["path"] == "kill_switch"
+
+
+@pytest.mark.asyncio
+async def test_invalid_primary_provider_fails_closed_with_selection_evidence(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "retired_provider")
+    db = _mock_db(_rule(canary_percent=100, kill_switch=0))
+    adapter = _RecordingAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda _db: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert adapter.calls == 0
+    assert result.error_code == "provider_runtime_primary_provider_invalid"
+    audit, safe_summary = _last_audit(db)
+    assert audit["status"] == "failed"
+    assert safe_summary["provider_configuration_valid"] is False
+    assert safe_summary["traffic_selection"]["path"] == "canary_authoritative"
+    assert safe_summary["traffic_selection"]["fallback_result"] == "provider_configuration_invalid"
+
+
+@pytest.mark.asyncio
 async def test_shadow_executes_candidate_but_discards_customer_output(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
     db = _mock_db(_rule(canary_percent=100))
@@ -208,3 +241,18 @@ async def test_webcall_private_runtime_alias_cannot_bypass_router(monkeypatch):
     assert result is routed
     assert len(router_calls) == 1
     assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_webcall_invalid_alias_is_audited_as_non_authoritative(monkeypatch):
+    db = _mock_db({})
+    monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", "retired_provider")
+
+    result = await _route_request(db, _request(scenario="webcall_ai_decision"))
+
+    assert result.error_code == "provider_runtime_provider_alias_invalid"
+    audit, safe_summary = _last_audit(db)
+    assert audit["status"] == "skipped"
+    assert safe_summary["provider_alias_valid"] is False
+    assert safe_summary["traffic_selection"]["authoritative"] is False
+    assert safe_summary["traffic_selection"]["fallback_result"] == "candidate_not_selected"
