@@ -73,10 +73,27 @@ normalize_native_url() {
     postgresql+psycopg2://*) value="postgresql://${value#postgresql+psycopg2://}" ;;
     postgres+psycopg://*) value="postgresql://${value#postgres+psycopg://}" ;;
   esac
-  case "$value" in
-    postgresql://*|postgres://*) printf '%s' "$value" ;;
-    *) echo "POSTGRES_NATIVE_URL must be a libpq postgresql:// URI" >&2; return 2 ;;
-  esac
+  POSTGRES_URL_CANDIDATE="$value" python - <<'PYURL'
+import os
+from urllib.parse import urlsplit
+
+value = os.environ["POSTGRES_URL_CANDIDATE"]
+parsed = urlsplit(value)
+if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
+    raise SystemExit("postgres_native_url_invalid")
+if parsed.query:
+    raise SystemExit("postgres_native_url_query_not_allowed")
+if parsed.fragment:
+    raise SystemExit("postgres_native_url_fragment_not_allowed")
+try:
+    parsed.port
+except ValueError as exc:
+    raise SystemExit("postgres_native_url_port_invalid") from exc
+database = parsed.path.lstrip("/")
+if not database or "/" in database:
+    raise SystemExit("postgres_native_url_database_invalid")
+print(value, end="")
+PYURL
 }
 
 require_health_2xx() {
