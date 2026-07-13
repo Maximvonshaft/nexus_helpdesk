@@ -19,6 +19,10 @@ _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IMAGE_NAME = re.compile(r"^ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$")
 _MIGRATION = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 _ATTESTATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
+_BUILD_TIME = re.compile(r"^\d{8}T\d{6}Z$")
+_APP_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,79}$")
+_LOCAL_IMAGE_TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_DIGEST_REFERENCE = re.compile(r"^[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$")
 
 
 class ManifestError(ValueError):
@@ -71,6 +75,24 @@ def _migration(value: str, reason: str) -> str:
 def _require(condition: bool, reason: str) -> None:
     if not condition:
         raise ManifestError(reason)
+
+
+def _build_time(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not _BUILD_TIME.fullmatch(normalized):
+        raise ManifestError("publish_receipt_build_time_invalid")
+    try:
+        datetime.strptime(normalized, "%Y%m%dT%H%M%SZ")
+    except ValueError as exc:
+        raise ManifestError("publish_receipt_build_time_invalid") from exc
+    return normalized
+
+
+def _app_version(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not _APP_VERSION.fullmatch(normalized):
+        raise ManifestError("publish_receipt_app_version_invalid")
+    return normalized
 
 
 def build_manifest(
@@ -127,6 +149,11 @@ def build_manifest(
     _require(candidate.get("frontend_build_sha") == frontend, "rc_frontend_mismatch")
     _require(candidate.get("image_id") == local_image, "rc_image_mismatch")
     _require(candidate.get("migration_revision") == migration, "rc_migration_mismatch")
+    local_tag = str(candidate.get("image_tag") or "")
+    _require(bool(_LOCAL_IMAGE_TAG.fullmatch(local_tag)), "rc_image_tag_invalid")
+    _require(bool(_SHA256.fullmatch(str(candidate.get("config_digest") or ""))), "rc_config_digest_invalid")
+    for key in ("postgres_image_digest", "nginx_image_digest"):
+        _require(bool(_DIGEST_REFERENCE.fullmatch(str(candidate.get(key) or ""))), f"rc_infra_digest_invalid:{key}")
     checks = rc.get("checks")
     _require(isinstance(checks, dict) and checks, "rc_checks_invalid")
     _require(all(value == "pass" for value in checks.values()), "rc_checks_not_pass")
@@ -193,10 +220,14 @@ def build_manifest(
     )
     _require(receipt.get("status") == "pass", "publish_receipt_status_invalid")
     _require(receipt.get("source_sha") == source, "publish_receipt_source_mismatch")
+    _require(receipt.get("frontend_build_sha") == frontend, "publish_receipt_frontend_mismatch")
     _require(receipt.get("registry_image") == image_name, "publish_receipt_image_mismatch")
     _require(receipt.get("registry_digest") == digest, "publish_receipt_digest_mismatch")
     _require(receipt.get("local_image_id") == local_image, "publish_receipt_local_image_mismatch")
     _require(receipt.get("pulled_image_id") == pulled_image, "publish_receipt_pull_image_mismatch")
+    _require(receipt.get("embedded_image_tag") == local_tag, "publish_receipt_embedded_tag_mismatch")
+    build_time = _build_time(receipt.get("build_time"))
+    app_version = _app_version(receipt.get("app_version"))
     _require(receipt.get("image_pushed") is True, "publish_receipt_not_pushed")
     _require(receipt.get("deployment_performed") is False, "publish_receipt_deployment_invalid")
 
@@ -236,6 +267,9 @@ def build_manifest(
             "source_sha": source,
             "frontend_build_sha": frontend,
             "migration_revision": migration,
+            "build_time": build_time,
+            "app_version": app_version,
+            "embedded_image_tag": local_tag,
             "local_image_id": local_image,
             "registry_pull_image_id": pulled_image,
             "registry_image": image_name,
