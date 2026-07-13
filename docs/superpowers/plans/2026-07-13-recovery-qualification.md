@@ -24,13 +24,14 @@
 
 - Assert native URL separation.
 - Assert explicit admin database authority before destructive setup.
-- Assert libpq query/fragment overrides are rejected before any `psql` call.
+- Assert libpq query/fragment overrides are rejected before any runner or standalone operator native-client call.
 - Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
 - Assert a committed restore is recorded before post-restore identity verification.
 - Assert partial rollback status is written after image restart/health failure.
 - Assert redirects are not accepted as health verification.
-- Assert bounded snapshot/compare/RTO/RPO contracts.
+- Assert deterministic foreign-key-definition signatures and bounded snapshot/compare/RTO/RPO contracts.
+- Assert reversed recovery timestamps fail closed.
 - Run the dedicated gate and record the expected test-only failure.
 
 ## Task 2 — Correct operator backup and rollback
@@ -39,7 +40,7 @@
 - Modify `scripts/deploy/backup_postgres.sh`
 - Modify `scripts/deploy/rollback_release.sh`
 
-- Normalize only known SQLAlchemy PostgreSQL prefixes to libpq form.
+- Normalize only known SQLAlchemy PostgreSQL prefixes to libpq form and reject all URI query/fragment overrides before native clients.
 - Create a custom archive in a mode-restricted temporary bundle.
 - Validate archive listing, one Alembic head, SHA-256, size and source identity.
 - Atomically publish archive plus manifest with no-target-directory semantics.
@@ -56,9 +57,9 @@
 **File:**
 - Create `scripts/qualification/recovery/build_recovery_evidence.py`
 
-- Snapshot one Alembic head, complete public table counts, marker and FK validation.
-- Compare source and restore exactly.
-- Calculate bounded RTO/RPO.
+- Snapshot one Alembic head, complete public table counts, marker, FK validation and hashed deterministic FK definitions.
+- Compare source and restore tables and FK signatures exactly.
+- Calculate bounded RTO/RPO only from monotonic timestamps.
 - Generate deterministic migration repair plans.
 - Reject missing/multiple/invalid heads and unsafe digests.
 - Keep reports below 256 KiB and free of business rows.
