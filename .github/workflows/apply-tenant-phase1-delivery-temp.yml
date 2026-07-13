@@ -1,0 +1,132 @@
+name: apply-tenant-phase1-delivery-temp
+
+on:
+  pull_request:
+    paths:
+      - ".github/transfer/tenant-phase1-files.part*"
+      - ".github/workflows/apply-tenant-phase1-delivery-temp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-tenant-phase1-delivery-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact delivery branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reassemble and extract bounded implementation archive
+        run: |
+          set -Eeuo pipefail
+          combined="${RUNNER_TEMP}/tenant-phase1-files.tar.gz.b64"
+          archive="${RUNNER_TEMP}/tenant-phase1-files.tar.gz"
+          cat \
+            .github/transfer/tenant-phase1-files.part00 \
+            .github/transfer/tenant-phase1-files.part01 \
+            .github/transfer/tenant-phase1-files.part02 \
+            .github/transfer/tenant-phase1-files.part03 \
+            > "${combined}"
+          test "$(sha256sum "${combined}" | awk '{print $1}')" = "29df630d31c829be93e83619ed0f8a769608f61edcaf86a9262f0d5083e7db88"
+          base64 --decode "${combined}" > "${archive}"
+          test "$(sha256sum "${archive}" | awk '{print $1}')" = "3660478f6798fc8d335fc6c9290983aa1c274937f644a862c5fb0476e04d05fd"
+          tar -tzf "${archive}" | sort > "${RUNNER_TEMP}/actual-paths"
+          cat > "${RUNNER_TEMP}/expected-paths" <<'EOF'
+          backend/alembic/versions/20260713_0059_add_tenant_principal.py
+          backend/app/models.py
+          backend/tests/test_tenant_principal_additive_schema.py
+          docs/architecture/tenant-principal-migration.md
+          scripts/qualification/tenant/tenant_principal_preflight.py
+          scripts/qualification/tenant/test_tenant_principal_preflight.py
+          EOF
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/actual-paths"
+          tar -xzf "${archive}"
+
+      - name: Setup Python immutable
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install locked backend dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install -r backend/requirements.txt
+
+      - name: Verify focused Phase 1 implementation
+        env:
+          PYTHONPATH: backend
+          APP_ENV: test
+          DATABASE_URL: sqlite:////tmp/tenant-phase1-delivery.db
+          AUTO_INIT_DB: 'false'
+          SEED_DEMO_DATA: 'false'
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            backend/app/models.py \
+            backend/alembic/versions/20260713_0059_add_tenant_principal.py \
+            backend/tests/test_tenant_principal_additive_schema.py \
+            scripts/qualification/tenant/tenant_principal_preflight.py \
+            scripts/qualification/tenant/test_tenant_principal_preflight.py
+          pytest -q \
+            backend/tests/test_tenant_principal_additive_schema.py \
+            backend/tests/test_migration_drift_gate.py \
+            backend/tests/test_osr_model_registration.py
+          python -m unittest scripts/qualification/tenant/test_tenant_principal_preflight.py
+          rm -f /tmp/tenant-phase1-alembic.db
+          export DATABASE_URL=sqlite:////tmp/tenant-phase1-alembic.db
+          (cd backend && alembic upgrade head)
+          test "$(cd backend && alembic current | awk '{print $1}')" = "20260713_0059"
+          (cd backend && alembic downgrade -1)
+          test "$(cd backend && alembic current | awk '{print $1}')" = "20260711_0058"
+          (cd backend && alembic upgrade head)
+          test "$(cd backend && alembic current | awk '{print $1}')" = "20260713_0059"
+          git diff --check
+
+      - name: Remove transfer artifacts and commit verified implementation
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/transfer/tenant-phase1-files.part0{0,1,2,3}
+          rm -f .github/workflows/apply-tenant-phase1-delivery-temp.yml
+          git add -A
+          git diff --cached --check
+          python - <<'PY'
+          import subprocess
+          expected = {
+              'backend/app/models.py',
+              'backend/alembic/versions/20260713_0059_add_tenant_principal.py',
+              'backend/tests/test_tenant_principal_additive_schema.py',
+              'docs/architecture/tenant-principal-migration.md',
+              'scripts/qualification/tenant/tenant_principal_preflight.py',
+              'scripts/qualification/tenant/test_tenant_principal_preflight.py',
+              '.github/transfer/tenant-phase1-files.part00',
+              '.github/transfer/tenant-phase1-files.part01',
+              '.github/transfer/tenant-phase1-files.part02',
+              '.github/transfer/tenant-phase1-files.part03',
+              '.github/workflows/apply-tenant-phase1-delivery-temp.yml',
+          }
+          actual = set(subprocess.check_output(
+              ['git', 'diff', '--cached', '--name-only'],
+              text=True,
+          ).splitlines())
+          if actual != expected:
+              raise SystemExit(f'unexpected staged paths: {sorted(actual)}')
+          PY
+          git config user.name 'nexus-osr-tenant-bot'
+          git config user.email 'nexus-osr-tenant-bot@users.noreply.github.com'
+          git commit -m 'feat(tenant): add relational principal Phase 1 (#546)'
+          git push origin HEAD:"${HEAD_BRANCH}"
