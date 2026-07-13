@@ -31,6 +31,10 @@ DEMO_TENANT = "internal-demo"
 TERMINAL_STATUSES = {"ended", "missed", "failed", "cancelled", "canceled", "expired", "rejected"}
 UNSAFE_ACTION_TERMS = {"cancel", "cancellation", "address change", "change address", "driver phone", "work order"}
 TRACKING_RE = re.compile(r"\b[A-Z]{1,4}\d{6,}[A-Z]{0,3}\b", re.IGNORECASE)
+_DEMO_LAB_CONFIGURATION_INVALID = "webcall_ai_demo_lab_configuration_invalid"
+_VOICE_RUNTIME_UNAVAILABLE = "webchat_voice_runtime_unavailable"
+_AI_RUNTIME_UNAVAILABLE = "webcall_ai_runtime_unavailable"
+_DEMO_LAB_STATUS_UNAVAILABLE = "webcall_ai_demo_lab_status_unavailable"
 
 
 @dataclass(frozen=True)
@@ -116,32 +120,32 @@ def get_demo_lab_status(db: Session | None = None, current_user: User | None = N
     try:
         settings = get_webcall_ai_demo_lab_settings()
         config_error = None
-    except RuntimeError as exc:
+    except RuntimeError:
         settings = WebCallAIDemoLabSettings(False, True, "simulated_full_loop", True, False, (), 3, 8, 1000, 200)
-        config_error = str(exc)
+        config_error = _DEMO_LAB_CONFIGURATION_INVALID
         blockers.append(config_error)
     try:
         voice_config = load_webchat_voice_runtime_config()
         public_customer_entry_enabled = bool(voice_config.enabled)
         recording_enabled = bool(voice_config.recording_enabled)
         transcription_enabled = bool(voice_config.transcription_enabled)
-    except RuntimeError as exc:
+    except RuntimeError:
         public_customer_entry_enabled = False
         recording_enabled = False
         transcription_enabled = False
-        warnings.append(f"webchat_voice_runtime_unavailable:{type(exc).__name__}")
+        warnings.append(_VOICE_RUNTIME_UNAVAILABLE)
     try:
         ai_settings = get_webcall_ai_settings()
         ai_agent_enabled = bool(ai_settings.enabled)
-    except RuntimeError as exc:
+    except RuntimeError:
         ai_agent_enabled = False
-        warnings.append(f"webcall_ai_runtime_unavailable:{type(exc).__name__}")
+        warnings.append(_AI_RUNTIME_UNAVAILABLE)
 
     try:
         active_demo_sessions = _active_demo_sessions(db) if db is not None else 0
-    except (AttributeError, TypeError, SQLAlchemyError) as exc:
+    except (AttributeError, TypeError, SQLAlchemyError):
         active_demo_sessions = 0
-        warnings.append(f"webcall_ai_demo_lab status unavailable: {type(exc).__name__}")
+        warnings.append(_DEMO_LAB_STATUS_UNAVAILABLE)
     if not settings.demo_lab_enabled:
         status_value = "disabled"
     elif settings.demo_lab_kill_switch:

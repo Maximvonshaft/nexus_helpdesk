@@ -263,6 +263,9 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
                 mime_type=media_turn.mime_type,
                 audio_stats=audio_stats,
             )
+            if result.get("authoritative") is False:
+                db.rollback()
+                continue
             turns += 1
             mark_status(db, session_id=session_id, worker_id=worker_id, status=AI_STATUS_SPEAKING)
             write_event(

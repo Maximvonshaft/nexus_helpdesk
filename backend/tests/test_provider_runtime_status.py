@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.services.provider_runtime_status import get_provider_runtime_status
+from app.api.admin_provider_runtime import _sanitize_provider_runtime_snapshot
+import app.services.provider_runtime_status as provider_runtime_status_module
+from app.services.provider_runtime_status import get_human_webcall_runtime_status, get_provider_runtime_status
 from app.services.webchat_runtime_config import get_webchat_runtime_settings
 
 
@@ -138,3 +140,58 @@ def test_provider_runtime_status_accepts_isolated_production_rag_runtime(monkeyp
     assert "private_ai_runtime RAG model requires an isolated runtime" not in status["warnings"]
     private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
     assert private_ai["diagnostics"]["rag_runtime_isolated"] is True
+
+
+def test_provider_runtime_status_masks_runtime_configuration_exception(monkeypatch):
+    sensitive_exception = "stack trace includes token=TOP-SECRET"
+
+    def raise_runtime_error():
+        raise RuntimeError(sensitive_exception)
+
+    monkeypatch.setattr(provider_runtime_status_module, "get_webchat_runtime_settings", raise_runtime_error)
+
+    status = get_provider_runtime_status()
+
+    assert status["status"] == "misconfigured"
+    assert status["config_error"] == "provider_runtime_configuration_invalid"
+    assert sensitive_exception not in str(status)
+
+
+def test_human_webcall_status_masks_runtime_configuration_exception(monkeypatch):
+    sensitive_exception = "voice provider secret and stack trace"
+
+    def raise_runtime_error():
+        raise RuntimeError(sensitive_exception)
+
+    monkeypatch.setattr(provider_runtime_status_module, "load_webchat_voice_runtime_config", raise_runtime_error)
+
+    status = get_human_webcall_runtime_status()
+
+    assert status["readiness_verdict"] == "disabled"
+    assert status["warnings"] == ["human_webcall runtime configuration invalid"]
+    assert sensitive_exception not in str(status)
+
+
+def test_human_webcall_status_unavailable_survives_admin_sanitization(monkeypatch):
+    sensitive_exception = "database failure includes private status details"
+
+    class VoiceConfig:
+        enabled = True
+        provider = "livekit"
+        recording_enabled = False
+        transcription_enabled = False
+
+    def raise_status_error(*args, **kwargs):
+        raise TypeError(sensitive_exception)
+
+    monkeypatch.setattr(provider_runtime_status_module, "load_webchat_voice_runtime_config", lambda: VoiceConfig())
+    monkeypatch.setattr(provider_runtime_status_module, "_human_webcall_count", raise_status_error)
+
+    status = get_human_webcall_runtime_status(object())
+    sanitized = _sanitize_provider_runtime_snapshot({"human_webcall": status})
+
+    assert status["readiness_verdict"] == "warning"
+    assert status["warnings"] == ["human_webcall status unavailable"]
+    assert sanitized["human_webcall"]["warnings"] == ["human_webcall status unavailable"]
+    assert sensitive_exception not in str(status)
+    assert sensitive_exception not in str(sanitized)

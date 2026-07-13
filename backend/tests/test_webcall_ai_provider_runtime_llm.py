@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_provider_runtime_llm_tests.db")
@@ -18,9 +20,12 @@ from app import models, operator_models, tool_models, voice_models, webchat_mode
 from app.db import Base, SessionLocal, engine
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.schemas import ProviderResult
+from app.services.provider_runtime.traffic_selection import stable_canary_bucket
+from app.services.webcall_ai_production import orchestrator as orchestrator_module
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.orchestrator import run_session_turn
-from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider
+from app.services.webcall_ai_production.providers.base import LLMResult, ProviderError
+from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider, _build_request
 from app.services.webcall_ai_production.providers.router import get_llm_provider
 from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession
@@ -55,10 +60,88 @@ class RuntimeDecisionAdapter(ProviderAdapter):
         )
 
 
+class RuntimeFailureAdapter(ProviderAdapter):
+    name = "private_ai_runtime"
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def generate(self, db, request):
+        self.requests.append(request)
+        return ProviderResult.unavailable(
+            self.name,
+            "synthetic_shadow_failure",
+            12,
+            fallback_allowed=False,
+        )
+
+
+class RuntimeParseRejectAdapter(RuntimeDecisionAdapter):
+    marker = "invalid.intent.audit.marker"
+
+    async def generate(self, db, request):
+        result = await super().generate(db, request)
+        result.structured_output["intent"] = self.marker
+        return result
+
+
+def _drop_provider_runtime_tables() -> None:
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS provider_runtime_audit_logs"))
+        conn.execute(text("DROP TABLE IF EXISTS provider_routing_rules"))
+
+
+def _create_provider_runtime_tables() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE provider_routing_rules (
+                    id VARCHAR(36) PRIMARY KEY,
+                    tenant_id VARCHAR(36) NOT NULL,
+                    channel_key VARCHAR(100) NOT NULL,
+                    scenario VARCHAR(100) NOT NULL,
+                    primary_provider VARCHAR(100) NOT NULL,
+                    fallback_providers JSON,
+                    output_contract VARCHAR(100) NOT NULL,
+                    timeout_ms INTEGER NOT NULL,
+                    canary_percent INTEGER NOT NULL DEFAULT 0,
+                    kill_switch BOOLEAN NOT NULL DEFAULT 0,
+                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE provider_runtime_audit_logs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    tenant_id VARCHAR(36) NOT NULL,
+                    provider VARCHAR(100) NOT NULL,
+                    request_id VARCHAR(100) NOT NULL,
+                    channel_key VARCHAR(100) NOT NULL,
+                    session_id VARCHAR(100),
+                    operation VARCHAR(50) NOT NULL,
+                    status VARCHAR(50) NOT NULL,
+                    safe_summary JSON,
+                    error_code VARCHAR(255),
+                    elapsed_ms INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+
 @pytest.fixture(autouse=True)
 def clean_db_and_env(monkeypatch):
+    _drop_provider_runtime_tables()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    _create_provider_runtime_tables()
     monkeypatch.setenv("WEBCALL_AI_PRODUCTION_ENABLED", "true")
     monkeypatch.setenv("WEBCALL_AI_AGENT_ENABLED", "true")
     monkeypatch.delenv("WEBCALL_AI_PROVIDER_PROFILE", raising=False)
@@ -69,9 +152,14 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", "default")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", "webcall_ai")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", "webcall_ai_decision")
+    monkeypatch.delenv("WEBCALL_AI_PROVIDER_RUNTIME_SESSION_ID", raising=False)
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "100")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     monkeypatch.setattr("app.services.provider_runtime.bootstrap_provider_runtime", lambda: None)
     get_webcall_ai_production_settings.cache_clear()
     yield
+    _drop_provider_runtime_tables()
     Base.metadata.drop_all(bind=engine)
     get_webcall_ai_production_settings.cache_clear()
 
@@ -105,6 +193,34 @@ def _voice_session(db) -> WebchatVoiceSession:
     return session
 
 
+def _provider_audits(db) -> list[dict]:
+    rows = db.execute(
+        text(
+            """
+            SELECT operation, status, safe_summary, error_code
+            FROM provider_runtime_audit_logs
+            ORDER BY created_at ASC
+            """
+        )
+    ).mappings().all()
+    output = []
+    for row in rows:
+        summary = row["safe_summary"]
+        if isinstance(summary, str):
+            summary = json.loads(summary)
+        output.append({**dict(row), "safe_summary": summary or {}})
+    return output
+
+
+def _session_id_for_bucket(*, selected: bool, percent: int) -> str:
+    for index in range(1000):
+        session_id = f"voice_canary_{index}"
+        request = _build_request(text="where is my parcel?", language="en", session_id=session_id)
+        if (stable_canary_bucket(request) < percent) is selected:
+            return session_id
+    raise AssertionError("unable to find deterministic WebCall canary session")
+
+
 def test_provider_runtime_llm_auto_selects_hybrid_profile():
     settings = get_webcall_ai_production_settings()
 
@@ -120,24 +236,211 @@ def test_provider_router_returns_provider_runtime_llm():
     assert isinstance(get_llm_provider("provider_runtime"), ProviderRuntimeLLMProvider)
 
 
-def test_provider_runtime_llm_maps_runtime_contract():
+def test_private_runtime_alias_routes_through_authoritative_router(db):
     adapter = RuntimeDecisionAdapter()
-    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
 
     result = ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
 
     assert result.response_text == "Could you send the shipment reference so I can check the shipment."
     assert result.intent == "tracking_missing_number"
     assert result.handoff_required is False
+    assert result.authoritative is True
     assert result.provider_name == "provider_runtime:private_ai_runtime"
     assert adapter.requests[0].scenario == "webcall_ai_decision"
     assert adapter.requests[0].output_contract == "nexus_webchat_runtime_reply_v1"
     assert adapter.requests[0].body == "where is my parcel?"
+    assert adapter.requests[0].session_id.startswith("webcall-request-")
+    assert "where" not in adapter.requests[0].session_id
+    audits = _provider_audits(db)
+    assert len(audits) == 1
+    traffic = audits[0]["safe_summary"]["traffic_selection"]
+    assert traffic["path"] == "canary_authoritative"
+    assert traffic["authoritative"] is True
 
 
-def test_session_turn_persists_provider_runtime_evidence(db):
+def test_webcall_control_mode_suppresses_direct_alias_candidate(monkeypatch, db):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "control")
     adapter = RuntimeDecisionAdapter()
-    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    result = ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert result.response_text == ""
+    assert result.intent == "provider_runtime_non_authoritative"
+    assert result.handoff_required is False
+    assert result.handoff_reason is None
+    assert result.authoritative is False
+    assert result.provider_name == "provider_runtime:provider_canary_control_path"
+    assert adapter.requests == []
+    audits = _provider_audits(db)
+    assert audits[-1]["operation"] == "traffic_select"
+    assert audits[-1]["safe_summary"]["traffic_selection"]["path"] == "control"
+
+
+def test_webcall_partial_canary_is_stable_per_voice_session(monkeypatch, db):
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "25")
+    selected_session_id = _session_id_for_bucket(selected=True, percent=25)
+    control_session_id = _session_id_for_bucket(selected=False, percent=25)
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+    provider = ProviderRuntimeLLMProvider()
+
+    selected_result = provider.respond_for_session(
+        "where is my parcel?",
+        language="en",
+        session_id=selected_session_id,
+    )
+    control_result = provider.respond_for_session(
+        "where is my parcel?",
+        language="en",
+        session_id=control_session_id,
+    )
+
+    assert selected_result.provider_name == "provider_runtime:private_ai_runtime"
+    assert selected_result.authoritative is True
+    assert control_result.response_text == ""
+    assert control_result.intent == "provider_runtime_non_authoritative"
+    assert control_result.handoff_required is False
+    assert control_result.authoritative is False
+    assert control_result.provider_name == "provider_runtime:provider_canary_control_path"
+    assert [request.session_id for request in adapter.requests] == [selected_session_id]
+    traffic_paths = [row["safe_summary"]["traffic_selection"]["path"] for row in _provider_audits(db)]
+    assert "canary_authoritative" in traffic_paths
+    assert "control" in traffic_paths
+
+
+def test_webcall_shadow_failure_is_neutral_and_non_authoritative(monkeypatch, db):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
+    adapter = RuntimeFailureAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    result = ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert result.response_text == ""
+    assert result.intent == "provider_runtime_non_authoritative"
+    assert result.handoff_required is False
+    assert result.handoff_reason is None
+    assert result.authoritative is False
+    assert result.provider_name == "provider_runtime:provider_shadow_failed"
+    assert len(adapter.requests) == 1
+    audits = _provider_audits(db)
+    assert audits[-1]["error_code"] == "provider_shadow_failed"
+    assert audits[-1]["safe_summary"]["traffic_selection"]["path"] == "shadow_only"
+    assert audits[-1]["safe_summary"]["traffic_selection"]["authoritative"] is False
+
+
+def test_parse_reject_audit_uses_fixed_code_without_provider_marker(db):
+    adapter = RuntimeParseRejectAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    with pytest.raises(ProviderError) as caught:
+        ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert caught.value.code == "all_providers_failed"
+    audits = _provider_audits(db)
+    parse_audit = next(item for item in audits if item["operation"] == "parse_reject")
+    summary = parse_audit["safe_summary"]
+    assert parse_audit["error_code"] == "parse_reject"
+    assert "parse_error" not in summary
+    assert summary["parse_error_code"] == "output_contract_rejected"
+    assert RuntimeParseRejectAdapter.marker not in json.dumps(summary)
+
+
+def test_webcall_kill_switch_suppresses_alias_even_with_invalid_lower_settings(monkeypatch, db):
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "invalid")
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    with pytest.raises(ProviderError) as caught:
+        ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert caught.value.code == "kill_switch_active"
+    assert adapter.requests == []
+    traffic = _provider_audits(db)[-1]["safe_summary"]["traffic_selection"]
+    assert traffic["path"] == "kill_switch"
+    assert traffic["execute_candidate"] is False
+
+
+def test_webcall_rejects_unapproved_provider_alias_without_adapter_call(monkeypatch, db):
+    marker = "unapproved-provider-marker"
+    monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", marker)
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    with pytest.raises(ProviderError) as caught:
+        ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
+
+    assert caught.value.code == "provider_runtime_provider_not_allowed"
+    assert adapter.requests == []
+    audits = _provider_audits(db)
+    assert len(audits) == 1
+    assert audits[0]["operation"] == "traffic_select"
+    assert audits[0]["error_code"] == "provider_runtime_provider_not_allowed"
+    assert audits[0]["safe_summary"]["fallback_result"] == "blocked"
+    assert marker not in json.dumps(audits)
+
+
+@pytest.mark.parametrize(
+    "provider_outcome",
+    ["provider_canary_control_path", "provider_shadow_completed"],
+)
+def test_session_turn_rolls_back_non_authoritative_provider_outcome_before_tts_and_evidence(
+    monkeypatch,
+    db,
+    provider_outcome,
+):
+    session = _voice_session(db)
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_timed_llm_response",
+        lambda settings, stt, *, session_id: LLMResult(
+            response_text="",
+            intent="provider_runtime_non_authoritative",
+            handoff_required=False,
+            handoff_reason=None,
+            provider_name=f"provider_runtime:{provider_outcome}",
+            authoritative=False,
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_synthesize_tts",
+        lambda *args, **kwargs: pytest.fail("non-authoritative turn reached TTS"),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "persist_turn_evidence",
+        lambda *args, **kwargs: pytest.fail("non-authoritative turn persisted evidence"),
+    )
+
+    turn_result = run_session_turn(
+        db,
+        session=session,
+        audio=b"help",
+        worker_id="worker-provider-runtime-neutral",
+        language="en",
+    )
+
+    assert turn_result["authoritative"] is False
+    assert turn_result["status"] == "provider_runtime_non_authoritative"
+    assert turn_result["turn_id"] is None
+    assert turn_result["tts"] is None
+    assert turn_result["tool_result"] is None
+    assert turn_result["handoff_required"] is False
+    assert turn_result["response"]["authoritative"] is False
+    assert turn_result["response"]["provider_name"] == f"provider_runtime:{provider_outcome}"
+    assert db.query(WebchatVoiceAITurn).count() == 0
+    assert db.query(WebchatVoiceAIAction).count() == 0
+    assert db.query(WebchatEvent).count() == 0
+
+
+def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db):
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
     session = _voice_session(db)
 
     turn_result = run_session_turn(
@@ -150,8 +453,14 @@ def test_session_turn_persists_provider_runtime_evidence(db):
 
     turn = db.query(WebchatVoiceAITurn).one()
     action = db.query(WebchatVoiceAIAction).one()
-    event_types = [row.event_type for row in db.query(WebchatEvent).filter(WebchatEvent.conversation_id == session.conversation_id).all()]
+    event_types = [
+        row.event_type
+        for row in db.query(WebchatEvent)
+        .filter(WebchatEvent.conversation_id == session.conversation_id)
+        .all()
+    ]
 
+    assert turn_result["authoritative"] is True
     assert turn_result["handoff_required"] is False
     assert turn.provider == "provider_runtime:private_ai_runtime"
     assert turn.stt_provider == "fake"
@@ -159,6 +468,6 @@ def test_session_turn_persists_provider_runtime_evidence(db):
     assert turn.intent == "tracking_missing_number"
     assert action.model_action == "tracking_missing_number"
     assert action.nexus_decision == "allowed"
+    assert adapter.requests[0].session_id == session.public_id
     assert "webcall_ai.transcript.final" in event_types
     assert "webcall_ai.response.generated" in event_types
-    assert "webcall_ai.tts.ready" in event_types

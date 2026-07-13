@@ -18,6 +18,7 @@ import pytest
 
 from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
+from app.services.webcall_ai_production import agent_worker as agent_worker_module
 from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED, release_session
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
 from app.services.webcall_ai_production.audio.livekit_io import LiveKitMediaTurn, PCMFrame, SDKLiveKitRTCBackend, VisitorDisconnected, decode_audio_for_livekit, pcm16_to_wav
@@ -146,6 +147,63 @@ def test_agent_loop_records_tracking_fallback_without_forced_handoff():
         transcript = db.query(WebchatVoiceTranscriptSegment).filter(WebchatVoiceTranscriptSegment.text_redacted.like("%...%")).first()
         assert transcript is not None
         assert "SF123456789CN" not in transcript.text_redacted
+    finally:
+        db.close()
+
+
+def test_agent_loop_skips_all_voice_effects_for_non_authoritative_turn(monkeypatch):
+    monkeypatch.setattr(agent_worker_module, "_speak_greeting", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        agent_worker_module,
+        "run_session_turn",
+        lambda *args, **kwargs: {
+            "turn_id": None,
+            "response": {
+                "response_text": "",
+                "intent": "provider_runtime_non_authoritative",
+                "handoff_required": False,
+                "handoff_reason": None,
+                "provider_name": "provider_runtime:provider_canary_control_path",
+                "authoritative": False,
+            },
+            "tts": None,
+            "handoff_required": False,
+            "handoff_reason": None,
+            "authoritative": False,
+            "status": "provider_runtime_non_authoritative",
+        },
+    )
+    monkeypatch.setattr(
+        agent_worker_module,
+        "_sleep_post_tts_listen_grace",
+        lambda settings: pytest.fail("non-authoritative turn reached post-TTS sleep"),
+    )
+    db = SessionLocal()
+    try:
+        session = _claimed_session(db)
+        io = FakeAgentIO([b"neutral provider runtime turn"])
+
+        result = run_claimed_session_loop(session.id, worker_id="worker-test", io=io)
+
+        db.refresh(session)
+        event_types = [event.event_type for event in db.query(WebchatEvent).order_by(WebchatEvent.id).all()]
+        assert result == {
+            "claimed": 1,
+            "processed": 0,
+            "failed": 0,
+            "status": "visitor_disconnected",
+        }
+        assert io.connected is True
+        assert io.closed is True
+        assert io.published == []
+        assert session.ai_turn_count in (None, 0)
+        assert db.query(WebchatVoiceAITurn).count() == 0
+        assert db.query(WebchatVoiceAIAction).count() == 0
+        assert "webcall_ai.agent.speaking" not in event_types
+        assert "webcall_ai.response.spoken" not in event_types
+        assert "webcall_ai.response.publish_failed" not in event_types
+        assert "webcall_ai.handoff.requested" not in event_types
+        assert "webcall_ai.agent.failed" not in event_types
     finally:
         db.close()
 
