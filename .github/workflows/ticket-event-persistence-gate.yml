@@ -17,6 +17,8 @@ on:
       - "backend/tests/test_nexus_osr_operations_dispatch_outbox.py"
       - "backend/tests/test_nexus_osr_tool_execution_service.py"
       - "backend/tests/test_nexus_osr_whatsapp_routing_service.py"
+      - "backend/tests/test_webchat_ai_turn_runtime.py"
+      - "backend/tests/test_webchat_ai_decision_runtime.py"
       - "backend/tests/test_webchat_handoff_control.py"
       - "backend/tests/test_webchat_voice_api.py"
       - "backend/tests/test_webchat_voice_room_compensation.py"
@@ -76,7 +78,9 @@ jobs:
             backend/tests/test_ticket_event_classification.py \
             backend/tests/test_ticket_event_architecture.py \
             backend/tests/test_ticket_event_repair.py \
-            backend/tests/test_qa_training_contract.py
+            backend/tests/test_qa_training_contract.py \
+            backend/tests/test_webchat_ai_turn_runtime.py \
+            backend/tests/test_webchat_ai_decision_runtime.py
       - name: Run writer and representative caller contracts
         run: |
           set -Eeuo pipefail
@@ -100,6 +104,8 @@ jobs:
             backend/tests/test_nexus_osr_operations_dispatch_outbox.py \
             backend/tests/test_nexus_osr_tool_execution_service.py \
             backend/tests/test_nexus_osr_whatsapp_routing_service.py \
+            backend/tests/test_webchat_ai_turn_runtime.py \
+            backend/tests/test_webchat_ai_decision_runtime.py \
             backend/tests/test_webchat_handoff_control.py \
             backend/tests/test_webchat_voice_api.py \
             backend/tests/test_webchat_voice_room_compensation.py \
