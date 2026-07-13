@@ -20,10 +20,11 @@ from app import models, operator_models, tool_models, voice_models, webchat_mode
 from app.db import Base, SessionLocal, engine
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.schemas import ProviderResult
+from app.services.provider_runtime.traffic_selection import stable_canary_bucket
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.orchestrator import run_session_turn
 from app.services.webcall_ai_production.providers.base import ProviderError
-from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider
+from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider, _build_request
 from app.services.webcall_ai_production.providers.router import get_llm_provider
 from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession
@@ -125,6 +126,7 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", "default")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", "webcall_ai")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", "webcall_ai_decision")
+    monkeypatch.delenv("WEBCALL_AI_PROVIDER_RUNTIME_SESSION_ID", raising=False)
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "100")
     monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
@@ -184,6 +186,15 @@ def _provider_audits(db) -> list[dict]:
     return output
 
 
+def _session_id_for_bucket(*, selected: bool, percent: int) -> str:
+    for index in range(1000):
+        session_id = f"voice_canary_{index}"
+        request = _build_request(text="where is my parcel?", language="en", session_id=session_id)
+        if (stable_canary_bucket(request) < percent) is selected:
+            return session_id
+    raise AssertionError("unable to find deterministic WebCall canary session")
+
+
 def test_provider_runtime_llm_auto_selects_hybrid_profile():
     settings = get_webcall_ai_production_settings()
 
@@ -212,6 +223,7 @@ def test_private_runtime_alias_routes_through_authoritative_router(db):
     assert adapter.requests[0].scenario == "webcall_ai_decision"
     assert adapter.requests[0].output_contract == "nexus_webchat_runtime_reply_v1"
     assert adapter.requests[0].body == "where is my parcel?"
+    assert adapter.requests[0].session_id == "webcall-ai-production"
     audits = _provider_audits(db)
     assert len(audits) == 1
     traffic = audits[0]["safe_summary"]["traffic_selection"]
@@ -264,6 +276,34 @@ def test_webcall_rejects_unapproved_provider_alias_without_adapter_call(monkeypa
     assert _provider_audits(db) == []
 
 
+def test_webcall_partial_canary_is_stable_per_voice_session(monkeypatch, db):
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "25")
+    selected_session_id = _session_id_for_bucket(selected=True, percent=25)
+    control_session_id = _session_id_for_bucket(selected=False, percent=25)
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+    provider = ProviderRuntimeLLMProvider()
+
+    selected_result = provider.respond_for_session(
+        "where is my parcel?",
+        language="en",
+        session_id=selected_session_id,
+    )
+    with pytest.raises(ProviderError) as caught:
+        provider.respond_for_session(
+            "where is my parcel?",
+            language="en",
+            session_id=control_session_id,
+        )
+
+    assert selected_result.provider_name == "provider_runtime:private_ai_runtime"
+    assert caught.value.code == "provider_canary_control_path"
+    assert [request.session_id for request in adapter.requests] == [selected_session_id]
+    traffic_paths = [row["safe_summary"]["traffic_selection"]["path"] for row in _provider_audits(db)]
+    assert "canary_authoritative" in traffic_paths
+    assert "control" in traffic_paths
+
+
 def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db):
     adapter = RuntimeDecisionAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
@@ -293,5 +333,6 @@ def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db)
     assert turn.intent == "tracking_missing_number"
     assert action.model_action == "tracking_missing_number"
     assert action.nexus_decision == "allowed"
+    assert adapter.requests[0].session_id == session.public_id
     assert "webcall_ai.transcript.final" in event_types
     assert "webcall_ai.response.generated" in event_types

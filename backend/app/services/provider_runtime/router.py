@@ -354,8 +354,14 @@ class ProviderRuntimeRouter:
                         summary={"shadow_provider": provider_name, "shadow_result": "valid"},
                     )
                 return result
-            except Exception as exc:
-                safe_summary = _summary_with_traffic({"parse_error": str(exc)[:500]}, traffic)
+            except Exception:
+                safe_summary = _summary_with_traffic(
+                    {
+                        "parse_reject": True,
+                        "parse_error_code": "provider_output_contract_rejected",
+                    },
+                    traffic,
+                )
                 if not shadow_only:
                     health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
                     if health_event:

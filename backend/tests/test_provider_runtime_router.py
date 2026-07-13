@@ -386,7 +386,8 @@ async def test_authoritative_timeout_is_audited_and_fails_without_unapproved_fal
 
 
 @pytest.mark.asyncio
-async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
+async def test_provider_runtime_router_parse_reject_returns_no_customer_reply_or_exception_text():
+    sensitive_upstream_value = "SENSITIVE-UPSTREAM-CUSTOMER-TEXT-DO-NOT-PERSIST"
     mock_db = _mock_db(_rule())
     adapter = DummyAdapter(
         "private_ai_runtime",
@@ -394,7 +395,7 @@ async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
             ok=True,
             provider="private_ai_runtime",
             elapsed_ms=100,
-            structured_output={"customer_reply": "hi"},
+            structured_output={"customer_reply": sensitive_upstream_value},
         ),
     )
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
@@ -404,6 +405,14 @@ async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
     assert not result.ok
     assert result.error_code == "all_providers_failed"
     assert mock_db.execute.call_count == 3
+    serialized_audit = json.dumps(mock_db.audit_rows, default=str)
+    assert sensitive_upstream_value not in serialized_audit
+    parse_reject_rows = [row for row in mock_db.audit_rows if row["operation"] == "parse_reject"]
+    assert len(parse_reject_rows) == 1
+    parse_summary = _audit_summary(parse_reject_rows[0])
+    assert parse_summary["parse_reject"] is True
+    assert parse_summary["parse_error_code"] == "provider_output_contract_rejected"
+    assert "parse_error" not in parse_summary
     for row in mock_db.audit_rows:
         assert "traffic_selection" in _audit_summary(row)
 

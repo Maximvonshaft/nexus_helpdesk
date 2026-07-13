@@ -25,7 +25,25 @@ class ProviderRuntimeLLMProvider(LLMProvider):
     provider_name = "provider_runtime"
 
     def respond(self, text: str, *, language: str | None = None) -> LLMResult:
-        request = _build_request(text=text, language=language)
+        return self._respond(text, language=language, session_id=None)
+
+    def respond_for_session(
+        self,
+        text: str,
+        *,
+        language: str | None = None,
+        session_id: str,
+    ) -> LLMResult:
+        return self._respond(text, language=language, session_id=session_id)
+
+    def _respond(
+        self,
+        text: str,
+        *,
+        language: str | None,
+        session_id: str | None,
+    ) -> LLMResult:
+        request = _build_request(text=text, language=language, session_id=session_id)
         db = SessionLocal()
         try:
             result = _run_async(_route_request(db, request))
@@ -35,7 +53,7 @@ class ProviderRuntimeLLMProvider(LLMProvider):
         except ProviderError:
             raise
         except Exception as exc:
-            raise ProviderError(self.provider_name, "provider_runtime_exception", str(exc)) from exc
+            raise ProviderError(self.provider_name, "provider_runtime_exception") from exc
         finally:
             db.close()
 
@@ -53,9 +71,13 @@ async def _route_request(db: Session, request: ProviderRequest) -> ProviderResul
     return await ProviderRuntimeRouter(db).route(request)
 
 
-def _build_request(*, text: str, language: str | None) -> ProviderRequest:
+def _build_request(*, text: str, language: str | None, session_id: str | None = None) -> ProviderRequest:
     body = (text or "").strip()
     lang = (language or "en").strip() or "en"
+    routing_session_id = (session_id or "").strip() or _env(
+        "WEBCALL_AI_PROVIDER_RUNTIME_SESSION_ID",
+        "webcall-ai-production",
+    )
     metadata = {
         "persona_context": None,
         "knowledge_context": {"retrieval": "unavailable", "total_matches": 0, "locked_facts": [], "hits": []},
@@ -71,7 +93,7 @@ def _build_request(*, text: str, language: str | None) -> ProviderRequest:
         tenant_id=_env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT),
         tenant_key=_env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_KEY", _env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT)),
         channel_key=_env("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", _DEFAULT_CHANNEL),
-        session_id=_env("WEBCALL_AI_PROVIDER_RUNTIME_SESSION_ID", "webcall-ai-production"),
+        session_id=routing_session_id,
         scenario=_env("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", _DEFAULT_SCENARIO),
         body=body,
         recent_context=[{"role": "user", "content": body, "language": lang}],
