@@ -177,7 +177,7 @@ Using a fresh unauthenticated browser profile:
 5. include the public `/webchat/live/health` response body in the transient scan even though the status-only health probe does not retain it;
 6. save only a bounded pass/fail manifest with asset URL path, status, content hash, scanner version, finding count, and UTC Timestamp.
 
-During the authorized window, a restricted scanner loads the predecessor and replacement only from restricted secret references, compares raw and approved encoded forms in memory against the public assets, `/webchat/live/health` response body, sanitized artifacts, and bounded log window, then immediately discards the values. The scanner emits only pass/fail and a finding count. It must not emit credential values, hashes, prefixes, suffixes, or lengths.
+During the authorized window, a restricted scanner loads the predecessor and replacement only from restricted secret references, compares raw and approved encoded forms in memory against the exact release tree and reachable Git history, public assets, `/webchat/live/health` response body, generated browser artifacts, sanitized evidence artifacts, and bounded log window, then immediately discards the values. The scanner emits only pass/fail and a finding count. It must not emit credential values, hashes, prefixes, suffixes, or lengths.
 
 The manifest must state: browser: zero secret, Git: zero secret, artifact: zero secret, and log: zero secret.
 
