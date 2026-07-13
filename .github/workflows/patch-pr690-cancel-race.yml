@@ -1,0 +1,77 @@
+name: Patch PR 690 cancellation race
+
+on:
+  push:
+    branches:
+      - fix/webchat-audioworklet-684
+    paths:
+      - .github/workflows/patch-pr690-cancel-race.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-cancel-race:
+    if: github.repository == 'Maximvonshaft/nexus_helpdesk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact patch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+
+      - name: Guard pre-allocation cancellation and add browser regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          widget_path = Path('backend/app/static/webchat/widget.js')
+          widget = widget_path.read_text(encoding='utf-8')
+          old_widget = """    Promise.resolve().then(function () {
+                live.audioContext = new AudioContextConstructor();"""
+          new_widget = """    Promise.resolve().then(function () {
+                if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
+                live.audioContext = new AudioContextConstructor();"""
+          if widget.count(old_widget) != 1:
+              raise SystemExit('widget cancellation allocation anchor mismatch')
+          widget_path.write_text(widget.replace(old_widget, new_widget, 1), encoding='utf-8')
+
+          browser_path = Path('webapp/e2e/live-voice-audioworklet.spec.ts')
+          browser = browser_path.read_text(encoding='utf-8')
+          anchor = """test('explicit start streams bounded PCM and hidden cleanup is deterministic', async ({ page }) => {"""
+          regression = """test('synchronous double activation cancels before allocating browser resources', async ({ page }) => {
+            await installVoiceFakes(page)
+            await page.goto(baseURL)
+            await page.locator('.nd-webchat-button').click()
+            await page.locator('.nd-webchat-voice').click()
+
+            await page.evaluate(() => {
+              const start = document.querySelector('.nd-webchat-voice-start') as HTMLButtonElement
+              start.click()
+              start.click()
+            })
+
+            await expect(page.locator('.nd-webchat-voice-status')).toHaveText('Voice stopped.')
+            const events = await page.evaluate(() => (window as any).__VOICE_EVENTS__ as string[])
+            expect(events.some((event) => (
+              event === 'context:create' || event === 'getUserMedia' || event.startsWith('socket:')
+            ))).toBe(false)
+          })
+
+          """
+          if browser.count(anchor) != 1:
+              raise SystemExit('browser regression anchor mismatch')
+          browser_path.write_text(browser.replace(anchor, regression + anchor, 1), encoding='utf-8')
+          PY
+
+          git rm .github/workflows/patch-pr690-cancel-race.yml
+          git config user.name "nexus-pr690-race-patcher"
+          git config user.email "noreply@github.com"
+          git add backend/app/static/webchat/widget.js webapp/e2e/live-voice-audioworklet.spec.ts
+          git diff --cached --check
+          git commit -m "fix(webchat): cancel voice before allocating audio resources"
+          git push origin HEAD:refs/heads/fix/webchat-audioworklet-684
