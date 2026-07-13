@@ -380,9 +380,7 @@ class ProviderRuntimeRouter:
                     provider_name,
                     0,
                     _summary_with_traffic(
-                        {
-                            "provider_health": health_decision.safe_summary()
-                        },
+                        {"provider_health": health_decision.safe_summary()},
                         traffic,
                         fallback_result=fallback_result,
                     ),
@@ -446,11 +444,25 @@ class ProviderRuntimeRouter:
                 )
                 if not result.fallback_allowed:
                     if shadow_only:
+                        shadow_summary = _summary_with_traffic(
+                            {"shadow_result": "failed"},
+                            traffic,
+                            fallback_result="blocked",
+                        )
+                        self._write_audit(
+                            request,
+                            "traffic_select",
+                            "failed",
+                            "router",
+                            result.elapsed_ms,
+                            shadow_summary,
+                            "provider_shadow_failed",
+                        )
                         return _unavailable_with_traffic(
                             "provider_shadow_failed",
                             traffic,
                             elapsed_ms=result.elapsed_ms,
-                            summary=safe_summary,
+                            summary=shadow_summary,
                         )
                     return result
                 continue
@@ -460,8 +472,7 @@ class ProviderRuntimeRouter:
                     raise ValueError("No structured output provided")
                 if (
                     request.scenario == "webchat_runtime_reply"
-                    and output_contract
-                    == "nexus_webchat_runtime_reply_v1"
+                    and output_contract == "nexus_webchat_runtime_reply_v1"
                 ):
                     parsed = self._parse_webchat_runtime_output(request, result)
                 else:
@@ -474,18 +485,14 @@ class ProviderRuntimeRouter:
                         (request.metadata or {}).get("knowledge_context"),
                     )
                 result.structured_output = parsed
-                fallback_result = (
-                    "succeeded" if is_fallback else "not_attempted"
-                )
+                fallback_result = "succeeded" if is_fallback else "not_attempted"
                 safe_summary = _summary_with_traffic(
                     {"provider_result": "succeeded"},
                     traffic,
                     fallback_result=fallback_result,
                 )
                 if not shadow_only:
-                    health_event = ProviderRuntimeHealth.record_success(
-                        provider_name
-                    )
+                    health_event = ProviderRuntimeHealth.record_success(provider_name)
                     if health_event:
                         safe_summary["provider_health"] = health_event
                 result.raw_payload_safe_summary = safe_summary
@@ -527,11 +534,7 @@ class ProviderRuntimeRouter:
                         safe_summary["provider_health"] = health_event
                 self._write_audit(
                     request,
-                    (
-                        "shadow_parse_reject"
-                        if shadow_only
-                        else "parse_reject"
-                    ),
+                    "shadow_parse_reject" if shadow_only else "parse_reject",
                     "failed",
                     provider_name,
                     result.elapsed_ms,
@@ -540,11 +543,7 @@ class ProviderRuntimeRouter:
                 )
                 continue
 
-        error_code = (
-            "provider_shadow_failed"
-            if shadow_only
-            else "all_providers_failed"
-        )
+        error_code = "provider_shadow_failed" if shadow_only else "all_providers_failed"
         summary = _summary_with_traffic(
             {},
             traffic,
@@ -575,23 +574,14 @@ def persisted_provider_alias_errors(
     if not isinstance(primary_provider, str):
         return [_PROVIDER_ALIAS_INVALID]
     primary = primary_provider.strip()
-    if (
-        primary != primary_provider
-        or primary not in _APPROVED_PROVIDER_ALIASES
-    ):
+    if primary != primary_provider or primary not in _APPROVED_PROVIDER_ALIASES:
         return [_PROVIDER_ALIAS_INVALID]
 
     try:
-        fallbacks = _coerce_fallbacks(
-            fallback_providers,
-            strict=True,
-        )
+        fallbacks = _coerce_fallbacks(fallback_providers, strict=True)
     except ValueError:
         return [_PROVIDER_ALIAS_INVALID]
-    if any(
-        provider not in _APPROVED_PROVIDER_ALIASES
-        for provider in fallbacks
-    ):
+    if any(provider not in _APPROVED_PROVIDER_ALIASES for provider in fallbacks):
         return [_PROVIDER_ALIAS_INVALID]
     return []
 
@@ -603,9 +593,7 @@ def _traffic_configuration_error_code(exc: BaseException) -> str:
     return "provider_runtime_traffic_configuration_invalid"
 
 
-def _blocked_configuration_summary(
-    error_code: str,
-) -> dict[str, Any]:
+def _blocked_configuration_summary(error_code: str) -> dict[str, Any]:
     return {
         "fallback_result": "blocked",
         "traffic_selection": {
@@ -701,19 +689,14 @@ def _apply_env_overrides(
     ).strip()
     if env_primary:
         if env_primary not in _DIRECT_ENV_PROVIDERS:
-            raise RuntimeError(
-                "provider_runtime_primary_provider_invalid"
-            )
+            raise RuntimeError("provider_runtime_primary_provider_invalid")
         primary_provider = env_primary
         env_fallbacks = os.getenv(
             "PROVIDER_RUNTIME_FALLBACK_PROVIDERS",
             "",
         )
         if env_fallbacks:
-            fallbacks = _coerce_fallbacks(
-                env_fallbacks,
-                strict=True,
-            )
+            fallbacks = _coerce_fallbacks(env_fallbacks, strict=True)
     env_contract = os.getenv(
         "PROVIDER_RUNTIME_OUTPUT_CONTRACT",
         "",
@@ -728,9 +711,7 @@ def _apply_env_overrides(
     )
 
     kill_switch = effective_kill_switch(kill_switch)
-    canary_override = os.getenv(
-        "PROVIDER_RUNTIME_CANARY_PERCENT"
-    )
+    canary_override = os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT")
     if canary_override is not None:
         canary_percent = canary_override.strip()
     return (
@@ -757,11 +738,7 @@ def _coerce_fallbacks(
         except json.JSONDecodeError as exc:
             if strict:
                 raise ValueError(_PROVIDER_ALIAS_INVALID) from exc
-            return [
-                item.strip()
-                for item in value.split(",")
-                if item.strip()
-            ]
+            return [item.strip() for item in value.split(",") if item.strip()]
     if not isinstance(parsed, list):
         if strict:
             raise ValueError(_PROVIDER_ALIAS_INVALID)
