@@ -98,3 +98,9 @@ def test_runbook_contains_no_credential_shaped_example() -> None:
     ]
     for pattern in forbidden_patterns:
         assert re.search(pattern, text) is None
+
+
+def test_websocket_probe_does_not_stream_raw_headers_or_bodies() -> None:
+    text = _read()
+    assert "--dump-header -" not in text
+    assert "The probe output is restricted to the HTTP status code and curl exit code." in text
