@@ -4,6 +4,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://127.0.0.1:${CANDIDATE_APP_PORT:-18082}}"
 OUT_DIR="${OUT_DIR:-$(mktemp -d -t nexus-candidate-smoke.XXXXXX)}"
 REQUIRE_RELEASE_METADATA_COMPLETE="${REQUIRE_RELEASE_METADATA_COMPLETE:-true}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$OUT_DIR"
 
@@ -67,10 +68,15 @@ PY
 
 grep -q 'data-live-voice-mode="edge-card"' "$OUT_DIR/webchat_demo.html"
 grep -q 'data-live-voice-ws-path="/webchat/live/ws"' "$OUT_DIR/webchat_demo.html"
-grep -q 'data-live-voice-mode' "$OUT_DIR/voice-entry.js"
-grep -q '/webchat/live/ws' "$OUT_DIR/voice-entry.js"
-if grep -Eq '47\.87\.143\.41|console\.log|\[Speedaf Voice\]' "$OUT_DIR/voice-entry.js"; then
-  echo "voice-entry contains production-only or debug markers" >&2
+grep -Fq "widget.setAttribute('data-live-voice-mode', 'off')" "$OUT_DIR/voice-entry.js"
+if grep -Fq "widget.setAttribute('data-live-voice-mode', 'edge-card')" "$OUT_DIR/voice-entry.js" \
+  || grep -Fq "widget.setAttribute('data-live-voice-ws-path', '/webchat/live/ws')" "$OUT_DIR/voice-entry.js" \
+  || grep -Fq 'window.NexusDeskWebChat.open()' "$OUT_DIR/voice-entry.js"; then
+  echo "voice-entry enables live voice or opens chat without explicit embed configuration" >&2
+  exit 2
+fi
+if grep -Eq '47\.87\.143\.41|console\.log|\[Speedaf Voice\]|LIVE_VOICE_UPSTREAM_TOKEN|token=' "$OUT_DIR/voice-entry.js"; then
+  echo "voice-entry contains production-only, credential, or debug markers" >&2
   exit 2
 fi
 
@@ -91,6 +97,14 @@ fi
 
 if [[ "${CHECK_LIVE_VOICE_HEALTH:-false}" =~ ^(1|true|yes|on)$ ]]; then
   curl_json /webchat/live/health "$OUT_DIR/live_voice_health.json"
+fi
+
+if [[ "${CHECK_LIVE_VOICE_WS_UPGRADE:-false}" =~ ^(1|true|yes|on)$ ]]; then
+  python3 "$SCRIPT_DIR/websocket_upgrade_probe.py" \
+    --base-url "${BASE_URL%/}" \
+    --path /webchat/live/ws \
+    --query "${LIVE_VOICE_WS_QUERY:-lang_code=en&voice=bm_george&speed=1.0}" \
+    --timeout-seconds "${LIVE_VOICE_WS_TIMEOUT_SECONDS:-10}"
 fi
 
 echo "CANDIDATE_SMOKE_PASS=true"
