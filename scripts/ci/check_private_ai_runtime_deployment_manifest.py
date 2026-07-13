@@ -130,7 +130,7 @@ def _integer(value: Any, *, field: str, minimum: int, maximum: int) -> int:
 def _string_list(value: Any, *, field: str, minimum: int = 1) -> list[str]:
     if not isinstance(value, list) or len(value) < minimum:
         _fail(f"{field}_must_be_string_list", field)
-    items = [_string(item, field=f"{field}[{index}]\") for index, item in enumerate(value)]
+    items = [_string(item, field=f"{field}[{index}]") for index, item in enumerate(value)]
     if len(items) != len(set(items)):
         _fail(f"{field}_must_be_unique", field)
     return items
