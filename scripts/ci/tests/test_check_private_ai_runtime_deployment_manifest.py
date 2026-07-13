@@ -178,3 +178,27 @@ def test_cli_rejects_oversized_manifest_before_json_parse(tmp_path: Path):
     assert subprocess.run(command, check=False, capture_output=True, text=True).returncode == 1
     result = json.loads(result_path.read_text(encoding="utf-8"))
     assert result["findings"] == [{"code": "manifest_too_large", "path": "$"}]
+
+
+def test_mutable_parent_path_cannot_enclose_immutable_release_root():
+    module = load_module()
+    manifest = valid_manifest()
+    manifest["mutable_state"][0]["path"] = "/opt/nexus/private-ai-runtime"
+    with pytest.raises(module.ManifestValidationError, match="mutable_path_overlaps_immutable_root"):
+        module.validate_manifest(manifest)
+
+
+def test_repository_identity_rejects_whitespace():
+    module = load_module()
+    manifest = valid_manifest()
+    manifest["source"]["repository"] = "Maximvonshaft /nexus_helpdesk"
+    with pytest.raises(module.ManifestValidationError, match="source.repository_invalid"):
+        module.validate_manifest(manifest)
+
+
+def test_commands_reject_secret_environment_assignments():
+    module = load_module()
+    manifest = valid_manifest()
+    manifest["acceptance"]["commands"][0].append("TOKEN=inline-secret")
+    with pytest.raises(module.ManifestValidationError, match=r"acceptance.commands\[0\]_inline_secret_argument_forbidden"):
+        module.validate_manifest(manifest)
