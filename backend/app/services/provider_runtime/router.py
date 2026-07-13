@@ -5,6 +5,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from .health import ProviderRuntimeHealth
 from .output_contracts import OutputContracts
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
+from .traffic_selection import ProviderTrafficPath, ProviderTrafficSelection, select_provider_traffic
 
 logger = logging.getLogger(__name__)
 
@@ -23,29 +25,46 @@ class ProviderRuntimeRouter:
     def __init__(self, db: Session):
         self.db = db
 
-    def _write_audit(self, request: ProviderRequest, operation: str, status: str, provider: str, elapsed_ms: int, safe_summary: dict | None, error_code: str | None = None):
+    def _write_audit(
+        self,
+        request: ProviderRequest,
+        operation: str,
+        status: str,
+        provider: str,
+        elapsed_ms: int,
+        safe_summary: dict | None,
+        error_code: str | None = None,
+    ) -> None:
         try:
-            self.db.execute(text("""
-                INSERT INTO provider_runtime_audit_logs
-                (id, tenant_id, provider, request_id, channel_key, session_id, operation, status, safe_summary, error_code, elapsed_ms, created_at)
-                VALUES (:id, :tenant_id, :provider, :request_id, :channel_key, :session_id, :operation, :status, :safe_summary, :error_code, :elapsed_ms, :now)
-            """), {
-                "id": str(uuid.uuid4()),
-                "tenant_id": request.tenant_id,
-                "provider": provider,
-                "request_id": request.request_id,
-                "channel_key": request.channel_key,
-                "session_id": request.session_id,
-                "operation": operation,
-                "status": status,
-                "safe_summary": json.dumps(safe_summary or {}),
-                "error_code": error_code,
-                "elapsed_ms": elapsed_ms,
-                "now": datetime.now(timezone.utc),
-            })
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO provider_runtime_audit_logs
+                    (id, tenant_id, provider, request_id, channel_key, session_id, operation, status, safe_summary, error_code, elapsed_ms, created_at)
+                    VALUES (:id, :tenant_id, :provider, :request_id, :channel_key, :session_id, :operation, :status, :safe_summary, :error_code, :elapsed_ms, :now)
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "tenant_id": request.tenant_id,
+                    "provider": provider,
+                    "request_id": request.request_id,
+                    "channel_key": request.channel_key,
+                    "session_id": request.session_id,
+                    "operation": operation,
+                    "status": status,
+                    "safe_summary": json.dumps(safe_summary or {}),
+                    "error_code": error_code,
+                    "elapsed_ms": elapsed_ms,
+                    "now": datetime.now(timezone.utc),
+                },
+            )
             self.db.commit()
         except Exception as exc:
-            logger.error("provider_runtime_audit_write_failed", extra={"error": str(exc)})
+            logger.error(
+                "provider_runtime_audit_write_failed",
+                extra={"error_type": type(exc).__name__},
+            )
             self.db.rollback()
 
     @staticmethod
@@ -107,48 +126,98 @@ class ProviderRuntimeRouter:
         )
         return parsed
 
+    @staticmethod
+    def _traffic_summary(
+        selection: ProviderTrafficSelection,
+        safe_summary: dict[str, Any] | None = None,
+        *,
+        fallback_result: str,
+        attempt_index: int | None = None,
+    ) -> dict[str, Any]:
+        summary = dict(safe_summary or {})
+        summary["traffic_selection"] = selection.safe_summary(fallback_result=fallback_result)
+        if attempt_index is not None:
+            summary["provider_attempt_index"] = attempt_index
+        return summary
+
     async def route(self, request: ProviderRequest) -> ProviderResult:
         from . import bootstrap_provider_runtime
 
         bootstrap_provider_runtime()
-        rule = self.db.execute(text("""
-            SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
-            FROM provider_routing_rules
-            WHERE tenant_id = :tenant_id AND channel_key = :channel AND scenario = :scenario AND enabled = true
-        """), {
-            "tenant_id": request.tenant_id,
-            "channel": request.channel_key,
-            "scenario": request.scenario,
-        }).mappings().first()
+        rule = self.db.execute(
+            text(
+                """
+                SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
+                FROM provider_routing_rules
+                WHERE tenant_id = :tenant_id AND channel_key = :channel AND scenario = :scenario AND enabled = true
+                """
+            ),
+            {
+                "tenant_id": request.tenant_id,
+                "channel": request.channel_key,
+                "scenario": request.scenario,
+            },
+        ).mappings().first()
 
         if not rule:
             primary_provider = "private_ai_runtime"
-            fallbacks = []
+            fallbacks: list[str] = []
             output_contract = "nexus_webchat_runtime_reply_v1"
             timeout_ms = 10000
-            kill_switch = False
-            canary_percent = 100
+            kill_switch: Any = False
+            canary_percent: Any = 0
+            default_mode = "control"
         else:
             primary_provider = rule["primary_provider"]
             fallbacks = _coerce_fallbacks(rule["fallback_providers"])
             output_contract = rule["output_contract"]
             timeout_ms = rule["timeout_ms"]
             kill_switch = rule["kill_switch"]
-            canary_percent = rule["canary_percent"] or 0
+            canary_percent = rule["canary_percent"]
+            default_mode = "canary"
 
-        primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent = _apply_env_overrides(
+        primary_provider, fallbacks, output_contract, timeout_ms = _apply_env_overrides(
             primary_provider,
             fallbacks,
             output_contract,
             timeout_ms,
-            kill_switch,
-            canary_percent,
         )
         fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
+        selection = select_provider_traffic(
+            request,
+            canary_percent=canary_percent,
+            kill_switch=kill_switch,
+            configured_mode_value=default_mode,
+        )
 
-        if kill_switch:
-            self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
-            return ProviderResult.unavailable("router", "kill_switch_active", 0)
+        if selection.path is ProviderTrafficPath.KILL_SWITCH:
+            self._write_audit(
+                request,
+                "generate",
+                "skipped",
+                primary_provider,
+                0,
+                self._traffic_summary(selection, fallback_result="suppressed_by_kill_switch"),
+                "kill_switch_active",
+            )
+            return ProviderResult.unavailable("router", "kill_switch_active", 0, fallback_allowed=False)
+
+        if not selection.execute_candidate:
+            error_code = (
+                "provider_runtime_traffic_configuration_invalid"
+                if selection.configuration_errors
+                else "provider_runtime_control_path"
+            )
+            self._write_audit(
+                request,
+                "generate",
+                "skipped",
+                primary_provider,
+                0,
+                self._traffic_summary(selection, fallback_result="candidate_not_selected"),
+                error_code,
+            )
+            return ProviderResult.unavailable("router", error_code, 0, fallback_allowed=False)
 
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
@@ -156,7 +225,7 @@ class ProviderRuntimeRouter:
         seen: set[str] = set()
         providers_to_try = [name for name in providers_to_try if name and not (name in seen or seen.add(name))]
 
-        for provider_name in providers_to_try:
+        for attempt_index, provider_name in enumerate(providers_to_try):
             health_decision = ProviderRuntimeHealth.should_skip(provider_name)
             if health_decision.skip:
                 self._write_audit(
@@ -165,14 +234,31 @@ class ProviderRuntimeRouter:
                     "skipped",
                     provider_name,
                     0,
-                    {"provider_health": health_decision.safe_summary()},
+                    self._traffic_summary(
+                        selection,
+                        {"provider_health": health_decision.safe_summary()},
+                        fallback_result="health_skip",
+                        attempt_index=attempt_index,
+                    ),
                     health_decision.reason or "provider_health_skip",
                 )
                 continue
 
             adapter = ProviderRegistry.get(provider_name, self.db)
             if not adapter:
-                self._write_audit(request, "generate", "failed", provider_name, 0, {}, "adapter_not_registered")
+                self._write_audit(
+                    request,
+                    "generate",
+                    "failed",
+                    provider_name,
+                    0,
+                    self._traffic_summary(
+                        selection,
+                        fallback_result="adapter_not_registered",
+                        attempt_index=attempt_index,
+                    ),
+                    "adapter_not_registered",
+                )
                 continue
 
             result = await adapter.generate(self.db, request)
@@ -182,14 +268,27 @@ class ProviderRuntimeRouter:
                 if health_event:
                     safe_summary["provider_health"] = health_event
                     result.raw_payload_safe_summary = safe_summary
-                self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, safe_summary, result.error_code)
+                self._write_audit(
+                    request,
+                    "generate",
+                    "failed",
+                    provider_name,
+                    result.elapsed_ms,
+                    self._traffic_summary(
+                        selection,
+                        safe_summary,
+                        fallback_result="fallback_allowed" if result.fallback_allowed else "fallback_blocked",
+                        attempt_index=attempt_index,
+                    ),
+                    result.error_code,
+                )
                 if not result.fallback_allowed:
                     return result
                 continue
 
             try:
                 if not result.structured_output:
-                    raise ValueError("No structured output provided")
+                    raise ValueError("provider_runtime_structured_output_missing")
                 if request.scenario == "webchat_runtime_reply" and output_contract == "nexus_webchat_runtime_reply_v1":
                     parsed = self._parse_webchat_runtime_output(request, result)
                 else:
@@ -207,18 +306,76 @@ class ProviderRuntimeRouter:
                 if health_event:
                     safe_summary["provider_health"] = health_event
                     result.raw_payload_safe_summary = safe_summary
-                self._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, safe_summary)
+                if selection.path is ProviderTrafficPath.SHADOW_ONLY:
+                    self._write_audit(
+                        request,
+                        "generate",
+                        "shadow_ok",
+                        provider_name,
+                        result.elapsed_ms,
+                        self._traffic_summary(
+                            selection,
+                            safe_summary,
+                            fallback_result="shadow_output_discarded",
+                            attempt_index=attempt_index,
+                        ),
+                    )
+                    return ProviderResult.unavailable(
+                        "router",
+                        "provider_runtime_shadow_only",
+                        result.elapsed_ms,
+                        fallback_allowed=False,
+                    )
+                self._write_audit(
+                    request,
+                    "generate",
+                    "ok",
+                    provider_name,
+                    result.elapsed_ms,
+                    self._traffic_summary(
+                        selection,
+                        safe_summary,
+                        fallback_result="primary_succeeded" if attempt_index == 0 else "fallback_succeeded",
+                        attempt_index=attempt_index,
+                    ),
+                )
                 return result
-            except Exception as exc:
-                safe_summary = {"parse_error": str(exc)[:500]}
+            except Exception:
+                safe_summary: dict[str, Any] = {"parse_reject": True}
                 health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
                 if health_event:
                     safe_summary["provider_health"] = health_event
-                self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, safe_summary, "parse_reject")
+                self._write_audit(
+                    request,
+                    "parse_reject",
+                    "failed",
+                    provider_name,
+                    result.elapsed_ms,
+                    self._traffic_summary(
+                        selection,
+                        safe_summary,
+                        fallback_result="parse_reject",
+                        attempt_index=attempt_index,
+                    ),
+                    "parse_reject",
+                )
                 continue
 
-        self._write_audit(request, "generate", "failed", "router", 0, {}, "all_providers_failed")
-        return ProviderResult.unavailable("router", "all_providers_failed", 0)
+        final_error = (
+            "provider_runtime_shadow_failed"
+            if selection.path is ProviderTrafficPath.SHADOW_ONLY
+            else "all_providers_failed"
+        )
+        self._write_audit(
+            request,
+            "generate",
+            "failed",
+            "router",
+            0,
+            self._traffic_summary(selection, fallback_result="providers_exhausted"),
+            final_error,
+        )
+        return ProviderResult.unavailable("router", final_error, 0, fallback_allowed=False)
 
 
 def _apply_env_overrides(
@@ -226,9 +383,7 @@ def _apply_env_overrides(
     fallbacks: list[str],
     output_contract: str,
     timeout_ms: int,
-    kill_switch: bool,
-    canary_percent: int,
-) -> tuple[str, list[str], str, int, bool, int]:
+) -> tuple[str, list[str], str, int]:
     env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
     if env_primary:
         if env_primary not in _DIRECT_ENV_PROVIDERS:
@@ -241,13 +396,10 @@ def _apply_env_overrides(
     if env_contract:
         output_contract = env_contract
     timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", timeout_ms, minimum=500, maximum=120000)
-    canary_percent = _int_env("PROVIDER_RUNTIME_CANARY_PERCENT", canary_percent, minimum=0, maximum=100)
-    if os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None:
-        kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", kill_switch)
-    return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
+    return primary_provider, fallbacks, output_contract, timeout_ms
 
 
-def _coerce_fallbacks(value) -> list[str]:
+def _coerce_fallbacks(value: Any) -> list[str]:
     if not value:
         return []
     if isinstance(value, list):
@@ -260,13 +412,6 @@ def _coerce_fallbacks(value) -> list[str]:
         if isinstance(parsed, list):
             return [str(item) for item in parsed if item]
     return []
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
