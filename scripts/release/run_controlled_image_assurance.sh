@@ -85,6 +85,40 @@ payload = {
     json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
 PY
+
+test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/release-image-manifest.json")" = "pass"
+test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/release-image-compliance-binding.json")" = "pass"
+test "$(jq -r '.image_id' "${RELEASE_IMAGE_DIR}/release-image-manifest.json")" = "${image_id}"
+
+cleanup_code=0
+raw_files=(
+  "${RELEASE_IMAGE_DIR}/trivy.raw.json"
+  "${RELEASE_IMAGE_DIR}/image.raw.cdx.json"
+  "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json"
+  "${RELEASE_IMAGE_DIR}/image.preliminary.cdx.json"
+  "${RELEASE_IMAGE_DIR}/image.preliminary.cdx.json.summary.json"
+)
+rm -f "${raw_files[@]}" || cleanup_code=1
+for raw_path in "${raw_files[@]}"; do
+  if [ -e "${raw_path}" ]; then
+    cleanup_code=1
+  fi
+done
+printf '%s\n' "${cleanup_code}" > "${RELEASE_IMAGE_DIR}/raw-cleanup-exit-code"
+test "${cleanup_code}" = "0"
+
+set +e
+python scripts/security/scan_artifacts.py \
+  --root . \
+  --output "${RELEASE_IMAGE_DIR}/artifact-scan.json" \
+  "${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt" \
+  THIRD_PARTY_NOTICES.md
+artifact_scan_code=$?
+set -e
+printf '%s\n' "${artifact_scan_code}" > "${RELEASE_IMAGE_DIR}/artifact-scan-exit-code"
+test "${artifact_scan_code}" = "0"
+test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/artifact-scan.json")" = "pass"
+
 python scripts/security/validate_release_image_evidence.py \
   --sbom "${RELEASE_IMAGE_DIR}/image.safe.cdx.json" \
   --sbom-summary "${RELEASE_IMAGE_DIR}/image.safe.cdx.json.summary.json" \
@@ -93,16 +127,4 @@ python scripts/security/validate_release_image_evidence.py \
   --licenses "${RELEASE_IMAGE_DIR}/license-summary.json" \
   --manifest "${RELEASE_IMAGE_DIR}/release-image-manifest.json" \
   --output "${RELEASE_IMAGE_DIR}/structured-evidence-scan.json"
-test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/release-image-manifest.json")" = "pass"
-test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/release-image-compliance-binding.json")" = "pass"
-test "$(jq -r '.image_id' "${RELEASE_IMAGE_DIR}/release-image-manifest.json")" = "${image_id}"
-rm -f \
-  "${RELEASE_IMAGE_DIR}/trivy.raw.json" \
-  "${RELEASE_IMAGE_DIR}/image.raw.cdx.json" \
-  "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json" \
-  "${RELEASE_IMAGE_DIR}/image.preliminary.cdx.json" \
-  "${RELEASE_IMAGE_DIR}/image.preliminary.cdx.json.summary.json"
-python scripts/security/scan_artifacts.py \
-  --root . \
-  --output "${RELEASE_IMAGE_DIR}/artifact-scan.json" \
-  "${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt"
+test "$(jq -r '.status' "${RELEASE_IMAGE_DIR}/structured-evidence-scan.json")" = "pass"
