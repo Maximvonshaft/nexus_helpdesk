@@ -53,7 +53,7 @@ Inline secret-shaped fields and token/password/API-key command arguments fail va
 
 ### Acceptance and rollback
 
-Acceptance and rollback commands are represented as argv arrays. The validator never executes them. A separate reviewed runner must later provide execution policy, environment controls, timeouts, evidence bounds and external-effect authorization.
+Acceptance and rollback commands are represented as argv arrays. The validator never executes them. Shell interpreters are forbidden anywhere in a declared command, including direct, absolute-path and wrapper-mediated forms; a shell-shaped token fails closed with a bounded reason code. A separate reviewed runner must later execute accepted argv with `shell=False` and provide execution policy, environment controls, timeouts, evidence bounds and external-effect authorization.
 
 A candidate must declare checks for:
 
