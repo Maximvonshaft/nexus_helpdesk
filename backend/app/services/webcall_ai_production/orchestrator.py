@@ -153,7 +153,7 @@ def run_session_turn(
                 provider_name="tool_policy",
             )
         else:
-            llm = _timed_llm_response(settings, stt)
+            llm = _timed_llm_response(settings, stt, session_id=session.public_id)
     elif is_tracking_question(stt.text):
         llm = LLMResult(
             response_text=ASK_TRACKING_NUMBER_REPLY,
@@ -163,7 +163,7 @@ def run_session_turn(
             provider_name="tool_policy",
         )
     else:
-        llm = _timed_llm_response(settings, stt)
+        llm = _timed_llm_response(settings, stt, session_id=session.public_id)
     if tracking_number and not llm.handoff_required and tracking_lookup_status != "not_configured":
         summary = ((tool_result or {}).get("result") or {}).get("summary")
         if summary:
@@ -277,9 +277,13 @@ def _safe_audio_stats_payload(payload: dict[str, object]) -> dict[str, object]:
     return sanitized
 
 
-def _safe_llm_response(settings, stt: STTResult) -> LLMResult:
+def _safe_llm_response(settings, stt: STTResult, *, session_id: str) -> LLMResult:
     try:
-        return get_llm_provider(settings.llm_provider).respond(stt.text, language=stt.language)
+        return get_llm_provider(settings.llm_provider).respond_for_session(
+            stt.text,
+            language=stt.language,
+            session_id=session_id,
+        )
     except ProviderError as exc:
         return LLMResult(
             response_text="",
@@ -290,9 +294,9 @@ def _safe_llm_response(settings, stt: STTResult) -> LLMResult:
         )
 
 
-def _timed_llm_response(settings, stt: STTResult) -> LLMResult:
+def _timed_llm_response(settings, stt: STTResult, *, session_id: str) -> LLMResult:
     started = time.monotonic()
-    llm = _safe_llm_response(settings, stt)
+    llm = _safe_llm_response(settings, stt, session_id=session_id)
     status = "handoff" if llm.handoff_required else "ok"
     if llm.intent == "llm_provider_failed":
         status = llm.handoff_reason or "llm_provider_failed"
