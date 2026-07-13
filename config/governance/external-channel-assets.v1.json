@@ -1,6 +1,6 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-13.1",
+  "inventory_version": "2026-07-13.2",
   "audited_main_sha": "e96dac837b4f02a297602259953d7c274b9c2063",
   "discovery_tokens": [
     "ExternalChannel",
@@ -166,11 +166,14 @@
         "deploy/.env.prod.example",
         "deploy/.env.prod.external-postgres.example",
         "deploy/.env.prod.local-postgres.example",
+        "deploy/.env.rc-test.example",
+        "deploy/docker-compose.operations-dispatch.yml",
         "deploy/docker-compose.server.yml",
         "deploy/nginx/nexusdesk.edge.conf.template",
         "scripts/deploy/check_deploy_contract.sh",
         "scripts/deploy/preflight.sh",
         "scripts/probe_nexus_runtime.sh",
+        "scripts/release/generate_rc_test_env.py",
         "scripts/smoke/browser_bundle_secret_scan.py",
         "scripts/smoke/worker_daemon_readiness_probe.py"
       ],
@@ -178,7 +181,7 @@
       "asset_type": "deployment_script_compatibility",
       "disposition": "safe_to_remove",
       "owner": "m12-production-readiness",
-      "rationale": "Executable, readiness and local environment compatibility references require migration and observation before cleanup.",
+      "rationale": "Executable, readiness and environment compatibility references require migration and observation before cleanup.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": [
@@ -244,13 +247,14 @@
     {
       "path": null,
       "paths": [
-        "config/governance/legacy-surface-domains.v1.json"
+        "config/governance/legacy-surface-domains.v1.json",
+        "scripts/ci/tests/test_check_legacy_surface_registry.py"
       ],
       "glob": null,
       "asset_type": "cross_domain_governance_registry",
       "disposition": "active_compatibility",
       "owner": "release-governance",
-      "rationale": "The current cross-domain legacy registry explicitly coordinates ExternalChannel compatibility ownership and must remain classified with this domain inventory.",
+      "rationale": "Current cross-domain legacy controls explicitly coordinate ExternalChannel compatibility ownership and must remain classified with this domain inventory.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": []
