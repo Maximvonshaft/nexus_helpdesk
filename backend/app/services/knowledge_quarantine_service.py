@@ -45,7 +45,7 @@ def _actor_id(actor) -> int | None:  # noqa: ANN001
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _parsed_text_sha256(value: str | None) -> str:
+def _content_sha256(value: str | None) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
@@ -190,7 +190,9 @@ def quarantine_and_parse_upload(
         else PromptRiskResult(status="pending", reasons=())
     )
     if parser.status == "passed" and parser.normalized_text:
-        record.parsed_text_sha256 = _parsed_text_sha256(parser.normalized_text)
+        # The higher-level Knowledge service replaces this with the hash of the
+        # canonical publication source after deterministic extraction.
+        record.parsed_text_sha256 = _content_sha256(parser.normalized_text)
     try:
         apply_parser_result(
             db,
@@ -331,6 +333,7 @@ def require_publication_eligible_record(
     db: Session,
     *,
     item: KnowledgeItem,
+    publication_text: str | None = None,
 ) -> KnowledgeIngestionRecord:
     if item.source_type != "file":
         raise HTTPException(status_code=409, detail="Knowledge quarantine is only authoritative for file uploads")
@@ -345,7 +348,8 @@ def require_publication_eligible_record(
     eligibility = evaluate_publication_eligibility(record)
     if not eligibility.eligible:
         raise HTTPException(status_code=409, detail="Knowledge quarantine approval required")
-    current_hash = _parsed_text_sha256(item.draft_normalized_text or item.draft_body)
+    content = publication_text if publication_text is not None else (item.draft_normalized_text or item.draft_body)
+    current_hash = _content_sha256(content)
     if not record.parsed_text_sha256 or current_hash != record.parsed_text_sha256:
         raise HTTPException(
             status_code=409,
