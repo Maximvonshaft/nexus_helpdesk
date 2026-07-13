@@ -78,6 +78,7 @@ jobs:
             backend/tests/test_ticket_event_classification.py \
             backend/tests/test_ticket_event_architecture.py \
             backend/tests/test_ticket_event_repair.py \
+            backend/tests/test_ticket_event_osr_current_writes.py \
             backend/tests/test_qa_training_contract.py \
             backend/tests/test_webchat_ai_turn_runtime.py \
             backend/tests/test_webchat_ai_decision_runtime.py
@@ -91,6 +92,7 @@ jobs:
             backend/tests/test_ticket_event_classification.py \
             backend/tests/test_ticket_event_architecture.py \
             backend/tests/test_ticket_event_repair.py \
+            backend/tests/test_ticket_event_osr_current_writes.py \
             backend/tests/test_customer_visible_event_safety.py \
             backend/tests/test_channel_workbench_backend_contracts.py \
             backend/tests/test_qa_training_contract.py \
