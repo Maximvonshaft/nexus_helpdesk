@@ -107,89 +107,18 @@ jobs:
             scripts/qualification/recovery/build_recovery_evidence.py \
             scripts/qualification/recovery/test_recovery_contracts.py
           python -m unittest -v scripts.qualification.recovery.test_recovery_contracts
-          bash -n scripts/deploy/backup_postgres.sh scripts/deploy/rollback_release.sh
+          bash -n \
+            scripts/qualification/recovery/run_recovery_qualification.sh \
+            scripts/deploy/backup_postgres.sh \
+            scripts/deploy/rollback_release.sh
 
       - name: Run disposable PostgreSQL recovery qualification
         id: qualification
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -Eeuo pipefail
-          psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-          DROP DATABASE IF EXISTS nexus_source;
-          DROP DATABASE IF EXISTS nexus_restore;
-          CREATE DATABASE nexus_source;
-          CREATE DATABASE nexus_restore;
-          SQL
-
-          DATABASE_URL="$SOURCE_APP_URL" alembic -c backend/alembic.ini upgrade head
-          EXPECTED_HEAD="$(psql "$SOURCE_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version')"
-          test -n "$EXPECTED_HEAD"
-
-          DATABASE_URL="$SOURCE_APP_URL" alembic -c backend/alembic.ini downgrade -1
-          OBSERVED_HEAD="$(psql "$SOURCE_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version')"
-          set +e
-          python scripts/qualification/recovery/build_recovery_evidence.py migration-plan \
-            --observed-head "$OBSERVED_HEAD" \
-            --expected-head "$EXPECTED_HEAD" \
-            --output artifacts/recovery/migration-repair-plan.json
-          PLAN_EXIT=$?
-          set -e
-          test "$PLAN_EXIT" = "1"
-          test "$(jq -r '.action' artifacts/recovery/migration-repair-plan.json)" = "alembic_upgrade_head"
-          test "$(jq -r '.apply_authorized' artifacts/recovery/migration-repair-plan.json)" = "false"
-
-          DATABASE_URL="$SOURCE_APP_URL" alembic -c backend/alembic.ini upgrade head
-          test "$(psql "$SOURCE_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version')" = "$EXPECTED_HEAD"
-
-          psql "$SOURCE_NATIVE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-          INSERT INTO markets (code, name, country_code, is_active, created_at, updated_at)
-          VALUES ('QUAL-RCV-001', 'Synthetic Recovery Qualification', 'ZZ', TRUE, clock_timestamp(), clock_timestamp());
-          INSERT INTO teams (name, team_type, market_id, is_active, created_at, updated_at)
-          SELECT 'Synthetic Recovery Team', 'support', id, TRUE, clock_timestamp(), clock_timestamp()
-          FROM markets WHERE code = 'QUAL-RCV-001';
-          SQL
-          date -u +%Y-%m-%dT%H:%M:%S.%NZ > marker-committed-at.txt
-
-          python scripts/qualification/recovery/build_recovery_evidence.py snapshot \
-            --database-url "$SOURCE_APP_URL" \
-            --marker-code "$QUALIFICATION_MARKER" \
-            --output artifacts/recovery/source-snapshot.json
-
-          POSTGRES_NATIVE_URL="$SOURCE_NATIVE_URL" \
-            scripts/deploy/backup_postgres.sh artifacts/recovery/backups
-          BUNDLE="$(find artifacts/recovery/backups -mindepth 1 -maxdepth 1 -type d -name 'helpdesk_*' -print -quit)"
-          test -n "$BUNDLE"
-          date -u +%Y-%m-%dT%H:%M:%S.%NZ > backup-completed-at.txt
-          BACKUP_SHA256="$(jq -r '.archive_sha256' "$BUNDLE/backup_manifest.json")"
-
-          date -u +%Y-%m-%dT%H:%M:%S.%NZ > restore-started-at.txt
-          ROLLBACK_CONFIRM=I_UNDERSTAND \
-          POSTGRES_NATIVE_URL="$RESTORE_NATIVE_URL" \
-          ROLLBACK_STATUS_FILE=artifacts/recovery/rollback-result.json \
-            scripts/deploy/rollback_release.sh "$BUNDLE"
-          date -u +%Y-%m-%dT%H:%M:%S.%NZ > restore-completed-at.txt
-          test "$(jq -r '.database_restored' artifacts/recovery/rollback-result.json)" = "true"
-
-          python scripts/qualification/recovery/build_recovery_evidence.py snapshot \
-            --database-url "$RESTORE_APP_URL" \
-            --marker-code "$QUALIFICATION_MARKER" \
-            --output artifacts/recovery/restored-snapshot.json
-
-          python scripts/qualification/recovery/build_recovery_evidence.py compare \
-            --source artifacts/recovery/source-snapshot.json \
-            --restored artifacts/recovery/restored-snapshot.json \
-            --output artifacts/recovery/recovery-evidence.json \
-            --source-sha "$SOURCE_SHA" \
-            --backup-sha256 "$BACKUP_SHA256" \
-            --marker-committed-at "$(cat marker-committed-at.txt)" \
-            --backup-completed-at "$(cat backup-completed-at.txt)" \
-            --restore-started-at "$(cat restore-started-at.txt)" \
-            --restore-completed-at "$(cat restore-completed-at.txt)" \
-            --rto-target-seconds "$RTO_TARGET_SECONDS" \
-            --rpo-target-seconds "$RPO_TARGET_SECONDS"
-          test "$(jq -r '.status' artifacts/recovery/recovery-evidence.json)" = "pass"
+          EVIDENCE_ROOT: artifacts/recovery
+        run: bash scripts/qualification/recovery/run_recovery_qualification.sh
 
       - name: Remove backup bytes before evidence processing
         if: always()
@@ -204,7 +133,7 @@ jobs:
           QUALIFICATION_OUTCOME: ${{ steps.qualification.outcome }}
         run: |
           set -Eeuo pipefail
-          QUALIFICATION_OUTCOME="$QUALIFICATION_OUTCOME" python - <<'PY'
+          python - <<'PY'
           import json
           import os
           from pathlib import Path
