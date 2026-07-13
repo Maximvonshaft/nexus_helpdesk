@@ -98,6 +98,106 @@ if [[ "${CHECK_LIVE_VOICE_HEALTH:-false}" =~ ^(1|true|yes|on)$ ]]; then
   curl_json /webchat/live/health "$OUT_DIR/live_voice_health.json"
 fi
 
+if [[ "${CHECK_LIVE_VOICE_WS_UPGRADE:-false}" =~ ^(1|true|yes|on)$ ]]; then
+  python3 - "${BASE_URL%/}" <<'PY'
+import base64
+import hashlib
+import hmac
+import os
+import socket
+import ssl
+import sys
+from urllib.parse import urlsplit
+
+base_url = sys.argv[1]
+parsed = urlsplit(base_url)
+if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    raise SystemExit(f"unsupported BASE_URL for websocket probe: {base_url}")
+
+host = parsed.hostname
+port = parsed.port or (443 if parsed.scheme == "https" else 80)
+host_literal = f"[{host}]" if ":" in host else host
+host_header = host_literal if parsed.port is None else f"{host_literal}:{port}"
+path_prefix = parsed.path.rstrip("/")
+ws_path = f"{path_prefix}/webchat/live/ws"
+query = os.getenv(
+    "LIVE_VOICE_WS_QUERY",
+    "lang_code=en&voice=bm_george&speed=1.0",
+).lstrip("?")
+if query:
+    ws_path = f"{ws_path}?{query}"
+
+websocket_key = base64.b64encode(os.urandom(16)).decode("ascii")
+origin = f"{parsed.scheme}://{host_header}"
+request = "\r\n".join(
+    [
+        f"GET {ws_path} HTTP/1.1",
+        f"Host: {host_header}",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        f"Sec-WebSocket-Key: {websocket_key}",
+        "Sec-WebSocket-Version: 13",
+        f"Origin: {origin}",
+        "",
+        "",
+    ]
+).encode("ascii")
+
+raw_socket = socket.create_connection((host, port), timeout=10)
+probe_socket = raw_socket
+try:
+    if parsed.scheme == "https":
+        probe_socket = ssl.create_default_context().wrap_socket(raw_socket, server_hostname=host)
+    probe_socket.settimeout(10)
+    probe_socket.sendall(request)
+    response = b""
+    while b"\r\n\r\n" not in response and len(response) < 65536:
+        chunk = probe_socket.recv(4096)
+        if not chunk:
+            break
+        response += chunk
+finally:
+    probe_socket.close()
+
+header_bytes, separator, _ = response.partition(b"\r\n\r\n")
+if not separator:
+    raise SystemExit("live voice websocket probe returned incomplete HTTP headers")
+lines = header_bytes.decode("iso-8859-1").split("\r\n")
+status_parts = lines[0].split(" ", 2)
+try:
+    status_code = int(status_parts[1])
+except (IndexError, ValueError) as exc:
+    raise SystemExit(f"invalid websocket status line: {lines[0]}") from exc
+
+headers = {}
+for line in lines[1:]:
+    if ":" not in line:
+        continue
+    name, value = line.split(":", 1)
+    headers[name.strip().lower()] = value.strip()
+
+upgrade_header = headers.get("upgrade", "")
+connection_header = headers.get("connection", "")
+if status_code != 101:
+    raise SystemExit(f"live voice websocket upgrade failed: status={status_code}")
+if upgrade_header.lower() != 'websocket':
+    raise SystemExit(f"live voice websocket upgrade header invalid: {upgrade_header!r}")
+if "upgrade" not in connection_header.lower():
+    raise SystemExit(f"live voice websocket connection header invalid: {connection_header!r}")
+
+expected_accept = base64.b64encode(
+    hashlib.sha1(
+        (websocket_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")
+    ).digest()
+).decode("ascii")
+actual_accept = headers.get("sec-websocket-accept", "")
+if not hmac.compare_digest(actual_accept, expected_accept):
+    raise SystemExit("live voice websocket Sec-WebSocket-Accept validation failed")
+
+print("LIVE_VOICE_WS_UPGRADE_PASS=true")
+PY
+fi
+
 echo "CANDIDATE_SMOKE_PASS=true"
 echo "base_url=$BASE_URL"
 echo "evidence_dir=$OUT_DIR"
