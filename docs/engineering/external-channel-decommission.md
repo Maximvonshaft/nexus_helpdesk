@@ -2,9 +2,16 @@
 
 ## Status
 
-ExternalChannel is a retired transport. Production configuration already rejects enablement, but compatibility code, historical persistence contracts, disabled settings, frontend labels, scripts, tests, migrations and reports remain in the repository.
+ExternalChannel is a retired transport. Production configuration rejects enablement, but compatibility code, historical persistence contracts, disabled settings, frontend labels, scripts, tests, migrations and reports remain in the repository.
 
-Work Item #572 owns the complete decommission. PR #597 delivers only the first non-destructive slice: an authoritative repository inventory and a reintroduction gate. It does not authorize runtime removal, database mutation, deployment or production deletion.
+Work Item #572 owns the complete decommission. PR #680 is the current non-destructive inventory and reintroduction-control slice. It supersedes closed, unmerged PR #597 after that historical head became 135 commits behind and its source branch was unavailable. Neither PR authorizes runtime deletion, database mutation, deployment or production cleanup.
+
+Current reconciliation baseline:
+
+- audited main: `e96dac837b4f02a297602259953d7c274b9c2063`;
+- inventory version: `2026-07-13.1`;
+- current PR: #680;
+- migration/schema/runtime changes: none.
 
 ## Current authority
 
@@ -13,21 +20,14 @@ The machine-readable authority is:
 - inventory: `config/governance/external-channel-assets.v1.json`;
 - schema: `nexus.external-channel-retirement.inventory.v1`;
 - checker: `scripts/ci/check_external_channel_retirement.py`;
+- focused tests: `scripts/ci/tests/test_check_external_channel_retirement.py`;
 - CI workflow/check: `external-channel-retirement-gate`.
 
-The workflow runs for every pull request to `main`, every push to `main`, and manual dispatch. The pull request creates the check but does not itself modify repository branch-protection settings. Repository administrators should add the check to the protected-branch required-check set when that policy is managed outside the repository.
+The workflow runs for every pull request to `main`, every push to `main`, and manual dispatch. It is intentionally not path-filtered: a new reference in an unanticipated directory must not bypass classification. Repository administrators still own branch-protection configuration outside this repository.
 
-The inventory supports:
+## Discovery and classification contract
 
-- one exact `path`;
-- a grouped list of exact `paths` when every asset shares the same owner, disposition and prerequisites;
-- a controlled historical `glob` under an approved non-runtime root.
-
-Grouped `paths` are expanded into individual exact rules before evaluation. They do not weaken production-path enforcement.
-
-## Discovery contract
-
-The checker recognizes these naming variants:
+The checker recognizes five marker variants:
 
 - `ExternalChannel`;
 - `external_channel`;
@@ -35,72 +35,76 @@ The checker recognizes these naming variants:
 - `externalChannel`;
 - `external-channel`.
 
-A regular tracked file is discovered when a marker appears in either its repository path or its non-binary contents. Path matching ensures that empty, binary or unusual-encoding assets with retired names still require classification.
+A regular tracked file is discovered when a marker appears in its repository path or non-binary contents. Git entries are enumerated through `git ls-files -z --stage`; only regular `100644` and `100755` blobs are scanned. Symlinks and gitlinks are excluded explicitly, while malformed index records and unsupported modes fail closed.
 
-Git entries are read through `git ls-files -z --stage`. Only regular blobs (`100644`, `100755`) are scanned. Symlinks (`120000`) and gitlinks/submodules (`160000`) are excluded explicitly; malformed index data and unknown modes fail closed.
+Inventory selectors are limited to:
+
+- one exact `path`;
+- grouped exact `paths` sharing one owner, disposition and prerequisite set;
+- a controlled historical `glob` under an approved non-runtime root.
+
+Grouped paths expand into individual exact rules before evaluation. Production-capable roots cannot be covered by globs.
 
 ## Asset dispositions
 
 | Disposition | Meaning | Removal authority |
 |---|---|---|
-| `active_compatibility` | A current consumer, API, worker, frontend or workflow still imports or exposes compatibility behavior. | Requires consumer migration and observation evidence. |
-| `historical_evidence` | Report, documentation or test evidence with no runtime authority. | May be archived or removed only through separately reviewed repository hygiene work. |
+| `active_compatibility` | A current consumer, API, worker, frontend, registry or workflow still exposes compatibility behavior. | Requires consumer migration and observation evidence. |
+| `historical_evidence` | Documentation, report or test evidence with no runtime authority. | Archive or remove only through separately reviewed hygiene work. |
 | `data_migration_dependency` | Model, schema, enum, migration or bootstrap needed to interpret historical data. | Requires data-read proof and #532 recovery rehearsal before destructive change. |
 | `safe_to_remove` | No intended long-term authority, but prerequisites are not yet proven. | Requires the listed prerequisites and a bounded removal PR. |
-| `retirement_control` | Manifest, checker, tests and CI workflow that enforce this process. | Retained until #572 is fully closed and successor controls are accepted. |
+| `retirement_control` | Manifest, checker, tests and CI workflow enforcing this process. | Retain until #572 is closed or a successor control is accepted. |
 
-## Known write-capable surfaces
+## Current write-capable surfaces
 
-The inventory explicitly marks legacy write activation and compatibility call paths. The initial baseline includes:
+The July 13 current-main reconciliation removed stale inventory entries for assets already deleted from the repository:
 
-- service-package bootstrap that installs the unresolved-event persistence patch;
-- legacy bridge persistence helpers;
-- unresolved-event storage;
-- admin and ticket compatibility APIs;
-- operator replay paths;
-- background jobs;
-- message-dispatch compatibility calls.
+- `backend/app/services/external_channel_unresolved_store.py`;
+- `backend/app/services/external_channel_payload_hash.py`.
 
-This classification is intentionally conservative. A write-capable classification means the file can directly or indirectly invoke obsolete persistence behavior. It does not mean the path is currently receiving production traffic.
+It also removed `backend/app/services/__init__.py` from the inventory because the current file no longer contains an ExternalChannel marker or installs the retired unresolved-store patch.
 
-Every write-capable entry must:
+The remaining explicitly classified write-capable surfaces are:
 
-- be an exact path, never a glob;
-- set `write_surface=true`;
-- set `stop_new_writes_required=true`;
-- list `caller_migration` as a prerequisite;
-- remain blocked from removal until traffic and observation evidence exist.
+- `backend/app/services/external_channel_bridge.py`;
+- `backend/app/api/admin.py`;
+- `backend/app/api/operator_queue.py`;
+- `backend/app/api/tickets.py`;
+- `backend/app/services/background_jobs.py`;
+- `backend/app/services/message_dispatch.py`.
+
+The bridge still contains compatibility persistence helpers, including unresolved-event and attachment writes. This classification is conservative: it proves code capability, not current production traffic. Each write-capable rule is exact, sets `write_surface=true`, requires `stop_new_writes_required=true`, and lists caller migration before removal.
+
+The current cross-domain registry `config/governance/legacy-surface-domains.v1.json` is also classified because it explicitly coordinates the `external_channel_compatibility` domain and #572 ownership.
 
 ## Gate behavior
 
 The checker fails closed when:
 
 - JSON contains duplicate keys;
-- the schema, fields or identifiers are invalid;
+- schema, fields, identifiers or selectors are invalid;
 - Git index data is malformed or contains an unsupported mode;
-- an exact inventory path is no longer tracked;
-- an exact inventory path no longer has a discovery marker in its path or contents;
-- a discovered tracked file has no rule;
-- a file matches multiple rules;
-- a wildcard can classify a production-capable root;
-- a historical wildcard matches no current discovered file;
-- a write surface is not exact or lacks the stop-new-writes control;
-- Git tracked-file enumeration or regular-file reading fails.
+- an exact inventory path is not tracked;
+- an exact path no longer contains a discovery marker;
+- a discovered file has no rule;
+- a discovered file matches multiple rules;
+- a glob can classify a production-capable root;
+- a historical glob matches no current reference;
+- a write surface is not exact or lacks stop-new-writes controls;
+- tracked-file enumeration or file reading fails.
 
-Success output contains only bounded counts, the audited main SHA, inventory version and a SHA-256 digest. It does not emit source contents, customer data, tracking/contact/address data, Provider payloads, tool payloads, credentials or endpoint values.
-
-The workflow is intentionally not path-filtered. A directory allowlist would let a new reference bypass the control by entering an unanticipated directory.
+Success output is bounded to aggregate counts, inventory metadata and a SHA-256 digest. It does not emit paths, source contents, customer data, Provider payloads, credentials, endpoints or raw operational payloads.
 
 ## Decommission phases
 
-### Phase 1 — inventory and reintroduction gate
+### Phase 1 — current repository inventory and reintroduction gate
 
-Delivered by PR #597:
+PR #680 owns the current-main reconciliation of this phase:
 
-1. classify current repository assets;
-2. identify known write-capable surfaces;
+1. classify every currently discovered reference;
+2. identify remaining write-capable surfaces;
 3. prevent new unclassified path or content references;
-4. establish exact-head CI evidence.
+4. produce exact-head bounded CI evidence.
 
 No runtime behavior changes in this phase.
 
@@ -110,83 +114,55 @@ Before changing behavior:
 
 1. enumerate every import, API consumer, worker entry point and frontend consumer;
 2. prove whether compatibility routes receive traffic;
-3. measure legacy-table write/read activity using bounded operational evidence;
+3. measure legacy-table write/read activity through bounded operational evidence;
 4. confirm historical rows remain readable through approved models and migrations;
 5. identify retention, legal and audit requirements;
 6. record a rollback-compatible migration map.
 
-Absence of a code-search caller is not sufficient evidence of zero runtime traffic.
+Code search alone is not evidence of zero runtime traffic.
 
 ### Phase 3 — stop new legacy writes
 
-A separate PR must:
-
-1. add failing tests for each write path;
-2. migrate callers to current governed channel boundaries;
-3. remove bootstrap monkey patching and write helpers only after callers are migrated;
-4. preserve historical read compatibility;
-5. prove WhatsApp/Provider routing, governed outbound and operator workflows are unchanged;
-6. add operational counters or bounded audit evidence for attempted legacy writes.
-
-The phase must fail closed rather than silently dropping events.
+A separate PR must add failing tests for every write path, migrate callers to governed channel boundaries, preserve historical reads, and prove WhatsApp/Provider routing and customer-visible governance remain unchanged. Attempted legacy writes must fail closed or enter an explicit repair path; they must not be silently dropped.
 
 ### Phase 4 — compatibility observation
 
-After stop-new-writes deployment is separately authorized:
-
-1. observe route and legacy-store activity for a defined window;
-2. investigate every non-zero call or write;
-3. prove no required consumer depends on the compatibility surface;
-4. verify rollback remains possible;
-5. retain exact release and evidence identifiers.
-
-The observation window and acceptance threshold must be defined in the implementing Work Item or PR. This document does not invent production thresholds.
+After separately authorized deployment of stop-new-writes behavior, define an observation window, investigate every non-zero call/write, verify rollback, and retain exact release/evidence identifiers. This document does not invent production thresholds.
 
 ### Phase 5 — remove safe code and configuration
 
-Remove only assets whose prerequisites are proven. Keep the inventory updated in the same PR. The gate must remain green on the exact head.
-
-Expected candidates include disabled-only settings, legacy bridge helpers, obsolete scripts and misleading frontend labels. Each removal must preserve current governed WhatsApp/Provider behavior.
+Remove only assets whose prerequisites are proven. Update the inventory in the same PR and keep the exact-head gate green. Disabled settings, bridge helpers, obsolete scripts and misleading UI labels are candidates, not pre-authorized deletions.
 
 ### Phase 6 — rehearse destructive data/schema change
 
-Any table, column or historical-row deletion is blocked on #532. Required evidence includes:
-
-- production-like backup and restore rehearsal;
-- row-count and integrity reconciliation;
-- historical read-path validation;
-- rollback timing and operator procedure;
-- migration upgrade and downgrade behavior where downgrade is safe;
-- explicit retention/legal approval where applicable.
+Any table, column or historical-row deletion is blocked on #532. Required evidence includes production-like backup/restore, row and integrity reconciliation, historical read validation, rollback timing, migration upgrade/downgrade behavior where safe, and retention/legal approval where applicable.
 
 ### Phase 7 — separately authorized destructive migration
 
-Destructive migration is optional, not presumed. It occurs only if retained historical structures no longer provide required business, audit or recovery value and all #532 gates are accepted.
+Destructive migration is optional. It proceeds only if historical structures no longer provide required business, audit or recovery value and all #532 gates are accepted.
 
 ## WhatsApp and Provider non-regression boundary
 
-ExternalChannel retirement must not become a backdoor refactor of current channel execution. In every later phase:
+ExternalChannel retirement must not become a backdoor refactor of current channel execution:
 
 - customer-visible messages remain governed;
 - WhatsApp and Provider routing remain configuration-driven;
-- current outbound policy and controlled execution boundaries remain authoritative;
-- no real outbound is triggered by tests or migration tooling;
-- no Provider enablement, credential change or production mutation is implied by a green repository gate.
+- controlled execution and outbound policy remain authoritative;
+- tests and migration tooling cannot send real outbound;
+- a green repository gate does not enable a Provider, change credentials or mutate production.
 
 ## Review checklist for later slices
 
-- exact current main and current #572 claim re-read;
-- one current PR for the active slice;
-- all affected inventory entries updated;
-- failing tests precede behavior changes;
-- caller and traffic evidence attached in bounded form;
-- migration and rollback evidence explicit;
-- no unresolved blocking review thread;
-- required checks green on the exact final head;
-- #572 remains open until all acceptance criteria are completed and merged.
+- re-read exact current main, #572 and active Claims;
+- keep one current PR for the active slice;
+- update every affected inventory entry;
+- write failing tests before behavior changes;
+- attach bounded caller/traffic/data-read evidence;
+- state migration and rollback evidence explicitly;
+- resolve every blocking review thread;
+- require exact-final-head checks;
+- keep #572 open until all acceptance criteria are completed and merged.
 
 ## Rollback
 
-PR #597 is additive. Reverting it removes the inventory, checker, tests, workflow and explanatory documents. It does not change runtime code, persisted data, database schema, active routes, Provider configuration or outbound behavior.
-
-Later behavior-changing slices require their own rollback plan. Re-enabling the retired transport is not an acceptable rollback strategy.
+PR #680 is additive. Reverting it removes the inventory, checker, tests, workflow and explanatory documents without changing runtime code, persisted data, database schema, active routes, Provider configuration or outbound behavior. Later behavior-changing slices require their own rollback plans; re-enabling the retired transport is not an acceptable rollback strategy.
