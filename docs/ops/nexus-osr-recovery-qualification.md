@@ -8,9 +8,19 @@ This control proves that an exact Nexus revision can be migrated, backed up, res
 
 Application code uses a SQLAlchemy URL such as `postgresql+psycopg://...`. Native PostgreSQL tools use `POSTGRES_NATIVE_URL` in libpq form: `postgresql://...`.
 
-The operator scripts accept `POSTGRES_NATIVE_URL` directly. For compatibility they may normalize the known SQLAlchemy driver prefixes from `DATABASE_URL`, but they never pass an unmodified `postgresql+psycopg://` URL to `pg_dump`, `pg_restore` or `psql`. Before any native client call, both scripts require an explicit host and database path and reject URI query strings or fragments, so libpq parameters cannot replace the visibly reviewed target.
+The operator scripts accept `POSTGRES_NATIVE_URL` directly. For compatibility they may normalize known SQLAlchemy driver prefixes from `DATABASE_URL`, but they never pass an unmodified `postgresql+psycopg://` URL to `pg_dump`, `pg_restore` or `psql`. Before any native client call, both scripts require an explicit user, host and database path and reject URI query strings or fragments, so neither `PGUSER` nor libpq URI parameters can replace the visibly reviewed identity or target.
 
-The disposable runner additionally requires `RECOVERY_ADMIN_NATIVE_URL` and `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. Before any `DROP DATABASE` or `CREATE DATABASE`, it proves that the admin, source and restore URLs share the same host and port, that application/native URL pairs agree, that the source/restore database names are exactly `nexus_source` and `nexus_restore`, and that the admin URL targets a different database. URI query strings and fragments are rejected because libpq parameters such as `host`, `hostaddr`, `port` or `dbname` could override the visibly validated authority. Ambient `PGHOST`, `PGUSER` or default-database state is never used as destructive authority.
+The disposable runner additionally requires `RECOVERY_ADMIN_NATIVE_URL` and `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. Before any destructive statement, it proves that:
+
+- application/native URL pairs have the same explicit identity;
+- source, restore and admin use the exact distinct roles `nexus_recovery_source`, `nexus_recovery_restore` and `nexus_recovery_admin`;
+- all URLs share the same host and port;
+- source/restore database names are exactly `nexus_source` and `nexus_restore`;
+- the admin URL targets a third database;
+- the source/restore roles exist, can log in and have no SUPERUSER, CREATEDB or CREATEROLE privilege;
+- the admin role has CREATEDB authority.
+
+The admin creates each disposable database with its corresponding non-admin role as owner, and the runner verifies those owners before Alembic starts. Ambient `PGHOST`, `PGUSER`, `PGPASSWORD` or default-database state is not destructive authority.
 
 ## Backup bundle
 
@@ -33,32 +43,35 @@ Possible states are:
 - `IMAGE_RESTARTED` — the requested old image tag was applied through Docker Compose;
 - `HEALTH_VERIFIED` — both `/healthz` and `/readyz` returned explicit HTTP 2xx responses after restart.
 
-The result also includes `outcome`, a fixed `failure_stage`, and Boolean fields that distinguish restore application from verified restoration. An EXIT trap writes the partial state when an operation fails. For example, if `pg_restore` commits but the Alembic post-check fails, the result records `DATABASE_RESTORE_APPLIED`, `outcome=fail`, `failure_stage=DATABASE_POST_VERIFY`, and `database_restored=false`. If the image restarts but a health check fails or returns a redirect, it records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
+The result also includes `outcome`, a fixed `failure_stage`, and Boolean fields that distinguish restore application from verified restoration. An EXIT trap writes partial state when a later operation fails. For example, if `pg_restore` commits but the Alembic post-check fails, the result records `DATABASE_RESTORE_APPLIED`, `outcome=fail`, `failure_stage=DATABASE_POST_VERIFY`, and `database_restored=false`. If the image restarts but a health check fails or redirects, it records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
 
 The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair and exact checksum match.
 
 ## Disposable CI topology
 
-The dedicated gate uses pgvector PostgreSQL 16 and creates:
+The dedicated gate uses pgvector PostgreSQL 16 with three isolated login roles:
 
-- `nexus_source` — migrated using the repository's current Alembic chain;
-- `nexus_restore` — empty target restored only from the generated backup bundle.
+- `nexus_recovery_admin` — bootstrap role used only for role/database creation and ownership proof;
+- `nexus_recovery_source` — non-admin owner/client for `nexus_source`;
+- `nexus_recovery_restore` — non-admin owner/client for `nexus_restore`.
 
 The sequence is:
 
-1. Validate explicit admin/source/restore URL authority before destructive setup.
-2. Upgrade source to the single current Alembic head.
-3. Downgrade one revision to simulate an interrupted/outdated state.
-4. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
-5. Re-upgrade and verify the exact expected head.
-6. Insert one synthetic Market/Team referential marker.
-7. Snapshot every public table count, Alembic head, marker count, unvalidated-FK count and a deterministic SHA-256 signature for every public foreign-key definition.
-8. Create and validate the real operator backup bundle.
-9. Restore through the real rollback script into the disposable target.
-10. Compare exact head, complete table/count set, marker and FK state.
-11. Measure synthetic RPO and restore RTO.
-12. Remove all backup bytes.
-13. Scan bounded JSON evidence before upload.
+1. Validate explicit URL authority and pairwise-distinct role identity.
+2. Prove source/restore are non-admin and admin has database-creation authority.
+3. Recreate `nexus_source` and `nexus_restore` with different owners and verify ownership.
+4. Upgrade source to the single current Alembic head.
+5. Downgrade one revision to simulate an interrupted/outdated state.
+6. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
+7. Re-upgrade and verify the exact expected head.
+8. Insert one synthetic Market/Team referential marker.
+9. Snapshot every public table count, Alembic head, marker count, unvalidated-FK count and a deterministic SHA-256 signature for every public foreign-key definition.
+10. Create and validate the real operator backup bundle as the source role.
+11. Restore through the real rollback script into the restore-owned database.
+12. Compare exact head, complete table/count set, marker and FK state.
+13. Measure synthetic RPO and restore RTO.
+14. Remove all backup bytes.
+15. Scan bounded JSON evidence before upload.
 
 ## Evidence
 
@@ -77,7 +90,7 @@ These are CI qualification thresholds, not production SLOs.
 
 ## Failure semantics
 
-The gate fails closed on migration/restore errors, missing/multiple/invalid heads, admin/source/restore cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
+The gate fails closed on missing/ambient user identity, role collision or privilege mismatch, database-owner mismatch, migration/restore errors, missing/multiple/invalid heads, cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
 
 ## Remaining work
 
