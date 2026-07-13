@@ -9,7 +9,7 @@ import os
 import socket
 import ssl
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 _WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _MAX_HEADER_BYTES = 65536
@@ -23,7 +23,7 @@ class WebSocketUpgradeResult:
     connection_header: str
 
 
-def _request_target(base_url: str, path: str, query: str) -> tuple[object, str, str]:
+def _request_target(base_url: str, path: str, query: str) -> tuple[SplitResult, str, str]:
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("base URL must be an absolute http:// or https:// URL")
@@ -38,13 +38,14 @@ def _request_target(base_url: str, path: str, query: str) -> tuple[object, str, 
     return parsed, request_path, target
 
 
-def _host_header(parsed: object) -> tuple[str, int]:
+def _host_header(parsed: SplitResult) -> tuple[str, str, int]:
     host = parsed.hostname
     if not host:
         raise ValueError("base URL hostname is required")
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     host_literal = f"[{host}]" if ":" in host else host
-    return (host_literal if parsed.port is None else f"{host_literal}:{port}"), port
+    host_header = host_literal if parsed.port is None else f"{host_literal}:{port}"
+    return host_header, host, port
 
 
 def _read_headers(connection: socket.socket) -> bytes:
@@ -86,7 +87,7 @@ def probe_websocket_upgrade(
     ssl_context: ssl.SSLContext | None = None,
 ) -> WebSocketUpgradeResult:
     parsed, request_path, target = _request_target(base_url, path, query)
-    host_header, port = _host_header(parsed)
+    host_header, host, port = _host_header(parsed)
     websocket_key = base64.b64encode(os.urandom(16)).decode("ascii")
     origin = f"{parsed.scheme}://{host_header}"
     request = "\r\n".join(
@@ -106,11 +107,11 @@ def probe_websocket_upgrade(
     raw_socket: socket.socket | None = None
     connection: socket.socket | None = None
     try:
-        raw_socket = socket.create_connection((parsed.hostname, port), timeout=timeout_seconds)
+        raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
         connection = raw_socket
         if parsed.scheme == "https":
             context = ssl_context or ssl.create_default_context()
-            connection = context.wrap_socket(raw_socket, server_hostname=parsed.hostname)
+            connection = context.wrap_socket(raw_socket, server_hostname=host)
         connection.settimeout(timeout_seconds)
         connection.sendall(request)
         header_bytes = _read_headers(connection)
