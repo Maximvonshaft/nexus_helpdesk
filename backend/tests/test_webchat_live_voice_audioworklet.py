@@ -78,6 +78,8 @@ def test_durable_exact_head_browser_and_runtime_smokes_are_wired() -> None:
     assert "socket failure fails closed before microphone permission" in browser
     assert "permission denial fails closed and releases the socket" in browser
     assert "module failure and unsupported browsers never request microphone permission" in browser
+    assert "socketBoundary.host" in browser
+    assert "expect(events).not.toContain('getUserMedia')" in browser
     assert "requested frame size is bounded" in runtime
     assert "playwright.voice-smoke.config.ts" in workflow
     assert "github.event.pull_request.head.sha" in workflow
