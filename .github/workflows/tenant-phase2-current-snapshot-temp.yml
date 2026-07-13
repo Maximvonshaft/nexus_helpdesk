@@ -20,13 +20,15 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - name: Create exact source snapshot
+      - name: Create exact source snapshot and tree identity
         run: |
           set -Eeuo pipefail
           archive="${RUNNER_TEMP}/tenant-phase2-current.tar.gz"
           tar --exclude=.git -czf "${archive}" .
           test -s "${archive}"
           sha256sum "${archive}" > "${RUNNER_TEMP}/tenant-phase2-current.sha256"
+          git rev-parse 'HEAD^{tree}' > "${RUNNER_TEMP}/tenant-phase2-current.tree-sha"
+          test "$(wc -c < "${RUNNER_TEMP}/tenant-phase2-current.tree-sha")" -eq 41
       - name: Upload snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -34,5 +36,6 @@ jobs:
           path: |
             ${{ runner.temp }}/tenant-phase2-current.tar.gz
             ${{ runner.temp }}/tenant-phase2-current.sha256
+            ${{ runner.temp }}/tenant-phase2-current.tree-sha
           retention-days: 1
           if-no-files-found: error
