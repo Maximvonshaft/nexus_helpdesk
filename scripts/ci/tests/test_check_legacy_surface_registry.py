@@ -30,7 +30,7 @@ class LegacySurfaceRegistryTests(unittest.TestCase):
 
     def test_registry_contract_is_strict_and_current(self):
         self.assertEqual(self.registry['schema'], legacy.REGISTRY_SCHEMA)
-        self.assertEqual(self.registry['registry_version'], '2026-07-12.5')
+        self.assertEqual(self.registry['registry_version'], '2026-07-13.1')
         self.assertEqual(self.registry['enforcement'], 'fail_closed')
         self.assertEqual(set(self.registry['allowed_dispositions']), legacy.ALLOWED_DISPOSITIONS)
         self.assertTrue(all(item['deletion_authorized'] is False for item in self.registry['domains']))
