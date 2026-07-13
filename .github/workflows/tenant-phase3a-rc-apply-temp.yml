@@ -60,7 +60,7 @@ jobs:
           git apply --check --whitespace=error-all "${patch}"
           git apply --index --whitespace=error-all "${patch}"
 
-      - name: Verify authority and RC regression contracts
+      - name: Verify syntax YAML and shell
         run: |
           set -Eeuo pipefail
           python -m py_compile \
@@ -81,6 +81,10 @@ jobs:
           from pathlib import Path
           yaml.safe_load(Path('.github/workflows/tenant-runtime-authority-gate.yml').read_text(encoding='utf-8'))
           PY
+
+      - name: Verify existing authority contracts
+        run: |
+          set -Eeuo pipefail
           pytest -q \
             backend/tests/test_tenant_runtime_authority.py \
             backend/tests/test_lite_cases_pagination.py \
@@ -90,6 +94,10 @@ jobs:
             backend/tests/test_production_hardening_permissions.py \
             backend/tests/test_production_settings_contract.py \
             backend/tests/test_settings.py
+
+      - name: Verify WebChat Support and RC repair contracts
+        run: |
+          set -Eeuo pipefail
           pytest -q \
             backend/tests/test_webchat_public_tenant_binding.py \
             backend/tests/test_support_conversations_rbac.py \
@@ -97,7 +105,9 @@ jobs:
             scripts/release/tests/test_seed_rc_test_data_contract.py \
             scripts/release/tests/test_generate_rc_test_env.py \
             scripts/release/tests/test_validate_rc_test_manifest.py
-          git diff --cached --check
+
+      - name: Verify staged repair whitespace
+        run: git diff --cached --check
 
       - name: Remove transfer files and commit formal repair
         env:
