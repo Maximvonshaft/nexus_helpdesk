@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 
 MAX_TABLES = 500
+MAX_FOREIGN_KEYS = 1000
 MAX_EVIDENCE_BYTES = 256 * 1024
 _SAFE_REVISION = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class RecoveryEvidenceError(ValueError):
@@ -116,6 +118,24 @@ def snapshot(database_url: str, output: Path, *, marker_code: str) -> int:
             for table_name in tables:
                 quoted = preparer.quote(table_name)
                 counts[table_name] = int(connection.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one())
+            foreign_key_rows = connection.execute(
+                text(
+                    "SELECT n.nspname, r.relname, c.conname, pg_get_constraintdef(c.oid, true) "
+                    "FROM pg_constraint AS c "
+                    "JOIN pg_class AS r ON r.oid = c.conrelid "
+                    "JOIN pg_namespace AS n ON n.oid = r.relnamespace "
+                    "WHERE c.contype = 'f' AND n.nspname = 'public' "
+                    "ORDER BY n.nspname, r.relname, c.conname, pg_get_constraintdef(c.oid, true)"
+                )
+            ).all()
+            if len(foreign_key_rows) > MAX_FOREIGN_KEYS:
+                raise RecoveryEvidenceError("foreign_key_count_excessive")
+            foreign_key_signatures = [
+                hashlib.sha256(
+                    "\x00".join(str(value) for value in row).encode("utf-8")
+                ).hexdigest()
+                for row in foreign_key_rows
+            ]
             invalid_fk_count = int(
                 connection.execute(
                     text(
@@ -137,6 +157,8 @@ def snapshot(database_url: str, output: Path, *, marker_code: str) -> int:
                 "alembic_head": revision,
                 "table_count": len(tables),
                 "tables": counts,
+                "foreign_key_signature_count": len(foreign_key_signatures),
+                "foreign_key_signatures": foreign_key_signatures,
                 "invalid_foreign_key_count": invalid_fk_count,
                 "synthetic_marker_count": marker_count,
             },
@@ -173,10 +195,16 @@ def compare(
     backup_time = _utc(backup_completed_at)
     restore_start = _utc(restore_started_at)
     restore_end = _utc(restore_completed_at)
-    rpo_seconds = max(0.0, (backup_time - marker_time).total_seconds())
-    restore_seconds = max(0.0, (restore_end - restore_start).total_seconds())
+    raw_rpo_seconds = (backup_time - marker_time).total_seconds()
+    raw_restore_seconds = (restore_end - restore_start).total_seconds()
+    rpo_seconds = max(0.0, raw_rpo_seconds)
+    restore_seconds = max(0.0, raw_restore_seconds)
 
     reasons: list[str] = []
+    if raw_rpo_seconds < 0:
+        reasons.append("recovery.rpo_timestamp_order_invalid")
+    if raw_restore_seconds < 0:
+        reasons.append("recovery.rto_timestamp_order_invalid")
     if source.get("schema_version") != "nexus_recovery_snapshot_v1" or restored.get("schema_version") != "nexus_recovery_snapshot_v1":
         reasons.append("recovery.snapshot_schema_invalid")
     if source.get("alembic_head") != restored.get("alembic_head"):
@@ -185,6 +213,30 @@ def compare(
         reasons.append("recovery.table_count_mismatch")
     if source.get("table_count") != restored.get("table_count"):
         reasons.append("recovery.table_set_mismatch")
+    source_fk_signatures = source.get("foreign_key_signatures")
+    restored_fk_signatures = restored.get("foreign_key_signatures")
+    source_fk_count = source.get("foreign_key_signature_count")
+    restored_fk_count = restored.get("foreign_key_signature_count")
+    source_fk_valid = (
+        isinstance(source_fk_signatures, list)
+        and isinstance(source_fk_count, int)
+        and not isinstance(source_fk_count, bool)
+        and source_fk_count == len(source_fk_signatures)
+        and source_fk_count <= MAX_FOREIGN_KEYS
+        and all(isinstance(item, str) and _SHA256_HEX.fullmatch(item) for item in source_fk_signatures)
+    )
+    restored_fk_valid = (
+        isinstance(restored_fk_signatures, list)
+        and isinstance(restored_fk_count, int)
+        and not isinstance(restored_fk_count, bool)
+        and restored_fk_count == len(restored_fk_signatures)
+        and restored_fk_count <= MAX_FOREIGN_KEYS
+        and all(isinstance(item, str) and _SHA256_HEX.fullmatch(item) for item in restored_fk_signatures)
+    )
+    if not source_fk_valid or not restored_fk_valid:
+        reasons.append("recovery.foreign_key_signature_invalid")
+    elif source_fk_signatures != restored_fk_signatures:
+        reasons.append("recovery.foreign_key_definition_mismatch")
     if source.get("invalid_foreign_key_count") != 0 or restored.get("invalid_foreign_key_count") != 0:
         reasons.append("recovery.foreign_key_not_validated")
     if source.get("synthetic_marker_count") != 1 or restored.get("synthetic_marker_count") != 1:
@@ -208,7 +260,10 @@ def compare(
         "rto_observed_seconds": round(restore_seconds, 3),
         "rpo_target_seconds": int(rpo_target_seconds),
         "rpo_observed_seconds": round(rpo_seconds, 3),
-        "foreign_keys_validated": restored.get("invalid_foreign_key_count") == 0,
+        "source_foreign_key_count": source_fk_count,
+        "restored_foreign_key_count": restored_fk_count,
+        "foreign_key_definitions_match": source_fk_valid and restored_fk_valid and source_fk_signatures == restored_fk_signatures,
+        "foreign_keys_validated": source.get("invalid_foreign_key_count") == 0 and restored.get("invalid_foreign_key_count") == 0,
         "synthetic_marker_restored": restored.get("synthetic_marker_count") == 1,
         "reasons": sorted(set(reasons)),
         "production_data_used": False,
