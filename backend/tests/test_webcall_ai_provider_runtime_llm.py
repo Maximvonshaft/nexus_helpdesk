@@ -21,9 +21,10 @@ from app.db import Base, SessionLocal, engine
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.schemas import ProviderResult
 from app.services.provider_runtime.traffic_selection import stable_canary_bucket
+from app.services.webcall_ai_production import orchestrator as orchestrator_module
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.orchestrator import run_session_turn
-from app.services.webcall_ai_production.providers.base import ProviderError
+from app.services.webcall_ai_production.providers.base import LLMResult, ProviderError
 from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider, _build_request
 from app.services.webcall_ai_production.providers.router import get_llm_provider
 from app.utils.time import utc_now
@@ -244,6 +245,7 @@ def test_private_runtime_alias_routes_through_authoritative_router(db):
     assert result.response_text == "Could you send the shipment reference so I can check the shipment."
     assert result.intent == "tracking_missing_number"
     assert result.handoff_required is False
+    assert result.authoritative is True
     assert result.provider_name == "provider_runtime:private_ai_runtime"
     assert adapter.requests[0].scenario == "webcall_ai_decision"
     assert adapter.requests[0].output_contract == "nexus_webchat_runtime_reply_v1"
@@ -268,6 +270,7 @@ def test_webcall_control_mode_suppresses_direct_alias_candidate(monkeypatch, db)
     assert result.intent == "provider_runtime_non_authoritative"
     assert result.handoff_required is False
     assert result.handoff_reason is None
+    assert result.authoritative is False
     assert result.provider_name == "provider_runtime:provider_canary_control_path"
     assert adapter.requests == []
     audits = _provider_audits(db)
@@ -295,9 +298,11 @@ def test_webcall_partial_canary_is_stable_per_voice_session(monkeypatch, db):
     )
 
     assert selected_result.provider_name == "provider_runtime:private_ai_runtime"
+    assert selected_result.authoritative is True
     assert control_result.response_text == ""
     assert control_result.intent == "provider_runtime_non_authoritative"
     assert control_result.handoff_required is False
+    assert control_result.authoritative is False
     assert control_result.provider_name == "provider_runtime:provider_canary_control_path"
     assert [request.session_id for request in adapter.requests] == [selected_session_id]
     traffic_paths = [row["safe_summary"]["traffic_selection"]["path"] for row in _provider_audits(db)]
@@ -316,6 +321,7 @@ def test_webcall_shadow_failure_is_neutral_and_non_authoritative(monkeypatch, db
     assert result.intent == "provider_runtime_non_authoritative"
     assert result.handoff_required is False
     assert result.handoff_reason is None
+    assert result.authoritative is False
     assert result.provider_name == "provider_runtime:provider_shadow_failed"
     assert len(adapter.requests) == 1
     audits = _provider_audits(db)
@@ -377,6 +383,61 @@ def test_webcall_rejects_unapproved_provider_alias_without_adapter_call(monkeypa
     assert marker not in json.dumps(audits)
 
 
+@pytest.mark.parametrize(
+    "provider_outcome",
+    ["provider_canary_control_path", "provider_shadow_completed"],
+)
+def test_session_turn_rolls_back_non_authoritative_provider_outcome_before_tts_and_evidence(
+    monkeypatch,
+    db,
+    provider_outcome,
+):
+    session = _voice_session(db)
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_timed_llm_response",
+        lambda settings, stt, *, session_id: LLMResult(
+            response_text="",
+            intent="provider_runtime_non_authoritative",
+            handoff_required=False,
+            handoff_reason=None,
+            provider_name=f"provider_runtime:{provider_outcome}",
+            authoritative=False,
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_synthesize_tts",
+        lambda *args, **kwargs: pytest.fail("non-authoritative turn reached TTS"),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "persist_turn_evidence",
+        lambda *args, **kwargs: pytest.fail("non-authoritative turn persisted evidence"),
+    )
+
+    turn_result = run_session_turn(
+        db,
+        session=session,
+        audio=b"help",
+        worker_id="worker-provider-runtime-neutral",
+        language="en",
+    )
+
+    assert turn_result["authoritative"] is False
+    assert turn_result["status"] == "provider_runtime_non_authoritative"
+    assert turn_result["turn_id"] is None
+    assert turn_result["tts"] is None
+    assert turn_result["tool_result"] is None
+    assert turn_result["handoff_required"] is False
+    assert turn_result["response"]["authoritative"] is False
+    assert turn_result["response"]["provider_name"] == f"provider_runtime:{provider_outcome}"
+    assert db.query(WebchatVoiceAITurn).count() == 0
+    assert db.query(WebchatVoiceAIAction).count() == 0
+    assert db.query(WebchatEvent).count() == 0
+
+
 def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db):
     adapter = RuntimeDecisionAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
@@ -399,6 +460,7 @@ def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db)
         .all()
     ]
 
+    assert turn_result["authoritative"] is True
     assert turn_result["handoff_required"] is False
     assert turn.provider == "provider_runtime:private_ai_runtime"
     assert turn.stt_provider == "fake"
