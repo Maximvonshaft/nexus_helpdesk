@@ -8,6 +8,7 @@ VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 DEMO_HTML = ROOT / "backend" / "app" / "static" / "webchat" / "demo.html"
 DEMO_INDEX = ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html"
 WIDGET_JS = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
+CANDIDATE_SMOKE = ROOT / "scripts" / "smoke" / "production_candidate_smoke.sh"
 ADMIN_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
 OPERATOR_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall-operator.tsx"
 AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
@@ -77,3 +78,14 @@ def test_public_voice_entry_fails_closed_without_runtime_secrets():
     assert "__SPEEDAF" not in combined
     assert "console.log" not in combined
     assert "[Speedaf Voice]" not in combined
+
+
+def test_candidate_smoke_can_prove_live_voice_health_and_websocket_upgrade():
+    smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
+
+    assert "CHECK_LIVE_VOICE_HEALTH" in smoke
+    assert "CHECK_LIVE_VOICE_WS_UPGRADE" in smoke
+    assert "Sec-WebSocket-Key" in smoke
+    assert "Sec-WebSocket-Version: 13" in smoke
+    assert "status_code != 101" in smoke
+    assert "upgrade_header.lower() != 'websocket'" in smoke
