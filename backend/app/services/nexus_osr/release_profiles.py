@@ -43,6 +43,7 @@ _SENSITIVE_KEY_PAIRS = frozenset(
         ("private", "key"),
         ("access", "key"),
         ("signing", "key"),
+        ("secret", "key"),
     }
 )
 _NONSECRET_TOKEN_COUNT_PREFIXES = frozenset(
