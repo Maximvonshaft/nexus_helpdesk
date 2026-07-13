@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile
-from sqlalchemy import or_
+from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session
 
-from ..models_control_plane import KnowledgeItem, KnowledgeItemVersion
+from ..models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
+from ..models_knowledge_quarantine import KnowledgeIngestionRecord
 from ..utils.time import utc_now
-from . import file_service
-from .knowledge_document_service import extract_knowledge_candidate, parse_document_bytes, read_upload_bytes
+from . import knowledge_quarantine_service
+from .knowledge_document_service import extract_knowledge_candidate
 from .knowledge_retrieval_service import index_published_item
 
 VALID_STATUSES = {"draft", "active", "archived"}
@@ -30,6 +32,14 @@ _BACKEND_OWNED_FIELDS = {
     "indexed_version",
     "indexed_at",
     "chunk_count",
+}
+_FILE_PUBLICATION_FIELDS = {
+    "draft_body",
+    "draft_normalized_text",
+    "fact_question",
+    "fact_answer",
+    "fact_aliases_json",
+    "knowledge_kind",
 }
 
 
@@ -78,7 +88,7 @@ def _normalize_country_scope(value: str | None) -> str:
     return "GLOBAL" if cleaned in {"*", "ALL", "ANY"} else cleaned[:16]
 
 
-def _parse_snapshot_datetime(value):
+def _parse_snapshot_datetime(value):  # noqa: ANN001,ANN201
     if isinstance(value, datetime):
         return value
     if isinstance(value, str) and value.strip():
@@ -151,7 +161,11 @@ def _structured_source_text(row: KnowledgeItem) -> str:
 def _published_source_text(row: KnowledgeItem) -> str:
     if row.knowledge_kind in {"faq", "business_fact"} and (row.fact_question or row.fact_answer):
         return _structured_source_text(row)
-    return row.draft_body or row.draft_normalized_text or ""
+    return row.draft_normalized_text or row.draft_body or ""
+
+
+def _publication_content_sha256(row: KnowledgeItem) -> str:
+    return hashlib.sha256(_published_source_text(row).encode("utf-8")).hexdigest()
 
 
 def _snapshot(row: KnowledgeItem, *, version: int, published_at) -> dict:
@@ -241,7 +255,12 @@ def list_items(
             )
         )
     total = query.count()
-    rows = query.order_by(KnowledgeItem.priority.asc(), KnowledgeItem.item_key.asc()).offset(max(offset, 0)).limit(min(max(limit, 1), 200)).all()
+    rows = (
+        query.order_by(KnowledgeItem.priority.asc(), KnowledgeItem.item_key.asc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 200))
+        .all()
+    )
     return rows, total
 
 
@@ -253,10 +272,15 @@ def get_item_or_404(db: Session, item_id: int) -> KnowledgeItem:
 
 
 def list_versions(db: Session, item_id: int) -> list[KnowledgeItemVersion]:
-    return db.query(KnowledgeItemVersion).filter(KnowledgeItemVersion.item_id == item_id).order_by(KnowledgeItemVersion.version.desc()).all()
+    return (
+        db.query(KnowledgeItemVersion)
+        .filter(KnowledgeItemVersion.item_id == item_id)
+        .order_by(KnowledgeItemVersion.version.desc())
+        .all()
+    )
 
 
-def create_item(db: Session, payload, actor) -> KnowledgeItem:
+def create_item(db: Session, payload, actor) -> KnowledgeItem:  # noqa: ANN001
     key = _normalize_key(payload.item_key)
     _validate_shape(
         status=payload.status,
@@ -285,7 +309,11 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
         locale=_clean_optional_text(payload.locale),
         visibility=_normalize_scope(payload.visibility, "customer"),
         shareability=_normalize_scope(payload.shareability, "customer_visible"),
-        authority_level=_normalize_authority_level(payload.authority_level, knowledge_kind=payload.knowledge_kind, fact_status=payload.fact_status),
+        authority_level=_normalize_authority_level(
+            payload.authority_level,
+            knowledge_kind=payload.knowledge_kind,
+            fact_status=payload.fact_status,
+        ),
         risk_level=_normalize_scope(payload.risk_level, "low"),
         review_due_at=payload.review_due_at,
         valid_from=payload.valid_from,
@@ -368,43 +396,85 @@ def create_file_item_from_upload(
 
 
 def upload_document(db: Session, row: KnowledgeItem, file: UploadFile, actor) -> KnowledgeItem:
-    content = read_upload_bytes(file)
-    parsed_body, normalized_text = parse_document_bytes(
-        content=content,
-        filename=file.filename,
-        mime_type=file.content_type,
-    )
-    stored = file_service.save_upload(file)
     now = utc_now()
+    result = knowledge_quarantine_service.quarantine_and_parse_upload(
+        db,
+        item=row,
+        file=file,
+        actor=actor,
+    )
     row.source_type = "file"
-    row.file_name = stored.stored_name
-    row.file_storage_key = stored.storage_key
-    row.mime_type = stored.mime_type
-    row.file_size = stored.file_size
-    row.draft_body = parsed_body
-    row.draft_normalized_text = normalized_text
-    _apply_document_extraction(row, parsed_body=parsed_body, normalized_text=normalized_text, filename=file.filename)
-    if not row.summary:
-        row.summary = _suggest_summary(normalized_text)
-    if not row.language:
-        row.language = _detect_text_language(normalized_text)
-    row.parsing_status = "parsed"
-    row.parsing_error = None
-    row.parsed_at = now
+    row.file_name = result.stored.stored_name
+    row.file_storage_key = result.stored.storage_key
+    row.mime_type = result.stored.mime_type
+    row.file_size = result.stored.file_size
     row.updated_by = getattr(actor, "id", None)
+
+    metadata = dict(row.citation_metadata_json or {})
+    metadata["quarantine"] = {
+        "ingestion_id": result.ingestion.id,
+        "content_sha256": result.ingestion.content_sha256,
+        "signature_status": result.ingestion.signature_status,
+        "parser_status": result.ingestion.parser_status,
+        "parser_identity": result.ingestion.parser_identity,
+        "parser_version": result.ingestion.parser_version,
+        "malware_status": result.ingestion.malware_status,
+        "cdr_status": result.ingestion.cdr_status,
+        "prompt_risk_status": result.ingestion.prompt_risk_status,
+        "review_status": result.ingestion.review_status,
+        "lifecycle_status": result.ingestion.lifecycle_status,
+    }
+    row.citation_metadata_json = metadata
+
+    if result.parser.status == "passed" and result.parser.body and result.parser.normalized_text:
+        row.draft_body = result.parser.body
+        row.draft_normalized_text = result.parser.normalized_text
+        _apply_document_extraction(
+            row,
+            parsed_body=result.parser.body,
+            normalized_text=result.parser.normalized_text,
+            filename=file.filename,
+        )
+        if not row.summary:
+            row.summary = _suggest_summary(result.parser.normalized_text)
+        if not row.language:
+            row.language = _detect_text_language(result.parser.normalized_text)
+        row.parsing_status = "parsed"
+        row.parsing_error = None
+        row.parsed_at = now
+        result.ingestion.parsed_text_sha256 = _publication_content_sha256(row)
+    else:
+        row.draft_body = None
+        row.draft_normalized_text = None
+        row.parsing_status = "failed"
+        row.parsing_error = result.parser.reason_code[:255]
+        row.parsed_at = now
     db.flush()
     return row
 
 
-def _apply_document_extraction(row: KnowledgeItem, *, parsed_body: str, normalized_text: str, filename: str | None) -> None:
-    extraction = extract_knowledge_candidate(text=parsed_body, normalized_text=normalized_text, filename=filename)
+def _apply_document_extraction(
+    row: KnowledgeItem,
+    *,
+    parsed_body: str,
+    normalized_text: str,
+    filename: str | None,
+) -> None:
+    extraction = extract_knowledge_candidate(
+        text=parsed_body,
+        normalized_text=normalized_text,
+        filename=filename,
+    )
     if extraction.confidence < 0.7 or extraction.knowledge_kind != "business_fact":
         metadata = dict(row.citation_metadata_json or {})
-        metadata.setdefault("document_extraction", {
-            "extractor": extraction.extractor,
-            "confidence": round(float(extraction.confidence or 0), 3),
-            "knowledge_kind": "document",
-        })
+        metadata.setdefault(
+            "document_extraction",
+            {
+                "extractor": extraction.extractor,
+                "confidence": round(float(extraction.confidence or 0), 3),
+                "knowledge_kind": "document",
+            },
+        )
         row.citation_metadata_json = metadata
         return
 
@@ -443,10 +513,11 @@ def _merge_aliases(existing: list[str], suggested: list[str]) -> list[str]:
     return merged
 
 
-def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeItem:
+def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeItem:  # noqa: ANN001
     values = payload.model_dump(exclude_unset=True)
     for field in _BACKEND_OWNED_FIELDS:
         values.pop(field, None)
+    previous_publication_hash = _publication_content_sha256(row) if row.source_type == "file" else None
     status = values.get("status", row.status)
     source_type = values.get("source_type", row.source_type)
     knowledge_kind = values.get("knowledge_kind", row.knowledge_kind)
@@ -467,11 +538,22 @@ def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeIte
         authority_level=authority_level,
         risk_level=risk_level,
     )
-    for key, default in {"tenant_id": "default", "brand_id": "default", "channel_scope": "all", "visibility": "customer", "shareability": "customer_visible", "risk_level": "low"}.items():
+    for key, default in {
+        "tenant_id": "default",
+        "brand_id": "default",
+        "channel_scope": "all",
+        "visibility": "customer",
+        "shareability": "customer_visible",
+        "risk_level": "low",
+    }.items():
         if key in values:
             values[key] = _normalize_scope(values.get(key), default)
     if "authority_level" in values:
-        values["authority_level"] = _normalize_authority_level(values.get("authority_level"), knowledge_kind=knowledge_kind, fact_status=fact_status)
+        values["authority_level"] = _normalize_authority_level(
+            values.get("authority_level"),
+            knowledge_kind=knowledge_kind,
+            fact_status=fact_status,
+        )
     if "country_scope" in values:
         values["country_scope"] = _normalize_country_scope(values.get("country_scope"))
     if "locale" in values:
@@ -485,14 +567,56 @@ def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeIte
     for key, value in values.items():
         setattr(row, key, value)
     row.updated_by = getattr(actor, "id", None)
+
+    publication_changed = (
+        row.source_type == "file"
+        and bool(_FILE_PUBLICATION_FIELDS.intersection(values))
+        and previous_publication_hash != _publication_content_sha256(row)
+    )
+    if publication_changed:
+        record = knowledge_quarantine_service.get_latest_ingestion(
+            db,
+            item_id=row.id,
+            storage_key=row.file_storage_key,
+            for_update=True,
+        )
+        if record and record.lifecycle_status in {"approved", "published", "review_required"}:
+            knowledge_quarantine_service.request_record_re_review(
+                db,
+                item_id=row.id,
+                ingestion_id=record.id,
+                actor=actor,
+                reason="review.publication_content_changed",
+            )
     db.flush()
     return row
 
 
-def publish_item(db: Session, row: KnowledgeItem, actor, *, notes: Optional[str] = None) -> KnowledgeItemVersion:
+def publish_item(
+    db: Session,
+    row: KnowledgeItem,
+    actor,
+    *,
+    notes: Optional[str] = None,
+) -> KnowledgeItemVersion:
     if not _has_draft_content(row):
         raise HTTPException(status_code=400, detail="Draft knowledge content is empty")
-    new_version = (row.published_version or 0) + 1
+
+    quarantine_record = None
+    if row.source_type == "file":
+        quarantine_record = knowledge_quarantine_service.require_publication_eligible_record(
+            db,
+            item=row,
+            publication_text=_published_source_text(row),
+        )
+
+    highest_version = (
+        db.query(func.max(KnowledgeItemVersion.version))
+        .filter(KnowledgeItemVersion.item_id == row.id)
+        .scalar()
+        or 0
+    )
+    new_version = int(highest_version) + 1
     published_at = utc_now()
     version_row = KnowledgeItemVersion(
         item_id=row.id,
@@ -513,22 +637,23 @@ def publish_item(db: Session, row: KnowledgeItem, actor, *, notes: Optional[str]
     if row.status == "draft":
         row.status = "active"
     db.add(version_row)
+    db.flush()
+
+    if quarantine_record is not None:
+        knowledge_quarantine_service.bind_exact_published_version(
+            db,
+            record=quarantine_record,
+            version=new_version,
+            actor=actor,
+        )
     index_published_item(db, row)
     db.flush()
     return version_row
 
 
-def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes: Optional[str] = None) -> KnowledgeItemVersion:
-    target = db.query(KnowledgeItemVersion).filter(
-        KnowledgeItemVersion.item_id == row.id,
-        KnowledgeItemVersion.version == version,
-    ).first()
-    if target is None:
-        raise HTTPException(status_code=404, detail="Knowledge item version not found")
-    snapshot = target.snapshot_json or {}
+def _apply_snapshot_to_draft(row: KnowledgeItem, snapshot: dict) -> None:
     row.title = snapshot.get("title") or row.title
     row.summary = snapshot.get("summary")
-    row.status = snapshot.get("status") or row.status
     row.source_type = snapshot.get("source_type") or row.source_type
     row.knowledge_kind = snapshot.get("knowledge_kind") or row.knowledge_kind
     row.tenant_id = snapshot.get("tenant_id") or row.tenant_id or "default"
@@ -563,7 +688,69 @@ def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes
     row.citation_metadata_json = snapshot.get("citation_metadata_json") or {}
     row.draft_body = snapshot.get("body")
     row.draft_normalized_text = snapshot.get("normalized_text")
+
+
+def rollback_item(
+    db: Session,
+    row: KnowledgeItem,
+    *,
+    version: int,
+    actor,
+    notes: Optional[str] = None,
+) -> KnowledgeItemVersion:
+    target = db.query(KnowledgeItemVersion).filter(
+        KnowledgeItemVersion.item_id == row.id,
+        KnowledgeItemVersion.version == version,
+    ).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Knowledge item version not found")
+    snapshot = target.snapshot_json or {}
+
+    if row.source_type == "file":
+        knowledge_quarantine_service.revoke_exact_published_version(
+            db,
+            item=row,
+            actor=actor,
+            reason=notes or f"publication.rollback_to_v{version}",
+        )
+        _apply_snapshot_to_draft(row, snapshot)
+        db.query(KnowledgeChunk).filter(KnowledgeChunk.item_id == row.id).delete(
+            synchronize_session=False
+        )
+        row.status = "draft"
+        row.published_body = None
+        row.published_normalized_text = None
+        row.published_version = 0
+        row.published_at = None
+        row.published_by = None
+        row.indexed_version = 0
+        row.indexed_at = None
+        row.chunk_count = 0
+        row.updated_by = getattr(actor, "id", None)
+        db.flush()
+        return target
+
+    _apply_snapshot_to_draft(row, snapshot)
+    row.status = snapshot.get("status") or row.status
     return publish_item(db, row, actor, notes=notes or f"Rollback to v{version}")
+
+
+def _file_publication_exists() -> object:
+    return exists().where(
+        and_(
+            KnowledgeIngestionRecord.knowledge_item_id == KnowledgeItem.id,
+            KnowledgeIngestionRecord.published_version == KnowledgeItem.published_version,
+            KnowledgeIngestionRecord.lifecycle_status == "published",
+            KnowledgeIngestionRecord.signature_status == "match",
+            KnowledgeIngestionRecord.parser_status == "passed",
+            KnowledgeIngestionRecord.malware_status == "clean",
+            KnowledgeIngestionRecord.cdr_status == "clean",
+            KnowledgeIngestionRecord.prompt_risk_status == "clear",
+            KnowledgeIngestionRecord.source_trust.in_(("internal_reviewed", "external_verified")),
+            KnowledgeIngestionRecord.review_status == "approved",
+            KnowledgeIngestionRecord.rolled_back_at.is_(None),
+        )
+    )
 
 
 def search_published(
@@ -581,6 +768,7 @@ def search_published(
         KnowledgeItem.published_version > 0,
         KnowledgeItem.visibility == "customer",
         KnowledgeItem.shareability.in_(("customer_visible", "runtime_context")),
+        or_(KnowledgeItem.source_type != "file", _file_publication_exists()),
         or_(KnowledgeItem.starts_at.is_(None), KnowledgeItem.starts_at <= now),
         or_(KnowledgeItem.ends_at.is_(None), KnowledgeItem.ends_at >= now),
         or_(KnowledgeItem.valid_from.is_(None), KnowledgeItem.valid_from <= now),
@@ -605,11 +793,15 @@ def search_published(
             )
         )
     total = query.count()
-    rows = query.order_by(KnowledgeItem.priority.asc(), KnowledgeItem.item_key.asc()).limit(min(max(limit, 1), 100)).all()
+    rows = (
+        query.order_by(KnowledgeItem.priority.asc(), KnowledgeItem.item_key.asc())
+        .limit(min(max(limit, 1), 100))
+        .all()
+    )
     return rows, total
 
 
-def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
+def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:  # noqa: ANN001
     hits = list(getattr(retrieval, "hits", []) or [])
     top_hit = hits[0] if hits else None
     top_score = float(getattr(top_hit, "score", 0.0) or 0.0)
@@ -618,7 +810,10 @@ def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
     expected_answer_contains = _clean_optional_text(getattr(payload, "expected_answer_contains", None))
     forbidden_terms = [
         term
-        for term in (_clean_optional_text(str(item)) for item in (getattr(payload, "forbidden_answer_terms", []) or []))
+        for term in (
+            _clean_optional_text(str(item))
+            for item in (getattr(payload, "forbidden_answer_terms", []) or [])
+        )
         if term
     ][:20]
 
@@ -634,8 +829,7 @@ def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
     combined_answer_text = "\n".join(answer_texts)
     normalized_answers = _normalize_assertion_text(combined_answer_text)
 
-    assertions: list[dict] = []
-    assertions.append(
+    assertions: list[dict] = [
         {
             "key": "top-hit-score",
             "label": "Top hit score",
@@ -644,8 +838,7 @@ def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
             "actual": f"{top_score:g}" if top_hit else "no published hit",
             "evidence": getattr(top_hit, "item_key", None) or "retrieve-test returned no hit",
         }
-    )
-
+    ]
     if expected_item_key:
         normalized_expected_key = expected_item_key.lower()
         assertions.append(
@@ -655,13 +848,18 @@ def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
                 "passed": normalized_expected_key in hit_keys,
                 "expected": normalized_expected_key,
                 "actual": ", ".join(hit_keys[:5]) or "no published hit",
-                "evidence": "retrieval hits include expected item_key" if normalized_expected_key in hit_keys else "expected item_key missing from hits",
+                "evidence": (
+                    "retrieval hits include expected item_key"
+                    if normalized_expected_key in hit_keys
+                    else "expected item_key missing from hits"
+                ),
             }
         )
-
     if expected_answer_contains:
         normalized_expected_answer = _normalize_assertion_text(expected_answer_contains)
-        answer_matched = bool(normalized_expected_answer and normalized_expected_answer in normalized_answers)
+        answer_matched = bool(
+            normalized_expected_answer and normalized_expected_answer in normalized_answers
+        )
         assertions.append(
             {
                 "key": "expected-answer",
@@ -669,14 +867,18 @@ def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
                 "passed": answer_matched,
                 "expected": expected_answer_contains,
                 "actual": combined_answer_text[:300] if combined_answer_text else "no answer text",
-                "evidence": "expected answer text was present in retrieved evidence" if answer_matched else "expected answer text was not present",
+                "evidence": (
+                    "expected answer text was present in retrieved evidence"
+                    if answer_matched
+                    else "expected answer text was not present"
+                ),
             }
         )
-
     found_forbidden = [
         term
         for term in forbidden_terms
-        if _normalize_assertion_text(term) and _normalize_assertion_text(term) in normalized_answers
+        if _normalize_assertion_text(term)
+        and _normalize_assertion_text(term) in normalized_answers
     ]
     assertions.append(
         {
@@ -685,10 +887,13 @@ def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
             "passed": not found_forbidden,
             "expected": "no forbidden terms" if forbidden_terms else "no forbidden terms configured",
             "actual": ", ".join(found_forbidden) if found_forbidden else "none",
-            "evidence": "retrieved evidence does not contain forbidden terms" if not found_forbidden else "forbidden term appeared in retrieved evidence",
+            "evidence": (
+                "retrieved evidence does not contain forbidden terms"
+                if not found_forbidden
+                else "forbidden term appeared in retrieved evidence"
+            ),
         }
     )
-
     return all(item["passed"] for item in assertions), assertions
 
 
@@ -697,8 +902,6 @@ def _normalize_assertion_text(value: str | None) -> str:
 
 
 def _safe_item_key_from_filename(filename: str) -> str:
-    import re
-
     stem = filename.rsplit(".", 1)[0].strip().lower() or "knowledge"
     cleaned = re.sub(r"[^a-z0-9_.-]+", "-", stem).strip("-_.") or "knowledge"
     return f"kb.{cleaned}"[:120]
