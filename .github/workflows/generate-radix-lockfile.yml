@@ -1,4 +1,4 @@
-name: Generate Radix lockfile
+name: Apply Tenant ORM constraint correction
 
 on:
   push:
@@ -6,59 +6,95 @@ on:
       - feature/radix-primitives-dependencies
     paths:
       - ".github/workflows/generate-radix-lockfile.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-jobs:
-  generate-lockfile:
-    name: Install Radix packages and commit lockfile
-    runs-on: ubuntu-latest
+concurrency:
+  group: tenant-673-orm-constraint-correction
+  cancel-in-progress: false
 
+jobs:
+  apply-tenant-orm-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_BRANCH: feat/tenant-additive-schema-546-delivery
+      EXPECTED_TARGET_HEAD: a7974730e4fa6625e253749257516f5b28cd4d52
+      PYTHONPATH: backend
+      APP_ENV: test
+      DATABASE_URL: sqlite:////tmp/tenant-673-orm-fix.db
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
     steps:
-      - name: Checkout branch
+      - name: Checkout authoritative Phase 1 branch
         uses: actions/checkout@v4
         with:
-          ref: feature/radix-primitives-dependencies
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Verify immutable target
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_TARGET_HEAD}"
+          test "$(git merge-base HEAD origin/main)" = "e96dac837b4f02a297602259953d7c274b9c2063"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: webapp/package-lock.json
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
-      - name: Install current dependencies
-        working-directory: webapp
-        run: npm ci
-
-      - name: Install Radix primitives
-        working-directory: webapp
+      - name: Install locked backend dependencies
         run: |
-          npm install \
-            @radix-ui/react-dialog \
-            @radix-ui/react-popover \
-            @radix-ui/react-tooltip \
-            @radix-ui/react-dropdown-menu \
-            @radix-ui/react-tabs \
-            @radix-ui/react-select
+          set -Eeuo pipefail
+          python -m pip install -r backend/requirements.txt
 
-      - name: Validate webapp
-        working-directory: webapp
+      - name: Correct ORM Tenant key constraints
         run: |
-          npm run typecheck
-          npm run lint
-          npm run build
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
 
-      - name: Commit generated package files
+          path = Path("backend/app/models.py")
+          source = path.read_text(encoding="utf-8")
+          replacements = (
+              (
+                  'CheckConstraint("tenant_key = lower(tenant_key)", name="ck_tenants_key_lowercase")',
+                  'CheckConstraint("tenant_key = lower(trim(tenant_key))", name="ck_tenants_key_lowercase")',
+              ),
+              (
+                  'CheckConstraint("tenant_key <> \'default\'", name="ck_tenants_key_not_default")',
+                  'CheckConstraint("lower(trim(tenant_key)) <> \'default\'", name="ck_tenants_key_not_default")',
+              ),
+          )
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f"unexpected replacement count for {old!r}: {source.count(old)}")
+              source = source.replace(old, new, 1)
+          path.write_text(source, encoding="utf-8")
+          PY
+
+      - name: Verify focused contracts
         run: |
+          set -Eeuo pipefail
+          python -m py_compile backend/app/models.py
+          pytest -q \
+            backend/tests/test_tenant_principal_additive_schema.py \
+            backend/tests/test_migration_drift_gate.py
+          python -m unittest scripts/qualification/tenant/test_tenant_principal_preflight.py
+          git diff --check
+
+      - name: Commit and push authoritative correction
+        run: |
+          set -Eeuo pipefail
+          git add backend/app/models.py
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = "backend/app/models.py"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add webapp/package.json webapp/package-lock.json
-          if git diff --cached --quiet; then
-            echo "No package changes to commit."
-          else
-            git commit -m "chore: add Radix primitive dependencies"
-            git push origin feature/radix-primitives-dependencies
-          fi
+          git commit -m "fix(tenant): align ORM Tenant key normalization (#546)"
+          git push origin HEAD:"${TARGET_BRANCH}"
