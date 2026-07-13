@@ -127,8 +127,11 @@ jobs:
           set -Eeuo pipefail
           python -m py_compile \
             scripts/qualification/recovery/build_recovery_evidence.py \
-            scripts/qualification/recovery/test_recovery_contracts.py
-          python -m unittest -v scripts.qualification.recovery.test_recovery_contracts
+            scripts/qualification/recovery/test_recovery_contracts.py \
+            scripts/qualification/recovery/test_recovery_review_regressions.py
+          python -m unittest -v \
+            scripts.qualification.recovery.test_recovery_contracts \
+            scripts.qualification.recovery.test_recovery_review_regressions
           bash -n \
             scripts/qualification/recovery/run_recovery_qualification.sh \
             scripts/deploy/backup_postgres.sh \
