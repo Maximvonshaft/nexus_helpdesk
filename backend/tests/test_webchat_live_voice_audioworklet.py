@@ -14,11 +14,16 @@ BROWSER_WORKFLOW = ROOT / ".github" / "workflows" / "webchat-live-voice-browser-
 def test_widget_uses_versioned_audioworklet_before_socket_and_permission() -> None:
     widget = WIDGET.read_text(encoding="utf-8")
     start = widget[widget.index("  function startLiveVoice() {") : widget.index("  function api(")]
+    allocation_guard = (
+        "if (live.released || state.liveVoice !== live) "
+        "throw new Error('Voice start was cancelled.');"
+    )
 
     assert "/webchat/live-voice-capture-worklet.js?v=1" in widget
     assert "audioWorklet.addModule" in start
     assert "new AudioWorkletNode" in start
     assert "createScriptProcessor(" not in widget
+    assert start.index(allocation_guard) < start.index("live.audioContext = new AudioContextConstructor()")
     assert start.index("audioWorklet.addModule") < start.index("openLiveVoiceSocket")
     assert start.index("openLiveVoiceSocket") < start.index("getUserMedia({")
     assert "getUserMedia(" not in widget[: widget.index("  function startLiveVoice() {")]
@@ -73,6 +78,7 @@ def test_durable_exact_head_browser_and_runtime_smokes_are_wired() -> None:
     runtime = RUNTIME_TEST.read_text(encoding="utf-8")
     workflow = BROWSER_WORKFLOW.read_text(encoding="utf-8")
 
+    assert "synchronous double activation cancels before allocating browser resources" in browser
     assert "explicit start streams bounded PCM and hidden cleanup is deterministic" in browser
     assert "explicit stop releases every live voice resource" in browser
     assert "socket failure fails closed before microphone permission" in browser
