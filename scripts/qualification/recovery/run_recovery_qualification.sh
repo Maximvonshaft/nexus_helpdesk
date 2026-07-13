@@ -101,15 +101,17 @@ ROLE_PROOF="$(psql "$RECOVERY_ADMIN_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --fie
 SELECT
   count(*) FILTER (
     WHERE rolname = 'nexus_recovery_source'
-      AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+      AND rolcanlogin AND rolinherit AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+      AND NOT rolreplication AND NOT rolbypassrls
   ),
   count(*) FILTER (
     WHERE rolname = 'nexus_recovery_restore'
-      AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+      AND rolcanlogin AND rolinherit AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+      AND NOT rolreplication AND NOT rolbypassrls
   ),
   count(*) FILTER (
     WHERE rolname = 'nexus_recovery_admin'
-      AND rolcanlogin AND rolcreatedb
+      AND rolcanlogin AND rolsuper AND rolcreatedb
   )
 FROM pg_roles
 WHERE rolname IN ('nexus_recovery_source', 'nexus_recovery_restore', 'nexus_recovery_admin');
@@ -125,8 +127,8 @@ mkdir -p -- "$EVIDENCE_ROOT"
 psql "$RECOVERY_ADMIN_NATIVE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 DROP DATABASE IF EXISTS nexus_source;
 DROP DATABASE IF EXISTS nexus_restore;
-CREATE DATABASE nexus_source OWNER nexus_recovery_source;
-CREATE DATABASE nexus_restore OWNER nexus_recovery_restore;
+CREATE DATABASE nexus_source WITH OWNER nexus_recovery_source TEMPLATE template0;
+CREATE DATABASE nexus_restore WITH OWNER nexus_recovery_restore TEMPLATE template0;
 SQL
 
 DATABASE_OWNER_PROOF="$(psql "$RECOVERY_ADMIN_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "
@@ -137,6 +139,32 @@ WHERE datname IN ('nexus_source', 'nexus_restore');
 if [[ "$DATABASE_OWNER_PROOF" != "nexus_restore:nexus_recovery_restore,nexus_source:nexus_recovery_source" ]]; then
   echo "recovery_database_owner_proof_failed" >&2
   exit 4
+fi
+
+mapfile -t RECOVERY_ADMIN_DATABASE_URLS < <(
+  RECOVERY_ADMIN_NATIVE_URL="$RECOVERY_ADMIN_NATIVE_URL" python - <<'PY'
+import os
+from urllib.parse import urlsplit, urlunsplit
+
+parsed = urlsplit(os.environ["RECOVERY_ADMIN_NATIVE_URL"])
+for database in ("nexus_source", "nexus_restore"):
+    print(urlunsplit((parsed.scheme, parsed.netloc, "/" + database, "", "")))
+PY
+)
+if [[ "${#RECOVERY_ADMIN_DATABASE_URLS[@]}" -ne 2 ]]; then
+  echo "recovery_admin_database_url_derivation_failed" >&2
+  exit 5
+fi
+SOURCE_ADMIN_NATIVE_URL="${RECOVERY_ADMIN_DATABASE_URLS[0]}"
+RESTORE_ADMIN_NATIVE_URL="${RECOVERY_ADMIN_DATABASE_URLS[1]}"
+
+psql "$SOURCE_ADMIN_NATIVE_URL" -X --set ON_ERROR_STOP=1 -c 'CREATE EXTENSION vector'
+psql "$RESTORE_ADMIN_NATIVE_URL" -X --set ON_ERROR_STOP=1 -c 'CREATE EXTENSION vector'
+SOURCE_VECTOR_PROOF="$(psql "$SOURCE_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "SELECT extversion, pg_get_userbyid(extowner) FROM pg_extension WHERE extname = 'vector'")"
+RESTORE_VECTOR_PROOF="$(psql "$RESTORE_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "SELECT extversion, pg_get_userbyid(extowner) FROM pg_extension WHERE extname = 'vector'")"
+if [[ -z "$SOURCE_VECTOR_PROOF" || "$SOURCE_VECTOR_PROOF" != "$RESTORE_VECTOR_PROOF" || "$SOURCE_VECTOR_PROOF" != *"|nexus_recovery_admin" ]]; then
+  echo "recovery_vector_preinstall_proof_failed" >&2
+  exit 6
 fi
 
 (cd backend && DATABASE_URL="$SOURCE_APP_URL" alembic upgrade head)
