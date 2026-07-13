@@ -2,7 +2,7 @@
 
 > Required execution mode: Superpowers planning, TDD, systematic debugging and verification-before-completion.
 
-**Goal:** Produce complete bounded evidence for credential-shaped material in every reachable Git Blob without mutating repository history or exposing matched values.
+**Goal:** Produce complete bounded evidence for credential-shaped material in every reachable Git Blob and historical path alias without mutating repository history or exposing matched values.
 
 **Work Item:** #565
 
@@ -15,15 +15,17 @@
 - No credential rotation or revocation.
 - No history rewrite, force-push, branch/tag deletion or visibility change.
 - No deployment, Provider, outbound, database or production-data action.
-- No raw matched values, source lines, commit messages, author identities, emails or ref names in evidence.
+- No raw matched values, source lines, paths, commit messages, author identities, emails or ref names in evidence.
 - A finding or incomplete result blocks merge.
 
 ## Task 1 — Establish RED on current main
 
 **File:** `scripts/security/tests/test_scan_git_history.py`
 
-- Add tests for removed-secret detection and raw-value absence.
+- Add tests for removed-secret detection and raw-value/path absence.
 - Add logical cross-Blob deduplication.
+- Add independent allowlist decisions for identical Blob content at multiple paths.
+- Add complete same-rule matching when one line contains multiple credentials.
 - Add complete counting beyond 200 while preserving the tree cap.
 - Add shallow rejection and complete Blob accounting.
 - Add bounded failure-report behavior.
@@ -37,13 +39,15 @@
 - Reject shallow repositories.
 - Enumerate all reachable objects.
 - Resolve type/size with batch metadata.
-- Stream eligible unique Blobs once.
+- Enumerate every `(Blob, path)` pair from unique reachable commit root Trees.
+- Stream each eligible unique Blob once and evaluate every path alias independently.
 - Reuse current scanner patterns, placeholders and fingerprints.
-- Deduplicate logical findings without Blob SHA.
-- Apply exact unexpired allowlist entries.
+- Iterate every match for every rule on each line.
+- Deduplicate logical findings without Blob SHA while keeping path in the identity.
+- Apply exact unexpired allowlist entries independently per path.
 - Account for every Blob and fail closed on unknown oversized content.
 - Store at most 100 findings while counting all findings.
-- Emit bounded safe pass/fail reports.
+- Emit bounded safe pass/fail reports with path digests only.
 
 ## Task 3 — Add reliable CI evidence
 
@@ -57,7 +61,7 @@
 - Scan generated evidence.
 - Always create numeric exit-status evidence.
 - Upload only bounded JSON files.
-- Enforce tests, scan, completeness, accounting and artifact-scan success.
+- Enforce tests, scan, Blob accounting, Blob-path enumeration and artifact-scan success.
 
 ## Task 4 — Document operations and authority
 
@@ -68,19 +72,23 @@
 - `docs/superpowers/plans/2026-07-13-git-history-secret-assurance.md`
 
 - Document pass, finding and incomplete states.
-- Document strict allowlist use.
+- Document strict path-specific allowlist use.
+- Document Blob alias and repeated-match semantics.
 - Document separate owner authority for credential and history remediation.
 - Document rollback.
 
 ## Task 5 — Exact-head verification
 
 - Run all current security tests.
+- Prove one allowlisted fixture path does not suppress an identical non-fixture alias.
+- Prove all same-rule credentials on one line are counted.
 - Run the real non-shallow reachable-history scan.
 - Verify `accounted_blob_count == reachable_blob_count`.
+- Verify `reachable_blob_path_count` is present and positive.
 - Verify report size is at most 64 KiB.
 - Verify the generated report passes artifact scanning.
-- Inspect only bounded counts/fingerprints; never publish raw matches.
-- Run repository-required checks.
+- Inspect only bounded counts/fingerprints; never publish raw matches or paths.
+- Run repository-required checks and CodeQL.
 - Request independent review and resolve all actionable threads.
 - Re-read latest main and require `0 behind` before merge.
 
