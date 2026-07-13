@@ -103,4 +103,18 @@ def test_runbook_contains_no_credential_shaped_example() -> None:
 def test_websocket_probe_does_not_stream_raw_headers_or_bodies() -> None:
     text = _read()
     assert "--dump-header -" not in text
-    assert "The probe output is restricted to the HTTP status code and curl exit code." in text
+    assert "The probe output is restricted to the pass flag, HTTP status code, and request path." in text
+
+
+def test_probes_enforce_health_200_and_reviewed_websocket_handshake() -> None:
+    text = _read()
+    required = [
+        "test \"$HEALTH_RESULT\" = 'status=200'",
+        "scripts/smoke/websocket_upgrade_probe.py",
+        "LIVE_VOICE_WS_UPGRADE_PASS=true",
+        "Sec-WebSocket-Accept",
+        "Do not use `--query` for credentials",
+    ]
+    for marker in required:
+        assert marker in text
+    assert "WS_KEY=" not in text
