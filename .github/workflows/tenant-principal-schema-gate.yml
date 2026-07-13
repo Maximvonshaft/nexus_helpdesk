@@ -104,7 +104,7 @@ jobs:
               ownership = {
                   "tenant_id": tenant.id,
                   "tenant_assignment_source": "schema_gate",
-                  "tenant_assignment_version": "sha256:schema-gate-v1",
+                  "tenant_assignment_version": "sha256:" + ("a" * 64),
               }
               market = Market(code="SCHEMA-A", name="Schema Market A", country_code="ME", **ownership)
               db.add(market); db.flush()
