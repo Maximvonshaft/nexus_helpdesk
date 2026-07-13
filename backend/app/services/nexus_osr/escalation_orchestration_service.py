@@ -377,6 +377,7 @@ def _write_orchestration_events(db: Session, *, ticket: Ticket, conversation: We
         actor_id=None,
         event_type=EventType.field_updated,
         event_class=TicketEventClass.INTERNAL_AUDIT,
+        field_name="ticket.escalation_orchestration",
         note="Nexus OSR escalation orchestration",
         payload=payload,
     )

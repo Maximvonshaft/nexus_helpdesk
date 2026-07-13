@@ -224,7 +224,7 @@ def _record_osr_ticket_event(db: Session, *, ticket: Ticket, conversation: Webch
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.field_updated,
-        event_class=TicketEventClass.INTERNAL_AUDIT,
+        event_class=TicketEventClass.PROVIDER,
         note="OSR runtime decision audit recorded",
         payload=payload,
     )
