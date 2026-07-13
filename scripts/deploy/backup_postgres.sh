@@ -69,12 +69,18 @@ if [[ "${#ALEMBIC_HEADS[@]}" -ne 1 || -z "${ALEMBIC_HEADS[0]}" ]]; then
   echo "Expected exactly one Alembic head before backup" >&2
   exit 3
 fi
+VECTOR_VERSION="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c "SELECT extversion FROM pg_extension WHERE extname = 'vector'")"
+if [[ ! "$VECTOR_VERSION" =~ ^[A-Za-z0-9._+-]{1,80}$ ]]; then
+  echo "Required preinstalled vector extension is missing or has an invalid version" >&2
+  exit 4
+fi
 
 MANIFEST="$MANIFEST" \
 BACKUP_SHA256="$BACKUP_SHA256" \
 BACKUP_SIZE_BYTES="$BACKUP_SIZE_BYTES" \
 SOURCE_DATABASE="$SOURCE_DATABASE" \
 ALEMBIC_HEAD="${ALEMBIC_HEADS[0]}" \
+VECTOR_VERSION="$VECTOR_VERSION" \
 CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 python - <<'PY'
 import hashlib
@@ -91,6 +97,9 @@ payload = {
     "archive_size_bytes": int(os.environ["BACKUP_SIZE_BYTES"]),
     "source_database_sha256": source_identity,
     "alembic_head": os.environ["ALEMBIC_HEAD"],
+    "preinstalled_extensions": [
+        {"name": "vector", "version": os.environ["VECTOR_VERSION"]},
+    ],
     "created_at": os.environ["CREATED_AT"],
 }
 encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
