@@ -10,6 +10,13 @@ from xml.etree import ElementTree
 
 SCHEMA = "nexus_osr_resilience_qualification_v1"
 _SHA_RE = re.compile(r"^[a-f0-9]{40}$")
+_REQUIRED_TEST_NAMES = frozenset(
+    {
+        "test_concurrent_postgres_claims_never_duplicate_a_job",
+        "test_concurrent_enqueue_keeps_one_active_dedupe_record",
+        "test_expired_processing_lock_is_reclaimed_after_worker_crash",
+    }
+)
 
 
 def _bounded_int(value: object) -> int:
@@ -34,6 +41,12 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
     errors = sum(_bounded_int(suite.attrib.get("errors")) for suite in suites)
     skipped = sum(_bounded_int(suite.attrib.get("skipped")) for suite in suites)
     duration_ms = sum(_duration_ms(suite.attrib.get("time")) for suite in suites)
+    observed_test_names = {
+        str(testcase.attrib.get("name") or "").strip()
+        for testcase in root.iter("testcase")
+    }
+    observed_required = len(_REQUIRED_TEST_NAMES.intersection(observed_test_names))
+    missing_required = len(_REQUIRED_TEST_NAMES) - observed_required
     normalized_sha = source_sha.strip().lower()
     if not _SHA_RE.fullmatch(normalized_sha):
         normalized_sha = "unknown"
@@ -41,10 +54,11 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
         "pass"
         if (
             pytest_exit_code == 0
-            and tests >= 3
+            and tests >= len(_REQUIRED_TEST_NAMES)
             and failures == 0
             and errors == 0
             and skipped == 0
+            and missing_required == 0
             and normalized_sha != "unknown"
         )
         else "fail"
@@ -58,6 +72,11 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
             "concurrent_skip_locked_claim": "required",
             "concurrent_dedupe_enqueue": "required",
             "expired_worker_lock_recovery": "required",
+        },
+        "required_scenarios": {
+            "expected": len(_REQUIRED_TEST_NAMES),
+            "observed": observed_required,
+            "missing": missing_required,
         },
         "counts": {
             "tests": tests,
