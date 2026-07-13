@@ -55,7 +55,7 @@ python scripts/qualification/recovery/build_recovery_evidence.py snapshot \
   --output "$EVIDENCE_ROOT/source-snapshot.json"
 
 POSTGRES_NATIVE_URL="$SOURCE_NATIVE_URL" \
-  scripts/deploy/backup_postgres.sh "$EVIDENCE_ROOT/backups"
+  bash scripts/deploy/backup_postgres.sh "$EVIDENCE_ROOT/backups"
 BUNDLE="$(find "$EVIDENCE_ROOT/backups" -mindepth 1 -maxdepth 1 -type d -name 'helpdesk_*' -print -quit)"
 test -n "$BUNDLE"
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > backup-completed-at.txt
@@ -65,7 +65,7 @@ date -u +%Y-%m-%dT%H:%M:%S.%NZ > restore-started-at.txt
 ROLLBACK_CONFIRM=I_UNDERSTAND \
 POSTGRES_NATIVE_URL="$RESTORE_NATIVE_URL" \
 ROLLBACK_STATUS_FILE="$EVIDENCE_ROOT/rollback-result.json" \
-  scripts/deploy/rollback_release.sh "$BUNDLE"
+  bash scripts/deploy/rollback_release.sh "$BUNDLE"
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > restore-completed-at.txt
 test "$(jq -r '.database_restored' "$EVIDENCE_ROOT/rollback-result.json")" = "true"
 
