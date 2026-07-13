@@ -26,6 +26,7 @@ class LLMResult:
     handoff_required: bool = False
     handoff_reason: str | None = None
     provider_name: str | None = None
+    authoritative: bool = True
 
 
 @dataclass(frozen=True)
