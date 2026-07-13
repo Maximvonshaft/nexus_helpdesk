@@ -1,0 +1,12 @@
+{
+  "schema": "nexus.osr.controlled-candidate-request.v1",
+  "request_id": "candidate-20260714t012233-0200",
+  "intent": "dispatch-controlled-candidate",
+  "candidate_workflow": "controlled-candidate-convergence.yml",
+  "requested_ref": "main",
+  "base_sha": "202b55f2baa8e487539d975dd19bab2fe62215da",
+  "deployment_authorized": false,
+  "production_authority": false,
+  "external_actions_authorized": false,
+  "issue_533": "NO_GO"
+}
