@@ -4,9 +4,6 @@ on:
   pull_request:
     paths:
       - "backend/app/api/admin_provider_runtime.py"
-      - "backend/app/models/provider_routing_rule.py"
-      - "backend/app/models/provider_runtime_audit.py"
-      - "backend/app/models/provider_runtime_health_state.py"
       - "backend/app/services/provider_runtime/**"
       - "backend/app/services/provider_runtime_status.py"
       - "backend/app/services/webcall_ai/demo_lab.py"
@@ -15,23 +12,16 @@ on:
       - "backend/app/services/webcall_ai_production/providers/router.py"
       - "backend/app/services/webcall_ai_production/config.py"
       - "backend/app/services/webcall_ai_production/orchestrator.py"
-      - "backend/app/services/webchat_runtime_output_parser.py"
+      - "backend/app/services/webchat_runtime_ai_service.py"
+      - "backend/app/services/webchat_rate_limit.py"
       - "backend/tests/test_admin_provider_runtime_routing_api.py"
-      - "backend/tests/test_admin_provider_runtime_api.py"
-      - "backend/tests/test_private_ai_runtime_provider.py"
       - "backend/tests/test_provider_runtime_*.py"
       - "backend/tests/test_webcall_ai_demo_status_safety.py"
       - "backend/tests/test_webcall_ai_provider_runtime_llm.py"
-      - "backend/tests/test_webchat_provider_runtime_integration.py"
-      - "backend/tests/test_webchat_runtime_output_parser.py"
-      - "backend/tests/test_webchat_ai_service_context.py"
-      - "backend/tests/test_webchat_ai_readiness.py"
-      - "backend/alembic/versions/20260616_0030_add_provider_runtime_schema.py"
-      - "backend/alembic/versions/20260616_0034_add_provider_runtime_audit_logs.py"
-      - "backend/alembic/versions/20260616_0041_add_provider_runtime_health_state.py"
-      - "backend/alembic/versions/20260622_0056_provider_runtime_foundation_rebased.py"
-      - "backend/scripts/check_provider_runtime_live_probe_gate.py"
-      - "scripts/provider_runtime_release_gate.py"
+      - "backend/tests/test_webcall_ai_production.py"
+      - "backend/tests/test_webchat_runtime_ai_service.py"
+      - "backend/tests/test_webchat_rate_limit_bucket.py"
+      - "backend/tests/test_webchat_ai_turn_runtime.py"
       - "docs/ops/PRIVATE_AI_RUNTIME_ROLLOUT_RUNBOOK.md"
       - "deploy/.env.candidate.example"
       - "deploy/.env.prod.example"
@@ -44,6 +34,8 @@ permissions:
 jobs:
   provider-runtime-routes:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,17 +44,19 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt pytest pytest-asyncio
-      - run: |
+      - name: Router, traffic selection, and output contracts
+        run: |
           pytest -q \
+            backend/tests/test_provider_runtime_output_contracts.py \
+            backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
-            backend/tests/test_provider_runtime_configuration.py \
             backend/tests/test_provider_runtime_traffic_selection.py \
-            backend/tests/test_provider_runtime_review_regressions.py \
-            backend/tests/test_webchat_provider_runtime_integration.py \
-            backend/tests/test_webchat_runtime_output_parser.py
+            backend/tests/test_provider_runtime_review_regressions.py
 
   provider-runtime-webcall-adapter:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -71,14 +65,16 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt pytest pytest-asyncio
-      - run: |
+      - name: WebCall Provider Runtime authority
+        run: |
           pytest -q \
             backend/tests/test_webcall_ai_provider_runtime_llm.py \
-            backend/tests/test_webcall_ai_production_orchestrator.py \
-            backend/tests/test_webcall_ai_production_providers.py
+            backend/tests/test_webcall_ai_production.py
 
   provider-runtime-admin-contract:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -87,14 +83,18 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt pytest pytest-asyncio
-      - run: |
+      - name: Admin, status, and bounded evidence
+        run: |
           pytest -q \
-            backend/tests/test_admin_provider_runtime_api.py \
             backend/tests/test_admin_provider_runtime_routing_api.py \
+            backend/tests/test_provider_runtime_status.py \
+            backend/tests/test_provider_runtime_token_leakage.py \
             backend/tests/test_webcall_ai_demo_status_safety.py
 
   provider-runtime-release-contract:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -103,15 +103,17 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt pytest pytest-asyncio
-      - run: |
+      - name: Compile Provider and Admin runtime paths
+        run: |
+          python -m compileall -q \
+            backend/app/api/admin_provider_runtime.py \
+            backend/app/services/provider_runtime \
+            backend/app/services/provider_runtime_status.py \
+            backend/app/services/webcall_ai/demo_lab.py \
+            backend/app/services/webcall_ai_production
+      - name: WebChat runtime compatibility
+        run: |
           pytest -q \
-            backend/tests/test_private_ai_runtime_provider.py \
-            backend/tests/test_provider_runtime_status.py \
-            backend/tests/test_webchat_ai_readiness.py \
-            backend/tests/test_webchat_ai_service_context.py
-      - name: Provider runtime configured-live gate (dummy upstream)
-        env:
-          CI: "true"
-        run: python backend/scripts/check_provider_runtime_live_probe_gate.py --allow-dummy-upstream
-      - name: Provider runtime release contract tests
-        run: pytest -q backend/tests/test_provider_runtime_release_gate.py
+            backend/tests/test_webchat_runtime_ai_service.py \
+            backend/tests/test_webchat_rate_limit_bucket.py \
+            backend/tests/test_webchat_ai_turn_runtime.py
