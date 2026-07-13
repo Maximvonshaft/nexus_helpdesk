@@ -180,6 +180,11 @@ class ReleaseProfileEvaluationTests(unittest.TestCase):
         self.assertEqual(result.reason_codes, tuple(sorted(set(result.reason_codes))))
         self.assertTrue(all(re.fullmatch(r"[a-z0-9_]{3,96}", item) for item in result.reason_codes))
 
+    def test_evidence_entry_limit_fails_closed_before_unknown_keys(self) -> None:
+        evidence = {f"unknown_{index}": "ready" for index in range(65)}
+        with self.assertRaisesRegex(profiles.ReleaseProfileContractError, "release_evidence_too_large"):
+            profiles.evaluate_release_profile("development", evidence)
+
     def test_unknown_capability_and_state_fail_closed(self) -> None:
         evidence = _ready_evidence("development")
         evidence["invented_capability"] = "ready"
@@ -259,6 +264,35 @@ class SafeConfigurationFingerprintTests(unittest.TestCase):
             profiles.safe_configuration_fingerprint(first),
             profiles.safe_configuration_fingerprint(second),
         )
+
+    def test_sensitive_values_are_shape_validated_before_redaction(self) -> None:
+        invalid_values = (
+            {"secret_key": {1, 2}},
+            {"password": "x" * 513},
+            {"jwtSecretKey": {"a": {"b": {"c": {"d": "too-deep"}}}}},
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(profiles.ReleaseProfileContractError):
+                    profiles.safe_configuration_fingerprint(value)
+
+    def test_numeric_and_key_bounds_fail_closed(self) -> None:
+        invalid_values = (
+            {"nan": float("nan")},
+            {"infinity": float("inf")},
+            {"integer": 10**18 + 1},
+            {"": "empty-key"},
+            {1: "non-string-key"},
+            {"x" * 129: "oversized-key"},
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(profiles.ReleaseProfileContractError):
+                    profiles.safe_configuration_fingerprint(value)
+
+    def test_non_mapping_root_fails_closed(self) -> None:
+        with self.assertRaisesRegex(profiles.ReleaseProfileContractError, "release_configuration_root_invalid"):
+            profiles.safe_configuration_fingerprint([("profile", "shadow")])
 
     def test_unsupported_or_excessive_configuration_fails_closed(self) -> None:
         invalid_values = (
