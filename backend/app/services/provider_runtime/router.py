@@ -412,6 +412,7 @@ class ProviderRuntimeRouter:
             result = await adapter.generate(self.db, request)
             last_elapsed_ms = result.elapsed_ms
             if not result.ok:
+                fixed_error_code = _fixed_provider_error_code(result.error_code)
                 fallback_result = (
                     "blocked"
                     if not result.fallback_allowed
@@ -428,11 +429,10 @@ class ProviderRuntimeRouter:
                 if not shadow_only:
                     health_event = ProviderRuntimeHealth.record_failure(
                         provider_name,
-                        result.error_code,
+                        fixed_error_code,
                     )
                     if health_event:
                         safe_summary["provider_health"] = health_event
-                result.raw_payload_safe_summary = safe_summary
                 self._write_audit(
                     request,
                     operation,
@@ -440,7 +440,7 @@ class ProviderRuntimeRouter:
                     provider_name,
                     result.elapsed_ms,
                     safe_summary,
-                    _fixed_provider_error_code(result.error_code),
+                    fixed_error_code,
                 )
                 if not result.fallback_allowed:
                     if shadow_only:
@@ -464,7 +464,12 @@ class ProviderRuntimeRouter:
                             elapsed_ms=result.elapsed_ms,
                             summary=shadow_summary,
                         )
-                    return result
+                    return _unavailable_with_traffic(
+                        fixed_error_code,
+                        traffic,
+                        elapsed_ms=result.elapsed_ms,
+                        summary=safe_summary,
+                    )
                 continue
 
             try:
