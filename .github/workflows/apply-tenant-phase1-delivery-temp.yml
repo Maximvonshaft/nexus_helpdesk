@@ -36,7 +36,10 @@ jobs:
             .github/transfer/tenant-phase1-files.part00 \
             .github/transfer/tenant-phase1-files.part01 \
             .github/transfer/tenant-phase1-files.part02 \
-            .github/transfer/tenant-phase1-files.part03 \
+            .github/transfer/tenant-phase1-files.part03a \
+            .github/transfer/tenant-phase1-files.part03b \
+            .github/transfer/tenant-phase1-files.part03c \
+            .github/transfer/tenant-phase1-files.part03d \
             > "${combined}"
           test "$(sha256sum "${combined}" | awk '{print $1}')" = "29df630d31c829be93e83619ed0f8a769608f61edcaf86a9262f0d5083e7db88"
           base64 --decode "${combined}" > "${archive}"
@@ -100,7 +103,15 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
           set -Eeuo pipefail
-          rm -f .github/transfer/tenant-phase1-files.part0{0,1,2,3}
+          rm -f \
+            .github/transfer/tenant-phase1-files.part00 \
+            .github/transfer/tenant-phase1-files.part01 \
+            .github/transfer/tenant-phase1-files.part02 \
+            .github/transfer/tenant-phase1-files.part03 \
+            .github/transfer/tenant-phase1-files.part03a \
+            .github/transfer/tenant-phase1-files.part03b \
+            .github/transfer/tenant-phase1-files.part03c \
+            .github/transfer/tenant-phase1-files.part03d
           rm -f .github/workflows/apply-tenant-phase1-delivery-temp.yml
           git add -A
           git diff --cached --check
@@ -117,6 +128,10 @@ jobs:
               '.github/transfer/tenant-phase1-files.part01',
               '.github/transfer/tenant-phase1-files.part02',
               '.github/transfer/tenant-phase1-files.part03',
+              '.github/transfer/tenant-phase1-files.part03a',
+              '.github/transfer/tenant-phase1-files.part03b',
+              '.github/transfer/tenant-phase1-files.part03c',
+              '.github/transfer/tenant-phase1-files.part03d',
               '.github/workflows/apply-tenant-phase1-delivery-temp.yml',
           }
           actual = set(subprocess.check_output(
