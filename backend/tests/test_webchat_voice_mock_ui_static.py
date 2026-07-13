@@ -16,16 +16,17 @@ ROUTER = ROOT / "webapp" / "src" / "router.tsx"
 PACKAGE_JSON = ROOT / "webapp" / "package.json"
 
 
-def test_public_voice_entry_calls_voice_session_api_and_webcall_page():
+def test_public_voice_entry_delegates_to_widget_without_opening_existing_chat():
     text = VOICE_ENTRY.read_text(encoding="utf-8")
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
     assert "/webchat/widget.js" in text
-    assert "window.__NEXUSDESK_WEBCHAT_LOADED__" in text
+    assert "if (window.__NEXUSDESK_WEBCHAT_LOADED__) return;" in text
+    assert "window.NexusDeskWebChat.open()" not in text
     assert "data-live-voice-mode" in text
     assert "data-live-voice-ws-path" in text
     assert "/webchat/live/ws" in widget
-    assert "createScriptProcessor" in widget
+    assert "voiceStartBtn.addEventListener('click', startLiveVoice)" in widget
     assert "getUserMedia" in widget
 
 
@@ -60,14 +61,15 @@ def test_showcase_support_chat_is_owned_by_widget_only():
     assert "bindPageTriggers()" in widget_text
 
 
-def test_public_voice_entry_contains_feature_gated_edge_card_without_runtime_secrets():
+def test_public_voice_entry_fails_closed_without_runtime_secrets():
     text = VOICE_ENTRY.read_text(encoding="utf-8")
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
     assert "data-live-voice-mode" in text
-    assert "edge-card" in text
-    assert "/webchat/live/ws" in text
-    assert "createScriptProcessor" in widget
+    assert "widget.setAttribute('data-live-voice-mode', 'off')" in text
+    assert "widget.setAttribute('data-live-voice-mode', 'edge-card')" not in text
+    assert "widget.setAttribute('data-live-voice-ws-path', '/webchat/live/ws')" not in text
+    assert "var liveVoiceMode = (script.getAttribute('data-live-voice-mode') || 'off').toLowerCase();" in widget
     combined = text + "\n" + widget
     assert "token=" not in combined
     assert "LIVE_VOICE_UPSTREAM_TOKEN" not in combined
