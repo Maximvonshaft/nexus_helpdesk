@@ -4,7 +4,7 @@
 
 The tracked-tree scanner proves only that the current checkout has no unsuppressed credential-shaped finding. It cannot prove that a credential committed previously and removed later is absent from reachable branches or tags.
 
-The reachable-history assurance control scans every unique regular Git blob reachable from the full local reference set. It is read-only. It does not rotate credentials, rewrite history, delete refs, change repository visibility, deploy code, or mutate production data.
+The reachable-history assurance control scans every unique regular Git Blob reachable from the full local reference set. It is read-only. It does not rotate credentials, rewrite history, delete refs, change repository visibility, deploy code, or mutate production data.
 
 ## Authority
 
@@ -24,18 +24,19 @@ The scanner:
 2. detects the repository object format;
 3. enumerates every object reachable from local branch, remote-tracking and tag references;
 4. resolves object type and declared size through Git batch metadata;
-5. enumerates every `(Blob, path)` pair from all unique reachable commit root Trees;
-6. reads each eligible unique Blob once, but evaluates every historical path alias independently;
-7. evaluates every match produced by every credential rule, including repeated same-rule values on one line;
-8. accounts for every Blob as scanned text, binary/unreadable, known oversized binary, or unknown oversized;
-9. fails closed if any unknown oversized Blob remains unscanned;
-10. uses the same credential patterns, placeholder policy and fingerprint algorithm as the current-tree scanner.
+5. enumerates every `(Blob, path)` pair from all unique reachable commit root Trees and every reference that peels directly to a Tree, including Tree-targeting tags;
+6. preserves Git path bytes after UTF-8 decoding, including leading and trailing whitespace;
+7. reads each eligible unique Blob once, but evaluates every historical path alias independently;
+8. evaluates every match produced by every credential rule, including repeated same-rule values on one line;
+9. accounts for every Blob as scanned text, binary/unreadable, or oversized and unscanned;
+10. fails closed if any oversized Blob remains unscanned, regardless of filename suffix;
+11. uses the same credential patterns, placeholder policy and fingerprint algorithm as the current-tree scanner.
 
-A path-specific allowlist therefore applies only to that exact path/rule/fingerprint tuple. Copying or renaming identical Blob content to another path creates a separate allowlist decision; one fixture path cannot suppress a non-fixture alias.
+A path-specific allowlist therefore applies only to that exact path/rule/fingerprint tuple. Copying or renaming identical Blob content to another path creates a separate allowlist decision; one fixture path cannot suppress a non-fixture alias. Paths that differ only by whitespace are also distinct.
 
 The current-tree scanner retains its existing 200-record contract. The history scanner counts all logical findings while storing no more than 100 redacted records.
 
-The dedicated Workflow scans Blobs up to 8 MiB. This ceiling covered every non-binary reachable Blob at the accepted current-main run. Any future unknown Blob above the ceiling makes the result incomplete and blocks the gate.
+The dedicated Workflow scans Blobs up to 8 MiB. This ceiling covered every reachable Blob at the accepted current-main run. Any future Blob above the ceiling makes the result incomplete and blocks the gate. A binary-looking suffix such as `.png` or `.zip` is not evidence that an oversized Blob is safe to skip.
 
 ## Evidence boundary
 
@@ -70,6 +71,7 @@ Generated reports are limited to 64 KiB and scanned again before upload. Artifac
 
 - every reachable Blob was accounted for;
 - every reachable historical path alias was independently evaluated;
+- no Blob was skipped solely because of its suffix;
 - no unsuppressed credential-shaped finding was detected;
 - generated evidence passed artifact scanning.
 
@@ -83,7 +85,7 @@ Credential rotation or revocation must occur before any history-cleanup decision
 
 ### Incomplete
 
-`status=fail` and `complete=false` means the scanner could not make a complete assurance claim. Causes include a shallow repository, malformed Git metadata, incomplete path-alias enumeration, object read mismatch, invalid allowlist, unknown oversized Blob or missing evidence.
+`status=fail` and `complete=false` means the scanner could not make a complete assurance claim. Causes include a shallow repository, malformed Git metadata, incomplete path-alias enumeration, object read mismatch, invalid allowlist, any Blob above the configured scan ceiling, or missing evidence.
 
 Incomplete is blocking evidence, not a clean result.
 
