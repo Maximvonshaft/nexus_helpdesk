@@ -27,14 +27,25 @@ from .traffic_selection import (
 logger = logging.getLogger(__name__)
 
 _APPROVED_PROVIDER_ALIASES = frozenset({"private_ai_runtime"})
+_APPROVED_OUTPUT_CONTRACTS = frozenset(
+    {
+        "nexus.ai_reply.v3",
+        "nexus.ai_reply.v2",
+        "nexus_webchat_runtime_reply_v1",
+        "speedaf_ticket_triage_v1",
+        "speedaf_delivery_exception_analysis_v1",
+    }
+)
 _DIRECT_ENV_PROVIDERS = _APPROVED_PROVIDER_ALIASES
 _PROVIDER_ALIAS_INVALID = "provider_runtime_provider_alias_invalid"
+_OUTPUT_CONTRACT_INVALID = "provider_runtime_output_contract_invalid"
 _TRAFFIC_CONFIGURATION_ERRORS = {
     "provider_runtime_traffic_mode_invalid",
     "provider_runtime_canary_percent_invalid",
     "provider_runtime_kill_switch_invalid",
     "provider_runtime_primary_provider_invalid",
     _PROVIDER_ALIAS_INVALID,
+    _OUTPUT_CONTRACT_INVALID,
 }
 _FALLBACK_RESULTS = frozenset(
     {
@@ -221,6 +232,7 @@ class ProviderRuntimeRouter:
             kill_switch: Any = False
             canary_percent: Any = 0
             persisted_provider_errors: list[str] = []
+            persisted_output_contract_errors: list[str] = []
         else:
             primary_provider = rule["primary_provider"]
             raw_fallbacks = rule["fallback_providers"]
@@ -233,6 +245,9 @@ class ProviderRuntimeRouter:
             except ValueError:
                 fallbacks = []
             output_contract = rule["output_contract"]
+            persisted_output_contract_errors = persisted_output_contract_configuration_errors(
+                output_contract
+            )
             timeout_ms = rule["timeout_ms"]
             kill_switch = rule["kill_switch"]
             # Persisted NULL is corrupt configuration. Only the no-rule path
@@ -245,6 +260,8 @@ class ProviderRuntimeRouter:
         try:
             if persisted_provider_errors:
                 raise ValueError(persisted_provider_errors[0])
+            if persisted_output_contract_errors:
+                raise ValueError(persisted_output_contract_errors[0])
 
             (
                 primary_provider,
@@ -268,6 +285,11 @@ class ProviderRuntimeRouter:
             )
             if effective_provider_errors:
                 raise ValueError(effective_provider_errors[0])
+            effective_output_contract_errors = persisted_output_contract_configuration_errors(
+                output_contract
+            )
+            if effective_output_contract_errors:
+                raise ValueError(effective_output_contract_errors[0])
 
             persisted_errors = persisted_traffic_configuration_errors(
                 canary_percent=persisted_canary_percent,
@@ -590,6 +612,15 @@ def persisted_provider_alias_errors(
         return [_PROVIDER_ALIAS_INVALID]
     if any(provider not in _APPROVED_PROVIDER_ALIASES for provider in fallbacks):
         return [_PROVIDER_ALIAS_INVALID]
+    return []
+
+
+def persisted_output_contract_configuration_errors(output_contract: Any) -> list[str]:
+    if not isinstance(output_contract, str):
+        return [_OUTPUT_CONTRACT_INVALID]
+    normalized = output_contract.strip()
+    if normalized != output_contract or normalized not in _APPROVED_OUTPUT_CONTRACTS:
+        return [_OUTPUT_CONTRACT_INVALID]
     return []
 
 
