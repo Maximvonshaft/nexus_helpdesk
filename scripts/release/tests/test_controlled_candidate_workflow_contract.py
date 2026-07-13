@@ -54,6 +54,24 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn('docker push "${registry_image}:${tag}"', combined)
         self.assertIn('test "${pulled_image_id}" = "${local_image_id}"', combined)
 
+    def test_failed_rc_is_bounded_and_blocks_publication(self) -> None:
+        self.assertIn("id: controlled_rc", WORKFLOW)
+        self.assertIn("capture_controlled_rc_failure.py", WORKFLOW)
+        self.assertIn("steps.controlled_rc.outcome == 'failure'", WORKFLOW)
+        self.assertIn("controlled-rc-failure-${{ github.sha }}", WORKFLOW)
+        self.assertIn("steps.rc_failure_scan.outcome == 'success'", WORKFLOW)
+        self.assertIn('exit "${code}"', WORKFLOW)
+        self.assertIn("path: artifacts/controlled-rc-failure", WORKFLOW)
+        self.assertLess(
+            WORKFLOW.index("Upload bounded RC failure evidence"),
+            WORKFLOW.index("Verify runtime imports"),
+        )
+        failure_upload_block = WORKFLOW.split("- name: Upload bounded RC failure evidence", 1)[1].split(
+            "- name: Verify runtime imports", 1
+        )[0]
+        self.assertNotIn("RUNNER_TEMP", failure_upload_block)
+        self.assertNotIn("controlled-rc-run.log", failure_upload_block)
+
     def test_same_binary_and_build_metadata_are_bound(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
         self.assertIn("image-ref: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
