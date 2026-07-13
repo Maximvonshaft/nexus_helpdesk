@@ -82,8 +82,27 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install test dependencies
         run: pip install -r backend/requirements.txt pytest pytest-asyncio
-      - name: WebCall Provider Runtime adapter
-        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py
+      - name: WebCall profile and Provider selection
+        run: |
+          pytest -q \
+            backend/tests/test_webcall_ai_provider_runtime_llm.py::test_provider_runtime_llm_auto_selects_hybrid_profile \
+            backend/tests/test_webcall_ai_provider_runtime_llm.py::test_provider_router_returns_provider_runtime_llm
+      - name: Generic request identity and authoritative route
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_private_runtime_alias_routes_through_authoritative_router
+      - name: Control authority remains neutral
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_control_mode_suppresses_direct_alias_candidate
+      - name: Stable explicit-session partial canary
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_partial_canary_is_stable_per_voice_session
+      - name: Shadow failure remains neutral
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_shadow_failure_is_neutral_and_non_authoritative
+      - name: Parse rejection audit is bounded
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_parse_reject_audit_uses_fixed_code_without_provider_marker
+      - name: Kill switch remains authoritative
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_kill_switch_suppresses_alias_even_with_invalid_lower_settings
+      - name: Unsupported alias audit is bounded
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_webcall_rejects_unapproved_provider_alias_without_adapter_call
+      - name: Session turn preserves stable identity
+        run: pytest -q backend/tests/test_webcall_ai_provider_runtime_llm.py::test_session_turn_persists_provider_runtime_result_and_governed_evidence
       - name: WebCall production orchestration
         run: pytest -q backend/tests/test_webcall_ai_production.py
 
