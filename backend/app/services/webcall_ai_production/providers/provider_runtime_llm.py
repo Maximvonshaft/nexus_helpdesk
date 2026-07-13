@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import threading
 import uuid
 from typing import Any, Coroutine
 
 from app.db import SessionLocal
-from app.services.provider_runtime.output_contracts import OutputContracts
-from app.services.provider_runtime.registry import ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
 from sqlalchemy.orm import Session
@@ -21,6 +18,7 @@ _DEFAULT_PROVIDER = "router"
 _DEFAULT_SCENARIO = "webcall_ai_decision"
 _DEFAULT_CHANNEL = "webcall_ai"
 _DEFAULT_TENANT = "default"
+_ROUTER_ALIASES = frozenset({"router", "private_ai_runtime"})
 
 
 class ProviderRuntimeLLMProvider(LLMProvider):
@@ -37,51 +35,31 @@ class ProviderRuntimeLLMProvider(LLMProvider):
         except ProviderError:
             raise
         except Exception as exc:
-            raise ProviderError(self.provider_name, "provider_runtime_exception", str(exc)) from exc
+            raise ProviderError(self.provider_name, "provider_runtime_exception") from exc
         finally:
             db.close()
 
 
 async def _route_request(db: Session, request: ProviderRequest) -> ProviderResult:
-    provider = _env("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", _DEFAULT_PROVIDER)
-    if provider and provider != "router":
-        return await _generate_with_provider(db, request, provider)
-    return await ProviderRuntimeRouter(db).route(request)
-
-
-async def _generate_with_provider(db: Session, request: ProviderRequest, provider_name: str) -> ProviderResult:
-    from app.services.provider_runtime import bootstrap_provider_runtime
-
+    provider_alias = _env("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", _DEFAULT_PROVIDER)
     router = ProviderRuntimeRouter(db)
-    bootstrap_provider_runtime()
-    adapter = ProviderRegistry.get(provider_name, db)
-    if not adapter:
-        router._write_audit(request, "generate", "failed", provider_name, 0, {}, "adapter_not_registered")
-        return ProviderResult.unavailable(provider_name, "adapter_not_registered", 0, fallback_allowed=False)
-
-    result = await adapter.generate(db, request)
-    if not result.ok:
-        router._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, result.raw_payload_safe_summary, result.error_code)
-        return result
-
-    try:
-        if not result.structured_output:
-            raise ValueError("No structured output provided")
-        parsed = OutputContracts.validate_and_parse(
-            request.output_contract,
-            json.dumps(result.structured_output, ensure_ascii=False),
-            request.tracking_fact_evidence_present,
-            (request.metadata or {}).get("persona_context"),
-            request.body,
-            (request.metadata or {}).get("knowledge_context"),
+    if provider_alias not in _ROUTER_ALIASES:
+        router._write_audit(
+            request,
+            "generate",
+            "skipped",
+            "router",
+            0,
+            {"provider_alias_valid": False},
+            "provider_runtime_provider_alias_invalid",
         )
-    except Exception as exc:
-        router._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, {"parse_error": str(exc)[:500]}, "parse_reject")
-        return ProviderResult.unavailable(provider_name, "parse_reject", result.elapsed_ms, fallback_allowed=False)
-
-    result.structured_output = parsed
-    router._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, result.raw_payload_safe_summary)
-    return result
+        return ProviderResult.unavailable(
+            "router",
+            "provider_runtime_provider_alias_invalid",
+            0,
+            fallback_allowed=False,
+        )
+    return await router.route(request)
 
 
 def _build_request(*, text: str, language: str | None) -> ProviderRequest:
