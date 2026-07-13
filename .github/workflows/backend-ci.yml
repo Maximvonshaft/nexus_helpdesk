@@ -1,143 +1,183 @@
 name: backend-ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths:
+      - ".github/workflows/backend-ci.yml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: tenant-673-backend-ci-repair
+  cancel-in-progress: false
+
 jobs:
-  backend-ci:
+  apply-tenant-review-fix:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 673
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: backend
+      APP_ENV: test
+      DATABASE_URL: sqlite:////tmp/tenant-673-backend-repair.db
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+      PERMANENT_GATE_COMMIT: 48c60c8e0b40d1a41ab182fd7c6e38faf60ffacd
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Checkout exact authoritative branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          python-version: '3.11'
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install pytest
-
-      - name: Compile backend
-        run: python -m compileall backend/app backend/scripts
-
-      - name: Run baseline backend tests
+      - name: Verify immutable parent
         run: |
           set -Eeuo pipefail
-          timeout 600 pytest -q \
-            backend/tests/test_outbound_safety.py \
-            backend/tests/test_outbound_message_semantics.py \
-            backend/tests/test_round24_hardening.py \
-            backend/tests/test_production_settings_contract.py \
-            backend/tests/test_next_phase_max_push.py \
-            backend/tests/test_deploy_contracts.py \
-            backend/tests/test_round20a_rectification.py \
-            backend/tests/test_round20b_legacy_frontend.py \
-            backend/tests/test_round27_frontend_hardening.py \
-            backend/tests/test_tool_governance.py
+          test "$(git rev-parse HEAD^)" = "c32da9c67e6d498d72313d550aee6346ef48b3d6"
+          test "$(git merge-base HEAD origin/main)" = "e96dac837b4f02a297602259953d7c274b9c2063"
 
-      - name: Run runtime retirement and observability tests
-        env:
-          PYTHONPATH: backend
+      - name: Setup Python immutable
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install locked backend dependencies
         run: |
           set -Eeuo pipefail
-          timeout 600 pytest -q \
-            backend/tests/test_provider_runtime_status.py \
-            backend/tests/test_worker_daemon_readiness.py \
-            backend/tests/test_db_query_timing.py \
-            backend/tests/test_observability_metrics.py \
-            backend/tests/test_worker_metrics.py \
-            backend/tests/test_external_channel_persistence_authority.py
+          python -m pip install -r backend/requirements.txt
 
-      - name: Run WebChat voice readiness header tests
+      - name: Apply reviewed corrections and restore permanent workflows
         run: |
           set -Eeuo pipefail
-          timeout 300 pytest -q backend/tests/test_webchat_voice_static_headers.py
+          git fetch --no-tags origin main "${PERMANENT_GATE_COMMIT}"
+          git show origin/main:.github/workflows/backend-ci.yml > .github/workflows/backend-ci.yml
+          git show "${PERMANENT_GATE_COMMIT}:.github/workflows/tenant-principal-schema-gate.yml" \
+            > .github/workflows/tenant-principal-schema-gate.yml
+          python - <<'PY'
+          from pathlib import Path
 
-      - name: Run WebChat voice API foundation tests
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text(encoding='utf-8')
+              if source.count(old) != 1:
+                  raise SystemExit(f'{path}: replacement count={source.count(old)} for {old!r}')
+              target.write_text(source.replace(old, new, 1), encoding='utf-8')
+
+          for path in (
+              'backend/app/models.py',
+              'backend/alembic/versions/20260713_0059_add_tenant_principal.py',
+          ):
+              replace_once(path, 'tenant_key = lower(tenant_key)', 'tenant_key = lower(trim(tenant_key))')
+              replace_once(path, "tenant_key <> 'default'", "lower(trim(tenant_key)) <> 'default'")
+
+          test_path = Path('backend/tests/test_tenant_principal_additive_schema.py')
+          source = test_path.read_text(encoding='utf-8')
+          if 'import pytest\n' not in source:
+              source = source.replace(
+                  'import sys\n\nimport sqlalchemy as sa\n',
+                  'import sys\n\nimport pytest\nimport sqlalchemy as sa\n',
+                  1,
+              )
+          marker = '\n\ndef test_additive_migration_contains_no_insert_or_backfill_statement() -> None:\n'
+          addition = '''
+
+
+def test_tenant_key_constraints_reject_padding_case_and_forbidden_default(tmp_path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'tenant-key-constraints.db'}", future=True)
+    metadata = sa.MetaData()
+    for table_name in CORE_TABLES:
+        sa.Table(
+            table_name,
+            metadata,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("marker", sa.String(40), nullable=False),
+        )
+    metadata.create_all(engine)
+    migration = _load_migration()
+    with engine.begin() as connection:
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        for row_id, tenant_key in enumerate(
+            ("default", " default ", "tenant-a ", " Tenant-a"),
+            start=1,
+        ):
+            with pytest.raises(sa.exc.IntegrityError):
+                with connection.begin_nested():
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO tenants (id, tenant_key, display_name, is_active) "
+                            "VALUES (:id, :tenant_key, 'Invalid Tenant', 1)"
+                        ),
+                        {"id": row_id, "tenant_key": tenant_key},
+                    )
+        connection.execute(sa.text(
+            "INSERT INTO tenants (id, tenant_key, display_name, is_active) "
+            "VALUES (99, 'tenant-a', 'Tenant A', 1)"
+        ))
+        assert connection.execute(sa.text("SELECT tenant_key FROM tenants")).scalar_one() == "tenant-a"
+    engine.dispose()
+'''
+          if 'test_tenant_key_constraints_reject_padding_case_and_forbidden_default' not in source:
+              if source.count(marker) != 1:
+                  raise SystemExit(f'test marker count={source.count(marker)}')
+              source = source.replace(marker, addition + marker, 1)
+          test_path.write_text(source, encoding='utf-8')
+
+          replace_once(
+              'scripts/qualification/tenant/test_tenant_principal_preflight.py',
+              'sa.Column("tenant_key", sa.String(120), nullable=False)',
+              'sa.Column("tenant_key", sa.String(80), nullable=False)',
+          )
+
+          gate = Path('.github/workflows/tenant-principal-schema-gate.yml')
+          source = gate.read_text(encoding='utf-8')
+          marker = '''          for table in markets teams users channel_accounts customers tickets; do
+            test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' AND column_name='tenant_assignment_version'")" = "80"
+          done
+'''
+          addition = marker + '''          if psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -v ON_ERROR_STOP=1 -c "INSERT INTO tenants (tenant_key, display_name) VALUES (' default ', 'Forbidden')"; then
+            echo "padded default Tenant key unexpectedly accepted" >&2
+            exit 1
+          fi
+'''
+          if source.count(marker) != 1:
+              raise SystemExit(f'permanent gate marker count={source.count(marker)}')
+          gate.write_text(source.replace(marker, addition, 1), encoding='utf-8')
+
+          doc = Path('docs/architecture/tenant-principal-migration.md')
+          source = doc.read_text(encoding='utf-8').replace(
+              '- `tenant_key` is non-empty, lowercase and cannot equal `default`;',
+              '- `tenant_key` is non-empty, lowercase, has no surrounding whitespace and cannot normalize to `default`;',
+          )
+          doc.write_text(source, encoding='utf-8')
+          PY
+          rm -f .github/workflows/tenant-phase1-authority-fix-temp.yml
+
+      - name: Verify corrected authority contract
         run: |
           set -Eeuo pipefail
-          timeout 300 pytest -q \
-            backend/tests/test_webchat_voice_api.py \
-            backend/tests/test_webchat_voice_room_compensation.py
+          python -m py_compile \
+            backend/app/models.py \
+            backend/alembic/versions/20260713_0059_add_tenant_principal.py \
+            backend/tests/test_tenant_principal_additive_schema.py \
+            scripts/qualification/tenant/test_tenant_principal_preflight.py
+          pytest -q \
+            backend/tests/test_tenant_principal_additive_schema.py \
+            backend/tests/test_migration_drift_gate.py
+          python -m unittest scripts/qualification/tenant/test_tenant_principal_preflight.py
+          git diff --check
 
-      - name: Run webchat performance and security tests
+      - name: Commit and push authoritative correction
         run: |
           set -Eeuo pipefail
-          timeout 600 pytest -q \
-            backend/tests/test_webchat_events.py \
-            backend/tests/test_webchat_events_realdb.py \
-            backend/tests/test_webchat_events_rbac_realdb.py \
-            backend/tests/test_webchat_polling_write_throttle.py \
-            backend/tests/test_webchat_event_write_isolation.py \
-            backend/tests/test_webchat_admin_conversations_query_count.py
-
-      - name: Run admin users pagination tests
-        run: |
-          set -Eeuo pipefail
-          timeout 180 pytest -q backend/tests/test_admin_users_pagination.py
-
-      - name: Run lite cases pagination tests
-        run: |
-          set -Eeuo pipefail
-          timeout 180 pytest -q backend/tests/test_lite_cases_pagination.py
-
-      - name: Run ticket search query tests
-        run: |
-          set -Eeuo pipefail
-          timeout 180 pytest -q backend/tests/test_ticket_search_query.py
-
-      - name: Run ticket timeline pagination tests
-        run: |
-          set -Eeuo pipefail
-          timeout 180 pytest -q backend/tests/test_ticket_timeline_pagination.py
-
-      - name: Run ticket detail summary tests
-        run: |
-          set -Eeuo pipefail
-          timeout 180 pytest -q backend/tests/test_ticket_detail_summary.py
-
-      - name: Run production drift reconciliation tests
-        run: |
-          set -Eeuo pipefail
-          export PYTHONPATH=backend
-          timeout 300 pytest -q \
-            backend/tests/test_release_metadata.py \
-            backend/tests/test_release_metadata_consistency_gate.py \
-            backend/tests/test_candidate_readiness_identity.py \
-            backend/tests/test_webchat_voice_mock_ui_static.py \
-            backend/tests/test_candidate_compose_contract.py \
-            backend/tests/test_support_intelligence_config.py
-
-      - name: Run operator queue tests
-        run: |
-          set -Eeuo pipefail
-          timeout 600 pytest -q \
-            backend/tests/test_operator_queue.py \
-            backend/tests/test_operator_queue_api.py \
-            backend/tests/test_operator_queue_projection.py \
-            backend/tests/test_operator_queue_replay.py \
-            backend/tests/test_operator_queue_pagination.py \
-            backend/tests/test_operator_queue_audit.py
-
-      - name: Strict readiness configuration check
-        env:
-          APP_ENV: development
-          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
-          STORAGE_BACKEND: s3
-          EXTERNAL_CHANNEL_TRANSPORT: disabled
-          EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled
-          EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED: "false"
-          WEBCHAT_RATE_LIMIT_BACKEND: database
-          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ai
-          WEBCHAT_ALLOWED_ORIGINS: https://example.test
-        run: cd backend && python scripts/validate_production_readiness.py
+          git add -A
+          git diff --cached --check
+          git config user.name 'nexus-osr-tenant-bot'
+          git config user.email 'nexus-osr-tenant-bot@users.noreply.github.com'
+          git commit -m 'fix(tenant): reject normalized default identities (#546)'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
