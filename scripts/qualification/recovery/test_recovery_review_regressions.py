@@ -173,7 +173,7 @@ class RecoveryReviewRegressionTests(unittest.TestCase):
                 "case \"$*\" in\n"
                 "  *'SELECT current_database()'*) printf 'nexus_restore\\n' ;;\n"
                 "  *\"SELECT extversion FROM pg_extension WHERE extname = 'vector'\"*) printf '0.8.0\\n' ;;\n"
-                "  *'WITH extension_owned'*) printf '0|0\\n' ;;\n"
+                "  *'extension_owned'*) printf '0|0\\n' ;;\n"
                 "  *'SELECT version_num FROM alembic_version'*) printf '20260713_0059\\n' ;;\n"
                 "  *) exit 1 ;;\n"
                 "esac\n",
@@ -198,7 +198,8 @@ class RecoveryReviewRegressionTests(unittest.TestCase):
         rollback = (ROOT / "scripts" / "deploy" / "rollback_release.sh").read_text(encoding="utf-8")
         for catalog in ("pg_class", "pg_proc", "pg_type", "pg_operator", "pg_collation", "pg_conversion"):
             self.assertIn(catalog, rollback)
-        self.assertIn("extension_owned", rollback)
+        self.assertIn("WITH RECURSIVE extension_owned", rollback)
+        self.assertIn("dependency.deptype IN ('i', 'a')", rollback)
         self.assertIn("rollback_target_not_empty", rollback)
 
     def test_image_rollback_restarts_runtime_warmer(self) -> None:
