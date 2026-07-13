@@ -53,7 +53,10 @@ class ProviderRuntimeLLMProvider(LLMProvider):
             if not result.ok or not result.structured_output:
                 if result.error_code in _NEUTRAL_ROUTER_OUTCOMES:
                     return _neutral_non_authoritative_result(result.error_code)
-                raise ProviderError(self.provider_name, result.error_code or "provider_runtime_unavailable")
+                raise ProviderError(
+                    self.provider_name,
+                    result.error_code or "provider_runtime_unavailable",
+                )
             return _to_llm_result(result)
         except ProviderError:
             raise
@@ -65,27 +68,38 @@ class ProviderRuntimeLLMProvider(LLMProvider):
 
 async def _route_request(db: Session, request: ProviderRequest) -> ProviderResult:
     provider_alias = _env("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", _DEFAULT_PROVIDER)
+    router = ProviderRuntimeRouter(db)
     if provider_alias not in _ALLOWED_PROVIDER_ALIASES:
-        return ProviderResult.unavailable(
-            "router",
+        return router.reject_before_route(
+            request,
             "provider_runtime_provider_not_allowed",
-            0,
-            fallback_allowed=False,
         )
+    return await router.route(request)
 
-    return await ProviderRuntimeRouter(db).route(request)
 
-
-def _build_request(*, text: str, language: str | None, session_id: str | None = None) -> ProviderRequest:
+def _build_request(
+    *,
+    text: str,
+    language: str | None,
+    session_id: str | None = None,
+) -> ProviderRequest:
     body = (text or "").strip()
     lang = (language or "en").strip() or "en"
-    routing_session_id = (session_id or "").strip() or _env(
-        "WEBCALL_AI_PROVIDER_RUNTIME_SESSION_ID",
-        "webcall-ai-production",
-    )
+    request_token = uuid.uuid4().hex
+    explicit_session_id = (session_id or "").strip()
+    # Generic calls have no durable session authority. Give each request a
+    # server-generated, request-scoped, non-PII identity instead of one
+    # process-wide bucket. respond_for_session() continues to use its stable
+    # server-owned session identifier.
+    routing_session_id = explicit_session_id or f"webcall-request-{request_token}"
     metadata = {
         "persona_context": None,
-        "knowledge_context": {"retrieval": "unavailable", "total_matches": 0, "locked_facts": [], "hits": []},
+        "knowledge_context": {
+            "retrieval": "unavailable",
+            "total_matches": 0,
+            "locked_facts": [],
+            "hits": [],
+        },
         "safety_policy": {
             "knowledge_scope": "voice_transcript_only_without_tracking_evidence",
             "tracking_truth_boundary": "Parcel live status requires tracking_fact_evidence_present=true and trusted tracking_fact_summary.",
@@ -94,18 +108,35 @@ def _build_request(*, text: str, language: str | None, session_id: str | None = 
         "language": lang,
     }
     return ProviderRequest(
-        request_id=f"webcall-ai-llm-{uuid.uuid4().hex}",
+        request_id=f"webcall-ai-llm-{request_token}",
         tenant_id=_env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT),
-        tenant_key=_env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_KEY", _env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT)),
-        channel_key=_env("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", _DEFAULT_CHANNEL),
+        tenant_key=_env(
+            "WEBCALL_AI_PROVIDER_RUNTIME_TENANT_KEY",
+            _env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT),
+        ),
+        channel_key=_env(
+            "WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY",
+            _DEFAULT_CHANNEL,
+        ),
         session_id=routing_session_id,
-        scenario=_env("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", _DEFAULT_SCENARIO),
+        scenario=_env(
+            "WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO",
+            _DEFAULT_SCENARIO,
+        ),
         body=body,
         recent_context=[{"role": "user", "content": body, "language": lang}],
         tracking_fact_summary=None,
         tracking_fact_evidence_present=False,
-        output_contract=_env("WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT", _DEFAULT_CONTRACT),
-        timeout_ms=_int_env("WEBCALL_AI_PROVIDER_RUNTIME_TIMEOUT_MS", 10000, minimum=500, maximum=30000),
+        output_contract=_env(
+            "WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT",
+            _DEFAULT_CONTRACT,
+        ),
+        timeout_ms=_int_env(
+            "WEBCALL_AI_PROVIDER_RUNTIME_TIMEOUT_MS",
+            10000,
+            minimum=500,
+            maximum=30000,
+        ),
         metadata=metadata,
     )
 
@@ -122,14 +153,28 @@ def _neutral_non_authoritative_result(error_code: str) -> LLMResult:
 
 def _to_llm_result(result: ProviderResult) -> LLMResult:
     output = result.structured_output or {}
-    reply = _first_text(output, "customer_reply", "reply", "response_text", "response", "message", "customer_visible_reply")
+    reply = _first_text(
+        output,
+        "customer_reply",
+        "reply",
+        "response_text",
+        "response",
+        "message",
+        "customer_visible_reply",
+    )
     if not reply:
-        raise ProviderError(ProviderRuntimeLLMProvider.provider_name, "provider_runtime_missing_reply")
+        raise ProviderError(
+            ProviderRuntimeLLMProvider.provider_name,
+            "provider_runtime_missing_reply",
+        )
     intent = _first_text(output, "intent") or "other"
     handoff_required = output.get("handoff_required") is True
     handoff_reason = _first_text(output, "handoff_reason")
     if handoff_required and not handoff_reason:
-        handoff_reason = _first_text(output, "recommended_agent_action") or "provider_runtime_handoff"
+        handoff_reason = (
+            _first_text(output, "recommended_agent_action")
+            or "provider_runtime_handoff"
+        )
     return LLMResult(
         response_text=reply,
         intent=intent,
