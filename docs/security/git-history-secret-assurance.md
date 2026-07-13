@@ -16,6 +16,19 @@ The reachable-history assurance control scans every unique regular Git Blob reac
 - Status schema: `nexus_security_git_history_assurance_status_v1`
 - Allowlist: `config/security/secret-scan-allowlist.json`
 
+## Trusted execution model
+
+For pull requests the Workflow uses `pull_request_target`, read-only permissions and two isolated checkouts:
+
+- `.trusted` contains scanner code, tests, artifact scanner and allowlist from the trusted base SHA;
+- `target` contains the exact PR Head with full history and tags.
+
+Only Python under `.trusted` is compiled or executed. The target checkout is treated exclusively as Git data. No script, workflow, hook, dependency or allowlist from the PR Head is executed or trusted by the assurance job.
+
+The target repository and Head SHA are passed to the immutable checkout Action as structured inputs. The checked-out target HEAD and non-shallow state are verified before scanning. Scanner and artifact commands are executed from the target directory but use code and policy paths under `../.trusted`.
+
+This PR is the one-time bootstrap that establishes the trusted control on `main`. Its own scanner implementation is qualified through existing repository CI, Security Assurance, CodeQL and independent review. The first authoritative tamper-resistant history assurance is the `push` run after the bootstrap merge, when the scanner, tests, Workflow and allowlist are all part of trusted `main`. #565 must not be closed before that post-merge run passes.
+
 ## Coverage model
 
 The scanner:
@@ -97,9 +110,11 @@ An allowlist entry is valid only for the exact internal path, rule and fingerpri
 
 Allowlisting is intended for proven synthetic fixtures or third-party example material. A real credential must not be allowlisted as remediation. Every accepted historical tuple remains time-bounded and must be re-reviewed before expiry.
 
+A pull request cannot self-authorize an allowlist change because pull-request assurance always uses the allowlist from the trusted base SHA. Legitimate allowlist changes therefore require independent review and are not treated as clean until merged and revalidated by the trusted `main` push run.
+
 ## Workflow behavior
 
-The Workflow uses immutable Action SHAs, read-only repository permission, full-history checkout and non-persisted checkout credentials.
+The Workflow uses immutable Action SHAs, read-only repository permission, full-history target checkout and non-persisted checkout credentials.
 
 Tests, the history scan and the artifact scan have separate exit evidence. If tests or scanning fail before a normal report is produced, the Workflow creates a minimal bounded failure report. A clean artifact scan permits upload of the complete bounded evidence set. A non-clean artifact scan uploads only sanitized numeric status and blocks the final gate, so a tainted report never becomes an artifact.
 
