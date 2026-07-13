@@ -28,11 +28,12 @@ The archive is non-empty and must pass `pg_restore --list`. The manifest and SHA
 Possible states are:
 
 - `INSTRUCTIONS_ONLY` — no mutation input was provided;
-- `DATABASE_RESTORED` — manifest/checksum/archive validation and transactional `pg_restore` succeeded;
+- `DATABASE_RESTORE_APPLIED` — the single-transaction `pg_restore` completed, so the target database was mutated even if post-restore identity verification later fails;
+- `DATABASE_RESTORED` — the applied restore subsequently passed exact Alembic-head verification;
 - `IMAGE_RESTARTED` — the requested old image tag was applied through Docker Compose;
 - `HEALTH_VERIFIED` — both `/healthz` and `/readyz` returned explicit HTTP 2xx responses after restart.
 
-The result also includes `outcome` and a fixed `failure_stage`. An EXIT trap writes the partial state when an operation fails. For example, if the image restarts but a health check fails or returns a redirect, the result records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
+The result also includes `outcome`, a fixed `failure_stage`, and Boolean fields that distinguish restore application from verified restoration. An EXIT trap writes the partial state when an operation fails. For example, if `pg_restore` commits but the Alembic post-check fails, the result records `DATABASE_RESTORE_APPLIED`, `outcome=fail`, `failure_stage=DATABASE_POST_VERIFY`, and `database_restored=false`. If the image restarts but a health check fails or returns a redirect, it records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
 
 The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair and exact checksum match.
 
