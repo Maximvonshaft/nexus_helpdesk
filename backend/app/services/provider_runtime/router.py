@@ -176,13 +176,6 @@ class ProviderRuntimeRouter:
             canary_percent = rule["canary_percent"]
             default_mode = "canary"
 
-        primary_provider, fallbacks, output_contract, timeout_ms = _apply_env_overrides(
-            primary_provider,
-            fallbacks,
-            output_contract,
-            timeout_ms,
-        )
-        fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
         selection = select_provider_traffic(
             request,
             canary_percent=canary_percent,
@@ -219,6 +212,35 @@ class ProviderRuntimeRouter:
             )
             return ProviderResult.unavailable("router", error_code, 0, fallback_allowed=False)
 
+        try:
+            primary_provider, fallbacks, output_contract, timeout_ms = _apply_env_overrides(
+                primary_provider,
+                fallbacks,
+                output_contract,
+                timeout_ms,
+            )
+        except RuntimeError:
+            self._write_audit(
+                request,
+                "generate",
+                "failed",
+                "router",
+                0,
+                self._traffic_summary(
+                    selection,
+                    {"provider_configuration_valid": False},
+                    fallback_result="provider_configuration_invalid",
+                ),
+                "provider_runtime_primary_provider_invalid",
+            )
+            return ProviderResult.unavailable(
+                "router",
+                "provider_runtime_primary_provider_invalid",
+                0,
+                fallback_allowed=False,
+            )
+
+        fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
         providers_to_try = [primary_provider] + list(fallbacks)
@@ -387,7 +409,7 @@ def _apply_env_overrides(
     env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
     if env_primary:
         if env_primary not in _DIRECT_ENV_PROVIDERS:
-            raise RuntimeError("PROVIDER_RUNTIME_PRIMARY_PROVIDER must be a registered provider")
+            raise RuntimeError("provider_runtime_primary_provider_invalid")
         primary_provider = env_primary
         env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", "")
         if env_fallbacks:
