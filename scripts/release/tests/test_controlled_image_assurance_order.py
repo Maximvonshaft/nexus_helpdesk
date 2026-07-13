@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = (ROOT / "scripts/release/run_controlled_image_assurance.sh").read_text(encoding="utf-8")
+SCRIPT_PATH = ROOT / "scripts/release/run_controlled_image_assurance.sh"
+SCRIPT = SCRIPT_PATH.read_text(encoding="utf-8")
 
 
 class ControlledImageAssuranceOrderTests(unittest.TestCase):
+    def test_shell_syntax_is_valid(self) -> None:
+        subprocess.run(["bash", "-n", str(SCRIPT_PATH)], check=True)
+
     def test_cleanup_and_scan_markers_precede_structured_validation(self) -> None:
         cleanup_marker = 'printf \'%s\\n\' "${cleanup_code}" > "${RELEASE_IMAGE_DIR}/raw-cleanup-exit-code"'
         scan_marker = 'printf \'%s\\n\' "${artifact_scan_code}" > "${RELEASE_IMAGE_DIR}/artifact-scan-exit-code"'
