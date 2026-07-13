@@ -114,6 +114,7 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
           set -Eeuo pipefail
+          git restore --staged --worktree .github/workflows/tenant-runtime-authority-gate.yml
           rm -f \
             .github/workflows/tenant-phase3a-rc-apply-temp.yml \
             .github/patches/tenant-phase3a-rc-fix.patch.gz.b64
@@ -125,7 +126,6 @@ jobs:
               '.github/workflows/tenant-phase3a-rc-source-temp.yml',
               '.github/workflows/tenant-phase3a-rc-apply-temp.yml',
               '.github/patches/tenant-phase3a-rc-fix.patch.gz.b64',
-              '.github/workflows/tenant-runtime-authority-gate.yml',
               'backend/app/api/support_conversations.py',
               'backend/app/services/support_conversation_scope.py',
               'backend/app/services/webchat_service.py',
