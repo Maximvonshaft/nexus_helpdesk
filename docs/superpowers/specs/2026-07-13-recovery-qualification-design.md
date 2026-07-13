@@ -4,13 +4,13 @@
 
 - Work Item: #532
 - Parent Epic: #501
-- Baseline: `main@7b46e48e5cd26fc400728cb84dfe04b57d5fa855`
+- Baseline: `main@e857132fc040b0fc324df922b52e5d84a64a93e0`
 - Historical PR #608: closed without merge; evidence only
 - Delivery class: disposable PostgreSQL qualification plus operator-script correctness
 
 ## Problem
 
-The repository had no accepted current-main backup/restore rehearsal. The operator scripts also exposed seven reproducible failure modes:
+The repository had no accepted current-main backup/restore rehearsal. The operator scripts also exposed ten reproducible failure modes:
 
 1. a SQLAlchemy `postgresql+psycopg://` URL was passed directly to native clients;
 2. restore could continue after SQL errors;
@@ -18,7 +18,10 @@ The repository had no accepted current-main backup/restore rehearsal. The operat
 4. failed backups could leave a plausible final `.sql.gz` artifact;
 5. the disposable runner could issue destructive database commands through ambient libpq defaults rather than supplied URLs;
 6. a health-check failure after image restart could exit without recording the partial mutation;
-7. concurrent same-second backup publication could nest one bundle inside another final directory.
+7. concurrent same-second backup publication could nest one bundle inside another final directory;
+8. libpq URI query parameters could override the visibly validated host, port or database;
+9. HTTP redirects could be accepted as successful health responses;
+10. a regression asserted the fake `psql` marker only after its temporary directory had already been removed.
 
 These defects prevent a defensible claim that a test candidate is recoverable.
 
@@ -28,7 +31,7 @@ These defects prevent a defensible claim that a test candidate is recoverable.
 
 `POSTGRES_NATIVE_URL` is the native-client authority. Known SQLAlchemy prefixes may be normalized for backward compatibility, but native tools never receive the unmodified application-driver URI.
 
-The disposable runner requires a separate `RECOVERY_ADMIN_NATIVE_URL` and an explicit `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. It validates source/restore application and native URL pairs, requires all three native URLs to share one host/port, restricts source/restore names to `nexus_source` and `nexus_restore`, and requires the admin URL to target a third database before any destructive command.
+The disposable runner requires a separate `RECOVERY_ADMIN_NATIVE_URL` and an explicit `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. It validates source/restore application and native URL pairs, requires all three native URLs to share one host/port, restricts source/restore names to `nexus_source` and `nexus_restore`, and requires the admin URL to target a third database before any destructive command. Query strings and fragments are rejected so libpq options cannot override the validated authority.
 
 ### Atomic backup bundle
 
@@ -40,7 +43,7 @@ The restore path validates regular files, manifest schema/format/name/size/SHA-2
 
 ### Explicit rollback state
 
-Rollback output is structured. `DATABASE_RESTORED`, `IMAGE_RESTARTED` and `HEALTH_VERIFIED` are emitted only after their operations succeed. An EXIT trap writes `outcome=fail`, a fixed `failure_stage`, and all completed states when a later operation fails. No generic success string is allowed.
+Rollback output is structured. `DATABASE_RESTORED`, `IMAGE_RESTARTED` and `HEALTH_VERIFIED` are emitted only after their operations succeed. An EXIT trap writes `outcome=fail`, a fixed `failure_stage`, and all completed states when a later operation fails. Health verification requires explicit HTTP 2xx from both endpoints; redirects are failures. No generic success string is allowed.
 
 ### Migration repair
 
@@ -57,7 +60,7 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 ## Security and privacy
 
 - no production database or credentials;
-- no ambient connection authority for destructive setup;
+- no ambient or query-parameter connection authority for destructive setup;
 - no customer, ticket, message, tracking, address or Provider data;
 - no backup bytes uploaded;
 - no deployment or real image restart in CI;
@@ -68,16 +71,18 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 
 - Passing SQLAlchemy URLs directly to libpq tools: incompatible and ambiguous.
 - Using ambient `PGHOST`/`PGUSER` for destructive setup: not bound to the supplied disposable topology.
+- Accepting libpq query overrides after validating only the URI authority: the executed target can differ.
 - Plain SQL gzip as the canonical backup: weaker archive validation and restore control.
 - Direct write to the final backup filename: leaves partial artifacts.
 - Directory-target `mv` semantics: can hide concurrent publication by nesting a bundle.
 - Alembic `stamp` as automatic repair: can hide schema drift.
 - Treating printed rollback instructions as completion: no operational proof.
 - Writing rollback status only on success: loses partial-mutation evidence.
+- Treating any non-error HTTP status, including redirects, as readiness proof.
 
 ## Acceptance
 
-One exact final Head must prove focused tests, explicit admin authority, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact restore comparison, RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
+One exact final Head must prove focused tests, explicit URL authority without query overrides, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact 2xx health semantics, exact restore comparison, RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
 
 ## Rollback
 
