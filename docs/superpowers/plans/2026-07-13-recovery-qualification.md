@@ -27,6 +27,9 @@
 - Assert libpq query/fragment overrides are rejected before any runner or standalone operator native-client call.
 - Assert admin/source/restore roles are pairwise distinct and source/restore lack destructive privileges.
 - Assert source/restore databases have different non-admin owners.
+- Reproduce fresh-Alembic failure when the restricted source owner must install `vector`.
+- Assert the manifest binds the preinstalled vector version and restore refuses a missing/mismatched target extension before mutation.
+- Assert the restore TOC excludes exactly the vector extension records without broadly excluding application objects.
 - Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
 - Assert a committed restore is recorded before post-restore identity verification.
@@ -34,7 +37,7 @@
 - Assert redirects are not accepted as health verification.
 - Assert deterministic foreign-key-definition signatures and bounded snapshot/compare/RTO/RPO contracts.
 - Assert reversed recovery timestamps fail closed.
-- Run the dedicated gate and record the expected test-only failure.
+- Run the dedicated gate and record the expected failure evidence.
 
 ## Task 2 — Correct operator backup and rollback
 
@@ -46,12 +49,16 @@
 - Require explicit native-client user, host and database identity.
 - Reject all URI query/fragment overrides before native clients.
 - Create a custom archive in a mode-restricted temporary bundle.
-- Validate archive listing, one Alembic head, SHA-256, size and source identity.
+- Validate archive listing, one Alembic head, SHA-256, size, source identity and vector version.
 - Atomically publish archive plus manifest with no-target-directory semantics.
-- Verify manifest, digest, size, source identity and exact head before restore.
+- Verify manifest, digest, size, source identity, exact head and exact target vector version before restore.
 - Refuse in-place restore unless separately acknowledged.
-- Use `pg_restore --exit-on-error --single-transaction`.
+- Generate a temporary TOC from the validated archive and comment exactly one `EXTENSION - vector` entry plus at most one matching extension comment.
+- Fail closed on missing, duplicate or unrecognized vector TOC entries.
+- Use `pg_restore --exit-on-error --single-transaction --clean --if-exists --use-list` for all remaining objects.
+- Recheck Alembic head and vector version after restore.
 - Record `DATABASE_RESTORE_APPLIED` immediately after successful restore and `DATABASE_RESTORED` only after post-verification.
+- Delete temporary TOC files on success and failure.
 - Execute old-image restart only with an explicit health URL.
 - Require explicit HTTP 2xx from `/healthz` and `/readyz`; reject redirects.
 - Write structured success or partial-failure rollback states from an EXIT trap.
@@ -75,18 +82,19 @@
 - Expand `.github/workflows/osr-recovery-qualification.yml`
 
 - Bootstrap only `nexus_recovery_admin` in the service container.
-- Create `nexus_recovery_source` and `nexus_recovery_restore` as separate non-superuser, non-CREATEDB, non-CREATEROLE login roles.
+- Create `nexus_recovery_source` and `nexus_recovery_restore` as separate inheriting, non-superuser, non-CREATEDB, non-CREATEROLE login roles.
 - Require explicit admin/source/restore URLs and recreate confirmation.
 - Reject missing users, URI query strings/fragments and cross-cluster identity before destructive setup.
 - Prove role privileges before database recreation.
-- Create `nexus_source` and `nexus_restore` with different owners and verify ownership.
-- Use pgvector PostgreSQL 16.
+- Create `nexus_source` and `nexus_restore` from `template0` with different owners and verify ownership.
+- Derive bounded admin URLs for only those two validated disposable databases.
+- Install `vector` as admin in both databases and prove the same admin-owned version through the restricted roles.
 - Upgrade, downgrade one revision, plan repair and re-upgrade as the source role.
 - Seed a synthetic Market/Team relationship.
 - Invoke the real backup script as the source role.
-- Invoke the real rollback script as the restore role.
+- Invoke the real rollback script as the restore role while preserving the preinstalled vector extension.
 - Compare source/restore evidence and RTO/RPO.
-- Remove backup bytes before artifact processing.
+- Remove backup bytes and temporary TOC files before artifact processing.
 - Scan all JSON evidence before upload.
 - Upload full evidence only after a clean scan; otherwise upload sanitized status only.
 - Fail closed through one final gate.
@@ -100,7 +108,7 @@
 
 - Run dedicated exact-head recovery qualification on Alembic `20260713_0059`.
 - Run all applicable repository checks, including governance gates.
-- Inspect the bounded artifact only; never publish connection strings or data rows.
+- Inspect the bounded artifact only; never publish connection strings, raw extension TOC or data rows.
 - Obtain independent review and resolve every actionable thread.
 - Require zero-behind current main and merge with expected Head.
 - Keep #532 open for Tenant retention/DSAR and exact #533 candidate rerun.
@@ -108,5 +116,5 @@
 ## Decision boundary
 
 - **Clean qualification:** mark the recovery foundation Ready for unified acceptance; do not claim final production recovery readiness.
-- **Migration/restore/evidence/role-isolation failure:** keep Draft and fix the reproduced cause.
+- **Migration/restore/evidence/role/extension-isolation failure:** keep Draft and fix the reproduced cause.
 - **Tenant retention/DSAR request:** defer to #546 rather than creating parallel ownership.
