@@ -306,7 +306,7 @@ def update_webchat_runtime_routing(
     return {
         "ok": True,
         "routing_rule": {
-            *(params),
+            **params,
             "fallback_providers": payload.fallback_providers,
             "traffic_selection": safe_traffic_configuration(
                 default_canary_percent=payload.canary_percent,

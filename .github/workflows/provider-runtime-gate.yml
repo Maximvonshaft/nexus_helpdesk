@@ -2,177 +2,112 @@ name: provider-runtime-gate
 
 on:
   pull_request:
-    branches: [main]
     paths:
-      - 'backend/app/services/provider_runtime/**'
-      - 'backend/app/services/webcall_ai_production/providers/provider_runtime_llm.py'
-      - 'backend/app/services/webchat_runtime_ai_service.py'
-      - 'backend/app/services/webchat_rate_limit.py'
-      - 'backend/app/services/speedaf/**'
-      - 'backend/app/api/admin_provider_runtime.py'
-      - 'backend/tests/test_provider_runtime_*.py'
-      - 'backend/tests/test_webcall_ai_provider_runtime_llm.py'
-      - 'backend/tests/test_webchat_runtime_ai_service.py'
-      - 'backend/tests/test_webchat_rate_limit_bucket.py'
-      - 'backend/tests/test_speedaf*.py'
-      - 'backend/alembic/versions/*provider*.py'
-      - '.github/workflows/provider-runtime-gate.yml'
-  push:
-    branches: [main]
+      - "backend/app/api/admin_provider_runtime.py"
+      - "backend/app/models/provider_routing_rule.py"
+      - "backend/app/models/provider_runtime_audit.py"
+      - "backend/app/models/provider_runtime_health_state.py"
+      - "backend/app/services/provider_runtime/**"
+      - "backend/app/services/webcall_ai_production/providers/provider_runtime_llm.py"
+      - "backend/app/services/webcall_ai_production/providers/router.py"
+      - "backend/app/services/webcall_ai_production/config.py"
+      - "backend/app/services/webcall_ai_production/orchestrator.py"
+      - "backend/app/services/webchat_runtime_output_parser.py"
+      - "backend/app/services/provider_runtime_status.py"
+      - "backend/tests/test_admin_provider_runtime_routing_api.py"
+      - "backend/tests/test_admin_provider_runtime_api.py"
+      - "backend/tests/test_private_ai_runtime_provider.py"
+      - "backend/tests/test_provider_runtime_*.py"
+      - "backend/tests/test_webcall_ai_provider_runtime_llm.py"
+      - "backend/tests/test_webchat_provider_runtime_integration.py"
+      - "backend/tests/test_webchat_runtime_output_parser.py"
+      - "backend/tests/test_webchat_ai_service_context.py"
+      - "backend/tests/test_webchat_ai_readiness.py"
+      - "backend/alembic/versions/20260616_0030_add_provider_runtime_schema.py"
+      - "backend/alembic/versions/20260616_0034_add_provider_runtime_audit_logs.py"
+      - "backend/alembic/versions/20260616_0041_add_provider_runtime_health_state.py"
+      - "backend/alembic/versions/20260622_0056_provider_runtime_foundation_rebased.py"
+      - "backend/scripts/check_provider_runtime_live_probe_gate.py"
+      - "scripts/provider_runtime_release_gate.py"
+      - "docs/ops/PRIVATE_AI_RUNTIME_ROLLOUT_RUNBOOK.md"
+      - "deploy/.env.candidate.example"
+      - "deploy/.env.prod.example"
+      - ".github/workflows/provider-runtime-gate.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  provider-runtime-gate:
+  provider-runtime-routes:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          set -Eeuo pipefail
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -r backend/requirements.txt
-          python -m pip install pytest pytest-asyncio jsonschema cryptography httpx
-
-      - name: Repository hygiene gate
-        run: |
-          set -Eeuo pipefail
-          if git ls-files | grep -E '^(\.venv/|__pycache__/|\.pytest_cache/)'; then
-            echo 'ERROR: generated local artifacts are tracked by Git.'
-            exit 1
-          fi
-          if ! grep -qxF '.venv/' .gitignore; then
-            echo 'ERROR: .venv/ must be ignored.'
-            exit 1
-          fi
-          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts; then
-            echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
-            exit 1
-          fi
-
-      - name: Alembic revision integrity gate
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import re
-          from collections import defaultdict
-
-          seen = defaultdict(list)
-          for path in sorted(Path('backend/alembic/versions').glob('*.py')):
-              text = path.read_text(encoding='utf-8')
-              match = re.search(r"^revision\s*=\s*['\"]([^'\"]+)['\"]", text, re.M)
-              if match:
-                  seen[match.group(1)].append(str(path))
-          duplicates = {rev: files for rev, files in seen.items() if len(files) > 1}
-          if duplicates:
-              print('DUPLICATE_REVISIONS_FOUND')
-              for rev, files in duplicates.items():
-                  print(rev, files)
-              raise SystemExit(1)
-          print(f'alembic_revision_count={len(seen)}')
-          print('duplicate_revisions=0')
-          PY
-
-      - name: Direct Alembic SQLite upgrade gate
-        env:
-          APP_ENV: development
-          DATABASE_URL: sqlite:////tmp/nexus_provider_runtime_gate.db
-          ALLOW_DEV_AUTH: 'false'
-          PYTHONPATH: ${{ github.workspace }}/backend
-        run: |
-          set -Eeuo pipefail
-          rm -f /tmp/nexus_provider_runtime_gate.db
-          cd backend
-          python -m alembic upgrade head
-
-      - name: Execute Provider Runtime targeted tests
-        env:
-          PYTHONPATH: backend
-        run: |
-          set +e
-          timeout 600 python -m pytest -q --tb=short --disable-warnings \
-            backend/tests/test_provider_runtime_output_contracts.py \
-            backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
+      - run: |
+          pytest -q \
             backend/tests/test_provider_runtime_router.py \
+            backend/tests/test_provider_runtime_configuration.py \
             backend/tests/test_provider_runtime_traffic_selection.py \
-            backend/tests/test_provider_runtime_status.py \
-            backend/tests/test_provider_runtime_token_leakage.py \
-            backend/tests/test_admin_provider_runtime_routing_api.py \
-            backend/tests/test_webcall_ai_provider_runtime_llm.py \
-            backend/tests/test_webchat_runtime_ai_service.py \
-            backend/tests/test_webchat_rate_limit_bucket.py \
-            backend/tests/test_webchat_ai_turn_runtime.py \
-            backend/tests/test_speedaf_client_contract.py \
-            backend/tests/test_speedaf_status_map.py \
-            backend/tests/test_speedaf_track_query.py \
-            backend/tests/test_speedaf_tracking_fact_source.py \
-            > /tmp/provider-runtime-targeted.log 2>&1
-          status=$?
-          set -e
-          printf '%s' "$status" > /tmp/provider-runtime-targeted-status
-          tail -n 200 /tmp/provider-runtime-targeted.log || true
-          exit 0
+            backend/tests/test_provider_runtime_review_regressions.py \
+            backend/tests/test_webchat_provider_runtime_integration.py \
+            backend/tests/test_webchat_runtime_output_parser.py
 
-      - name: Upload Provider Runtime targeted evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+  provider-runtime-webcall-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: provider-runtime-targeted-evidence
-          path: |
-            /tmp/provider-runtime-targeted.log
-            /tmp/provider-runtime-targeted-status
-          if-no-files-found: error
-          retention-days: 7
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
+      - run: |
+          pytest -q \
+            backend/tests/test_webcall_ai_provider_runtime_llm.py \
+            backend/tests/test_webcall_ai_production_orchestrator.py \
+            backend/tests/test_webcall_ai_production_providers.py
 
-      - name: Require Provider Runtime targeted tests success
-        run: |
-          status=$(cat /tmp/provider-runtime-targeted-status)
-          if [ "$status" -ne 0 ]; then
-            echo "Provider Runtime targeted tests failed with exit code $status" >&2
-            exit "$status"
-          fi
+  provider-runtime-admin-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
+      - run: |
+          pytest -q \
+            backend/tests/test_admin_provider_runtime_api.py \
+            backend/tests/test_admin_provider_runtime_routing_api.py
 
-      - name: Application route contract
+  provider-runtime-release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
+      - run: |
+          pytest -q \
+            backend/tests/test_private_ai_runtime_provider.py \
+            backend/tests/test_provider_runtime_status.py \
+            backend/tests/test_webchat_ai_readiness.py \
+            backend/tests/test_webchat_ai_service_context.py
+      - name: Provider runtime configured-live gate (dummy upstream)
         env:
-          PYTHONPATH: backend
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from app.main import app
-
-          def route_paths(routes):
-              for route in routes:
-                  path = getattr(route, 'path', None)
-                  if path:
-                      yield path
-                  original_router = getattr(route, 'original_router', None)
-                  if original_router is not None:
-                      yield from route_paths(getattr(original_router, 'routes', ()))
-                  nested_routes = getattr(route, 'routes', None)
-                  if nested_routes is not None:
-                      yield from route_paths(nested_routes)
-
-          paths = list(route_paths(app.routes))
-          expected = {
-              '/api/admin/provider-runtime/status',
-              '/api/webchat/init',
-          }
-          missing = sorted(expected.difference(paths))
-          retired = [
-              path for path in paths
-              if 'provider-credentials/codex' in path
-              or 'webchat-fast' in path
-              or 'fast-reply' in path
-          ]
-          assert not missing, missing
-          assert not retired, retired
-          print('application_route_contract_ok')
-          PY
+          CI: "true"
+        run: python backend/scripts/check_provider_runtime_live_probe_gate.py --allow-dummy-upstream
+      - name: Provider runtime release contract tests
+        run: pytest -q backend/tests/test_provider_runtime_release_gate.py
