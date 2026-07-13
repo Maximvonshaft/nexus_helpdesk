@@ -47,6 +47,7 @@ REQUIRED_ACCEPTANCE_CHECKS = {
     "metrics",
     "model_identity",
 }
+FORBIDDEN_COMMAND_LAUNCHERS = frozenset({"env"})
 FORBIDDEN_SHELL_EXECUTABLES = frozenset(
     {
         "sh",
@@ -129,7 +130,7 @@ def _integer(value: Any, *, field: str, minimum: int, maximum: int) -> int:
 def _string_list(value: Any, *, field: str, minimum: int = 1) -> list[str]:
     if not isinstance(value, list) or len(value) < minimum:
         _fail(f"{field}_must_be_string_list", field)
-    items = [_string(item, field=f"{field}[{index}]") for index, item in enumerate(value)]
+    items = [_string(item, field=f"{field}[{index}]\") for index, item in enumerate(value)]
     if len(items) != len(set(items)):
         _fail(f"{field}_must_be_unique", field)
     return items
@@ -216,7 +217,10 @@ def _argv_commands(value: Any, *, field: str) -> list[list[str]]:
             for arg in argv
         ):
             _fail(f"{command_field}_inline_secret_argument_forbidden", command_field)
-        if any(_command_token_basename(arg) in FORBIDDEN_SHELL_EXECUTABLES for arg in argv):
+        if (
+            _command_token_basename(argv[0]) in FORBIDDEN_COMMAND_LAUNCHERS
+            or any(_command_token_basename(arg) in FORBIDDEN_SHELL_EXECUTABLES for arg in argv)
+        ):
             _fail(f"{command_field}_shell_execution_forbidden", command_field)
         commands.append(argv)
     return commands
