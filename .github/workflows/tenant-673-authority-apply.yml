@@ -1,9 +1,9 @@
 name: tenant-673-authority-apply
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/tenant-673-authority-apply.yml
+  push:
+    branches:
+      - tmp/tenant-673-authority-fix
   workflow_dispatch:
 
 permissions:
@@ -24,7 +24,8 @@ jobs:
       AUTO_INIT_DB: "false"
       SEED_DEMO_DATA: "false"
       TARGET_BRANCH: feat/tenant-additive-schema-546-delivery
-      EXPECTED_TARGET_HEAD: 3357a7af08f688c3c76c068434e79f95ef540a20
+      EXPECTED_TARGET_HEAD: 23a41f9b0eff9549125d132f3b28f4b31de3c497
+      PERMANENT_GATE_COMMIT: 48c60c8e0b40d1a41ab182fd7c6e38faf60ffacd
     steps:
       - name: Checkout authoritative Phase 1 branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -51,31 +52,39 @@ jobs:
           set -Eeuo pipefail
           python -m pip install -r backend/requirements.txt
 
-      - name: Close canonical Tenant identity gaps
+      - name: Apply reviewed corrections and restore permanent workflows
         run: |
           set -Eeuo pipefail
+          git fetch --no-tags origin main "${PERMANENT_GATE_COMMIT}"
+          git show origin/main:.github/workflows/backend-ci.yml > .github/workflows/backend-ci.yml
+          git show "${PERMANENT_GATE_COMMIT}:.github/workflows/tenant-principal-schema-gate.yml" \
+            > .github/workflows/tenant-principal-schema-gate.yml
           python - <<'PY'
           from pathlib import Path
 
           def replace_once(path: str, old: str, new: str) -> None:
               target = Path(path)
-              source = target.read_text(encoding='utf-8')
+              source = target.read_text(encoding="utf-8")
               if source.count(old) != 1:
-                  raise SystemExit(f'{path}: replacement count={source.count(old)} for {old!r}')
-              target.write_text(source.replace(old, new, 1), encoding='utf-8')
+                  raise SystemExit(f"{path}: replacement count={source.count(old)} for {old!r}")
+              target.write_text(source.replace(old, new, 1), encoding="utf-8")
 
           for path in (
-              'backend/app/models.py',
-              'backend/alembic/versions/20260713_0059_add_tenant_principal.py',
+              "backend/app/models.py",
+              "backend/alembic/versions/20260713_0059_add_tenant_principal.py",
           ):
-              replace_once(path, 'tenant_key = lower(tenant_key)', 'tenant_key = lower(trim(tenant_key))')
+              replace_once(path, "tenant_key = lower(tenant_key)", "tenant_key = lower(trim(tenant_key))")
               replace_once(path, "tenant_key <> 'default'", "lower(trim(tenant_key)) <> 'default'")
 
-          test_path = Path('backend/tests/test_tenant_principal_additive_schema.py')
-          source = test_path.read_text(encoding='utf-8')
-          if 'import pytest\n' not in source:
-              source = source.replace('import sys\n\nimport sqlalchemy as sa\n', 'import sys\n\nimport pytest\nimport sqlalchemy as sa\n', 1)
-          marker = '\n\ndef test_additive_migration_contains_no_insert_or_backfill_statement() -> None:\n'
+          test_path = Path("backend/tests/test_tenant_principal_additive_schema.py")
+          source = test_path.read_text(encoding="utf-8")
+          if "import pytest\n" not in source:
+              source = source.replace(
+                  "import sys\n\nimport sqlalchemy as sa\n",
+                  "import sys\n\nimport pytest\nimport sqlalchemy as sa\n",
+                  1,
+              )
+          marker = "\n\ndef test_additive_migration_contains_no_insert_or_backfill_statement() -> None:\n"
           addition = '''
 
 
@@ -91,7 +100,6 @@ def test_tenant_key_constraints_reject_padding_case_and_forbidden_default(tmp_pa
         )
     metadata.create_all(engine)
     migration = _load_migration()
-
     with engine.begin() as connection:
         migration.op = Operations(MigrationContext.configure(connection))
         migration.upgrade()
@@ -108,68 +116,48 @@ def test_tenant_key_constraints_reject_padding_case_and_forbidden_default(tmp_pa
                         ),
                         {"id": row_id, "tenant_key": tenant_key},
                     )
-        connection.execute(
-            sa.text(
-                "INSERT INTO tenants (id, tenant_key, display_name, is_active) "
-                "VALUES (99, 'tenant-a', 'Tenant A', 1)"
-            )
-        )
+        connection.execute(sa.text(
+            "INSERT INTO tenants (id, tenant_key, display_name, is_active) "
+            "VALUES (99, 'tenant-a', 'Tenant A', 1)"
+        ))
         assert connection.execute(sa.text("SELECT tenant_key FROM tenants")).scalar_one() == "tenant-a"
     engine.dispose()
 '''
-          if 'test_tenant_key_constraints_reject_padding_case_and_forbidden_default' not in source:
+          if "test_tenant_key_constraints_reject_padding_case_and_forbidden_default" not in source:
               if source.count(marker) != 1:
-                  raise SystemExit(f'test marker count={source.count(marker)}')
+                  raise SystemExit(f"test marker count={source.count(marker)}")
               source = source.replace(marker, addition + marker, 1)
-          test_path.write_text(source, encoding='utf-8')
+          test_path.write_text(source, encoding="utf-8")
 
           replace_once(
-              'scripts/qualification/tenant/test_tenant_principal_preflight.py',
+              "scripts/qualification/tenant/test_tenant_principal_preflight.py",
               'sa.Column("tenant_key", sa.String(120), nullable=False)',
               'sa.Column("tenant_key", sa.String(80), nullable=False)',
           )
 
-          gate = Path('.github/workflows/tenant-principal-schema-gate.yml')
-          source = gate.read_text(encoding='utf-8')
-          upgrade_marker = '''          alembic upgrade head
-          test "$(alembic heads | awk '{print $1}')" = "20260713_0059"
-'''
-          upgrade_addition = upgrade_marker + '''          test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='tenants' AND column_name='tenant_key'")" = "80"
-          for table in markets teams users channel_accounts customers tickets; do
+          gate = Path(".github/workflows/tenant-principal-schema-gate.yml")
+          source = gate.read_text(encoding="utf-8")
+          marker = '''          for table in markets teams users channel_accounts customers tickets; do
             test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' AND column_name='tenant_assignment_version'")" = "80"
           done
-          if psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -v ON_ERROR_STOP=1 -c "INSERT INTO tenants (tenant_key, display_name) VALUES (' default ', 'Forbidden')"; then
+'''
+          addition = marker + '''          if psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -v ON_ERROR_STOP=1 -c "INSERT INTO tenants (tenant_key, display_name) VALUES (' default ', 'Forbidden')"; then
             echo "padded default Tenant key unexpectedly accepted" >&2
             exit 1
           fi
 '''
-          if source.count(upgrade_marker) != 1:
-              raise SystemExit(f'gate upgrade marker count={source.count(upgrade_marker)}')
-          source = source.replace(upgrade_marker, upgrade_addition, 1)
-          replace = '"tenant_assignment_version": "sha256:schema-gate-v1",'
-          if source.count(replace) != 1:
-              raise SystemExit(f'gate digest fixture count={source.count(replace)}')
-          source = source.replace(replace, '"tenant_assignment_version": "sha256:" + ("a" * 64),', 1)
-          evidence_marker = '              "core_rows_preserved": True,\n'
-          if source.count(evidence_marker) != 1:
-              raise SystemExit(f'evidence marker count={source.count(evidence_marker)}')
-          source = source.replace(
-              evidence_marker,
-              evidence_marker
-              + '              "canonical_tenant_key_max_length": 80,\n'
-              + '              "assignment_version_max_length": 80,\n',
-              1,
-          )
-          gate.write_text(source, encoding='utf-8')
+          if source.count(marker) != 1:
+              raise SystemExit(f"permanent gate marker count={source.count(marker)}")
+          gate.write_text(source.replace(marker, addition, 1), encoding="utf-8")
 
-          doc = Path('docs/architecture/tenant-principal-migration.md')
-          source = doc.read_text(encoding='utf-8')
-          source = source.replace(
-              '- `tenant_key` is non-empty, lowercase and cannot equal `default`;',
-              '- `tenant_key` is non-empty, lowercase, has no surrounding whitespace and cannot normalize to `default`;',
+          doc = Path("docs/architecture/tenant-principal-migration.md")
+          source = doc.read_text(encoding="utf-8").replace(
+              "- `tenant_key` is non-empty, lowercase and cannot equal `default`;",
+              "- `tenant_key` is non-empty, lowercase, has no surrounding whitespace and cannot normalize to `default`;",
           )
-          doc.write_text(source, encoding='utf-8')
+          doc.write_text(source, encoding="utf-8")
           PY
+          rm -f .github/workflows/tenant-phase1-authority-fix-temp.yml
 
       - name: Verify corrected authority contract
         run: |
@@ -185,13 +173,12 @@ def test_tenant_key_constraints_reject_padding_case_and_forbidden_default(tmp_pa
           python -m unittest scripts/qualification/tenant/test_tenant_principal_preflight.py
           git diff --check
 
-      - name: Remove old bootstrap and push authoritative fix
+      - name: Commit and push authoritative correction
         run: |
           set -Eeuo pipefail
-          rm -f .github/workflows/tenant-phase1-authority-fix-temp.yml
           git add -A
           git diff --cached --check
-          git config user.name 'nexus-osr-tenant-bot'
-          git config user.email 'nexus-osr-tenant-bot@users.noreply.github.com'
-          git commit -m 'fix(tenant): reject normalized default identities (#546)'
+          git config user.name "nexus-osr-tenant-bot"
+          git config user.email "nexus-osr-tenant-bot@users.noreply.github.com"
+          git commit -m "fix(tenant): reject normalized default identities (#546)"
           git push origin HEAD:"${TARGET_BRANCH}"
