@@ -1,7 +1,7 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-13.3",
-  "audited_main_sha": "e96dac837b4f02a297602259953d7c274b9c2063",
+  "inventory_version": "2026-07-13.4",
+  "audited_main_sha": "df4863d4e4c77b47d694d4eca3f655fa93a8e67b",
   "discovery_tokens": [
     "ExternalChannel",
     "external_channel",
@@ -228,11 +228,9 @@
       "path": null,
       "paths": [
         "LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md",
-        "PATCH_MANIFEST.md",
         "README.md",
         "ROUND26_FRONTEND_HARDENING_REPORT.md",
         "ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md",
-        "VERIFY_RESULTS.md",
         "pr_body.md"
       ],
       "glob": null,
