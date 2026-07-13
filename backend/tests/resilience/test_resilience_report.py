@@ -31,18 +31,40 @@ def _write_junit(
     failures: int = 0,
     errors: int = 0,
     skipped: int = 0,
+    declared_tests: int | None = None,
 ) -> None:
     cases = "".join(
         f'<testcase classname="backend.tests.resilience" name="{name}" time="0.1" />'
         for name in names
     )
+    tests = len(names) if declared_tests is None else declared_tests
     path.write_text(
         (
-            f'<testsuite tests="{len(names)}" failures="{failures}" errors="{errors}" '
+            f'<testsuite tests="{tests}" failures="{failures}" errors="{errors}" '
             f'skipped="{skipped}" time="1.234">{cases}</testsuite>'
         ),
         encoding="utf-8",
     )
+
+
+def _expected_coverage(
+    *, observed: int = 3, missing: int = 0, duplicated: int = 0, unexpected: int = 0
+) -> dict[str, int]:
+    return {
+        "expected": 3,
+        "observed": observed,
+        "missing": missing,
+        "duplicated": duplicated,
+        "unexpected": unexpected,
+    }
+
+
+def _assert_no_testcase_details(report: dict[str, object], *extra_markers: str) -> None:
+    encoded = json.dumps(report, sort_keys=True)
+    assert "backend.tests.resilience" not in encoded
+    assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
+    assert not any(marker in encoded for marker in extra_markers)
+    assert len(encoded.encode("utf-8")) < 8192
 
 
 def test_report_contains_only_bounded_aggregate_evidence(tmp_path: Path) -> None:
@@ -54,13 +76,10 @@ def test_report_contains_only_bounded_aggregate_evidence(tmp_path: Path) -> None
 
     assert report["status"] == "pass"
     assert report["counts"] == {"tests": 3, "failures": 0, "errors": 0, "skipped": 0}
-    assert report["required_scenarios"] == {"expected": 3, "observed": 3, "missing": 0}
+    assert report["required_scenarios"] == _expected_coverage()
     assert report["external_effects"] is False
     assert report["production_data_used"] is False
-    encoded = json.dumps(report, sort_keys=True)
-    assert "backend.tests.resilience" not in encoded
-    assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
-    assert len(encoded.encode("utf-8")) < 8192
+    _assert_no_testcase_details(report)
 
 
 def test_report_fails_closed_on_failed_or_incomplete_suite(tmp_path: Path) -> None:
@@ -72,7 +91,7 @@ def test_report_fails_closed_on_failed_or_incomplete_suite(tmp_path: Path) -> No
 
     assert report["status"] == "fail"
     assert report["source_sha"] == "unknown"
-    assert report["required_scenarios"]["missing"] == 1
+    assert report["required_scenarios"] == _expected_coverage(observed=2, missing=1)
 
 
 def test_report_fails_closed_when_required_scenarios_are_skipped(tmp_path: Path) -> None:
@@ -89,13 +108,28 @@ def test_report_fails_closed_when_required_scenarios_are_skipped(tmp_path: Path)
 def test_report_fails_closed_when_an_unrelated_test_replaces_a_required_scenario(tmp_path: Path) -> None:
     module = _load_module()
     junit = tmp_path / "junit.xml"
-    _write_junit(junit, names=REQUIRED_TEST_NAMES[:2] + ("test_unrelated_green_check",))
+    marker = "test_unrelated_green_check"
+    _write_junit(junit, names=REQUIRED_TEST_NAMES[:2] + (marker,))
 
     report = module.build_report(junit, pytest_exit_code=0, source_sha="c" * 40)
 
     assert report["status"] == "fail"
     assert report["counts"]["tests"] == 3
-    assert report["required_scenarios"] == {"expected": 3, "observed": 2, "missing": 1}
+    assert report["required_scenarios"] == _expected_coverage(observed=2, missing=1, unexpected=1)
+    _assert_no_testcase_details(report, marker)
+
+
+def test_report_fails_closed_when_required_scenario_is_renamed(tmp_path: Path) -> None:
+    module = _load_module()
+    junit = tmp_path / "junit.xml"
+    renamed = REQUIRED_TEST_NAMES[2] + "_renamed"
+    _write_junit(junit, names=REQUIRED_TEST_NAMES[:2] + (renamed,))
+
+    report = module.build_report(junit, pytest_exit_code=0, source_sha="c" * 40)
+
+    assert report["status"] == "fail"
+    assert report["required_scenarios"] == _expected_coverage(observed=2, missing=1, unexpected=1)
+    _assert_no_testcase_details(report, renamed)
 
 
 def test_report_accepts_pytest_parameter_suffixes_without_emitting_names(tmp_path: Path) -> None:
@@ -107,10 +141,8 @@ def test_report_accepts_pytest_parameter_suffixes_without_emitting_names(tmp_pat
     report = module.build_report(junit, pytest_exit_code=0, source_sha="d" * 40)
 
     assert report["status"] == "pass"
-    assert report["required_scenarios"] == {"expected": 3, "observed": 3, "missing": 0}
-    encoded = json.dumps(report, sort_keys=True)
-    assert PARAMETER_MARKER not in encoded
-    assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
+    assert report["required_scenarios"] == _expected_coverage()
+    _assert_no_testcase_details(report, PARAMETER_MARKER)
 
 
 def test_report_fails_closed_without_exact_source_identity(tmp_path: Path) -> None:
@@ -138,5 +170,30 @@ def test_report_fails_closed_when_required_scenario_is_duplicated(tmp_path: Path
     report = module.build_report(junit, pytest_exit_code=0, source_sha="e" * 40)
 
     assert report["status"] == "fail"
-    encoded = json.dumps(report, sort_keys=True)
-    assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
+    assert report["required_scenarios"] == _expected_coverage(duplicated=1)
+    _assert_no_testcase_details(report)
+
+
+def test_report_fails_closed_when_unrelated_test_is_added(tmp_path: Path) -> None:
+    module = _load_module()
+    junit = tmp_path / "junit.xml"
+    marker = "test_extra_unrelated_green_check"
+    _write_junit(junit, names=REQUIRED_TEST_NAMES + (marker,))
+
+    report = module.build_report(junit, pytest_exit_code=0, source_sha="f" * 40)
+
+    assert report["status"] == "fail"
+    assert report["required_scenarios"] == _expected_coverage(unexpected=1)
+    _assert_no_testcase_details(report, marker)
+
+
+def test_report_fails_closed_when_declared_and_actual_test_counts_differ(tmp_path: Path) -> None:
+    module = _load_module()
+    junit = tmp_path / "junit.xml"
+    _write_junit(junit, declared_tests=4)
+
+    report = module.build_report(junit, pytest_exit_code=0, source_sha="1" * 40)
+
+    assert report["status"] == "fail"
+    assert report["counts"]["tests"] == 4
+    assert report["required_scenarios"] == _expected_coverage()
