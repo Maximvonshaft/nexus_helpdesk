@@ -4,7 +4,7 @@
 
 `backend/app/services/nexus_osr/release_profiles.py` is the single framework-light authority for OSR release-profile semantics. It prevents process health, an empty queue or a configured Provider from being interpreted as end-to-end business readiness.
 
-This module is a contract foundation. It performs no database, network, filesystem, Provider, outbound or deployment operation and is not wired to `/healthz`, `/readyz` or an Admin API by this slice.
+This module is a **Partial Foundation**. It performs no database, network, filesystem, Provider, outbound or deployment operation and is not wired to `/healthz`, `/readyz` or an Admin API by this slice. Parent Work Item #549 remains open for collectors and Runtime integration.
 
 ## Schema
 
@@ -81,11 +81,13 @@ Controls:
 - maximum 64 mapping entries and 64 sequence items;
 - maximum depth 4;
 - maximum string length 512 and key length 128;
-- finite numeric values only;
-- unsupported objects fail closed;
-- snake, kebab, space and camel-case key segmentation;
-- redaction for terminal secret, password, authorization, credential, cookie, payload and token keys, plus API/private/access/signing-key pairs;
+- finite numeric values and integers with absolute value no greater than `10^18`;
+- unsupported objects and non-Mapping roots fail closed;
+- snake, kebab, space, acronym and camel-case key segmentation;
+- redaction for terminal secret, password, authorization, credential, cookie, payload and token keys, plus API/private/access/signing/secret-key pairs;
 - plural token-count parameters such as `max_tokens`, `input_tokens`, `output_tokens`, `total_tokens`, `context_tokens`, `usage_tokens` and `budget_tokens` remain non-secret so their drift changes the digest.
+
+The complete configuration shape is validated **before** sensitive values are replaced. Unsupported, over-depth, oversized or invalid values under `password`, `api_key`, `secret_key` or any other sensitive key therefore fail closed rather than being hidden by redaction.
 
 Consequently, changing a secret value does not change the digest, while changing non-secret configuration does. The digest is an identity aid, not proof that the source configuration is safe.
 
@@ -109,7 +111,8 @@ Merging this core contract does not:
 - change `/healthz` or `/readyz`;
 - enable Providers, Dispatch, Voice or external writes;
 - prove recovery, resilience or final M12 readiness;
-- authorize deployment, release tags, production configuration or data mutation.
+- authorize deployment, release tags, production configuration or data mutation;
+- close parent Work Item #549.
 
 ## Verification
 

@@ -3,9 +3,10 @@
 ## Status and authority
 
 - Work Item: #549
-- Baseline: `main@df4863d4e4c77b47d694d4eca3f655fa93a8e67b`
-- Delivery: bounded core contract only
+- Current reconciliation baseline: `main@7006af1e88d7681713cfd5ad4b540a3964d780f1`
+- Delivery: **Partial Foundation** in PR #700; bounded core contract only
 - Historical PR #578: closed/unmerged evidence only
+- Merge and parent-Issue closure: unified acceptance authority only
 
 ## Problem
 
@@ -76,21 +77,22 @@ This registry is intentionally broader than currently implemented collectors. A 
 
 ### Evidence
 
-`CapabilityEvidence` contains only a fixed state. No raw free-text detail is accepted by the evaluator. Results contain only profile/schema/status and sorted fixed reason codes.
+The evaluator accepts only fixed capability states. No raw free-text detail is accepted. Results contain only profile/schema/status and sorted fixed reason codes.
 
 ### Configuration fingerprint
 
 The helper returns only a lowercase SHA-256 digest. It:
 
 - sorts mappings deterministically;
-- limits depth, entry count, list length and string length;
-- splits snake, kebab, space and camel-case keys into segments;
-- redacts values for terminal secret/password/authorization/credential/cookie/payload/token keys and API/private/access/signing-key pairs;
+- limits depth, mapping entry count, sequence length, key length, string length and numeric magnitude;
+- splits snake, kebab, space, acronym and camel-case keys into segments;
+- redacts values for terminal secret/password/authorization/credential/cookie/payload/token keys and API/private/access/signing/secret-key pairs;
 - treats plural token-count keys such as `max_tokens`, `input_tokens` and `output_tokens` as non-secret configuration so their changes remain visible;
-- accepts only JSON-like scalar/container values;
-- rejects unsupported, oversized or ambiguous input.
+- accepts only bounded JSON-like scalar/container values;
+- validates the complete shape before applying any redaction;
+- rejects unsupported, non-finite, oversized, over-depth or otherwise ambiguous input.
 
-Secret value changes do not alter the digest because values are redacted; non-secret configuration changes do.
+Secret value changes do not alter the digest because values are redacted; non-secret configuration changes do. Invalid values under a sensitive key still fail closed because validation precedes redaction.
 
 ## Status precedence
 
@@ -106,4 +108,4 @@ Revert the additive module, tests, Workflow and documentation. No runtime, schem
 
 ## Follow-up boundary
 
-A later #549 slice may consume accepted collectors and wire a read-only aggregate. It must not weaken these semantics, bypass normalized Settings or report Pilot/Full OSR ready while #546/#567 authority is absent.
+A later #549 slice may consume accepted collectors and wire a read-only aggregate. It must not weaken these semantics, bypass normalized Settings or report Pilot/Full OSR ready while #546/#567 authority is absent. PR #700 does not close #549 and does not authorize Runtime integration or deployment.
