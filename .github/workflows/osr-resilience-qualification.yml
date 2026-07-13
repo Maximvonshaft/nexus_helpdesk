@@ -5,11 +5,16 @@ on:
     branches:
       - main
     paths:
+      - "backend/app/enums.py"
+      - "backend/app/model_registry.py"
       - "backend/app/models.py"
+      - "backend/app/settings.py"
       - "backend/app/services/background_jobs.py"
       - "backend/tests/resilience/**"
       - "backend/scripts/resilience/**"
       - "backend/alembic/**"
+      - "backend/requirements.txt"
+      - "scripts/security/scan_artifacts.py"
       - ".github/workflows/osr-resilience-qualification.yml"
   workflow_dispatch:
 
@@ -71,6 +76,11 @@ jobs:
           set -Eeuo pipefail
           python -m py_compile backend/scripts/resilience/build_resilience_report.py
           pytest -q backend/tests/resilience/test_resilience_report.py
+      - name: Verify one Alembic head
+        working-directory: backend
+        run: |
+          set -Eeuo pipefail
+          test "$(alembic heads | sed '/^[[:space:]]*$/d' | wc -l)" -eq 1
       - name: Upgrade disposable PostgreSQL to exact head
         working-directory: backend
         run: alembic upgrade head
