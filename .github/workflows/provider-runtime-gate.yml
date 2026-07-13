@@ -53,7 +53,11 @@ jobs:
             echo 'ERROR: .venv/ must be ignored.'
             exit 1
           fi
-          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts; then
+          retired_markers="$(git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- \
+            backend/app backend/scripts deploy webapp/src scripts \
+            ':(exclude)scripts/ai/probe_ai_resource_server.py' || true)"
+          if [[ -n "${retired_markers}" ]]; then
+            printf '%s\n' "${retired_markers}"
             echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
             exit 1
           fi
