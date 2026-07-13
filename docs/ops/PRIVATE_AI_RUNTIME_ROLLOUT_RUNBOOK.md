@@ -89,9 +89,9 @@ sha256(tenant_id,tenant_key,channel_key,session_id,scenario)%100
 
 The contract deliberately excludes random state, request IDs and worker identity. Reconstructing the same scoped request after a retry, worker change or restart therefore yields the same bucket. Changing Tenant, Tenant key, channel, session/conversation or scenario may deliberately produce a different bucket.
 
-Audit rows include only bounded `traffic_selection` evidence: schema version, configured mode, configuration errors, percentage, bucket, selected path, authoritative flag and reason. No customer message, token or upstream payload belongs in this summary.
+Audit rows include only bounded `traffic_selection` evidence: schema version, configured mode, configuration errors, allowed canary percentages, effective percentage, bucket, selected path, authoritative flag and reason. No customer message, token or upstream payload belongs in this summary.
 
-Traffic configuration is fail-closed. Any unsupported or explicitly empty mode, non-canonical/non-integer/out-of-range percentage, non-boolean persisted kill switch, or unsupported kill-switch environment value prevents a candidate call. The Router returns a bounded fixed error code and Admin status becomes `misconfigured`; Nexus does not silently clamp, coerce or substitute a permissive value.
+Traffic configuration is fail-closed. The only governed percentages are exactly `0`, `1`, `5`, `25` and `100`. Any unsupported or explicitly empty mode, percentage outside that set, non-canonical/non-integer percentage, non-boolean persisted kill switch, or unsupported kill-switch environment value prevents a candidate call. The Router returns a bounded fixed error code and Admin status becomes `misconfigured`; Nexus does not silently clamp, coerce or substitute a permissive value.
 
 For WebCall AI production providers:
 
@@ -157,35 +157,3 @@ docker compose --env-file deploy/.env.prod -f deploy/docker-compose.server.yml \
 Treat warmup as a deployment gate, not a container healthcheck. A warmup failure should block cutover or page the operator; it should not restart healthy web services in a loop. Expected timings and the actual model identity must come from the #586 capability proof rather than stale names in this document.
 
 Then run candidate WebChat smoke against the candidate app port. Provider audit rows must show the expected `traffic_selection.path`, no secret values, and parse rejects, health skips and timeouts must retain bounded traffic evidence and fail closed.
-
-## Cutover
-
-1. Start with `PROVIDER_RUNTIME_TRAFFIC_MODE=control` and `PROVIDER_RUNTIME_CANARY_PERCENT=0`. Prove that no candidate call occurs.
-2. Set `PROVIDER_RUNTIME_TRAFFIC_MODE=shadow`. Pass smoke and inspect bounded `shadow_generate` audit rows; prove that no customer reply or side effect is produced from the shadow output.
-3. Set `PROVIDER_RUNTIME_TRAFFIC_MODE=canary` while keeping the percentage at `0`; confirm the control path remains authoritative.
-4. Raise canary to `1`, then `5`, then `25`, then `100`, with a defined observation window and rollback threshold at each step.
-5. Keep `PROVIDER_RUNTIME_FALLBACK_PROVIDERS=[]`; backend fallback must return `reply:null`, not customer-visible text.
-6. Roll back instantly with:
-
-```env
-PROVIDER_RUNTIME_KILL_SWITCH=true
-```
-
-The valid true kill switch is higher priority than `control`, `shadow`, `canary`, percentage validation and mode validation. It suppresses candidate execution while still surfacing lower-priority configuration defects for repair.
-
-## Production Gates
-
-- Token is present only in a server-side file.
-- Browser network traces do not contain `47.87.143.41`, bearer tokens, or upstream WS query tokens.
-- Traffic mode, percentage, bucket contract, Admin status and audit path use `nexus.provider_runtime.traffic_selection.v1` consistently.
-- Invalid effective or persisted traffic configuration is `misconfigured` and performs no candidate call.
-- `0%` never sends an authoritative candidate request.
-- Identical server-owned scope maps to the same bucket across retries, workers and restarts.
-- Shadow output never becomes customer-visible and never performs a side effect.
-- A valid true kill switch suppresses every candidate call, including when lower-priority settings are malformed.
-- Health skips, timeouts and parse rejects retain bounded traffic-selection evidence.
-- WebChat runtime returns valid `nexus_webchat_runtime_reply_v1` output from `private_ai_runtime` only on an authoritative candidate path.
-- Live tracking status is never claimed without trusted tracking evidence.
-- WebCall voice remains same-origin through `/webchat/live/ws`.
-- Runtime capability/model identity is proven through #586 before rollout.
-- RAG embedding dimension is confirmed before writing production vectors.
