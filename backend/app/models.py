@@ -48,8 +48,8 @@ class Tenant(Base):
     __table_args__ = (
         UniqueConstraint("tenant_key", name="uq_tenants_tenant_key"),
         CheckConstraint("length(trim(tenant_key)) > 0", name="ck_tenants_key_nonempty"),
-        CheckConstraint("tenant_key = lower(tenant_key)", name="ck_tenants_key_lowercase"),
-        CheckConstraint("tenant_key <> 'default'", name="ck_tenants_key_not_default"),
+        CheckConstraint("tenant_key = lower(trim(tenant_key))", name="ck_tenants_key_lowercase"),
+        CheckConstraint("lower(trim(tenant_key)) <> 'default'", name="ck_tenants_key_not_default"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
