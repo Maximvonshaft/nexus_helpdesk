@@ -1,0 +1,210 @@
+name: verify-trusted-git-history-assurance
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-trusted-git-history-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-trusted-git-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout merged trusted assurance code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: Maximvonshaft/nexus_helpdesk
+          ref: df367f951051bfb99d6cbb0392505ff068ebaa15
+          path: .trusted
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact validation target as Git data
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: target
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Verify trusted and target identities
+        env:
+          TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C .trusted rev-parse HEAD)" = "df367f951051bfb99d6cbb0392505ff068ebaa15"
+          test "$(git -C target rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git -C target rev-parse --is-shallow-repository)" = "false"
+
+      - name: Setup Python immutable
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - name: Compile and test merged trusted scanner
+        env:
+          PYTHONPATH: .trusted/scripts/security
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            .trusted/scripts/security/scanner.py \
+            .trusted/scripts/security/scan_git_history.py \
+            .trusted/scripts/security/scan_artifacts.py \
+            .trusted/scripts/security/tests/test_scan_git_history.py \
+            .trusted/scripts/security/tests/test_scan_git_history_hardening.py
+          python -m unittest discover -s .trusted/scripts/security/tests -p 'test_*.py' -v
+
+      - name: Recreate trusted evidence workspace
+        run: |
+          set -Eeuo pipefail
+          rm -rf -- target/.nexus-history-evidence
+          install -d -m 0700 target/.nexus-history-evidence
+          test -d target/.nexus-history-evidence
+          test ! -L target/.nexus-history-evidence
+
+      - name: Scan exact target history with merged trusted code
+        id: history_scan
+        working-directory: target
+        run: |
+          set +e
+          python ../.trusted/scripts/security/scan_git_history.py \
+            --root . \
+            --allowlist ../.trusted/config/security/secret-scan-allowlist.json \
+            --max-blob-bytes 8388608 \
+            --output .nexus-history-evidence/history.json
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Require trusted regular history report
+        id: history_report
+        if: always()
+        working-directory: target
+        run: |
+          set -Eeuo pipefail
+          report=.nexus-history-evidence/history.json
+          regular=false
+          if [[ -f "$report" && ! -L "$report" ]]; then
+            test "$(wc -c < "$report")" -le 65536
+            regular=true
+          fi
+          echo "regular=${regular}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate history evidence with merged trusted code
+        id: artifact_scan
+        if: always() && steps.history_report.outputs.regular == 'true'
+        working-directory: target
+        run: |
+          set +e
+          python ../.trusted/scripts/security/scan_artifacts.py \
+            --root . \
+            --output .nexus-history-evidence/artifact-scan.json \
+            .nexus-history-evidence/history.json
+          code=$?
+          regular=false
+          if [[ -f .nexus-history-evidence/artifact-scan.json && ! -L .nexus-history-evidence/artifact-scan.json ]]; then
+            regular=true
+          fi
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          echo "regular=${regular}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Write sanitized status evidence
+        if: always()
+        working-directory: target
+        env:
+          TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+          HISTORY_EXIT: ${{ steps.history_scan.outputs.exit_code || '98' }}
+          HISTORY_REGULAR: ${{ steps.history_report.outputs.regular || 'false' }}
+          ARTIFACT_EXIT: ${{ steps.artifact_scan.outputs.exit_code || '98' }}
+          ARTIFACT_REGULAR: ${{ steps.artifact_scan.outputs.regular || 'false' }}
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          status = {
+              "schema_version": "nexus_security_git_history_validation_status_v1",
+              "trusted_scanner_sha": "df367f951051bfb99d6cbb0392505ff068ebaa15",
+              "target_sha256": hashlib.sha256(os.environ["TARGET_SHA"].encode("ascii")).hexdigest(),
+              "history_exit_code": int(os.environ.get("HISTORY_EXIT") or 98),
+              "history_report_regular": os.environ.get("HISTORY_REGULAR") == "true",
+              "artifact_scan_exit_code": int(os.environ.get("ARTIFACT_EXIT") or 98),
+              "artifact_report_regular": os.environ.get("ARTIFACT_REGULAR") == "true",
+          }
+          path = Path(".nexus-history-evidence/status.json")
+          path.write_text(json.dumps(status, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+          test -f .nexus-history-evidence/status.json
+          test ! -L .nexus-history-evidence/status.json
+
+      - name: Upload clean bounded evidence
+        if: >-
+          always() &&
+          steps.history_scan.outputs.exit_code == '0' &&
+          steps.history_report.outputs.regular == 'true' &&
+          steps.artifact_scan.outputs.exit_code == '0' &&
+          steps.artifact_scan.outputs.regular == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: trusted-git-history-validation
+          path: |
+            target/.nexus-history-evidence/history.json
+            target/.nexus-history-evidence/artifact-scan.json
+            target/.nexus-history-evidence/status.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload sanitized failure status
+        if: >-
+          always() && !(
+          steps.history_scan.outputs.exit_code == '0' &&
+          steps.history_report.outputs.regular == 'true' &&
+          steps.artifact_scan.outputs.exit_code == '0' &&
+          steps.artifact_scan.outputs.regular == 'true')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: trusted-git-history-validation-failure
+          path: target/.nexus-history-evidence/status.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce trusted clean complete validation
+        if: always()
+        working-directory: target
+        env:
+          HISTORY_EXIT: ${{ steps.history_scan.outputs.exit_code || '98' }}
+          HISTORY_REGULAR: ${{ steps.history_report.outputs.regular || 'false' }}
+          ARTIFACT_EXIT: ${{ steps.artifact_scan.outputs.exit_code || '98' }}
+          ARTIFACT_REGULAR: ${{ steps.artifact_scan.outputs.regular || 'false' }}
+        run: |
+          set -Eeuo pipefail
+          test "$HISTORY_EXIT" = "0"
+          test "$HISTORY_REGULAR" = "true"
+          test "$ARTIFACT_EXIT" = "0"
+          test "$ARTIFACT_REGULAR" = "true"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          history = json.loads(Path(".nexus-history-evidence/history.json").read_text(encoding="utf-8"))
+          artifact = json.loads(Path(".nexus-history-evidence/artifact-scan.json").read_text(encoding="utf-8"))
+          if history.get("status") != "pass" or history.get("complete") is not True:
+              raise SystemExit("trusted_history_validation_failed")
+          if history.get("accounted_blob_count") != history.get("reachable_blob_count"):
+              raise SystemExit("trusted_history_accounting_incomplete")
+          if artifact.get("status") != "pass" or artifact.get("finding_count") != 0:
+              raise SystemExit("trusted_history_artifact_scan_failed")
+          PY
