@@ -44,6 +44,13 @@ def _write(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(encoded, encoding="utf-8")
 
 
+def _validate_revision(value: str, *, reason: str) -> str:
+    normalized = str(value or "").strip()
+    if not _SAFE_REVISION.fullmatch(normalized):
+        raise RecoveryEvidenceError(reason)
+    return normalized
+
+
 def sha256_file(path: Path) -> str:
     if not path.is_file() or path.is_symlink():
         raise RecoveryEvidenceError("backup_file_invalid")
@@ -52,6 +59,39 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def migration_plan(*, observed_heads: tuple[str, ...], expected_head: str, output: Path) -> int:
+    expected = _validate_revision(expected_head, reason="expected_head_invalid")
+    normalized = tuple(_validate_revision(item, reason="observed_head_invalid") for item in observed_heads)
+    if len(normalized) > 1:
+        raise RecoveryEvidenceError("migration_heads_multiple")
+    if len(normalized) == 1 and normalized[0] == expected:
+        status = "current"
+        action = "none"
+        code = 0
+    elif len(normalized) == 1:
+        status = "repair_required"
+        action = "alembic_upgrade_head"
+        code = 1
+    else:
+        status = "repair_required"
+        action = "alembic_upgrade_head"
+        code = 1
+    _write(
+        output,
+        {
+            "schema_version": "nexus_migration_repair_plan_v1",
+            "status": status,
+            "action": action,
+            "expected_head": expected,
+            "observed_heads": list(normalized),
+            "apply_authorized": False,
+            "production_data_used": False,
+            "production_mutation_performed": False,
+        },
+    )
+    return code
 
 
 def snapshot(database_url: str, output: Path, *, marker_code: str) -> int:
@@ -72,8 +112,9 @@ def snapshot(database_url: str, output: Path, *, marker_code: str) -> int:
             revision_rows = connection.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num")
             ).scalars().all()
-            if len(revision_rows) != 1 or not _SAFE_REVISION.fullmatch(str(revision_rows[0])):
+            if len(revision_rows) != 1:
                 raise RecoveryEvidenceError("alembic_head_invalid")
+            revision = _validate_revision(str(revision_rows[0]), reason="alembic_head_invalid")
             for table_name in tables:
                 quoted = preparer.quote(table_name)
                 counts[table_name] = int(connection.execute(text(f"SELECT count(*) FROM {quoted}")).scalar_one())
@@ -95,7 +136,7 @@ def snapshot(database_url: str, output: Path, *, marker_code: str) -> int:
             output,
             {
                 "schema_version": "nexus_recovery_snapshot_v1",
-                "alembic_head": str(revision_rows[0]),
+                "alembic_head": revision,
                 "table_count": len(tables),
                 "tables": counts,
                 "invalid_foreign_key_count": invalid_fk_count,
@@ -191,6 +232,11 @@ def main() -> int:
     digest_parser = sub.add_parser("digest")
     digest_parser.add_argument("--file", type=Path, required=True)
 
+    plan_parser = sub.add_parser("migration-plan")
+    plan_parser.add_argument("--observed-head", action="append", default=[])
+    plan_parser.add_argument("--expected-head", required=True)
+    plan_parser.add_argument("--output", type=Path, required=True)
+
     compare_parser = sub.add_parser("compare")
     compare_parser.add_argument("--source", type=Path, required=True)
     compare_parser.add_argument("--restored", type=Path, required=True)
@@ -211,6 +257,12 @@ def main() -> int:
         if args.command == "digest":
             print(sha256_file(args.file))
             return 0
+        if args.command == "migration-plan":
+            return migration_plan(
+                observed_heads=tuple(args.observed_head),
+                expected_head=args.expected_head,
+                output=args.output,
+            )
         return compare(
             args.source,
             args.restored,
