@@ -62,6 +62,8 @@ jobs:
       SOURCE_NATIVE_URL: postgresql://nexus:nexus@127.0.0.1:5432/nexus_source
       RESTORE_APP_URL: postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus_restore
       RESTORE_NATIVE_URL: postgresql://nexus:nexus@127.0.0.1:5432/nexus_restore
+      RECOVERY_ADMIN_NATIVE_URL: postgresql://nexus:nexus@127.0.0.1:5432/postgres
+      RECOVERY_ALLOW_DATABASE_RECREATE: "I_UNDERSTAND"
       QUALIFICATION_MARKER: QUAL-RCV-001
       RTO_TARGET_SECONDS: "120"
       RPO_TARGET_SECONDS: "60"
