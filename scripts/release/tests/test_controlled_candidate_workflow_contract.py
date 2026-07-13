@@ -36,6 +36,9 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("packages: write", WORKFLOW)
         self.assertIn("attestations: write", WORKFLOW)
         self.assertIn("id-token: write", WORKFLOW)
+        bind_job = WORKFLOW.split("  bind-and-attest:", 1)[1]
+        self.assertIn("artifact-metadata: write", bind_job)
+        self.assertEqual(WORKFLOW.count("artifact-metadata: write"), 1)
 
     def test_actions_are_pinned_and_no_mutable_action_tags(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
@@ -111,6 +114,7 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
         self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
         self.assertIn("push-to-registry: true", WORKFLOW)
+        self.assertIn("create-storage-record: true", WORKFLOW)
 
     def test_recovery_and_external_effect_safety_are_required(self) -> None:
         self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW + "\n" + HELPERS)
