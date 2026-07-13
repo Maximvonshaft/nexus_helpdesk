@@ -46,8 +46,10 @@ Each domain has:
 - one allowed disposition;
 - `deletion_authorized=false`;
 - rationale and prerequisites;
-- exact, glob or path-scoped content selectors;
+- exact paths, case-insensitive globs, optional validated path regexes or path-scoped content selectors;
 - references to authoritative Issues, PRs or documents.
+
+Domain `path_regexes` are optional and compile during strict registry validation. They are evaluated as full repository-path matches, not substring searches. Root-scoped regexes must remain bounded to their approved contract locations; the protected versioned-contract domain covers direct and nested pure-numeric versions only under its four declared roots.
 
 Reachable Git history is intentionally not represented by a tracked-file selector. Its authority remains #565; a tracked placeholder such as `.gitignore` would be false evidence.
 
