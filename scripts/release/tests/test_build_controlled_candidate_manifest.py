@@ -18,6 +18,9 @@ class ControlledCandidateManifestTests(unittest.TestCase):
     image_id = "sha256:" + "b" * 64
     registry_digest = "sha256:" + "c" * 64
     migration = "20260713_0059"
+    build_time = "20260713T190000Z"
+    app_version = "controlled-aaaaaaaaaaaa"
+    local_tag = "nexusdesk/helpdesk:rc-test-" + source
 
     def _write(self, root: Path, name: str, payload: dict) -> Path:
         path = root / name
@@ -31,6 +34,7 @@ class ControlledCandidateManifestTests(unittest.TestCase):
             "candidate": {
                 "source_sha": self.source,
                 "frontend_build_sha": self.source,
+                "image_tag": self.local_tag,
                 "image_id": self.image_id,
                 "migration_revision": self.migration,
                 "config_profile": "rc-test-isolated-v1",
@@ -87,6 +91,10 @@ class ControlledCandidateManifestTests(unittest.TestCase):
             "schema": "nexus.osr.registry-publish-receipt.v1",
             "status": "pass",
             "source_sha": self.source,
+            "frontend_build_sha": self.source,
+            "build_time": self.build_time,
+            "app_version": self.app_version,
+            "embedded_image_tag": self.local_tag,
             "registry_image": "ghcr.io/maximvonshaft/nexus_helpdesk",
             "registry_digest": self.registry_digest,
             "registry_reference": "ghcr.io/maximvonshaft/nexus_helpdesk@" + self.registry_digest,
@@ -135,6 +143,8 @@ class ControlledCandidateManifestTests(unittest.TestCase):
                 payload["candidate"]["registry_reference"],
                 "ghcr.io/maximvonshaft/nexus_helpdesk@" + self.registry_digest,
             )
+            self.assertEqual(payload["candidate"]["build_time"], self.build_time)
+            self.assertEqual(payload["candidate"]["app_version"], self.app_version)
             self.assertFalse(payload["safety"]["production_ready"])
             self.assertFalse(payload["safety"]["external_effects_authorized"])
             self.assertEqual(payload["safety"]["full_osr_automation"], "NO_GO")
@@ -164,6 +174,26 @@ class ControlledCandidateManifestTests(unittest.TestCase):
             rc["safety"]["real_outbound_enabled"] = True
             paths["rc"].write_text(json.dumps(rc))
             with self.assertRaisesRegex(MODULE.ManifestError, "rc_safety_invalid:real_outbound_enabled"):
+                self._build(root, paths)
+
+    def test_rejects_unbound_build_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._inputs(root)
+            receipt = json.loads(paths["receipt"].read_text())
+            receipt["build_time"] = "unknown"
+            paths["receipt"].write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(MODULE.ManifestError, "publish_receipt_build_time_invalid"):
+                self._build(root, paths)
+
+    def test_rejects_embedded_image_tag_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._inputs(root)
+            receipt = json.loads(paths["receipt"].read_text())
+            receipt["embedded_image_tag"] = "nexusdesk/helpdesk:other"
+            paths["receipt"].write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(MODULE.ManifestError, "publish_receipt_embedded_tag_mismatch"):
                 self._build(root, paths)
 
 
