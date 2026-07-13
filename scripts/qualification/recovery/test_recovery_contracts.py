@@ -202,7 +202,6 @@ class RecoveryEvidenceTests(unittest.TestCase):
     def _snapshot(self, *, head: str = "20260711_0058", markets: int = 1, marker: int = 1) -> dict:
         return {
             "schema_version": "nexus_recovery_snapshot_v1",
-            "almbic_head": head,
             "alembic_head": head,
             "table_count": 3,
             "tables": {"markets": markets, "teams": 1, "service_heartbeats": 0},
