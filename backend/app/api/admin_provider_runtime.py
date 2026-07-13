@@ -157,7 +157,7 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
                        fallback_providers, canary_percent, kill_switch,
                        enabled, updated_at
                 FROM provider_routing_rules
-                ORDER BY scenario ASC, tenant_id ASC, channel_key ASC
+                ORDER BY tenant_id ASC, channel_key ASC, scenario ASC
                 """
             )
             .columns(kill_switch=Boolean(), enabled=Boolean())
