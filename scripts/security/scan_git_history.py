@@ -20,6 +20,7 @@ SCHEMA = "nexus_security_git_history_scan_v1"
 MAX_STORED_FINDINGS = 100
 MAX_STORED_OVERSIZED = 20
 MAX_OBJECTS = 2_000_000
+MAX_BLOB_PATH_PAIRS = 2_000_000
 MAX_PATH_LENGTH = 240
 _OBJECT_FORMATS = {"sha1": 40, "sha256": 64}
 _SAFE_REASON_RE = re.compile(r"^[a-z0-9_]{3,120}$")
@@ -83,7 +84,7 @@ class ObjectMetadata:
     object_id: str
     object_type: str
     size: int
-    path: str
+    representative_path: str
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,9 @@ class HistoryFinding:
 
     @property
     def logical_identity(self) -> tuple[str, str, int, str]:
+        # Blob identity is intentionally excluded. A changed Blob containing the
+        # same logical path/rule/line/fingerprint is counted once, while aliases
+        # at different paths remain independent allowlist decisions.
         return self.path, self.rule, self.line, self.fingerprint
 
     def as_dict(self) -> dict[str, object]:
@@ -183,6 +187,12 @@ def _bounded_path(raw: bytes) -> str:
 
 
 def parse_object_listing(raw: bytes, *, object_id_length: int) -> dict[str, str]:
+    """Return one bounded fallback path per reachable object.
+
+    `rev-list --objects` does not preserve all aliases for a Blob. Complete Blob
+    alias collection is performed separately from reachable commit root Trees.
+    """
+
     paths: dict[str, str] = {}
     for line in raw.splitlines():
         if not line:
@@ -247,8 +257,112 @@ def resolve_object_metadata(
             raise HistoryScanError("git_object_metadata_invalid") from exc
         if size < 0:
             raise HistoryScanError("git_object_metadata_invalid")
-        records.append(ObjectMetadata(object_id, object_type, size, object_paths[object_id]))
+        records.append(
+            ObjectMetadata(
+                object_id=object_id,
+                object_type=object_type,
+                size=size,
+                representative_path=object_paths[object_id],
+            )
+        )
     return tuple(records)
+
+
+def _root_tree_ids(root: Path, *, object_id_length: int) -> tuple[str, ...]:
+    raw = _run_git(root, ["log", "--all", "--format=%T"])
+    trees: set[str] = set()
+    for line in raw.splitlines():
+        if not line:
+            continue
+        try:
+            value = line.decode("ascii").strip()
+        except UnicodeDecodeError as exc:
+            raise HistoryScanError("git_root_tree_invalid") from exc
+        trees.add(
+            _validate_object_id(
+                value,
+                object_id_length=object_id_length,
+                reason="git_root_tree_invalid",
+            )
+        )
+    if not trees:
+        raise HistoryScanError("git_root_tree_empty")
+    return tuple(sorted(trees))
+
+
+def _parse_ls_tree(
+    raw: bytes,
+    *,
+    object_id_length: int,
+) -> tuple[tuple[str, str], ...]:
+    pairs: list[tuple[str, str]] = []
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, raw_path = record.partition(b"\t")
+        if not separator:
+            raise HistoryScanError("git_tree_listing_invalid")
+        parts = metadata.split(b" ")
+        if len(parts) != 3:
+            raise HistoryScanError("git_tree_listing_invalid")
+        _mode, raw_type, raw_object_id = parts
+        try:
+            object_type = raw_type.decode("ascii")
+            object_id = raw_object_id.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise HistoryScanError("git_tree_listing_invalid") from exc
+        _validate_object_id(
+            object_id,
+            object_id_length=object_id_length,
+            reason="git_tree_listing_invalid",
+        )
+        if object_type == "commit":
+            # Gitlinks are commit objects, not scannable Blob content.
+            continue
+        if object_type != "blob":
+            raise HistoryScanError("git_tree_listing_invalid")
+        pairs.append((object_id, _bounded_path(raw_path)))
+    return tuple(pairs)
+
+
+def collect_blob_paths(
+    root: Path,
+    blobs: Sequence[ObjectMetadata],
+    *,
+    object_id_length: int,
+) -> dict[str, tuple[str, ...]]:
+    """Collect every historical path alias while keeping one Blob read.
+
+    Root Tree IDs are deduplicated, and each unique `(blob, path)` pair is kept.
+    Exact path allowlists are therefore evaluated independently for every alias.
+    """
+
+    blob_ids = {blob.object_id for blob in blobs}
+    aliases: dict[str, set[str]] = {blob.object_id: set() for blob in blobs}
+    pair_count = 0
+    for tree_id in _root_tree_ids(root, object_id_length=object_id_length):
+        raw = _run_git(root, ["ls-tree", "-r", "-z", "--full-tree", tree_id])
+        for object_id, path in _parse_ls_tree(raw, object_id_length=object_id_length):
+            if object_id not in blob_ids:
+                raise HistoryScanError("git_tree_blob_unreachable")
+            paths = aliases[object_id]
+            if path not in paths:
+                paths.add(path)
+                pair_count += 1
+                if pair_count > MAX_BLOB_PATH_PAIRS:
+                    raise HistoryScanError("git_blob_path_limit_exceeded")
+
+    for blob in blobs:
+        if not aliases[blob.object_id]:
+            aliases[blob.object_id].add(blob.representative_path)
+            pair_count += 1
+            if pair_count > MAX_BLOB_PATH_PAIRS:
+                raise HistoryScanError("git_blob_path_limit_exceeded")
+
+    return {
+        object_id: tuple(sorted(paths))
+        for object_id, paths in sorted(aliases.items())
+    }
 
 
 def iter_blob_contents(
@@ -315,8 +429,7 @@ def _iter_secret_findings(relative_path: str, text: str) -> Iterator[Finding]:
         if scanner._is_placeholder(line):
             continue
         for rule, pattern in scanner._PATTERNS:
-            match = pattern.search(line)
-            if match:
+            for match in pattern.finditer(line):
                 yield Finding(
                     rule,
                     relative_path,
@@ -402,6 +515,7 @@ def failure_report(reason: str, *, object_id_length: int) -> dict[str, object]:
         "commit_count": 0,
         "reachable_object_count": 0,
         "reachable_blob_count": 0,
+        "reachable_blob_path_count": 0,
         "accounted_blob_count": 0,
         "scanned_text_blob_count": 0,
         "binary_blob_count": 0,
@@ -442,14 +556,20 @@ def scan_repository_history(
         object_id_length=object_id_length,
     )
     blobs = tuple(record for record in metadata if record.object_type == "blob")
+    blob_paths = collect_blob_paths(
+        repo_root,
+        blobs,
+        object_id_length=object_id_length,
+    )
 
     eligible: list[ObjectMetadata] = []
     oversized_binary_count = 0
     unscanned_oversized: list[ObjectMetadata] = []
     for blob in blobs:
+        paths = blob_paths[blob.object_id]
         if blob.size <= max_blob_bytes:
             eligible.append(blob)
-        elif _is_known_binary_path(blob.path):
+        elif paths and all(_is_known_binary_path(path) for path in paths):
             oversized_binary_count += 1
         else:
             unscanned_oversized.append(blob)
@@ -478,18 +598,19 @@ def scan_repository_history(
             binary_count += 1
             continue
         scanned_text_count += 1
-        for base_finding in _iter_secret_findings(blob.path, text):
-            finding = _history_finding(blob, base_finding)
-            if finding.logical_identity in logical_findings:
-                continue
-            logical_findings.add(finding.logical_identity)
-            if finding.allowlist_key in allowed:
-                suppressed_count += 1
-                continue
-            total_findings += 1
-            by_rule[finding.rule] += 1
-            if len(stored_findings) < MAX_STORED_FINDINGS:
-                stored_findings.append(finding)
+        for path in blob_paths[blob.object_id]:
+            for base_finding in _iter_secret_findings(path, text):
+                finding = _history_finding(blob, base_finding)
+                if finding.logical_identity in logical_findings:
+                    continue
+                logical_findings.add(finding.logical_identity)
+                if finding.allowlist_key in allowed:
+                    suppressed_count += 1
+                    continue
+                total_findings += 1
+                by_rule[finding.rule] += 1
+                if len(stored_findings) < MAX_STORED_FINDINGS:
+                    stored_findings.append(finding)
 
     accounted_blob_count = (
         scanned_text_count
@@ -499,14 +620,19 @@ def scan_repository_history(
     )
     complete = accounted_blob_count == len(blobs) and not unscanned_oversized
     status = "pass" if complete and total_findings == 0 else "fail"
-    oversized_records = [
-        {
-            **_path_evidence(blob.path),
-            "size_bytes": blob.size,
-            "blob_sha": blob.object_id,
-        }
-        for blob in unscanned_oversized[:MAX_STORED_OVERSIZED]
-    ]
+    oversized_records = []
+    for blob in unscanned_oversized[:MAX_STORED_OVERSIZED]:
+        paths = blob_paths[blob.object_id]
+        representative_path = paths[0] if paths else blob.representative_path
+        oversized_records.append(
+            {
+                **_path_evidence(representative_path),
+                "path_count": len(paths),
+                "size_bytes": blob.size,
+                "blob_sha": blob.object_id,
+            }
+        )
+
     report = {
         "schema_version": SCHEMA,
         "status": status,
@@ -518,6 +644,7 @@ def scan_repository_history(
         "commit_count": commit_count,
         "reachable_object_count": len(metadata),
         "reachable_blob_count": len(blobs),
+        "reachable_blob_path_count": sum(len(paths) for paths in blob_paths.values()),
         "accounted_blob_count": accounted_blob_count,
         "scanned_text_blob_count": scanned_text_count,
         "binary_blob_count": binary_count,
@@ -590,6 +717,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "complete": report["complete"],
                 "commit_count": report["commit_count"],
                 "reachable_blob_count": report["reachable_blob_count"],
+                "reachable_blob_path_count": report["reachable_blob_path_count"],
                 "accounted_blob_count": report["accounted_blob_count"],
                 "finding_count": report["finding_count"],
                 "suppressed_count": report["suppressed_count"],
