@@ -14,8 +14,7 @@ SCHEMA = "nexus.osr.controlled-image-assurance-failure.v1"
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-_STAGE = re.compile(r"^[a-z0-9_-]{1,80}$")
-_STATUS = re.compile(r"^[a-z0-9_-]{1,40}$")
+_SAFE_NAME = re.compile(r"^[a-z0-9_-]{1,80}$")
 _ALLOWED_STAGES = {
     "sbom-preliminary",
     "sbom-finalization",
@@ -30,6 +29,31 @@ _ALLOWED_STAGES = {
     "structured-evidence-validation",
     "artifact-scan",
     "post-assurance-unknown",
+}
+_SIGNAL_KEYS = {
+    "present",
+    "status",
+    "counts",
+    "unresolved_count",
+    "applied_exception_count",
+    "unused_exception_count",
+    "critical_count",
+    "high_count",
+    "unresolved_license_count",
+    "finding_count",
+    "scanned_files",
+    "suppressed_count",
+}
+_SIGNAL_NAMES = {
+    "sbom",
+    "policy_inputs",
+    "vulnerabilities",
+    "licenses",
+    "manifest",
+    "compliance",
+    "binding",
+    "structured",
+    "artifact_scan",
 }
 
 
@@ -55,7 +79,7 @@ def _status(payload: dict[str, Any] | None) -> str | None:
     if payload is None:
         return None
     value = str(payload.get("status") or "").strip().lower()
-    return value if _STATUS.fullmatch(value) else None
+    return value if _SAFE_NAME.fullmatch(value) else None
 
 
 def _bounded_int(value: object, *, maximum: int = 1_000_000) -> int | None:
@@ -65,11 +89,9 @@ def _bounded_int(value: object, *, maximum: int = 1_000_000) -> int | None:
 
 
 def _counts(payload: dict[str, Any] | None, keys: tuple[str, ...]) -> dict[str, int]:
-    if payload is None:
+    if payload is None or not isinstance(payload.get("counts"), dict):
         return {}
-    raw = payload.get("counts")
-    if not isinstance(raw, dict):
-        return {}
+    raw = payload["counts"]
     result: dict[str, int] = {}
     for key in keys:
         value = _bounded_int(raw.get(key))
@@ -105,39 +127,40 @@ def _signal(payload: dict[str, Any] | None, *, count_keys: tuple[str, ...] = ())
     return result
 
 
-def _infer_stage(root: Path, payloads: dict[str, dict[str, Any] | None]) -> str:
-    ordered = (
-        ("sbom-preliminary", root / "image.preliminary.cdx.json"),
-        ("sbom-finalization", root / "image.safe.cdx.json"),
-        ("policy-input-validation", root / "policy-input-validation.json"),
-        ("installed-license-evidence", root / "installed-license-evidence.json"),
-        ("vulnerability-policy", root / "vulnerability-summary.json"),
-        ("license-policy", root / "license-summary.json"),
-        ("release-image-manifest", root / "release-image-manifest.json"),
-        ("license-compliance", root / "license-compliance-evidence.json"),
-        ("compliance-binding", root / "release-image-compliance-binding.json"),
-        ("raw-evidence-digests", root / "raw-evidence-digests.json"),
-        ("structured-evidence-validation", root / "structured-evidence-scan.json"),
-        ("artifact-scan", root / "artifact-scan.json"),
-    )
-    for stage, path in ordered:
-        if not path.is_file() or path.is_symlink():
-            return stage
+def _missing(path: Path) -> bool:
+    return not path.is_file() or path.is_symlink()
 
-    status_order = (
-        ("policy-input-validation", payloads["policy_inputs"]),
-        ("vulnerability-policy", payloads["vulnerabilities"]),
-        ("license-policy", payloads["licenses"]),
-        ("release-image-manifest", payloads["manifest"]),
-        ("license-compliance", payloads["compliance"]),
-        ("compliance-binding", payloads["binding"]),
-        ("structured-evidence-validation", payloads["structured"]),
-        ("artifact-scan", payloads["artifact_scan"]),
-    )
-    for stage, payload in status_order:
-        status = _status(payload)
-        if status is not None and status != "pass":
-            return stage
+
+def _failed(payload: dict[str, Any] | None) -> bool:
+    status = _status(payload)
+    return status is not None and status != "pass"
+
+
+def _infer_stage(root: Path, payloads: dict[str, dict[str, Any] | None]) -> str:
+    if _missing(root / "image.preliminary.cdx.json"):
+        return "sbom-preliminary"
+    if _missing(root / "image.safe.cdx.json"):
+        return "sbom-finalization"
+    if _missing(root / "policy-input-validation.json") or _failed(payloads["policy_inputs"]):
+        return "policy-input-validation"
+    if _missing(root / "installed-license-evidence.json"):
+        return "installed-license-evidence"
+    if _missing(root / "vulnerability-summary.json") or _failed(payloads["vulnerabilities"]):
+        return "vulnerability-policy"
+    if _missing(root / "license-summary.json") or _failed(payloads["licenses"]):
+        return "license-policy"
+    if _missing(root / "release-image-manifest.json") or _failed(payloads["manifest"]):
+        return "release-image-manifest"
+    if _missing(root / "license-compliance-evidence.json") or _failed(payloads["compliance"]):
+        return "license-compliance"
+    if _missing(root / "release-image-compliance-binding.json") or _failed(payloads["binding"]):
+        return "compliance-binding"
+    if _missing(root / "raw-evidence-digests.json"):
+        return "raw-evidence-digests"
+    if _missing(root / "structured-evidence-scan.json") or _failed(payloads["structured"]):
+        return "structured-evidence-validation"
+    if _missing(root / "artifact-scan.json") or _failed(payloads["artifact_scan"]):
+        return "artifact-scan"
     return "post-assurance-unknown"
 
 
@@ -145,7 +168,7 @@ def build_summary(*, release_image_dir: Path, source_sha: str, exit_code: int) -
     source = source_sha.strip().lower()
     if not _SHA40.fullmatch(source):
         raise FailureEvidenceError("source_sha_invalid")
-    if isinstance(exit_code, bool) or not 1 <= exit_code <= 255:
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 1 <= exit_code <= 255:
         raise FailureEvidenceError("exit_code_invalid")
     if not release_image_dir.is_dir() or release_image_dir.is_symlink():
         raise FailureEvidenceError("release_image_dir_invalid")
@@ -161,11 +184,10 @@ def build_summary(*, release_image_dir: Path, source_sha: str, exit_code: int) -
         "structured": _load_json(release_image_dir / "structured-evidence-scan.json"),
         "artifact_scan": _load_json(release_image_dir / "artifact-scan.json"),
     }
-    stage = _infer_stage(release_image_dir, payloads)
     summary = {
         "schema": SCHEMA,
         "status": "failed",
-        "stage": stage,
+        "stage": _infer_stage(release_image_dir, payloads),
         "exit_code": exit_code,
         "source_sha": source,
         "image_pushed": False,
@@ -173,9 +195,7 @@ def build_summary(*, release_image_dir: Path, source_sha: str, exit_code: int) -
         "signals": {
             "sbom": _signal(payloads["sbom"]),
             "policy_inputs": _signal(payloads["policy_inputs"]),
-            "vulnerabilities": _signal(
-                payloads["vulnerabilities"], count_keys=("CRITICAL", "HIGH")
-            ),
+            "vulnerabilities": _signal(payloads["vulnerabilities"], count_keys=("CRITICAL", "HIGH")),
             "licenses": _signal(
                 payloads["licenses"],
                 count_keys=("components", "allowed", "review", "denied", "unknown"),
@@ -191,10 +211,32 @@ def build_summary(*, release_image_dir: Path, source_sha: str, exit_code: int) -
     return summary
 
 
+def _validate_signal(name: str, signal: object) -> None:
+    if not isinstance(signal, dict) or set(signal) - _SIGNAL_KEYS:
+        raise FailureEvidenceError(f"summary_signal_invalid:{name}")
+    present = signal.get("present")
+    if not isinstance(present, bool):
+        raise FailureEvidenceError(f"summary_signal_present_invalid:{name}")
+    if not present and signal != {"present": False}:
+        raise FailureEvidenceError(f"summary_signal_absent_fields:{name}")
+    if "status" in signal and not _SAFE_NAME.fullmatch(str(signal["status"])):
+        raise FailureEvidenceError(f"summary_signal_status_invalid:{name}")
+    counts = signal.get("counts")
+    if counts is not None:
+        if not isinstance(counts, dict) or len(counts) > 10:
+            raise FailureEvidenceError(f"summary_signal_counts_invalid:{name}")
+        for key, value in counts.items():
+            if not _SAFE_NAME.fullmatch(str(key)) or _bounded_int(value) is None:
+                raise FailureEvidenceError(f"summary_signal_count_invalid:{name}")
+    for key in _SIGNAL_KEYS - {"present", "status", "counts"}:
+        if key in signal and _bounded_int(signal[key]) is None:
+            raise FailureEvidenceError(f"summary_signal_integer_invalid:{name}")
+
+
 def validate_summary(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise FailureEvidenceError("summary_object_required")
-    expected = {
+    if set(payload) != {
         "schema",
         "status",
         "stage",
@@ -203,13 +245,12 @@ def validate_summary(payload: object) -> dict[str, Any]:
         "image_pushed",
         "deployment_performed",
         "signals",
-    }
-    if set(payload) != expected:
+    }:
         raise FailureEvidenceError("summary_fields_invalid")
     if payload.get("schema") != SCHEMA or payload.get("status") != "failed":
         raise FailureEvidenceError("summary_identity_invalid")
     stage = str(payload.get("stage") or "")
-    if not _STAGE.fullmatch(stage) or stage not in _ALLOWED_STAGES:
+    if not _SAFE_NAME.fullmatch(stage) or stage not in _ALLOWED_STAGES:
         raise FailureEvidenceError("summary_stage_invalid")
     exit_code = payload.get("exit_code")
     if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 1 <= exit_code <= 255:
@@ -219,20 +260,11 @@ def validate_summary(payload: object) -> dict[str, Any]:
     if payload.get("image_pushed") is not False or payload.get("deployment_performed") is not False:
         raise FailureEvidenceError("summary_safety_invalid")
     signals = payload.get("signals")
-    if not isinstance(signals, dict) or set(signals) != {
-        "sbom",
-        "policy_inputs",
-        "vulnerabilities",
-        "licenses",
-        "manifest",
-        "compliance",
-        "binding",
-        "structured",
-        "artifact_scan",
-    }:
+    if not isinstance(signals, dict) or set(signals) != _SIGNAL_NAMES:
         raise FailureEvidenceError("summary_signals_invalid")
-    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
-    if len(encoded) > MAX_OUTPUT_BYTES:
+    for name, signal in signals.items():
+        _validate_signal(name, signal)
+    if len(json.dumps(payload, sort_keys=True).encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise FailureEvidenceError("summary_too_large")
     return dict(payload)
 
@@ -265,7 +297,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.capture:
-            if None in (args.release_image_dir, args.source_sha, args.exit_code, args.output):
+            if any(value is None for value in (args.release_image_dir, args.source_sha, args.exit_code, args.output)):
                 raise FailureEvidenceError("capture_arguments_missing")
             payload = build_summary(
                 release_image_dir=args.release_image_dir,
