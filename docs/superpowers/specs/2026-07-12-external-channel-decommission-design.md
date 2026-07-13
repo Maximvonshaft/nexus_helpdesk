@@ -188,7 +188,7 @@ Phases:
 
 Production roots include application code, deploy configuration, executable scripts, frontend code and GitHub workflows. A wildcard cannot classify references in these roots because that would allow a new runtime dependency to enter unnoticed. Every production-root reference receives an explicit exact-path decision, either as `path` or as a member of a `paths` group.
 
-Historical globs are permitted only under bounded roots such as `docs/`, `backend/tests/`, `webapp/e2e/` and `backend/alembic/versions/`. A new matching production file fails the gate until an explicit rule and review are added.
+Historical globs are permitted only under bounded non-schema roots such as `docs/`, `backend/tests/` and `webapp/e2e/`. `backend/alembic/versions/` is production/schema-capable: every current migration reference must be exact-listed, and a future migration fails the gate until an explicit rule and review are added.
 
 ## Error handling and fail-closed behavior
 
