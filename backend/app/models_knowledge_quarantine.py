@@ -34,6 +34,10 @@ class KnowledgeIngestionRecord(Base):
             name="ck_knowledge_ingestion_sha256_length",
         ),
         CheckConstraint(
+            "parsed_text_sha256 IS NULL OR length(parsed_text_sha256) = 64",
+            name="ck_knowledge_ingestion_parsed_sha256_length",
+        ),
+        CheckConstraint(
             "sanitized_content_sha256 IS NULL OR length(sanitized_content_sha256) = 64",
             name="ck_knowledge_ingestion_sanitized_sha256_length",
         ),
@@ -96,6 +100,7 @@ class KnowledgeIngestionRecord(Base):
     storage_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    parsed_text_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     sanitized_content_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     declared_mime_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
