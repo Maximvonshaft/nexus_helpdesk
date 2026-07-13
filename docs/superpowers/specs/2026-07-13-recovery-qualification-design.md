@@ -10,7 +10,7 @@
 
 ## Problem
 
-The repository had no accepted current-main backup/restore rehearsal. The operator scripts and evidence builder exposed seventeen reproducible failure modes:
+The repository had no accepted current-main backup/restore rehearsal. The operator scripts and evidence builder exposed nineteen reproducible failure modes:
 
 1. a SQLAlchemy `postgresql+psycopg://` URL was passed directly to native clients;
 2. restore could continue after SQL errors;
@@ -28,7 +28,9 @@ The repository had no accepted current-main backup/restore rehearsal. The operat
 14. source/restore comparison checked only unvalidated-FK counts and could miss deleted or altered FK definitions;
 15. native URLs without userinfo could inherit `PGUSER`, changing the executing identity outside the reviewed URI;
 16. the qualification topology used one role for admin, migration, backup and restore, so non-admin paths were never proven independent of destructive authority;
-17. the existing Alembic chain installs the untrusted `vector` extension, which a fresh restricted database owner cannot install, while a normal `--clean` restore would try to replace an admin-owned preinstalled extension.
+17. the existing Alembic chain installs the untrusted `vector` extension, which a fresh restricted database owner cannot install, while a normal `--clean` restore would try to replace an admin-owned preinstalled extension;
+18. Docker Compose could build a local image when the requested rollback image was unavailable, so a successful restart did not prove the exact old artifact ran;
+19. `pg_restore --clean` removes only archive-listed objects, allowing target-only schemas, tables or indexes to survive and invalidate an exact restore claim.
 
 These defects prevent a defensible claim that a test candidate is recoverable.
 
@@ -62,13 +64,21 @@ The manifest declares exactly one preinstalled extension: `vector` with its exac
 
 A temporary TOC list is generated from the checksum-validated archive. The filter comments out exactly one `EXTENSION - vector` entry and at most one matching extension comment. Missing, duplicate or unrecognized vector extension TOC records fail closed. No broad name matching or arbitrary omission is permitted. The temporary list is deleted on success and failure.
 
+### Clean target precondition
+
+A restore target must contain only system schemas, `public`, and objects that are members of the preinstalled extension. Before TOC generation or `pg_restore`, the operator script counts non-system schemas and public relations outside the extension dependency graph. Any non-zero footprint fails with `rollback_target_not_empty` before mutation.
+
+This deliberately rejects an in-place reconciliation model. Unknown target-only tables, partitions, views, sequences, foreign tables, indexes or composite relations must be removed by recreating or separately cleaning the target under an independently authorized procedure.
+
 ### Transactional restore
 
-After extension verification and TOC filtering, the restore path invokes `pg_restore --exit-on-error --single-transaction --clean --if-exists --no-owner --no-privileges --use-list`. All non-extension schema/data objects are restored as `nexus_recovery_restore`. Post-restore checks verify both the exact Alembic head and vector version. Restore to a database with the same hashed name as the source is refused unless separately acknowledged.
+After extension and clean-target verification and TOC filtering, the restore path invokes `pg_restore --exit-on-error --single-transaction --clean --if-exists --no-owner --no-privileges --use-list`. All non-extension schema/data objects are restored as `nexus_recovery_restore`. Post-restore checks verify both the exact Alembic head and vector version. Restore to a database with the same hashed name as the source is refused unless separately acknowledged.
 
-### Explicit rollback state
+### Explicit rollback state and exact image authority
 
 Rollback output is structured. `DATABASE_RESTORE_APPLIED` is emitted immediately after a successful single-transaction `pg_restore`; `DATABASE_RESTORED` is emitted only after exact Alembic-head and vector-version post-checks also succeed. `IMAGE_RESTARTED` and `HEALTH_VERIFIED` are emitted only after their operations succeed. An EXIT trap writes `outcome=fail`, a fixed `failure_stage`, and all completed states when a later operation fails. Health verification requires explicit HTTP 2xx from both endpoints; redirects are failures. No generic success string is allowed.
+
+Image rollback invokes Docker Compose with `--no-build --pull always`. An unavailable old image or registry failure therefore stops the rollback instead of falling back to a local Dockerfile build.
 
 ### Migration repair
 
@@ -80,7 +90,7 @@ Evidence contains aggregate schema identity and timing only. Public foreign-key 
 
 ## Qualification topology
 
-One pgvector PostgreSQL 16 service hosts one bootstrap admin database and two `template0` disposable databases with distinct restricted owners. Admin activity is limited to role/database creation, owner proof and vector installation. Source migration/backup uses only `nexus_recovery_source`; target restore/snapshot uses only `nexus_recovery_restore`. The source is seeded with a synthetic referential marker and the restore database is rebuilt exclusively from the manifest-bound operator backup while preserving the preinstalled extension.
+One pgvector PostgreSQL 16 service hosts one bootstrap admin database and two `template0` disposable databases with distinct restricted owners. Admin activity is limited to role/database creation, owner proof and vector installation. Source migration/backup uses only `nexus_recovery_source`; target restore/snapshot uses only `nexus_recovery_restore`. The source is seeded with a synthetic referential marker and the clean restore database is rebuilt exclusively from the manifest-bound operator backup while preserving the preinstalled extension.
 
 ## Security and privacy
 
@@ -89,6 +99,7 @@ One pgvector PostgreSQL 16 service hosts one bootstrap admin database and two `t
 - no customer, ticket, message, tracking, address or Provider data;
 - no backup bytes or restore TOC uploaded;
 - no deployment or real image restart in CI;
+- no local image build fallback in the rollback command;
 - all Actions are immutable and permissions read-only;
 - failure evidence is bounded and customer-data free.
 
@@ -100,6 +111,8 @@ One pgvector PostgreSQL 16 service hosts one bootstrap admin database and two `t
 - Granting source/restore SUPERUSER solely to install vector: collapses the security boundary.
 - Letting a normal clean restore drop/recreate an admin-owned vector extension: fails under the restricted role and obscures bootstrap authority.
 - Broadly removing every TOC line containing `vector`: could omit application objects and hide corruption.
+- Treating `pg_restore --clean` as proof that a non-empty target contains no extra objects: target-only objects are not in the archive TOC.
+- Allowing Compose to build when the rollback tag cannot be pulled: the resulting image is not the selected rollback artifact.
 - Using ambient `PGHOST`/`PGUSER` for destructive setup: not bound to the supplied disposable topology.
 - Accepting libpq query or fragment overrides: the executed target can differ.
 - Plain SQL gzip as the canonical backup: weaker archive validation and restore control.
@@ -115,7 +128,7 @@ One pgvector PostgreSQL 16 service hosts one bootstrap admin database and two `t
 
 ## Acceptance
 
-One exact final Head must prove focused tests, explicit user/target authority, isolated role privileges and database ownership, bounded admin-only vector bootstrap, manifest-bound extension preservation, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact 2xx health semantics, exact table/FK restore comparison, monotonic RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
+One exact final Head must prove focused tests, explicit user/target authority, isolated role privileges and database ownership, bounded admin-only vector bootstrap, manifest-bound extension preservation, clean-target precondition, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact rollback-image pull without build fallback, exact 2xx health semantics, exact table/FK restore comparison, monotonic RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
 
 ## Rollback
 
