@@ -8,6 +8,16 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = (ROOT / ".github/workflows/controlled-candidate-convergence.yml").read_text(encoding="utf-8")
 COMPOSE = (ROOT / "deploy/docker-compose.controlled.yml").read_text(encoding="utf-8")
 ENV_EXAMPLE = (ROOT / "deploy/.env.controlled.example").read_text(encoding="utf-8")
+HELPERS = "\n".join(
+    (ROOT / path).read_text(encoding="utf-8")
+    for path in (
+        "scripts/release/run_controlled_image_assurance.sh",
+        "scripts/release/publish_controlled_image.sh",
+        "scripts/release/finalize_controlled_candidate.sh",
+        "scripts/release/run_controlled_rc_gate.sh",
+        "scripts/release/run_controlled_recovery_gate.sh",
+    )
+)
 
 
 class ControlledCandidateWorkflowContractTests(unittest.TestCase):
@@ -22,7 +32,7 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("id-token: write", WORKFLOW)
 
     def test_actions_are_pinned_and_no_mutable_action_tags(self) -> None:
-        uses = re.findall(r"(?m)^\s*uses:\s*([^\s]+)", WORKFLOW)
+        uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
         self.assertGreaterEqual(len(uses), 8)
         for reference in uses:
             if reference.startswith("./"):
@@ -32,23 +42,24 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             self.assertNotIn(mutable, WORKFLOW)
 
     def test_existing_rc_build_is_reused_and_no_second_build_exists(self) -> None:
-        self.assertIn("scripts/release/run_rc_test_candidate.sh", WORKFLOW)
+        combined = WORKFLOW + "\n" + HELPERS
+        self.assertIn("scripts/release/run_rc_test_candidate.sh", combined)
         self.assertNotIn("docker build ", WORKFLOW)
-        self.assertIn("docker tag \"$CANDIDATE_IMAGE\"", WORKFLOW)
-        self.assertIn("docker push \"$registry_image:$tag\"", WORKFLOW)
-        self.assertIn("test \"$pulled_image_id\" = \"$local_image_id\"", WORKFLOW)
+        self.assertIn('docker tag "${CANDIDATE_IMAGE}"', combined)
+        self.assertIn('docker push "${registry_image}:${tag}"', combined)
+        self.assertIn('test "${pulled_image_id}" = "${local_image_id}"', combined)
 
     def test_same_binary_is_scanned_published_and_attested(self) -> None:
         self.assertIn("image-ref: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
         self.assertIn("image: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
-        self.assertIn("release-image-manifest.json", WORKFLOW)
+        self.assertIn("release-image-manifest.json", WORKFLOW + "\n" + HELPERS)
         self.assertIn("registry-publish-receipt.json", WORKFLOW)
         self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
         self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
         self.assertIn("push-to-registry: true", WORKFLOW)
 
     def test_recovery_and_external_effect_safety_are_required(self) -> None:
-        self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW)
+        self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW + "\n" + HELPERS)
         self.assertIn("controlled-recovery-${{ github.sha }}", WORKFLOW)
         for marker in (
             "PROVIDER_RUNTIME_KILL_SWITCH=true",
