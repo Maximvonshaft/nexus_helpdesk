@@ -49,6 +49,18 @@ def _run(root: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
+def _run_with_input(root: Path, args: list[str], data: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        input=data,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
 def _init_repo(root: Path) -> None:
     _run(root, "init", "-b", "main")
     _run(root, "config", "user.name", "Nexus Test")
@@ -219,6 +231,73 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
             hashlib.sha256(b"runtime.py").hexdigest(),
         )
 
+    def test_direct_tree_tag_paths_receive_independent_allowlist_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            line = "TOKEN = " + json.dumps(_github_token())
+            fixture = root / "fixture.py"
+            fixture.write_text(line + "\n", encoding="utf-8")
+            _commit_all(root, "add fixture blob")
+            blob_sha = _run(root, "hash-object", "fixture.py")
+            tree_sha = _run_with_input(
+                root,
+                ["mktree"],
+                f"100644 blob {blob_sha}\truntime.py\n",
+            )
+            _run(root, "update-ref", "refs/tags/tree-snapshot", tree_sha)
+            allowlist_path = _write_allowlist(
+                root,
+                [
+                    {
+                        "path": "fixture.py",
+                        "rule": "github_token",
+                        "fingerprint": _fingerprint_for("github_token", "fixture.py", 1, line),
+                        "reason": "Synthetic fixture path only.",
+                        "expires_on": "2099-12-31",
+                    }
+                ],
+            )
+            report = history.scan_repository_history(root, allowlist_path=allowlist_path)
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["suppressed_count"], 1)
+        self.assertEqual(report["finding_count"], 1)
+        self.assertEqual(
+            report["findings"][0]["path_sha256"],
+            hashlib.sha256(b"runtime.py").hexdigest(),
+        )
+
+    def test_leading_space_path_is_not_collapsed_into_allowlisted_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            line = "TOKEN = " + json.dumps(_github_token())
+            (root / "runtime.py").write_text(line + "\n", encoding="utf-8")
+            (root / " runtime.py").write_text(line + "\n", encoding="utf-8")
+            _commit_all(root, "add whitespace alias")
+            allowlist_path = _write_allowlist(
+                root,
+                [
+                    {
+                        "path": "runtime.py",
+                        "rule": "github_token",
+                        "fingerprint": _fingerprint_for("github_token", "runtime.py", 1, line),
+                        "reason": "Synthetic fixture path only.",
+                        "expires_on": "2099-12-31",
+                    }
+                ],
+            )
+            report = history.scan_repository_history(root, allowlist_path=allowlist_path)
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["suppressed_count"], 1)
+        self.assertEqual(report["finding_count"], 1)
+        self.assertEqual(
+            report["findings"][0]["path_sha256"],
+            hashlib.sha256(b" runtime.py").hexdigest(),
+        )
+
     def test_all_same_rule_matches_on_one_line_are_scanned(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -269,17 +348,19 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
         self.assertEqual(item["size_bytes"], 128)
         self.assertNotIn("path", item)
 
-    def test_known_oversized_binary_is_accounted_without_incomplete_claim(self) -> None:
+    def test_oversized_binary_suffix_is_not_treated_as_scanned(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _init_repo(root)
-            (root / "image.png").write_bytes(b"\x89PNG\r\n" + (b"A" * 128))
-            _commit_all(root, "add binary image")
+            payload = ("TOKEN = " + json.dumps(_github_token()) + "\n") * 4
+            (root / "image.png").write_text(payload, encoding="utf-8")
+            _commit_all(root, "add oversized suffix fixture")
             report = _scan(root, max_blob_bytes=32)
 
-        self.assertEqual(report["status"], "pass")
-        self.assertTrue(report["complete"])
-        self.assertEqual(report["oversized_binary_blob_count"], 1)
+        self.assertEqual(report["status"], "fail")
+        self.assertFalse(report["complete"])
+        self.assertEqual(report["oversized_binary_blob_count"], 0)
+        self.assertEqual(report["unscanned_oversized_blob_count"], 1)
         self.assertEqual(report["accounted_blob_count"], report["reachable_blob_count"])
 
     def test_exact_allowlist_suppresses_history_finding(self) -> None:
