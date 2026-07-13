@@ -24,7 +24,7 @@ RESTORE_NATIVE_URL="$RESTORE_NATIVE_URL" \
 RECOVERY_ADMIN_NATIVE_URL="$RECOVERY_ADMIN_NATIVE_URL" \
 python - <<'PY'
 import os
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 def parse(
@@ -43,6 +43,9 @@ def parse(
         raise SystemExit(f"recovery_url_user_required:{name}")
     if parsed.username != expected_user:
         raise SystemExit(f"recovery_user_name_mismatch:{name}")
+    host_authority = unquote(parsed.netloc.rsplit("@", 1)[-1])
+    if "," in host_authority:
+        raise SystemExit(f"recovery_url_multi_host_not_allowed:{name}")
     if parsed.query:
         raise SystemExit(f"recovery_url_query_not_allowed:{name}")
     if parsed.fragment:
