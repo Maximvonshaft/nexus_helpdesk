@@ -134,7 +134,10 @@ def load_allowlist(path: Path, *, today: date | None = None) -> list[AllowlistEn
     for raw in raw_entries:
         if not isinstance(raw, dict):
             raise ValueError("secret_allowlist_entry_invalid")
-        path_value = str(raw.get("path") or "").strip()
+        raw_path = raw.get("path")
+        if not isinstance(raw_path, str):
+            raise ValueError("secret_allowlist_entry_invalid")
+        path_value = raw_path
         rule = str(raw.get("rule") or "").strip()
         fingerprint = str(raw.get("fingerprint") or "").strip().lower()
         reason = " ".join(str(raw.get("reason") or "").strip().split())[:240]
@@ -145,6 +148,8 @@ def load_allowlist(path: Path, *, today: date | None = None) -> list[AllowlistEn
         if (
             not path_value
             or path_value.startswith("/")
+            or "\\" in path_value
+            or any(character in path_value for character in "\x00\r\n")
             or ".." in Path(path_value).parts
             or not re.fullmatch(r"[a-z0-9_:-]{2,80}", rule)
             or not re.fullmatch(r"[a-f0-9]{16}", fingerprint)
