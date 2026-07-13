@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -193,6 +194,45 @@ def test_additive_migration_preserves_rows_across_downgrade_and_reupgrade(tmp_pa
             assert row.marker == f"preserve-{table_name}"
             assert row.tenant_id is None
 
+    engine.dispose()
+
+
+def test_tenant_key_constraints_reject_padding_case_and_forbidden_default(tmp_path) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'tenant-key-constraints.db'}", future=True)
+    metadata = sa.MetaData()
+    for table_name in CORE_TABLES:
+        sa.Table(
+            table_name,
+            metadata,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("marker", sa.String(40), nullable=False),
+        )
+    metadata.create_all(engine)
+    migration = _load_migration()
+
+    with engine.begin() as connection:
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        for row_id, tenant_key in enumerate(
+            ("default", " default ", "tenant-a ", " Tenant-a"),
+            start=1,
+        ):
+            with pytest.raises(sa.exc.IntegrityError):
+                with connection.begin_nested():
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO tenants (id, tenant_key, display_name, is_active) "
+                            "VALUES (:id, :tenant_key, 'Invalid Tenant', 1)"
+                        ),
+                        {"id": row_id, "tenant_key": tenant_key},
+                    )
+        connection.execute(
+            sa.text(
+                "INSERT INTO tenants (id, tenant_key, display_name, is_active) "
+                "VALUES (99, 'tenant-a', 'Tenant A', 1)"
+            )
+        )
+        assert connection.execute(sa.text("SELECT tenant_key FROM tenants")).scalar_one() == "tenant-a"
     engine.dispose()
 
 
