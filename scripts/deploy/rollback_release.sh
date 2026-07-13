@@ -78,6 +78,15 @@ normalize_native_url() {
   esac
 }
 
+require_health_2xx() {
+  local url="$1" http_code
+  http_code="$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code}' "$url")"
+  if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    echo "Health endpoint returned non-2xx status: $http_code" >&2
+    return 1
+  fi
+}
+
 if [[ -z "$BACKUP_BUNDLE" && -z "$OLD_IMAGE_TAG" ]]; then
   append_state "INSTRUCTIONS_ONLY"
   echo "No backup bundle or OLD_IMAGE_TAG supplied; no mutation performed."
@@ -168,8 +177,8 @@ if [[ -n "$OLD_IMAGE_TAG" ]]; then
   IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up -d "${SERVICES[@]}"
   append_state "IMAGE_RESTARTED"
   FAILURE_STAGE="HEALTH_VERIFICATION"
-  curl --fail --silent --show-error --max-time 15 "$ROLLBACK_HEALTH_URL/healthz" >/dev/null
-  curl --fail --silent --show-error --max-time 15 "$ROLLBACK_HEALTH_URL/readyz" >/dev/null
+  require_health_2xx "$ROLLBACK_HEALTH_URL/healthz"
+  require_health_2xx "$ROLLBACK_HEALTH_URL/readyz"
   append_state "HEALTH_VERIFIED"
 fi
 
