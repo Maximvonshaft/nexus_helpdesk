@@ -45,7 +45,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python -m pip install -r backend/requirements.txt
-          python -m pip install pytest pytest-asyncio
+          python -m pip install pytest pytest-asyncio pyyaml
 
       - name: Decode and apply verified repair
         run: |
