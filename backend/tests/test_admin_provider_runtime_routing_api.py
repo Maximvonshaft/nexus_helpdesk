@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 from app.api.admin_provider_runtime import (
     WebchatRuntimeRoutingUpdate,
@@ -30,12 +32,14 @@ def _db_with_routing_rows(rows):
 
 def _routing_row(
     *,
+    scenario="webchat_runtime_reply",
     canary_percent=5,
     kill_switch=False,
     primary_provider="private_ai_runtime",
     fallback_providers=None,
 ):
     return {
+        "scenario": scenario,
         "tenant_id": "tenant-a",
         "channel_key": "website",
         "primary_provider": primary_provider,
@@ -186,6 +190,7 @@ def test_admin_provider_runtime_status_reports_database_rule_under_safe_control_
     assert routing_state["truncated"] is False
     assert len(routing_state["items"]) == 1
     rule = routing_state["items"][0]
+    assert rule["scenario"] == "webchat_runtime_reply"
     assert rule["tenant_id"] == "tenant-a"
     assert rule["database_canary_percent"] == 5
     assert rule["database_kill_switch"] is False
@@ -278,6 +283,102 @@ def test_admin_status_validates_invalid_101st_rule_beyond_bounded_output(monkeyp
     assert len(routing_state["items"]) == 100
     assert all(
         item["database_configuration_errors"] == []
+        for item in routing_state["items"]
+    )
+    assert marker not in repr(response)
+
+
+def test_admin_status_validates_invalid_101st_rule_across_scenarios(monkeypatch):
+    _stub_admin_dependencies(monkeypatch)
+    marker = "PROVIDER-ALIAS-IN-101ST-WEBCALL-RULE"
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE provider_routing_rules (
+                    scenario VARCHAR(100) NOT NULL,
+                    tenant_id VARCHAR(36) NOT NULL,
+                    channel_key VARCHAR(100) NOT NULL,
+                    primary_provider VARCHAR(100) NOT NULL,
+                    fallback_providers JSON,
+                    canary_percent INTEGER,
+                    kill_switch BOOLEAN,
+                    enabled BOOLEAN,
+                    updated_at DATETIME
+                )
+                """
+            )
+        )
+        for index in range(100):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO provider_routing_rules (
+                        scenario, tenant_id, channel_key, primary_provider,
+                        fallback_providers, canary_percent, kill_switch,
+                        enabled, updated_at
+                    ) VALUES (
+                        :scenario, :tenant_id, :channel_key, :primary_provider,
+                        :fallback_providers, :canary_percent, :kill_switch,
+                        :enabled, CURRENT_TIMESTAMP
+                    )
+                    """
+                ),
+                {
+                    "scenario": "webchat_runtime_reply",
+                    "tenant_id": f"tenant-{index:03d}",
+                    "channel_key": "website",
+                    "primary_provider": "private_ai_runtime",
+                    "fallback_providers": "[]",
+                    "canary_percent": 5,
+                    "kill_switch": False,
+                    "enabled": True,
+                },
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO provider_routing_rules (
+                    scenario, tenant_id, channel_key, primary_provider,
+                    fallback_providers, canary_percent, kill_switch,
+                    enabled, updated_at
+                ) VALUES (
+                    :scenario, :tenant_id, :channel_key, :primary_provider,
+                    :fallback_providers, :canary_percent, :kill_switch,
+                    :enabled, CURRENT_TIMESTAMP
+                )
+                """
+            ),
+            {
+                "scenario": "webcall_ai_decision",
+                "tenant_id": "tenant-z",
+                "channel_key": "webcall_ai",
+                "primary_provider": marker,
+                "fallback_providers": '["private_ai_runtime"]',
+                "canary_percent": 5,
+                "kill_switch": False,
+                "enabled": True,
+            },
+        )
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        response = provider_runtime_status(db=db, current_user=Mock())
+    finally:
+        db.close()
+        engine.dispose()
+
+    assert response["ok"] is False
+    assert response["status"] == "misconfigured"
+    routing_state = response["traffic_selection"]["webchat_runtime_rules"]
+    assert routing_state["status"] == "misconfigured"
+    assert routing_state["reason_code"] == "provider_runtime_routing_rule_invalid"
+    assert routing_state["truncated"] is True
+    assert len(routing_state["items"]) == 100
+    assert all(
+        item["scenario"] == "webchat_runtime_reply"
         for item in routing_state["items"]
     )
     assert marker not in repr(response)
