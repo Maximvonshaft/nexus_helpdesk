@@ -13,6 +13,7 @@ from ..enums import TicketStatus, UserRole
 from ..models import Customer, Ticket, User
 from ..utils.time import utc_now
 from .lite_service import serialize_lite_list
+from .tenant_authority import ensure_ticket_tenant_authority, resolve_actor_tenant_id
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
@@ -152,12 +153,19 @@ def list_lite_cases_page(
     status_value, status_in = _lite_status_filter(status)
     normalized_q = _normalize_q(q)
 
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
     query = db.query(Ticket).options(
         joinedload(Ticket.customer),
         joinedload(Ticket.assignee),
+        joinedload(Ticket.creator),
         joinedload(Ticket.team),
         joinedload(Ticket.market),
+        joinedload(Ticket.channel_account),
     )
+    if actor_tenant_id is not None:
+        query = query.filter(Ticket.tenant_id == actor_tenant_id)
+    else:
+        query = query.filter(Ticket.tenant_id.is_(None))
     if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
         query = query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
@@ -203,6 +211,13 @@ def list_lite_cases_page(
             )
 
     rows = query.order_by(Ticket.updated_at.desc(), Ticket.id.desc()).limit(safe_limit + 1).all()
+    for ticket in rows:
+        ensure_ticket_tenant_authority(
+            db,
+            current_user,
+            ticket,
+            actor_tenant_id=actor_tenant_id,
+        )
     visible = rows[:safe_limit]
     has_more = len(rows) > safe_limit
     next_cursor = None

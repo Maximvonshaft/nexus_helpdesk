@@ -232,6 +232,7 @@ if values.get("WEBCHAT_ALLOWED_ORIGINS", "").rstrip("/") != public_origin:
 
 expected = {
     "AUTO_INIT_DB": "false",
+    "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
     "SEED_DEMO_DATA": "false",
     "ALLOW_DEV_AUTH": "false",
     "KNOWLEDGE_RUNTIME_VERSION": "legacy",
@@ -375,6 +376,7 @@ import json
 import os
 from app.db import SessionLocal
 from app.model_registry import register_all_models
+from app.models import Tenant
 from app.models_webchat_binding import WebchatPublicOriginBinding
 from app.services.webchat_tenant_binding import normalize_public_origin
 
@@ -382,6 +384,10 @@ register_all_models()
 origin = normalize_public_origin(os.environ["RC_PUBLIC_ORIGIN"])
 db = SessionLocal()
 try:
+    tenant_key = os.environ["RC_TEST_TENANT_KEY"]
+    tenants = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).all()
+    if len(tenants) != 1 or not tenants[0].is_active:
+        raise SystemExit("RC Tenant seed is not authoritative and active")
     rows = db.query(WebchatPublicOriginBinding).filter(
         WebchatPublicOriginBinding.normalized_origin == origin
     ).all()
@@ -405,6 +411,8 @@ try:
         "status": "pass",
         "origin": origin,
         "row_count": 1,
+        "tenant_principal_count": 1,
+        "tenant_principal_active": True,
         **actual,
     }, indent=2, sort_keys=True))
 finally:
@@ -419,13 +427,21 @@ from app.auth_service import hash_password
 from app.db import SessionLocal
 from app.enums import UserRole
 from app.model_registry import register_all_models
-from app.models import User
+from app.models import Tenant, User
+from app.services.tenant_authority import (
+    RUNTIME_TENANT_ASSIGNMENT_SOURCE,
+    RUNTIME_TENANT_ASSIGNMENT_VERSION,
+)
 
 register_all_models()
 username = os.environ["RC_TEST_ADMIN_USERNAME"].strip()
 password = os.environ["RC_TEST_ADMIN_PASSWORD"]
+tenant_key = os.environ["RC_TEST_TENANT_KEY"].strip()
 db = SessionLocal()
 try:
+    tenant = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).first()
+    if tenant is None or not tenant.is_active:
+        raise SystemExit("RC_TEST_OPERATOR_FAILED reason=tenant_principal_missing")
     user = db.query(User).filter(func.lower(User.username) == username.lower()).first()
     if user is None:
         user = User(
@@ -441,6 +457,9 @@ try:
         user.password_hash = hash_password(password)
         user.role = UserRole.admin
         user.is_active = True
+    user.tenant_id = tenant.id
+    user.tenant_assignment_source = RUNTIME_TENANT_ASSIGNMENT_SOURCE
+    user.tenant_assignment_version = RUNTIME_TENANT_ASSIGNMENT_VERSION
     db.commit()
 finally:
     db.close()

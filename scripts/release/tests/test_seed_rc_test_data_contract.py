@@ -55,6 +55,14 @@ class RcSeedContractTest(unittest.TestCase):
         self.assertIn("normalize_public_origin(requested_origin)", self.source)
         self.assertNotIn('origin = "https://rc-test.invalid"', self.source)
 
+    def test_seed_creates_active_authoritative_tenant_before_binding(self) -> None:
+        self.assertIn("from app.models import Tenant", self.source)
+        self.assertIn("Tenant.tenant_key == tenant_key", self.source)
+        self.assertIn("if tenant is None:", self.source)
+        self.assertIn("Tenant(", self.source)
+        self.assertIn("tenant.is_active = True", self.source)
+        self.assertLess(self.source.index("Tenant.tenant_key == tenant_key"), self.source.index("WebchatPublicOriginBinding.normalized_origin == origin"))
+
     def test_seed_is_idempotent_and_committed(self) -> None:
         self.assertIn("WebchatPublicOriginBinding.normalized_origin == origin", self.source)
         self.assertIn("if binding is None:", self.source)

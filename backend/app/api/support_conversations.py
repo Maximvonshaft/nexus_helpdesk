@@ -106,7 +106,7 @@ def _load_conversation(
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(WebchatConversation.public_id == public_id)
     )
-    row = apply_support_ticket_scope(query, current_user).first()
+    row = apply_support_ticket_scope(query, current_user, db).first()
     if row is None:
         # The same response is used for missing and unauthorized cases so object
         # existence is not disclosed across support scopes.
@@ -181,7 +181,7 @@ def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, A
         .filter(WebchatAITurn.created_at >= since)
     )
     turns = (
-        apply_support_ticket_scope(query, current_user)
+        apply_support_ticket_scope(query, current_user, db)
         .order_by(WebchatAITurn.id.desc())
         .limit(120)
         .all()
@@ -354,7 +354,7 @@ def list_support_conversations(
         .outerjoin(latest_message_ids, latest_message_ids.c.conversation_id == WebchatConversation.id)
         .outerjoin(WebchatMessage, WebchatMessage.id == latest_message_ids.c.last_message_id)
     )
-    query = apply_support_ticket_scope(query, current_user)
+    query = apply_support_ticket_scope(query, current_user, db)
     if view == "closed":
         query = query.filter(Ticket.status.in_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
     elif view != "all":
@@ -484,7 +484,7 @@ def support_conversation_metrics(
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(WebchatConversation.updated_at >= since)
     )
-    rows = apply_support_ticket_scope(query, current_user).all()
+    rows = apply_support_ticket_scope(query, current_user, db).all()
     by_channel: Counter[str] = Counter()
     state_counts: Counter[str] = Counter()
     needs_human = 0
@@ -524,14 +524,14 @@ def support_conversation_state(
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
     )
-    open_count = apply_support_ticket_scope(open_query, current_user).count()
+    open_count = apply_support_ticket_scope(open_query, current_user, db).count()
 
     requested_query = (
         db.query(WebchatHandoffRequest.id)
         .join(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
         .filter(WebchatHandoffRequest.status == "requested")
     )
-    requested_handoffs = apply_support_ticket_scope(requested_query, current_user).count()
+    requested_handoffs = apply_support_ticket_scope(requested_query, current_user, db).count()
 
     my_query = (
         db.query(WebchatHandoffRequest.id)
@@ -541,7 +541,7 @@ def support_conversation_state(
             WebchatHandoffRequest.assigned_agent_id == current_user.id,
         )
     )
-    my_handoffs = apply_support_ticket_scope(my_query, current_user).count()
+    my_handoffs = apply_support_ticket_scope(my_query, current_user, db).count()
 
     return {
         "source": "nexus_support_conversations",

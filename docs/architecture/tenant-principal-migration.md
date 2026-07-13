@@ -263,3 +263,47 @@ No repository workflow invokes apply against production, and no manifest or
 signing key is committed to this repository. A production execution still
 requires an independently approved change record, backup/restore evidence,
 post-backfill preflight and retained signed receipt.
+
+## Phase 3A runtime authority contract (`nexus.tenant.runtime_authority.v1`)
+
+The first runtime enforcement slice governs authenticated Ticket and Customer
+access without pretending that all downstream operational records have already
+migrated:
+
+- production defaults to and requires `TENANT_RUNTIME_AUTHORITY_MODE=enforce`;
+- development and test may use `shadow` only to preserve a fully unowned legacy
+  chain where User, Team, Market, Ticket and linked Customer resources all have
+  no relational Tenant;
+- once any link is Tenant-owned, missing, inactive or conflicting ownership
+  fails closed;
+- privileged roles are capability-privileged, not Tenant-global: admin, manager
+  and auditor access remains constrained to the actor's active Tenant;
+- Ticket authority verifies the Ticket, Customer, Market, Team, ChannelAccount,
+  assignee and creator against one Tenant before role/team visibility rules;
+- Ticket creation derives Tenant only from the authenticated relational
+  principal and dual-writes the Ticket and newly created Customer with bounded
+  runtime provenance;
+- public WebChat creation resolves the already verified server-owned Origin
+  binding to one active relational Tenant before writing customer data; client
+  `tenant_key` cannot select a Tenant in enforce mode, and new Customer/Ticket
+  rows receive the same runtime provenance;
+- Support list, detail, reply, metrics, state and runtime-latency queries resolve
+  the actor Tenant first and apply it as the outer SQL predicate; Admin/Auditor
+  capabilities are not cross-Tenant visibility;
+- the isolated RC profile creates one synthetic active Tenant, binds its public
+  Origin and synthetic administrator to that Tenant, and keeps
+  `TENANT_RUNTIME_AUTHORITY_MODE=enforce` while proving the public-to-operator
+  message journey;
+- Customer identity matching is Tenant-scoped, so an email, phone or external
+  reference cannot select or update another Tenant's Customer;
+- Ticket lists, statistics, Customer history, Lite upsert lookup and cursor-based
+  Workspace/Lite projections apply the same Tenant predicate;
+- client `tenant_key`, country, Market code and the literal `default` never
+  authorize runtime access;
+- this slice adds no schema, executes no backfill and does not enable Provider,
+  outbound, deployment or production-data actions.
+
+`shadow` is a transition aid, not a production safety posture. Phase 3B must
+propagate and verify the same authority through Knowledge, Case Context, Runtime
+Audit, Tool execution, Worker jobs and Dispatch/Outbox before Phase 4 can make
+core ownership non-null or evaluate RLS activation.

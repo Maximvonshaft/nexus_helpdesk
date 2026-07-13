@@ -7,7 +7,9 @@ on:
       - "backend/app/model_registry.py"
       - "backend/app/services/webchat_tenant_binding.py"
       - "backend/app/services/webchat_rate_limit.py"
+      - "backend/app/services/webchat_service.py"
       - "backend/alembic/versions/20260711_0058_webchat_public_origin_bindings.py"
+      - "backend/alembic/versions/20260713_0059_add_tenant_principal.py"
       - "backend/scripts/manage_webchat_origin_binding.py"
       - "backend/tests/test_webchat_public_tenant_binding.py"
       - ".github/workflows/webchat-tenant-binding-gate.yml"
@@ -66,9 +68,10 @@ jobs:
             backend/app/models_webchat_binding.py \
             backend/app/services/webchat_tenant_binding.py \
             backend/app/services/webchat_rate_limit.py \
+            backend/app/services/webchat_service.py \
             backend/scripts/manage_webchat_origin_binding.py \
             backend/tests/test_webchat_public_tenant_binding.py
-      - name: Prove one migration line containing 0058
+      - name: Prove current head contains the binding migration line
         working-directory: backend
         run: |
           python - <<'PY'
@@ -77,8 +80,9 @@ jobs:
           script = ScriptDirectory.from_config(Config("alembic.ini"))
           heads = script.get_heads()
           assert len(heads) == 1, heads
-          assert heads[0] == "20260711_0058", heads
+          assert heads[0] == "20260713_0059", heads
           revisions = {row.revision for row in script.walk_revisions("base", heads[0])}
+          assert "20260713_0059" in revisions, revisions
           assert "20260711_0058" in revisions, revisions
           assert "20260711_0057" in revisions, revisions
           PY

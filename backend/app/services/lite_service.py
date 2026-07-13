@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..enums import EventType, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket, TicketAIIntake, TicketInternalNote, User
+from ..models import Customer, Market, Ticket, TicketAIIntake, TicketInternalNote, User
 from ..schemas import (
     AIIntakeCreate,
     CustomerInput,
@@ -35,6 +35,7 @@ from .permissions import (
     ensure_ticket_visible,
 )
 from .ticket_service import add_ai_intake, add_internal_note, change_status, create_ticket, get_ticket_or_404, list_tickets, validate_assignee_team
+from .tenant_authority import ensure_resource_tenant, resolve_actor_tenant_id
 from .sla_service import evaluate_sla, resume_sla, update_pause_state_for_status
 from .state_machine import requires_note, validate_transition
 
@@ -163,8 +164,17 @@ def serialize_lite_list(ticket: Ticket, highlighted: bool = False) -> LiteCaseLi
     )
 
 
-def _find_open_case(db: Session, payload: LiteCaseCreate) -> Optional[Ticket]:
+def _find_open_case(
+    db: Session,
+    payload: LiteCaseCreate,
+    current_user: User,
+) -> Optional[Ticket]:
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
     q = db.query(Ticket)
+    if actor_tenant_id is not None:
+        q = q.filter(Ticket.tenant_id == actor_tenant_id)
+    else:
+        q = q.filter(Ticket.tenant_id.is_(None))
     q = q.filter(Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
 
     if payload.source_chat_id:
@@ -219,8 +229,9 @@ def get_lite_case(db: Session, ticket_id: int, current_user: User) -> LiteCaseDe
 
 def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
     if payload.upsert_open_case:
-        existing = _find_open_case(db, payload)
+        existing = _find_open_case(db, payload, current_user)
         if existing:
+            ensure_ticket_visible(current_user, existing, db)
             changed = False
             for field, value in {
                 "last_customer_message": payload.last_customer_message,
@@ -300,6 +311,12 @@ def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
 def update_lite_case(db: Session, ticket_id: int, payload: LiteCaseUpdate, current_user: User) -> LiteCaseDetail:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    if payload.market_id is not None:
+        market = db.query(Market).filter(Market.id == payload.market_id, Market.is_active.is_(True)).first()
+        if market is None:
+            raise HTTPException(status_code=404, detail="Market not found")
+        ensure_resource_tenant(db, actor_tenant_id, market, resource_kind="Market")
 
     changed_fields = []
     mapping = {
@@ -353,7 +370,13 @@ def assign_lite_case(db: Session, ticket_id: int, payload: LiteAssignRequest, cu
     ensure_can_assign(current_user, db)
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
-    assignee, team = validate_assignee_team(db, payload.assignee_id, payload.team_id, fallback_team_id=ticket.team_id)
+    assignee, team = validate_assignee_team(
+        db,
+        payload.assignee_id,
+        payload.team_id,
+        fallback_team_id=ticket.team_id,
+        actor_tenant_id=resolve_actor_tenant_id(db, current_user),
+    )
     ticket.assignee_id = assignee.id if assignee else None
     ticket.team_id = team.id if team else ticket.team_id
     if ticket.status in {TicketStatus.new, TicketStatus.pending_assignment} and ticket.assignee_id:
@@ -401,6 +424,7 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
             effective_assignee_id,
             effective_team_id,
             fallback_team_id=ticket.team_id,
+            actor_tenant_id=resolve_actor_tenant_id(db, current_user),
         )
         if team_provided and team is not None:
             ticket.team_id = team.id

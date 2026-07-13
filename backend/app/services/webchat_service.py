@@ -13,7 +13,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket, TicketComment, TicketEvent, User
+from ..models import Customer, Tenant, Ticket, TicketComment, TicketEvent, User
 from ..utils.time import utc_now
 from ..settings import get_settings
 from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
@@ -21,6 +21,7 @@ from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .server_fact_evidence import resolve_server_fact_evidence
 from .permissions import ensure_ticket_visible
+from .tenant_authority import stamp_runtime_tenant, tenant_runtime_authority_mode
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
 from .customer_visible_message_service import create_customer_visible_message
@@ -28,6 +29,7 @@ from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webcha
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
 from .webchat_inbox_read_state import webchat_read_state_payload
 from .webchat_public_payload import public_webchat_metadata
+from .webchat_tenant_binding import current_verified_webchat_scope
 
 WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
 
@@ -224,9 +226,62 @@ def _event_read(row: WebchatEvent) -> dict[str, Any]:
     }
 
 
+def _verified_relational_webchat_tenant(db: Session) -> Tenant | None:
+    scope = current_verified_webchat_scope(db)
+    mode = tenant_runtime_authority_mode()
+    if scope is None:
+        if mode == "enforce":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="webchat_verified_scope_required",
+            )
+        return None
+    if scope.authority != "server_origin_binding":
+        if mode == "enforce":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="webchat_verified_scope_required",
+            )
+        return None
+    tenant_key = scope.tenant_key.strip().lower()
+    tenant = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).first()
+    if tenant is not None and tenant.is_active:
+        return tenant
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="webchat_tenant_principal_required",
+    )
+
+
+def _assert_resumed_webchat_tenant(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    tenant: Tenant | None,
+) -> None:
+    ticket = db.get(Ticket, conversation.ticket_id) if conversation.ticket_id is not None else None
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="webchat_tenant_relationship_conflict",
+        )
+    customer = db.get(Customer, ticket.customer_id) if ticket.customer_id is not None else None
+    expected = tenant.id if tenant is not None else None
+    if (
+        ticket.tenant_id != expected
+        or (tenant is not None and customer is None)
+        or (customer is not None and customer.tenant_id != expected)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="webchat_tenant_relationship_conflict",
+        )
+
+
 def create_or_resume_conversation(db: Session, payload: Any, request: Request) -> dict[str, Any]:
     tenant_key = _clip(getattr(payload, "tenant_key", None) or "default", 120) or "default"
     channel_key = _clip(getattr(payload, "channel_key", None) or "default", 120) or "default"
+    relational_tenant = _verified_relational_webchat_tenant(db)
     public_id = _clip(getattr(payload, "conversation_id", None), 64)
     visitor_token = getattr(payload, "visitor_token", None)
 
@@ -234,6 +289,11 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
         existing = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
         if existing:
             _validate_token(existing, visitor_token)
+            _assert_resumed_webchat_tenant(
+                db,
+                conversation=existing,
+                tenant=relational_tenant,
+            )
             existing.last_seen_at = utc_now()
             existing.visitor_token_expires_at = _new_token_expiry()
             existing.updated_at = utc_now()
@@ -265,6 +325,7 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
         phone=visitor_phone,
         external_ref=visitor_ref or public_id,
     )
+    stamp_runtime_tenant(customer, relational_tenant.id if relational_tenant is not None else None)
     db.add(customer)
     db.flush()
 
@@ -284,6 +345,7 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
         customer_request="Webchat conversation initiated.",
         last_customer_message="Webchat conversation initiated.",
     )
+    stamp_runtime_tenant(ticket, relational_tenant.id if relational_tenant is not None else None)
     db.add(ticket)
     db.flush()
 

@@ -19,6 +19,7 @@ if _backend_text not in sys.path:
 
 from app.db import SessionLocal
 from app.model_registry import register_all_models
+from app.models import Tenant
 from app.models_webchat_binding import WebchatPublicOriginBinding
 from app.services.webchat_tenant_binding import normalize_public_origin
 
@@ -45,12 +46,25 @@ def seed_public_origin_binding() -> WebchatPublicOriginBinding:
     origin = normalize_public_origin(requested_origin)
     if origin is None:
         raise ValueError("invalid RC_PUBLIC_ORIGIN")
-    tenant_key = _bounded_env("RC_TEST_TENANT_KEY", DEFAULT_TENANT_KEY, max_length=120)
+    tenant_key = _bounded_env("RC_TEST_TENANT_KEY", DEFAULT_TENANT_KEY, max_length=80)
     channel_key = _bounded_env("RC_TEST_CHANNEL_KEY", DEFAULT_CHANNEL_KEY, max_length=120)
     display_name = _bounded_env("RC_TEST_DISPLAY_NAME", DEFAULT_DISPLAY_NAME, max_length=160)
 
     db = SessionLocal()
     try:
+        tenant = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).first()
+        if tenant is None:
+            tenant = Tenant(
+                tenant_key=tenant_key,
+                display_name=display_name,
+                is_active=True,
+            )
+            db.add(tenant)
+            db.flush()
+        else:
+            tenant.display_name = display_name
+            tenant.is_active = True
+
         binding = (
             db.query(WebchatPublicOriginBinding)
             .filter(WebchatPublicOriginBinding.normalized_origin == origin)

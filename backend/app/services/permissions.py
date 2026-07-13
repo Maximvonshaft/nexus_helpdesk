@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..enums import NoteVisibility, TicketStatus, UserRole
 from ..models import UserCapabilityOverride
+from .tenant_authority import ensure_ticket_tenant_authority
 
 CAP_TICKET_READ = "ticket.read"
 CAP_TICKET_ASSIGN = "ticket.assign"
@@ -162,6 +163,12 @@ def ensure_capability(user, capability: str, db: Session | None = None, *, messa
 
 def ensure_ticket_visible(user, ticket, db: Session | None = None):
     ensure_capability(user, CAP_TICKET_READ, db, message="Ticket not visible for current user")
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Tenant authority requires a database session",
+        )
+    ensure_ticket_tenant_authority(db, user, ticket)
     if user.role in {UserRole.admin, UserRole.manager, UserRole.auditor}:
         return
     if ticket.assignee_id == user.id:

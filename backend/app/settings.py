@@ -34,6 +34,11 @@ class Settings:
 
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./helpdesk.db").strip()
         self.database_echo = os.getenv("DATABASE_ECHO", "false").strip().lower() == "true"
+        default_tenant_authority_mode = "enforce" if self.app_env == "production" else "shadow"
+        self.tenant_runtime_authority_mode = (
+            os.getenv("TENANT_RUNTIME_AUTHORITY_MODE", default_tenant_authority_mode).strip().lower()
+            or default_tenant_authority_mode
+        )
         self.jwt_secret_key = os.getenv("SECRET_KEY")
         self.jwt_issuer = os.getenv("JWT_ISSUER", "helpdesk-suite")
         self.jwt_audience = os.getenv("JWT_AUDIENCE", "helpdesk-suite-users")
@@ -277,6 +282,8 @@ class Settings:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_BATCH_SIZE must be between 1 and 100")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
+        if self.tenant_runtime_authority_mode not in {"shadow", "enforce"}:
+            raise RuntimeError("TENANT_RUNTIME_AUTHORITY_MODE must be shadow or enforce")
         if self.external_channel_transport != "disabled":
             raise RuntimeError("EXTERNAL_CHANNEL_TRANSPORT has been retired; set EXTERNAL_CHANNEL_TRANSPORT=disabled")
         if self.external_channel_deployment_mode != "disabled":
@@ -292,6 +299,8 @@ class Settings:
         if self.external_channel_event_driver_enabled:
             raise RuntimeError("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED has been retired; set EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false")
         if self.app_env == "production":
+            if self.tenant_runtime_authority_mode != "enforce":
+                raise RuntimeError("TENANT_RUNTIME_AUTHORITY_MODE=enforce is required in production")
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")
             weak_secrets = {"change-me", "changeme", "replace-me", "replace_this", "secret", "default"}
