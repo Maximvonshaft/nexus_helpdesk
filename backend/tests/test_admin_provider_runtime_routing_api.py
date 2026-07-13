@@ -37,9 +37,10 @@ def test_admin_provider_runtime_routing_api_inserts_safe_default(monkeypatch):
     assert db.commit.called
 
 
-def test_admin_provider_runtime_rejects_non_stage_canary_percentage():
+@pytest.mark.parametrize("value", [2, True, "5", 5.0])
+def test_admin_provider_runtime_rejects_non_strict_canary_stage_input(value):
     with pytest.raises(ValidationError) as exc_info:
-        WebchatRuntimeRoutingUpdate(canary_percent=2)
+        WebchatRuntimeRoutingUpdate(canary_percent=value)
 
     assert "provider_runtime_canary_percent_invalid" in str(exc_info.value)
 
