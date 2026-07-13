@@ -10,8 +10,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  guard-main:
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require exact main ref
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+
   build-assure-publish:
     if: github.ref == 'refs/heads/main'
+    needs: guard-main
     permissions:
       contents: read
       packages: write
@@ -116,6 +127,7 @@ jobs:
 
   recovery:
     if: github.ref == 'refs/heads/main'
+    needs: guard-main
     permissions:
       contents: read
     runs-on: ubuntu-latest
