@@ -81,11 +81,17 @@ def _valid_result(provider: str = "private_ai_runtime") -> ProviderResult:
     )
 
 
-def _rule(*, primary="private_ai_runtime", fallbacks=None, canary_percent=100):
+def _rule(
+    *,
+    primary="private_ai_runtime",
+    fallbacks=None,
+    output_contract="nexus_webchat_runtime_reply_v1",
+    canary_percent=100,
+):
     return {
         "primary_provider": primary,
         "fallback_providers": [] if fallbacks is None else fallbacks,
-        "output_contract": "nexus_webchat_runtime_reply_v1",
+        "output_contract": output_contract,
         "timeout_ms": 1000,
         "kill_switch": False,
         "canary_percent": canary_percent,
@@ -151,6 +157,29 @@ async def test_unsupported_persisted_primary_blocks_approved_fallback_before_any
     summary = _summary(audit)
     assert summary["fallback_result"] == "blocked"
     assert "customer-controlled-provider-alias" not in repr(summary)
+
+
+@pytest.mark.asyncio
+async def test_unsupported_persisted_output_contract_blocks_before_adapter(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    marker = "CUSTOMER-CONTROLLED-OUTPUT-CONTRACT"
+    db = _mock_db(_rule(output_contract=marker, canary_percent=100))
+    adapter = _Adapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.ok is False
+    assert result.error_code == "provider_runtime_output_contract_invalid"
+    assert adapter.calls == 0
+    assert len(db.audit_rows) == 1
+    audit = db.audit_rows[0]
+    assert audit["provider"] == "router"
+    assert audit["operation"] == "traffic_select"
+    assert audit["error_code"] == "provider_runtime_output_contract_invalid"
+    assert _summary(audit)["fallback_result"] == "blocked"
+    assert marker not in repr(result)
+    assert marker not in repr(db.audit_rows)
 
 
 @pytest.mark.asyncio
