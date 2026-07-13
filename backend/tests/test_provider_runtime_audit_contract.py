@@ -230,6 +230,7 @@ async def test_authoritative_nonfallback_failure_returns_router_owned_bounded_re
     assert result.reply_source == "router"
     assert result.error_code == "provider_runtime_provider_failed"
     assert result.elapsed_ms == 7
+    assert result.fallback_allowed is False
     assert result.raw_payload_safe_summary["fallback_result"] == "blocked"
     assert result.raw_payload_safe_summary["provider_result"] == "failed"
     assert marker not in repr(result)
@@ -265,6 +266,7 @@ async def test_shadow_failure_with_fallback_disallowed_never_calls_fallback(monk
 
     assert result.ok is False
     assert result.error_code == "provider_shadow_failed"
+    assert result.fallback_allowed is False
     assert primary.calls == 1
     assert backup.calls == 0
     provider_rows = [row for row in db.audit_rows if row["operation"] == "shadow_generate"]
