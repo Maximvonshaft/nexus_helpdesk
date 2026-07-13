@@ -23,24 +23,24 @@ def _load_evidence_module():
 class OperatorRecoveryContractTests(unittest.TestCase):
     def test_backup_uses_native_libpq_url_and_atomic_finalization(self) -> None:
         script = (ROOT / "scripts" / "deploy" / "backup_postgres.sh").read_text(encoding="utf-8")
-        self.assertIn('POSTGRES_NATIVE_URL', script)
+        self.assertIn("POSTGRES_NATIVE_URL", script)
         self.assertNotIn('pg_dump "$DATABASE_URL"', script)
-        self.assertIn('mktemp', script)
-        self.assertIn('pg_restore --list', script)
-        self.assertIn('sha256sum', script)
-        self.assertIn('backup_manifest', script)
-        self.assertIn('mv --', script)
+        self.assertIn("mktemp", script)
+        self.assertIn("pg_restore --list", script)
+        self.assertIn("sha256sum", script)
+        self.assertIn("backup_manifest", script)
+        self.assertIn("mv --", script)
 
     def test_rollback_fails_fast_and_reports_explicit_states(self) -> None:
         script = (ROOT / "scripts" / "deploy" / "rollback_release.sh").read_text(encoding="utf-8")
-        self.assertIn('POSTGRES_NATIVE_URL', script)
-        self.assertIn('ON_ERROR_STOP=1', script)
-        self.assertIn('--single-transaction', script)
-        self.assertIn('INSTRUCTIONS_ONLY', script)
-        self.assertIn('DATABASE_RESTORED', script)
-        self.assertIn('IMAGE_RESTARTED', script)
-        self.assertIn('HEALTH_VERIFIED', script)
-        self.assertNotIn('Rollback helper completed.', script)
+        self.assertIn("POSTGRES_NATIVE_URL", script)
+        self.assertIn("ON_ERROR_STOP=1", script)
+        self.assertIn("--single-transaction", script)
+        self.assertIn("INSTRUCTIONS_ONLY", script)
+        self.assertIn("DATABASE_RESTORED", script)
+        self.assertIn("IMAGE_RESTARTED", script)
+        self.assertIn("HEALTH_VERIFIED", script)
+        self.assertNotIn("Rollback helper completed.", script)
 
 
 class RecoveryEvidenceTests(unittest.TestCase):
@@ -117,6 +117,28 @@ class RecoveryEvidenceTests(unittest.TestCase):
             self.assertIn("recovery.rpo_exceeded", evidence["reasons"])
             with self.assertRaisesRegex(self.module.RecoveryEvidenceError, "backup_sha"):
                 self._compare(root, self._snapshot(), self._snapshot(), backup_sha256="invalid")
+
+    def test_migration_repair_plan_is_deterministic_and_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "plan.json"
+            code = self.module.migration_plan(
+                observed_heads=("20260710_0057",),
+                expected_head="20260711_0058",
+                output=output,
+            )
+            plan = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(code, 1)
+            self.assertEqual(plan["status"], "repair_required")
+            self.assertEqual(plan["action"], "alembic_upgrade_head")
+            self.assertFalse(plan["apply_authorized"])
+            self.assertFalse(plan["production_mutation_performed"])
+
+            with self.assertRaisesRegex(self.module.RecoveryEvidenceError, "migration_heads_multiple"):
+                self.module.migration_plan(
+                    observed_heads=("20260710_0057", "20260711_0058"),
+                    expected_head="20260711_0058",
+                    output=output,
+                )
 
 
 if __name__ == "__main__":
