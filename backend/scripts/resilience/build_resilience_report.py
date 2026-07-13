@@ -8,9 +8,9 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree
 
-SCHEMA = "nexus_osr_resilience_qualification_v1"
+SCHEMA = "nexus.osr.resilience_qualification.v1"
 _SHA_RE = re.compile(r"^[a-f0-9]{40}$")
-_REQUIRED_TEST_NAMES = frozenset(
+REQUIRED_SCENARIO_TESTS = frozenset(
     {
         "test_concurrent_postgres_claims_never_duplicate_a_job",
         "test_concurrent_enqueue_keeps_one_active_dedupe_record",
@@ -33,6 +33,10 @@ def _duration_ms(value: object) -> int:
         return 0
 
 
+def _normalized_test_name(value: object) -> str:
+    return str(value or "").split("[", 1)[0].strip()
+
+
 def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) -> dict[str, object]:
     root = ElementTree.parse(junit_path).getroot()
     suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
@@ -41,24 +45,27 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
     errors = sum(_bounded_int(suite.attrib.get("errors")) for suite in suites)
     skipped = sum(_bounded_int(suite.attrib.get("skipped")) for suite in suites)
     duration_ms = sum(_duration_ms(suite.attrib.get("time")) for suite in suites)
+
     observed_test_names = {
-        str(testcase.attrib.get("name") or "").strip()
+        _normalized_test_name(testcase.attrib.get("name"))
         for testcase in root.iter("testcase")
     }
-    observed_required = len(_REQUIRED_TEST_NAMES.intersection(observed_test_names))
-    missing_required = len(_REQUIRED_TEST_NAMES) - observed_required
-    normalized_sha = source_sha.strip().lower()
+    observed_required = REQUIRED_SCENARIO_TESTS.intersection(observed_test_names)
+    missing_required = REQUIRED_SCENARIO_TESTS.difference(observed_required)
+
+    normalized_sha = str(source_sha or "").strip().lower()
     if not _SHA_RE.fullmatch(normalized_sha):
         normalized_sha = "unknown"
+
     status = (
         "pass"
         if (
             pytest_exit_code == 0
-            and tests >= len(_REQUIRED_TEST_NAMES)
+            and tests >= len(REQUIRED_SCENARIO_TESTS)
             and failures == 0
             and errors == 0
             and skipped == 0
-            and missing_required == 0
+            and not missing_required
             and normalized_sha != "unknown"
         )
         else "fail"
@@ -68,15 +75,10 @@ def build_report(junit_path: Path, *, pytest_exit_code: int, source_sha: str) ->
         "status": status,
         "source_sha": normalized_sha,
         "database": "postgresql",
-        "scenarios": {
-            "concurrent_skip_locked_claim": "required",
-            "concurrent_dedupe_enqueue": "required",
-            "expired_worker_lock_recovery": "required",
-        },
         "required_scenarios": {
-            "expected": len(_REQUIRED_TEST_NAMES),
-            "observed": observed_required,
-            "missing": missing_required,
+            "expected": len(REQUIRED_SCENARIO_TESTS),
+            "observed": len(observed_required),
+            "missing": len(missing_required),
         },
         "counts": {
             "tests": tests,
@@ -106,7 +108,9 @@ def main() -> int:
     encoded = json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
     if len(encoded.encode("utf-8")) > 8192:
         raise SystemExit("resilience_report_too_large")
-    Path(args.output).write_text(encoded, encoding="utf-8")
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded, encoding="utf-8")
     return 0 if report["status"] == "pass" else 1
 
 
