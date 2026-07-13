@@ -9,7 +9,7 @@ Work Item #572 owns the complete decommission. PR #680 is the current non-destru
 Current reconciliation baseline:
 
 - audited main: `e96dac837b4f02a297602259953d7c274b9c2063`;
-- inventory version: `2026-07-13.1`;
+- inventory version: `2026-07-13.2`;
 - current PR: #680;
 - migration/schema/runtime changes: none.
 
@@ -75,7 +75,17 @@ The remaining explicitly classified write-capable surfaces are:
 
 The bridge still contains compatibility persistence helpers, including unresolved-event and attachment writes. This classification is conservative: it proves code capability, not current production traffic. Each write-capable rule is exact, sets `write_surface=true`, requires `stop_new_writes_required=true`, and lists caller migration before removal.
 
-The current cross-domain registry `config/governance/legacy-surface-domains.v1.json` is also classified because it explicitly coordinates the `external_channel_compatibility` domain and #572 ownership.
+## Current cross-domain and release compatibility
+
+The cross-domain registry `config/governance/legacy-surface-domains.v1.json` and its live contract test `scripts/ci/tests/test_check_legacy_surface_registry.py` explicitly coordinate the `external_channel_compatibility` domain and #572 ownership.
+
+Current RC and worker configuration also keep the retired transport explicitly disabled:
+
+- `deploy/.env.rc-test.example`;
+- `deploy/docker-compose.operations-dispatch.yml`;
+- `scripts/release/generate_rc_test_env.py`.
+
+These files are classified as deployment compatibility, not as active transport authority. Their disabled settings may be removed only after the same caller-migration and observation prerequisites used for other compatibility configuration.
 
 ## Gate behavior
 
