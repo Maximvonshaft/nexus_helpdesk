@@ -15,6 +15,7 @@ It does **not** authorize production Provider traffic, real outbound, WhatsApp, 
 - Current image ID: `sha256:604a170fbffd57966c165bd76e3b65c5fa1b17cec9784859528e0363361c365a`.
 - Current migration: `20260707_0052`.
 - PostgreSQL: `10.2.64.2:5432/nexusdesk`.
+- Runtime secret directory: `/run/secrets`.
 - Uploads: `/opt/nexus_helpdesk/data/uploads`.
 - Upload backup mount: `/var/backups/nexusdesk/uploads`.
 - AI token: `/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token`.
@@ -32,11 +33,12 @@ The workflow:
 
 1. executes the existing isolated RC chain and builds the application image once;
 2. scans and licenses that same local image;
-3. pushes that exact image to GHCR;
-4. pulls it back by registry digest and proves the image ID is unchanged;
-5. runs disposable PostgreSQL recovery qualification on the same source SHA;
-6. attaches provenance to the registry digest;
-7. emits `controlled-candidate-<sha>` evidence with `nexus.osr.controlled-candidate-manifest.v1`.
+3. captures the image-embedded source, frontend, build-time and app-version identity;
+4. pushes that exact image to GHCR;
+5. pulls it back by registry digest and proves the image ID and embedded identity are unchanged;
+6. runs disposable PostgreSQL recovery qualification on the same source SHA;
+7. attaches provenance to the registry digest;
+8. emits `controlled-candidate-<sha>` evidence with `nexus.osr.controlled-candidate-manifest.v1`.
 
 Do not deploy a mutable tag. The only acceptable application reference is:
 
@@ -44,9 +46,11 @@ Do not deploy a mutable tag. The only acceptable application reference is:
 ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<approved-registry-digest>
 ```
 
+The server environment must copy `candidate.build_time` and `candidate.app_version` from the accepted manifest. Do not invent or replace those values at deployment time.
+
 ## Swiss replacement sequence
 
-The operator command set is instantiated only after the GitHub workflow returns an accepted source SHA, registry digest, migration revision, and manifest.
+The operator command set is instantiated only after the GitHub workflow returns an accepted source SHA, registry digest, migration revision, build metadata, and manifest.
 
 ### 1. Pre-cutover backup
 
@@ -71,6 +75,7 @@ Required Swiss values:
 ALLOWED_ORIGINS=https://mcs.speedaf.com
 WEBCHAT_ALLOWED_ORIGINS=https://mcs.speedaf.com
 DATABASE_URL=<preserved secret URL to 10.2.64.2:5432/nexusdesk>
+NEXUS_RUNTIME_SECRETS_HOST_PATH=/run/secrets
 NEXUS_UPLOADS_HOST_PATH=/opt/nexus_helpdesk/data/uploads
 NEXUS_UPLOAD_BACKUP_HOST_PATH=/var/backups/nexusdesk/uploads
 AI_RUNTIME_TOKEN_HOST_PATH=/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token
@@ -91,6 +96,7 @@ python3 scripts/deploy/validate_controlled_server_preflight.py \
   --compose-file deploy/docker-compose.controlled.yml \
   --manifest controlled-candidate-manifest.json \
   --expected-database-host 10.2.64.2 \
+  --expected-database-port 5432 \
   --expected-domain mcs.speedaf.com \
   --check-host-paths \
   --output controlled-server-preflight.json
@@ -105,7 +111,7 @@ docker compose \
   config --quiet
 ```
 
-Any mutable image, missing host path, unsafe token mode, stale source/migration identity, enabled Provider/outbound flag, or Compose build directive is a hard stop.
+Any mutable image, missing host path, empty or over-permissive token file, placeholder secret, wrong database port, stale source/build/migration identity, enabled Provider/outbound flag, or Compose build directive is a hard stop.
 
 ### 4. Stop old writers and back up again if traffic changed
 
@@ -124,6 +130,7 @@ Expected readiness:
 
 - source SHA equals the controlled manifest;
 - frontend SHA equals source SHA;
+- build time and app version equal the image-bound manifest fields;
 - migration equals the controlled manifest;
 - `/healthz` and `/readyz` return 200;
 - app and workers are healthy;
