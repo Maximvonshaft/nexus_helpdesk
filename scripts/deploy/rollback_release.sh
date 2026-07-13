@@ -11,9 +11,20 @@ SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff
 STATES=()
 OUTCOME="fail"
 FAILURE_STAGE="INITIALIZATION"
+RESTORE_LIST_FILE=""
+RESTORE_LIST_RAW_FILE=""
 
 append_state() {
   STATES+=("$1")
+}
+
+cleanup_restore_list() {
+  if [[ -n "${RESTORE_LIST_FILE:-}" && -f "$RESTORE_LIST_FILE" ]]; then
+    rm -f -- "$RESTORE_LIST_FILE"
+  fi
+  if [[ -n "${RESTORE_LIST_RAW_FILE:-}" && -f "$RESTORE_LIST_RAW_FILE" ]]; then
+    rm -f -- "$RESTORE_LIST_RAW_FILE"
+  fi
 }
 
 write_status() {
@@ -52,6 +63,7 @@ PY
 on_exit() {
   local code=$?
   trap - EXIT
+  cleanup_restore_list || true
   if [[ "$code" -ne 0 ]]; then
     OUTCOME="fail"
     write_status || true
@@ -141,6 +153,7 @@ digest = payload.get("archive_sha256", "")
 source_hash = payload.get("source_database_sha256", "")
 head = payload.get("alembic_head", "")
 size = payload.get("archive_size_bytes")
+extensions = payload.get("preinstalled_extensions")
 if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
     raise SystemExit("backup_manifest_digest_invalid")
 if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
@@ -149,10 +162,15 @@ if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(head)):
     raise SystemExit("backup_manifest_head_invalid")
 if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
     raise SystemExit("backup_manifest_size_invalid")
-print("\t".join((digest, str(size), source_hash, str(head))))
+if not isinstance(extensions, list) or len(extensions) != 1 or not isinstance(extensions[0], dict):
+    raise SystemExit("backup_manifest_extensions_invalid")
+extension = extensions[0]
+if extension.get("name") != "vector" or not re.fullmatch(r"[A-Za-z0-9._+-]{1,80}", str(extension.get("version", ""))):
+    raise SystemExit("backup_manifest_vector_invalid")
+print("\t".join((digest, str(size), source_hash, str(head), str(extension["version"]))))
 PY
 )"
-  IFS=$'\t' read -r EXPECTED_SHA EXPECTED_SIZE SOURCE_DATABASE_SHA256 EXPECTED_HEAD <<< "$MANIFEST_FIELDS"
+  IFS=$'\t' read -r EXPECTED_SHA EXPECTED_SIZE SOURCE_DATABASE_SHA256 EXPECTED_HEAD EXPECTED_VECTOR_VERSION <<< "$MANIFEST_FIELDS"
   ACTUAL_SHA="sha256:$(sha256sum "$ARCHIVE" | awk '{print $1}')"
   ACTUAL_SIZE="$(wc -c < "$ARCHIVE" | tr -d ' ')"
   if [[ "$EXPECTED_SHA" != "$ACTUAL_SHA" || "$EXPECTED_SIZE" != "$ACTUAL_SIZE" ]]; then
@@ -166,8 +184,47 @@ PY
     echo "Refusing in-place restore without ROLLBACK_ALLOW_IN_PLACE=I_UNDERSTAND" >&2
     exit 6
   fi
+  TARGET_VECTOR_VERSION="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c "SELECT extversion FROM pg_extension WHERE extname = 'vector'")"
+  if [[ "$TARGET_VECTOR_VERSION" != "$EXPECTED_VECTOR_VERSION" ]]; then
+    echo "Target vector extension version does not match backup manifest" >&2
+    exit 10
+  fi
 
-  pg_restore --list "$ARCHIVE" >/dev/null
+  RESTORE_LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/nexus-restore-list.XXXXXX")"
+  RESTORE_LIST_RAW_FILE="$RESTORE_LIST_FILE.raw"
+  pg_restore --list "$ARCHIVE" > "$RESTORE_LIST_RAW_FILE"
+  RAW_RESTORE_LIST="$RESTORE_LIST_RAW_FILE" FILTERED_RESTORE_LIST="$RESTORE_LIST_FILE" python - <<'PY'
+import os
+import re
+from pathlib import Path
+
+raw_path = Path(os.environ["RAW_RESTORE_LIST"])
+filtered_path = Path(os.environ["FILTERED_RESTORE_LIST"])
+extension_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+EXTENSION\s+-\s+vector(?:\s+.*)?$")
+comment_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+COMMENT\s+-\s+EXTENSION\s+vector(?:\s+.*)?$")
+vector_toc = re.compile(r"^\d+;.*\bEXTENSION\b.*\bvector\b", re.IGNORECASE)
+lines = raw_path.read_text(encoding="utf-8").splitlines()
+filtered: list[str] = []
+extension_count = 0
+comment_count = 0
+for line in lines:
+    if extension_entry.fullmatch(line):
+        extension_count += 1
+        filtered.append(";" + line)
+    elif comment_entry.fullmatch(line):
+        comment_count += 1
+        filtered.append(";" + line)
+    elif vector_toc.search(line):
+        raise SystemExit("backup_restore_vector_toc_unrecognized")
+    else:
+        filtered.append(line)
+if extension_count != 1 or comment_count > 1:
+    raise SystemExit("backup_restore_vector_toc_invalid")
+filtered_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
+PY
+  rm -f -- "$RESTORE_LIST_RAW_FILE"
+  RESTORE_LIST_RAW_FILE=""
+
   FAILURE_STAGE="DATABASE_RESTORE"
   pg_restore \
     --dbname="$POSTGRES_NATIVE_URL" \
@@ -177,6 +234,7 @@ PY
     --if-exists \
     --no-owner \
     --no-privileges \
+    --use-list="$RESTORE_LIST_FILE" \
     "$ARCHIVE"
   append_state "DATABASE_RESTORE_APPLIED"
   FAILURE_STAGE="DATABASE_POST_VERIFY"
@@ -185,6 +243,11 @@ PY
   if [[ "${#HEAD_ROWS[@]}" -ne 1 || "${HEAD_ROWS[0]}" != "$EXPECTED_HEAD" ]]; then
     echo "Restored Alembic head does not match backup manifest" >&2
     exit 7
+  fi
+  RESTORED_VECTOR_VERSION="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c "SELECT extversion FROM pg_extension WHERE extname = 'vector'")"
+  if [[ "$RESTORED_VECTOR_VERSION" != "$EXPECTED_VECTOR_VERSION" ]]; then
+    echo "Restored vector extension version does not match backup manifest" >&2
+    exit 11
   fi
   append_state "DATABASE_RESTORED"
 fi
@@ -205,6 +268,7 @@ fi
 
 OUTCOME="pass"
 FAILURE_STAGE=""
+cleanup_restore_list
 write_status
 trap - EXIT
 printf 'rollback_states=%s\n' "$(IFS=,; echo "${STATES[*]}")"
