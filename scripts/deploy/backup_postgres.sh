@@ -44,10 +44,8 @@ pg_restore --list "$ARCHIVE" >/dev/null
 BACKUP_SHA256="sha256:$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 BACKUP_SIZE_BYTES="$(wc -c < "$ARCHIVE" | tr -d ' ')"
 SOURCE_DATABASE="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT current_database()')"
-mapfile -t ALEMBIC_HEADS < <(
-  psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 \
-    -c 'SELECT version_num FROM alembic_version ORDER BY version_num'
-)
+ALEMBIC_OUTPUT="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version ORDER BY version_num')"
+mapfile -t ALEMBIC_HEADS <<< "$ALEMBIC_OUTPUT"
 if [[ "${#ALEMBIC_HEADS[@]}" -ne 1 || -z "${ALEMBIC_HEADS[0]}" ]]; then
   echo "Expected exactly one Alembic head before backup" >&2
   exit 3
