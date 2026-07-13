@@ -76,7 +76,12 @@ def _join_server(capture: dict[str, bytes | BaseException], thread: threading.Th
         raise error
 
 
-def _switching_protocols_response(request: bytes, *, accept_override: str | None = None) -> bytes:
+def _switching_protocols_response(
+    request: bytes,
+    *,
+    accept_override: str | None = None,
+    connection_override: str | None = None,
+) -> bytes:
     websocket_key = _request_headers(request)["sec-websocket-key"]
     expected_accept = base64.b64encode(
         hashlib.sha1(
@@ -84,10 +89,11 @@ def _switching_protocols_response(request: bytes, *, accept_override: str | None
         ).digest()
     ).decode("ascii")
     accept = expected_accept if accept_override is None else accept_override
+    connection = "Upgrade" if connection_override is None else connection_override
     return (
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
+        f"Connection: {connection}\r\n"
         f"Sec-WebSocket-Accept: {accept}\r\n"
         "\r\n"
     ).encode("ascii")
@@ -132,6 +138,19 @@ def test_probe_rejects_invalid_websocket_accept_header():
     )
 
     with pytest.raises(RuntimeError, match="Sec-WebSocket-Accept"):
+        PROBE.probe_websocket_upgrade(base_url=base_url, timeout_seconds=1)
+    _join_server(capture, thread)
+
+
+def test_probe_rejects_connection_header_with_upgrade_substring_only():
+    base_url, capture, thread = _start_server(
+        lambda request: _switching_protocols_response(
+            request,
+            connection_override="keep-alive, x-upgrade",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="Connection response header"):
         PROBE.probe_websocket_upgrade(base_url=base_url, timeout_seconds=1)
     _join_server(capture, thread)
 
