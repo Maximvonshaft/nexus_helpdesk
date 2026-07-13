@@ -80,7 +80,7 @@ PY
 
 test -s "$MANIFEST"
 test ! -e "$FINAL_BUNDLE"
-mv -- "$TMP_BUNDLE" "$FINAL_BUNDLE"
+mv -T -- "$TMP_BUNDLE" "$FINAL_BUNDLE"
 TMP_BUNDLE=""
 trap - EXIT
 
