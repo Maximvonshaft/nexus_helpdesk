@@ -52,7 +52,24 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("IMAGE_RESTARTED", script)
         self.assertIn("HEALTH_VERIFIED", script)
         self.assertIn("failure_stage", script)
+        self.assertIn("http_code", script)
         self.assertNotIn("Rollback helper completed.", script)
+
+    def _runner_env(self, fake_bin: Path) -> dict[str, str]:
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+                "SOURCE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_source",
+                "SOURCE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_source",
+                "RESTORE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_restore",
+                "RESTORE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_restore",
+                "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus@db-b:5432/postgres",
+                "RECOVERY_ALLOW_DATABASE_RECREATE": "I_UNDERSTAND",
+                "SOURCE_SHA": "a" * 40,
+            }
+        )
+        return env
 
     def test_runner_refuses_mismatched_admin_cluster_before_psql(self) -> None:
         runner = ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh"
@@ -65,17 +82,37 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 fake_bin / "psql",
                 f"#!/usr/bin/env bash\ntouch {marker!s}\nexit 0\n",
             )
-            env = os.environ.copy()
+            completed = subprocess.run(
+                ["bash", str(runner)],
+                cwd=ROOT,
+                env=self._runner_env(fake_bin),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertFalse(marker.exists())
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("recovery_admin_cluster_mismatch", completed.stderr)
+
+    def test_runner_rejects_libpq_query_overrides_before_psql(self) -> None:
+        runner = ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "psql-called"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            _write_executable(
+                fake_bin / "psql",
+                f"#!/usr/bin/env bash\ntouch {marker!s}\nexit 0\n",
+            )
+            env = self._runner_env(fake_bin)
             env.update(
                 {
-                    "PATH": f"{fake_bin}:{env.get('PATH', '')}",
-                    "SOURCE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_source",
-                    "SOURCE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_source",
+                    "SOURCE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_source?host=db-b",
+                    "SOURCE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_source?host=db-b",
                     "RESTORE_APP_URL": "postgresql+psycopg://nexus@db-a:5432/nexus_restore",
                     "RESTORE_NATIVE_URL": "postgresql://nexus@db-a:5432/nexus_restore",
-                    "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus@db-b:5432/postgres",
-                    "RECOVERY_ALLOW_DATABASE_RECREATE": "I_UNDERSTAND",
-                    "SOURCE_SHA": "a" * 40,
+                    "RECOVERY_ADMIN_NATIVE_URL": "postgresql://nexus@db-a:5432/postgres",
                 }
             )
             completed = subprocess.run(
@@ -86,18 +123,18 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
+            self.assertFalse(marker.exists())
         self.assertNotEqual(completed.returncode, 0)
-        self.assertFalse(marker.exists())
-        self.assertIn("recovery_admin_cluster_mismatch", completed.stderr)
+        self.assertIn("recovery_url_query_not_allowed", completed.stderr)
 
-    def test_health_failure_writes_partial_rollback_status(self) -> None:
+    def _run_image_health_fixture(self, *, curl_script: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         script = ROOT / "scripts" / "deploy" / "rollback_release.sh"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fake_bin = root / "bin"
             fake_bin.mkdir()
             _write_executable(fake_bin / "docker", "#!/usr/bin/env bash\nexit 0\n")
-            _write_executable(fake_bin / "curl", "#!/usr/bin/env bash\nexit 22\n")
+            _write_executable(fake_bin / "curl", curl_script)
             status = root / "rollback-result.json"
             env = os.environ.copy()
             env.update(
@@ -118,11 +155,25 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 check=False,
             )
             payload = json.loads(status.read_text(encoding="utf-8"))
+        return completed, payload
+
+    def test_health_failure_writes_partial_rollback_status(self) -> None:
+        completed, payload = self._run_image_health_fixture(curl_script="#!/usr/bin/env bash\nexit 22\n")
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(payload["outcome"], "fail")
         self.assertEqual(payload["failure_stage"], "HEALTH_VERIFICATION")
         self.assertIn("IMAGE_RESTARTED", payload["states"])
         self.assertFalse(payload["health_verified"])
+
+    def test_health_redirect_is_not_accepted_as_verified(self) -> None:
+        completed, payload = self._run_image_health_fixture(
+            curl_script="#!/usr/bin/env bash\nprintf '302'\nexit 0\n"
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(payload["outcome"], "fail")
+        self.assertEqual(payload["failure_stage"], "HEALTH_VERIFICATION")
+        self.assertIn("IMAGE_RESTARTED", payload["states"])
+        self.assertNotIn("HEALTH_VERIFIED", payload["states"])
 
     def test_workflow_quarantines_unsafe_evidence(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "osr-recovery-qualification.yml").read_text(encoding="utf-8")
@@ -151,6 +202,7 @@ class RecoveryEvidenceTests(unittest.TestCase):
     def _snapshot(self, *, head: str = "20260711_0058", markets: int = 1, marker: int = 1) -> dict:
         return {
             "schema_version": "nexus_recovery_snapshot_v1",
+            "almbic_head": head,
             "alembic_head": head,
             "table_count": 3,
             "tables": {"markets": markets, "teams": 1, "service_heartbeats": 0},
