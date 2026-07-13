@@ -83,14 +83,21 @@ jobs:
           from app.db import SessionLocal
           from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
           from app.model_registry import register_all_models
-          from app.models import ChannelAccount, Customer, Market, Team, Ticket, User
+          from app.models import ChannelAccount, Customer, Market, Team, Tenant, Ticket, User
 
           register_all_models()
           db = SessionLocal()
           try:
-              market = Market(code="ME-A", name="Synthetic Market A", country_code="ME", is_active=True)
+              tenant = Tenant(tenant_key="tenant-a", display_name="Synthetic Tenant A", is_active=True)
+              db.add(tenant); db.flush()
+              assignment = {
+                  "tenant_id": tenant.id,
+                  "tenant_assignment_source": "qualification_manifest",
+                  "tenant_assignment_version": "sha256:synthetic-a",
+              }
+              market = Market(code="ME-A", name="Synthetic Market A", country_code="ME", is_active=True, **assignment)
               db.add(market); db.flush()
-              team = Team(name="Synthetic Team A", team_type="qualification", market_id=market.id, is_active=True)
+              team = Team(name="Synthetic Team A", team_type="qualification", market_id=market.id, is_active=True, **assignment)
               db.add(team); db.flush()
               user = User(
                   username="tenant-qualification-a",
@@ -100,6 +107,7 @@ jobs:
                   role=UserRole.agent,
                   team_id=team.id,
                   is_active=True,
+                  **assignment,
               )
               channel = ChannelAccount(
                   provider="synthetic",
@@ -107,8 +115,9 @@ jobs:
                   display_name="Synthetic Channel A",
                   market_id=market.id,
                   is_active=True,
+                  **assignment,
               )
-              customer = Customer(name="Synthetic Customer")
+              customer = Customer(name="Synthetic Customer", **assignment)
               db.add_all([user, channel, customer]); db.flush()
               ticket = Ticket(
                   ticket_no="QUAL-TENANT-0001",
@@ -125,6 +134,7 @@ jobs:
                   market_id=market.id,
                   country_code="ME",
                   channel_account_id=channel.id,
+                  **assignment,
               )
               db.add(ticket)
               db.commit()
@@ -181,21 +191,31 @@ jobs:
           test "$(jq -r '.status' artifacts/tenant/preflight-pass.json)" = "pass"
           test "$(jq -r '.implicit_default_backfill_allowed' artifacts/tenant/preflight-pass.json)" = "false"
           test "$(jq -r '.issues.issue_count' artifacts/tenant/preflight-pass.json)" = "0"
+          test "$(jq -r '.schema_version' artifacts/tenant/preflight-pass.json)" = "nexus_tenant_principal_preflight_v3"
+          test "$(jq -r '.schema_baseline.alembic_head' artifacts/tenant/preflight-pass.json)" = "20260713_0059"
+          test "$(jq -r '.schema_baseline.expected_existing_tenant_columns | length' artifacts/tenant/preflight-pass.json)" = "15"
 
       - name: Add a cross-Tenant Customer conflict and forbidden default value
         run: |
           python - <<'PY'
           from app.db import SessionLocal
           from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
-          from app.models import ChannelAccount, Customer, Market, Team, Ticket, User
+          from app.models import ChannelAccount, Customer, Market, Team, Tenant, Ticket, User
           from app.models_webchat_binding import WebchatPublicOriginBinding
 
           db = SessionLocal()
           try:
               customer = db.query(Customer).filter(Customer.name == "Synthetic Customer").one()
-              market = Market(code="CH-B", name="Synthetic Market B", country_code="CH", is_active=True)
+              tenant = Tenant(tenant_key="tenant-b", display_name="Synthetic Tenant B", is_active=True)
+              db.add(tenant); db.flush()
+              assignment = {
+                  "tenant_id": tenant.id,
+                  "tenant_assignment_source": "qualification_manifest",
+                  "tenant_assignment_version": "sha256:synthetic-b",
+              }
+              market = Market(code="CH-B", name="Synthetic Market B", country_code="CH", is_active=True, **assignment)
               db.add(market); db.flush()
-              team = Team(name="Synthetic Team B", team_type="qualification", market_id=market.id, is_active=True)
+              team = Team(name="Synthetic Team B", team_type="qualification", market_id=market.id, is_active=True, **assignment)
               db.add(team); db.flush()
               user = User(
                   username="tenant-qualification-b",
@@ -205,6 +225,7 @@ jobs:
                   role=UserRole.agent,
                   team_id=team.id,
                   is_active=True,
+                  **assignment,
               )
               channel = ChannelAccount(
                   provider="synthetic",
@@ -212,6 +233,7 @@ jobs:
                   display_name="Synthetic Channel B",
                   market_id=market.id,
                   is_active=True,
+                  **assignment,
               )
               db.add_all([user, channel]); db.flush()
               db.add(Ticket(
@@ -229,6 +251,7 @@ jobs:
                   market_id=market.id,
                   country_code="CH",
                   channel_account_id=channel.id,
+                  **assignment,
               ))
               db.add(WebchatPublicOriginBinding(
                   normalized_origin="https://synthetic.invalid",

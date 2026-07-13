@@ -14,14 +14,21 @@ from sqlalchemy import create_engine, inspect, text
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_MAPPING_ENTRIES = 200_000
 MAX_ISSUE_SAMPLES = 12
-CURRENT_ALEMBIC_HEAD = "20260711_0058"
+CURRENT_ALEMBIC_HEAD = "20260713_0059"
 CURRENT_TENANT_COLUMNS = frozenset({
     "case_contexts.tenant_id",
+    "channel_accounts.tenant_id",
+    "customers.tenant_id",
     "knowledge_chunks.tenant_id",
     "knowledge_items.tenant_id",
+    "markets.tenant_id",
     "operations_dispatch_outbox.tenant_key",
     "operator_queue_scope_grants.tenant_key",
     "runtime_decision_audits.tenant_id",
+    "teams.tenant_id",
+    "tenants.tenant_key",
+    "tickets.tenant_id",
+    "users.tenant_id",
     "webchat_conversations.tenant_key",
     "webchat_public_origin_bindings.tenant_key",
 })
@@ -36,11 +43,11 @@ _MAPPING_SECTIONS = (
     "customer_ids",
 )
 _CORE_TABLE_COLUMNS = {
-    "markets": ("id", "code"),
-    "teams": ("id", "market_id"),
-    "users": ("id", "team_id"),
-    "channel_accounts": ("id", "market_id"),
-    "customers": ("id",),
+    "markets": ("id", "code", "tenant_id"),
+    "teams": ("id", "market_id", "tenant_id"),
+    "users": ("id", "team_id", "tenant_id"),
+    "channel_accounts": ("id", "market_id", "tenant_id"),
+    "customers": ("id", "tenant_id"),
     "tickets": (
         "id",
         "customer_id",
@@ -49,6 +56,7 @@ _CORE_TABLE_COLUMNS = {
         "channel_account_id",
         "assignee_id",
         "created_by",
+        "tenant_id",
     ),
 }
 
@@ -170,39 +178,174 @@ def _resolve_relation(
     return next(iter(candidates))
 
 
-def _scan_existing_tenant_columns(connection, inspector, tenant_keys: set[str], findings: Findings) -> dict[str, int]:
+def _load_tenant_principals(connection, inspector, tenant_keys: set[str], findings: Findings) -> dict[int, str]:
+    if "tenants" not in inspector.get_table_names(schema="public"):
+        findings.add("tenant.principal_table_missing", kind="schema", record_id="tenants")
+        return {}
+    rows = _fetch_rows(connection, inspector, "tenants", ("id", "tenant_key"))
+    principals: dict[int, str] = {}
+    observed_keys: set[str] = set()
+    for row in rows:
+        principal_id = int(row["id"])
+        tenant_key = str(row["tenant_key"] or "").strip().lower()
+        if not tenant_key:
+            findings.add("tenant.principal_key_missing", kind="tenants", record_id=principal_id)
+            continue
+        if tenant_key == "default":
+            findings.add("tenant.existing_default_forbidden", kind="tenants", record_id=principal_id)
+            continue
+        if tenant_key not in tenant_keys:
+            findings.add("tenant.principal_key_unknown", kind="tenants", record_id=principal_id)
+            continue
+        principals[principal_id] = tenant_key
+        observed_keys.add(tenant_key)
+    for tenant_key in sorted(tenant_keys - observed_keys):
+        findings.add("tenant.principal_missing", kind="tenants", record_id=tenant_key)
+    return principals
+
+
+def _relational_tenant_id_columns(inspector, table_name: str) -> set[str]:
+    columns: set[str] = set()
+    for foreign_key in inspector.get_foreign_keys(table_name, schema="public"):
+        if foreign_key.get("referred_table") != "tenants":
+            continue
+        if foreign_key.get("referred_columns") != ["id"]:
+            continue
+        constrained = foreign_key.get("constrained_columns") or []
+        if len(constrained) == 1:
+            columns.add(str(constrained[0]))
+    return columns
+
+
+def _add_counted_finding(
+    findings: Findings,
+    reason: str,
+    *,
+    kind: str,
+    record_id: object,
+    count: int = 1,
+) -> None:
+    for index in range(min(count, MAX_ISSUE_SAMPLES)):
+        findings.add(reason, kind=kind, record_id=f"{record_id}:{index}")
+    if count > MAX_ISSUE_SAMPLES:
+        findings.counts[reason] += count - MAX_ISSUE_SAMPLES
+
+
+def _scan_existing_tenant_columns(
+    connection,
+    inspector,
+    tenant_keys: set[str],
+    principal_keys: dict[int, str],
+    assignments: dict[str, dict[int, str]],
+    findings: Findings,
+) -> dict[str, int]:
     scanned: dict[str, int] = {}
     preparer = connection.dialect.identifier_preparer
     for table_name in sorted(inspector.get_table_names(schema="public")):
-        columns = {item["name"] for item in inspector.get_columns(table_name, schema="public")}
+        reflected = inspector.get_columns(table_name, schema="public")
+        columns = {item["name"] for item in reflected}
+        relational_columns = _relational_tenant_id_columns(inspector, table_name)
         for column_name in sorted(columns & {"tenant_id", "tenant_key"}):
+            kind = f"{table_name}.{column_name}"
             table = preparer.quote(table_name)
             column = preparer.quote(column_name)
+            if column_name in relational_columns:
+                if "id" in columns:
+                    id_column = preparer.quote("id")
+                    rows = connection.execute(
+                        text(f"SELECT {id_column} AS record_id, {column} AS value FROM {table}")
+                    ).all()
+                    scanned[kind] = len(rows)
+                    expected_assignments = assignments.get(table_name, {})
+                    for row in rows:
+                        record_id = int(row.record_id)
+                        if row.value is None:
+                            findings.add("tenant.existing_value_missing", kind=kind, record_id=record_id)
+                            continue
+                        try:
+                            principal_id = int(row.value)
+                        except (TypeError, ValueError):
+                            findings.add("tenant.existing_principal_invalid", kind=kind, record_id=record_id)
+                            continue
+                        tenant_key = principal_keys.get(principal_id)
+                        if tenant_key is None:
+                            findings.add("tenant.existing_principal_unknown", kind=kind, record_id=record_id)
+                            continue
+                        expected = expected_assignments.get(record_id)
+                        if expected and tenant_key != expected:
+                            findings.add("tenant.relational_assignment_conflict", kind=kind, record_id=record_id)
+                    continue
+
+                rows = connection.execute(
+                    text(f"SELECT {column} AS value, count(*) AS count FROM {table} GROUP BY {column}")
+                ).all()
+                scanned[kind] = sum(int(row.count) for row in rows)
+                for row in rows:
+                    count = int(row.count)
+                    if row.value is None:
+                        _add_counted_finding(
+                            findings,
+                            "tenant.existing_value_missing",
+                            kind=kind,
+                            record_id="null",
+                            count=count,
+                        )
+                        continue
+                    try:
+                        principal_id = int(row.value)
+                    except (TypeError, ValueError):
+                        _add_counted_finding(
+                            findings,
+                            "tenant.existing_principal_invalid",
+                            kind=kind,
+                            record_id=row.value,
+                            count=count,
+                        )
+                        continue
+                    if principal_id not in principal_keys:
+                        _add_counted_finding(
+                            findings,
+                            "tenant.existing_principal_unknown",
+                            kind=kind,
+                            record_id=principal_id,
+                            count=count,
+                        )
+                continue
+
             rows = connection.execute(
                 text(
                     f"SELECT CAST({column} AS TEXT) AS value, count(*) AS count "
                     f"FROM {table} GROUP BY CAST({column} AS TEXT)"
                 )
             ).all()
-            scanned[f"{table_name}.{column_name}"] = sum(int(row.count) for row in rows)
+            scanned[kind] = sum(int(row.count) for row in rows)
             for row in rows:
                 value = str(row.value or "").strip().lower()
                 count = int(row.count)
                 if not value:
-                    for index in range(min(count, MAX_ISSUE_SAMPLES)):
-                        findings.add("tenant.existing_value_missing", kind=f"{table_name}.{column_name}", record_id=index)
-                    if count > MAX_ISSUE_SAMPLES:
-                        findings.counts["tenant.existing_value_missing"] += count - MAX_ISSUE_SAMPLES
+                    _add_counted_finding(
+                        findings,
+                        "tenant.existing_value_missing",
+                        kind=kind,
+                        record_id="empty",
+                        count=count,
+                    )
                 elif value == "default":
-                    for index in range(min(count, MAX_ISSUE_SAMPLES)):
-                        findings.add("tenant.existing_default_forbidden", kind=f"{table_name}.{column_name}", record_id=index)
-                    if count > MAX_ISSUE_SAMPLES:
-                        findings.counts["tenant.existing_default_forbidden"] += count - MAX_ISSUE_SAMPLES
+                    _add_counted_finding(
+                        findings,
+                        "tenant.existing_default_forbidden",
+                        kind=kind,
+                        record_id="default",
+                        count=count,
+                    )
                 elif value not in tenant_keys:
-                    for index in range(min(count, MAX_ISSUE_SAMPLES)):
-                        findings.add("tenant.existing_value_unknown", kind=f"{table_name}.{column_name}", record_id=index)
-                    if count > MAX_ISSUE_SAMPLES:
-                        findings.counts["tenant.existing_value_unknown"] += count - MAX_ISSUE_SAMPLES
+                    _add_counted_finding(
+                        findings,
+                        "tenant.existing_value_unknown",
+                        kind=kind,
+                        record_id=value,
+                        count=count,
+                    )
     return scanned
 
 
@@ -312,7 +455,15 @@ def run_preflight(database_url: str, manifest_path: Path, output_path: Path) -> 
                 if tenant:
                     assignments["customers"][record_id] = tenant
 
-            scanned_tenant_columns = _scan_existing_tenant_columns(connection, inspector, tenant_keys, findings)
+            principal_keys = _load_tenant_principals(connection, inspector, tenant_keys, findings)
+            scanned_tenant_columns = _scan_existing_tenant_columns(
+                connection,
+                inspector,
+                tenant_keys,
+                principal_keys,
+                assignments,
+                findings,
+            )
             observed_columns = set(scanned_tenant_columns)
             for missing_column in sorted(CURRENT_TENANT_COLUMNS - observed_columns):
                 findings.add(
@@ -327,7 +478,7 @@ def run_preflight(database_url: str, manifest_path: Path, output_path: Path) -> 
 
         issue_data = findings.as_dict()
         payload = {
-            "schema_version": "nexus_tenant_principal_preflight_v2",
+            "schema_version": "nexus_tenant_principal_preflight_v3",
             "schema_baseline": {
                 "alembic_head": CURRENT_ALEMBIC_HEAD,
                 "expected_existing_tenant_columns": sorted(CURRENT_TENANT_COLUMNS),

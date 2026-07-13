@@ -15,6 +15,10 @@ RETIRED_DELIVERY_ARTIFACTS = (
     "PRODUCTION_HARDENING_FIX_REPORT.md",
     "PRODUCTION_SIGNOFF_REPORT.md",
     "PATCH_NOTES.md",
+    "APPLY_PATCH.md",
+    "PATCH_MANIFEST.md",
+    "VERIFY_RESULTS.md",
+    "docs/audit/FINAL_REPORT.md",
     "docs/round-b-delivery-report.md",
     "docs/round-b-self-audit.md",
     "docs/round-b-readonly-audit.md",
@@ -38,6 +42,7 @@ class RetiredDeliveryArtifactContractTests(unittest.TestCase):
         self.assertIn("git show <commit>:<path>", text)
         self.assertIn("#652", text)
         self.assertIn("#656", text)
+        self.assertIn("#694", text)
 
 
 if __name__ == "__main__":
