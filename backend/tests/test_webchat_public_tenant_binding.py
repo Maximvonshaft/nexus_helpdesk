@@ -295,3 +295,32 @@ def test_enforce_mode_never_uses_unverified_payload_tenant_as_authority(
     assert exc.value.status_code == 403
     assert exc.value.detail == "webchat_verified_scope_required"
     assert db.query(Customer).count() == before_customers
+
+def test_shadow_mode_never_promotes_nonproduction_client_scope_to_relational_tenant(
+    db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tenant(db)
+    monkeypatch.setattr(webchat_service, "tenant_runtime_authority_mode", lambda: "shadow")
+    request = _request("http://localhost")
+    scope = resolve_public_webchat_scope(
+        db,
+        request=request,
+        requested_tenant_key="tenant-a",
+        requested_channel_key="webchat",
+        app_env="test",
+    )
+    assert scope.authority == "non_production_legacy"
+
+    result = create_or_resume_conversation(
+        db,
+        _payload(tenant_key="tenant-a", page_url="http://localhost/help"),
+        request,
+    )
+
+    ticket = db.query(Ticket).filter(Ticket.source_chat_id == result["conversation_id"]).one()
+    customer = db.get(Customer, ticket.customer_id)
+    assert customer is not None
+    assert ticket.tenant_id is None
+    assert customer.tenant_id is None
+    assert ticket.tenant_assignment_source is None
+    assert customer.tenant_assignment_source is None

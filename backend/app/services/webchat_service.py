@@ -226,28 +226,31 @@ def _event_read(row: WebchatEvent) -> dict[str, Any]:
     }
 
 
-def _verified_relational_webchat_tenant(db: Session, fallback_tenant_key: str) -> Tenant | None:
+def _verified_relational_webchat_tenant(db: Session) -> Tenant | None:
     scope = current_verified_webchat_scope(db)
     mode = tenant_runtime_authority_mode()
-    if scope is None and mode == "enforce":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="webchat_verified_scope_required",
-        )
-    tenant_key = (scope.tenant_key if scope is not None else fallback_tenant_key).strip().lower()
+    if scope is None:
+        if mode == "enforce":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="webchat_verified_scope_required",
+            )
+        return None
+    if scope.authority != "server_origin_binding":
+        if mode == "enforce":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="webchat_verified_scope_required",
+            )
+        return None
+    tenant_key = scope.tenant_key.strip().lower()
     tenant = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).first()
     if tenant is not None and tenant.is_active:
         return tenant
-    requires_principal = (
-        mode == "enforce"
-        or (scope is not None and scope.authority == "server_origin_binding")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="webchat_tenant_principal_required",
     )
-    if requires_principal or tenant is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="webchat_tenant_principal_required",
-        )
-    return None
 
 
 def _assert_resumed_webchat_tenant(
@@ -278,7 +281,7 @@ def _assert_resumed_webchat_tenant(
 def create_or_resume_conversation(db: Session, payload: Any, request: Request) -> dict[str, Any]:
     tenant_key = _clip(getattr(payload, "tenant_key", None) or "default", 120) or "default"
     channel_key = _clip(getattr(payload, "channel_key", None) or "default", 120) or "default"
-    relational_tenant = _verified_relational_webchat_tenant(db, tenant_key)
+    relational_tenant = _verified_relational_webchat_tenant(db)
     public_id = _clip(getattr(payload, "conversation_id", None), 64)
     visitor_token = getattr(payload, "visitor_token", None)
 
