@@ -86,6 +86,10 @@ jobs:
           set -Eeuo pipefail
           alembic upgrade head
           test "$(alembic heads | awk '{print $1}')" = "20260713_0059"
+          test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='tenants' AND column_name='tenant_key'")" = "80"
+          for table in markets teams users channel_accounts customers tickets; do
+            test "$(psql "postgresql://helpdesk@127.0.0.1:5432/helpdesk" -Atc "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' AND column_name='tenant_assignment_version'")" = "80"
+          done
 
       - name: Seed explicit relational ownership after additive upgrade
         run: |
@@ -192,6 +196,8 @@ jobs:
               "implicit_backfill_performed": False,
               "upgrade_downgrade_reupgrade": "pass",
               "core_rows_preserved": True,
+              "canonical_tenant_key_max_length": 80,
+              "assignment_version_max_length": 80,
               "production_mutation_performed": False,
           }
           Path("artifacts/tenant-schema/evidence.json").write_text(
