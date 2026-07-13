@@ -16,8 +16,8 @@ from .webchat_runtime_config import get_webchat_runtime_settings
 
 HUMAN_WEBCALL_RINGING_STATUSES = {"created", "ringing"}
 HUMAN_WEBCALL_ACTIVE_STATUSES = {"accepted", "active"}
-_HUMAN_WEBCALL_CONFIGURATION_INVALID = "human_webcall_configuration_invalid"
-_HUMAN_WEBCALL_STATUS_UNAVAILABLE = "human_webcall_status_unavailable"
+_HUMAN_WEBCALL_CONFIGURATION_INVALID = "human_webcall runtime configuration invalid"
+_HUMAN_WEBCALL_STATUS_UNAVAILABLE = "human_webcall status unavailable"
 _PROVIDER_RUNTIME_CONFIGURATION_INVALID = "provider_runtime_configuration_invalid"
 
 
