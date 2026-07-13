@@ -155,16 +155,24 @@ Generate the WebSocket handshake key locally for the probe. The key is protocol 
 
 ```bash
 WS_KEY="$(openssl rand -base64 16)"
-curl --http1.1 --silent --show-error --max-time 10 \
-  --output /dev/null --dump-header - \
-  --header 'Connection: Upgrade' \
-  --header 'Upgrade: websocket' \
-  --header 'Sec-WebSocket-Version: 13' \
-  --header "Sec-WebSocket-Key: ${WS_KEY}" \
-  'https://<approved-public-host>/webchat/live/ws'
+set +e
+WS_RESULT="$(
+  curl --http1.1 --silent --show-error --max-time 10 \
+    --output /dev/null \
+    --write-out 'status=%{http_code}' \
+    --header 'Connection: Upgrade' \
+    --header 'Upgrade: websocket' \
+    --header 'Sec-WebSocket-Version: 13' \
+    --header "Sec-WebSocket-Key: ${WS_KEY}" \
+    'https://<approved-public-host>/webchat/live/ws'
+)"
+WS_EXIT=$?
+set -e
+printf 'result=%s curl_exit=%s\n' "$WS_RESULT" "$WS_EXIT"
+test "$WS_RESULT" = 'status=101'
 ```
 
-Acceptance requires HTTP 101 on the exact deployed release. Sanitize captured headers to the status line and approved non-sensitive header names before hashing or attaching evidence. Do not retain cookies, query strings, internal destinations, or response bodies.
+Acceptance requires HTTP 101 on the exact deployed release. The probe output is restricted to the HTTP status code and curl exit code. A timeout after a confirmed `status=101` can reflect an intentionally open upgraded connection; any result without `status=101` fails. Raw headers and response bodies must never be emitted, retained, hashed, or attached.
 
 ### Browser zero-secret proof
 
