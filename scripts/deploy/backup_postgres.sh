@@ -16,6 +16,8 @@ value = os.environ["POSTGRES_URL_CANDIDATE"]
 parsed = urlsplit(value)
 if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
     raise SystemExit("postgres_native_url_invalid")
+if not parsed.username:
+    raise SystemExit("postgres_native_url_user_required")
 if parsed.query:
     raise SystemExit("postgres_native_url_query_not_allowed")
 if parsed.fragment:
