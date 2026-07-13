@@ -1,5 +1,6 @@
 (function () {
   'use strict';
+  // Temporary owner-authored exact-head trigger; removed in the next commit.
   if (window.__NEXUSDESK_WEBCHAT_VOICE_ENTRY_LOADED__) return;
   window.__NEXUSDESK_WEBCHAT_VOICE_ENTRY_LOADED__ = true;
 
