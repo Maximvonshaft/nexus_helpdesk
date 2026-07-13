@@ -22,7 +22,7 @@ The validator fails closed when:
 - derived Runtime state claims authority;
 - service-definition hashes do not match their immutable artifacts;
 - secrets appear as inline fields or command arguments;
-- commands are shell strings instead of explicit argv arrays;
+- commands are shell strings rather than explicit argv arrays, or any argv token names a POSIX, PowerShell or CMD shell interpreter;
 - rollback is destructive, drift is not fail-closed, or required acceptance checks are missing;
 - the manifest exceeds 1 MiB, contains unknown fields or violates bounded identifiers and paths.
 
