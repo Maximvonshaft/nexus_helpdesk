@@ -10,6 +10,8 @@ Application code uses a SQLAlchemy URL such as `postgresql+psycopg://...`. Nativ
 
 The operator scripts accept `POSTGRES_NATIVE_URL` directly. For compatibility they may normalize the known SQLAlchemy driver prefixes from `DATABASE_URL`, but they never pass an unmodified `postgresql+psycopg://` URL to `pg_dump`, `pg_restore` or `psql`.
 
+The disposable runner additionally requires `RECOVERY_ADMIN_NATIVE_URL` and `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. Before any `DROP DATABASE` or `CREATE DATABASE`, it proves that the admin, source and restore URLs share the same host and port, that application/native URL pairs agree, that the source/restore database names are exactly `nexus_source` and `nexus_restore`, and that the admin URL targets a different database. Ambient `PGHOST`, `PGUSER` or default-database state is never used as destructive authority.
+
 ## Backup bundle
 
 `scripts/deploy/backup_postgres.sh` creates one mode-restricted temporary directory containing:
@@ -17,7 +19,7 @@ The operator scripts accept `POSTGRES_NATIVE_URL` directly. For compatibility th
 - `database.dump` — custom-format, compressed, owner/privilege-free PostgreSQL archive;
 - `backup_manifest.json` — schema version, archive digest and size, hashed source-database identity, exact Alembic head and creation time.
 
-The archive is non-empty and must pass `pg_restore --list`. The manifest and SHA-256 are generated before the temporary directory is atomically renamed to its final bundle path. Failed backups are removed by the exit trap and cannot remain under a plausible final name.
+The archive is non-empty and must pass `pg_restore --list`. The manifest and SHA-256 are generated before the temporary directory is atomically renamed to its final bundle path. Publication uses `mv -T`, so a concurrent bundle with the same final name fails instead of being nested inside an existing directory. Failed backups are removed by the exit trap and cannot remain under a plausible final name.
 
 ## Rollback states
 
@@ -30,6 +32,8 @@ Possible states are:
 - `IMAGE_RESTARTED` — the requested old image tag was applied through Docker Compose;
 - `HEALTH_VERIFIED` — both `/healthz` and `/readyz` succeeded after restart.
 
+The result also includes `outcome` and a fixed `failure_stage`. An EXIT trap writes the partial state when an operation fails. For example, if the image restarts but a health check fails, the result records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
+
 The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair and exact checksum match.
 
 ## Disposable CI topology
@@ -41,18 +45,19 @@ The dedicated gate uses pgvector PostgreSQL 16 and creates:
 
 The sequence is:
 
-1. Upgrade source to the single current Alembic head.
-2. Downgrade one revision to simulate an interrupted/outdated state.
-3. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
-4. Re-upgrade and verify the exact expected head.
-5. Insert one synthetic Market/Team referential marker.
-6. Snapshot every public table count, Alembic head, marker count and unvalidated-FK count.
-7. Create and validate the real operator backup bundle.
-8. Restore through the real rollback script into the disposable target.
-9. Compare exact head, complete table/count set, marker and FK state.
-10. Measure synthetic RPO and restore RTO.
-11. Remove all backup bytes.
-12. Scan bounded JSON evidence before upload.
+1. Validate explicit admin/source/restore URL authority before destructive setup.
+2. Upgrade source to the single current Alembic head.
+3. Downgrade one revision to simulate an interrupted/outdated state.
+4. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
+5. Re-upgrade and verify the exact expected head.
+6. Insert one synthetic Market/Team referential marker.
+7. Snapshot every public table count, Alembic head, marker count and unvalidated-FK count.
+8. Create and validate the real operator backup bundle.
+9. Restore through the real rollback script into the disposable target.
+10. Compare exact head, complete table/count set, marker and FK state.
+11. Measure synthetic RPO and restore RTO.
+12. Remove all backup bytes.
+13. Scan bounded JSON evidence before upload.
 
 ## Evidence
 
@@ -70,7 +75,7 @@ These are CI qualification thresholds, not production SLOs.
 
 ## Failure semantics
 
-The gate fails closed on migration/restore errors, multiple or invalid heads, manifest/checksum mismatch, missing marker, table/count mismatch, unvalidated foreign keys, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
+The gate fails closed on migration/restore errors, missing/multiple/invalid heads, admin/source/restore cluster mismatch, manifest/checksum mismatch, missing marker, table/count mismatch, unvalidated foreign keys, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
 
 ## Remaining work
 
