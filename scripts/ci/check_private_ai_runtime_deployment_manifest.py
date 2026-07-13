@@ -469,7 +469,7 @@ def _read_manifest(path: Path) -> Any:
         return json.loads(payload.decode("utf-8"))
     except ManifestValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ManifestValidationError("manifest_read_or_json_error", "$") from exc
 
 
