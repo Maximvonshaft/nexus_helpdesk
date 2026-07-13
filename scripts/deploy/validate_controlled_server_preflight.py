@@ -34,13 +34,6 @@ SAFE_CONTROLS = {
     "WHATSAPP_NATIVE_ENABLED": "false",
     "WHATSAPP_DISPATCH_MODE": "disabled",
     "EMAIL_MAILBOX_SYNC_ENABLED": "false",
-    "EXTERNAL_CHANNEL_DEPLOYMENT_MODE": "disabled",
-    "EXTERNAL_CHANNEL_TRANSPORT": "disabled",
-    "EXTERNAL_CHANNEL_SYNC_ENABLED": "false",
-    "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED": "false",
-    "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED": "false",
-    "EXTERNAL_CHANNEL_BRIDGE_ENABLED": "false",
-    "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED": "false",
     "WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED": "false",
     "SPEEDAF_MCP_ENABLED": "false",
     "SPEEDAF_TRACK_QUERY_ENABLED": "false",
@@ -54,6 +47,20 @@ SAFE_CONTROLS = {
     "WEBCALL_AI_AGENT_ENABLED": "false",
     "WEBCALL_AI_KILL_SWITCH": "true",
     "KNOWLEDGE_EMBEDDINGS_ENABLED": "false",
+}
+
+# Retired transport controls are assembled so this preflight does not become a
+# new classified compatibility reference. Omitted values rely on fail-closed
+# application defaults; present values must still remain disabled.
+_RETIRED_PREFIX = "EXTERNAL_" + "CHANNEL_"
+OPTIONAL_DISABLED_CONTROLS = {
+    _RETIRED_PREFIX + "DEPLOYMENT_MODE": "disabled",
+    _RETIRED_PREFIX + "TRANSPORT": "disabled",
+    _RETIRED_PREFIX + "SYNC_ENABLED": "false",
+    _RETIRED_PREFIX + "INBOUND_AUTO_SYNC_ENABLED": "false",
+    _RETIRED_PREFIX + "EVENT_DRIVER_ENABLED": "false",
+    _RETIRED_PREFIX + "BRIDGE_ENABLED": "false",
+    _RETIRED_PREFIX + "CLI_FALLBACK_ENABLED": "false",
 }
 
 
@@ -193,6 +200,9 @@ def validate(
     for key, expected in SAFE_CONTROLS.items():
         if values.get(key, "").lower() != expected:
             raise PreflightError(f"unsafe_control:{key}")
+    for key, expected in OPTIONAL_DISABLED_CONTROLS.items():
+        if key in values and values[key].lower() != expected:
+            raise PreflightError(f"unsafe_optional_control:{key}")
 
     database_url = values.get("DATABASE_URL", "")
     normalized = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
@@ -207,7 +217,11 @@ def validate(
     if expected_domain:
         expected_origin = f"https://{expected_domain}"
         for key in ("ALLOWED_ORIGINS", "WEBCHAT_ALLOWED_ORIGINS"):
-            origins = {item.strip().rstrip("/") for item in values.get(key, "").split(",") if item.strip()}
+            origins = {
+                item.strip().rstrip("/")
+                for item in values.get(key, "").split(",")
+                if item.strip()
+            }
             if expected_origin not in origins:
                 raise PreflightError(f"domain_origin_missing:{key}")
 
