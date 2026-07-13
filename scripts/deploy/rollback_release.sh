@@ -1,6 +1,64 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+BACKUP_BUNDLE="${1:-}"
+OLD_IMAGE_TAG="${OLD_IMAGE_TAG:-}"
+COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.server.yml}"
+ROLLBACK_HEALTH_URL="${ROLLBACK_HEALTH_URL:-}"
+ROLLBACK_STATUS_FILE="${ROLLBACK_STATUS_FILE:-./rollback-result.json}"
+ROLLBACK_ALLOW_IN_PLACE="${ROLLBACK_ALLOW_IN_PLACE:-}"
+SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot)
+STATES=()
+OUTCOME="fail"
+FAILURE_STAGE="INITIALIZATION"
+
+append_state() {
+  STATES+=("$1")
+}
+
+write_status() {
+  local states_json status_dir
+  states_json="$(printf '%s\n' "${STATES[@]}" | python -c 'import json,sys; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))')"
+  status_dir="$(dirname "$ROLLBACK_STATUS_FILE")"
+  mkdir -p -- "$status_dir"
+  STATES_JSON="$states_json" \
+  STATUS_FILE="$ROLLBACK_STATUS_FILE" \
+  OUTCOME="$OUTCOME" \
+  FAILURE_STAGE="$FAILURE_STAGE" \
+  python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+states = json.loads(os.environ["STATES_JSON"])
+failure_stage = os.environ.get("FAILURE_STAGE") or None
+payload = {
+    "schema_version": "nexus_operator_rollback_result_v1",
+    "outcome": os.environ["OUTCOME"],
+    "failure_stage": failure_stage,
+    "states": states,
+    "database_restored": "DATABASE_RESTORED" in states,
+    "image_restarted": "IMAGE_RESTARTED" in states,
+    "health_verified": "HEALTH_VERIFIED" in states,
+}
+Path(os.environ["STATUS_FILE"]).write_text(
+    json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+on_exit() {
+  local code=$?
+  trap - EXIT
+  if [[ "$code" -ne 0 ]]; then
+    OUTCOME="fail"
+    write_status || true
+  fi
+  exit "$code"
+}
+trap on_exit EXIT
+
 : "${ROLLBACK_CONFIRM:?Set ROLLBACK_CONFIRM=I_UNDERSTAND to run rollback steps}"
 if [[ "$ROLLBACK_CONFIRM" != "I_UNDERSTAND" ]]; then
   echo "ROLLBACK_CONFIRM must equal I_UNDERSTAND" >&2
@@ -20,25 +78,13 @@ normalize_native_url() {
   esac
 }
 
-BACKUP_BUNDLE="${1:-}"
-OLD_IMAGE_TAG="${OLD_IMAGE_TAG:-}"
-COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.server.yml}"
-ROLLBACK_HEALTH_URL="${ROLLBACK_HEALTH_URL:-}"
-ROLLBACK_STATUS_FILE="${ROLLBACK_STATUS_FILE:-./rollback-result.json}"
-ROLLBACK_ALLOW_IN_PLACE="${ROLLBACK_ALLOW_IN_PLACE:-}"
-SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot)
-STATES=()
-
-append_state() {
-  STATES+=("$1")
-}
-
 if [[ -z "$BACKUP_BUNDLE" && -z "$OLD_IMAGE_TAG" ]]; then
   append_state "INSTRUCTIONS_ONLY"
   echo "No backup bundle or OLD_IMAGE_TAG supplied; no mutation performed."
 fi
 
 if [[ -n "$BACKUP_BUNDLE" ]]; then
+  FAILURE_STAGE="DATABASE_BACKUP_VALIDATION"
   POSTGRES_NATIVE_URL="$(normalize_native_url)"
   if [[ ! -d "$BACKUP_BUNDLE" ]]; then
     echo "Backup bundle not found: $BACKUP_BUNDLE" >&2
@@ -93,6 +139,7 @@ PY
   fi
 
   pg_restore --list "$ARCHIVE" >/dev/null
+  FAILURE_STAGE="DATABASE_RESTORE"
   pg_restore \
     --dbname="$POSTGRES_NATIVE_URL" \
     --exit-on-error \
@@ -102,6 +149,7 @@ PY
     --no-owner \
     --no-privileges \
     "$ARCHIVE"
+  FAILURE_STAGE="DATABASE_POST_VERIFY"
   RESTORED_HEADS="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c 'SELECT version_num FROM alembic_version ORDER BY version_num')"
   mapfile -t HEAD_ROWS <<< "$RESTORED_HEADS"
   if [[ "${#HEAD_ROWS[@]}" -ne 1 || "${HEAD_ROWS[0]}" != "$EXPECTED_HEAD" ]]; then
@@ -116,33 +164,17 @@ if [[ -n "$OLD_IMAGE_TAG" ]]; then
     echo "ROLLBACK_HEALTH_URL is required when OLD_IMAGE_TAG is set" >&2
     exit 8
   fi
+  FAILURE_STAGE="IMAGE_RESTART"
   IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up -d "${SERVICES[@]}"
   append_state "IMAGE_RESTARTED"
+  FAILURE_STAGE="HEALTH_VERIFICATION"
   curl --fail --silent --show-error --max-time 15 "$ROLLBACK_HEALTH_URL/healthz" >/dev/null
   curl --fail --silent --show-error --max-time 15 "$ROLLBACK_HEALTH_URL/readyz" >/dev/null
   append_state "HEALTH_VERIFIED"
 fi
 
-STATES_JSON="$(printf '%s\n' "${STATES[@]}" | python -c 'import json,sys; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))')"
-STATUS_DIR="$(dirname "$ROLLBACK_STATUS_FILE")"
-mkdir -p -- "$STATUS_DIR"
-STATES_JSON="$STATES_JSON" STATUS_FILE="$ROLLBACK_STATUS_FILE" python - <<'PY'
-import json
-import os
-from pathlib import Path
-
-states = json.loads(os.environ["STATES_JSON"])
-payload = {
-    "schema_version": "nexus_operator_rollback_result_v1",
-    "states": states,
-    "database_restored": "DATABASE_RESTORED" in states,
-    "image_restarted": "IMAGE_RESTARTED" in states,
-    "health_verified": "HEALTH_VERIFIED" in states,
-}
-Path(os.environ["STATUS_FILE"]).write_text(
-    json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
-    encoding="utf-8",
-)
-PY
-
+OUTCOME="pass"
+FAILURE_STAGE=""
+write_status
+trap - EXIT
 printf 'rollback_states=%s\n' "$(IFS=,; echo "${STATES[*]}")"
