@@ -20,11 +20,15 @@ class LegacySurfaceVersionContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.registry = legacy.load_registry(REGISTRY_PATH)
 
-    def test_multi_digit_versioned_contracts_are_owned(self) -> None:
+    def test_multi_digit_versioned_contracts_are_owned_recursively(self) -> None:
         paths = [
+            "config/example.v10.json",
             "config/governance/example.v10.json",
             "webapp/design/example.v12.json",
+            "webapp/design/runtime/example.v12.json",
             "backend/app/config/example.v123.json",
+            "backend/app/config/runtime/example.v123.json",
+            "backend/evals/example.v42.json",
             "backend/evals/runtime/example.v42.json",
         ]
 
@@ -47,6 +51,18 @@ class LegacySurfaceVersionContractTests(unittest.TestCase):
         self.assertEqual(result["matched_file_count"], 0, result)
         self.assertEqual(result["findings"][0]["path"], path)
         self.assertIn("legacy_surface_unowned", result["findings"][0]["reason_codes"])
+
+    def test_domain_path_regex_requires_a_full_path_match(self) -> None:
+        raw = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        domain = next(item for item in raw["domains"] if item["id"] == "protected_versioned_contracts")
+        domain["selectors"]["path_regexes"] = [r"example\.v[0-9]+\.json$"]
+        registry = legacy.validate_registry(raw)
+
+        result = legacy.scan_registry(registry, ["outside/example.v10.json"], read_text=lambda _path: "")
+
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["unowned_count"], 1, result)
+        self.assertEqual(result["matched_file_count"], 0, result)
 
     def test_non_numeric_version_suffixes_are_not_contract_markers(self) -> None:
         paths = [
