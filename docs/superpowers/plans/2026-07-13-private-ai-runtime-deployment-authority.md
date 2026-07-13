@@ -36,7 +36,7 @@ Include exact source/tree hashes, capability-contract hash, immutable artifacts,
 
 - [x] **Step 2: Add fail-closed behavior tests**
 
-Cover unknown keys, mutable tags, hash errors, path overlap, authority escalation, string commands, destructive rollback, schema mismatch, secret fields, duplicates, service hash mismatch, embedded secret arguments and oversized input.
+Cover unknown keys, mutable tags, hash errors, parent/child path overlap, repository-identity drift, authority escalation, string commands, destructive rollback, schema mismatch, secret fields, duplicates, service hash mismatch, embedded secret flags/environment assignments and oversized input.
 
 - [x] **Step 3: Run RED**
 
@@ -72,7 +72,7 @@ Set Linux/NVIDIA host family, capability schema, digest-pinned images, non-autho
 
 - [x] **Step 3: Keep cross-field checks in Python**
 
-JSON Schema documents shape. Service/artifact hash equality, root overlap, exact release differences and safe secret-store schemes remain Python validator responsibilities.
+JSON Schema documents shape. Service/artifact hash equality, bidirectional root overlap, exact release differences and safe secret-store schemes remain Python validator responsibilities.
 
 ### Task 3: Implement the minimal fail-closed validator
 
@@ -90,11 +90,11 @@ Read at most `1_048_576 + 1` bytes, reject oversized input before JSON parsing a
 
 - [x] **Step 2: Implement primitives**
 
-Validate exact key sets, non-empty strings, booleans, bounded integers, unique string lists, lowercase SHA-1/SHA-256 identities, IDs, canonical absolute/relative POSIX paths and argv arrays.
+Validate exact key sets, non-empty strings, booleans, bounded integers, unique string lists, lowercase SHA-1/SHA-256 identities, repository identity, IDs, canonical absolute/relative POSIX paths and argv arrays.
 
 - [x] **Step 3: Reject inline secrets**
 
-Recursively reject secret-value field names. Reject command arguments beginning with token/password/secret/API-key/private-key flags and Authorization headers. Never echo input values.
+Recursively reject secret-value field names. Reject command arguments beginning with token/password/secret/API-key/private-key flags, secret environment assignments and Authorization headers. Never echo input values.
 
 - [x] **Step 4: Validate deployment sections**
 
@@ -102,7 +102,7 @@ Validate source, capability reference, host profile, immutable artifacts, mutabl
 
 - [x] **Step 5: Enforce cross-field invariants**
 
-Reject mutable/secret/rollback/result paths under immutable root; reject service definitions absent from artifacts or with mismatched hashes; reject same-release rollback; require all six acceptance checks.
+Reject mutable/secret/rollback/result paths that contain or are contained by the immutable root; reject service definitions absent from artifacts or with mismatched hashes; reject same-release rollback; require all six acceptance checks.
 
 - [x] **Step 6: Emit bounded validation evidence**
 
@@ -117,7 +117,7 @@ python -m py_compile \
   scripts/ci/tests/test_check_private_ai_runtime_deployment_manifest.py
 ```
 
-Expected: `21 passed`; compilation exits `0`.
+Expected: `24 passed`; compilation exits `0`.
 
 ### Task 4: Document authority and residual work
 
