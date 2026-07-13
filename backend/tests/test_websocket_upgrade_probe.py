@@ -4,6 +4,7 @@ import base64
 import hashlib
 import importlib.util
 import socket
+import ssl
 import sys
 import threading
 from collections.abc import Callable
@@ -119,6 +120,42 @@ def test_probe_accepts_valid_websocket_upgrade_and_preserves_base_path():
     assert b"Sec-WebSocket-Version: 13\r\n" in request
     assert result.status_code == 101
     assert result.request_path == "/candidate/webchat/live/ws"
+
+
+def test_secure_ssl_context_enforces_tls_1_2_minimum():
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+
+    secured = PROBE._secure_ssl_context(context)
+
+    assert secured is context
+    assert secured.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+def test_secure_ssl_context_preserves_stricter_tls_minimum():
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+
+    secured = PROBE._secure_ssl_context(context)
+
+    assert secured.minimum_version == ssl.TLSVersion.TLSv1_3
+
+
+def test_secure_ssl_context_hardens_default_context(monkeypatch: pytest.MonkeyPatch):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+    monkeypatch.setattr(PROBE.ssl, "create_default_context", lambda: context)
+
+    secured = PROBE._secure_ssl_context()
+
+    assert secured.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+def test_secure_ssl_context_fails_closed_without_tls_version_support(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delattr(PROBE.ssl, "TLSVersion")
+
+    with pytest.raises(RuntimeError, match="TLS 1.2 support is required"):
+        PROBE._secure_ssl_context()
 
 
 def test_probe_rejects_non_switching_http_status():
