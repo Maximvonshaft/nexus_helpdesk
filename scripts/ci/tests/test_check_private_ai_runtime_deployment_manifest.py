@@ -202,3 +202,23 @@ def test_commands_reject_secret_environment_assignments():
     manifest["acceptance"]["commands"][0].append("TOKEN=inline-secret")
     with pytest.raises(module.ManifestValidationError, match=r"acceptance.commands\[0\]_inline_secret_argument_forbidden"):
         module.validate_manifest(manifest)
+
+
+@pytest.mark.parametrize(
+    ("section", "command"),
+    [
+        ("acceptance", ["bash", "-c", "python3 scripts/acceptance/check_runtime.py"]),
+        ("acceptance", ["/bin/sh", "-c", "python3 scripts/acceptance/check_runtime.py"]),
+        ("acceptance", ["env", "bash", "-c", "python3 scripts/acceptance/check_runtime.py"]),
+        ("rollback", ["powershell.exe", "-Command", "python scripts/rollback/activate.py"]),
+    ],
+)
+def test_commands_reject_shell_execution(section: str, command: list[str]):
+    module = load_module()
+    manifest = valid_manifest()
+    manifest[section]["commands"] = [command]
+    with pytest.raises(
+        module.ManifestValidationError,
+        match=rf"{section}\.commands\[0\]_shell_execution_forbidden",
+    ):
+        module.validate_manifest(manifest)
