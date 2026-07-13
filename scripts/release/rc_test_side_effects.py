@@ -80,6 +80,11 @@ ZERO_ROW_TABLES = (
 # denied actions are allowed, but executed tools and customer-visible AI/TTS
 # output are not.
 REQUIRED_EVIDENCE_TABLES = tuple(MISSING_TABLE_EXIT_CODES)
+FORBIDDEN_SEMANTIC_COUNTS = (
+    "external_tool_execution_count",
+    "provider_customer_output_count",
+    "tts_provider_customer_output_count",
+)
 
 FORBIDDEN_SECRET_ENV = (
     "PRIVATE_AI_RUNTIME_TOKEN",
@@ -130,10 +135,22 @@ def _collect_semantic_execution_counts(db: Any) -> dict[str, int]:
            OR background_job_id IS NOT NULL
         """,
     )
-    webchat_ai_turn_count = _count(db, "SELECT COUNT(*) FROM webchat_ai_turns")
+    webchat_ai_queued_turn_count = _count(
+        db,
+        "SELECT COUNT(*) FROM webchat_ai_turns WHERE status = 'queued'",
+    )
+    webchat_ai_customer_output_count = _count(
+        db,
+        "SELECT COUNT(*) FROM webchat_ai_turns WHERE reply_message_id IS NOT NULL",
+    )
     webchat_ai_message_count = _count(
         db,
-        "SELECT COUNT(*) FROM webchat_messages WHERE direction = 'ai'",
+        """
+        SELECT COUNT(*)
+        FROM webchat_messages
+        WHERE ai_turn_id IS NOT NULL
+          AND direction IN ('agent', 'ai')
+        """,
     )
     tts_provider_customer_output_count = _count(
         db,
@@ -151,9 +168,12 @@ def _collect_semantic_execution_counts(db: Any) -> dict[str, int]:
         "external_tool_execution_count": (
             runtime_tool_action_execution_count + voice_tool_action_execution_count
         ),
-        "webchat_ai_turn_count": webchat_ai_turn_count,
+        "webchat_ai_queued_turn_count": webchat_ai_queued_turn_count,
+        "webchat_ai_customer_output_count": webchat_ai_customer_output_count,
         "webchat_ai_message_count": webchat_ai_message_count,
-        "provider_customer_output_count": webchat_ai_message_count,
+        "provider_customer_output_count": (
+            webchat_ai_customer_output_count + webchat_ai_message_count
+        ),
         "tts_provider_customer_output_count": tts_provider_customer_output_count,
     }
 
@@ -202,9 +222,9 @@ def main() -> int:
 
     nonzero_rows = {table: count for table, count in counts.items() if count != 0}
     nonzero_semantic = {
-        name: count
-        for name, count in semantic_counts.items()
-        if count != 0
+        name: semantic_counts[name]
+        for name in FORBIDDEN_SEMANTIC_COUNTS
+        if semantic_counts[name] != 0
     }
     if nonzero_rows or nonzero_semantic:
         _emit(
