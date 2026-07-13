@@ -4,9 +4,9 @@
 
 **Goal:** Establish a framework-light, versioned and fail-closed release-profile authority without touching runtime wiring or active dependency paths.
 
-**Work Item:** #549  
-**PR:** #700  
-**Delivery status:** Partial Foundation; parent #549 remains open  
+**Work Item:** #549
+**PR:** #700
+**Delivery status:** Partial Foundation; parent #549 remains open
 **Current reconciliation baseline:** `main@7006af1e88d7681713cfd5ad4b540a3964d780f1`
 
 ## Global boundaries
