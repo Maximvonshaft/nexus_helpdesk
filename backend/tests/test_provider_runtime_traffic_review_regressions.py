@@ -33,6 +33,29 @@ class _FailingAdapter(ProviderAdapter):
         )
 
 
+class _InvalidOutputAdapter(ProviderAdapter):
+    name = "private_ai_runtime"
+
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+        self.calls = 0
+
+    async def generate(self, db, request):
+        self.calls += 1
+        return ProviderResult(
+            ok=True,
+            provider=self.name,
+            elapsed_ms=1,
+            structured_output={
+                "customer_reply": "safe public reply",
+                "language": "en",
+                "intent": self.marker,
+                "handoff_required": False,
+                "ticket_should_create": False,
+            },
+        )
+
+
 @pytest.fixture(autouse=True)
 def _isolate_runtime(monkeypatch):
     monkeypatch.setattr(provider_runtime_module, "_BOOTSTRAPPED", True)
@@ -50,21 +73,30 @@ def _isolate_runtime(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
 
 
-def _request() -> ProviderRequest:
+def _request(
+    *,
+    scenario: str = "review_traffic_test",
+    output_contract: str = "synthetic_contract",
+) -> ProviderRequest:
     return ProviderRequest(
         request_id="review-regression-request",
         tenant_id="tenant-1",
         tenant_key="tenant-key-1",
         channel_key="website",
         session_id="session-1",
-        scenario="review_traffic_test",
+        scenario=scenario,
         body="hello",
-        output_contract="synthetic_contract",
+        output_contract=output_contract,
         timeout_ms=1000,
     )
 
 
-def _sqlite_session(*, kill_switch: int) -> Session:
+def _sqlite_session(
+    *,
+    kill_switch: int,
+    scenario: str = "review_traffic_test",
+    output_contract: str = "synthetic_contract",
+) -> Session:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     with engine.begin() as connection:
         connection.execute(
@@ -112,12 +144,16 @@ def _sqlite_session(*, kill_switch: int) -> Session:
                     primary_provider, fallback_providers, output_contract, timeout_ms,
                     kill_switch, canary_percent, tenant_id, channel_key, scenario, enabled
                 ) VALUES (
-                    'private_ai_runtime', '[]', 'synthetic_contract', 3000,
-                    :kill_switch, 100, 'tenant-1', 'website', 'review_traffic_test', 1
+                    'private_ai_runtime', '[]', :output_contract, 3000,
+                    :kill_switch, 100, 'tenant-1', 'website', :scenario, 1
                 )
                 """
             ),
-            {"kill_switch": kill_switch},
+            {
+                "kill_switch": kill_switch,
+                "scenario": scenario,
+                "output_contract": output_contract,
+            },
         )
     return Session(engine)
 
@@ -189,3 +225,36 @@ async def test_sqlite_true_boolean_keeps_kill_switch_precedence():
     assert result.error_code == "kill_switch_active"
     assert adapter.calls == 0
     assert audit_summary["traffic_selection"]["path"] == "kill_switch"
+
+
+@pytest.mark.asyncio
+async def test_parse_reject_audit_never_persists_exception_or_output_text():
+    marker = "customer-secret-marker-582"
+    scenario = "webchat_runtime_reply"
+    output_contract = "nexus_webchat_runtime_reply_v1"
+    db = _sqlite_session(
+        kill_switch=0,
+        scenario=scenario,
+        output_contract=output_contract,
+    )
+    adapter = _InvalidOutputAdapter(marker)
+    ProviderRegistry.register(adapter.name, lambda _db: adapter)
+
+    try:
+        result = await ProviderRuntimeRouter(db).route(
+            _request(scenario=scenario, output_contract=output_contract)
+        )
+        raw_summaries = db.execute(
+            text("SELECT safe_summary FROM provider_runtime_audit_logs ORDER BY created_at ASC")
+        ).scalars().all()
+    finally:
+        db.close()
+
+    assert result.error_code == "all_providers_failed"
+    assert adapter.calls == 1
+    serialized = "\n".join(str(item) for item in raw_summaries)
+    assert marker not in serialized
+    summaries = [json.loads(item) for item in raw_summaries]
+    parse_reject = next(item for item in summaries if item.get("parse_error_code"))
+    assert parse_reject["parse_error_code"] == "output_contract_rejected"
+    assert "parse_error" not in parse_reject
