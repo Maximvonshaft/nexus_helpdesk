@@ -69,6 +69,7 @@ def test_admin_provider_runtime_routing_api_inserts_rule_without_granting_defaul
     assert traffic["configured_mode"] == "control"
     assert traffic["default_canary_percent"] == 100
     assert traffic["canary_percent"] == 100
+    assert traffic["allowed_canary_percents"] == [0, 1, 5, 25, 100]
     assert traffic["configuration_errors"] == []
     assert db.commit.called
 
@@ -78,6 +79,7 @@ def test_admin_provider_runtime_routing_api_inserts_rule_without_granting_defaul
     [
         (WebchatRuntimeRoutingUpdate(primary_provider="unexpected"), "primary_provider_not_allowed"),
         (WebchatRuntimeRoutingUpdate(fallback_providers=["unexpected"]), "fallback_provider_not_allowed"),
+        (WebchatRuntimeRoutingUpdate(canary_percent=2), "provider_runtime_canary_percent_invalid"),
     ],
 )
 def test_admin_routing_rejection_exposes_only_fixed_error_codes(monkeypatch, payload, expected_error):
@@ -89,6 +91,23 @@ def test_admin_routing_rejection_exposes_only_fixed_error_codes(monkeypatch, pay
     assert caught.value.status_code == 400
     assert caught.value.detail == {"error_code": expected_error}
     assert "traceback" not in str(caught.value.detail).lower()
+
+
+@pytest.mark.parametrize("canary_percent", [0, 1, 5, 25, 100])
+def test_admin_routing_accepts_only_documented_canary_stages(monkeypatch, canary_percent):
+    monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
+    db = Mock()
+    select_result = Mock()
+    select_result.mappings.return_value.first.return_value = None
+    db.execute.return_value = select_result
+
+    response = update_webchat_runtime_routing(
+        WebchatRuntimeRoutingUpdate(canary_percent=canary_percent),
+        db=db,
+        current_user=Mock(),
+    )
+
+    assert response["routing_rule"]["canary_percent"] == canary_percent
 
 
 def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monkeypatch):
@@ -104,6 +123,7 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     assert traffic["schema_version"] == "nexus.provider_runtime.traffic_selection.v1"
     assert traffic["configured_mode"] == "shadow"
     assert traffic["canary_percent"] == 25
+    assert traffic["allowed_canary_percents"] == [0, 1, 5, 25, 100]
     assert traffic["kill_switch"] is False
     assert traffic["configuration_errors"] == []
     assert traffic["bucket_contract"] == _BUCKET_CONTRACT
@@ -144,6 +164,7 @@ def test_admin_provider_runtime_status_reports_database_rule_under_safe_control_
     ("canary_percent", "kill_switch", "expected_error"),
     [
         (101, False, "provider_runtime_canary_percent_invalid"),
+        (2, False, "provider_runtime_canary_percent_invalid"),
         (True, False, "provider_runtime_canary_percent_invalid"),
         (5, "false", "provider_runtime_kill_switch_invalid"),
     ],
@@ -192,6 +213,7 @@ def test_admin_provider_runtime_status_fails_closed_when_rule_query_fails(monkey
     [
         ("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid", "provider_runtime_traffic_mode_invalid"),
         ("PROVIDER_RUNTIME_CANARY_PERCENT", "invalid", "provider_runtime_canary_percent_invalid"),
+        ("PROVIDER_RUNTIME_CANARY_PERCENT", "2", "provider_runtime_canary_percent_invalid"),
         ("PROVIDER_RUNTIME_KILL_SWITCH", "invalid", "provider_runtime_kill_switch_invalid"),
     ],
 )

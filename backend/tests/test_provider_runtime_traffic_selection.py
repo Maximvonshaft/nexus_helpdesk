@@ -1,7 +1,9 @@
 import pytest
+from sqlalchemy import Boolean, create_engine, text
 
 from app.services.provider_runtime.schemas import ProviderRequest
 from app.services.provider_runtime.traffic_selection import (
+    ALLOWED_CANARY_PERCENTS,
     ProviderTrafficPath,
     configured_traffic_mode,
     effective_canary_percent,
@@ -57,6 +59,7 @@ def test_missing_traffic_configuration_defaults_to_control_zero(monkeypatch):
     assert summary["canary_percent"] == 0
     assert summary["kill_switch"] is False
     assert summary["configuration_errors"] == []
+    assert summary["allowed_canary_percents"] == [0, 1, 5, 25, 100]
     assert decision.path == ProviderTrafficPath.CONTROL
     assert decision.execute_candidate is False
     assert decision.authoritative is False
@@ -134,6 +137,7 @@ def test_bucket_contract_declares_every_hashed_scope_field():
         configured_mode_value="canary",
     )
     assert decision.safe_summary()["bucket_contract"] == _BUCKET_CONTRACT
+    assert decision.safe_summary()["allowed_canary_percents"] == [0, 1, 5, 25, 100]
     assert safe_traffic_configuration()["bucket_contract"] == _BUCKET_CONTRACT
 
 
@@ -196,14 +200,14 @@ def test_invalid_or_explicitly_empty_mode_fails_closed(value):
         configured_traffic_mode(value)
 
 
-@pytest.mark.parametrize("value", ["abc", "-1", "101", "1.5"])
+@pytest.mark.parametrize("value", ["abc", "-1", "101", "1.5", "2", "3", "10", "50", "99"])
 def test_invalid_canary_override_fails_closed(monkeypatch, value):
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", value)
     with pytest.raises(ValueError, match="provider_runtime_canary_percent_invalid"):
         effective_canary_percent(25)
 
 
-@pytest.mark.parametrize("value", [-1, 101, 1.5, "01", True])
+@pytest.mark.parametrize("value", [-1, 101, 1.5, "01", True, 2, 3, 10, 50, 99])
 def test_invalid_database_or_direct_canary_value_fails_closed(monkeypatch, value):
     monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
     with pytest.raises(ValueError, match="provider_runtime_canary_percent_invalid"):
@@ -215,6 +219,12 @@ def test_invalid_database_or_direct_canary_value_fails_closed(monkeypatch, value
             kill_switch=False,
             configured_mode_value="canary",
         )
+
+
+@pytest.mark.parametrize("value", sorted(ALLOWED_CANARY_PERCENTS))
+def test_only_documented_canary_stages_are_accepted(monkeypatch, value):
+    monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
+    assert effective_canary_percent(value) == value
 
 
 @pytest.mark.parametrize("value", ["maybe", "enabled", "2", ""])
@@ -238,6 +248,20 @@ def test_invalid_database_or_direct_kill_switch_value_fails_closed(monkeypatch, 
         )
 
 
+def test_sqlite_boolean_result_contract_normalizes_persisted_values():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.connect() as connection:
+        row = connection.execute(
+            text("SELECT 0 AS kill_switch, 1 AS enabled").columns(
+                kill_switch=Boolean(),
+                enabled=Boolean(),
+            )
+        ).mappings().one()
+
+    assert row["kill_switch"] is False
+    assert row["enabled"] is True
+
+
 def test_persisted_configuration_errors_are_independent_of_env_overrides(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "5")
     monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "true")
@@ -255,7 +279,7 @@ def test_persisted_configuration_errors_are_independent_of_env_overrides(monkeyp
 
 def test_safe_configuration_reports_invalid_database_default(monkeypatch):
     monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
-    summary = safe_traffic_configuration(default_canary_percent=101, default_kill_switch=False)
+    summary = safe_traffic_configuration(default_canary_percent=2, default_kill_switch=False)
     assert summary["default_canary_percent"] is None
     assert summary["canary_percent"] is None
     assert summary["configuration_errors"] == ["provider_runtime_canary_percent_invalid"]
@@ -271,7 +295,7 @@ def test_safe_configuration_reports_invalid_kill_switch_default(monkeypatch):
 
 def test_safe_configuration_reports_invalid_database_default_even_when_env_overrides_it(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "5")
-    summary = safe_traffic_configuration(default_canary_percent=101, default_kill_switch=False)
+    summary = safe_traffic_configuration(default_canary_percent=2, default_kill_switch=False)
     assert summary["default_canary_percent"] is None
     assert summary["canary_percent"] == 5
     assert summary["configuration_errors"] == ["provider_runtime_canary_percent_invalid"]

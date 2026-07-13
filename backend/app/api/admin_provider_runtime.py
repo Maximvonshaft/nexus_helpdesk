@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.permissions import ensure_can_manage_runtime
-from ..services.provider_runtime.traffic_selection import safe_traffic_configuration
+from ..services.provider_runtime.traffic_selection import (
+    ALLOWED_CANARY_PERCENTS,
+    safe_traffic_configuration,
+)
 from ..services.provider_runtime_status import get_provider_runtime_status
 from .deps import get_current_user
 
@@ -40,6 +43,8 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
             raise ValueError("primary_provider_not_allowed")
         if self.fallback_providers:
             raise ValueError("fallback_provider_not_allowed")
+        if self.canary_percent not in ALLOWED_CANARY_PERCENTS:
+            raise ValueError(_CANARY_PERCENT_INVALID)
 
 
 def _database_configuration_errors(selection: dict[str, Any]) -> list[str]:
@@ -194,11 +199,12 @@ def update_webchat_runtime_routing(
     try:
         payload.validate_allowed()
     except ValueError:
-        error_code = (
-            "primary_provider_not_allowed"
-            if payload.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS
-            else "fallback_provider_not_allowed"
-        )
+        if payload.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS:
+            error_code = "primary_provider_not_allowed"
+        elif payload.fallback_providers:
+            error_code = "fallback_provider_not_allowed"
+        else:
+            error_code = _CANARY_PERCENT_INVALID
         raise HTTPException(status_code=400, detail={"error_code": error_code}) from None
 
     existing = db.execute(

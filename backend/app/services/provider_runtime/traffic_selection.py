@@ -11,6 +11,7 @@ from .schemas import ProviderRequest
 
 TRAFFIC_SELECTION_SCHEMA = "nexus.provider_runtime.traffic_selection.v1"
 TRAFFIC_MODE_ENV = "PROVIDER_RUNTIME_TRAFFIC_MODE"
+ALLOWED_CANARY_PERCENTS = frozenset({0, 1, 5, 25, 100})
 _BUCKET_CONTRACT = "sha256(tenant_id,tenant_key,channel_key,session_id,scenario)%100"
 _TRAFFIC_MODE_INVALID = "provider_runtime_traffic_mode_invalid"
 _CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
@@ -46,6 +47,7 @@ class ProviderTrafficSelection:
             "configuration_errors": list(self.configuration_errors),
             "path": self.path.value,
             "canary_percent": self.canary_percent,
+            "allowed_canary_percents": sorted(ALLOWED_CANARY_PERCENTS),
             "bucket": self.bucket,
             "execute_candidate": self.execute_candidate,
             "authoritative": self.authoritative,
@@ -77,7 +79,7 @@ def _validated_canary_percent(value: Any) -> int:
         raise ValueError(_CANARY_PERCENT_INVALID)
     if isinstance(value, str) and value.strip() != str(percent):
         raise ValueError(_CANARY_PERCENT_INVALID)
-    if not 0 <= percent <= 100:
+    if percent not in ALLOWED_CANARY_PERCENTS:
         raise ValueError(_CANARY_PERCENT_INVALID)
     return percent
 
@@ -180,6 +182,7 @@ def safe_traffic_configuration(
         "default_canary_percent": normalized_default_canary,
         "default_kill_switch": normalized_default_kill_switch,
         "canary_percent": canary_percent,
+        "allowed_canary_percents": sorted(ALLOWED_CANARY_PERCENTS),
         "canary_percent_env_override": canary_override is not None,
         "kill_switch": kill_switch,
         "kill_switch_env_override": kill_switch_override is not None,
