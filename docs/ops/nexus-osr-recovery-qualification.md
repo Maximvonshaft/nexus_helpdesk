@@ -8,7 +8,7 @@ This control proves that an exact Nexus revision can be migrated, backed up, res
 
 Application code uses a SQLAlchemy URL such as `postgresql+psycopg://...`. Native PostgreSQL tools use `POSTGRES_NATIVE_URL` in libpq form: `postgresql://...`.
 
-The operator scripts accept `POSTGRES_NATIVE_URL` directly. For compatibility they may normalize the known SQLAlchemy driver prefixes from `DATABASE_URL`, but they never pass an unmodified `postgresql+psycopg://` URL to `pg_dump`, `pg_restore` or `psql`.
+The operator scripts accept `POSTGRES_NATIVE_URL` directly. For compatibility they may normalize the known SQLAlchemy driver prefixes from `DATABASE_URL`, but they never pass an unmodified `postgresql+psycopg://` URL to `pg_dump`, `pg_restore` or `psql`. Before any native client call, both scripts require an explicit host and database path and reject URI query strings or fragments, so libpq parameters cannot replace the visibly reviewed target.
 
 The disposable runner additionally requires `RECOVERY_ADMIN_NATIVE_URL` and `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. Before any `DROP DATABASE` or `CREATE DATABASE`, it proves that the admin, source and restore URLs share the same host and port, that application/native URL pairs agree, that the source/restore database names are exactly `nexus_source` and `nexus_restore`, and that the admin URL targets a different database. URI query strings and fragments are rejected because libpq parameters such as `host`, `hostaddr`, `port` or `dbname` could override the visibly validated authority. Ambient `PGHOST`, `PGUSER` or default-database state is never used as destructive authority.
 
@@ -52,7 +52,7 @@ The sequence is:
 4. Emit a bounded dry-run plan whose only repair action is `alembic_upgrade_head`.
 5. Re-upgrade and verify the exact expected head.
 6. Insert one synthetic Market/Team referential marker.
-7. Snapshot every public table count, Alembic head, marker count and unvalidated-FK count.
+7. Snapshot every public table count, Alembic head, marker count, unvalidated-FK count and a deterministic SHA-256 signature for every public foreign-key definition.
 8. Create and validate the real operator backup bundle.
 9. Restore through the real rollback script into the disposable target.
 10. Compare exact head, complete table/count set, marker and FK state.
@@ -62,7 +62,7 @@ The sequence is:
 
 ## Evidence
 
-Uploaded JSON may contain only source SHA, Alembic revision, public table names and aggregate counts, backup digest, bounded durations, Boolean integrity results and fixed reason codes. It excludes backup bytes, connection strings and business rows.
+Uploaded JSON may contain only source SHA, Alembic revision, public table names and aggregate counts, hashed foreign-key definitions, backup digest, bounded durations, Boolean integrity results and fixed reason codes. It excludes raw constraint definitions, backup bytes, connection strings and business rows. Timestamp order is validated before RTO/RPO acceptance; reversed timestamps fail closed rather than becoming zero-second evidence.
 
 The disposable thresholds are:
 
@@ -70,13 +70,14 @@ The disposable thresholds are:
 - RPO: 60 seconds;
 - row-count mismatch: zero;
 - unvalidated foreign keys: zero;
+- foreign-key definition signatures: exact source/restore match;
 - Alembic heads: exactly one matching head.
 
 These are CI qualification thresholds, not production SLOs.
 
 ## Failure semantics
 
-The gate fails closed on migration/restore errors, missing/multiple/invalid heads, admin/source/restore cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, unvalidated foreign keys, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
+The gate fails closed on migration/restore errors, missing/multiple/invalid heads, admin/source/restore cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes are deleted even when qualification fails.
 
 ## Remaining work
 
