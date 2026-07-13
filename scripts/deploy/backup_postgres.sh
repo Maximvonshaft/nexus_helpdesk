@@ -10,7 +10,7 @@ normalize_native_url() {
   esac
   POSTGRES_URL_CANDIDATE="$value" python - <<'PYURL'
 import os
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 value = os.environ["POSTGRES_URL_CANDIDATE"]
 parsed = urlsplit(value)
@@ -18,6 +18,9 @@ if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
     raise SystemExit("postgres_native_url_invalid")
 if not parsed.username:
     raise SystemExit("postgres_native_url_user_required")
+host_authority = unquote(parsed.netloc.rsplit("@", 1)[-1])
+if "," in host_authority:
+    raise SystemExit("postgres_native_url_multi_host_not_allowed")
 if parsed.query:
     raise SystemExit("postgres_native_url_query_not_allowed")
 if parsed.fragment:
