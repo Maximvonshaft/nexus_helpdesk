@@ -203,8 +203,12 @@ def compare(
     reasons: list[str] = []
     if raw_rpo_seconds < 0:
         reasons.append("recovery.rpo_timestamp_order_invalid")
+    if backup_time > restore_start:
+        reasons.append("recovery.restore_started_before_backup_completed")
     if raw_restore_seconds < 0:
         reasons.append("recovery.rto_timestamp_order_invalid")
+    if not (marker_time <= backup_time <= restore_start <= restore_end):
+        reasons.append("recovery.timeline_order_invalid")
     if source.get("schema_version") != "nexus_recovery_snapshot_v1" or restored.get("schema_version") != "nexus_recovery_snapshot_v1":
         reasons.append("recovery.snapshot_schema_invalid")
     if source.get("alembic_head") != restored.get("alembic_head"):
