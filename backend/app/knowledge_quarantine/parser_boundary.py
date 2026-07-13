@@ -66,12 +66,8 @@ def _resource_limiter(config: ParserBoundaryConfig) -> Callable[[], None] | None
 
 
 def _sanitized_environment(config: ParserBoundaryConfig) -> dict[str, str]:
-    backend_root = str(Path(__file__).resolve().parents[2])
-    current_pythonpath = os.environ.get("PYTHONPATH", "")
-    pythonpath = os.pathsep.join(part for part in (backend_root, current_pythonpath) if part)
     env = {
         "PATH": os.environ.get("PATH", ""),
-        "PYTHONPATH": pythonpath,
         "PYTHONUNBUFFERED": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "APP_ENV": "test",
@@ -87,6 +83,17 @@ def _sanitized_environment(config: ParserBoundaryConfig) -> dict[str, str]:
         if value:
             env[key] = value
     return env
+
+
+def _worker_command() -> list[str]:
+    backend_root = str(Path(__file__).resolve().parents[2])
+    bootstrap = (
+        "import sys;"
+        f"sys.path.insert(0, {backend_root!r});"
+        "from app.knowledge_quarantine.parser_worker import main;"
+        "raise SystemExit(main())"
+    )
+    return [sys.executable, "-I", "-c", bootstrap]
 
 
 def _terminate(process: subprocess.Popen[bytes]) -> None:
@@ -137,16 +144,24 @@ def parse_document_in_boundary(
         sort_keys=True,
     ).encode("utf-8")
 
-    process = subprocess.Popen(
-        [sys.executable, "-I", "-m", "app.knowledge_quarantine.parser_worker"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        env=_sanitized_environment(resolved),
-        close_fds=True,
-        start_new_session=False,
-        preexec_fn=_resource_limiter(resolved),
-    )
+    try:
+        process = subprocess.Popen(
+            _worker_command(),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=_sanitized_environment(resolved),
+            close_fds=True,
+            start_new_session=False,
+            preexec_fn=_resource_limiter(resolved),
+        )
+    except (OSError, ValueError):
+        return ParserBoundaryResult(
+            status="failed",
+            parser_identity=PARSER_IDENTITY,
+            parser_version=PARSER_VERSION,
+            reason_code="parser.process_start_failed",
+        )
     try:
         stdout, _stderr = process.communicate(
             input=request,
@@ -180,7 +195,16 @@ def parse_document_in_boundary(
         )
     if process.returncode < 0:
         signal_number = abs(process.returncode)
-        status = "resource_exceeded" if signal_number in {signal.SIGKILL, signal.SIGXCPU, signal.SIGXFSZ} else "failed"
+        resource_signals = {
+            int(candidate)
+            for candidate in (
+                getattr(signal, "SIGKILL", None),
+                getattr(signal, "SIGXCPU", None),
+                getattr(signal, "SIGXFSZ", None),
+            )
+            if candidate is not None
+        }
+        status = "resource_exceeded" if signal_number in resource_signals else "failed"
         return ParserBoundaryResult(
             status=status,
             parser_identity=PARSER_IDENTITY,
