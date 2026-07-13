@@ -11,6 +11,7 @@ Current governance and delivery authority is maintained through:
 - Legacy-surface convergence: #650
 - Root-report retirement: #652
 - Round B document retirement: #656
+- Sandbox overlay and stale audit retirement: #694
 - Domain-specific Work Items and their accepted Pull Requests
 - Runtime release metadata and exact-head CI evidence
 
@@ -39,6 +40,17 @@ The following point-in-time Round B documents were removed from the active tree 
 - `docs/round-b-implementation-plan.md`
 - `docs/round-b-operator-demo-script.md`
 - `docs/round-b-post-push-audit.md`
+
+## Retired sandbox overlay and stale audit artifacts
+
+The following point-in-time artifacts were removed from the active tree under #694 / PR #695:
+
+- `APPLY_PATCH.md`
+- `PATCH_MANIFEST.md`
+- `VERIFY_RESULTS.md`
+- `docs/audit/FINAL_REPORT.md`
+
+The first three described a one-time ChatGPT-sandbox source-overlay package and were not a supported current deployment or release path. The audit report was bound to an old baseline and branch, recorded a then-failing repository test state, and explicitly did not establish production readiness.
 
 Their contents remain available through Git history and the commits that originally introduced or modified them. Restoring any retired artifact to the active tree requires a current owner, current consumer, explicit retention rationale and an update to the retirement regression.
 
