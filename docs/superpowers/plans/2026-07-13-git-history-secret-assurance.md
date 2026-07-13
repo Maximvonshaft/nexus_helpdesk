@@ -25,11 +25,14 @@
 - Add tests for removed-secret detection and raw-value/path absence.
 - Add logical cross-Blob deduplication.
 - Add independent allowlist decisions for identical Blob content at multiple paths.
+- Add direct Tree-tag alias coverage.
+- Add whitespace-distinct path coverage.
 - Add complete same-rule matching when one line contains multiple credentials.
+- Add fail-closed coverage for oversized binary-looking suffixes.
 - Add complete counting beyond 200 while preserving the tree cap.
 - Add shallow rejection and complete Blob accounting.
 - Add bounded failure-report behavior.
-- Publish Draft PR and prove Security Assurance fails at missing implementation.
+- Publish Draft PR and prove the tests fail before implementation.
 
 ## Task 2 — Implement the history scanner
 
@@ -40,12 +43,14 @@
 - Enumerate all reachable objects.
 - Resolve type/size with batch metadata.
 - Enumerate every `(Blob, path)` pair from unique reachable commit root Trees.
+- Peel validated branch, remote and tag object IDs to Trees when possible and include those roots.
+- Preserve decoded path whitespace exactly.
 - Stream each eligible unique Blob once and evaluate every path alias independently.
 - Reuse current scanner patterns, placeholders and fingerprints.
 - Iterate every match for every rule on each line.
 - Deduplicate logical findings without Blob SHA while keeping path in the identity.
 - Apply exact unexpired allowlist entries independently per path.
-- Account for every Blob and fail closed on unknown oversized content.
+- Treat every Blob above the configured ceiling as unscanned/incomplete regardless of suffix.
 - Store at most 100 findings while counting all findings.
 - Emit bounded safe pass/fail reports with path digests only.
 
@@ -73,7 +78,9 @@
 
 - Document pass, finding and incomplete states.
 - Document strict path-specific allowlist use.
-- Document Blob alias and repeated-match semantics.
+- Document commit-root and ref-peeled Tree coverage.
+- Document whitespace-preserving path identity.
+- Document all-match and strict oversized semantics.
 - Document separate owner authority for credential and history remediation.
 - Document rollback.
 
@@ -81,7 +88,10 @@
 
 - Run all current security tests.
 - Prove one allowlisted fixture path does not suppress an identical non-fixture alias.
+- Prove a direct Tree-targeting tag contributes its aliases.
+- Prove whitespace-distinct paths remain independent.
 - Prove all same-rule credentials on one line are counted.
+- Prove an oversized `.png`/`.zip`-style path remains incomplete unless bytes are actually scanned.
 - Run the real non-shallow reachable-history scan.
 - Verify `accounted_blob_count == reachable_blob_count`.
 - Verify `reachable_blob_path_count` is present and positive.
