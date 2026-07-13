@@ -25,52 +25,6 @@ MAX_PATH_LENGTH = 240
 _OBJECT_FORMATS = {"sha1": 40, "sha256": 64}
 _SAFE_REASON_RE = re.compile(r"^[a-z0-9_]{3,120}$")
 
-KNOWN_BINARY_SUFFIXES = frozenset(
-    {
-        ".7z",
-        ".avi",
-        ".bin",
-        ".bmp",
-        ".class",
-        ".db",
-        ".dll",
-        ".dmg",
-        ".doc",
-        ".docx",
-        ".eot",
-        ".exe",
-        ".gif",
-        ".gz",
-        ".ico",
-        ".jar",
-        ".jpeg",
-        ".jpg",
-        ".lockb",
-        ".mov",
-        ".mp3",
-        ".mp4",
-        ".o",
-        ".otf",
-        ".pdf",
-        ".png",
-        ".pyc",
-        ".sqlite",
-        ".sqlite3",
-        ".tar",
-        ".tgz",
-        ".ttf",
-        ".wav",
-        ".webm",
-        ".webp",
-        ".woff",
-        ".woff2",
-        ".xls",
-        ".xlsx",
-        ".xz",
-        ".zip",
-    }
-)
-
 
 class HistoryScanError(RuntimeError):
     def __init__(self, reason: str):
@@ -101,9 +55,6 @@ class HistoryFinding:
 
     @property
     def logical_identity(self) -> tuple[str, str, int, str]:
-        # Blob identity is intentionally excluded. A changed Blob containing the
-        # same logical path/rule/line/fingerprint is counted once, while aliases
-        # at different paths remain independent allowlist decisions.
         return self.path, self.rule, self.line, self.fingerprint
 
     def as_dict(self) -> dict[str, object]:
@@ -172,8 +123,7 @@ def _bounded_path(raw: bytes) -> str:
         value = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise HistoryScanError("git_object_path_encoding_invalid") from exc
-    value = value.strip()
-    if not value:
+    if value == "":
         return "unresolved-blob"
     if value.startswith("/") or "\\" in value or ".." in PurePosixPath(value).parts:
         raise HistoryScanError("git_object_path_invalid")
@@ -189,8 +139,8 @@ def _bounded_path(raw: bytes) -> str:
 def parse_object_listing(raw: bytes, *, object_id_length: int) -> dict[str, str]:
     """Return one bounded fallback path per reachable object.
 
-    `rev-list --objects` does not preserve all aliases for a Blob. Complete Blob
-    alias collection is performed separately from reachable commit root Trees.
+    `rev-list --objects` is used for the complete object set. Complete Blob path
+    aliases are collected separately from every reachable root Tree.
     """
 
     paths: dict[str, str] = {}
@@ -268,6 +218,70 @@ def resolve_object_metadata(
     return tuple(records)
 
 
+def _reference_object_ids(root: Path, *, object_id_length: int) -> tuple[str, ...]:
+    raw = _run_git(
+        root,
+        [
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ],
+    )
+    object_ids: set[str] = set()
+    for line in raw.splitlines():
+        if not line:
+            continue
+        try:
+            value = line.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise HistoryScanError("git_refs_invalid") from exc
+        object_ids.add(
+            _validate_object_id(
+                value,
+                object_id_length=object_id_length,
+                reason="git_refs_invalid",
+            )
+        )
+    if not object_ids:
+        raise HistoryScanError("git_refs_empty")
+    return tuple(sorted(object_ids))
+
+
+def _try_peel_tree(
+    root: Path,
+    object_id: str,
+    *,
+    object_id_length: int,
+) -> str | None:
+    _validate_object_id(
+        object_id,
+        object_id_length=object_id_length,
+        reason="git_ref_object_invalid",
+    )
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--verify", f"{object_id}^{{tree}}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as exc:
+        raise HistoryScanError("git_command_unavailable") from exc
+    if completed.returncode != 0:
+        return None
+    try:
+        value = completed.stdout.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise HistoryScanError("git_ref_tree_invalid") from exc
+    return _validate_object_id(
+        value,
+        object_id_length=object_id_length,
+        reason="git_ref_tree_invalid",
+    )
+
+
 def _root_tree_ids(root: Path, *, object_id_length: int) -> tuple[str, ...]:
     raw = _run_git(root, ["log", "--all", "--format=%T"])
     trees: set[str] = set()
@@ -275,7 +289,7 @@ def _root_tree_ids(root: Path, *, object_id_length: int) -> tuple[str, ...]:
         if not line:
             continue
         try:
-            value = line.decode("ascii").strip()
+            value = line.decode("ascii")
         except UnicodeDecodeError as exc:
             raise HistoryScanError("git_root_tree_invalid") from exc
         trees.add(
@@ -285,6 +299,18 @@ def _root_tree_ids(root: Path, *, object_id_length: int) -> tuple[str, ...]:
                 reason="git_root_tree_invalid",
             )
         )
+
+    # Branches and tags may directly reference a Tree rather than a commit.
+    # Peel every allowed reference object to a Tree when possible.
+    for object_id in _reference_object_ids(root, object_id_length=object_id_length):
+        tree_id = _try_peel_tree(
+            root,
+            object_id,
+            object_id_length=object_id_length,
+        )
+        if tree_id is not None:
+            trees.add(tree_id)
+
     if not trees:
         raise HistoryScanError("git_root_tree_empty")
     return tuple(sorted(trees))
@@ -317,7 +343,6 @@ def _parse_ls_tree(
             reason="git_tree_listing_invalid",
         )
         if object_type == "commit":
-            # Gitlinks are commit objects, not scannable Blob content.
             continue
         if object_type != "blob":
             raise HistoryScanError("git_tree_listing_invalid")
@@ -331,12 +356,6 @@ def collect_blob_paths(
     *,
     object_id_length: int,
 ) -> dict[str, tuple[str, ...]]:
-    """Collect every historical path alias while keeping one Blob read.
-
-    Root Tree IDs are deduplicated, and each unique `(blob, path)` pair is kept.
-    Exact path allowlists are therefore evaluated independently for every alias.
-    """
-
     blob_ids = {blob.object_id for blob in blobs}
     aliases: dict[str, set[str]] = {blob.object_id: set() for blob in blobs}
     pair_count = 0
@@ -420,10 +439,6 @@ def iter_blob_contents(
             raise HistoryScanError("git_batch_failed")
 
 
-def _is_known_binary_path(path: str) -> bool:
-    return PurePosixPath(path).suffix.lower() in KNOWN_BINARY_SUFFIXES
-
-
 def _iter_secret_findings(relative_path: str, text: str) -> Iterator[Finding]:
     for line_no, line in enumerate(text.splitlines(), start=1):
         if scanner._is_placeholder(line):
@@ -462,34 +477,8 @@ def _commit_count(root: Path) -> int:
 
 
 def _refs_digest(root: Path, *, object_id_length: int) -> str:
-    raw = _run_git(
-        root,
-        [
-            "for-each-ref",
-            "--format=%(objectname)",
-            "refs/heads",
-            "refs/remotes",
-            "refs/tags",
-        ],
-    )
-    object_ids: list[str] = []
-    for line in raw.splitlines():
-        try:
-            value = line.decode("ascii").strip()
-        except UnicodeDecodeError as exc:
-            raise HistoryScanError("git_refs_invalid") from exc
-        if not value:
-            continue
-        object_ids.append(
-            _validate_object_id(
-                value,
-                object_id_length=object_id_length,
-                reason="git_refs_invalid",
-            )
-        )
-    if not object_ids:
-        raise HistoryScanError("git_refs_empty")
-    return hashlib.sha256(("\n".join(sorted(object_ids)) + "\n").encode("ascii")).hexdigest()
+    object_ids = _reference_object_ids(root, object_id_length=object_id_length)
+    return hashlib.sha256(("\n".join(object_ids) + "\n").encode("ascii")).hexdigest()
 
 
 def _history_finding(blob: ObjectMetadata, finding: Finding) -> HistoryFinding:
@@ -563,15 +552,14 @@ def scan_repository_history(
     )
 
     eligible: list[ObjectMetadata] = []
-    oversized_binary_count = 0
     unscanned_oversized: list[ObjectMetadata] = []
     for blob in blobs:
-        paths = blob_paths[blob.object_id]
         if blob.size <= max_blob_bytes:
             eligible.append(blob)
-        elif paths and all(_is_known_binary_path(path) for path in paths):
-            oversized_binary_count += 1
         else:
+            # A suffix is not evidence of binary content. Oversized Blobs remain
+            # incomplete until the configured ceiling is raised and bytes are
+            # actually inspected.
             unscanned_oversized.append(blob)
 
     allowlist = load_allowlist(allowlist_path)
@@ -612,12 +600,7 @@ def scan_repository_history(
                 if len(stored_findings) < MAX_STORED_FINDINGS:
                     stored_findings.append(finding)
 
-    accounted_blob_count = (
-        scanned_text_count
-        + binary_count
-        + oversized_binary_count
-        + len(unscanned_oversized)
-    )
+    accounted_blob_count = scanned_text_count + binary_count + len(unscanned_oversized)
     complete = accounted_blob_count == len(blobs) and not unscanned_oversized
     status = "pass" if complete and total_findings == 0 else "fail"
     oversized_records = []
@@ -648,7 +631,7 @@ def scan_repository_history(
         "accounted_blob_count": accounted_blob_count,
         "scanned_text_blob_count": scanned_text_count,
         "binary_blob_count": binary_count,
-        "oversized_binary_blob_count": oversized_binary_count,
+        "oversized_binary_blob_count": 0,
         "unscanned_oversized_blob_count": len(unscanned_oversized),
         "unscanned_oversized": oversized_records,
         "unscanned_oversized_truncated": len(unscanned_oversized) > len(oversized_records),
@@ -669,7 +652,7 @@ def scan_repository_history(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Scan all reachable Git blobs for redacted credential findings."
+        description="Scan all reachable Git Blobs for redacted credential findings."
     )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument(
