@@ -122,3 +122,21 @@ def test_report_fails_closed_without_exact_source_identity(tmp_path: Path) -> No
 
     assert report["status"] == "fail"
     assert report["source_sha"] == "unknown"
+
+
+def test_report_fails_closed_when_required_scenario_is_duplicated(tmp_path: Path) -> None:
+    module = _load_module()
+    junit = tmp_path / "junit.xml"
+    duplicated_names = (
+        REQUIRED_TEST_NAMES[0],
+        REQUIRED_TEST_NAMES[0],
+        REQUIRED_TEST_NAMES[1],
+        REQUIRED_TEST_NAMES[2],
+    )
+    _write_junit(junit, names=duplicated_names)
+
+    report = module.build_report(junit, pytest_exit_code=0, source_sha="e" * 40)
+
+    assert report["status"] == "fail"
+    encoded = json.dumps(report, sort_keys=True)
+    assert not any(name in encoded for name in REQUIRED_TEST_NAMES)
