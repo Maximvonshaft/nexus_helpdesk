@@ -7,8 +7,8 @@ This runbook wires NexusDesk to a server-side AI Runtime without exposing the ru
 ```mermaid
 flowchart LR
   visitor["Customer browser"] --> nexus["NexusDesk backend"]
-  nexus --> pr["Provider Runtime"]
-  pr -->|"canary/fallback/kill switch"| private_ai["private_ai_runtime adapter"]
+  nexus --> pr["Provider Runtime traffic authority"]
+  pr -->|"control / shadow / staged canary / kill switch"| private_ai["private_ai_runtime adapter"]
   private_ai -->|"Authorization: Bearer from token file"| ai["AI Runtime or MCS gateway"]
   ai --> direct["/api/chat qwen2.5:3b"]
   ai --> rag["/api/chat qwen3:4b with Nexus RAG context"]
@@ -18,6 +18,25 @@ flowchart LR
   edge --> voice_gateway["MCS voice gateway"]
   voice_gateway --> live_ws["/live/ws"]
 ```
+
+## Traffic Selection Contract
+
+Provider traffic is governed by `nexus.provider_runtime.traffic_selection.v1`.
+
+- `control`: no candidate Provider call and no candidate customer-visible output.
+- `shadow`: the candidate may execute for validation, but its output is discarded and cannot execute tools, tickets, queues or external actions.
+- `canary`: a stable server-owned bucket selects authoritative traffic only when `bucket < canary_percent`.
+- kill switch: higher priority than every mode and percentage; it suppresses candidate execution.
+
+The stable bucket contract is:
+
+```text
+sha256(tenant_id, tenant_key, channel_key, session_id, scenario) % 100
+```
+
+Request IDs and process-local randomness are intentionally excluded so retries, workers and restarts retain the same selection. Only the staged percentages `0`, `1`, `5`, `25` and `100` are valid. Unsupported, malformed or non-canonical values fail closed. Persisted SQLite booleans are normalized only from the exact values `0` and `1`.
+
+WebChat and WebCall Provider Runtime requests use this same Router authority. The WebCall compatibility values `router` and `private_ai_runtime` are aliases for the Router; neither value permits direct Adapter execution.
 
 ## Server Secrets
 
@@ -61,14 +80,12 @@ PROVIDER_RUNTIME_PRIMARY_PROVIDER=private_ai_runtime
 PROVIDER_RUNTIME_FALLBACK_PROVIDERS=[]
 PROVIDER_RUNTIME_OUTPUT_CONTRACT=nexus_webchat_runtime_reply_v1
 PROVIDER_RUNTIME_TIMEOUT_MS=30000
-PROVIDER_RUNTIME_CANARY_PERCENT=100
+PROVIDER_RUNTIME_TRAFFIC_MODE=control
+PROVIDER_RUNTIME_CANARY_PERCENT=0
 PROVIDER_RUNTIME_KILL_SWITCH=false
 ```
 
-Keep `PRIVATE_AI_RUNTIME_CHAT_MODE=direct` for customer-facing WebChat unless
-the heavier RAG model has its own isolated Runtime host. In production, Nexus
-fails closed if `rag|auto` would load a different RAG model on the same Runtime
-origin while `PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL=false`.
+Keep `PRIVATE_AI_RUNTIME_CHAT_MODE=direct` for customer-facing WebChat unless the heavier RAG model has its own isolated Runtime host. In production, Nexus fails closed if `rag|auto` would load a different RAG model on the same Runtime origin while `PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL=false`.
 
 For WebCall AI production providers:
 
@@ -118,47 +135,45 @@ python backend/scripts/smoke_private_ai_runtime.py \
   --include-tts
 ```
 
-Warm the customer-facing direct model before sending public traffic or after
-restarting the app/worker containers:
+Warm the customer-facing direct model before sending public traffic or after restarting the app/worker containers:
 
 ```bash
 python scripts/smoke/warm_private_ai_runtime.py
 ```
 
-In Docker deployments, run it inside the app container so it uses the mounted
-server-side token file:
+In Docker deployments, run it inside the app container so it uses the mounted server-side token file:
 
 ```bash
 docker compose --env-file deploy/.env.prod -f deploy/docker-compose.server.yml \
   exec -T app python /app/scripts/smoke/warm_private_ai_runtime.py
 ```
 
-Treat warmup as a deployment gate, not a container healthcheck. A warmup failure
-should block cutover or page the operator; it should not restart healthy web
-services in a loop. Expected warmed `qwen2.5:3b` customer-facing timings are:
-short greeting/support prompts around 1 second end-to-end and trusted tracking
-fact prompts under 4 seconds end-to-end. A `load_duration_ms` spike after deploy
-means the model was cold and the first customer would have paid that latency.
+Treat warmup as a deployment gate, not a container healthcheck. A warmup failure should block cutover or page the operator; it should not restart healthy web services in a loop. Expected warmed `qwen2.5:3b` customer-facing timings are: short greeting/support prompts around 1 second end-to-end and trusted tracking fact prompts under 4 seconds end-to-end. A `load_duration_ms` spike after deploy means the model was cold and the first customer would have paid that latency.
 
-Then run candidate WebChat smoke against the candidate app port. The provider audit rows must show `provider=private_ai_runtime`, `status=ok`, no secret values, and parse rejects must fall back cleanly.
+Then run candidate WebChat smoke against the candidate app port. Every Provider audit row must contain bounded `traffic_selection` evidence with schema version, configured mode, staged percentage, bucket, selected path, reason, authoritative state and fallback result. Audit rows must not contain tokens, prompts, customer messages or raw Provider payloads.
 
 ## Cutover
 
-1. Start candidate with `PROVIDER_RUNTIME_CANARY_PERCENT=0`.
-2. Pass smoke and inspect `provider_runtime_audit_logs`.
-3. Raise canary to `1`, then `5`, then `25`, then `100`.
-4. Keep `PROVIDER_RUNTIME_FALLBACK_PROVIDERS=[]`; backend fallback must return `reply:null`, not customer-visible text.
-5. Roll back instantly with:
+1. Start candidate with `PROVIDER_RUNTIME_TRAFFIC_MODE=control` and `PROVIDER_RUNTIME_CANARY_PERCENT=0`; confirm no candidate call is made.
+2. Optionally set `PROVIDER_RUNTIME_TRAFFIC_MODE=shadow`; confirm candidate output is validated, audited and discarded.
+3. Pass smoke and inspect `provider_runtime_audit_logs` plus Admin Provider Runtime status.
+4. Set `PROVIDER_RUNTIME_TRAFFIC_MODE=canary` and raise the staged percentage from `0` to `1`, `5`, `25` and `100` only after each prior gate is accepted.
+5. Keep `PROVIDER_RUNTIME_FALLBACK_PROVIDERS=[]`; backend fallback must return `reply:null`, not customer-visible text.
+6. Roll back instantly with:
 
 ```env
 PROVIDER_RUNTIME_KILL_SWITCH=true
 ```
 
+A true kill switch suppresses candidate execution even when lower-priority mode or percentage configuration is invalid; the drift remains visible in bounded audit and Admin evidence.
+
 ## Production Gates
 
 - Token is present only in a server-side file.
 - Browser network traces do not contain `47.87.143.41`, bearer tokens, or upstream WS query tokens.
-- WebChat runtime returns valid `nexus_webchat_runtime_reply_v1` output from `private_ai_runtime`.
+- WebChat runtime returns valid `nexus_webchat_runtime_reply_v1` output only on an authoritative canary path.
+- Control, invalid configuration and kill-switch paths make no candidate call.
+- Shadow output never becomes customer-visible and cannot execute a tool or action.
 - Live tracking status is never claimed without trusted tracking evidence.
-- WebCall voice remains same-origin through `/webchat/live/ws`.
+- WebCall voice remains same-origin through `/webchat/live/ws` and its LLM Provider Runtime path cannot bypass the Router.
 - RAG embedding dimension is confirmed before writing production vectors.
