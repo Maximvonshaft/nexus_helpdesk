@@ -10,7 +10,7 @@
 
 ## Problem
 
-The repository had no accepted current-main backup/restore rehearsal. The operator scripts also exposed eleven reproducible failure modes:
+The repository had no accepted current-main backup/restore rehearsal. The operator scripts and evidence builder exposed fourteen reproducible failure modes:
 
 1. a SQLAlchemy `postgresql+psycopg://` URL was passed directly to native clients;
 2. restore could continue after SQL errors;
@@ -22,7 +22,10 @@ The repository had no accepted current-main backup/restore rehearsal. The operat
 8. libpq URI query parameters could override the visibly validated host, port or database;
 9. HTTP redirects could be accepted as successful health responses;
 10. a regression asserted the fake `psql` marker only after its temporary directory had already been removed;
-11. a successful transactional restore followed by a failed Alembic post-check could omit the already-applied database mutation from rollback state.
+11. a successful transactional restore followed by a failed Alembic post-check could omit the already-applied database mutation from rollback state;
+12. standalone backup/rollback entrypoints accepted libpq query or fragment overrides even though the disposable runner rejected them;
+13. reversed recovery timestamps could be clamped to zero and accepted as bounded RTO/RPO evidence;
+14. source/restore comparison checked only unvalidated-FK counts and could miss deleted or altered FK definitions.
 
 These defects prevent a defensible claim that a test candidate is recoverable.
 
@@ -30,7 +33,7 @@ These defects prevent a defensible claim that a test candidate is recoverable.
 
 ### Native PostgreSQL authority
 
-`POSTGRES_NATIVE_URL` is the native-client authority. Known SQLAlchemy prefixes may be normalized for backward compatibility, but native tools never receive the unmodified application-driver URI.
+`POSTGRES_NATIVE_URL` is the native-client authority. Known SQLAlchemy prefixes may be normalized for backward compatibility, but native tools never receive the unmodified application-driver URI. Standalone backup and rollback entrypoints reject URI query strings and fragments before any native client call and require explicit host/database identity.
 
 The disposable runner requires a separate `RECOVERY_ADMIN_NATIVE_URL` and an explicit `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. It validates source/restore application and native URL pairs, requires all three native URLs to share one host/port, restricts source/restore names to `nexus_source` and `nexus_restore`, and requires the admin URL to target a third database before any destructive command. Query strings and fragments are rejected so libpq options cannot override the validated authority.
 
@@ -52,7 +55,7 @@ The qualification simulates an outdated/interrupted migration by downgrading one
 
 ### Evidence boundary
 
-Evidence contains aggregate schema identity and timing only. Backup bytes, connection strings and business rows are removed before upload. The existing artifact scanner is the upload gate. Full evidence uploads only after a clean scan; an unsafe scan uploads only sanitized numeric status.
+Evidence contains aggregate schema identity and timing only. Public foreign-key definitions are represented only by deterministic SHA-256 signatures and must match exactly between source and restore. RTO/RPO timestamps must be monotonic; impossible ordering is an acceptance failure. Backup bytes, connection strings and business rows are removed before upload. The existing artifact scanner is the upload gate. Full evidence uploads only after a clean scan; an unsafe scan uploads only sanitized numeric status.
 
 ## Qualification topology
 
@@ -72,7 +75,7 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 
 - Passing SQLAlchemy URLs directly to libpq tools: incompatible and ambiguous.
 - Using ambient `PGHOST`/`PGUSER` for destructive setup: not bound to the supplied disposable topology.
-- Accepting libpq query overrides after validating only the URI authority: the executed target can differ.
+- Accepting libpq query or fragment overrides in either the runner or standalone operator entrypoints: the executed target can differ.
 - Plain SQL gzip as the canonical backup: weaker archive validation and restore control.
 - Direct write to the final backup filename: leaves partial artifacts.
 - Directory-target `mv` semantics: can hide concurrent publication by nesting a bundle.
@@ -81,10 +84,12 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 - Writing rollback status only on success: loses partial-mutation evidence.
 - Treating an applied restore as unmodified merely because the post-restore identity check failed.
 - Treating any non-error HTTP status, including redirects, as readiness proof.
+- Comparing only the count of unvalidated foreign keys: missing or altered FK definitions can still appear valid.
+- Clamping reversed timestamps to zero: impossible evidence must fail closed.
 
 ## Acceptance
 
-One exact final Head must prove focused tests, explicit URL authority without query overrides, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact 2xx health semantics, exact restore comparison, RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
+One exact final Head must prove focused tests, explicit URL authority without query overrides, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact 2xx health semantics, exact table and foreign-key-definition restore comparison, monotonic RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
 
 ## Rollback
 
