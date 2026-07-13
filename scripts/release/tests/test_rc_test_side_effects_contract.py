@@ -35,6 +35,19 @@ class RCTestSideEffectsContractTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.source)
 
+    def test_queued_ai_turn_is_diagnostic_not_customer_output(self) -> None:
+        # A public message deliberately creates one queued WebchatAITurn before
+        # the disabled AI worker observes the job. That durable placeholder is
+        # not Provider execution and must not fail the zero-output gate.
+        self.assertIn("FORBIDDEN_SEMANTIC_COUNTS", self.source)
+        self.assertIn("webchat_ai_queued_turn_count", self.source)
+        self.assertIn("webchat_ai_customer_output_count", self.source)
+        self.assertIn("reply_message_id IS NOT NULL", self.source)
+        self.assertNotIn(
+            'webchat_ai_turn_count = _count(db, "SELECT COUNT(*) FROM webchat_ai_turns")',
+            self.source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
