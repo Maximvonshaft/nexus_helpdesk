@@ -17,17 +17,19 @@ The tests execute the production `enqueue_background_job` and `claim_pending_job
 The workflow checks out the immutable pull-request Head and records that SHA in `report.json`. A report can be `pass` only when:
 
 1. the source identity is a valid exact 40-character Git SHA;
-2. the three required scenario identities are present in JUnit evidence, including normalized pytest parameter suffixes;
-3. the test process exits successfully;
-4. failures, errors and skipped tests are all zero;
-5. the report remains bounded to aggregate counts and is smaller than 8 KiB;
-6. the bounded artifact scanner reports no prohibited material.
+2. the three required normalized scenario identities each occur exactly once in JUnit evidence;
+3. declared JUnit test count, actual testcase count and required scenario count are all exactly three;
+4. no renamed, unrelated, duplicated or additional testcase is present;
+5. the test process exits successfully;
+6. failures, errors and skipped tests are all zero;
+7. the report remains bounded to aggregate counts and is smaller than 8 KiB;
+8. the bounded artifact scanner reports no prohibited material.
 
-A green count of three tests is not sufficient. Replacing any required scenario with an unrelated green test fails the report.
+A green aggregate count is not sufficient. Missing, renamed, duplicated, unrelated replacement and unrelated additional testcases all fail closed. Pytest parameter suffixes are normalized only for internal identity counting.
 
 The uploaded artifact contains only:
 
-- `report.json` — aggregate status, counts, required-scenario coverage, duration and exact source SHA;
+- `report.json` — aggregate status, counts, exact-source identity and aggregate required/missing/duplicated/unexpected coverage;
 - `artifact-scan.json` — bounded scanner result.
 
 Raw JUnit output is deleted before upload. Testcase names, parameter values, payloads, customer identifiers and Provider material are not emitted in the aggregate report.
