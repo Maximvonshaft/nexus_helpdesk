@@ -150,20 +150,71 @@ def _database_configuration_errors(selection: dict[str, Any]) -> list[str]:
 
 def _traffic_routing_rules(db: Session) -> dict[str, Any]:
     try:
-        statement = text(
-            """
-            SELECT tenant_id, channel_key, primary_provider, fallback_providers,
-                   canary_percent, kill_switch, enabled, updated_at
-            FROM provider_routing_rules
-            WHERE scenario = :scenario
-            ORDER BY tenant_id ASC, channel_key ASC
-            LIMIT 101
-            """
-        ).columns(kill_switch=Boolean(), enabled=Boolean())
+        statement = (
+            text(
+                """
+                SELECT tenant_id, channel_key, primary_provider, fallback_providers,
+                       canary_percent, kill_switch, enabled, updated_at
+                FROM provider_routing_rules
+                WHERE scenario = :scenario
+                ORDER BY tenant_id ASC, channel_key ASC
+                """
+            )
+            .columns(kill_switch=Boolean(), enabled=Boolean())
+            .execution_options(stream_results=True, yield_per=500)
+        )
         rows = db.execute(
             statement,
             {"scenario": _WEBCHAT_RUNTIME_SCENARIO},
-        ).mappings().all()
+        ).mappings()
+
+        output: list[dict[str, Any]] = []
+        invalid_rule_found = False
+        truncated = False
+        for index, row in enumerate(rows):
+            selection = safe_traffic_configuration(
+                default_canary_percent=row["canary_percent"],
+                default_kill_switch=row["kill_switch"],
+            )
+            database_errors = _database_configuration_errors(selection)
+            alias_errors = persisted_provider_alias_errors(
+                primary_provider=row["primary_provider"],
+                fallback_providers=row["fallback_providers"],
+            )
+            if alias_errors:
+                database_errors.append(_PROVIDER_ALIAS_INVALID)
+            database_errors = list(dict.fromkeys(database_errors))
+            invalid_rule_found = invalid_rule_found or bool(database_errors)
+
+            if index >= 100:
+                truncated = True
+                continue
+
+            output.append(
+                {
+                    "tenant_id": str(row["tenant_id"] or "")[:120],
+                    "channel_key": str(row["channel_key"] or "")[:120],
+                    "primary_provider": (
+                        str(row["primary_provider"] or "")[:100]
+                        if not alias_errors
+                        else "invalid"
+                    ),
+                    "enabled": bool(row["enabled"]),
+                    "database_canary_percent": selection.get(
+                        "default_canary_percent"
+                    ),
+                    "database_kill_switch": selection.get(
+                        "default_kill_switch"
+                    ),
+                    "database_configuration_errors": database_errors,
+                    "effective_traffic_selection": selection,
+                    "updated_at": (
+                        row["updated_at"].isoformat()
+                        if hasattr(row["updated_at"], "isoformat")
+                        else row["updated_at"]
+                    ),
+                }
+            )
     except Exception:
         return {
             "status": "unavailable",
@@ -172,48 +223,6 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
             "truncated": False,
         }
 
-    truncated = len(rows) > 100
-    output: list[dict[str, Any]] = []
-    invalid_rule_found = False
-    for row in rows[:100]:
-        selection = safe_traffic_configuration(
-            default_canary_percent=row["canary_percent"],
-            default_kill_switch=row["kill_switch"],
-        )
-        database_errors = _database_configuration_errors(selection)
-        alias_errors = persisted_provider_alias_errors(
-            primary_provider=row["primary_provider"],
-            fallback_providers=row["fallback_providers"],
-        )
-        if alias_errors:
-            database_errors.append(_PROVIDER_ALIAS_INVALID)
-        database_errors = list(dict.fromkeys(database_errors))
-        invalid_rule_found = invalid_rule_found or bool(database_errors)
-        output.append(
-            {
-                "tenant_id": str(row["tenant_id"] or "")[:120],
-                "channel_key": str(row["channel_key"] or "")[:120],
-                "primary_provider": (
-                    str(row["primary_provider"] or "")[:100]
-                    if not alias_errors
-                    else "invalid"
-                ),
-                "enabled": bool(row["enabled"]),
-                "database_canary_percent": selection.get(
-                    "default_canary_percent"
-                ),
-                "database_kill_switch": selection.get(
-                    "default_kill_switch"
-                ),
-                "database_configuration_errors": database_errors,
-                "effective_traffic_selection": selection,
-                "updated_at": (
-                    row["updated_at"].isoformat()
-                    if hasattr(row["updated_at"], "isoformat")
-                    else row["updated_at"]
-                ),
-            }
-        )
     return {
         "status": "misconfigured" if invalid_rule_found else "ready",
         "reason_code": (
