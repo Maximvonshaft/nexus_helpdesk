@@ -190,6 +190,33 @@ PY
     exit 10
   fi
 
+  TARGET_USER_FOOTPRINT="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "
+SELECT
+  (SELECT count(*)
+   FROM pg_namespace
+   WHERE nspname <> 'public'
+     AND nspname <> 'information_schema'
+     AND nspname NOT LIKE 'pg_%'),
+  (SELECT count(*)
+   FROM pg_class AS c
+   JOIN pg_namespace AS n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'i', 'I', 'c')
+     AND NOT EXISTS (
+       SELECT 1
+       FROM pg_depend AS d
+       JOIN pg_extension AS e ON e.oid = d.refobjid
+       WHERE d.classid = 'pg_class'::regclass
+         AND d.objid = c.oid
+         AND d.refclassid = 'pg_extension'::regclass
+         AND d.deptype = 'e'
+     ));
+")"
+  if [[ "$TARGET_USER_FOOTPRINT" != "0|0" ]]; then
+    echo "rollback_target_not_empty" >&2
+    exit 12
+  fi
+
   RESTORE_LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/nexus-restore-list.XXXXXX")"
   RESTORE_LIST_RAW_FILE="$RESTORE_LIST_FILE.raw"
   pg_restore --list "$ARCHIVE" > "$RESTORE_LIST_RAW_FILE"
@@ -258,7 +285,7 @@ if [[ -n "$OLD_IMAGE_TAG" ]]; then
     exit 8
   fi
   FAILURE_STAGE="IMAGE_RESTART"
-  IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up -d "${SERVICES[@]}"
+  IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up -d --no-build --pull always "${SERVICES[@]}"
   append_state "IMAGE_RESTARTED"
   FAILURE_STAGE="HEALTH_VERIFICATION"
   require_health_2xx "$ROLLBACK_HEALTH_URL/healthz"
