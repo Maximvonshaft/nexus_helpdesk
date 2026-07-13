@@ -1,0 +1,5 @@
+candidate_source_main=1d48ee935c55949837f87bee361718b725586918
+purpose=exact_head_rc_and_recovery_requalification
+runtime_change=false
+production_ready=false
+issue_533_go=false
