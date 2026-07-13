@@ -107,7 +107,7 @@ def upgrade() -> None:
                 )
             if "tenant_assignment_version" not in columns:
                 batch.add_column(
-                    sa.Column("tenant_assignment_version", sa.String(length=64), nullable=True)
+                    sa.Column("tenant_assignment_version", sa.String(length=80), nullable=True)
                 )
             if _fk_name(table_name) not in foreign_keys:
                 batch.create_foreign_key(

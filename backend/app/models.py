@@ -75,7 +75,7 @@ class Team(Base):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
-    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     team_type: Mapped[str] = mapped_column(String(80), default="support")
     market_id: Mapped[Optional[int]] = mapped_column(ForeignKey("markets.id"), nullable=True, index=True)
@@ -98,7 +98,7 @@ class Market(Base):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
-    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     country_code: Mapped[str] = mapped_column(String(8), index=True)
@@ -192,7 +192,7 @@ class ChannelAccount(Base):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
-    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     provider: Mapped[str] = mapped_column(String(40), index=True)
     account_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
@@ -310,7 +310,7 @@ class User(Base):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
-    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120))
     email: Mapped[Optional[str]] = mapped_column(String(200), unique=True, nullable=True)
@@ -465,7 +465,7 @@ class Customer(Base):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
-    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     name: Mapped[str] = mapped_column(String(160), index=True)
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
     email_normalized: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
@@ -515,7 +515,7 @@ class Ticket(Base):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
-    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     ticket_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255), index=True)
     description: Mapped[str] = mapped_column(Text)
