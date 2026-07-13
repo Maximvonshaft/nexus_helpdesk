@@ -91,7 +91,12 @@ def _parse_headers(header_bytes: bytes) -> tuple[int, dict[str, str]]:
         if ":" not in line:
             continue
         name, value = line.split(":", 1)
-        headers[name.strip().lower()] = value.strip()
+        normalized_name = name.strip().lower()
+        normalized_value = value.strip()
+        if normalized_name == "connection" and normalized_name in headers:
+            headers[normalized_name] = f"{headers[normalized_name]}, {normalized_value}"
+        else:
+            headers[normalized_name] = normalized_value
     return status_code, headers
 
 
