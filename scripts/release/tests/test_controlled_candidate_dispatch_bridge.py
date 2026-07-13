@@ -62,13 +62,14 @@ class ControlledCandidateDispatchBridgeTests(unittest.TestCase):
             "controlled-candidate-convergence.yml/runs?branch=main&event=workflow_dispatch&per_page=20",
             'select(.head_sha == $sha and .event == "workflow_dispatch" and .head_branch == "main")',
             '[[ "$run_id" =~ ^[0-9]+$ ]]',
-            '"repos/${GH_REPO}/issues/714/comments"',
+            '"repos/${GH_REPO}/issues/724/comments"',
             "## CONTROLLED_CANDIDATE_RUN",
             "- Deployment performed: `false`",
             "- External actions authorized: `false`",
             "- #533 GO: `false`",
         ):
             self.assertIn(marker, BRIDGE)
+        self.assertNotIn('"repos/${GH_REPO}/issues/714/comments"', BRIDGE)
         self.assertIn("for _attempt in $(seq 1 45)", BRIDGE)
         self.assertIn("sleep 2", BRIDGE)
 
