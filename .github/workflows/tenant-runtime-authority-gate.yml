@@ -10,7 +10,20 @@ on:
       - "backend/app/services/lite_service.py"
       - "backend/app/services/lite_pagination.py"
       - "backend/app/services/tenant_authority.py"
+      - "backend/app/services/webchat_service.py"
+      - "backend/app/services/support_conversation_scope.py"
+      - "backend/app/api/support_conversations.py"
       - "backend/tests/test_tenant_runtime_authority.py"
+      - "backend/tests/test_webchat_public_tenant_binding.py"
+      - "backend/tests/test_support_conversations_rbac.py"
+      - "backend/tests/test_support_conversations_api.py"
+      - "scripts/release/seed_rc_test_data.py"
+      - "scripts/release/run_rc_test_candidate.sh"
+      - "scripts/release/generate_rc_test_env.py"
+      - "scripts/release/tests/test_seed_rc_test_data_contract.py"
+      - "scripts/release/tests/test_generate_rc_test_env.py"
+      - "scripts/release/tests/test_validate_rc_test_manifest.py"
+      - "deploy/.env.rc-test.example"
       - "docs/architecture/tenant-principal-migration.md"
       - ".github/workflows/tenant-runtime-authority-gate.yml"
   workflow_dispatch:
@@ -78,7 +91,15 @@ jobs:
             backend/app/services/ticket_service.py \
             backend/app/services/lite_service.py \
             backend/app/services/lite_pagination.py \
-            backend/tests/test_tenant_runtime_authority.py
+            backend/app/services/webchat_service.py \
+            backend/app/services/support_conversation_scope.py \
+            backend/app/api/support_conversations.py \
+            backend/tests/test_tenant_runtime_authority.py \
+            backend/tests/test_webchat_public_tenant_binding.py \
+            backend/tests/test_support_conversations_rbac.py \
+            scripts/release/seed_rc_test_data.py \
+            scripts/release/generate_rc_test_env.py
+          bash -n scripts/release/run_rc_test_candidate.sh
           pytest -q \
             backend/tests/test_tenant_runtime_authority.py \
             backend/tests/test_lite_cases_pagination.py \
@@ -87,7 +108,13 @@ jobs:
             backend/tests/test_ticket_timeline_pagination.py \
             backend/tests/test_production_hardening_permissions.py \
             backend/tests/test_production_settings_contract.py \
-            backend/tests/test_settings.py
+            backend/tests/test_settings.py \
+            backend/tests/test_webchat_public_tenant_binding.py \
+            backend/tests/test_support_conversations_rbac.py \
+            backend/tests/test_support_conversations_api.py \
+            scripts/release/tests/test_seed_rc_test_data_contract.py \
+            scripts/release/tests/test_generate_rc_test_env.py \
+            scripts/release/tests/test_validate_rc_test_manifest.py
 
       - name: Upgrade disposable PostgreSQL to exact head
         working-directory: backend
@@ -102,14 +129,21 @@ jobs:
         run: |
           set -Eeuo pipefail
           python - <<'PY'
+          from types import SimpleNamespace
+
           from fastapi import HTTPException
+          from starlette.requests import Request
 
           from app.db import SessionLocal
           from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
           from app.models import Customer, Market, Team, Tenant, Ticket, User
+          from app.models_webchat_binding import WebchatPublicOriginBinding
           from app.schemas import CustomerInput, TicketCreate
           from app.services.permissions import ensure_ticket_visible
+          from app.services.support_conversation_scope import apply_support_ticket_scope
           from app.services.ticket_service import create_ticket, list_tickets
+          from app.services.webchat_service import create_or_resume_conversation
+          from app.services.webchat_tenant_binding import resolve_public_webchat_scope
 
           db = SessionLocal()
           try:
@@ -186,6 +220,65 @@ jobs:
               assert created.tenant_id == tenants[0].id
               assert created.customer is not None
               assert created.customer.tenant_id == tenants[0].id
+
+              origin = "https://tenant-runtime-gate.invalid"
+              db.add(WebchatPublicOriginBinding(
+                  normalized_origin=origin,
+                  tenant_key=tenants[0].tenant_key,
+                  channel_key="website",
+                  display_name="Tenant Runtime Gate",
+                  is_active=True,
+              ))
+              db.flush()
+              request = Request({
+                  "type": "http",
+                  "http_version": "1.1",
+                  "method": "POST",
+                  "scheme": "https",
+                  "path": "/api/webchat/init",
+                  "raw_path": b"/api/webchat/init",
+                  "query_string": b"",
+                  "headers": [(b"origin", origin.encode("ascii"))],
+                  "client": ("203.0.113.40", 40000),
+                  "server": ("testserver", 443),
+              })
+              resolve_public_webchat_scope(
+                  db,
+                  request=request,
+                  requested_tenant_key="default",
+                  requested_channel_key="default",
+                  app_env="production",
+              )
+              webchat_result = create_or_resume_conversation(
+                  db,
+                  SimpleNamespace(
+                      tenant_key="default",
+                      channel_key="default",
+                      conversation_id=None,
+                      visitor_token=None,
+                      visitor_name="Runtime WebChat Customer",
+                      visitor_email="runtime-webchat@invalid.test",
+                      visitor_phone=None,
+                      visitor_ref=None,
+                      origin=None,
+                      page_url=origin + "/help",
+                  ),
+                  request,
+              )
+              webchat_ticket = db.query(Ticket).filter(
+                  Ticket.source_chat_id == webchat_result["conversation_id"]
+              ).one()
+              assert webchat_ticket.tenant_id == tenants[0].id
+              assert webchat_ticket.customer is not None
+              assert webchat_ticket.customer.tenant_id == tenants[0].id
+              scoped_ids = {
+                  row.id for row in apply_support_ticket_scope(
+                      db.query(Ticket), actors[0], db
+                  ).all()
+              }
+              assert tickets[0].id in scoped_ids
+              assert webchat_ticket.id in scoped_ids
+              assert tickets[1].id not in scoped_ids
               db.rollback()
           finally:
               db.close()
@@ -204,6 +297,9 @@ jobs:
               "privileged_cross_tenant_access": "blocked",
               "same_tenant_access": "pass",
               "runtime_ticket_customer_dual_write": "pass",
+              "public_webchat_relational_tenant_dual_write": "pass",
+              "support_sql_tenant_isolation": "pass",
+              "rc_synthetic_principal_tenant_binding": "covered_by_contract_and_rc_gate",
               "production_mutation_performed": False,
           }
           Path("artifacts/tenant-runtime/evidence.json").write_text(
