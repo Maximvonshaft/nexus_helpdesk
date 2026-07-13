@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'backend/app/services/provider_runtime/**'
+      - 'backend/app/services/webcall_ai_production/providers/provider_runtime_llm.py'
       - 'backend/app/services/webchat_runtime_ai_service.py'
       - 'backend/app/services/webchat_rate_limit.py'
       - 'backend/app/services/speedaf/**'
       - 'backend/app/api/admin_provider_runtime.py'
       - 'backend/tests/test_provider_runtime_*.py'
+      - 'backend/tests/test_webcall_ai_provider_runtime_llm.py'
       - 'backend/tests/test_webchat_runtime_ai_service.py'
       - 'backend/tests/test_webchat_rate_limit_bucket.py'
       - 'backend/tests/test_speedaf*.py'
@@ -91,36 +93,86 @@ jobs:
           cd backend
           python -m alembic upgrade head
 
-      - name: Provider Runtime targeted tests
+      - name: Execute Provider Runtime targeted tests
         env:
           PYTHONPATH: backend
         run: |
-          set -Eeuo pipefail
-          timeout 600 python -m pytest -q \
+          set +e
+          timeout 600 python -m pytest -q --tb=short --disable-warnings \
             backend/tests/test_provider_runtime_output_contracts.py \
             backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
+            backend/tests/test_provider_runtime_traffic_selection.py \
             backend/tests/test_provider_runtime_status.py \
             backend/tests/test_provider_runtime_token_leakage.py \
+            backend/tests/test_admin_provider_runtime_routing_api.py \
+            backend/tests/test_webcall_ai_provider_runtime_llm.py \
             backend/tests/test_webchat_runtime_ai_service.py \
             backend/tests/test_webchat_rate_limit_bucket.py \
             backend/tests/test_webchat_ai_turn_runtime.py \
             backend/tests/test_speedaf_client_contract.py \
             backend/tests/test_speedaf_status_map.py \
             backend/tests/test_speedaf_track_query.py \
-            backend/tests/test_speedaf_tracking_fact_source.py
+            backend/tests/test_speedaf_tracking_fact_source.py \
+            > /tmp/provider-runtime-targeted.log 2>&1
+          status=$?
+          set -e
+          printf '%s' "$status" > /tmp/provider-runtime-targeted-status
+          tail -n 200 /tmp/provider-runtime-targeted.log || true
+          exit 0
 
-      - name: Route safety smoke
+      - name: Upload Provider Runtime targeted evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-runtime-targeted-evidence
+          path: |
+            /tmp/provider-runtime-targeted.log
+            /tmp/provider-runtime-targeted-status
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require Provider Runtime targeted tests success
+        run: |
+          status=$(cat /tmp/provider-runtime-targeted-status)
+          if [ "$status" -ne 0 ]; then
+            echo "Provider Runtime targeted tests failed with exit code $status" >&2
+            exit "$status"
+          fi
+
+      - name: Application route contract
         env:
           PYTHONPATH: backend
         run: |
           set -Eeuo pipefail
           python - <<'PY'
           from app.main import app
-          routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert '/api/admin/provider-runtime/status' in routes, routes
-          assert '/api/webchat/init' in routes, routes
-          assert not any('provider-credentials/codex' in path for path in routes), routes
-          assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), routes
-          print('route_smoke_ok')
+
+          def route_paths(routes):
+              for route in routes:
+                  path = getattr(route, 'path', None)
+                  if path:
+                      yield path
+                  original_router = getattr(route, 'original_router', None)
+                  if original_router is not None:
+                      yield from route_paths(getattr(original_router, 'routes', ()))
+                  nested_routes = getattr(route, 'routes', None)
+                  if nested_routes is not None:
+                      yield from route_paths(nested_routes)
+
+          paths = list(route_paths(app.routes))
+          expected = {
+              '/api/admin/provider-runtime/status',
+              '/api/webchat/init',
+          }
+          missing = sorted(expected.difference(paths))
+          retired = [
+              path for path in paths
+              if 'provider-credentials/codex' in path
+              or 'webchat-fast' in path
+              or 'fast-reply' in path
+          ]
+          assert not missing, missing
+          assert not retired, retired
+          print('application_route_contract_ok')
           PY
