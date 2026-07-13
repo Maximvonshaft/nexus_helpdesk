@@ -49,13 +49,19 @@ _ALLOWED_AUDIT_OPERATIONS = {
 }
 _ALLOWED_AUDIT_STATUSES = {"blocked", "failed", "ok", "skipped"}
 _ALLOWED_TRAFFIC_MODES = {"invalid", "control", "canary", "shadow"}
-_ALLOWED_TRAFFIC_PATHS = {"control", "canary_authoritative", "shadow_only", "kill_switch"}
+_ALLOWED_TRAFFIC_PATHS = {
+    "control",
+    "canary_authoritative",
+    "shadow_only",
+    "kill_switch",
+}
 _ALLOWED_TRAFFIC_REASONS = {
     "provider_runtime_traffic_mode_invalid",
     "provider_runtime_canary_percent_invalid",
     "provider_runtime_kill_switch_invalid",
     "provider_runtime_primary_provider_invalid",
     "provider_runtime_provider_alias_invalid",
+    "provider_runtime_provider_not_allowed",
     "provider_runtime_traffic_configuration_invalid",
     "control_mode_configured",
     "shadow_mode_configured",
@@ -63,6 +69,25 @@ _ALLOWED_TRAFFIC_REASONS = {
     "bucket_selected",
     "bucket_not_selected",
     "kill_switch_active",
+}
+_ALLOWED_AUDIT_ERROR_CODES = {
+    "adapter_not_registered",
+    "all_providers_failed",
+    "kill_switch_active",
+    "parse_reject",
+    "private_ai_runtime_failed",
+    "provider_canary_control_path",
+    "provider_runtime_canary_percent_invalid",
+    "provider_runtime_kill_switch_invalid",
+    "provider_runtime_primary_provider_invalid",
+    "provider_runtime_provider_alias_invalid",
+    "provider_runtime_provider_failed",
+    "provider_runtime_provider_not_allowed",
+    "provider_runtime_traffic_configuration_invalid",
+    "provider_runtime_traffic_mode_invalid",
+    "provider_shadow_completed",
+    "provider_shadow_failed",
+    "provider_timeout",
 }
 
 
@@ -80,7 +105,9 @@ def _sanitize_provider_runtime_snapshot(snapshot: dict[str, Any]) -> dict[str, A
                 safe_warnings.append(_HUMAN_WEBCALL_RECORDING_WARNING)
             elif warning == _HUMAN_WEBCALL_TRANSCRIPTION_WARNING:
                 safe_warnings.append(_HUMAN_WEBCALL_TRANSCRIPTION_WARNING)
-            elif isinstance(warning, str) and warning.startswith(_HUMAN_WEBCALL_STATUS_UNAVAILABLE):
+            elif isinstance(warning, str) and warning.startswith(
+                _HUMAN_WEBCALL_STATUS_UNAVAILABLE
+            ):
                 safe_warnings.append(_HUMAN_WEBCALL_STATUS_UNAVAILABLE)
             else:
                 safe_warnings.append(_HUMAN_WEBCALL_CONFIG_INVALID)
@@ -92,7 +119,11 @@ def _sanitize_provider_runtime_snapshot(snapshot: dict[str, Any]) -> dict[str, A
 class WebchatRuntimeRoutingUpdate(BaseModel):
     tenant_id: str = Field(default="default", min_length=1, max_length=36)
     channel_key: str = Field(default="website", min_length=1, max_length=100)
-    primary_provider: str = Field(default="private_ai_runtime", min_length=1, max_length=100)
+    primary_provider: str = Field(
+        default="private_ai_runtime",
+        min_length=1,
+        max_length=100,
+    )
     fallback_providers: list[str] = Field(default_factory=list, max_length=3)
     canary_percent: StrictInt = Field(default=0, ge=0, le=100)
     kill_switch: bool = False
@@ -168,8 +199,12 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
                     else "invalid"
                 ),
                 "enabled": bool(row["enabled"]),
-                "database_canary_percent": selection.get("default_canary_percent"),
-                "database_kill_switch": selection.get("default_kill_switch"),
+                "database_canary_percent": selection.get(
+                    "default_canary_percent"
+                ),
+                "database_kill_switch": selection.get(
+                    "default_kill_switch"
+                ),
                 "database_configuration_errors": database_errors,
                 "effective_traffic_selection": selection,
                 "updated_at": (
@@ -182,7 +217,9 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
     return {
         "status": "misconfigured" if invalid_rule_found else "ready",
         "reason_code": (
-            "provider_runtime_routing_rule_invalid" if invalid_rule_found else None
+            "provider_runtime_routing_rule_invalid"
+            if invalid_rule_found
+            else None
         ),
         "items": output,
         "truncated": truncated,
@@ -195,7 +232,9 @@ def provider_runtime_status(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_runtime(current_user, db)
-    snapshot = _sanitize_provider_runtime_snapshot(get_provider_runtime_status(db))
+    snapshot = _sanitize_provider_runtime_snapshot(
+        get_provider_runtime_status(db)
+    )
     traffic = safe_traffic_configuration()
     traffic["scope"] = "global_defaults_and_environment_overrides"
     traffic["webchat_runtime_rules"] = _traffic_routing_rules(db)
@@ -282,7 +321,10 @@ def provider_runtime_audit_recent(
                 ),
                 "safe_summary": _sanitize_audit_summary(safe_summary),
                 "error_code": _sanitize_error_code(row["error_code"]),
-                "elapsed_ms": max(0, min(int(row["elapsed_ms"] or 0), 120000)),
+                "elapsed_ms": max(
+                    0,
+                    min(int(row["elapsed_ms"] or 0), 120000),
+                ),
                 "created_at": (
                     row["created_at"].isoformat()
                     if hasattr(row["created_at"], "isoformat")
@@ -314,7 +356,10 @@ def _sanitize_audit_summary(value: Any) -> dict[str, Any]:
     traffic = value.get("traffic_selection")
     if isinstance(traffic, dict):
         safe_traffic: dict[str, Any] = {}
-        if traffic.get("schema_version") == "nexus.provider_runtime.traffic_selection.v1":
+        if (
+            traffic.get("schema_version")
+            == "nexus.provider_runtime.traffic_selection.v1"
+        ):
             safe_traffic["schema_version"] = traffic["schema_version"]
         if traffic.get("configured_mode") in _ALLOWED_TRAFFIC_MODES:
             safe_traffic["configured_mode"] = traffic["configured_mode"]
@@ -357,11 +402,9 @@ def _sanitize_error_code(value: Any) -> str | None:
     if not isinstance(value, str):
         return "provider_runtime_error_invalid"
     normalized = value.strip().lower()
-    if not normalized or len(normalized) > 96:
-        return "provider_runtime_error_invalid"
-    if any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in normalized):
-        return "provider_runtime_error_invalid"
-    return normalized
+    if normalized in _ALLOWED_AUDIT_ERROR_CODES:
+        return normalized
+    return "provider_runtime_error_invalid"
 
 
 @router.patch("/routing/webchat-runtime")
@@ -380,7 +423,10 @@ def update_webchat_runtime_routing(
             error_code = "fallback_provider_not_allowed"
         else:
             error_code = _CANARY_PERCENT_INVALID
-        raise HTTPException(status_code=400, detail={"error_code": error_code}) from None
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": error_code},
+        ) from None
 
     existing = db.execute(
         text(
@@ -440,12 +486,16 @@ def update_webchat_runtime_routing(
             text(
                 """
                 INSERT INTO provider_routing_rules (
-                    id, tenant_id, channel_key, scenario, primary_provider, fallback_providers,
-                    output_contract, timeout_ms, canary_percent, kill_switch, enabled, created_at, updated_at
+                    id, tenant_id, channel_key, scenario,
+                    primary_provider, fallback_providers,
+                    output_contract, timeout_ms, canary_percent,
+                    kill_switch, enabled, created_at, updated_at
                 )
                 VALUES (
-                    :id, :tenant_id, :channel_key, :scenario, :primary_provider, :fallback_providers,
-                    :output_contract, :timeout_ms, :canary_percent, :kill_switch, :enabled,
+                    :id, :tenant_id, :channel_key, :scenario,
+                    :primary_provider, :fallback_providers,
+                    :output_contract, :timeout_ms, :canary_percent,
+                    :kill_switch, :enabled,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """
