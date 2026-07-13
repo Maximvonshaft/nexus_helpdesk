@@ -39,13 +39,13 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: nexus
-          POSTGRES_PASSWORD: nexus
+          POSTGRES_USER: nexus_recovery_admin
+          POSTGRES_PASSWORD: nexus_recovery_admin
           POSTGRES_DB: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U nexus -d postgres"
+          --health-cmd "pg_isready -U nexus_recovery_admin -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -54,15 +54,11 @@ jobs:
       APP_ENV: test
       AUTO_INIT_DB: "false"
       SEED_DEMO_DATA: "false"
-      PGHOST: 127.0.0.1
-      PGPORT: "5432"
-      PGUSER: nexus
-      PGPASSWORD: nexus
-      SOURCE_APP_URL: postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus_source
-      SOURCE_NATIVE_URL: postgresql://nexus:nexus@127.0.0.1:5432/nexus_source
-      RESTORE_APP_URL: postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus_restore
-      RESTORE_NATIVE_URL: postgresql://nexus:nexus@127.0.0.1:5432/nexus_restore
-      RECOVERY_ADMIN_NATIVE_URL: postgresql://nexus:nexus@127.0.0.1:5432/postgres
+      SOURCE_APP_URL: postgresql+psycopg://nexus_recovery_source:nexus_recovery_source@127.0.0.1:5432/nexus_source
+      SOURCE_NATIVE_URL: postgresql://nexus_recovery_source:nexus_recovery_source@127.0.0.1:5432/nexus_source
+      RESTORE_APP_URL: postgresql+psycopg://nexus_recovery_restore:nexus_recovery_restore@127.0.0.1:5432/nexus_restore
+      RESTORE_NATIVE_URL: postgresql://nexus_recovery_restore:nexus_recovery_restore@127.0.0.1:5432/nexus_restore
+      RECOVERY_ADMIN_NATIVE_URL: postgresql://nexus_recovery_admin:nexus_recovery_admin@127.0.0.1:5432/postgres
       RECOVERY_ALLOW_DATABASE_RECREATE: "I_UNDERSTAND"
       QUALIFICATION_MARKER: QUAL-RCV-001
       RTO_TARGET_SECONDS: "120"
@@ -101,6 +97,29 @@ jobs:
           psql --version
           pg_dump --version
           pg_restore --version
+
+      - name: Create isolated disposable recovery roles
+        run: |
+          set -Eeuo pipefail
+          psql "$RECOVERY_ADMIN_NATIVE_URL" -X --set ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE nexus_recovery_source
+            LOGIN PASSWORD 'nexus_recovery_source'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE nexus_recovery_restore
+            LOGIN PASSWORD 'nexus_recovery_restore'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          SQL
+          test "$(psql "$RECOVERY_ADMIN_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 -c "
+            SELECT count(*)
+            FROM pg_roles
+            WHERE rolname IN ('nexus_recovery_source', 'nexus_recovery_restore')
+              AND rolcanlogin
+              AND NOT rolsuper
+              AND NOT rolcreatedb
+              AND NOT rolcreaterole
+              AND NOT rolreplication
+              AND NOT rolbypassrls;
+          ")" = "2"
 
       - name: Compile and run recovery contracts
         run: |
