@@ -155,3 +155,29 @@ is true:
 
 No document, PR or green CI in this migration stream authorizes production
 backfill, deployment, Provider enablement or real outbound.
+
+## Phase 1 implementation contract (`20260713_0059`)
+
+The first structural revision is intentionally limited to a reversible schema
+foundation:
+
+- `tenants` stores an internal integer identity, immutable unique `tenant_key`,
+  display name, active state and audit timestamps;
+- `tenant_key` is non-empty, lowercase and cannot equal `default`;
+- Market, Team, User, ChannelAccount, Customer and Ticket receive nullable
+  `tenant_id` foreign keys with `RESTRICT` deletion and dedicated indexes;
+- each core table receives nullable `tenant_assignment_source` and
+  `tenant_assignment_version` fields for the later reviewed backfill receipt;
+- ORM relationships expose the principal but no runtime authorization path is
+  switched to it in this phase;
+- the migration inserts no Tenant, applies no default and updates no historical
+  row;
+- downgrade removes only the new ownership structure while preserving all core
+  records; re-upgrade recreates empty nullable ownership fields;
+- the preflight resolves relational integer IDs through `tenants.tenant_key`
+  and compares them with manifest-derived ownership instead of treating IDs as
+  client-provided Tenant strings.
+
+This revision is not a rollout authorization. Phase 2 still requires an
+approved deployment mapping, dry-run receipt, bounded apply command and explicit
+handling of every unresolved or cross-Tenant record.

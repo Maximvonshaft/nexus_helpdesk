@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -43,10 +43,39 @@ def _external_channel_payload_hash_default(context) -> str:
     return _payload_hash_from_json_text(context.get_current_parameters().get("payload_json"))
 
 
+class Tenant(Base):
+    __tablename__ = "tenants"
+    __table_args__ = (
+        UniqueConstraint("tenant_key", name="uq_tenants_tenant_key"),
+        CheckConstraint("length(trim(tenant_key)) > 0", name="ck_tenants_key_nonempty"),
+        CheckConstraint("tenant_key = lower(tenant_key)", name="ck_tenants_key_lowercase"),
+        CheckConstraint("tenant_key <> 'default'", name="ck_tenants_key_not_default"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+    markets: Mapped[list["Market"]] = relationship(back_populates="tenant")
+    teams: Mapped[list["Team"]] = relationship(back_populates="tenant")
+    users: Mapped[list["User"]] = relationship(back_populates="tenant")
+    channel_accounts: Mapped[list["ChannelAccount"]] = relationship(back_populates="tenant")
+    customers: Mapped[list["Customer"]] = relationship(back_populates="tenant")
+    tickets: Mapped[list["Ticket"]] = relationship(back_populates="tenant")
+
+
 class Team(Base):
     __tablename__ = "teams"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     team_type: Mapped[str] = mapped_column(String(80), default="support")
     market_id: Mapped[Optional[int]] = mapped_column(ForeignKey("markets.id"), nullable=True, index=True)
@@ -56,6 +85,7 @@ class Team(Base):
 
     users: Mapped[list["User"]] = relationship(back_populates="team")
     market: Mapped[Optional["Market"]] = relationship(back_populates="teams")
+    tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="teams")
 
 
 
@@ -64,6 +94,11 @@ class Market(Base):
     __tablename__ = "markets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     country_code: Mapped[str] = mapped_column(String(8), index=True)
@@ -73,6 +108,7 @@ class Market(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
+    tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="markets")
     teams: Mapped[list["Team"]] = relationship(back_populates="market")
     channel_accounts: Mapped[list["ChannelAccount"]] = relationship(back_populates="market")
     outbound_email_accounts: Mapped[list["OutboundEmailAccount"]] = relationship(back_populates="market")
@@ -152,6 +188,11 @@ class ChannelAccount(Base):
     __tablename__ = "channel_accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     provider: Mapped[str] = mapped_column(String(40), index=True)
     account_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
@@ -165,6 +206,7 @@ class ChannelAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
     market: Mapped[Optional["Market"]] = relationship(back_populates="channel_accounts")
+    tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="channel_accounts")
 
 
 class WhatsAppInboundMessage(Base):
@@ -264,6 +306,11 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120))
     email: Mapped[Optional[str]] = mapped_column(String(200), unique=True, nullable=True)
@@ -275,6 +322,7 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
     team: Mapped[Optional["Team"]] = relationship(back_populates="users")
+    tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="users")
 
 
 
@@ -413,6 +461,11 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(160), index=True)
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
     email_normalized: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
@@ -422,6 +475,7 @@ class Customer(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
+    tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="customers")
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="customer")
 
 
@@ -457,6 +511,11 @@ class Ticket(Base):
     __tablename__ = "tickets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    tenant_assignment_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    tenant_assignment_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     ticket_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255), index=True)
     description: Mapped[str] = mapped_column(Text)
@@ -520,6 +579,7 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
 
+    tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="tickets")
     customer: Mapped[Optional["Customer"]] = relationship(back_populates="tickets")
     assignee: Mapped[Optional["User"]] = relationship(foreign_keys=[assignee_id])
     creator: Mapped[Optional["User"]] = relationship(foreign_keys=[created_by])

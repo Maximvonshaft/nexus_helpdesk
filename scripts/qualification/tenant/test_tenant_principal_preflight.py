@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import sqlalchemy as sa
+
 MODULE_PATH = Path(__file__).with_name("tenant_principal_preflight.py")
 SPEC = importlib.util.spec_from_file_location("tenant_principal_preflight", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -93,9 +95,73 @@ class TenantPrincipalPreflightTests(unittest.TestCase):
         self.assertNotIn("customers:17", sample)
 
     def test_current_schema_baseline_is_explicit_and_bounded(self) -> None:
-        self.assertEqual(MODULE.CURRENT_ALEMBIC_HEAD, "20260711_0058")
-        self.assertEqual(len(MODULE.CURRENT_TENANT_COLUMNS), 8)
+        self.assertEqual(MODULE.CURRENT_ALEMBIC_HEAD, "20260713_0059")
+        self.assertEqual(len(MODULE.CURRENT_TENANT_COLUMNS), 15)
+        self.assertIn("tenants.tenant_key", MODULE.CURRENT_TENANT_COLUMNS)
+        self.assertIn("tickets.tenant_id", MODULE.CURRENT_TENANT_COLUMNS)
         self.assertNotIn("default", MODULE.CURRENT_TENANT_COLUMNS)
+
+    def test_relational_tenant_id_resolves_to_manifest_key_and_detects_drift(self) -> None:
+        engine = sa.create_engine("sqlite:///:memory:", future=True)
+        metadata = sa.MetaData()
+        sa.Table(
+            "tenants",
+            metadata,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("tenant_key", sa.String(120), nullable=False),
+        )
+        sa.Table(
+            "markets",
+            metadata,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id"), nullable=True),
+        )
+        metadata.create_all(engine)
+
+        class PublicInspector:
+            def __init__(self, connection):
+                self._inspector = sa.inspect(connection)
+
+            def get_table_names(self, schema=None):
+                return self._inspector.get_table_names()
+
+            def get_columns(self, table_name, schema=None):
+                return self._inspector.get_columns(table_name)
+
+            def get_foreign_keys(self, table_name, schema=None):
+                return self._inspector.get_foreign_keys(table_name)
+
+        with engine.begin() as connection:
+            connection.execute(sa.text("INSERT INTO tenants (id, tenant_key) VALUES (7, 'tenant-a')"))
+            connection.execute(sa.text("INSERT INTO markets (id, tenant_id) VALUES (3, 7)"))
+            inspector = PublicInspector(connection)
+            findings = MODULE.Findings()
+            principals = MODULE._load_tenant_principals(
+                connection, inspector, {"tenant-a"}, findings
+            )
+            scanned = MODULE._scan_existing_tenant_columns(
+                connection,
+                inspector,
+                {"tenant-a"},
+                principals,
+                {"markets": {3: "tenant-a"}},
+                findings,
+            )
+            self.assertEqual(principals, {7: "tenant-a"})
+            self.assertEqual(scanned["markets.tenant_id"], 1)
+            self.assertEqual(findings.as_dict()["issue_count"], 0)
+
+            drift = MODULE.Findings()
+            MODULE._scan_existing_tenant_columns(
+                connection,
+                inspector,
+                {"tenant-a"},
+                principals,
+                {"markets": {3: "tenant-b"}},
+                drift,
+            )
+            self.assertEqual(drift.counts["tenant.relational_assignment_conflict"], 1)
+        engine.dispose()
 
 
 
