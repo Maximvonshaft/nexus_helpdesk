@@ -164,6 +164,11 @@ def run_session_turn(
         )
     else:
         llm = _timed_llm_response(settings, stt, session_id=session.public_id)
+
+    if not llm.authoritative:
+        db.rollback()
+        return _non_authoritative_turn_result(llm, worker_id=worker_id)
+
     if tracking_number and not llm.handoff_required and tracking_lookup_status != "not_configured":
         summary = ((tool_result or {}).get("result") or {}).get("summary")
         if summary:
@@ -173,6 +178,7 @@ def run_session_turn(
                 handoff_required=llm.handoff_required,
                 handoff_reason=llm.handoff_reason,
                 provider_name=llm.provider_name,
+                authoritative=llm.authoritative,
             )
     tts_started = time.monotonic()
     tts = _synthesize_tts(settings, llm.response_text, language=stt.language)
@@ -202,6 +208,23 @@ def run_session_turn(
         "worker_id": worker_id,
         "handoff_required": llm.handoff_required,
         "handoff_reason": llm.handoff_reason,
+        "authoritative": True,
+        "status": "authoritative",
+    }
+
+
+def _non_authoritative_turn_result(llm: LLMResult, *, worker_id: str) -> dict[str, object]:
+    return {
+        "turn_id": None,
+        "transcript": None,
+        "response": llm.__dict__,
+        "tool_result": None,
+        "tts": None,
+        "worker_id": worker_id,
+        "handoff_required": False,
+        "handoff_reason": None,
+        "authoritative": False,
+        "status": "provider_runtime_non_authoritative",
     }
 
 
@@ -297,7 +320,12 @@ def _safe_llm_response(settings, stt: STTResult, *, session_id: str) -> LLMResul
 def _timed_llm_response(settings, stt: STTResult, *, session_id: str) -> LLMResult:
     started = time.monotonic()
     llm = _safe_llm_response(settings, stt, session_id=session_id)
-    status = "handoff" if llm.handoff_required else "ok"
+    if not llm.authoritative:
+        status = "non_authoritative"
+    elif llm.handoff_required:
+        status = "handoff"
+    else:
+        status = "ok"
     if llm.intent == "llm_provider_failed":
         status = llm.handoff_reason or "llm_provider_failed"
     record_webcall_ai_stage(stage="llm_decision", status=status, provider=llm.provider_name, elapsed_ms=int((time.monotonic() - started) * 1000))
@@ -420,6 +448,8 @@ def build_handoff_turn(
         "worker_id": worker_id,
         "handoff_required": handoff_required,
         "handoff_reason": handoff_reason,
+        "authoritative": True,
+        "status": "authoritative",
     }
 
 
