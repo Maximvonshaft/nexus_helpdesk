@@ -37,6 +37,12 @@ The existing Alembic chain contains `CREATE EXTENSION IF NOT EXISTS vector`, but
 
 The filtered TOC is temporary, mode-restricted and deleted on success or failure. It is not uploaded.
 
+## Clean restore target
+
+`--clean` removes only objects represented in the archive; it cannot remove unrelated objects that exist only in the target. Before generating the restore TOC or calling `pg_restore`, the rollback script therefore proves that the target contains no non-system schema other than `public` and no public relation, partitioned table, view, materialized view, sequence, foreign table, index or composite relation outside the preinstalled extension dependency graph. A target with any such footprint fails with `rollback_target_not_empty` before mutation.
+
+This is a strict disposable-target contract. The operator must recreate or separately clean a non-empty target rather than relying on archive restore to erase unknown state.
+
 ## Backup bundle
 
 `scripts/deploy/backup_postgres.sh` creates one mode-restricted temporary directory containing:
@@ -55,12 +61,12 @@ Possible states are:
 - `INSTRUCTIONS_ONLY` — no mutation input was provided;
 - `DATABASE_RESTORE_APPLIED` — the single-transaction `pg_restore` completed, so the target database was mutated even if post-restore identity verification later fails;
 - `DATABASE_RESTORED` — the applied restore subsequently passed exact Alembic-head and vector-version verification;
-- `IMAGE_RESTARTED` — the requested old image tag was applied through Docker Compose;
+- `IMAGE_RESTARTED` — Docker Compose pulled the requested old image and restarted the bounded service set without any local build fallback;
 - `HEALTH_VERIFIED` — both `/healthz` and `/readyz` returned explicit HTTP 2xx responses after restart.
 
 The result also includes `outcome`, a fixed `failure_stage`, and Boolean fields that distinguish restore application from verified restoration. An EXIT trap writes partial state when a later operation fails. For example, if `pg_restore` commits but the Alembic post-check fails, the result records `DATABASE_RESTORE_APPLIED`, `outcome=fail`, `failure_stage=DATABASE_POST_VERIFY`, and `database_restored=false`. If the image restarts but a health check fails or redirects, it records `IMAGE_RESTARTED`, `outcome=fail`, `failure_stage=HEALTH_VERIFICATION`, and `health_verified=false`.
 
-The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair, exact checksum and matching preinstalled vector version.
+Image rollback uses `docker compose up --no-build --pull always`; an unavailable old image is a hard failure rather than permission to rebuild locally. The script never reports a generic completed state. An image rollback requires `ROLLBACK_HEALTH_URL`; a database restore requires a regular archive/manifest pair, exact checksum, matching preinstalled vector version and a clean target.
 
 ## Disposable CI topology
 
@@ -83,11 +89,12 @@ The sequence is:
 9. Insert one synthetic Market/Team referential marker.
 10. Snapshot every public table count, Alembic head, marker count, unvalidated-FK count and a deterministic SHA-256 signature for every public foreign-key definition.
 11. Create and validate the real operator backup bundle as the source role.
-12. Restore through the real rollback script as the restore role while preserving the manifest-bound preinstalled extension.
-13. Compare exact head, complete table/count set, marker and FK state.
-14. Measure synthetic RPO and restore RTO.
-15. Remove all backup bytes and temporary TOC files.
-16. Scan bounded JSON evidence before upload.
+12. Prove the restore target has no user schema/relation footprint beyond the preinstalled extension.
+13. Restore through the real rollback script as the restore role while preserving the manifest-bound preinstalled extension.
+14. Compare exact head, complete table/count set, marker and FK state.
+15. Measure synthetic RPO and restore RTO.
+16. Remove all backup bytes and temporary TOC files.
+17. Scan bounded JSON evidence before upload.
 
 ## Evidence
 
@@ -101,13 +108,14 @@ The disposable thresholds are:
 - unvalidated foreign keys: zero;
 - foreign-key definition signatures: exact source/restore match;
 - Alembic heads: exactly one matching head;
-- vector version: exact source/target/post-restore match.
+- vector version: exact source/target/post-restore match;
+- target user schema/relation footprint before restore: zero.
 
 These are CI qualification thresholds, not production SLOs.
 
 ## Failure semantics
 
-The gate fails closed on missing/ambient user identity, role collision or privilege mismatch, database-owner mismatch, vector bootstrap/version/TOC mismatch, migration/restore errors, missing/multiple/invalid heads, cluster mismatch, URI authority overrides, manifest/checksum mismatch, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes and temporary TOC files are deleted even when qualification fails.
+The gate fails closed on missing/ambient user identity, role collision or privilege mismatch, database-owner mismatch, vector bootstrap/version/TOC mismatch, non-empty restore target, migration/restore errors, missing/multiple/invalid heads, cluster mismatch, URI authority overrides, manifest/checksum mismatch, unavailable exact rollback image, local-build fallback, non-2xx health responses, missing marker, table/count mismatch, invalid or mismatched foreign-key signatures, unvalidated foreign keys, non-monotonic timing, RTO/RPO breach, unsafe evidence or missing evidence. Backup bytes and temporary TOC files are deleted even when qualification fails.
 
 ## Remaining work
 
