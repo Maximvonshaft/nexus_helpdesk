@@ -138,4 +138,4 @@ def test_probe_rejects_invalid_websocket_accept_header():
 
 def test_probe_rejects_ambiguous_base_url_query():
     with pytest.raises(ValueError, match="query string or fragment"):
-        PROBE.probe_websocket_upgrade(base_url="http://127.0.0.1:1?token=forbidden")
+        PROBE.probe_websocket_upgrade(base_url="http://127.0.0.1:1?mode=ambiguous")
