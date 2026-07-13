@@ -228,6 +228,11 @@ class SafeConfigurationFingerprintTests(unittest.TestCase):
                 "jwtSecretKey": "jwt-secret-alpha",
                 "password": "one",
                 "clientPrivateKey": "private-one",
+                "api_keys": ["api-one", "api-two"],
+                "privateKeys": ["private-a", "private-b"],
+                "access_keys": ["access-a"],
+                "signing_keys": ["signing-a"],
+                "secret_keys": ["secret-a"],
             },
         }
         second = {
@@ -242,6 +247,11 @@ class SafeConfigurationFingerprintTests(unittest.TestCase):
                 "jwtSecretKey": "jwt-secret-beta",
                 "password": "two",
                 "clientPrivateKey": "private-two",
+                "api_keys": ["rotated-api-one", "rotated-api-two"],
+                "privateKeys": ["rotated-private-a", "rotated-private-b"],
+                "access_keys": ["rotated-access-a"],
+                "signing_keys": ["rotated-signing-a"],
+                "secret_keys": ["rotated-secret-a"],
             },
         }
         self.assertEqual(
