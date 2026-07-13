@@ -7,7 +7,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.server.yml}"
 ROLLBACK_HEALTH_URL="${ROLLBACK_HEALTH_URL:-}"
 ROLLBACK_STATUS_FILE="${ROLLBACK_STATUS_FILE:-./rollback-result.json}"
 ROLLBACK_ALLOW_IN_PLACE="${ROLLBACK_ALLOW_IN_PLACE:-}"
-SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot)
+SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot runtime-warmer)
 STATES=()
 OUTCOME="fail"
 FAILURE_STAGE="INITIALIZATION"
@@ -87,7 +87,7 @@ normalize_native_url() {
   esac
   POSTGRES_URL_CANDIDATE="$value" python - <<'PYURL'
 import os
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 value = os.environ["POSTGRES_URL_CANDIDATE"]
 parsed = urlsplit(value)
@@ -95,6 +95,9 @@ if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
     raise SystemExit("postgres_native_url_invalid")
 if not parsed.username:
     raise SystemExit("postgres_native_url_user_required")
+host_authority = unquote(parsed.netloc.rsplit("@", 1)[-1])
+if "," in host_authority:
+    raise SystemExit("postgres_native_url_multi_host_not_allowed")
 if parsed.query:
     raise SystemExit("postgres_native_url_query_not_allowed")
 if parsed.fragment:
@@ -191,6 +194,42 @@ PY
   fi
 
   TARGET_USER_FOOTPRINT="$(psql "$POSTGRES_NATIVE_URL" -XAt --set ON_ERROR_STOP=1 --field-separator='|' -c "
+WITH extension_owned AS (
+  SELECT d.classid, d.objid
+  FROM pg_depend AS d
+  WHERE d.deptype = 'e'
+),
+public_objects AS (
+  SELECT 'pg_class'::regclass::oid AS classid, c.oid AS objid
+  FROM pg_class AS c
+  JOIN pg_namespace AS n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+  UNION ALL
+  SELECT 'pg_proc'::regclass::oid, p.oid
+  FROM pg_proc AS p
+  JOIN pg_namespace AS n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+  UNION ALL
+  SELECT 'pg_type'::regclass::oid, t.oid
+  FROM pg_type AS t
+  JOIN pg_namespace AS n ON n.oid = t.typnamespace
+  WHERE n.nspname = 'public'
+  UNION ALL
+  SELECT 'pg_operator'::regclass::oid, o.oid
+  FROM pg_operator AS o
+  JOIN pg_namespace AS n ON n.oid = o.oprnamespace
+  WHERE n.nspname = 'public'
+  UNION ALL
+  SELECT 'pg_collation'::regclass::oid, c.oid
+  FROM pg_collation AS c
+  JOIN pg_namespace AS n ON n.oid = c.collnamespace
+  WHERE n.nspname = 'public'
+  UNION ALL
+  SELECT 'pg_conversion'::regclass::oid, c.oid
+  FROM pg_conversion AS c
+  JOIN pg_namespace AS n ON n.oid = c.connamespace
+  WHERE n.nspname = 'public'
+)
 SELECT
   (SELECT count(*)
    FROM pg_namespace
@@ -198,19 +237,13 @@ SELECT
      AND nspname <> 'information_schema'
      AND nspname NOT LIKE 'pg_%'),
   (SELECT count(*)
-   FROM pg_class AS c
-   JOIN pg_namespace AS n ON n.oid = c.relnamespace
-   WHERE n.nspname = 'public'
-     AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'i', 'I', 'c')
-     AND NOT EXISTS (
-       SELECT 1
-       FROM pg_depend AS d
-       JOIN pg_extension AS e ON e.oid = d.refobjid
-       WHERE d.classid = 'pg_class'::regclass
-         AND d.objid = c.oid
-         AND d.refclassid = 'pg_extension'::regclass
-         AND d.deptype = 'e'
-     ));
+   FROM public_objects AS object
+   WHERE NOT EXISTS (
+     SELECT 1
+     FROM extension_owned AS extension
+     WHERE extension.classid = object.classid
+       AND extension.objid = object.objid
+   ));
 ")"
   if [[ "$TARGET_USER_FOOTPRINT" != "0|0" ]]; then
     echo "rollback_target_not_empty" >&2
@@ -228,25 +261,43 @@ from pathlib import Path
 raw_path = Path(os.environ["RAW_RESTORE_LIST"])
 filtered_path = Path(os.environ["FILTERED_RESTORE_LIST"])
 extension_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+EXTENSION\s+-\s+vector(?:\s+.*)?$")
-comment_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+COMMENT\s+-\s+EXTENSION\s+vector(?:\s+.*)?$")
+extension_comment_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+COMMENT\s+-\s+EXTENSION\s+vector(?:\s+.*)?$")
+public_schema_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+SCHEMA\s+-\s+public(?:\s+.*)?$")
+public_schema_comment_entry = re.compile(r"^\d+;\s+\d+\s+\d+\s+COMMENT\s+-\s+SCHEMA\s+public(?:\s+.*)?$")
 vector_toc = re.compile(r"^\d+;.*\bEXTENSION\b.*\bvector\b", re.IGNORECASE)
+public_schema_toc = re.compile(r"^\d+;.*\b(?:SCHEMA|COMMENT)\b.*\bpublic\b", re.IGNORECASE)
 lines = raw_path.read_text(encoding="utf-8").splitlines()
 filtered: list[str] = []
 extension_count = 0
-comment_count = 0
+extension_comment_count = 0
+public_schema_count = 0
+public_schema_comment_count = 0
 for line in lines:
     if extension_entry.fullmatch(line):
         extension_count += 1
         filtered.append(";" + line)
-    elif comment_entry.fullmatch(line):
-        comment_count += 1
+    elif extension_comment_entry.fullmatch(line):
+        extension_comment_count += 1
+        filtered.append(";" + line)
+    elif public_schema_entry.fullmatch(line):
+        public_schema_count += 1
+        filtered.append(";" + line)
+    elif public_schema_comment_entry.fullmatch(line):
+        public_schema_comment_count += 1
         filtered.append(";" + line)
     elif vector_toc.search(line):
         raise SystemExit("backup_restore_vector_toc_unrecognized")
+    elif public_schema_toc.search(line):
+        raise SystemExit("backup_restore_public_schema_toc_unrecognized")
     else:
         filtered.append(line)
-if extension_count != 1 or comment_count > 1:
-    raise SystemExit("backup_restore_vector_toc_invalid")
+if (
+    extension_count != 1
+    or extension_comment_count > 1
+    or public_schema_count > 1
+    or public_schema_comment_count > 1
+):
+    raise SystemExit("backup_restore_toc_invalid")
 filtered_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
 PY
   rm -f -- "$RESTORE_LIST_RAW_FILE"
