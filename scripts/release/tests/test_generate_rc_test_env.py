@@ -74,6 +74,7 @@ class GenerateRcTestEnvTests(unittest.TestCase):
         self.assertEqual(values["RC_TEST_DISPLAY_NAME"], "RC-Test-Website")
         self.assertEqual(values["EXPECTED_MIGRATION_HEAD"], "20260711_0058")
         self.assertEqual(values["READINESS_REQUIRE_RELEASE_METADATA"], "true")
+        self.assertEqual(values["TENANT_RUNTIME_AUTHORITY_MODE"], "enforce")
         self.assertEqual(values["PROVIDER_RUNTIME_KILL_SWITCH"], "true")
         self.assertEqual(values["PROVIDER_RUNTIME_CANARY_PERCENT"], "0")
         self.assertEqual(values["ENABLE_OUTBOUND_DISPATCH"], "false")

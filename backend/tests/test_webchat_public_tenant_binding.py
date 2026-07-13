@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -10,8 +11,11 @@ from starlette.requests import Request
 
 from app.db import Base
 from app.model_registry import register_all_models
+from app.models import Customer, Tenant, Ticket
 from app.models_webchat_binding import WebchatPublicOriginBinding
 from app.services import webchat_rate_limit
+from app.services import webchat_service
+from app.services.webchat_service import create_or_resume_conversation
 from app.services.webchat_tenant_binding import (
     normalize_public_origin,
     resolve_public_webchat_scope,
@@ -64,6 +68,31 @@ def _binding(db, *, origin: str = "https://tenant-a.example", tenant: str = "ten
     db.add(row)
     db.commit()
     return row
+
+
+
+def _tenant(db, *, tenant_key: str = "tenant-a", active: bool = True) -> Tenant:
+    row = Tenant(tenant_key=tenant_key, display_name=f"Tenant {tenant_key}", is_active=active)
+    db.add(row)
+    db.commit()
+    return row
+
+
+def _payload(**overrides):
+    values = {
+        "tenant_key": "default",
+        "channel_key": "default",
+        "conversation_id": None,
+        "visitor_token": None,
+        "visitor_name": "Tenant Visitor",
+        "visitor_email": "visitor@invalid.test",
+        "visitor_phone": None,
+        "visitor_ref": None,
+        "origin": None,
+        "page_url": "https://tenant-a.example/help",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def test_production_requires_server_binding(db) -> None:
@@ -205,3 +234,64 @@ def test_origin_normalization_rejects_wildcard_credentials_and_insecure_remote_h
             normalize_public_origin(origin)
     assert normalize_public_origin("HTTPS://Example.COM:443/") == "https://example.com"
     assert normalize_public_origin("http://localhost:3000") == "http://localhost:3000"
+
+def test_public_webchat_stamps_customer_and_ticket_with_verified_relational_tenant(db) -> None:
+    tenant = _tenant(db)
+    _binding(db)
+    resolve_public_webchat_scope(
+        db,
+        request=_request(),
+        requested_tenant_key="default",
+        requested_channel_key="default",
+        app_env="production",
+    )
+
+    result = create_or_resume_conversation(db, _payload(), _request())
+
+    ticket = db.query(Ticket).filter(Ticket.source_chat_id == result["conversation_id"]).one()
+    customer = db.get(Customer, ticket.customer_id)
+    assert customer is not None
+    assert ticket.tenant_id == tenant.id
+    assert customer.tenant_id == tenant.id
+    assert ticket.tenant_assignment_source == "runtime_principal"
+    assert customer.tenant_assignment_source == "runtime_principal"
+    assert ticket.tenant_assignment_version == "nexus.tenant.runtime_authority.v1"
+    assert customer.tenant_assignment_version == "nexus.tenant.runtime_authority.v1"
+
+
+@pytest.mark.parametrize("active", [False, None])
+def test_public_webchat_rejects_missing_or_inactive_relational_tenant_before_customer_write(db, active) -> None:
+    if active is not None:
+        _tenant(db, active=active)
+    _binding(db)
+    resolve_public_webchat_scope(
+        db,
+        request=_request(),
+        requested_tenant_key="default",
+        requested_channel_key="default",
+        app_env="production",
+    )
+    before_customers = db.query(Customer).count()
+    before_tickets = db.query(Ticket).count()
+
+    with pytest.raises(HTTPException) as exc:
+        create_or_resume_conversation(db, _payload(), _request())
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "webchat_tenant_principal_required"
+    assert db.query(Customer).count() == before_customers
+    assert db.query(Ticket).count() == before_tickets
+
+def test_enforce_mode_never_uses_unverified_payload_tenant_as_authority(
+    db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tenant(db)
+    monkeypatch.setattr(webchat_service, "tenant_runtime_authority_mode", lambda: "enforce")
+    before_customers = db.query(Customer).count()
+
+    with pytest.raises(HTTPException) as exc:
+        create_or_resume_conversation(db, _payload(tenant_key="tenant-a"), _request())
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "webchat_verified_scope_required"
+    assert db.query(Customer).count() == before_customers

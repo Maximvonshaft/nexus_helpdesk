@@ -22,7 +22,7 @@ from app.api.deps import get_current_user  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Customer, Market, Team, Ticket, User  # noqa: E402
+from app.models import Customer, Market, Team, Tenant, Ticket, User  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: E402
 
@@ -54,17 +54,25 @@ def api_context(tmp_path):
         engine.dispose()
 
 
-def _team(db, *, code: str) -> Team:
-    market = Market(code=code, name=f"Market {code}", country_code=code, is_active=True)
+def _tenant(db, *, key: str) -> Tenant:
+    row = Tenant(tenant_key=key, display_name=f"Tenant {key}", is_active=True)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _team(db, *, code: str, tenant: Tenant | None = None) -> Team:
+    ownership = {"tenant_id": tenant.id} if tenant else {}
+    market = Market(code=code, name=f"Market {code}", country_code=code, is_active=True, **ownership)
     db.add(market)
     db.flush()
-    team = Team(name=f"Team {code}", team_type="support", market_id=market.id, is_active=True)
+    team = Team(name=f"Team {code}", team_type="support", market_id=market.id, is_active=True, **ownership)
     db.add(team)
     db.flush()
     return team
 
 
-def _user(db, *, username: str, role: UserRole, team: Team | None) -> User:
+def _user(db, *, username: str, role: UserRole, team: Team | None, tenant: Tenant | None = None) -> User:
     row = User(
         username=username,
         display_name=username,
@@ -73,14 +81,18 @@ def _user(db, *, username: str, role: UserRole, team: Team | None) -> User:
         role=role,
         team_id=team.id if team else None,
         is_active=True,
+        tenant_id=tenant.id if tenant else None,
     )
     db.add(row)
     db.flush()
     return row
 
 
-def _conversation(db, *, suffix: str, team: Team, assignee: User | None = None) -> tuple[Ticket, WebchatConversation]:
-    customer = Customer(name=f"Customer {suffix}", phone=f"+4100000{suffix}", email=f"{suffix}@customer.test")
+def _conversation(
+    db, *, suffix: str, team: Team, assignee: User | None = None, tenant: Tenant | None = None
+) -> tuple[Ticket, WebchatConversation]:
+    ownership = {"tenant_id": tenant.id} if tenant else {}
+    customer = Customer(name=f"Customer {suffix}", phone=f"+4100000{suffix}", email=f"{suffix}@customer.test", **ownership)
     db.add(customer)
     db.flush()
     ticket = Ticket(
@@ -99,13 +111,14 @@ def _conversation(db, *, suffix: str, team: Team, assignee: User | None = None) 
         customer_request=f"request {suffix}",
         last_customer_message=f"message {suffix}",
         tracking_number=f"CH02000012{suffix}99",
+        **ownership,
     )
     db.add(ticket)
     db.flush()
     conversation = WebchatConversation(
         public_id=f"wc_{suffix}",
         visitor_token_hash=hashlib.sha256(suffix.encode()).hexdigest(),
-        tenant_key=f"tenant-{suffix}",
+        tenant_key=tenant.tenant_key if tenant else f"tenant-{suffix}",
         channel_key="webchat",
         ticket_id=ticket.id,
         visitor_name=customer.name,
@@ -203,3 +216,39 @@ def test_admin_retains_explicit_global_support_view(api_context):
         f"webchat:{first.public_id}",
         f"webchat:{second.public_id}",
     }
+
+def test_tenant_bound_admin_support_scope_is_not_global(api_context):
+    db, client, state = api_context
+    tenant_a = _tenant(db, key="tenant-a")
+    tenant_b = _tenant(db, key="tenant-b")
+    team_a = _team(db, code="TA", tenant=tenant_a)
+    team_b = _team(db, code="TB", tenant=tenant_b)
+    admin = _user(db, username="tenant-admin", role=UserRole.admin, team=None, tenant=tenant_a)
+    ticket_a, conversation_a = _conversation(db, suffix="7007", team=team_a, tenant=tenant_a)
+    _, conversation_b = _conversation(db, suffix="8008", team=team_b, tenant=tenant_b)
+    db.commit()
+    state["user"] = admin
+
+    listing = client.get("/api/support/conversations", params={"view": "all"})
+    assert listing.status_code == 200
+    assert [item["session_key"] for item in listing.json()["items"]] == [
+        f"webchat:{conversation_a.public_id}"
+    ]
+
+    own_detail = client.get(
+        "/api/support/conversations/detail",
+        params={"session_key": f"webchat:{conversation_a.public_id}"},
+    )
+    assert own_detail.status_code == 200
+    assert own_detail.json()["ticket"]["id"] == ticket_a.id
+
+    hidden_detail = client.get(
+        "/api/support/conversations/detail",
+        params={"session_key": f"webchat:{conversation_b.public_id}"},
+    )
+    assert hidden_detail.status_code == 404
+    assert hidden_detail.json()["detail"] == "support_conversation_not_found"
+
+    metrics = client.get("/api/support/conversations/metrics")
+    assert metrics.status_code == 200
+    assert metrics.json()["total"] == 1

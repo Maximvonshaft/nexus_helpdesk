@@ -283,6 +283,17 @@ migrated:
 - Ticket creation derives Tenant only from the authenticated relational
   principal and dual-writes the Ticket and newly created Customer with bounded
   runtime provenance;
+- public WebChat creation resolves the already verified server-owned Origin
+  binding to one active relational Tenant before writing customer data; client
+  `tenant_key` cannot select a Tenant in enforce mode, and new Customer/Ticket
+  rows receive the same runtime provenance;
+- Support list, detail, reply, metrics, state and runtime-latency queries resolve
+  the actor Tenant first and apply it as the outer SQL predicate; Admin/Auditor
+  capabilities are not cross-Tenant visibility;
+- the isolated RC profile creates one synthetic active Tenant, binds its public
+  Origin and synthetic administrator to that Tenant, and keeps
+  `TENANT_RUNTIME_AUTHORITY_MODE=enforce` while proving the public-to-operator
+  message journey;
 - Customer identity matching is Tenant-scoped, so an email, phone or external
   reference cannot select or update another Tenant's Customer;
 - Ticket lists, statistics, Customer history, Lite upsert lookup and cursor-based

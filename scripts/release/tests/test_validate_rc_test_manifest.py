@@ -172,6 +172,14 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         self.assertIn("normalize_public_origin(requested_origin)", self.seed)
         self.assertIn("service_completed_successfully", self.compose)
 
+    def test_runner_binds_synthetic_operator_to_seeded_tenant(self):
+        self.assertIn("Tenant.tenant_key == tenant_key", self.runner)
+        self.assertIn("user.tenant_id = tenant.id", self.runner)
+        self.assertIn("tenant_assignment_source", self.runner)
+        self.assertIn("tenant_assignment_version", self.runner)
+        self.assertIn("TENANT_RUNTIME_AUTHORITY_MODE", self.runner)
+        self.assertIn("TENANT_RUNTIME_AUTHORITY_MODE=enforce", (self.root / "deploy" / ".env.rc-test.example").read_text(encoding="utf-8"))
+
     def test_runner_proves_exact_migration_browser_and_all_failure_logs(self):
         self.assertIn("RC requires exactly one Alembic head", self.runner)
         self.assertIn("MIGRATION_CURRENT", self.runner)

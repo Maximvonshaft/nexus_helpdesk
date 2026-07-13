@@ -166,6 +166,7 @@ def build_values(
         "DATABASE_URL": f"postgresql+psycopg://nexus_rc:{pg_password}@postgres-rc:5432/nexus_rc",
         "DATABASE_ECHO": "false",
         "APP_ENV": "production",
+        "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
         "SECRET_KEY": jwt_secret,
         "RUNTIME_CONTRACT_SIGNING_SECRET": contract_secret,
         "JWT_ISSUER": "nexusdesk-rc-test",

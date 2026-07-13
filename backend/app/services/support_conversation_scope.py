@@ -3,27 +3,33 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import false, or_, true
+from sqlalchemy import and_, false, or_
 from sqlalchemy.orm import Query, Session
 
 from ..enums import UserRole
 from ..models import Ticket
+from .tenant_authority import resolve_actor_tenant_id
 
 _GLOBAL_SUPPORT_ROLES = {UserRole.admin, UserRole.auditor}
 
 
-def support_ticket_scope_predicate(current_user: Any):
-    """Return the authoritative Ticket predicate for support-conversation reads.
+def support_ticket_scope_predicate(current_user: Any, *, actor_tenant_id: int | None):
+    """Return one Tenant-contained Ticket predicate for support reads.
 
-    Admin and Auditor retain the intentional global control/audit view. Manager
-    is limited to the actor's market, team, or direct assignments. Lead and Agent
-    are limited to their team or direct assignments. Missing organizational
-    provenance fails closed instead of widening access.
+    An authenticated relational Tenant is always the outer boundary, including
+    privileged roles. In bounded shadow compatibility a fully unowned actor can
+    see only fully unowned Ticket rows; it never widens into owned Tenant data.
+    Legacy role/team/market rules are then applied inside that Tenant boundary.
     """
 
+    tenant_predicate = (
+        Ticket.tenant_id == actor_tenant_id
+        if actor_tenant_id is not None
+        else Ticket.tenant_id.is_(None)
+    )
     role = getattr(current_user, "role", None)
     if role in _GLOBAL_SUPPORT_ROLES:
-        return true()
+        return tenant_predicate
 
     predicates = []
     user_id = getattr(current_user, "id", None)
@@ -40,17 +46,24 @@ def support_ticket_scope_predicate(current_user: Any):
         if market_id is not None:
             predicates.append(Ticket.market_id == market_id)
 
-    return or_(*predicates) if predicates else false()
+    return and_(tenant_predicate, or_(*predicates)) if predicates else false()
 
 
-def apply_support_ticket_scope(query: Query, current_user: Any) -> Query:
-    return query.filter(support_ticket_scope_predicate(current_user))
+def apply_support_ticket_scope(query: Query, current_user: Any, db: Session) -> Query:
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    return query.filter(
+        support_ticket_scope_predicate(
+            current_user,
+            actor_tenant_id=actor_tenant_id,
+        )
+    )
 
 
 def ensure_support_ticket_visible(db: Session, current_user: Any, ticket_id: int) -> None:
     visible = apply_support_ticket_scope(
         db.query(Ticket.id).filter(Ticket.id == int(ticket_id)),
         current_user,
+        db,
     ).first()
     if visible is None:
         # Deliberately use 404 so an unauthorized actor cannot distinguish a
