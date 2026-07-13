@@ -31,6 +31,7 @@ _TRAFFIC_CONFIGURATION_ERRORS = {
     "provider_runtime_canary_percent_invalid",
     "provider_runtime_kill_switch_invalid",
 }
+_OUTPUT_CONTRACT_REJECTED = "output_contract_rejected"
 
 
 class ProviderRuntimeRouter:
@@ -354,8 +355,11 @@ class ProviderRuntimeRouter:
                         summary={"shadow_provider": provider_name, "shadow_result": "valid"},
                     )
                 return result
-            except Exception as exc:
-                safe_summary = _summary_with_traffic({"parse_error": str(exc)[:500]}, traffic)
+            except Exception:
+                safe_summary = _summary_with_traffic(
+                    {"parse_error_code": _OUTPUT_CONTRACT_REJECTED},
+                    traffic,
+                )
                 if not shadow_only:
                     health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
                     if health_event:
