@@ -12,7 +12,7 @@
 
 The current-tree scanner cannot prove that credentials removed from HEAD are absent from reachable Git history. Historical PR #603 failed its tests, skipped the real scan, and then failed evidence upload, so it established neither a clean result nor a confirmed finding.
 
-The control must also resist these bypasses:
+A self-modifying pull request must not be allowed to execute its own replacement scanner or allowlist and then attest that the same Head is clean. The control must also resist:
 
 - identical Blob content at multiple historical paths;
 - multiple same-rule values on one line, including the same value repeated;
@@ -26,7 +26,9 @@ The control must also resist these bypasses:
 
 The implementation must:
 
-- use read-only Git operations;
+- execute scanner code and policy from a trusted base commit for pull requests;
+- treat the PR Head only as untrusted Git data;
+- use read-only Git operations and permissions;
 - retain the current-tree scanner's 200-finding contract;
 - reuse current credential patterns and placeholder semantics;
 - count every logical historical occurrence;
@@ -38,6 +40,21 @@ The implementation must:
 - perform no credential, history, visibility, deployment or production mutation.
 
 ## Architecture
+
+### Trusted pull-request execution
+
+The Workflow uses `pull_request_target` for pull requests and two isolated checkouts:
+
+- `.trusted`: the base SHA from the trusted repository, containing scanner code, tests, artifact scanner, Workflow contract and allowlist;
+- `target`: the exact PR Head with full history and tags.
+
+Only `.trusted` Python is compiled or executed. The target working tree is never used as executable code or policy. Trusted commands run against `target` through the scanner's `--root` argument and the trusted allowlist path.
+
+The target repository/Head are structured Action inputs, checkout credentials are not persisted, and the resulting HEAD and non-shallow state are verified. Permissions remain `contents: read`; no secrets or write-capable token are passed to untrusted code.
+
+This PR is the bootstrap that places the trusted control on `main`. Because the Workflow does not yet exist in the base branch, the bootstrap PR is qualified through existing repository CI, Security Assurance, CodeQL and independent review. The first authoritative tamper-resistant history scan is the `push` run after merge. The Work Item remains open until that run passes.
+
+A future PR cannot self-approve scanner or allowlist changes: its assurance run uses the prior trusted base versions. Legitimate policy changes require independent review and post-merge revalidation.
 
 ### Reachable objects and path aliases
 
@@ -63,7 +80,7 @@ The shared allowlist parser also preserves the exact path string. It does not no
 
 Each rule uses `finditer()` rather than first-match search. The first occurrence of a path/rule/line/value keeps the existing 16-character base fingerprint for compatibility. Repeated identical values on the same line receive deterministic occurrence-derived fingerprints. Therefore one allowlist tuple cannot suppress multiple identical occurrences.
 
-Logical identity remains:
+Logical identity is:
 
 ```text
 path + rule + line + occurrence fingerprint
@@ -79,7 +96,7 @@ Each reachable Blob is exactly one of:
 - binary or unreadable after actual byte inspection;
 - oversized and unscanned.
 
-`accounted_blob_count` must equal `reachable_blob_count`. Every Blob above the ceiling makes `complete=false`, regardless of suffix. The Workflow currently scans up to 8 MiB; a future larger Blob blocks until the ceiling is explicitly reviewed and its bytes are scanned.
+`accounted_blob_count` must equal `reachable_blob_count`. Every Blob above the ceiling makes `complete=false`, regardless of suffix. The Workflow scans up to 8 MiB; a future larger Blob blocks until the ceiling is explicitly reviewed and its bytes are scanned.
 
 ### Evidence boundary
 
@@ -113,7 +130,9 @@ The complete history report is uploaded only when the artifact scan exit code is
 ## Security analysis
 
 - Actions use immutable SHAs and read-only permissions.
-- Checkout is full-history and does not persist credentials.
+- Pull requests use trusted base code and policy against a separate untrusted target checkout.
+- Target scripts, dependencies and workflows are never executed.
+- Target checkout is full-history and does not persist credentials.
 - Git revision expressions contain validated object IDs and are passed without a shell.
 - Git stderr is discarded from evidence.
 - Reports are capped at 64 KiB and scanned before upload.
@@ -123,6 +142,7 @@ The complete history report is uploaded only when the artifact scan exit code is
 
 ## Rejected approaches
 
+- **Execute scanner from PR Head:** permits a PR to disable its own detector or broaden its allowlist.
 - **Checkout every commit:** duplicates Blob reads and expands temporary working-tree surface.
 - **One representative path per Blob:** widens exact allowlists across aliases.
 - **Commit Trees only:** misses direct Tree tags.
@@ -135,18 +155,23 @@ The complete history report is uploaded only when the artifact scan exit code is
 
 ## Acceptance
 
-One exact final Head must prove:
+The bootstrap PR must prove:
 
-- all existing and focused security tests pass;
-- removed historical credentials are detectable without raw disclosure;
-- changed-Blob deduplication remains correct;
+- existing and focused security tests pass;
+- repository checks and Python/JS CodeQL pass;
+- the dual-checkout Workflow contract prevents PR-code execution;
+- independent review reports no remaining Critical/Important issue;
+- the branch is `0 behind` before expected-head merge.
+
+After merge, the trusted `main` push run must prove:
+
+- the real non-shallow Nexus history scan completes;
+- removed historical credentials remain detectable in adversarial tests without raw disclosure;
 - aliases, Tree tags and whitespace-distinct paths are independent;
 - all same-rule matches and repeated identical occurrences are counted;
 - oversized binary-looking Blobs remain incomplete;
 - unsafe suffixes are not emitted;
-- the real non-shallow Nexus history scan completes;
 - every reachable Blob is accounted for and every historical alias evaluated;
-- generated evidence passes scanning before full upload;
-- repository checks, Python/JS CodeQL and independent review pass.
+- generated evidence passes scanning before full upload.
 
 A finding or incomplete scan is blocking evidence. Credential rotation, revocation or history rewriting remains separately authorized #565 work.
