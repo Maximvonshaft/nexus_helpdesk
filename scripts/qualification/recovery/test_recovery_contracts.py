@@ -116,6 +116,9 @@ class OperatorRecoveryContractTests(unittest.TestCase):
             "--single-transaction",
             "--use-list=",
             "backup_restore_vector_toc_invalid",
+            "rollback_target_not_empty",
+            "--no-build",
+            "--pull always",
             "preinstalled_extensions",
             "DATABASE_RESTORE_APPLIED",
             "DATABASE_RESTORED",
@@ -254,6 +257,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 "case \"$*\" in\n"
                 "  *'SELECT current_database()'*) printf 'nexus_restore\\n' ;;\n"
                 "  *\"SELECT extversion FROM pg_extension WHERE extname = 'vector'\"*) printf '0.8.0\\n' ;;\n"
+                "  *'FROM pg_namespace'*) printf '0|0\\n' ;;\n"
                 "  *'SELECT version_num FROM alembic_version'*) printf '20260713_0058\\n' ;;\n"
                 "  *) exit 1 ;;\n"
                 "esac\n",
@@ -311,6 +315,39 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("Target vector extension version does not match backup manifest", completed.stderr)
 
+    def test_restore_refuses_nonempty_target_before_pg_restore(self) -> None:
+        rollback = ROOT / "scripts" / "deploy" / "rollback_release.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = _write_bundle(root)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            restore_marker = root / "restore-called"
+            _write_executable(fake_bin / "pg_restore", f"#!/usr/bin/env bash\ntouch {restore_marker!s}\nexit 0\n")
+            _write_executable(
+                fake_bin / "psql",
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'SELECT current_database()'*) printf 'nexus_restore\\n' ;;\n"
+                "  *\"SELECT extversion FROM pg_extension WHERE extname = 'vector'\"*) printf '0.8.0\\n' ;;\n"
+                "  *'FROM pg_namespace'*) printf '0|1\\n' ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n",
+            )
+            completed = _run(
+                rollback,
+                str(bundle),
+                env=_env(
+                    fake_bin,
+                    ROLLBACK_CONFIRM="I_UNDERSTAND",
+                    POSTGRES_NATIVE_URL="postgresql://nexus_recovery_restore:restore-test@db-a:5432/nexus_restore",
+                    ROLLBACK_STATUS_FILE=str(root / "rollback-result.json"),
+                ),
+            )
+            self.assertFalse(restore_marker.exists())
+        self.assertEqual(completed.returncode, 12)
+        self.assertIn("rollback_target_not_empty", completed.stderr)
+
     def test_health_requires_2xx_and_writes_partial_state(self) -> None:
         rollback = ROOT / "scripts" / "deploy" / "rollback_release.sh"
         for curl_script in ("#!/usr/bin/env bash\nexit 22\n", "#!/usr/bin/env bash\nprintf '302'\n"):
@@ -318,7 +355,15 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 root = Path(directory)
                 fake_bin = root / "bin"
                 fake_bin.mkdir()
-                _write_executable(fake_bin / "docker", "#!/usr/bin/env bash\nexit 0\n")
+                docker_marker = root / "docker-exact-image"
+                _write_executable(
+                    fake_bin / "docker",
+                    "#!/usr/bin/env bash\n"
+                    "[[ \"$*\" == *'--no-build'* ]] || exit 9\n"
+                    "[[ \"$*\" == *'--pull always'* ]] || exit 9\n"
+                    f"touch {docker_marker!s}\n"
+                    "exit 0\n",
+                )
                 _write_executable(fake_bin / "curl", curl_script)
                 status = root / "rollback-result.json"
                 completed = _run(
@@ -332,6 +377,7 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                     ),
                 )
                 payload = json.loads(status.read_text(encoding="utf-8"))
+                self.assertTrue(docker_marker.exists())
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertEqual(payload["failure_stage"], "HEALTH_VERIFICATION")
                 self.assertIn("IMAGE_RESTARTED", payload["states"])
