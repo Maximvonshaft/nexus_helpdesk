@@ -141,38 +141,30 @@ The ordering invariant is: **replacement credential works before predecessor rev
 Run from the approved external probe location against the same-origin public route. Do not add an Authorization header and do not include an upstream URL.
 
 ```bash
-curl --silent --show-error --max-time 10 \
-  --output /dev/null \
-  --write-out 'status=%{http_code} duration=%{time_total}\n' \
-  'https://<approved-public-host>/webchat/live/health'
+HEALTH_RESULT="$(
+  curl --silent --show-error --max-time 10 \
+    --output /dev/null \
+    --write-out 'status=%{http_code}' \
+    'https://<approved-public-host>/webchat/live/health'
+)"
+printf 'result=%s\n' "$HEALTH_RESULT"
+test "$HEALTH_RESULT" = 'status=200'
 ```
 
-Record only the HTTP status, duration, UTC Timestamp, release identity, and bounded redacted result. Do not retain the response body.
+Acceptance requires HTTP 200 on the exact deployed release. Record only the status, duration measured by the approved runner, UTC Timestamp, release identity, and bounded redacted result. Do not retain the response body.
 
 ### WebSocket upgrade probe
 
-Generate the WebSocket handshake key locally for the probe. The key is protocol nonce material, not the upstream credential.
+Use the reviewed repository probe from the exact approved probe revision. Hash-match the file to that revision before execution.
 
 ```bash
-WS_KEY="$(openssl rand -base64 16)"
-set +e
-WS_RESULT="$(
-  curl --http1.1 --silent --show-error --max-time 10 \
-    --output /dev/null \
-    --write-out 'status=%{http_code}' \
-    --header 'Connection: Upgrade' \
-    --header 'Upgrade: websocket' \
-    --header 'Sec-WebSocket-Version: 13' \
-    --header "Sec-WebSocket-Key: ${WS_KEY}" \
-    'https://<approved-public-host>/webchat/live/ws'
-)"
-WS_EXIT=$?
-set -e
-printf 'result=%s curl_exit=%s\n' "$WS_RESULT" "$WS_EXIT"
-test "$WS_RESULT" = 'status=101'
+python3 scripts/smoke/websocket_upgrade_probe.py \
+  --base-url 'https://<approved-public-host>' \
+  --path /webchat/live/ws \
+  --timeout-seconds 10
 ```
 
-Acceptance requires HTTP 101 on the exact deployed release. The probe output is restricted to the HTTP status code and curl exit code. A timeout after a confirmed `status=101` can reflect an intentionally open upgraded connection; any result without `status=101` fails. Raw headers and response bodies must never be emitted, retained, hashed, or attached.
+Acceptance requires `LIVE_VOICE_WS_UPGRADE_PASS=true`, `status=101`, and exit `0` on the exact deployed release. The reviewed probe validates the `Upgrade`, `Connection`, and `Sec-WebSocket-Accept` response contracts and closes the socket without printing raw headers or bodies. The probe output is restricted to the pass flag, HTTP status code, and request path. Do not use `--query` for credentials; if an approved functional query is required, it may contain only non-secret allowlisted voice parameters. Raw headers and response bodies must never be emitted, retained, hashed, or attached.
 
 ### Browser zero-secret proof
 
