@@ -6,7 +6,7 @@
 
 **Work Item:** #532
 
-**Baseline:** `main@7b46e48e5cd26fc400728cb84dfe04b57d5fa855`
+**Baseline:** `main@e857132fc040b0fc324df922b52e5d84a64a93e0`
 
 ## Global boundaries
 
@@ -24,9 +24,11 @@
 
 - Assert native URL separation.
 - Assert explicit admin database authority before destructive setup.
+- Assert libpq query/fragment overrides are rejected before any `psql` call.
 - Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
 - Assert partial rollback status is written after image restart/health failure.
+- Assert redirects are not accepted as health verification.
 - Assert bounded snapshot/compare/RTO/RPO contracts.
 - Run the dedicated gate and record the expected test-only failure.
 
@@ -44,6 +46,7 @@
 - Refuse in-place restore unless separately acknowledged.
 - Use `pg_restore --exit-on-error --single-transaction`.
 - Execute old-image restart only with an explicit health URL.
+- Require explicit HTTP 2xx from `/healthz` and `/readyz`; reject redirects.
 - Write structured success or partial-failure rollback states from an EXIT trap.
 
 ## Task 3 — Add bounded recovery evidence
@@ -65,7 +68,7 @@
 - Expand `.github/workflows/osr-recovery-qualification.yml`
 
 - Require explicit admin/source/restore URLs and recreate confirmation.
-- Prove all URLs target one disposable cluster before `DROP DATABASE`.
+- Reject URI query strings/fragments and prove all URLs target one disposable cluster before `DROP DATABASE`.
 - Use pgvector PostgreSQL 16.
 - Upgrade, downgrade one revision, plan repair and re-upgrade.
 - Seed a synthetic Market/Team relationship.
@@ -85,7 +88,7 @@
 - Create this plan
 
 - Run dedicated exact-head recovery qualification on Alembic `20260713_0059`.
-- Run all applicable repository checks.
+- Run all applicable repository checks, including new governance gates.
 - Inspect the bounded artifact only; never publish connection strings or data rows.
 - Obtain independent review and resolve every actionable thread.
 - Require zero-behind current main and merge with expected Head.
