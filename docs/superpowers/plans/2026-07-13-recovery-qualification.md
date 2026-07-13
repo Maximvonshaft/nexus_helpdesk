@@ -22,9 +22,11 @@
 - Create `scripts/qualification/recovery/test_recovery_contracts.py`
 - Create `.github/workflows/osr-recovery-qualification.yml` in RED form
 
-- Assert native URL separation.
+- Assert native URL separation and explicit user identity.
 - Assert explicit admin database authority before destructive setup.
 - Assert libpq query/fragment overrides are rejected before any runner or standalone operator native-client call.
+- Assert admin/source/restore roles are pairwise distinct and source/restore lack destructive privileges.
+- Assert source/restore databases have different non-admin owners.
 - Assert temporary/archive/manifest/checksum/atomic `mv -T` backup behavior.
 - Assert transactional fail-fast restore and explicit rollback states.
 - Assert a committed restore is recorded before post-restore identity verification.
@@ -40,7 +42,9 @@
 - Modify `scripts/deploy/backup_postgres.sh`
 - Modify `scripts/deploy/rollback_release.sh`
 
-- Normalize only known SQLAlchemy PostgreSQL prefixes to libpq form and reject all URI query/fragment overrides before native clients.
+- Normalize only known SQLAlchemy PostgreSQL prefixes to libpq form.
+- Require explicit native-client user, host and database identity.
+- Reject all URI query/fragment overrides before native clients.
 - Create a custom archive in a mode-restricted temporary bundle.
 - Validate archive listing, one Alembic head, SHA-256, size and source identity.
 - Atomically publish archive plus manifest with no-target-directory semantics.
@@ -64,19 +68,23 @@
 - Reject missing/multiple/invalid heads and unsafe digests.
 - Keep reports below 256 KiB and free of business rows.
 
-## Task 4 — Run disposable PostgreSQL rehearsal
+## Task 4 — Run isolated disposable PostgreSQL rehearsal
 
 **Files:**
 - Create `scripts/qualification/recovery/run_recovery_qualification.sh`
 - Expand `.github/workflows/osr-recovery-qualification.yml`
 
+- Bootstrap only `nexus_recovery_admin` in the service container.
+- Create `nexus_recovery_source` and `nexus_recovery_restore` as separate non-superuser, non-CREATEDB, non-CREATEROLE login roles.
 - Require explicit admin/source/restore URLs and recreate confirmation.
-- Reject URI query strings/fragments and prove all URLs target one disposable cluster before `DROP DATABASE`.
+- Reject missing users, URI query strings/fragments and cross-cluster identity before destructive setup.
+- Prove role privileges before database recreation.
+- Create `nexus_source` and `nexus_restore` with different owners and verify ownership.
 - Use pgvector PostgreSQL 16.
-- Upgrade, downgrade one revision, plan repair and re-upgrade.
+- Upgrade, downgrade one revision, plan repair and re-upgrade as the source role.
 - Seed a synthetic Market/Team relationship.
-- Invoke the real backup script.
-- Invoke the real rollback script against a clean restore database.
+- Invoke the real backup script as the source role.
+- Invoke the real rollback script as the restore role.
 - Compare source/restore evidence and RTO/RPO.
 - Remove backup bytes before artifact processing.
 - Scan all JSON evidence before upload.
@@ -91,7 +99,7 @@
 - Create this plan
 
 - Run dedicated exact-head recovery qualification on Alembic `20260713_0059`.
-- Run all applicable repository checks, including new governance gates.
+- Run all applicable repository checks, including governance gates.
 - Inspect the bounded artifact only; never publish connection strings or data rows.
 - Obtain independent review and resolve every actionable thread.
 - Require zero-behind current main and merge with expected Head.
@@ -100,5 +108,5 @@
 ## Decision boundary
 
 - **Clean qualification:** mark the recovery foundation Ready for unified acceptance; do not claim final production recovery readiness.
-- **Migration/restore/evidence failure:** keep Draft and fix the reproduced cause.
+- **Migration/restore/evidence/role-isolation failure:** keep Draft and fix the reproduced cause.
 - **Tenant retention/DSAR request:** defer to #546 rather than creating parallel ownership.
