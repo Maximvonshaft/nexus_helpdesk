@@ -69,11 +69,11 @@ def upgrade() -> None:
                 name="ck_tenants_key_nonempty",
             ),
             sa.CheckConstraint(
-                "tenant_key = lower(tenant_key)",
+                "tenant_key = lower(trim(tenant_key))",
                 name="ck_tenants_key_lowercase",
             ),
             sa.CheckConstraint(
-                "tenant_key <> 'default'",
+                "lower(trim(tenant_key)) <> 'default'",
                 name="ck_tenants_key_not_default",
             ),
             sa.PrimaryKeyConstraint("id"),
