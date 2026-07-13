@@ -10,7 +10,7 @@
 
 ## Problem
 
-The repository had no accepted current-main backup/restore rehearsal. The operator scripts and evidence builder exposed fourteen reproducible failure modes:
+The repository had no accepted current-main backup/restore rehearsal. The operator scripts and evidence builder exposed sixteen reproducible failure modes:
 
 1. a SQLAlchemy `postgresql+psycopg://` URL was passed directly to native clients;
 2. restore could continue after SQL errors;
@@ -25,7 +25,9 @@ The repository had no accepted current-main backup/restore rehearsal. The operat
 11. a successful transactional restore followed by a failed Alembic post-check could omit the already-applied database mutation from rollback state;
 12. standalone backup/rollback entrypoints accepted libpq query or fragment overrides even though the disposable runner rejected them;
 13. reversed recovery timestamps could be clamped to zero and accepted as bounded RTO/RPO evidence;
-14. source/restore comparison checked only unvalidated-FK counts and could miss deleted or altered FK definitions.
+14. source/restore comparison checked only unvalidated-FK counts and could miss deleted or altered FK definitions;
+15. native URLs without userinfo could inherit `PGUSER`, changing the executing identity outside the reviewed URI;
+16. the qualification topology used one role for admin, migration, backup and restore, so non-admin paths were never proven independent of destructive authority.
 
 These defects prevent a defensible claim that a test candidate is recoverable.
 
@@ -33,9 +35,19 @@ These defects prevent a defensible claim that a test candidate is recoverable.
 
 ### Native PostgreSQL authority
 
-`POSTGRES_NATIVE_URL` is the native-client authority. Known SQLAlchemy prefixes may be normalized for backward compatibility, but native tools never receive the unmodified application-driver URI. Standalone backup and rollback entrypoints reject URI query strings and fragments before any native client call and require explicit host/database identity.
+`POSTGRES_NATIVE_URL` is the native-client authority. Known SQLAlchemy prefixes may be normalized for backward compatibility, but native tools never receive the unmodified application-driver URI. Standalone backup and rollback entrypoints require explicit user, host and database identity and reject URI query strings and fragments before any native client call.
 
-The disposable runner requires a separate `RECOVERY_ADMIN_NATIVE_URL` and an explicit `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. It validates source/restore application and native URL pairs, requires all three native URLs to share one host/port, restricts source/restore names to `nexus_source` and `nexus_restore`, and requires the admin URL to target a third database before any destructive command. Query strings and fragments are rejected so libpq options cannot override the validated authority.
+The disposable runner requires a separate `RECOVERY_ADMIN_NATIVE_URL` and `RECOVERY_ALLOW_DATABASE_RECREATE=I_UNDERSTAND`. It validates source/restore application and native URL pairs, exact disposable database names, one cluster, an isolated admin database and three exact pairwise-distinct users:
+
+- `nexus_recovery_admin`;
+- `nexus_recovery_source`;
+- `nexus_recovery_restore`.
+
+No ambient user or target parameter is accepted.
+
+### Role and ownership separation
+
+The PostgreSQL service bootstraps only `nexus_recovery_admin`. The workflow creates source and restore login roles with no SUPERUSER, CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS capability. Before database recreation, the runner queries `pg_roles` and fails unless those restrictions and admin CREATEDB authority are present. It creates each disposable database with its corresponding non-admin owner and verifies `pg_database.datdba` before Alembic executes.
 
 ### Atomic backup bundle
 
@@ -59,12 +71,12 @@ Evidence contains aggregate schema identity and timing only. Public foreign-key 
 
 ## Qualification topology
 
-One pgvector PostgreSQL 16 service hosts one admin database and two disposable databases. The source is migrated and seeded with a synthetic referential marker; the restore database is rebuilt exclusively from the operator backup. Source and restore snapshots are compared exactly.
+One pgvector PostgreSQL 16 service hosts one bootstrap admin database and two disposable databases with distinct owners. Source migration/backup uses only `nexus_recovery_source`; target restore/snapshot uses only `nexus_recovery_restore`; database creation and ownership proof use only `nexus_recovery_admin`. The source is seeded with a synthetic referential marker and the restore database is rebuilt exclusively from the operator backup.
 
 ## Security and privacy
 
 - no production database or credentials;
-- no ambient or query-parameter connection authority for destructive setup;
+- no ambient connection user or query-parameter authority;
 - no customer, ticket, message, tracking, address or Provider data;
 - no backup bytes uploaded;
 - no deployment or real image restart in CI;
@@ -74,8 +86,10 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 ## Rejected approaches
 
 - Passing SQLAlchemy URLs directly to libpq tools: incompatible and ambiguous.
+- Omitting userinfo and allowing `PGUSER` fallback: executed identity is not bound to the reviewed URL.
+- Sharing one database role across admin/source/restore: cannot prove least-privilege separation.
 - Using ambient `PGHOST`/`PGUSER` for destructive setup: not bound to the supplied disposable topology.
-- Accepting libpq query or fragment overrides in either the runner or standalone operator entrypoints: the executed target can differ.
+- Accepting libpq query or fragment overrides: the executed target can differ.
 - Plain SQL gzip as the canonical backup: weaker archive validation and restore control.
 - Direct write to the final backup filename: leaves partial artifacts.
 - Directory-target `mv` semantics: can hide concurrent publication by nesting a bundle.
@@ -83,13 +97,13 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 - Treating printed rollback instructions as completion: no operational proof.
 - Writing rollback status only on success: loses partial-mutation evidence.
 - Treating an applied restore as unmodified merely because the post-restore identity check failed.
-- Treating any non-error HTTP status, including redirects, as readiness proof.
+- Treating redirects as readiness proof.
 - Comparing only the count of unvalidated foreign keys: missing or altered FK definitions can still appear valid.
 - Clamping reversed timestamps to zero: impossible evidence must fail closed.
 
 ## Acceptance
 
-One exact final Head must prove focused tests, explicit URL authority without query overrides, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact 2xx health semantics, exact table and foreign-key-definition restore comparison, monotonic RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
+One exact final Head must prove focused tests, explicit user/target authority, isolated role privileges and database ownership, real disposable migration roundtrip, dry-run repair planning, real operator backup and rollback scripts, exact 2xx health semantics, exact table/FK restore comparison, monotonic RTO/RPO thresholds, failure-state persistence, safe evidence, repository checks and independent review.
 
 ## Rollback
 
