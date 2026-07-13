@@ -52,6 +52,21 @@ jobs:
         if: github.event_name == 'pull_request'
         run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
 
+      - name: Export exact-head source snapshot
+        run: |
+          set -Eeuo pipefail
+          tar -czf /tmp/knowledge-quarantine-source.tgz \
+            backend \
+            .github/workflows/knowledge-quarantine-gate.yml
+
+      - name: Upload exact-head source snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: knowledge-quarantine-source-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/knowledge-quarantine-source.tgz
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Setup Python immutable
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
