@@ -74,6 +74,7 @@ def test_concurrent_postgres_claims_never_duplicate_a_job(session_factory) -> No
             claimed_batches = list(executor.map(claim, range(worker_count)))
 
         claimed = [job_id for batch in claimed_batches for job_id in batch]
+        assert all(len(batch) == jobs_per_worker for batch in claimed_batches)
         assert len(claimed) == worker_count * jobs_per_worker
         assert len(set(claimed)) == len(claimed)
 
@@ -162,5 +163,6 @@ def test_expired_processing_lock_is_reclaimed_after_worker_crash(session_factory
             assert recovered.status == JobStatus.processing
             assert recovered.locked_by == "recovery-worker"
             assert recovered.locked_at is not None
+            assert db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f"{prefix}:one").count() == 1
     finally:
         _cleanup(Session, prefix)
