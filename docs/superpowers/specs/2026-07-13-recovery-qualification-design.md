@@ -4,13 +4,13 @@
 
 - Work Item: #532
 - Parent Epic: #501
-- Baseline: `main@e857132fc040b0fc324df922b52e5d84a64a93e0`
+- Baseline: `main@7006af1e88d7681713cfd5ad4b540a3964d780f1`
 - Historical PR #608: closed without merge; evidence only
 - Delivery class: disposable PostgreSQL qualification plus operator-script correctness
 
 ## Problem
 
-The repository had no accepted current-main backup/restore rehearsal. The operator scripts also exposed ten reproducible failure modes:
+The repository had no accepted current-main backup/restore rehearsal. The operator scripts also exposed eleven reproducible failure modes:
 
 1. a SQLAlchemy `postgresql+psycopg://` URL was passed directly to native clients;
 2. restore could continue after SQL errors;
@@ -21,7 +21,8 @@ The repository had no accepted current-main backup/restore rehearsal. The operat
 7. concurrent same-second backup publication could nest one bundle inside another final directory;
 8. libpq URI query parameters could override the visibly validated host, port or database;
 9. HTTP redirects could be accepted as successful health responses;
-10. a regression asserted the fake `psql` marker only after its temporary directory had already been removed.
+10. a regression asserted the fake `psql` marker only after its temporary directory had already been removed;
+11. a successful transactional restore followed by a failed Alembic post-check could omit the already-applied database mutation from rollback state.
 
 These defects prevent a defensible claim that a test candidate is recoverable.
 
@@ -43,7 +44,7 @@ The restore path validates regular files, manifest schema/format/name/size/SHA-2
 
 ### Explicit rollback state
 
-Rollback output is structured. `DATABASE_RESTORED`, `IMAGE_RESTARTED` and `HEALTH_VERIFIED` are emitted only after their operations succeed. An EXIT trap writes `outcome=fail`, a fixed `failure_stage`, and all completed states when a later operation fails. Health verification requires explicit HTTP 2xx from both endpoints; redirects are failures. No generic success string is allowed.
+Rollback output is structured. `DATABASE_RESTORE_APPLIED` is emitted immediately after a successful single-transaction `pg_restore`; `DATABASE_RESTORED` is emitted only after the exact Alembic-head post-check also succeeds. `IMAGE_RESTARTED` and `HEALTH_VERIFIED` are emitted only after their operations succeed. An EXIT trap writes `outcome=fail`, a fixed `failure_stage`, and all completed states when a later operation fails. Health verification requires explicit HTTP 2xx from both endpoints; redirects are failures. No generic success string is allowed.
 
 ### Migration repair
 
@@ -78,6 +79,7 @@ One pgvector PostgreSQL 16 service hosts one admin database and two disposable d
 - Alembic `stamp` as automatic repair: can hide schema drift.
 - Treating printed rollback instructions as completion: no operational proof.
 - Writing rollback status only on success: loses partial-mutation evidence.
+- Treating an applied restore as unmodified merely because the post-restore identity check failed.
 - Treating any non-error HTTP status, including redirects, as readiness proof.
 
 ## Acceptance
