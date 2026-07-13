@@ -90,6 +90,33 @@ class GitHistoryFinalHardeningTests(unittest.TestCase):
         self.assertIn("security-git-history-exit-status.json", workflow[failure_step:enforce_step])
         self.assertNotIn("security-git-history-scan.json", workflow[failure_step:enforce_step])
 
+    def test_workflow_recreates_artifact_workspace_and_requires_regular_report(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "git-history-secret-assurance.yml").read_text(
+            encoding="utf-8"
+        )
+
+        init_step = workflow.index("- name: Initialize trusted evidence workspace")
+        scan_step = workflow.index("- name: Scan target complete reachable history with trusted code")
+        ensure_step = workflow.index("- name: Ensure bounded history report exists")
+        validate_step = workflow.index("- name: Validate bounded history evidence with trusted code")
+        clean_step = workflow.index("- name: Upload clean bounded history evidence")
+        failure_step = workflow.index("- name: Upload sanitized history failure status")
+
+        self.assertLess(init_step, scan_step)
+        init_block = workflow[init_step:scan_step]
+        self.assertIn("rm -rf -- artifacts", init_block)
+        self.assertIn("install -d -m 700 -- artifacts", init_block)
+
+        ensure_block = workflow[ensure_step:validate_step]
+        self.assertIn('REPORT="artifacts/security-git-history-scan.json"', ensure_block)
+        self.assertIn('[[ ! -f "$REPORT" || -L "$REPORT" ]]', ensure_block)
+        self.assertIn('rm -rf -- "$REPORT"', ensure_block)
+        self.assertIn('test -f "$REPORT"', ensure_block)
+        self.assertIn('test ! -L "$REPORT"', ensure_block)
+
+        clean_block = workflow[clean_step:failure_step]
+        self.assertIn("steps.artifact_scan.outputs.report_regular == 'true'", clean_block)
+
     def test_pull_request_target_uses_trusted_base_code_against_untrusted_target(self) -> None:
         workflow = (REPO_ROOT / ".github" / "workflows" / "git-history-secret-assurance.yml").read_text(
             encoding="utf-8"
