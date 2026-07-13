@@ -1,5 +1,6 @@
 name: Apply Tenant ORM constraint correction
 
+# One-shot trusted branch repair for PR #673. The target Head lock prevents replay.
 on:
   push:
     branches:
