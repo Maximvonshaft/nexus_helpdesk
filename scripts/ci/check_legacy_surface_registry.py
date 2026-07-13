@@ -49,7 +49,7 @@ DOMAIN_KEYS = {
     "selectors",
     "authoritative_refs",
 }
-SELECTOR_KEYS = {"paths", "globs", "content_rules"}
+SELECTOR_KEYS = {"paths", "globs", "path_regexes", "content_rules"}
 CONTENT_RULE_KEYS = {"markers", "path_globs"}
 DISCOVERY_KEYS = {
     "id",
@@ -89,10 +89,17 @@ def _string_list(value: Any, *, field: str, allow_empty: bool = True) -> list[st
 def _validate_selectors(value: Any, *, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RegistryValidationError(f"{field}_must_be_object")
-    _exact_keys(value, SELECTOR_KEYS, field=field)
-    paths = _string_list(value["paths"], field=f"{field}.paths")
-    globs = _string_list(value["globs"], field=f"{field}.globs")
-    rules = value["content_rules"]
+    normalized_value = {**value, "path_regexes": value.get("path_regexes", [])}
+    _exact_keys(normalized_value, SELECTOR_KEYS, field=field)
+    paths = _string_list(normalized_value["paths"], field=f"{field}.paths")
+    globs = _string_list(normalized_value["globs"], field=f"{field}.globs")
+    path_regexes = _string_list(normalized_value["path_regexes"], field=f"{field}.path_regexes")
+    for index, pattern in enumerate(path_regexes):
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise RegistryValidationError(f"{field}.path_regexes[{index}]_invalid") from exc
+    rules = normalized_value["content_rules"]
     if not isinstance(rules, list):
         raise RegistryValidationError(f"{field}.content_rules_must_be_list")
 
@@ -111,9 +118,14 @@ def _validate_selectors(value: Any, *, field: str) -> dict[str, Any]:
             }
         )
 
-    if not paths and not globs and not normalized_rules:
+    if not paths and not globs and not path_regexes and not normalized_rules:
         raise RegistryValidationError(f"{field}_must_have_selector")
-    return {"paths": paths, "globs": globs, "content_rules": normalized_rules}
+    return {
+        "paths": paths,
+        "globs": globs,
+        "path_regexes": path_regexes,
+        "content_rules": normalized_rules,
+    }
 
 
 def validate_registry(raw: Any) -> dict[str, Any]:
@@ -287,6 +299,8 @@ def _read_text_bounded(repo_root: Path, path: str, *, max_bytes: int) -> str | N
 def _domain_matches(domain: Mapping[str, Any], path: str, *, read_text: Callable[[str], str | None]) -> bool:
     selectors = domain["selectors"]
     if _path_matches(path, exact=selectors["paths"], globs=selectors["globs"]):
+        return True
+    if any(re.search(pattern, path) for pattern in selectors["path_regexes"]):
         return True
     for rule in selectors["content_rules"]:
         if any(_glob_matches(path, pattern) for pattern in rule["path_globs"]):
