@@ -24,6 +24,7 @@ MAX_BLOB_PATH_PAIRS = 2_000_000
 MAX_PATH_LENGTH = 240
 _OBJECT_FORMATS = {"sha1": 40, "sha256": 64}
 _SAFE_REASON_RE = re.compile(r"^[a-z0-9_]{3,120}$")
+_SAFE_SUFFIX_RE = re.compile(r"^\.[a-z0-9]{1,16}$")
 
 
 class HistoryScanError(RuntimeError):
@@ -67,10 +68,15 @@ class HistoryFinding:
         }
 
 
+def _safe_path_suffix(path: str) -> str:
+    suffix = PurePosixPath(path).suffix.lower()
+    return suffix if _SAFE_SUFFIX_RE.fullmatch(suffix) else ""
+
+
 def _path_evidence(path: str) -> dict[str, str]:
     return {
         "path_sha256": hashlib.sha256(path.encode("utf-8", errors="replace")).hexdigest(),
-        "path_suffix": PurePosixPath(path).suffix.lower()[:24],
+        "path_suffix": _safe_path_suffix(path),
     }
 
 
@@ -131,18 +137,12 @@ def _bounded_path(raw: bytes) -> str:
         raise HistoryScanError("git_object_path_invalid")
     if len(value) > MAX_PATH_LENGTH:
         digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
-        suffix = PurePosixPath(value).suffix.lower()[:24]
+        suffix = _safe_path_suffix(value)
         return f"long-path/{digest}{suffix}"
     return value
 
 
 def parse_object_listing(raw: bytes, *, object_id_length: int) -> dict[str, str]:
-    """Return one bounded fallback path per reachable object.
-
-    `rev-list --objects` is used for the complete object set. Complete Blob path
-    aliases are collected separately from every reachable root Tree.
-    """
-
     paths: dict[str, str] = {}
     for line in raw.splitlines():
         if not line:
@@ -300,8 +300,6 @@ def _root_tree_ids(root: Path, *, object_id_length: int) -> tuple[str, ...]:
             )
         )
 
-    # Branches and tags may directly reference a Tree rather than a commit.
-    # Peel every allowed reference object to a Tree when possible.
     for object_id in _reference_object_ids(root, object_id_length=object_id_length):
         tree_id = _try_peel_tree(
             root,
@@ -439,17 +437,34 @@ def iter_blob_contents(
             raise HistoryScanError("git_batch_failed")
 
 
+def _occurrence_fingerprint(base_fingerprint: str, occurrence: int) -> str:
+    if occurrence == 0:
+        return base_fingerprint
+    payload = f"{base_fingerprint}\0occurrence\0{occurrence}".encode("ascii")
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
 def _iter_secret_findings(relative_path: str, text: str) -> Iterator[Finding]:
     for line_no, line in enumerate(text.splitlines(), start=1):
         if scanner._is_placeholder(line):
             continue
+        occurrences: Counter[tuple[str, str]] = Counter()
         for rule, pattern in scanner._PATTERNS:
             for match in pattern.finditer(line):
+                base_fingerprint = scanner._fingerprint(
+                    rule,
+                    relative_path,
+                    line_no,
+                    match.group(0),
+                )
+                occurrence_key = (rule, base_fingerprint)
+                occurrence = occurrences[occurrence_key]
+                occurrences[occurrence_key] += 1
                 yield Finding(
                     rule,
                     relative_path,
                     line_no,
-                    scanner._fingerprint(rule, relative_path, line_no, match.group(0)),
+                    _occurrence_fingerprint(base_fingerprint, occurrence),
                 )
 
 
@@ -557,9 +572,6 @@ def scan_repository_history(
         if blob.size <= max_blob_bytes:
             eligible.append(blob)
         else:
-            # A suffix is not evidence of binary content. Oversized Blobs remain
-            # incomplete until the configured ceiling is raised and bytes are
-            # actually inspected.
             unscanned_oversized.append(blob)
 
     allowlist = load_allowlist(allowlist_path)
