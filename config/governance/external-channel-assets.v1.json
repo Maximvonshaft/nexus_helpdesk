@@ -1,6 +1,6 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-13.4",
+  "inventory_version": "2026-07-13.5",
   "audited_main_sha": "df4863d4e4c77b47d694d4eca3f655fa93a8e67b",
   "discovery_tokens": [
     "ExternalChannel",
@@ -245,6 +245,7 @@
     {
       "path": null,
       "paths": [
+        "config/governance/actions-authority.v1.json",
         "config/governance/legacy-surface-domains.v1.json",
         "scripts/ci/tests/test_check_legacy_surface_registry.py"
       ],
@@ -252,7 +253,7 @@
       "asset_type": "cross_domain_governance_registry",
       "disposition": "active_compatibility",
       "owner": "release-governance",
-      "rationale": "Current cross-domain legacy controls explicitly coordinate ExternalChannel compatibility ownership and must remain classified with this domain inventory.",
+      "rationale": "Current cross-domain governance registries explicitly coordinate ExternalChannel workflow or compatibility ownership and must remain classified with this domain inventory.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": []
