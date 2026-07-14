@@ -43,12 +43,10 @@ test('there is exactly one canonical operator product spine and route', () => {
   const value = contract()
   assert.equal(value.product.canonical_product_spine, 'case_resolution')
   assert.equal(value.product.canonical_operator_route, '/workspace')
-
   const canonicalOperatorRoutes = value.route_authority.filter(
     (item) => item.domain === 'operator_work' && item.status === 'canonical',
   )
   assert.deepEqual(canonicalOperatorRoutes.map((item) => item.route), ['/workspace'])
-
   const routes = byRoute(value.route_authority)
   assert.equal(routes.get('/webchat')?.status, 'redirect_only')
   for (const route of ['/knowledge', '/channels', '/runtime', '/control-tower']) {
@@ -59,20 +57,16 @@ test('there is exactly one canonical operator product spine and route', () => {
 test('new unowned route files cannot create another product spine', () => {
   const value = contract()
   const allowed = new Set(value.allowed_route_files)
-  const actual = readdirSync(ROUTES_DIR)
-    .filter((name) => name.endsWith('.tsx'))
-    .sort()
-
+  const actual = readdirSync(ROUTES_DIR).filter((name) => name.endsWith('.tsx')).sort()
   const unknown = actual.filter((name) => !allowed.has(name))
   assert.deepEqual(unknown, [], `unowned route files found: ${unknown.join(', ')}`)
-
   const router = read(join(WEBAPP_ROOT, 'src', 'router.tsx'))
   const importedRoutes = [...router.matchAll(/from ['"]@\/routes\/([^'"]+)['"]/g)].map((match) => `${match[1]}.tsx`)
   const unknownImports = importedRoutes.filter((name) => !allowed.has(name))
   assert.deepEqual(unknownImports, [], `router imports an unowned route: ${unknownImports.join(', ')}`)
 })
 
-test('all current, retired, and orphaned operator surfaces have explicit dispositions', () => {
+test('all current and retired operator surfaces have explicit dispositions', () => {
   const surfaces = byId(contract().implementation_surfaces)
   assert.equal(surfaces.get('modern_operator_workspace')?.disposition, 'CANONICAL')
 
@@ -83,11 +77,13 @@ test('all current, retired, and orphaned operator surfaces have explicit disposi
     assert.equal(existsSync(join(REPO_ROOT, path)), false, `retired console path still exists: ${path}`)
   }
 
-  const debugConsole = surfaces.get('ai_debug_console')
-  assert.equal(debugConsole?.disposition, 'VALUABLE_ORPHAN_MIGRATE_TO_RUNTIME')
-  assert.equal(debugConsole?.deleted, false)
-  assert.equal(existsSync(join(REPO_ROOT, debugConsole.path)), true)
-  assert.equal(debugConsole?.target, 'webapp/src/features/runtime/ai-debug')
+  const audit = surfaces.get('ai_evidence_audit')
+  assert.equal(audit?.disposition, 'CANONICAL_RUNTIME_CAPABILITY')
+  assert.equal(existsSync(join(REPO_ROOT, audit.path)), true)
+  for (const path of audit?.deleted_legacy_paths ?? []) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), false, `legacy AI debug path still exists: ${path}`)
+  }
+  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'features', 'support-console')), false)
 
   assert.equal(surfaces.get('legacy_static_admin')?.disposition, 'LEGACY_ACTIVE_MIGRATE_THEN_DELETE')
   assert.equal(surfaces.get('public_webchat_widget')?.disposition, 'SEPARATE_PUBLIC_SURFACE')
@@ -112,7 +108,6 @@ test('transport duplication is frozen and must converge on one target', () => {
 test('login presentation is operational rather than promotional or AI-styled', () => {
   const login = read(join(WEBAPP_ROOT, 'src', 'routes', 'login.tsx'))
   const authCss = read(join(WEBAPP_ROOT, 'src', 'styles', 'auth.css'))
-
   assert.match(login, /客服与运营工作台/)
   assert.match(login, /可见国家、渠道和操作权限由当前账号决定/)
   assert.doesNotMatch(login, /从可信事实到可验证结案/)
