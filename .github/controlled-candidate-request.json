@@ -1,10 +1,10 @@
 {
   "schema": "nexus.osr.controlled-candidate-request.v1",
-  "request_id": "candidate-20260714t023500-0200",
+  "request_id": "candidate-20260714t010000z-final-bundle",
   "intent": "dispatch-controlled-candidate",
   "candidate_workflow": "controlled-candidate-convergence.yml",
   "requested_ref": "main",
-  "base_sha": "3bc06eba81db79f7f693e970e39944c07cd8eebe",
+  "base_sha": "d257ef3baf6fca12c662809581a21190559f41e5",
   "deployment_authorized": false,
   "production_authority": false,
   "external_actions_authorized": false,
