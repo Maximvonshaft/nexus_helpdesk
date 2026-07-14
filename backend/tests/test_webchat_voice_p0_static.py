@@ -6,7 +6,9 @@ VOICE_SERVICE = ROOT / "backend" / "app" / "services" / "webchat_voice_service.p
 VOICE_API = ROOT / "backend" / "app" / "api" / "webchat_voice.py"
 RATE_LIMIT = ROOT / "backend" / "app" / "services" / "webchat_rate_limit.py"
 WEBCHAT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat.tsx"
-SUPPORT_CONSOLE = ROOT / "webapp" / "src" / "features" / "support-console" / "SupportConsolePage.tsx"
+WORKSPACE = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "OperatorWorkspacePage.tsx"
+CONVERSATION = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "components" / "ConversationPanel.tsx"
+OVERVIEW = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "components" / "CaseOverview.tsx"
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 WIDGET_JS = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
 
@@ -29,43 +31,35 @@ def test_backend_p0_routes_and_metrics_are_present():
     assert '"/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject"' in api
 
 
-def test_frontend_p0_queue_reject_and_text_fallback_are_present():
+def test_frontend_text_fallback_and_single_operator_route_are_present():
     webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
-    console = SUPPORT_CONSOLE.read_text(encoding="utf-8")
+    workspace = WORKSPACE.read_text(encoding="utf-8")
+    conversation = CONVERSATION.read_text(encoding="utf-8")
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
-    assert "SupportConsolePage" in webchat_route
-    assert "supportApi.supportConversationReply" in console
-    assert "当前不能直接回复" in console
+    assert "redirect({ to: getSupportToken() ? '/workspace' : '/login'" in webchat_route
+    assert "ConversationPanel" in workspace
+    assert "operatorWorkspaceApi.reply" in conversation
+    assert "当前案例没有可回复的客户会话" in conversation
     assert "nd-webchat-voice" in widget
     assert "/webchat/live/ws" in widget
     assert "startLiveVoice" in widget
     assert "stopLiveVoice" in widget
-    assert "visitor_token" not in console
-    assert "LIVEKIT_API_SECRET" not in console
+    assert "visitor_token" not in conversation
+    assert "LIVEKIT_API_SECRET" not in conversation
 
-def test_voice_call_evidence_cards_are_present_and_do_not_render_secrets():
-    webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
-    console = SUPPORT_CONSOLE.read_text(encoding="utf-8")
+
+def test_case_evidence_is_present_and_does_not_render_secrets():
+    overview = OVERVIEW.read_text(encoding="utf-8")
     widget = WIDGET_JS.read_text(encoding="utf-8")
-    combined = console + "\n" + widget
+    combined = overview + "\n" + widget
 
-    assert "SupportConsolePage" in webchat_route
-    assert "supportMemory" in console
-    assert "证据" in console
-    for marker in [
-        "runtime_trace",
-        "runtime_usage",
-        "evidence_timeline",
-        "tracking",
-        "voiceStatus",
-        "nd-webchat-voice-transcript",
-    ]:
-        assert marker in combined
-
-    evidence_blocks = console.split("supportMemory", 1)[-1]
+    assert "事实与待确认信息" in overview
+    assert "evidence_timeline" in overview
+    assert "nd-webchat-voice-transcript" in widget
     forbidden = ["participant_token", "visitor_token", "LIVEKIT_API_SECRET", "api_secret"]
-    assert not any(marker in evidence_blocks for marker in forbidden)
+    assert not any(marker in overview for marker in forbidden)
+    assert "startLiveVoice" in combined
 
 
 def test_voice_entry_delegates_to_consolidated_widget():
