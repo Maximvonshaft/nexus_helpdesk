@@ -48,6 +48,19 @@ test('one apiClient owns transport while typed domain adapters delegate', () => 
     assert.doesNotMatch(source, /helpdesk-webapp-token/)
   }
 })
+
+test('the static operator frontend is permanently retired with machine evidence', () => {
+  assert.equal(existsSync(join(REPO_ROOT, 'frontend')), false)
+  const retirement = JSON.parse(read(join(WEBAPP_ROOT, 'design', 'legacy-frontend-retirement.v1.json')))
+  assert.equal(retirement.disposition, 'SUPERSEDED_DELETE')
+  assert.deepEqual(retirement.deleted_paths.sort(), [
+    'frontend/app.js',
+    'frontend/index.html',
+    'frontend/style.css',
+  ])
+  assert.equal(retirement.canonical_replacements.cases, '/workspace')
+  assert.equal(retirement.canonical_replacements.overview, '/control-tower')
+})
 '''
     marker = "\ntest('login presentation is operational rather than promotional or AI-styled', () => {"
     if additional.strip() not in test:
