@@ -1,27 +1,24 @@
-rm 'frontend/app.js'
-rm 'frontend/index.html'
-rm 'frontend/style.css'
+rm '.github/workflows/frontend-consolidation-diagnostics.yml'
+rm '.github/workflows/frontend-convergence-finalizer.yml'
+rm '.github/workflows/generate-radix-lockfile.yml'
+rm 'docs/ai/frontend-convergence-finalizer-diagnostic.txt'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-00.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-01.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-02.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-03.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-04.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-05.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-06.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-07.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-08.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-09.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-10.pyfrag'
+rm 'scripts/ci/.frontend-convergence-finalizer/part-11.pyfrag'
 Traceback (most recent call last):
-  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 827, in <module>
-  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 816, in main
-  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 794, in assert_zero_legacy_consumers
-RuntimeError: legacy frontend references remain:
-README.md:47:The legacy static `frontend/`, duplicate Support Console, and duplicate `shared/ui` component tree have been removed. A missing modern build fails closed rather than selecting another frontend.
-backend/scripts/smoke_verify_round27.py:40:    assert not LEGACY_FRONTEND.exists(), 'legacy frontend/ must be deleted'
-config/governance/external-channel-assets.v1.json:18:    "frontend/",
-config/governance/external-channel-assets.v1.json:195:        "frontend/app.js",
-config/governance/external-channel-assets.v1.json:196:        "frontend/index.html",
-config/governance/legacy-surface-domains.v1.json:62:          "frontend/**"
-config/governance/legacy-surface-domains.v1.json:281:        "frontend/**"
-docs/ai/skills/nexus-codebase-rationalization/SKILL.md:139:- duplicate frontend/design-system authority checks;
-docs/ai/skills/nexus-codebase-rationalization/SKILL.md:161:`webapp/` and the accepted product/design authority govern survival. Deletion of `frontend/`, legacy styles, routes, or components remains owned by #573 and requires route, authorization, accessibility, degraded-state, build, and deployment parity.
-docs/deployment-runbook.md:13:- `frontend/` is legacy fallback only until the React webapp is fully signed off.
-docs/engineering/frontend-product-foundation.md:55:7. Remove redundant global/feature authorities and the legacy `frontend/` through #573 after parity evidence.
-docs/legacy-frontend-deprecation.md:5:`frontend/` is a fallback only. Do not add new product features to `frontend/`.
-docs/superpowers/specs/2026-07-12-candidate-identity-readiness-design.md:61:Other bounded readiness reasons include `release_metadata_incomplete` and the existing storage/frontend/signing failures.
-docs/superpowers/specs/2026-07-12-frontend-product-foundation-design.md:146:5. Retire legacy classes and `frontend/` only after #573 parity evidence.
-scripts/ci/.frontend-convergence-finalizer/part-09.pyfrag:52:    grep = run("git", "grep", "-n", "-I", "-e", "frontend/", "--", ":!docs/ai/codebase-rationalization-inventory.v1.yaml", check=False, capture=True)
-scripts/ci/.frontend-convergence-finalizer/part-11.pyfrag:16:    result = run("git", "grep", "-n", "-I", "-e", "frontend/", check=False, capture=True)
-scripts/ci/tests/test_check_external_channel_retirement.py:78:            "frontend/",
-scripts/ci/tests/test_check_legacy_surface_registry.py:144:                'selectors': {'paths': ['frontend/obsolete.js'], 'globs': [], 'content_rules': []},
-scripts/ci/tests/test_check_legacy_surface_registry.py:149:        result = legacy.scan_registry(registry, ['frontend/obsolete.js'], read_text=lambda _: '')
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 878, in <module>
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 867, in main
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 845, in assert_zero_legacy_consumers
+RuntimeError: legacy frontend executable consumers remain:
+webapp/tests/operator-console-consolidation-contract.test.mjs:159:    'frontend/app.js',
+webapp/tests/operator-console-consolidation-contract.test.mjs:160:    'frontend/index.html',
+webapp/tests/operator-console-consolidation-contract.test.mjs:161:    'frontend/style.css',
