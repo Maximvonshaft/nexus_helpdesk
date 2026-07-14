@@ -44,19 +44,31 @@ jobs:
           python -m pip install -r backend/requirements.txt
           python -m pip install pytest pytest-asyncio jsonschema cryptography httpx
 
-      - name: Repository hygiene gate
+      - name: Reject tracked generated local artifacts
         run: |
           set -Eeuo pipefail
-          if git ls-files | grep -E '^(\.venv/|__pycache__/|\.pytest_cache/)'; then
+          tracked="$(git ls-files | grep -E '^(\.venv/|__pycache__/|\.pytest_cache/)' || true)"
+          if [ -n "${tracked}" ]; then
             echo 'ERROR: generated local artifacts are tracked by Git.'
+            printf '%s\n' "${tracked}" | head -n 20
             exit 1
           fi
+
+      - name: Require virtualenv ignore contract
+        run: |
+          set -Eeuo pipefail
           if ! grep -qxF '.venv/' .gitignore; then
             echo 'ERROR: .venv/ must be ignored.'
             exit 1
           fi
-          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts; then
+
+      - name: Reject retired provider and canned-reply markers
+        run: |
+          set -Eeuo pipefail
+          matches="$(git grep -lE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts || true)"
+          if [ -n "${matches}" ]; then
             echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
+            printf '%s\n' "${matches}" | head -n 40
             exit 1
           fi
 
