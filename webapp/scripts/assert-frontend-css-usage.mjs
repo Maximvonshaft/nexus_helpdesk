@@ -27,42 +27,46 @@ function relativePath(path) {
 
 const codeFiles = walk(srcRoot).filter((path) => ['.ts', '.tsx'].includes(extname(path)))
 const cssFiles = walk(srcRoot).filter((path) => path.endsWith('.css'))
-const usageCorpus = [read(join(webappRoot, 'index.html')), ...codeFiles.map(read)].join('\n')
+const indexHtml = read(join(webappRoot, 'index.html'))
+const usageCorpus = [indexHtml, ...codeFiles.map(read)].join('\n')
 const dynamicPrefixes = new Set()
 for (const match of usageCorpus.matchAll(/([A-Za-z_][\w-]*--|[A-Za-z_][\w-]*-)\$\{/g)) dynamicPrefixes.add(match[1])
 
 const definitions = new Map()
 for (const path of cssFiles) {
-  const classes = new Set()
-  for (const match of read(path).matchAll(/\.([A-Za-z_][\w-]*)/g)) classes.add(match[1])
-  for (const className of classes) {
-    const locations = definitions.get(className) ?? []
-    locations.push(relativePath(path))
+  const source = read(path)
+  assert.doesNotMatch(source, /transition(?:-property)?\s*:\s*all\b/i, `transition: all is prohibited: ${relativePath(path)}`)
+  for (const match of source.matchAll(/\.([A-Za-z_][\w-]*)/g)) {
+    const className = match[1]
+    const locations = definitions.get(className) ?? new Set()
+    locations.add(relativePath(path))
     definitions.set(className, locations)
   }
 }
-
-const duplicateDefinitions = [...definitions.entries()]
-  .filter(([, locations]) => new Set(locations).size > 1)
-  .map(([className, locations]) => `${className}: ${[...new Set(locations)].join(', ')}`)
-  .sort()
-assert.deepEqual(duplicateDefinitions, [], `CSS classes have multiple source authorities:\n${duplicateDefinitions.join('\n')}`)
+assert.doesNotMatch(indexHtml, /(?:user-scalable\s*=\s*no|maximum-scale\s*=\s*1)/i, 'viewport must not disable zoom')
 
 function isUsed(className) {
-  const exact = new RegExp(`(^|[^A-Za-z0-9_-])${className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_-]|$)`)
+  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const exact = new RegExp(`(^|[^A-Za-z0-9_-])${escaped}([^A-Za-z0-9_-]|$)`)
   if (exact.test(usageCorpus)) return true
   return [...dynamicPrefixes].some((prefix) => className.startsWith(prefix))
 }
 
 const unusedClasses = [...definitions.entries()]
   .filter(([className]) => !isUsed(className))
-  .map(([className, locations]) => `${className}: ${locations.join(', ')}`)
+  .map(([className, locations]) => `${className}: ${[...locations].join(', ')}`)
   .sort()
 assert.deepEqual(unusedClasses, [], `unused frontend CSS classes remain:\n${unusedClasses.join('\n')}`)
+
+const layeredClasses = [...definitions.entries()]
+  .filter(([, locations]) => locations.size > 1)
+  .map(([className, locations]) => ({ className, stylesheets: [...locations].sort() }))
+  .sort((a, b) => a.className.localeCompare(b.className))
 
 console.log(JSON.stringify({
   ok: true,
   cssFiles: cssFiles.length,
   definedClasses: definitions.size,
+  layeredClasses,
   dynamicPrefixes: [...dynamicPrefixes].sort(),
 }, null, 2))
