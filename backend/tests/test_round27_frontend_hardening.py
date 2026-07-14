@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,16 +60,19 @@ def test_frontend_routes_expose_canonical_product_domains_and_transitional_webch
     assert '客服与运营工作台' in shell
 
 
-def test_frontend_governance_is_concentrated_in_shared_shell_support_api_and_login_boundary():
+def test_frontend_governance_is_concentrated_in_shell_transport_and_login_boundary():
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
+    api_client = (PROJECT / 'webapp' / 'src' / 'lib' / 'apiClient.ts').read_text()
     support_api = (PROJECT / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text()
     shell = (PROJECT / 'webapp' / 'src' / 'app' / 'AppShell.tsx').read_text()
     channels = (PROJECT / 'webapp' / 'src' / 'features' / 'channels' / 'ChannelsPage.tsx').read_text()
     runtime = (PROJECT / 'webapp' / 'src' / 'features' / 'runtime' / 'RuntimePage.tsx').read_text()
 
     assert "redirect({ to: '/login' })" in webchat
-    assert 'Authorization' in support_api
-    assert 'clearSupportToken()' in support_api
+    assert 'Authorization' in api_client
+    assert 'clearSupportToken()' in api_client
+    assert "from '@/lib/apiClient'" in support_api
+    assert 'fetch(' not in support_api
     assert '/api/auth/me' in support_api
     assert '/api/admin/provider-runtime/status' in support_api
     assert '/api/admin/channel-accounts' in support_api
@@ -116,8 +120,12 @@ def test_ci_readiness_checks_are_blocking():
     assert 'validate_production_readiness.py || true' not in pg_ci
     assert 'Strict readiness' in backend_ci
     assert 'Strict production-like readiness' in pg_ci
-    assert 'refusing legacy frontend fallback' in settings
+    assert 'frontend_dist/index.html must exist in production' in settings
+    assert 'legacy_frontend_root' not in settings
+    assert 'frontend_uses_legacy_fallback' not in settings
     assert "'frontend': frontend_readiness" in main
+    assert "'active_root': 'frontend_dist'" in main
+    assert "'active_root': 'legacy'" not in main
 
 
 def test_deployment_templates_prevent_server_drift():
@@ -137,18 +145,15 @@ def test_deployment_templates_prevent_server_drift():
     assert 'git reset --hard' in readme
 
 
-def test_legacy_frontend_copy_is_business_friendly():
-    legacy_index = (PROJECT / 'frontend' / 'index.html').read_text()
-    legacy_app = (PROJECT / 'frontend' / 'app.js').read_text()
+def test_static_operator_product_is_deleted_and_governed_by_manifest():
+    manifest = json.loads((PROJECT / 'webapp' / 'design' / 'operator-console-consolidation.v1.json').read_text())
+    surfaces = {item['id']: item for item in manifest['implementation_surfaces']}
+    static_admin = surfaces['legacy_static_admin']
 
-    assert '客服工作台 final console' not in legacy_index
-    assert 'Issue and customer context' not in legacy_index
-    assert 'Human workbench' not in legacy_index
-    assert 'Action center' not in legacy_index
-    assert 'Auto inject to AI' not in legacy_index
-    assert 'Go to overview' not in legacy_app
-    assert 'Refresh all data' not in legacy_app
-    assert 'Issue summary and customer request are required' not in legacy_app
+    assert static_admin['disposition'] == 'SUPERSEDED_DELETE'
+    assert static_admin['deleted'] is True
+    for path in static_admin['deleted_paths']:
+        assert not (PROJECT / path).exists()
 
 
 def test_round27_smoke_script_exists_and_checks_public_copy():
