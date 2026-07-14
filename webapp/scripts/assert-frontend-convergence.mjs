@@ -126,14 +126,22 @@ function collectJsxVisibleStrings(sourceFile) {
   return values
 }
 
-function collectStringLiterals(sourceFile) {
+const visiblePropertyNames = new Set(['label', 'detail', 'title', 'description', 'message', 'summary'])
+function collectPresentationStrings(sourceFile) {
   const values = []
-  function visit(node) {
+  function propertyName(node) {
+    if (ts.isIdentifier(node) || ts.isStringLiteral(node)) return node.text
+    return ''
+  }
+  function collectValue(node) {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) values.push(node.text)
     else if (ts.isTemplateExpression(node)) {
       values.push(node.head.text)
       for (const span of node.templateSpans) values.push(span.literal.text)
     }
+  }
+  function visit(node) {
+    if (ts.isPropertyAssignment(node) && visiblePropertyNames.has(propertyName(node.name))) collectValue(node.initializer)
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
@@ -150,7 +158,7 @@ for (const path of codeFiles.filter((value) => value.endsWith('.tsx'))) {
 }
 for (const path of codeFiles.filter((value) => value.endsWith('.ts') && /(?:Presentation|Status|Copy|Map|Labels|Messages)\.ts$/i.test(basename(value)))) {
   const sourceFile = ts.createSourceFile(path, read(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  for (const value of collectStringLiterals(sourceFile)) {
+  for (const value of collectPresentationStrings(sourceFile)) {
     if (forbiddenVisibleTerms.test(value)) visibleFindings.push(`${relativePath(path)}: ${value.trim()}`)
   }
 }
