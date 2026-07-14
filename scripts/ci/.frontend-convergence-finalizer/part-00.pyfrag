@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+from typing import Iterable
+
+ROOT = Path(__file__).resolve().parents[2]
+WEBAPP = ROOT / "webapp"
+BASE_SHA = "4bc76c3607db2732388d33634bc26968a880ee07"
+DONOR_SHA = "4906188ac77d5d6c1e8409bbb1d5d7e519674a73"
+CANONICAL_BRANCH = "work/744-canonical-operator-console-consolidation"
+
+
+def run(*args: str, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(args),
+        cwd=ROOT,
+        check=check,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def write(path: str, content: str) -> None:
+    target = ROOT / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def replace_once(text: str, old: str, new: str, *, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"{label}: expected one occurrence, found {count}")
+    return text.replace(old, new, 1)
+
+
+def git_show(sha: str, path: str) -> str:
+    result = run("git", "show", f"{sha}:{path}", capture=True)
+    return result.stdout
+
+
+def path_exists_at(sha: str, path: str) -> bool:
+    return run("git", "cat-file", "-e", f"{sha}:{path}", check=False).returncode == 0
+
+
+def current_differs_from_base(path: str) -> bool:
+    return run("git", "diff", "--quiet", BASE_SHA, "--", path, check=False).returncode != 0
+
+
+def selective_three_way(path: str) -> None:
+    """Apply only the donor delta for one declared consumer file."""
+    if not path_exists_at(BASE_SHA, path) or not path_exists_at(DONOR_SHA, path):
+        return
+    donor = git_show(DONOR_SHA, path)
+    if not current_differs_from_base(path):
+        write(path, donor)
+        return
+    base = git_show(BASE_SHA, path)
+    current = read(path)
+    tmp = ROOT / ".tmp-frontend-convergence"
+    tmp.mkdir(exist_ok=True)
