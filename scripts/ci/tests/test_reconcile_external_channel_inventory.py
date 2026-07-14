@@ -4,6 +4,8 @@ import unittest
 
 from scripts.ci.check_external_channel_retirement import InventoryError
 from scripts.ci.reconcile_external_channel_inventory import (
+    RECONCILIATION_CONTROL_PATHS,
+    add_reconciliation_control_rule,
     canonical_deleted_paths,
     reconcile_inventory_payload,
 )
@@ -103,6 +105,15 @@ class CanonicalExternalChannelReconciliationTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(InventoryError, "canonical_transport_target_retired"):
             canonical_deleted_paths(target_retired_manifest)
+
+    def test_reconciliation_controls_are_fixed_and_must_be_tracked(self) -> None:
+        payload = {"rules": []}
+        add_reconciliation_control_rule(payload, RECONCILIATION_CONTROL_PATHS)
+        self.assertEqual(payload["rules"][0]["paths"], list(RECONCILIATION_CONTROL_PATHS))
+        self.assertEqual(payload["rules"][0]["disposition"], "retirement_control")
+
+        with self.assertRaisesRegex(InventoryError, "canonical_reconciliation_control_missing"):
+            add_reconciliation_control_rule({"rules": []}, RECONCILIATION_CONTROL_PATHS[:1])
 
 
 if __name__ == "__main__":
