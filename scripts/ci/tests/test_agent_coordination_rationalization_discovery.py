@@ -164,6 +164,20 @@ def test_ledger_rejects_oversized_input(tmp_path: Path) -> None:
         discovery._load_ledger_classifications(ledger)
 
 
+def test_repository_ledger_consumes_the_canonical_console_manifest() -> None:
+    root = Path(__file__).resolve().parents[3]
+    ledger = discovery._load_ledger_document(
+        root / "docs/ai/codebase-rationalization-inventory.v1.yaml"
+    )
+    authority = ledger["authority"]
+
+    assert authority["canonical_console_pr"] == 748
+    assert authority["canonical_console_manifest"] == (
+        "webapp/design/operator-console-consolidation.v1.json"
+    )
+    assert "single repository rationalization authority" in authority["rule"]
+
+
 def test_repository_discovery_is_fully_classified() -> None:
     root = Path(__file__).resolve().parents[3]
     result = discovery.scan_repository(
