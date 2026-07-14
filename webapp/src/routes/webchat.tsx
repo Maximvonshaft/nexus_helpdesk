@@ -1,27 +1,55 @@
 import { useEffect } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
-import { getSupportToken } from '@/lib/supportApi'
+import { getSupportToken, supportApi } from '@/lib/supportApi'
+
+function replaceWithWorkspace(queueId?: string | null) {
+  const destination = queueId ? `/workspace?queue=${encodeURIComponent(queueId)}` : '/workspace'
+  window.location.replace(destination)
+}
 
 function WebchatCompatibilityRedirect() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    let active = true
     const params = new URLSearchParams(window.location.search)
     const tab = params.get('tab')
     if (tab === 'knowledge') {
       navigate({ to: '/knowledge', replace: true })
-      return
+      return () => { active = false }
     }
     if (tab === 'channels') {
       navigate({ to: '/channels', replace: true })
-      return
+      return () => { active = false }
     }
     if (tab === 'runtime') {
       navigate({ to: '/runtime', replace: true })
-      return
+      return () => { active = false }
     }
-    navigate({ to: '/workspace', replace: true })
+
+    const legacySession = params.get('session')
+    if (!legacySession) {
+      navigate({ to: '/workspace', replace: true })
+      return () => { active = false }
+    }
+
+    void supportApi.supportConversationDetail(legacySession)
+      .then((detail) => {
+        if (!active) return
+        const conversation = detail.conversation
+        const queueId = conversation.handoff_request_id
+          ? `handoff:${conversation.handoff_request_id}`
+          : conversation.ticket_id
+            ? `ticket:${conversation.ticket_id}`
+            : null
+        replaceWithWorkspace(queueId)
+      })
+      .catch(() => {
+        if (active) replaceWithWorkspace()
+      })
+
+    return () => { active = false }
   }, [navigate])
 
   return (
