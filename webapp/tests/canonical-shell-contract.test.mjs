@@ -53,7 +53,7 @@ test('one shared application shell owns product identity, navigation, session an
 test('normal operators fail closed when no authorized scope exists', () => {
   const route = read('src/routes/workspace.tsx')
   assert.match(route, /当前账号没有可用工作范围/)
-  assert.match(route, /系统不会自动猜测或扩大访问范围/)
+  assert.match(route, /系统不会自动猜测、扩大或允许手工输入 Tenant、国家和渠道/)
   assert.doesNotMatch(route, /requires_explicit_admin_scope|LegacyWorkspaceFallback/)
   assert.match(route, /不会回退到手工 Tenant、国家或渠道/)
 })
