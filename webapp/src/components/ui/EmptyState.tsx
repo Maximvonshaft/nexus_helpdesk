@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 export function EmptyState({
   text,
@@ -13,13 +13,12 @@ export function EmptyState({
   reason?: string
   action?: ReactNode
 }) {
-  if (!title && !description && !reason && !action) return <div className="empty">{text}</div>
   return (
-    <div className="empty-state" role="status">
+    <div className="nd-empty-state" role="status">
       <strong>{title ?? text}</strong>
       {description ? <p>{description}</p> : null}
       {reason ? <small>{reason}</small> : null}
-      {action ? <div className="empty-state-action">{action}</div> : null}
+      {action ? <div className="nd-empty-state__action">{action}</div> : null}
     </div>
   )
 }
