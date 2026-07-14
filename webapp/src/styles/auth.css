@@ -42,9 +42,10 @@
   margin: 0;
 }
 
-.auth-context h2 {
+.auth-context__title {
   color: var(--nd-color-on-ink);
   font-size: clamp(26px, 3vw, 34px);
+  font-weight: 800;
   line-height: 1.18;
   margin: 0;
   text-wrap: balance;
