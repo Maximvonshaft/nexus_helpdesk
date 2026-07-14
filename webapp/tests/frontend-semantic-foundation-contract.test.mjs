@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 
 const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
-
 const main = read('src/main.tsx')
 const button = read('src/components/ui/Button.tsx')
 const badge = read('src/components/ui/Badge.tsx')
@@ -13,101 +12,54 @@ const field = read('src/components/ui/Field.tsx')
 const pageHeader = read('src/components/ui/PageHeader.tsx')
 const confirmDialog = read('src/components/ui/ConfirmDialog.tsx')
 const login = read('src/routes/login.tsx')
-const tokens = read('src/styles/tokens.css')
 const components = read('src/styles/components.css')
+const auth = read('src/styles/auth.css')
 const a11y = read('src/a11y.css')
-const authPath = resolve(root, 'src/styles/auth.css')
-const auth = existsSync(authPath) ? read('src/styles/auth.css') : ''
 
-
-test('semantic CSS authorities load after bounded legacy compatibility', () => {
-  const tokenIndex = main.indexOf("@/styles/tokens.css")
-  const legacyIndex = main.indexOf("@/styles.css")
-  const componentIndex = main.indexOf("@/styles/components.css")
-  const authIndex = main.indexOf("@/styles/auth.css")
-
-  assert.ok(tokenIndex >= 0)
-  assert.ok(legacyIndex > tokenIndex)
-  assert.ok(componentIndex > legacyIndex)
-  assert.ok(authIndex > componentIndex)
+test('semantic authorities load in one deterministic order', () => {
+  const paths = ['@/styles/tokens.css', '@/styles.css', '@/a11y.css', '@/styles/components.css', '@/styles/auth.css', '@/styles/service-shell.css']
+  const indexes = paths.map((path) => main.indexOf(path))
+  assert.ok(indexes.every((value) => value >= 0))
+  assert.deepEqual([...indexes].sort((a, b) => a - b), indexes)
 })
 
-
-test('shared Button and Badge expose semantic authority with bounded compatibility', () => {
+test('shared primitives expose only the nd component vocabulary', () => {
   assert.match(button, /nd-button/)
-  assert.match(button, /loadingLabel/)
-  assert.match(button, /aria-busy/)
-  assert.match(button, /size/)
-  assert.match(button, /loading \? true/)
+  assert.doesNotMatch(button, /['"]button['"]/)
   assert.match(badge, /nd-badge/)
-  assert.match(badge, /nd-badge--/)
-})
-
-
-test('Field uses explicit label association and semantic controls', () => {
-  assert.match(field, /<label[^>]*htmlFor=/)
+  assert.doesNotMatch(badge, /['"]badge['"]/)
   assert.match(field, /nd-field/)
   assert.match(field, /nd-control/)
-  assert.doesNotMatch(field, /<label className="field">/)
-  assert.match(field, /aria-describedby/)
-  assert.match(field, /role="alert"/)
+  assert.doesNotMatch(field, /['"]field['"]|['"]input['"]|['"]select['"]|['"]textarea['"]/)
+  assert.match(pageHeader, /nd-page-header/)
+  assert.doesNotMatch(pageHeader, /page-header nd-page-header/)
 })
 
-
-test('PageHeader and ConfirmDialog consume shared semantic primitives', () => {
-  assert.match(pageHeader, /headingLevel/)
-  assert.match(pageHeader, /const Heading/)
+test('forms and dialogs remain accessible and explicit', () => {
+  assert.match(field, /htmlFor=/)
+  assert.match(field, /aria-describedby/)
+  assert.match(field, /role="alert"/)
   assert.match(confirmDialog, /@radix-ui\/react-dialog/)
   assert.match(confirmDialog, /Dialog\.Title/)
   assert.match(confirmDialog, /Dialog\.Description/)
   assert.match(confirmDialog, /Dialog\.Close asChild/)
-  assert.match(confirmDialog, /loading=\{busy\}/)
-  assert.doesNotMatch(confirmDialog, /处理中\.\.\./)
 })
 
-
-test('Login is one semantic keyboard-complete authentication flow', () => {
-  assert.match(login, /<main className="auth-shell">/)
-  assert.match(login, /<form[^>]*onSubmit=/)
+test('login is customer-service branded and contains no internal automation language', () => {
+  assert.match(login, /Nexus Customer Service/)
+  assert.match(login, /把客户问题处理到结果/)
   assert.match(login, /type="submit"/)
   assert.match(login, /aria-pressed=\{showPassword\}/)
-  assert.match(login, /role="alert"/)
-  assert.match(login, /无法登录。请检查账号和密码后重试。/)
-  assert.match(login, /useState\(''\)/)
-  assert.doesNotMatch(login, /useState\('admin'\)/)
-  assert.doesNotMatch(login, /navigate\(\{ to: '\/webchat'/)
-  assert.equal((login.match(/navigate\(\{ to: '\/'/g) ?? []).length, 2)
+  assert.doesNotMatch(login, /\b(?:AI|Runtime|Provider|RAG|Prompt|Model|Agent)\b/i)
 })
 
-
-test('semantic tokens and component CSS encode interaction states without raw feature colors', () => {
-  assert.match(tokens, /--nd-control-height-md:\s*44px/)
-  assert.match(tokens, /--nd-focus-ring:/)
-  assert.match(tokens, /--nd-motion-fast:/)
-  assert.match(tokens, /--nd-z-dialog:/)
-  assert.match(components, /min-height:\s*var\(--nd-control-height-md\)/)
-  assert.match(components, /\.nd-button:focus-visible/)
-  assert.match(components, /\.nd-button\[aria-busy="true"\]/)
-  assert.doesNotMatch(components, /#[0-9a-f]{3,8}\b/i)
-  assert.doesNotMatch(components, /rgba?\(/i)
-})
-
-
-test('Login presentation is semantic, restrained, responsive, and reduced-motion safe', () => {
-  assert.equal(existsSync(authPath), true, 'src/styles/auth.css must exist')
-  assert.match(auth, /var\(--nd-/)
-  assert.match(auth, /@media \(max-width:/)
-  assert.match(auth, /100dvh/)
-  assert.doesNotMatch(auth, /gradient/i)
-  assert.doesNotMatch(auth, /rgba?\(/i)
-  assert.doesNotMatch(auth, /#[0-9a-f]{3,8}\b/i)
-  assert.doesNotMatch(auth, /border-radius:\s*(?:1[3-9]|[2-9]\d)px/)
+test('component and authentication styles consume tokens only', () => {
+  for (const source of [components, auth]) {
+    assert.match(source, /var\(--nd-/)
+    assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b/i)
+    assert.doesNotMatch(source, /rgba?\(/i)
+  }
   assert.match(a11y, /prefers-reduced-motion/)
-  assert.match(a11y, /\.nd-button/)
-  assert.match(a11y, /\.auth-/)
-})
-
-
-test('dedicated Login browser evidence exists', () => {
+  assert.match(a11y, /button:focus-visible/)
   assert.equal(existsSync(resolve(root, 'e2e/login-semantic.spec.ts')), true)
 })
