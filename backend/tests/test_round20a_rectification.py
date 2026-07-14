@@ -87,31 +87,36 @@ def test_operator_lookup_endpoints_are_available_to_agent_role(db_session):
     assert bulletins and bulletins[0].title == '延误提醒'
 
 
-def test_round20a_support_workbench_uses_single_authenticated_operator_surface():
-    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
+def test_customer_service_console_uses_one_authenticated_surface():
+    router = (ROOT.parent / 'webapp' / 'src' / 'router.tsx').read_text(encoding='utf-8')
     webchat_route = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text(encoding='utf-8')
+    shell = (ROOT.parent / 'webapp' / 'src' / 'components' / 'layout' / 'ServiceAppShell.tsx').read_text(encoding='utf-8')
+    workspace = (ROOT.parent / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'OperatorWorkspacePage.tsx').read_text(encoding='utf-8')
     support_api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text(encoding='utf-8')
 
-    assert "beforeLoad" in webchat_route
-    assert "getSupportToken()" in webchat_route
-    assert "useSession()" in console
-    assert "客服后台视图" in console
-    assert "会话" in console
-    assert "知识" in console
-    assert "渠道" in console
-    assert "运行" in console
-    assert "/api/support/conversations" in support_api
-    assert "/api/admin/channel-accounts" in support_api
+    assert 'WorkspaceRoute' in router
+    assert 'KnowledgeRoute' in router
+    assert 'ChannelsRoute' in router
+    assert 'SystemRoute' in router
+    assert "redirect({ to: getSupportToken() ? '/workspace' : '/login'" in webchat_route
+    assert 'Nexus 客服中心' in shell
+    assert '客服工作台' in shell
+    assert '客户待办' in workspace
+    assert '/api/admin/channel-accounts' in support_api
+    assert not (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console').exists()
 
 
-def test_workspace_hides_session_key_from_customer_service_view():
-    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
-    legacy = (ROOT.parent / 'frontend' / 'app.js').read_text(encoding='utf-8')
+def test_workspace_hides_internal_identifiers_from_customer_service_view():
+    workspace = (ROOT.parent / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'OperatorWorkspacePage.tsx').read_text(encoding='utf-8')
+    overview = (ROOT.parent / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'components' / 'CaseOverview.tsx').read_text(encoding='utf-8')
+    conversation = (ROOT.parent / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'components' / 'ConversationPanel.tsx').read_text(encoding='utf-8')
 
-    assert '会话编号' not in console
-    assert '客户、联系方式' in console
-    assert '会话编号' not in legacy
-    assert '已绑定来信来源' in legacy
+    combined = workspace + overview + conversation
+    assert '会话编号' not in combined
+    assert 'Queue ID' not in combined
+    assert '客户沟通' in conversation
+    assert '事实与待确认信息' in overview
+    assert not (ROOT.parent / 'frontend').exists()
 
 
 def test_init_dev_db_seeds_committed_demo_ticket_and_bulletin(tmp_path, monkeypatch):
