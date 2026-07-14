@@ -4,6 +4,7 @@ import unittest
 
 from scripts.ci.check_external_channel_retirement import InventoryError
 from scripts.ci.reconcile_external_channel_inventory import (
+    CROSS_DOMAIN_RELEASE_CONTROL_PATHS,
     RECONCILIATION_CONTROL_PATHS,
     actions_deleted_paths,
     add_reconciliation_control_rule,
@@ -132,14 +133,28 @@ class CanonicalExternalChannelReconciliationTests(unittest.TestCase):
         with self.assertRaisesRegex(InventoryError, "actions_authoritative_workflow_retired"):
             actions_deleted_paths(conflict)
 
-    def test_reconciliation_controls_are_fixed_and_must_be_tracked(self) -> None:
+    def test_effective_controls_are_exact_and_must_be_tracked(self) -> None:
+        all_paths = RECONCILIATION_CONTROL_PATHS + CROSS_DOMAIN_RELEASE_CONTROL_PATHS
         payload = {"rules": []}
-        add_reconciliation_control_rule(payload, RECONCILIATION_CONTROL_PATHS)
+        add_reconciliation_control_rule(payload, all_paths)
+
         self.assertEqual(payload["rules"][0]["paths"], list(RECONCILIATION_CONTROL_PATHS))
         self.assertEqual(payload["rules"][0]["disposition"], "retirement_control")
+        self.assertEqual(payload["rules"][1]["paths"], list(CROSS_DOMAIN_RELEASE_CONTROL_PATHS))
+        self.assertEqual(payload["rules"][1]["asset_type"], "cross_domain_release_contract")
+        self.assertEqual(payload["rules"][1]["disposition"], "retirement_control")
+        self.assertIsNone(payload["rules"][1]["glob"])
 
         with self.assertRaisesRegex(InventoryError, "canonical_reconciliation_control_missing"):
-            add_reconciliation_control_rule({"rules": []}, RECONCILIATION_CONTROL_PATHS[:1])
+            add_reconciliation_control_rule(
+                {"rules": []},
+                CROSS_DOMAIN_RELEASE_CONTROL_PATHS,
+            )
+        with self.assertRaisesRegex(InventoryError, "canonical_release_control_missing"):
+            add_reconciliation_control_rule(
+                {"rules": []},
+                RECONCILIATION_CONTROL_PATHS,
+            )
 
 
 if __name__ == "__main__":
