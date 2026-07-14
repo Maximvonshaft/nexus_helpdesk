@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 825, in <module>
+    main()
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 811, in main
+    inventory_and_retire_frontend()
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 707, in inventory_and_retire_frontend
+    selective_three_way(path)
+  File "/home/runner/work/nexus_helpdesk/nexus_helpdesk/scripts/ci/frontend_convergence_finalizer.py", line 85, in selective_three_way
+    raise RuntimeError(f"selective donor merge conflict: {path}\n{result.stderr}")
+RuntimeError: selective donor merge conflict: backend/tests/test_next_phase_max_push.py
+
