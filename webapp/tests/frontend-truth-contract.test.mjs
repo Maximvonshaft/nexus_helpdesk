@@ -7,8 +7,13 @@ const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 const statusPath = resolve(root, 'src/lib/supportStatus.ts')
 const supportStatus = existsSync(statusPath) ? read('src/lib/supportStatus.ts') : ''
-const supportConsole = read('src/features/support-console/SupportConsolePage.tsx')
-const supportCss = read('src/features/support-console/support-console.css')
+const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
+const workspacePresentation = read('src/lib/operatorWorkspacePresentation.ts')
+const channels = read('src/features/channels/ChannelsPage.tsx')
+const runtime = read('src/features/runtime/RuntimePage.tsx')
+const appShellCss = read('src/app/app-shell.css')
+const adminCss = read('src/features/admin-routes/admin-routes.css')
+const knowledgeCss = read('src/features/knowledge/knowledge.css')
 
 
 test('frontend operational health uses an explicit fail-closed mapping module', () => {
@@ -19,62 +24,57 @@ test('frontend operational health uses an explicit fail-closed mapping module', 
   assert.match(supportStatus, /reconnecting/)
   assert.match(supportStatus, /unknown/)
   assert.doesNotMatch(supportStatus, /\.includes\(/)
-  assert.match(supportConsole, /healthPresentation/)
-  assert.doesNotMatch(supportConsole, /function toneForHealth/)
+  assert.match(channels, /healthPresentation/)
+  assert.doesNotMatch(channels, /function toneForHealth/)
 })
 
 
-test('source ticket state and ownership never claim business success', () => {
-  assert.match(supportStatus, /sourceConversationPresentation/)
-  assert.match(supportStatus, /来源状态：已解决/)
-  assert.match(supportStatus, /来源状态：已关闭/)
-  assert.doesNotMatch(supportConsole, /已结束/)
-  assert.doesNotMatch(supportConsole, /handoff_status === 'accepted'\) return 'success'/)
-  assert.doesNotMatch(supportConsole, /channel === 'whatsapp'\) return 'success'/)
+test('source state and ownership never claim business success', () => {
+  assert.match(workspacePresentation, /sourceStatusPresentation/)
+  assert.match(workspacePresentation, /来源状态/)
+  assert.match(workspacePresentation, /ownerPresentation/)
+  assert.doesNotMatch(workspace, /已结束/)
+  assert.doesNotMatch(workspace, /handoff_status === 'accepted'\) return 'success'/)
+  assert.doesNotMatch(workspace, /channel === 'whatsapp'\) return 'success'/)
 })
 
 
 test('controlled actions distinguish request acceptance from verified outcome', () => {
-  assert.match(supportStatus, /controlledActionPresentation/)
-  assert.match(supportStatus, /queued/)
-  assert.match(supportStatus, /submitted/)
-  assert.match(supportStatus, /等待确认/)
-  assert.match(supportStatus, /business_result_confirmed/)
-  assert.match(supportStatus, /operational_completed/)
-  assert.doesNotMatch(supportStatus, /\n\s*'completed',/)
-  assert.doesNotMatch(supportStatus, /\n\s*'succeeded',/)
-  assert.doesNotMatch(supportStatus, /\n\s*'confirmed',/)
-  assert.match(supportConsole, /controlledActionPresentation/)
-  assert.match(supportConsole, /TechnicalDetails/)
-  assert.doesNotMatch(supportConsole, /support-action-result success[\s\S]{0,260}actionResult/)
-  assert.doesNotMatch(supportConsole, /<small>Job #\{actionResult\.jobId\}<\/small>/)
+  assert.match(workspacePresentation, /outcomePresentation/)
+  assert.match(workspacePresentation, /queued/)
+  assert.match(workspacePresentation, /submitted/)
+  assert.match(workspacePresentation, /operational_completed/)
+  assert.match(workspacePresentation, /business_result_confirmed/)
+  assert.match(workspace, /TechnicalDetails/)
+  assert.match(workspace, /预检不是取消完成/)
+  assert.match(workspace, /请求已排队/)
+  assert.doesNotMatch(workspace, /<small>Job #\{actionResult\.jobId\}<\/small>/)
 })
 
 
 test('runtime header cannot show normal while loading, unavailable, or not ok', () => {
   assert.match(supportStatus, /runtimePresentation/)
-  assert.match(supportConsole, /runtimePresentation\(/)
-  assert.match(supportConsole, /runtime\.isLoading/)
-  assert.match(supportConsole, /runtime\.isError/)
-  assert.doesNotMatch(supportConsole, /warnings\?\.length \? '需要关注' : '正常'/)
+  assert.match(runtime, /runtimePresentation\(/)
+  assert.match(runtime, /runtime\.isLoading/)
+  assert.match(runtime, /runtime\.isError/)
+  assert.doesNotMatch(runtime, /warnings\?\.length \? '需要关注' : '正常'/)
 })
 
 
-test('current transitional console meets bounded accessibility truth requirements', () => {
-  assert.doesNotMatch(supportCss, /#f06423/i)
-  assert.match(supportCss, /\.support-top-tabs button[\s\S]*min-height:\s*44px/)
-  assert.match(supportCss, /\.support-segments button[\s\S]*min-height:\s*44px/)
-  assert.match(supportCss, /\.support-thread-back[\s\S]*min-height:\s*44px/)
-  assert.match(supportConsole, /<table className="support-table">/)
-  assert.match(supportConsole, /<th scope="col">/)
-  assert.match(supportConsole, /aria-live="polite"/)
+test('canonical surfaces meet bounded accessibility truth requirements', () => {
+  for (const css of [appShellCss, adminCss, knowledgeCss]) assert.doesNotMatch(css, /#f06423/i)
+  assert.match(appShellCss, /min-height:\s*var\(--nd-control-height-md\)/)
+  assert.match(appShellCss, /:focus-visible/)
+  assert.match(adminCss, /<table|nd-admin-table/)
+  assert.match(knowledgeCss, /min-height:\s*72px/)
+  assert.match(workspace, /aria-live="polite"/)
+  assert.match(channels, /<th scope="col">/)
 })
 
 
-test('conversation state polling and visible freshness remain aligned', () => {
-  assert.match(
-    supportConsole,
-    /queryKey: \['supportConversationState'\][\s\S]{0,180}enabled: activeView === 'conversations'/,
-  )
-  assert.match(supportConsole, /会话状态暂停刷新/)
+test('workspace queue and selected conversation freshness remain visible and bounded', () => {
+  assert.match(workspace, /refetchInterval:\s*15000/)
+  assert.match(workspace, /refetchInterval: selectedItem\?\.source_links\.conversation \? 5000 : false/)
+  assert.match(workspace, /刷新中/)
+  assert.match(workspace, /加载更多任务/)
 })
