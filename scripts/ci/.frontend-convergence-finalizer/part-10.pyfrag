@@ -1,48 +1,3 @@
-        "webapp/PRODUCT.md",
-        "webapp/DESIGN.md",
-        "webapp/tests/frontend-truth-contract.test.mjs",
-        "webapp/tests/frontend-route-splitting-contract.test.mjs",
-    ]
-    active_consumer_paths = set(consumer_paths)
-    for path in consumer_whitelist:
-        if path not in active_consumer_paths:
-            continue
-        if (ROOT / path).exists() and path_exists_at(DONOR_SHA, path):
-            selective_three_way(path)
-
-    if frontend.exists():
-        run("git", "rm", "-r", "frontend")
-
-    inventory = {
-        "schema": "nexus.legacy-frontend-retirement.v1",
-        "work_item": 747,
-        "canonical_pr": 748,
-        "baseline_main_sha": BASE_SHA,
-        "donor_pr": 743,
-        "donor_head": DONOR_SHA,
-        "disposition": "SUPERSEDED_DELETE",
-        "deleted_paths": tracked,
-        "capabilities": ["overview", "cases", "bulletins", "channel_settings", "signoff"],
-        "canonical_replacements": {
-            "overview": "/control-tower",
-            "cases": "/workspace",
-            "bulletins": "/knowledge",
-            "channel_settings": "/channels",
-            "signoff": "/control-tower",
-        },
-        "pre_deletion_reference_paths": consumer_paths,
-        "verification": [
-            "zero_runtime_build_deploy_consumer",
-            "canonical_route_browser_parity",
-            "missing_modern_build_fails_closed",
-            "anti_reintroduction_gate",
-            "exact_head_ci",
-        ],
-        "rollback": "Revert PR #748; no schema or production-data mutation is included.",
-    }
-    write("webapp/design/legacy-frontend-retirement.v1.json", json.dumps(inventory, ensure_ascii=False, indent=2) + "\n")
-
-
 def update_authority() -> None:
     path = WEBAPP / "design" / "operator-console-consolidation.v1.json"
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -69,4 +24,15 @@ def update_authority() -> None:
 
 
 def remove_temporary_controls() -> None:
-    for path in [
+    tracked_paths = [
+        ".github/workflows/frontend-consolidation-diagnostics.yml",
+        ".github/workflows/generate-radix-lockfile.yml",
+        ".github/workflows/frontend-convergence-finalizer.yml",
+        "docs/ai/frontend-convergence-finalizer-diagnostic.txt",
+        "scripts/ci/.frontend-convergence-finalizer",
+    ]
+    run("git", "rm", "-r", "-f", "--ignore-unmatch", "--", *tracked_paths)
+    executor = ROOT / "scripts/ci/frontend_convergence_finalizer.py"
+    if executor.exists():
+        executor.unlink()
+
