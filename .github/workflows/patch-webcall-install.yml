@@ -1,0 +1,44 @@
+name: Patch WebCall install policy
+
+on:
+  push:
+    branches:
+      - feat/customer-service-console-purge
+    paths:
+      - .github/workflows/patch-webcall-install.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout convergence branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: feat/customer-service-console-purge
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Disable dependency lifecycle scripts in WebCall guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/pr-webcall-guard.yml')
+          source = path.read_text(encoding='utf-8')
+          old = '        run: npm ci\n'
+          new = '        run: npm ci --ignore-scripts\n'
+          if source.count(old) != 1:
+              raise SystemExit(f'expected one install command, found {source.count(old)}')
+          path.write_text(source.replace(old, new), encoding='utf-8')
+          PY
+
+      - name: Commit hardened install policy
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/pr-webcall-guard.yml
+          git commit -m "ci(webcall): disable dependency lifecycle scripts"
+          git push origin HEAD:feat/customer-service-console-purge
