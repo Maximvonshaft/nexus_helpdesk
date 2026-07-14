@@ -76,7 +76,7 @@ function LoginPage() {
         <form className="auth-card" onSubmit={handleSubmit}>
           <PageHeader
             eyebrow="账号登录"
-            title="登录客服与运营工作台"
+            title="进入运营工作台"
             description="使用内部账号继续。系统会按你的权限加载可访问的工作内容。"
             headingLevel={1}
           />
@@ -140,7 +140,7 @@ function LoginPage() {
               loading={login.isPending}
               loadingLabel="正在验证账号…"
             >
-              登录
+              登录运营工作台
             </Button>
           </div>
         </form>
