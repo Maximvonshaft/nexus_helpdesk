@@ -38,7 +38,7 @@ test('one shell navigates across customer service, knowledge, channels and servi
 
   await page.getByRole('link', { name: /渠道状态/ }).click()
   await expect(page.getByRole('heading', { level: 1, name: '渠道状态' })).toBeVisible()
-  await expect(page.getByText('WhatsApp 客服')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: 'WhatsApp 客服' })).toBeVisible()
 
   await page.getByRole('link', { name: /系统保障/ }).click()
   await expect(page.getByRole('heading', { level: 1, name: '系统保障' })).toBeVisible()
