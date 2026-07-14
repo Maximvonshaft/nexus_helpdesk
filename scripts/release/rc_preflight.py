@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Sequence
 
 SCHEMA = "nexus.osr.rc-preflight.v1"
+FAILURE_SCHEMA = "nexus.osr.rc-test-failure-summary.v1"
 REGISTRY_PATH = Path("docs/ai/remote-skills-registry.yaml")
 COMPILE_TARGETS = (
     "scripts/release/generate_rc_test_env.py",
@@ -21,6 +23,7 @@ COMPILE_TARGETS = (
     "scripts/release/validate_rc_test_evidence.py",
     "scripts/release/rc_preflight.py",
 )
+SAFE_STAGE_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
 
 def validate_registry_text(text: str) -> None:
@@ -35,6 +38,8 @@ def validate_registry_text(text: str) -> None:
 def bounded_result(*, status: str, stage: str, exit_code: int, output: bytes = b"") -> dict[str, object]:
     if status not in {"pass", "fail"}:
         raise ValueError("status_invalid")
+    if not SAFE_STAGE_RE.fullmatch(stage):
+        raise ValueError("stage_invalid")
     return {
         "schema": SCHEMA,
         "status": status,
@@ -42,6 +47,21 @@ def bounded_result(*, status: str, stage: str, exit_code: int, output: bytes = b
         "exit_code": int(exit_code),
         "output_sha256": hashlib.sha256(output).hexdigest(),
         "output_bytes": len(output),
+    }
+
+
+def failure_summary(*, stage: str, exit_code: int, reason_code: str) -> dict[str, object]:
+    if not SAFE_STAGE_RE.fullmatch(stage):
+        raise ValueError("stage_invalid")
+    if not SAFE_STAGE_RE.fullmatch(reason_code):
+        raise ValueError("reason_code_invalid")
+    return {
+        "schema": FAILURE_SCHEMA,
+        "status": "failed",
+        "stage": stage,
+        "exit_code": int(exit_code),
+        "reason_code": reason_code,
+        "service_states": {},
     }
 
 
@@ -59,22 +79,50 @@ def _run(command: Sequence[str], *, timeout: int = 600) -> tuple[int, bytes]:
 
 def _write(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+
+
+def _emit_failure(
+    *,
+    failure_path: Path,
+    result_path: Path,
+    preflight_stage: str,
+    exit_code: int,
+    output: bytes,
+) -> int:
+    result = bounded_result(
+        status="fail",
+        stage=preflight_stage,
+        exit_code=exit_code,
+        output=output,
+    )
+    summary = failure_summary(
+        stage="rc-preflight",
+        exit_code=exit_code,
+        reason_code=f"{preflight_stage}_failed",
+    )
+    _write(result_path, result)
+    _write(failure_path, summary)
+    print(f"RC_PREFLIGHT_FAILED stage={preflight_stage} exit_code={exit_code}")
+    return exit_code or 1
 
 
 def run_preflight(artifact_root: Path) -> int:
     failure_path = artifact_root / "failure-summary.json"
     result_path = artifact_root / "preflight-result.json"
     failure_path.unlink(missing_ok=True)
+    result_path.unlink(missing_ok=True)
 
     try:
         validate_registry_text(REGISTRY_PATH.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        payload = bounded_result(status="fail", stage="registry_contract", exit_code=1, output=str(exc).encode())
-        _write(failure_path, payload)
-        _write(result_path, payload)
-        print("RC_PREFLIGHT_FAILED stage=registry_contract")
-        return 1
+        return _emit_failure(
+            failure_path=failure_path,
+            result_path=result_path,
+            preflight_stage="registry_contract",
+            exit_code=1,
+            output=str(exc).encode(),
+        )
 
     stages: tuple[tuple[str, Sequence[str]], ...] = (
         ("release_compile", (sys.executable, "-m", "py_compile", *COMPILE_TARGETS)),
@@ -88,14 +136,15 @@ def run_preflight(artifact_root: Path) -> int:
             output = str(exc).encode()
             exit_code = 124 if isinstance(exc, subprocess.TimeoutExpired) else 127
         if exit_code != 0:
-            payload = bounded_result(status="fail", stage=stage, exit_code=exit_code, output=output)
-            _write(failure_path, payload)
-            _write(result_path, payload)
-            print(f"RC_PREFLIGHT_FAILED stage={stage} exit_code={exit_code}")
-            return exit_code or 1
+            return _emit_failure(
+                failure_path=failure_path,
+                result_path=result_path,
+                preflight_stage=stage,
+                exit_code=exit_code,
+                output=output,
+            )
 
-    payload = bounded_result(status="pass", stage="complete", exit_code=0)
-    _write(result_path, payload)
+    _write(result_path, bounded_result(status="pass", stage="complete", exit_code=0))
     print("RC_PREFLIGHT_PASSED")
     return 0
 
