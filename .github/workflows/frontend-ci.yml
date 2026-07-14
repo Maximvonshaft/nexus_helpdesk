@@ -4,13 +4,16 @@ on:
   pull_request:
     paths:
       - "webapp/**"
+      - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
   push:
     branches:
       - main
       - "feature/**"
+      - "feat/**"
     paths:
       - "webapp/**"
+      - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
 
 permissions:
@@ -22,7 +25,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Typecheck, lint, and build webapp
+    name: Architecture, typecheck, lint, test and build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,6 +45,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Single-frontend architecture gate
+        run: npm run architecture
+
+      - name: Unit contracts
+        run: npm test
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -50,3 +59,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Bundle budget
+        run: npm run size-report
