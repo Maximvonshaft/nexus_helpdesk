@@ -1,6 +1,7 @@
 import type {
   AuthUser,
   ChannelAccount,
+  ControlTower,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
@@ -46,6 +47,7 @@ export const supportApi = {
   }),
   me: () => apiRequest<AuthUser>('/api/auth/me'),
 
+  controlTower: () => apiRequest<ControlTower>('/api/lite/control-tower'),
   supportConversations: (params?: { view?: string; channel?: string; q?: string; limit?: number }, init?: RequestInit) => {
     const search = new URLSearchParams()
     search.set('view', params?.view || 'open')
