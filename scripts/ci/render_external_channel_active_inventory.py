@@ -30,6 +30,15 @@ def _normalize_path(value: object) -> str:
     return value
 
 
+def _normalize_glob(value: object) -> str:
+    if not isinstance(value, str) or not value or "\\" in value or value.startswith("/"):
+        raise ValueError("invalid retired glob")
+    parts = value.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("invalid retired glob")
+    return value
+
+
 def _tracked_paths(repo_root: Path) -> set[str]:
     result = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files", "-z"],
@@ -73,6 +82,13 @@ def render_active_inventory(
     if len(removed_paths) != len(set(removed_paths)):
         raise ValueError("removed_paths contains duplicates")
 
+    raw_retired_globs = removed.get("retired_globs", [])
+    if not isinstance(raw_retired_globs, list):
+        raise ValueError("retired_globs must be a list")
+    retired_globs = tuple(_normalize_glob(value) for value in raw_retired_globs)
+    if len(retired_globs) != len(set(retired_globs)):
+        raise ValueError("retired_globs contains duplicates")
+
     tracked = _tracked_paths(repo_root)
     reintroduced = sorted(set(removed_paths) & tracked)
     if reintroduced:
@@ -84,10 +100,16 @@ def render_active_inventory(
 
     active_rules: list[dict[str, Any]] = []
     referenced_removed: set[str] = set()
+    referenced_retired_globs: set[str] = set()
     for raw_rule in rules:
         if not isinstance(raw_rule, dict):
             raise ValueError("base inventory rule is invalid")
         rule = dict(raw_rule)
+        if rule.get("glob") is not None:
+            glob = _normalize_glob(rule["glob"])
+            if glob in retired_globs:
+                referenced_retired_globs.add(glob)
+                continue
         if rule.get("path") is not None:
             path = _normalize_path(rule["path"])
             if path in removed_paths:
@@ -112,6 +134,9 @@ def render_active_inventory(
     missing_from_base = sorted(set(removed_paths) - referenced_removed)
     if missing_from_base:
         raise ValueError(f"removed asset is not present in base inventory: {missing_from_base[0]}")
+    missing_globs_from_base = sorted(set(retired_globs) - referenced_retired_globs)
+    if missing_globs_from_base:
+        raise ValueError(f"retired glob is not present in base inventory: {missing_globs_from_base[0]}")
 
     missing_controls = sorted(set(RETIREMENT_CONTROL_PATHS) - _exact_rule_paths(active_rules))
     missing_tracked_controls = sorted(set(missing_controls) - tracked)
@@ -139,6 +164,7 @@ def render_active_inventory(
     return {
         "ok": True,
         "removed_path_count": len(removed_paths),
+        "retired_glob_count": len(retired_globs),
         "retirement_control_count": len(missing_controls),
         "active_rule_count": len(active_rules),
         "output": output_path.as_posix(),
