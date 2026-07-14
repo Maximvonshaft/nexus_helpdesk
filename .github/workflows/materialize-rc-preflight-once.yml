@@ -1,0 +1,54 @@
+name: Materialize bounded RC preflight once
+
+on:
+  push:
+    branches:
+      - work/744-canonical-operator-console-consolidation
+    paths:
+      - .github/workflows/materialize-rc-preflight-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-rc-preflight-once
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.repository == 'Maximvonshaft/nexus_helpdesk'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact trigger source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          show-progress: false
+
+      - name: Apply bounded workflow replacement
+        run: |
+          set -Eeuo pipefail
+          python scripts/ci/materialize_rc_preflight_workflow.py
+          python -m py_compile scripts/release/rc_preflight.py scripts/ci/materialize_rc_preflight_workflow.py
+          grep -q 'id: rc-preflight' .github/workflows/rc-test-candidate.yml
+          grep -q "steps.rc-preflight.outcome == 'failure'" .github/workflows/rc-test-candidate.yml
+
+      - name: Remove one-shot assets
+        run: |
+          rm scripts/ci/materialize_rc_preflight_workflow.py
+          rm .github/workflows/materialize-rc-preflight-once.yml
+
+      - name: Commit final bounded workflow
+        env:
+          EXPECTED_PARENT: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_PARENT}"
+          git config user.name "Nexus implementation bot"
+          git config user.email "noreply@github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "ci(release): emit bounded RC preflight failure stages"
+          git push origin HEAD:work/744-canonical-operator-console-consolidation
