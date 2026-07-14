@@ -8,6 +8,10 @@ from typing import Any
 
 BASE_SCHEMA = "nexus.external-channel-retirement.inventory.v1"
 REMOVED_SCHEMA = "nexus.external-channel-retirement.removed-assets.v1"
+RETIREMENT_CONTROL_PATHS = (
+    "config/governance/external-channel-removed-assets.v1.json",
+    "scripts/ci/render_external_channel_active_inventory.py",
+)
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -34,6 +38,19 @@ def _tracked_paths(repo_root: Path) -> set[str]:
         stderr=subprocess.PIPE,
     )
     return {value for value in result.stdout.decode("utf-8").split("\0") if value}
+
+
+def _exact_rule_paths(rules: list[dict[str, Any]]) -> set[str]:
+    paths: set[str] = set()
+    for rule in rules:
+        if rule.get("path") is not None:
+            paths.add(_normalize_path(rule["path"]))
+        elif rule.get("paths") is not None:
+            values = rule["paths"]
+            if not isinstance(values, list):
+                raise ValueError("inventory paths selector is invalid")
+            paths.update(_normalize_path(value) for value in values)
+    return paths
 
 
 def render_active_inventory(
@@ -96,6 +113,24 @@ def render_active_inventory(
     if missing_from_base:
         raise ValueError(f"removed asset is not present in base inventory: {missing_from_base[0]}")
 
+    missing_controls = sorted(set(RETIREMENT_CONTROL_PATHS) - _exact_rule_paths(active_rules))
+    missing_tracked_controls = sorted(set(missing_controls) - tracked)
+    if missing_tracked_controls:
+        raise ValueError(f"retirement control is not tracked: {missing_tracked_controls[0]}")
+    if missing_controls:
+        active_rules.append({
+            "path": None,
+            "paths": missing_controls,
+            "glob": None,
+            "asset_type": "retirement_control",
+            "disposition": "retirement_control",
+            "owner": "release-governance",
+            "rationale": "Removal overlays and active-inventory rendering preserve audit history while preventing retired asset reintroduction.",
+            "write_surface": False,
+            "stop_new_writes_required": False,
+            "prerequisites": [],
+        })
+
     active = dict(base)
     active["inventory_version"] = f"{base['inventory_version']}.removed-{removed['version']}"
     active["rules"] = active_rules
@@ -104,6 +139,7 @@ def render_active_inventory(
     return {
         "ok": True,
         "removed_path_count": len(removed_paths),
+        "retirement_control_count": len(missing_controls),
         "active_rule_count": len(active_rules),
         "output": output_path.as_posix(),
     }
