@@ -49,7 +49,7 @@ test('Login exposes a direct operator purpose, semantic form, visible labels, an
   await page.goto('/login')
 
   await expect(page.getByRole('main')).toBeVisible()
-  await expect(page.getByRole('heading', { level: 1, name: '登录客服与运营工作台' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 2, name: '客服与运营工作台' })).toBeVisible()
   await expect(page.getByText('可见国家、渠道和操作权限由当前账号决定。')).toBeVisible()
   await expect(page.getByText('从可信事实到可验证结案')).toHaveCount(0)
@@ -83,7 +83,7 @@ test('Login failure is bounded, announced, and focused without exposing backend 
 
   await page.getByLabel('账号 必填').fill('operator')
   await page.getByLabel('密码 必填').fill('wrong-password')
-  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByRole('button', { name: '登录运营工作台' }).click()
 
   const alert = page.getByRole('alert')
   await expect(alert).toHaveText('无法登录。请检查账号和密码后重试。')
@@ -101,7 +101,7 @@ test('375px Login has no horizontal overflow and primary controls meet target si
   const username = await page.getByLabel('账号 必填').boundingBox()
   const password = await page.getByLabel('密码 必填').boundingBox()
   const reveal = await page.getByRole('button', { name: '显示密码' }).boundingBox()
-  const submit = await page.getByRole('button', { name: '登录', exact: true }).boundingBox()
+  const submit = await page.getByRole('button', { name: '登录运营工作台' }).boundingBox()
 
   expect(username?.height ?? 0).toBeGreaterThanOrEqual(44)
   expect(password?.height ?? 0).toBeGreaterThanOrEqual(44)
