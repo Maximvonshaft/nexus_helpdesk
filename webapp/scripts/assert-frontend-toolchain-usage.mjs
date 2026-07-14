@@ -31,7 +31,7 @@ function relativePath(path) {
 }
 
 function packageName(specifier) {
-  if (!specifier || specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('@/') || builtinNames.has(specifier)) return null
+  if (!specifier || specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('@/') || specifier.startsWith('node:') || builtinNames.has(specifier)) return null
   if (specifier.startsWith('@')) return specifier.split('/').slice(0, 2).join('/')
   return specifier.split('/')[0]
 }
