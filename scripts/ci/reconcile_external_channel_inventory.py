@@ -18,6 +18,7 @@ from scripts.ci.check_external_channel_retirement import (
 
 ALLOWED_DELETED_DISPOSITIONS = {"SUPERSEDED_DELETE"}
 RECONCILIATION_CONTROL_PATHS = (
+    "config/governance/actions-authority.v1.json",
     "scripts/ci/reconcile_external_channel_inventory.py",
     "scripts/ci/tests/test_reconcile_external_channel_inventory.py",
 )
@@ -48,7 +49,6 @@ def canonical_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
     surfaces = manifest.get("implementation_surfaces")
     if not isinstance(surfaces, list):
         raise InventoryError("canonical_console_surfaces_invalid")
-
     deleted: set[str] = set()
     for row in surfaces:
         if not isinstance(row, dict):
@@ -62,7 +62,6 @@ def canonical_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
             if values is None:
                 continue
             deleted.update(_string_list(values, "canonical_console_deleted_paths_invalid", row.get("id")))
-
     transport = manifest.get("transport_authority")
     if not isinstance(transport, dict):
         raise InventoryError("canonical_transport_authority_invalid")
@@ -94,12 +93,7 @@ def actions_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
     return frozenset(retired)
 
 
-def reconcile_inventory_payload(
-    inventory: Mapping[str, Any],
-    *,
-    tracked_paths: Sequence[str],
-    deleted_paths: frozenset[str],
-) -> tuple[dict[str, Any], tuple[str, ...]]:
+def reconcile_inventory_payload(inventory: Mapping[str, Any], *, tracked_paths: Sequence[str], deleted_paths: frozenset[str]) -> tuple[dict[str, Any], tuple[str, ...]]:
     payload = deepcopy(dict(inventory))
     rules = payload.get("rules")
     if not isinstance(rules, list):
@@ -107,7 +101,6 @@ def reconcile_inventory_payload(
     tracked = set(tracked_paths)
     removed: list[str] = []
     reconciled_rules: list[dict[str, Any]] = []
-
     for raw_rule in rules:
         if not isinstance(raw_rule, dict):
             raise InventoryError("inventory_rule_invalid")
@@ -139,7 +132,6 @@ def reconcile_inventory_payload(
                 continue
             rule["paths"] = retained
         reconciled_rules.append(rule)
-
     payload["rules"] = reconciled_rules
     payload["inventory_version"] = f"{payload.get('inventory_version', 'unknown')}.canonical"
     return payload, tuple(sorted(removed))
@@ -153,47 +145,34 @@ def add_reconciliation_control_rule(payload: dict[str, Any], tracked_paths: Sequ
     rules = payload.get("rules")
     if not isinstance(rules, list):
         raise InventoryError("inventory_rules_invalid")
-    rules.append(
-        {
-            "path": None,
-            "paths": list(RECONCILIATION_CONTROL_PATHS),
-            "glob": None,
-            "asset_type": "retirement_control",
-            "disposition": "retirement_control",
-            "owner": "release-governance",
-            "rationale": "The fixed Canonical Console and Actions reconciliation checker keeps retired ExternalChannel inventory fail closed without mutating the historical inventory source.",
-            "write_surface": False,
-            "stop_new_writes_required": False,
-            "prerequisites": [],
-        }
-    )
+    rules.append({
+        "path": None,
+        "paths": list(RECONCILIATION_CONTROL_PATHS),
+        "glob": None,
+        "asset_type": "retirement_control",
+        "disposition": "retirement_control",
+        "owner": "release-governance",
+        "rationale": "The fixed Canonical Console and Actions reconciliation checker keeps retired ExternalChannel inventory fail closed without mutating the historical inventory source.",
+        "write_surface": False,
+        "stop_new_writes_required": False,
+        "prerequisites": [],
+    })
 
 
-def check_reconciled_repository(
-    repo_root: Path,
-    inventory_path: Path,
-    console_manifest_path: Path,
-    actions_manifest_path: Path,
-) -> dict[str, object]:
+def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_manifest_path: Path, actions_manifest_path: Path) -> dict[str, object]:
     inventory = _load_json(inventory_path)
     console_manifest = _load_json(console_manifest_path)
     actions_manifest = _load_json(actions_manifest_path)
     tracked = list_tracked_files(repo_root)
     governed_deleted = canonical_deleted_paths(console_manifest) | actions_deleted_paths(actions_manifest)
-    reconciled, removed = reconcile_inventory_payload(
-        inventory,
-        tracked_paths=tracked,
-        deleted_paths=governed_deleted,
-    )
+    reconciled, removed = reconcile_inventory_payload(inventory, tracked_paths=tracked, deleted_paths=governed_deleted)
     add_reconciliation_control_rule(reconciled, tracked)
     with tempfile.TemporaryDirectory(prefix="nexus-external-channel-") as tmp:
         path = Path(tmp) / "reconciled-inventory.json"
         path.write_text(json.dumps(reconciled, sort_keys=True, separators=(",", ":")), encoding="utf-8")
         result = check_repository(repo_root, path)
     result["canonical_deleted_exact_rule_count"] = len(removed)
-    result["canonical_deleted_exact_rule_fingerprints"] = [
-        hashlib.sha256(path.encode("utf-8")).hexdigest()[:16] for path in removed
-    ]
+    result["canonical_deleted_exact_rule_fingerprints"] = [hashlib.sha256(path.encode("utf-8")).hexdigest()[:16] for path in removed]
     result["reconciliation_control_path_count"] = len(RECONCILIATION_CONTROL_PATHS)
     return result
 
