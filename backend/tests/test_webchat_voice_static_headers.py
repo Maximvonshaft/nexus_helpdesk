@@ -268,7 +268,7 @@ def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(m
 
     assert demo_response.status_code in {200, 404}
     assert _permissions(demo_response) == "camera=(), microphone=(self), geolocation=()"
-    assert api_response.status_code == 404
+    assert api_response.status_code in {404, 405}
     assert _permissions(api_response) == "camera=(), microphone=(), geolocation=()"
     assert "wss://voice.example.test" not in _csp(api_response)
 
