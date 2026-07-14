@@ -68,7 +68,7 @@ async function navigate(page: Page, path: string): Promise<Response | null> {
 test.describe.configure({ mode: 'serial' })
 test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
-test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
+test('RC public WebChat message is visible in the canonical operator workspace', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
   markStage('public-navigation')
@@ -119,20 +119,20 @@ test('RC public WebChat message is visible in the authenticated operator surface
   expect(loginResponse?.ok()).toBeTruthy()
   await page.getByLabel('账号').fill(adminUsername)
   await page.getByLabel('密码').fill(adminPassword)
-  await page.getByRole('button', { name: '登录' }).click()
+  await page.getByRole('button', { name: '登录运营工作台' }).click()
   await expect(page).not.toHaveURL(/\/login$/)
 
   markStage('operator-navigation')
   const operatorPath = `/webchat?session=${encodeURIComponent(operatorSessionKey)}`
   const operatorResponse = await navigate(page, operatorPath)
-  markStage('operator-console')
+  markStage('operator-workspace')
   expect(operatorResponse).not.toBeNull()
   expect(operatorResponse?.ok()).toBeTruthy()
-  await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
-  await expect(page).toHaveURL(new RegExp(`session=${encodeURIComponent(operatorSessionKey)}`))
+  await expect(page).toHaveURL(/\/workspace\?queue=(ticket|handoff)%3A\d+$/, { timeout: 25_000 })
+  await expect(page.getByTestId('operator-workspace')).toBeVisible({ timeout: 20_000 })
 
-  markStage('operator-session')
-  await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 25_000 })
+  markStage('operator-case')
+  await expect(page.locator('.operator-message p', { hasText: message }).first()).toBeVisible({ timeout: 25_000 })
 
   markStage('completed')
 })
