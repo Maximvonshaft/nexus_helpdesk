@@ -22,10 +22,12 @@ jobs:
         working-directory: webapp
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
@@ -34,9 +36,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Architecture audit
+        run: |
+          set -Eeuo pipefail
+          npm run architecture 2>&1 | tee frontend-architecture.log
+
       - name: Unit tests
         run: |
-          set -o pipefail
+          set -Eeuo pipefail
           npm test 2>&1 | tee frontend-contract.log
 
       - name: Typecheck
@@ -56,10 +63,11 @@ jobs:
 
       - name: Upload frontend diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: webapp-diagnostics
           path: |
+            webapp/frontend-architecture.log
             webapp/frontend-contract.log
             webapp/playwright-report
             webapp/test-results
