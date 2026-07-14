@@ -7,6 +7,7 @@ import {
 } from '@/lib/supportApi'
 import type { WebchatReadStateResult, WebchatReplyResult, WebchatThread } from '@/lib/types'
 import type {
+  AuthorizedWorkspaceScopesResponse,
   UnifiedOperatorQueueResponse,
   WorkspaceFilters,
   WorkspaceScope,
@@ -15,6 +16,7 @@ import type {
 
 const WORKSPACE_SCOPE_STORAGE_KEY = 'nexus-operator-workspace-scope'
 const UNIFIED_OPERATOR_QUEUE_PATH = '/api/admin/operator-queue/unified'
+const CURRENT_OPERATOR_SCOPES_PATH = '/api/admin/operator-queue/my-scopes'
 const API_BASE_URL = normalizeSupportApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
 const DEFAULT_API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000)
 
@@ -119,6 +121,9 @@ export function saveWorkspaceScope(scope: WorkspaceScope) {
 }
 
 export const operatorWorkspaceApi = {
+  currentScopes: (init?: RequestInit) =>
+    operatorRequest<AuthorizedWorkspaceScopesResponse>(CURRENT_OPERATOR_SCOPES_PATH, init),
+
   unifiedQueue: (
     scope: WorkspaceScope,
     filters: WorkspaceFilters,
