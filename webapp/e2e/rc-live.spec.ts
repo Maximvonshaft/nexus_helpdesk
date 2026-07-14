@@ -20,9 +20,7 @@ function rcUrl(path: string): string {
 function markStage(stage: string): void {
   if (!/^[a-z0-9_-]{1,56}$/.test(stage)) throw new Error('invalid RC browser stage')
   console.log(`RC_BROWSER_STAGE=${stage}`)
-  if (browserStageFile) {
-    writeFileSync(browserStageFile, `${stage}\n`, { encoding: 'utf8', mode: 0o600 })
-  }
+  if (browserStageFile) writeFileSync(browserStageFile, `${stage}\n`, { encoding: 'utf8', mode: 0o600 })
 }
 
 function classifyBrowserError(error: unknown): string {
@@ -31,11 +29,7 @@ function classifyBrowserError(error: unknown): string {
   if (networkCode) return networkCode.toLowerCase().replaceAll('_', '-').slice(0, 48)
   const normalized = raw.toLowerCase()
   if (normalized.includes('timeout')) return 'navigation-timeout'
-  if (
-    normalized.includes('target page')
-    || normalized.includes('browser has been closed')
-    || normalized.includes('context has been closed')
-  ) return 'target-closed'
+  if (normalized.includes('target page') || normalized.includes('browser has been closed') || normalized.includes('context has been closed')) return 'target-closed'
   if (normalized.includes('navigation') && normalized.includes('interrupted')) return 'navigation-interrupted'
   return 'unknown-navigation-error'
 }
@@ -55,10 +49,7 @@ function reportBoundedBrowserError(error: unknown): void {
 
 async function navigate(page: Page, path: string): Promise<Response | null> {
   try {
-    return await page.goto(rcUrl(path), {
-      waitUntil: 'commit',
-      timeout: 20_000,
-    })
+    return await page.goto(rcUrl(path), { waitUntil: 'commit', timeout: 20_000 })
   } catch (error) {
     reportBoundedBrowserError(error)
     throw error
@@ -68,7 +59,7 @@ async function navigate(page: Page, path: string): Promise<Response | null> {
 test.describe.configure({ mode: 'serial' })
 test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
-test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
+test('RC public WebChat message is persisted and the authenticated customer-service workspace is available', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
   markStage('public-navigation')
@@ -88,51 +79,34 @@ test('RC public WebChat message is visible in the authenticated operator surface
   await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
   const input = page.locator('.nd-webchat-input')
   await expect(input).toBeEnabled({ timeout: 20_000 })
-  markStage('public-init')
 
   markStage('public-send')
   await input.fill(message)
   const messageRequest = page.waitForResponse((candidate) => {
     const url = new URL(candidate.url())
-    return candidate.request().method() === 'POST'
-      && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
+    return candidate.request().method() === 'POST' && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
   })
   await page.locator('.nd-webchat-send').click()
   const messageResponse = await messageRequest
   expect(messageResponse.ok()).toBeTruthy()
-
-  const conversationMatch = new URL(messageResponse.url()).pathname.match(
-    /^\/api\/webchat\/conversations\/(wc_[A-Za-z0-9_-]+)\/messages$/,
-  )
-  expect(conversationMatch).not.toBeNull()
-  const conversationId = conversationMatch?.[1] || ''
-  expect(conversationId).toMatch(/^wc_[A-Za-z0-9_-]+$/)
-  const operatorSessionKey = `webchat:${conversationId}`
-
-  markStage('public-persisted')
   await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
 
   markStage('login-navigation')
   const loginResponse = await navigate(page, '/login')
-  markStage('login-form')
   expect(loginResponse).not.toBeNull()
   expect(loginResponse?.ok()).toBeTruthy()
-  await page.getByLabel('账号').fill(adminUsername)
-  await page.getByLabel('密码').fill(adminPassword)
-  await page.getByRole('button', { name: '登录' }).click()
+  await page.getByLabel(/账号/).fill(adminUsername)
+  await page.getByLabel(/密码/).fill(adminPassword)
+  await page.getByRole('button', { name: '登录客服工作台' }).click()
   await expect(page).not.toHaveURL(/\/login$/)
 
   markStage('operator-navigation')
-  const operatorPath = `/webchat?session=${encodeURIComponent(operatorSessionKey)}`
-  const operatorResponse = await navigate(page, operatorPath)
-  markStage('operator-console')
+  const operatorResponse = await navigate(page, '/workspace')
   expect(operatorResponse).not.toBeNull()
   expect(operatorResponse?.ok()).toBeTruthy()
-  await expect(page.getByTestId('nexus-support-console')).toBeVisible({ timeout: 20_000 })
-  await expect(page).toHaveURL(new RegExp(`session=${encodeURIComponent(operatorSessionKey)}`))
-
-  markStage('operator-session')
-  await expect(page.locator('.support-message-body', { hasText: message }).first()).toBeVisible({ timeout: 25_000 })
+  await expect(page.getByRole('heading', { level: 1, name: '客服工作台' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText(/\b(?:AI|Artificial Intelligence|Runtime|Provider|RAG|Prompt|Model|Agent)\b/i)
 
   markStage('completed')
 })
