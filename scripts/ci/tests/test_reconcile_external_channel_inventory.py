@@ -37,7 +37,7 @@ class CanonicalExternalChannelReconciliationTests(unittest.TestCase):
                 deleted_paths=frozenset(),
             )
 
-    def test_manifest_requires_explicit_deleted_state_and_disposition(self) -> None:
+    def test_manifest_collects_deleted_surfaces_and_retired_transport_sources(self) -> None:
         manifest = {
             "schema": "nexus.operator-console-consolidation.v1",
             "implementation_surfaces": [
@@ -53,8 +53,16 @@ class CanonicalExternalChannelReconciliationTests(unittest.TestCase):
                     "path": "webapp/src/features/operator-workspace",
                 },
             ],
+            "transport_authority": {
+                "target": "webapp/src/lib/apiClient.ts",
+                "current_duplicates": [],
+                "retired_sources": ["webapp/src/lib/api.ts"],
+            },
         }
-        self.assertEqual(canonical_deleted_paths(manifest), frozenset({"frontend/app.js"}))
+        self.assertEqual(
+            canonical_deleted_paths(manifest),
+            frozenset({"frontend/app.js", "webapp/src/lib/api.ts"}),
+        )
 
     def test_deleted_true_with_non_delete_disposition_fails_closed(self) -> None:
         manifest = {
@@ -62,9 +70,39 @@ class CanonicalExternalChannelReconciliationTests(unittest.TestCase):
             "implementation_surfaces": [
                 {"id": "bad", "disposition": "CANONICAL", "deleted": True, "paths": ["x.py"]},
             ],
+            "transport_authority": {
+                "target": "webapp/src/lib/apiClient.ts",
+                "current_duplicates": [],
+                "retired_sources": [],
+            },
         }
         with self.assertRaisesRegex(InventoryError, "canonical_console_deleted_disposition_invalid"):
             canonical_deleted_paths(manifest)
+
+    def test_transport_duplicates_or_retired_target_fail_closed(self) -> None:
+        duplicate_manifest = {
+            "schema": "nexus.operator-console-consolidation.v1",
+            "implementation_surfaces": [],
+            "transport_authority": {
+                "target": "webapp/src/lib/apiClient.ts",
+                "current_duplicates": ["webapp/src/lib/supportApi.ts"],
+                "retired_sources": [],
+            },
+        }
+        with self.assertRaisesRegex(InventoryError, "canonical_transport_duplicates_remain"):
+            canonical_deleted_paths(duplicate_manifest)
+
+        target_retired_manifest = {
+            "schema": "nexus.operator-console-consolidation.v1",
+            "implementation_surfaces": [],
+            "transport_authority": {
+                "target": "webapp/src/lib/apiClient.ts",
+                "current_duplicates": [],
+                "retired_sources": ["webapp/src/lib/apiClient.ts"],
+            },
+        }
+        with self.assertRaisesRegex(InventoryError, "canonical_transport_target_retired"):
+            canonical_deleted_paths(target_retired_manifest)
 
 
 if __name__ == "__main__":
