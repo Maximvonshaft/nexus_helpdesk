@@ -1,0 +1,48 @@
+name: Refresh frontend lockfile
+
+on:
+  push:
+    branches:
+      - feat/customer-service-console-purge
+    paths:
+      - .github/workflows/refresh-frontend-lockfile.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout convergence branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: feat/customer-service-console-purge
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Regenerate lockfile from manifest
+        working-directory: webapp
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Verify manifest unchanged
+        run: git diff --exit-code -- webapp/package.json
+
+      - name: Commit regenerated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add webapp/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Lockfile already matches package.json."
+          else
+            git commit -m "chore(frontend): regenerate pruned lockfile"
+            git push origin HEAD:feat/customer-service-console-purge
+          fi
