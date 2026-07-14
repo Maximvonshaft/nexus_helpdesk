@@ -3,26 +3,30 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SUPPORT_CONSOLE = ROOT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx'
-SUPPORT_API = ROOT / 'webapp' / 'src' / 'lib' / 'supportApi.ts'
+WORKSPACE = ROOT / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'OperatorWorkspacePage.tsx'
+WORKSPACE_API = ROOT / 'webapp' / 'src' / 'lib' / 'operatorWorkspaceApi.ts'
+API_CLIENT = ROOT / 'webapp' / 'src' / 'lib' / 'apiClient.ts'
 E2E_SMOKE = ROOT / 'webapp' / 'e2e' / 'smoke.spec.ts'
 
 
 def test_ticket_lightweight_frontend_contract_files_exist():
-    assert SUPPORT_CONSOLE.exists()
-    assert SUPPORT_API.exists()
+    assert WORKSPACE.exists()
+    assert WORKSPACE_API.exists()
+    assert API_CLIENT.exists()
     assert E2E_SMOKE.exists()
+    assert not (ROOT / 'webapp' / 'src' / 'features' / 'support-console').exists()
 
 
-def test_ticket_detail_first_paint_uses_summary_and_timeline_not_heavy_endpoint():
-    console = SUPPORT_CONSOLE.read_text(encoding='utf-8')
-    api = SUPPORT_API.read_text(encoding='utf-8')
+def test_ticket_workspace_uses_scoped_summary_and_thread_endpoints_not_heavy_ticket_page():
+    workspace = WORKSPACE.read_text(encoding='utf-8')
+    api = WORKSPACE_API.read_text(encoding='utf-8')
+    client = API_CLIENT.read_text(encoding='utf-8')
 
-    assert "supportApi.supportConversations" in console
-    assert "supportApi.supportConversationDetail" in console
-    assert "supportApi.supportConversationState" in console
-    assert "supportApi.supportConversationMetrics" in console
-    assert "supportApi.supportConversationReply" in console
-    assert "supportApi.ticket(" not in console
-    assert "/api/support/conversations/detail" in api
-    assert "/api/support/conversations/metrics" in api
+    assert 'operatorWorkspaceApi.unifiedQueue' in workspace
+    assert 'operatorWorkspaceApi.conversationThread' in workspace
+    assert 'operatorWorkspaceApi.sourceRecord' in workspace
+    assert '/api/admin/operator-queue/unified' in api
+    assert 'requireApiPath: true' in api
+    assert 'apiRequest' in api
+    assert 'export async function apiRequest' in client
+    assert 'supportApi.ticket(' not in workspace
