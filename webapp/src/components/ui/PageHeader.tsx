@@ -16,15 +16,14 @@ export function PageHeader({
   headingLevel?: HeadingLevel
 }) {
   const Heading = `h${headingLevel}` as ElementType
-
   return (
-    <div className="page-header nd-page-header">
+    <div className="nd-page-header">
       <div>
-        {eyebrow ? <div className="page-eyebrow nd-page-header__eyebrow">{eyebrow}</div> : null}
-        <Heading className="page-title nd-page-header__title">{title}</Heading>
-        {description ? <p className="page-description nd-page-header__description">{description}</p> : null}
+        {eyebrow ? <div className="nd-page-header__eyebrow">{eyebrow}</div> : null}
+        <Heading className="nd-page-header__title">{title}</Heading>
+        {description ? <p className="nd-page-header__description">{description}</p> : null}
       </div>
-      {actions ? <div className="page-actions nd-page-header__actions">{actions}</div> : null}
+      {actions ? <div className="nd-page-header__actions">{actions}</div> : null}
     </div>
   )
 }
