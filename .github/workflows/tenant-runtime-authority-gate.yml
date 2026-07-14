@@ -100,6 +100,7 @@ jobs:
             scripts/release/seed_rc_test_data.py \
             scripts/release/generate_rc_test_env.py
           bash -n scripts/release/run_rc_test_candidate.sh
+          mkdir -p artifacts/tenant-runtime
           pytest -q \
             backend/tests/test_tenant_runtime_authority.py \
             backend/tests/test_lite_cases_pagination.py \
@@ -114,7 +115,8 @@ jobs:
             backend/tests/test_support_conversations_api.py \
             scripts/release/tests/test_seed_rc_test_data_contract.py \
             scripts/release/tests/test_generate_rc_test_env.py \
-            scripts/release/tests/test_validate_rc_test_manifest.py
+            scripts/release/tests/test_validate_rc_test_manifest.py \
+            --junitxml=artifacts/tenant-runtime/contracts.xml
 
       - name: Upgrade disposable PostgreSQL to exact head
         working-directory: backend
@@ -314,11 +316,12 @@ jobs:
           test "$(jq -r '.status' artifacts/tenant-runtime/artifact-scan.json)" = "pass"
 
       - name: Upload bounded authority evidence
-        if: success()
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tenant-runtime-authority-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
+            artifacts/tenant-runtime/contracts.xml
             artifacts/tenant-runtime/evidence.json
             artifacts/tenant-runtime/artifact-scan.json
           if-no-files-found: error
@@ -326,4 +329,7 @@ jobs:
 
       - name: Check exact-head whitespace
         if: github.event_name == 'pull_request'
-        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "${BASE_SHA}...${HEAD_SHA}"
