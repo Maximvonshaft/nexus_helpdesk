@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { api } from '@/lib/api'
@@ -39,7 +38,7 @@ function ActionRow({ item }: { item: ControlTowerAction }) {
         <p>{sanitizeDisplayText(item.next)}</p>
       </div>
       {item.enabled && href ? (
-        <Button asChild variant="secondary"><a href={href}>打开处理页面</a></Button>
+        <a className="button nd-button nd-button--md nd-button--secondary" href={href}>打开处理页面</a>
       ) : (
         <span className="nd-admin-muted">{item.enabled ? '目标页面迁移中' : '当前账号无执行权限'}</span>
       )}
