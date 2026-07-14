@@ -36,9 +36,6 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("packages: write", WORKFLOW)
         self.assertIn("attestations: write", WORKFLOW)
         self.assertIn("id-token: write", WORKFLOW)
-        bind_job = WORKFLOW.split("  bind-and-attest:", 1)[1]
-        self.assertIn("artifact-metadata: write", bind_job)
-        self.assertEqual(WORKFLOW.count("artifact-metadata: write"), 1)
 
     def test_actions_are_pinned_and_no_mutable_action_tags(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
@@ -114,7 +111,24 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
         self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
         self.assertIn("push-to-registry: true", WORKFLOW)
-        self.assertIn("create-storage-record: true", WORKFLOW)
+
+    def test_registry_attestation_is_authenticated_without_unsupported_storage_record(self) -> None:
+        login = WORKFLOW.index("Authenticate GHCR for registry attestation")
+        attest = WORKFLOW.index("Attest exact registry digest")
+        logout = WORKFLOW.index("Clear GHCR registry credentials")
+        finalize = WORKFLOW.index("Build final evidence-bound candidate")
+        self.assertLess(login, attest)
+        self.assertLess(attest, logout)
+        self.assertLess(logout, finalize)
+        self.assertIn("GHCR_TOKEN: ${{ github.token }}", WORKFLOW)
+        self.assertIn(
+            'printf \'%s\' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin',
+            WORKFLOW,
+        )
+        self.assertIn("create-storage-record: false", WORKFLOW)
+        self.assertNotIn("artifact-metadata: write", WORKFLOW)
+        self.assertIn("if: ${{ always() }}", WORKFLOW)
+        self.assertIn("docker logout ghcr.io", WORKFLOW)
 
     def test_recovery_and_external_effect_safety_are_required(self) -> None:
         self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW + "\n" + HELPERS)
