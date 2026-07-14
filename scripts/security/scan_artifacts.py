@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,12 @@ from scanner import bounded_report, scan_artifact_files, write_report
 _SAFE_RULE_RE = re.compile(r"^[a-z0-9_:.-]{2,80}$")
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]{1,240}$")
 _SAFE_EXCEPTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,80}$")
+_GITHUB_ATTESTATION_ID_RE = re.compile(r"^[0-9]{1,20}$")
+_GITHUB_ATTESTATION_URL_RE = re.compile(
+    r"^https://github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/"
+    r"[A-Za-z0-9_.-]{1,100}/attestations/([0-9]{1,20})$"
+)
+_CONTROLLED_CANDIDATE_SCHEMA = "nexus.osr.controlled-candidate-manifest.v1"
 
 
 def _rc_root_for_output(output: Path) -> Path | None:
@@ -77,7 +84,6 @@ def _write_rc_failure_summary(output: Path, findings: list[object]) -> None:
     rc_root = _rc_root_for_output(output)
     if rc_root is None or not findings:
         return
-
     rules: list[str] = []
     paths: list[str] = []
     for finding in findings[:20]:
@@ -103,6 +109,77 @@ def _write_rc_failure_summary(output: Path, findings: list[object]) -> None:
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _finding_fingerprint(rule: str, path: str, value: str) -> str:
+    payload = f"{rule}\0{path}\00\0{value}".encode("utf-8", errors="replace")
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def _validated_attestation_phone_fingerprints(root: Path, paths: list[str]) -> set[tuple[str, str, str]]:
+    """Return exact scanner findings caused by a validated GitHub attestation ID.
+
+    GitHub's persisted attestation ID is a numeric technical identifier. The
+    generic PII detector intentionally treats long digit strings as phone-like.
+    Suppression is permitted only for the exact controlled-candidate schema,
+    the exact three-field attestation object, a numeric GitHub ID, and a URL
+    whose terminal identifier is identical. Secret-pattern findings are never
+    suppressed.
+    """
+
+    allowed: set[tuple[str, str, str]] = set()
+    for relative in sorted(set(paths))[:200]:
+        path = root / relative
+        try:
+            if not path.is_file() or path.is_symlink() or path.stat().st_size > 2 * 1024 * 1024:
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+            continue
+        if not isinstance(payload, dict) or payload.get("schema") != _CONTROLLED_CANDIDATE_SCHEMA:
+            continue
+        attestation = payload.get("attestation")
+        if not isinstance(attestation, dict) or set(attestation) != {
+            "id",
+            "url",
+            "registry_provenance_pushed",
+        }:
+            continue
+        attestation_id = attestation.get("id")
+        attestation_url = attestation.get("url")
+        if not isinstance(attestation_id, str) or not _GITHUB_ATTESTATION_ID_RE.fullmatch(attestation_id):
+            continue
+        if not isinstance(attestation_url, str):
+            continue
+        url_match = _GITHUB_ATTESTATION_URL_RE.fullmatch(attestation_url)
+        if url_match is None or url_match.group(1) != attestation_id:
+            continue
+        if attestation.get("registry_provenance_pushed") is not True:
+            continue
+        fingerprint = _finding_fingerprint("phone", relative, attestation_id)
+        allowed.add((relative, "artifact:phone", fingerprint))
+    return allowed
+
+
+def _suppress_validated_attestation_phone_findings(
+    *, root: Path, paths: list[str], findings: list[object]
+) -> tuple[list[object], int]:
+    allowed = _validated_attestation_phone_fingerprints(root, paths)
+    if not allowed:
+        return findings, 0
+    remaining: list[object] = []
+    suppressed = 0
+    for finding in findings:
+        key = (
+            str(getattr(finding, "path", "")),
+            str(getattr(finding, "rule", "")),
+            str(getattr(finding, "fingerprint", "")),
+        )
+        if key in allowed:
+            suppressed += 1
+        else:
+            remaining.append(finding)
+    return remaining, suppressed
 
 
 def main() -> int:
@@ -139,9 +216,19 @@ def main() -> int:
             return 0
 
         findings = scan_artifact_files(root, args.paths)
+        findings, suppressed = _suppress_validated_attestation_phone_findings(
+            root=root,
+            paths=args.paths,
+            findings=findings,
+        )
         write_report(
             output,
-            bounded_report(schema="nexus_security_artifact_scan_v1", findings=findings, scanned_files=len(args.paths)),
+            bounded_report(
+                schema="nexus_security_artifact_scan_v1",
+                findings=findings,
+                scanned_files=len(args.paths),
+                suppressed_count=suppressed,
+            ),
         )
         _write_rc_failure_summary(output, findings)
         return 1 if findings else 0
