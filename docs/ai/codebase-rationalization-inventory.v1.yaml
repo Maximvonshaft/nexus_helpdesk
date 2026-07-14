@@ -1,7 +1,7 @@
 schema: nexus.osr.codebase-rationalization-inventory.v1
 work_item: 744
 baseline_main_sha: 0cad026eec02ae3b3623273d04f422ead2bb63e8
-status: initial_inventory
+status: active_first_deletion_slice
 product_authority:
   backend_runtime:
     canonical_paths:
@@ -38,51 +38,77 @@ product_authority:
     delete_blockers:
       - tenant_authority_546
       - release_profile_authority_549
-initial_safe_slice:
-  scope: repository_root_scratch_reports_and_unreferenced_utilities
-  candidates:
-    - path: APPLY_PATCH.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: NEXT_PHASE_MAX_PUSH_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: PATCH_MANIFEST.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: PATCH_NOTES.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: PRODUCTION_HARDENING_FIX_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: PRODUCTION_SIGNOFF_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: README_LIMITATION.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND20A_RECTIFICATION_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND20B_LEGACY_PRODUCTION_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND24_HARDENING_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND25_HARDENING_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND26_FRONTEND_HARDENING_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND_A_DELIVERY_REPORT.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND_A_VERIFY_RESULTS.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND_B_MOBILE_APPLY.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: ROUND_B_VERIFY_RESULTS.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: VERIFY_RESULTS.md
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: check_bridge.py
-      disposition: UNKNOWN_BLOCK_DELETE
-    - path: pr_body.md
-      disposition: UNKNOWN_BLOCK_DELETE
+existing_retirement_evidence:
+  governing_index: docs/governance/historical-delivery-evidence.md
+  regression_test: scripts/ci/tests/test_agent_coordination_retired_root_reports.py
+  disposition: DEAD_DELETE
+  state: absent_on_baseline_main
+  paths:
+    - APPLY_PATCH.md
+    - NEXT_PHASE_MAX_PUSH_REPORT.md
+    - PATCH_MANIFEST.md
+    - PATCH_NOTES.md
+    - PRODUCTION_HARDENING_FIX_REPORT.md
+    - PRODUCTION_SIGNOFF_REPORT.md
+    - ROUND24_HARDENING_REPORT.md
+    - ROUND25_HARDENING_REPORT.md
+    - ROUND_A_DELIVERY_REPORT.md
+    - ROUND_A_VERIFY_RESULTS.md
+    - ROUND_B_MOBILE_APPLY.md
+    - ROUND_B_VERIFY_RESULTS.md
+    - VERIFY_RESULTS.md
+deletion_slices:
+  - id: root_historical_overlay_and_round20
+    disposition: DEAD_DELETE
+    state: deleted_on_work_branch
+    branch: work/744-codebase-rationalization
+    paths:
+      - README_LIMITATION.md
+      - ROUND20A_RECTIFICATION_REPORT.md
+      - ROUND20B_LEGACY_PRODUCTION_REPORT.md
+    evidence:
+      static_consumers:
+        README_LIMITATION.md: none_outside_self
+        ROUND20A_RECTIFICATION_REPORT.md:
+          - optional_copy_in_superseded_source_release_script
+        ROUND20B_LEGACY_PRODUCTION_REPORT.md:
+          - optional_copy_in_superseded_source_release_script
+          - stale_source_release_assertions
+      runtime_consumers: none
+      build_or_deploy_requirement: none
+      retention:
+        - git_history
+        - docs/governance/historical-delivery-evidence.md
+      anti_reintroduction: scripts/ci/tests/test_agent_coordination_retired_root_reports.py
+open_candidates:
+  - capability: obsolete_round_source_release_path
+    disposition: SUPERSEDED_DELETE
+    owning_work_item: 744
+    paths:
+      - backend/scripts/build_source_release.sh
+      - backend/scripts/smoke_verify_round20b.py
+    related_test_cleanup:
+      - backend/tests/test_round24_hardening.py
+      - backend/tests/test_round27_frontend_hardening.py
+    finding: >
+      The source-release script still names a round27 archive, packages the legacy
+      frontend, and optionally injects historical Round reports. The Round20B smoke
+      script asserts an inconsistent round20B archive name and old cloud-compose
+      contract. Delete as one coherent slice after removing only the obsolete
+      packaging assertions while retaining unrelated security and behavior tests.
+  - capability: external_channel_root_artifacts
+    disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
+    owning_work_item: 572
+    paths:
+      - LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md
+      - ROUND26_FRONTEND_HARDENING_REPORT.md
+      - ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md
+      - check_bridge.py
+      - pr_body.md
+    blocker: >
+      These paths are exact-classified by the ExternalChannel retirement inventory.
+      Removal requires an owning #572 slice and a synchronized fail-closed inventory update.
 notes:
-  - UNKNOWN_BLOCK_DELETE candidates require exact reference, history, workflow, runbook, and runtime/deployment checks before deletion.
-  - Blocked runtime scopes remain under their owning Work Items and are not bypassed by this inventory.
+  - Absence from GitHub search results is not sufficient deletion evidence; exact branch fetch and tracked-file gates are authoritative.
+  - Blocked runtime scopes remain under their owning Work Items and are not bypassed by #744.
+  - Production deployment, production-data mutation, live outbound and Provider enablement remain unauthorized.
