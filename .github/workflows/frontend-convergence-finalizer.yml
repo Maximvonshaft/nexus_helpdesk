@@ -15,7 +15,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 concurrency:
   group: frontend-convergence-finalizer-748
@@ -36,6 +35,21 @@ jobs:
           persist-credentials: false
           show-progress: false
 
+      - name: Assert exact branch identity
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git branch --show-current)" = "work/744-canonical-operator-console-consolidation"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Fetch bounded donor evidence
+        run: git fetch --no-tags origin 4906188ac77d5d6c1e8409bbb1d5d7e519674a73
+
+      - name: Assemble and validate bounded executor
+        run: |
+          cat scripts/ci/.frontend-convergence-finalizer/part-*.pyfrag > scripts/ci/frontend_convergence_finalizer.py
+          python -m py_compile scripts/ci/frontend_convergence_finalizer.py
+
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -43,87 +57,52 @@ jobs:
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
-      - name: Execute fail-closed convergence transaction
+      - name: Apply canonical convergence migration
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -Eeuo pipefail
-          exec > >(tee /tmp/frontend-convergence-finalizer.log) 2>&1
-          report_failure() {
-            status=$?
-            tail -c 12000 /tmp/frontend-convergence-finalizer.log > /tmp/frontend-convergence-finalizer-tail.log || true
-            python - <<'PY'
-          import json, os
-          from pathlib import Path
-          log = Path('/tmp/frontend-convergence-finalizer-tail.log').read_text(encoding='utf-8', errors='replace')
-          body = (
-              '## FRONTEND_CONVERGENCE_FINALIZER — fail-closed diagnostic\n\n'
-              f'- Exact input Head: `{os.environ["EXPECTED_HEAD"]}`\n'
-              f'- Run: {os.environ["RUN_URL"]}\n'
-              '- No convergence commit was pushed.\n\n'
-              '```text\n' + log[-10000:] + '\n```'
-          )
-          Path('/tmp/comment.json').write_text(json.dumps({'body': body}), encoding='utf-8')
-          PY
-            curl --fail-with-body --silent --show-error \
-              -X POST \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/748/comments" \
-              --data-binary @/tmp/comment.json || true
-            exit "${status}"
-          }
-          trap report_failure ERR
-
-          test "$(git branch --show-current)" = "work/744-canonical-operator-console-consolidation"
-          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
-          git fetch --no-tags origin 4906188ac77d5d6c1e8409bbb1d5d7e519674a73
-          cat scripts/ci/.frontend-convergence-finalizer/part-*.pyfrag > scripts/ci/frontend_convergence_finalizer.py
-          python -m py_compile scripts/ci/frontend_convergence_finalizer.py
           python scripts/ci/frontend_convergence_finalizer.py
           rm -rf scripts/ci/.frontend-convergence-finalizer
 
-          cd webapp
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --loglevel=error
-          npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
-          npm test
-          npm run typecheck -- --pretty false
-          npm run lint
-          npm run build
-          npm run architecture
-          cd ..
-          git diff --check
+      - name: Regenerate dependency lock from current graph
+        working-directory: webapp
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund --loglevel=error
 
+      - name: Install regenerated locked dependencies
+        working-directory: webapp
+        run: npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
+
+      - name: Node contract suite
+        working-directory: webapp
+        run: npm test
+
+      - name: Typecheck
+        working-directory: webapp
+        run: npm run typecheck -- --pretty false
+
+      - name: Lint
+        working-directory: webapp
+        run: npm run lint
+
+      - name: Production build
+        working-directory: webapp
+        run: npm run build
+
+      - name: Architecture and residue gates
+        working-directory: webapp
+        run: npm run architecture
+
+      - name: Diff integrity
+        run: git diff --check
+
+      - name: Commit verified convergence to canonical branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "$(git status --porcelain)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          test -n "$(git status --porcelain)"
           git commit -m "refactor(frontend): converge canonical console and retire duplicate frontend"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:work/744-canonical-operator-console-consolidation
-          trap - ERR
-
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-          body = (
-              '## FRONTEND_CONVERGENCE_FINALIZER — verified migration committed\n\n'
-              f'- Input Head: `{os.environ["EXPECTED_HEAD"]}`\n'
-              f'- New Head: `{head}`\n'
-              f'- Run: {os.environ["RUN_URL"]}\n'
-              '- Local transaction gates passed before push: Node contracts, typecheck, lint, production build, architecture/residue gates, and diff integrity.\n'
-              '- The push used `GITHUB_TOKEN`, so a separate owner-authored metadata commit is still required to trigger the full repository exact-head CI matrix.'
-          )
-          Path('/tmp/comment.json').write_text(json.dumps({'body': body}), encoding='utf-8')
-          PY
-          curl --fail-with-body --silent --show-error \
-            -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/748/comments" \
-            --data-binary @/tmp/comment.json
