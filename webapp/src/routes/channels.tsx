@@ -1,13 +1,17 @@
+import { lazy, Suspense } from 'react'
 import { createRoute, redirect } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
 import { AuthenticatedAppPage } from '@/app/AuthenticatedAppPage'
-import { ChannelsPage } from '@/features/channels/ChannelsPage'
 import { getSupportToken } from '@/lib/supportApi'
+
+const LazyChannelsPage = lazy(() => import('@/features/channels/lazy'))
 
 function ChannelsRoutePage() {
   return (
     <AuthenticatedAppPage activeRoute="channels" requiredAny={['channel_account.manage']}>
-      <ChannelsPage />
+      <Suspense fallback={<main className="nd-app-boundary-state" aria-busy="true"><section className="empty-state" role="status"><strong>正在加载渠道管理…</strong></section></main>}>
+        <LazyChannelsPage />
+      </Suspense>
     </AuthenticatedAppPage>
   )
 }
