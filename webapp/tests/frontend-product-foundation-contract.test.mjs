@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-const webappRoot = resolve(process.cwd())
+const testDir = dirname(fileURLToPath(import.meta.url))
+const webappRoot = resolve(testDir, '..')
 const repoRoot = resolve(webappRoot, '..')
 const read = (path) => readFileSync(path, 'utf8')
 const contract = JSON.parse(read(join(webappRoot, 'design', 'frontend-product-foundation.v1.json')))
