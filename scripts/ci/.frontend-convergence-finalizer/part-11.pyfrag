@@ -26,7 +26,7 @@ def main() -> None:
     current_branch = run("git", "branch", "--show-current", capture=True).stdout.strip()
     if current_branch != CANONICAL_BRANCH:
         raise RuntimeError(f"wrong branch: {current_branch}")
-    expected = os.environ.get("GITHUB_SHA", "").strip()
+    expected = (os.environ.get("EXPECTED_HEAD") or os.environ.get("GITHUB_SHA") or "").strip()
     actual = run("git", "rev-parse", "HEAD", capture=True).stdout.strip()
     if expected and actual != expected:
         raise RuntimeError(f"head moved: expected {expected}, got {actual}")
