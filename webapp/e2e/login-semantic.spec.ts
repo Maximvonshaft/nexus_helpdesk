@@ -23,7 +23,7 @@ test('login is a customer-service flow with visible labels and password reveal',
   await page.goto('/login')
   await expect(page.getByRole('heading', { level: 1, name: '进入客服工作台' })).toBeVisible()
   await expect(page.getByText('把客户问题处理到结果')).toBeVisible()
-  const password = page.getByLabel('密码 必填')
+  const password = page.getByLabel(/密码/)
   await expect(password).toHaveAttribute('type', 'password')
   await page.getByRole('button', { name: '显示密码' }).click()
   await expect(password).toHaveAttribute('type', 'text')
@@ -32,9 +32,9 @@ test('login is a customer-service flow with visible labels and password reveal',
 test('enter submits to the single workspace authority', async ({ page }) => {
   await mockAuth(page)
   await page.goto('/login')
-  await page.getByLabel('账号 必填').fill('operator')
-  await page.getByLabel('密码 必填').fill('correct-password')
-  await page.getByLabel('密码 必填').press('Enter')
+  await page.getByLabel(/账号/).fill('operator')
+  await page.getByLabel(/密码/).fill('correct-password')
+  await page.getByLabel(/密码/).press('Enter')
   await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/)
   await expect.poll(() => page.evaluate((key) => sessionStorage.getItem(key), TOKEN_KEY)).toBe('operator-token')
 })
@@ -42,8 +42,8 @@ test('enter submits to the single workspace authority', async ({ page }) => {
 test('login failure is bounded and does not expose backend detail', async ({ page }) => {
   await mockAuth(page, { rejectLogin: true })
   await page.goto('/login')
-  await page.getByLabel('账号 必填').fill('operator')
-  await page.getByLabel('密码 必填').fill('wrong-password')
+  await page.getByLabel(/账号/).fill('operator')
+  await page.getByLabel(/密码/).fill('wrong-password')
   await page.getByRole('button', { name: '登录客服工作台' }).click()
   await expect(page.getByRole('alert')).toHaveText('无法登录。请检查账号和密码后重试。')
   await expect(page.getByText('private-backend-detail')).toHaveCount(0)
@@ -54,7 +54,7 @@ test('375px login has no horizontal overflow and controls meet touch target size
   await mockAuth(page)
   await page.goto('/login')
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  for (const locator of [page.getByLabel('账号 必填'), page.getByLabel('密码 必填'), page.getByRole('button', { name: '显示密码' }), page.getByRole('button', { name: '登录客服工作台' })]) {
+  for (const locator of [page.getByLabel(/账号/), page.getByLabel(/密码/), page.getByRole('button', { name: '显示密码' }), page.getByRole('button', { name: '登录客服工作台' })]) {
     expect((await locator.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
   }
 })
