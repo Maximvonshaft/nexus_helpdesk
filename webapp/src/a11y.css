@@ -11,6 +11,26 @@
   width: 1px;
 }
 
+.service-app__skip-link {
+  background: var(--nd-color-surface);
+  border: 2px solid var(--nd-color-accent);
+  border-radius: var(--nd-radius-md);
+  box-shadow: var(--nd-shadow-popover);
+  color: var(--nd-color-text);
+  font-weight: 800;
+  left: var(--nd-space-3);
+  padding: var(--nd-space-2) var(--nd-space-3);
+  position: fixed;
+  top: var(--nd-space-3);
+  transform: translateY(calc(-100% - var(--nd-space-6)));
+  transition: transform var(--nd-motion-fast) var(--nd-ease-standard);
+  z-index: var(--nd-z-dialog);
+}
+
+.service-app__skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 button:focus-visible,
 a[href]:focus-visible,
 input:focus-visible,
