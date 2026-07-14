@@ -277,6 +277,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: [build-assure-publish, recovery]
     permissions:
+      artifact-metadata: write
       attestations: write
       contents: read
       id-token: write
@@ -333,6 +334,7 @@ jobs:
           subject-name: ${{ steps.identity.outputs.image }}
           subject-digest: ${{ steps.identity.outputs.digest }}
           push-to-registry: true
+          create-storage-record: true
 
       - name: Build final evidence-bound candidate
         env:
