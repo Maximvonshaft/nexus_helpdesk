@@ -52,13 +52,18 @@ jobs:
 
       - name: Apply bounded Canonical Transport and retirement patch
         working-directory: .
-        run: python scripts/ci/apply_canonical_transport_and_retirement.py
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/canonical-transport
+          python scripts/ci/apply_canonical_transport_and_retirement.py 2>&1 | tee artifacts/canonical-transport/patch.log
 
-      - name: Upload generated implementation files
+      - name: Upload generated implementation files and diagnostics
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: canonical-transport-generated-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
+            artifacts/canonical-transport/patch.log
             webapp/src/lib/api.ts
             webapp/src/lib/supportApi.ts
             webapp/src/lib/operatorWorkspaceApi.ts
