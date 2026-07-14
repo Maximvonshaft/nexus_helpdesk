@@ -55,7 +55,7 @@ jobs:
       - name: Verify tracked repository inventory
         run: |
           set +e
-          python scripts/ci/reconcile_external_channel_inventory.py \
+          PYTHONPATH=. python scripts/ci/reconcile_external_channel_inventory.py \
             --repo-root . \
             --inventory config/governance/external-channel-assets.v1.json \
             --console-manifest webapp/design/operator-console-consolidation.v1.json \
