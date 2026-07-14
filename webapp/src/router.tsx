@@ -3,12 +3,16 @@ import { NotFoundBoundary, Route as RootRoute } from '@/routes/root'
 import { Route as LoginRoute } from '@/routes/login'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
+import { Route as ChannelsRoute } from '@/routes/channels'
+import { Route as RuntimeRoute } from '@/routes/runtime'
 import { Route as WebchatRoute } from '@/routes/webchat'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
   IndexRoute,
   WorkspaceRoute,
+  ChannelsRoute,
+  RuntimeRoute,
   WebchatRoute,
 ])
 
