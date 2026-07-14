@@ -1,5 +1,8 @@
 {
   "schema": "nexus.osr.actions-authority.v1",
+  "version": "2026-07-14.1",
+  "owner_issue": 574,
+  "parent_issue": 744,
   "authoritative": {
     "frontend": ".github/workflows/frontend-truth-gate.yml",
     "backend": ".github/workflows/backend-full-regression.yml",
