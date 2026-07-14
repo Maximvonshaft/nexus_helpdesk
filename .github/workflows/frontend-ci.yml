@@ -6,6 +6,9 @@ on:
       - "webapp/**"
       - "backend/app/settings.py"
       - "backend/app/main.py"
+      - "backend/app/operator_schemas.py"
+      - "backend/tests/test_operator_queue_current_scopes.py"
+      - "backend/tests/test_unified_operator_queue.py"
       - "backend/tests/test_round27_frontend_hardening.py"
       - ".github/workflows/frontend-ci.yml"
   push:
@@ -15,6 +18,9 @@ on:
       - "webapp/**"
       - "backend/app/settings.py"
       - "backend/app/main.py"
+      - "backend/app/operator_schemas.py"
+      - "backend/tests/test_operator_queue_current_scopes.py"
+      - "backend/tests/test_unified_operator_queue.py"
       - "backend/tests/test_round27_frontend_hardening.py"
       - ".github/workflows/frontend-ci.yml"
 
@@ -91,7 +97,11 @@ jobs:
             webapp/src/lib/operatorWorkspaceApi.ts
             webapp/src/lib/operatorWorkspaceTypes.ts
             webapp/src/routes/workspace.tsx
+            webapp/tests/canonical-shell-contract.test.mjs
             backend/app/settings.py
             backend/app/main.py
+            backend/app/operator_schemas.py
+            backend/tests/test_operator_queue_current_scopes.py
+            backend/tests/test_unified_operator_queue.py
           if-no-files-found: ignore
           retention-days: 1
