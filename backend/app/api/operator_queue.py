@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..operator_schemas import (
+    OperatorQueueCurrentScopesResponse,
     OperatorQueueProjectResponse,
     OperatorQueueScopeGrantRead,
     OperatorQueueScopeGrantUpsert,
@@ -25,6 +26,7 @@ from ..services.operator_queue import (
 )
 from ..services.operator_queue_scope import (
     delete_scope_grant,
+    list_current_scope_grants,
     serialize_scope_grant,
     upsert_scope_grant,
 )
@@ -81,6 +83,14 @@ def get_unified_operator_queue(
         cursor=_optional_query_string(cursor),
         limit=_query_limit(limit),
     )
+
+
+@router.get("/my-scopes", response_model=OperatorQueueCurrentScopesResponse)
+def get_current_operator_queue_scopes(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return list_current_scope_grants(db, current_user=current_user)
 
 
 @router.get("/scope-grants", response_model=list[OperatorQueueScopeGrantRead])
