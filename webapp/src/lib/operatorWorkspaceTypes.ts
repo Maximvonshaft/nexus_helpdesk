@@ -14,6 +14,30 @@ export interface WorkspaceScope {
   channelKey: string
 }
 
+export interface AuthorizedWorkspaceScope {
+  tenant_key: string
+  tenant_hash: string
+  country_code: string
+  channel_key: string
+}
+
+export interface AuthorizedWorkspaceScopesResponse {
+  items: AuthorizedWorkspaceScope[]
+  requires_explicit_admin_scope: boolean
+}
+
+export function workspaceScopeFromAuthorized(scope: AuthorizedWorkspaceScope): WorkspaceScope {
+  return {
+    tenantKey: scope.tenant_key,
+    countryCode: scope.country_code,
+    channelKey: scope.channel_key,
+  }
+}
+
+export function workspaceScopeKey(scope: WorkspaceScope) {
+  return `${scope.tenantKey}\u0000${scope.countryCode}\u0000${scope.channelKey}`
+}
+
 export interface WorkspaceFilters {
   state: WorkspaceStateFilter
   sourceType: 'all' | WorkspaceSourceType
