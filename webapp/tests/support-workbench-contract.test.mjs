@@ -8,8 +8,10 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const router = read('src/router.tsx')
 const workspaceRoute = read('src/routes/workspace.tsx')
+const knowledgeRoute = read('src/routes/knowledge.tsx')
 const channelsRoute = read('src/routes/channels.tsx')
 const runtimeRoute = read('src/routes/runtime.tsx')
+const controlTowerRoute = read('src/routes/control-tower.tsx')
 const webchatRoute = read('src/routes/webchat.tsx')
 const supportConsole = read('src/features/support-console/SupportConsolePage.tsx')
 const supportCss = read('src/features/support-console/support-console.css')
@@ -18,29 +20,41 @@ const componentCss = read('src/styles/components.css')
 const routeFiles = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
 
 
-test('production router exposes the canonical workspace, supporting routes, and transitional support workbench', () => {
-  assert.deepEqual(routeFiles, ['channels.tsx', 'index.tsx', 'login.tsx', 'root.tsx', 'runtime.tsx', 'webchat.tsx', 'workspace.tsx'])
-  assert.match(router, /LoginRoute/)
-  assert.match(router, /IndexRoute/)
-  assert.match(router, /WorkspaceRoute/)
-  assert.match(router, /ChannelsRoute/)
-  assert.match(router, /RuntimeRoute/)
-  assert.match(router, /WebchatRoute/)
+test('production router exposes canonical product domains and the transitional support workbench', () => {
+  assert.deepEqual(routeFiles, [
+    'channels.tsx',
+    'control-tower.tsx',
+    'index.tsx',
+    'knowledge.tsx',
+    'login.tsx',
+    'root.tsx',
+    'runtime.tsx',
+    'webchat.tsx',
+    'workspace.tsx',
+  ])
+  for (const routeName of [
+    'LoginRoute',
+    'IndexRoute',
+    'WorkspaceRoute',
+    'KnowledgeRoute',
+    'ChannelsRoute',
+    'RuntimeRoute',
+    'ControlTowerRoute',
+    'WebchatRoute',
+  ]) {
+    assert.match(router, new RegExp(routeName))
+  }
   assert.match(workspaceRoute, /path: '\/workspace'/)
   assert.match(workspaceRoute, /features\/operator-workspace\/lazy/)
+  assert.match(knowledgeRoute, /path: '\/knowledge'/)
+  assert.match(knowledgeRoute, /AuthenticatedAppPage/)
   assert.match(channelsRoute, /path: '\/channels'/)
   assert.match(channelsRoute, /AuthenticatedAppPage/)
   assert.match(runtimeRoute, /path: '\/runtime'/)
   assert.match(runtimeRoute, /AuthenticatedAppPage/)
-  for (const staleRoute of [
-    'EmailRoute',
-    'WebCallRoute',
-    'KnowledgeStudioRoute',
-    'ControlTowerRoute',
-    'AccountsRoute',
-    'UsersRoute',
-    'SecurityRoute',
-  ]) {
+  assert.match(controlTowerRoute, /path: '\/control-tower'/)
+  assert.match(controlTowerRoute, /AuthenticatedAppPage/)
+  for (const staleRoute of ['EmailRoute', 'WebCallRoute', 'AccountsRoute', 'UsersRoute', 'SecurityRoute']) {
     assert.doesNotMatch(router, new RegExp(staleRoute))
   }
 })
@@ -152,7 +166,7 @@ test('support workbench exposes controlled Speedaf actions without customer temp
 })
 
 
-test('knowledge workbench is operator-maintainable instead of a read-only dashboard', () => {
+test('knowledge workbench remains operator-maintainable until canonical route parity is accepted', () => {
   assert.match(supportConsole, /知识库维护/)
   assert.match(supportConsole, /新建知识/)
   assert.match(supportConsole, /编辑知识/)
