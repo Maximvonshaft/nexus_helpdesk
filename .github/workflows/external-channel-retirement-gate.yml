@@ -1,7 +1,5 @@
 name: external-channel-retirement-gate
 
-# ExternalChannel is retired; this lightweight full-tree scan runs for every main change
-# so a new reference cannot bypass the gate by entering an unanticipated directory.
 on:
   pull_request:
     branches: [main]
@@ -21,32 +19,46 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout immutable
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
           persist-credentials: false
+          show-progress: false
+
+      - name: Assert checkout identity
+        if: github.event_name == 'pull_request'
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
 
       - name: Setup Python immutable
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
-      - name: Compile checker
+      - name: Compile governance checkers
         run: |
           set -Eeuo pipefail
-          python -m py_compile scripts/ci/check_external_channel_retirement.py
+          python -m py_compile \
+            scripts/ci/check_external_channel_retirement.py \
+            scripts/ci/reconcile_external_channel_inventory.py
 
       - name: Run focused retirement tests
         run: |
           set -Eeuo pipefail
-          python -m unittest -v scripts.ci.tests.test_check_external_channel_retirement
+          python -m unittest -v \
+            scripts.ci.tests.test_check_external_channel_retirement \
+            scripts.ci.tests.test_reconcile_external_channel_inventory
 
       - name: Verify tracked repository inventory
         run: |
           set +e
-          python scripts/ci/check_external_channel_retirement.py \
+          python scripts/ci/reconcile_external_channel_inventory.py \
             --repo-root . \
-            --manifest config/governance/external-channel-assets.v1.json \
+            --inventory config/governance/external-channel-assets.v1.json \
+            --console-manifest webapp/design/operator-console-consolidation.v1.json \
             > external-channel-retirement-result.json 2>&1
           status=$?
           cat external-channel-retirement-result.json
@@ -54,9 +66,9 @@ jobs:
 
       - name: Upload bounded inventory evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: external-channel-retirement-result
+          name: external-channel-retirement-result-${{ github.event.pull_request.head.sha || github.sha }}
           path: external-channel-retirement-result.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
