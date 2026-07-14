@@ -1,0 +1,70 @@
+name: frontend-consolidation-diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+    paths:
+      - webapp/**
+      - .github/workflows/frontend-consolidation-diagnostics.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-consolidation-diagnostics-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Assert exact head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install
+        working-directory: webapp
+        run: npm ci --no-audit --no-fund --loglevel=error
+
+      - name: Run bounded diagnostics
+        id: diagnostics
+        working-directory: webapp
+        shell: bash
+        run: |
+          set +e
+          mkdir -p ../diagnostics
+          status=0
+          node --test --test-reporter=spec tests/*.test.mjs > ../diagnostics/node-contracts.log 2>&1 || status=1
+          npm run typecheck -- --pretty false > ../diagnostics/typecheck.log 2>&1 || status=1
+          npm run lint > ../diagnostics/lint.log 2>&1 || status=1
+          npm run build > ../diagnostics/build.log 2>&1 || status=1
+          node scripts/assert-route-splitting.mjs > ../diagnostics/route-splitting.log 2>&1 || status=1
+          printf '%s\n' "${status}" > ../diagnostics/status
+          exit "${status}"
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-consolidation-diagnostics-${{ github.event.pull_request.head.sha }}
+          path: diagnostics/
+          if-no-files-found: error
+          retention-days: 3
