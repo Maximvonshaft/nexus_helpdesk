@@ -55,7 +55,7 @@ jobs:
         run: npm ci --no-audit --no-fund --loglevel=error
 
       - name: Node contracts
-        run: npm test
+        run: node --test --test-reporter=dot tests/*.test.mjs
 
       - name: Typecheck
         run: npm run typecheck -- --pretty false
