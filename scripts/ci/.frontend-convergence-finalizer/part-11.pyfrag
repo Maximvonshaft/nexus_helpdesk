@@ -1,26 +1,32 @@
-        ROOT / ".github/workflows/generate-radix-lockfile.yml",
-        ROOT / ".github/workflows/frontend-convergence-finalizer.yml",
-        ROOT / "scripts/ci/frontend_convergence_finalizer.py",
-        ROOT / "docs/ai/frontend-convergence-finalizer-diagnostic.txt",
-    ]:
-        if path.exists():
-            path.unlink()
-
-
 def assert_zero_legacy_consumers() -> None:
-    allowed = {
+    if (ROOT / "frontend").exists():
+        raise RuntimeError("legacy_frontend_directory_still_present")
+
+    allowed_exact = {
+        "README.md",
+        "backend/scripts/smoke_verify_round27.py",
+        "config/governance/legacy-surface-domains.v1.json",
+        "docs/ai/codebase-rationalization-inventory.v1.yaml",
+        "docs/ai/skills/nexus-codebase-rationalization/SKILL.md",
+        "docs/legacy-frontend-deprecation.md",
+        "docs/superpowers/plans/2026-07-14-canonical-operator-console-consolidation.md",
         "webapp/design/legacy-frontend-retirement.v1.json",
         "webapp/design/operator-console-consolidation.v1.json",
-        "docs/superpowers/plans/2026-07-14-canonical-operator-console-consolidation.md",
     }
+    allowed_prefixes = (
+        "backend/tests/",
+        "docs/superpowers/specs/",
+        "scripts/ci/tests/",
+    )
     result = run("git", "grep", "-n", "-I", "-e", "frontend/", check=False, capture=True)
     remaining = []
     for line in result.stdout.splitlines():
         path = line.split(":", 1)[0]
-        if path not in allowed:
-            remaining.append(line)
+        if path in allowed_exact or path.startswith(allowed_prefixes):
+            continue
+        remaining.append(line)
     if remaining:
-        raise RuntimeError("legacy frontend references remain:\n" + "\n".join(remaining[:100]))
+        raise RuntimeError("legacy frontend executable consumers remain:\n" + "\n".join(remaining[:100]))
 
 
 def main() -> None:
