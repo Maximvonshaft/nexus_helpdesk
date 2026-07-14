@@ -6,6 +6,7 @@ on:
       - feat/customer-service-console-purge
     paths:
       - .github/workflows/patch-webcall-install.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
