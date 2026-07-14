@@ -1,6 +1,6 @@
 {
   "schema": "nexus.operator-console-consolidation.v1",
-  "version": "operator_console_consolidation.2026-07-14.5",
+  "version": "operator_console_consolidation.2026-07-14.6",
   "owner_issue": 747,
   "parent_issue": 744,
   "baseline_main_sha": "4bc76c3607db2732388d33634bc26968a880ee07",
@@ -80,9 +80,10 @@
     {
       "id":"legacy_static_admin",
       "path":"frontend",
-      "disposition":"LEGACY_ACTIVE_MIGRATE_THEN_DELETE",
-      "capabilities":["overview","cases","bulletins","channel_settings","signoff"],
-      "exit_condition":"route parity, browser evidence, build identity and fallback-free release observation"
+      "disposition":"SUPERSEDED_DELETE",
+      "deleted":true,
+      "deleted_paths":["frontend/app.js","frontend/index.html","frontend/style.css"],
+      "replacement_routes":["/workspace","/knowledge","/channels","/runtime","/control-tower"]
     },
     {
       "id":"public_webchat_widget",
@@ -93,11 +94,13 @@
   ],
   "transport_authority": {
     "target":"webapp/src/lib/apiClient.ts",
-    "selection":"ADAPT_VERIFIED_DONOR_IMPLEMENTATION",
+    "selection":"CANONICAL_ADAPTED_DONOR_IMPLEMENTATION",
     "donor_source":{"pr":743,"head":"4906188ac77d5d6c1e8409bbb1d5d7e519674a73","path":"webapp/src/lib/apiClient.ts"},
-    "current_duplicates":["webapp/src/lib/api.ts","webapp/src/lib/operatorWorkspaceApi.ts","webapp/src/lib/supportApi.ts","webapp/src/features/runtime/aiDebugApi.ts"],
+    "current_duplicates":[],
+    "retired_sources":["webapp/src/lib/api.ts"],
+    "delegating_adapters":["webapp/src/lib/supportApi.ts","webapp/src/lib/operatorWorkspaceApi.ts","webapp/src/features/runtime/aiDebugApi.ts"],
     "required_shared_behavior":["api_base_url","token_storage","request_id","timeout","safe_retry","auth_expiry","error_normalization","latency_telemetry","external_abort_propagation"],
-    "migration_rule":"domain adapters may remain typed but must delegate transport, auth, timeout, retry and error behavior to apiClient.ts",
+    "migration_rule":"domain adapters remain typed and must delegate transport, auth, timeout, retry and error behavior to apiClient.ts",
     "forbidden_targets":["webapp/src/lib/http/httpClient.ts","a_second_generic_fetch_wrapper"]
   },
   "design_authority": {
@@ -105,28 +108,29 @@
     "components":"webapp/src/components/ui",
     "retired_sources":[
       "webapp/src/features/support-console/support-console.css",
-      "webapp/src/features/support-console/ai-debug-console.css"
+      "webapp/src/features/support-console/ai-debug-console.css",
+      "frontend/style.css"
     ],
-    "legacy_sources_to_retire":["frontend/style.css","webapp/src/styles.css"]
+    "legacy_sources_to_retire":["webapp/src/styles.css"]
   },
   "donor_convergence": [
     {
       "id":"static_frontend_retirement",
-      "decision":"ADAPT",
+      "decision":"ADOPTED_DELETED",
       "source_pr":743,
       "source_paths":["frontend/app.js","frontend/index.html","frontend/style.css"],
-      "destination":"delete_on_748_after_capability_consumer_parity",
+      "destination":"deleted_on_748",
       "required_evidence":["build_and_deploy_consumer_inventory","browser_parity","fallback_free_release_identity","rollback"],
-      "reason":"PR #743 proved a complete deletion shape, but #748 must bind it to the current route and capability authority."
+      "reason":"Static product files are deleted; Settings and backend mount compatibility remain blocked until their focused contracts pass."
     },
     {
       "id":"single_transport_authority",
-      "decision":"ADAPT",
+      "decision":"ADOPTED_AND_ADAPTED",
       "source_pr":743,
       "source_paths":["webapp/src/lib/apiClient.ts"],
       "destination":"webapp/src/lib/apiClient.ts",
-      "required_evidence":["merge_safe_retry_and_latency_from_current_api","migrate_all_domain_adapters","delete_generic_duplicates","focused_network_and_auth_tests"],
-      "reason":"Reuse the verified donor boundary instead of creating a new httpClient implementation."
+      "required_evidence":["safe_retry_and_latency","all_domain_adapters_delegate","generic_duplicates_deleted","focused_network_and_auth_tests"],
+      "reason":"One transport authority now owns auth, timeout, retry, request identity, errors, telemetry and abort propagation."
     },
     {
       "id":"frontend_architecture_gates",
@@ -141,7 +145,7 @@
       ],
       "destination":"existing_748_architecture_and_truth_gate_chain",
       "required_evidence":["no_second_workflow_authority","route_allowlist_matches_747","privileged_runtime_copy_exception_is_bounded","negative_reintroduction_tests"],
-      "reason":"The detection logic is valuable; a parallel workflow/registry is not."
+      "reason":"Detection logic is valuable; a parallel workflow or registry is forbidden."
     },
     {
       "id":"component_and_token_authority",
@@ -150,7 +154,7 @@
       "source_paths":["webapp/src/components/ui","webapp/src/styles/tokens.css"],
       "destination":["webapp/src/components/ui","webapp/src/styles/tokens.css"],
       "required_evidence":["remove_shared_ui_duplicates","remove_raw_feature_palettes","preserve_748_shell_and_runtime_components","accessibility_contracts"],
-      "reason":"Keep one authority while adapting components to the newer product shell."
+      "reason":"Keep one component/token authority while adapting it to the canonical shell."
     },
     {
       "id":"dependency_and_dead_css_cleanup",
@@ -159,7 +163,7 @@
       "source_paths":["webapp/package.json","webapp/package-lock.json","webapp/src/styles/components.css"],
       "destination":"748_current_dependency_and_css_graph",
       "required_evidence":["current_import_graph","generated_lockfile","unused_selector_test","production_build"],
-      "reason":"Recompute against #748; do not copy a stale lockfile or delete dependencies now used by Runtime/Control Tower."
+      "reason":"Recompute against #748; never copy a stale lockfile or remove a currently consumed Runtime dependency."
     },
     {
       "id":"accessibility_corrections",
@@ -168,7 +172,7 @@
       "source_paths":["webapp/src/a11y.css","webapp/e2e/login-semantic.spec.ts","webapp/e2e/operator-workspace.spec.ts"],
       "destination":["webapp/src/app/AppShell.tsx","webapp/src/styles","webapp/e2e"],
       "required_evidence":["skip_link","landmark_order","focus_target","reduced_motion","keyboard_e2e"],
-      "reason":"Port behavior into #748 AppShell; do not reintroduce the superseded ServiceAppShell."
+      "reason":"Port behavior into #748 AppShell; never reintroduce the superseded ServiceAppShell."
     },
     {
       "id":"system_route_and_old_shell",
@@ -176,7 +180,7 @@
       "source_pr":743,
       "source_paths":["webapp/src/features/service-admin/SystemPage.tsx","webapp/src/components/layout/ServiceAppShell.tsx","webapp/src/routes/system.tsx"],
       "destination":["/runtime","/control-tower","webapp/src/app/AppShell.tsx"],
-      "reason":"#747 defines the newer route and shell authority."
+      "reason":"#747 defines the route and shell authority."
     },
     {
       "id":"operator_visible_technical_copy_rule",
@@ -185,7 +189,7 @@
       "source_paths":["webapp/scripts/assert-frontend-visible-copy.mjs"],
       "destination":"primary_operator_routes_strict_plus_privileged_runtime_bounded",
       "required_evidence":["ordinary_operator_no_raw_model_runtime_terms","runtime_route_capability_gate","progressive_disclosure"],
-      "reason":"The primary operator hierarchy remains non-technical, while privileged Runtime evidence is an intentional canonical capability."
+      "reason":"Primary operator hierarchy remains non-technical; privileged Runtime evidence is a bounded canonical capability."
     },
     {
       "id":"known_donor_defects",
@@ -197,7 +201,7 @@
         "cancel_preview_token_must_reset_when_request_fields_change"
       ],
       "required_evidence":["focused_regression_tests_on_748","exact_head_review_resolution"],
-      "reason":"Closed donor PR contains three unresolved P2 findings."
+      "reason":"The donor contains three unresolved P2 findings that may not be imported blindly."
     }
   ],
   "deletion_gate":["consumer_inventory","route_and_capability_parity","authorization_preserved","keyboard_and_accessibility_evidence","degraded_and_large_list_evidence","build_and_deployment_identity","rollback_proof","anti_reintroduction_gate","exact_head_ci"],
