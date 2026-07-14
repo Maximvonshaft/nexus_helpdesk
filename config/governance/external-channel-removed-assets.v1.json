@@ -1,13 +1,14 @@
 {
   "schema": "nexus.external-channel-retirement.removed-assets.v1",
-  "version": "2026-07-14.2",
+  "version": "2026-07-14.3",
   "removed_paths": [
     "frontend/app.js",
-    "frontend/index.html"
+    "frontend/index.html",
+    "webapp/src/lib/api.ts"
   ],
   "retired_globs": [
     "webapp/e2e/*.ts"
   ],
   "authority": "issue-742-pr-743",
-  "rationale": "The legacy static frontend was physically removed and browser tests were rewritten without retired channel terminology after the authenticated customer-service console became the sole frontend authority. Reintroduction is prohibited."
+  "rationale": "The legacy static frontend, its browser contracts, and the duplicate frontend API client were physically removed after the authenticated customer-service console and apiClient.ts became the sole frontend authorities. Reintroduction is prohibited."
 }
