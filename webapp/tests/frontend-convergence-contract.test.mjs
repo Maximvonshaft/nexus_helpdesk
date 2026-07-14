@@ -6,6 +6,7 @@ const auditScripts = [
   'assert-frontend-convergence.mjs',
   'assert-frontend-reachability.mjs',
   'assert-frontend-css-usage.mjs',
+  'assert-frontend-visible-copy.mjs',
   'assert-frontend-toolchain-usage.mjs',
   'assert-frontend-workflow-security.mjs',
 ]
