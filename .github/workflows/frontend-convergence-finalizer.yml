@@ -1,0 +1,98 @@
+name: frontend-convergence-finalizer
+
+on:
+  push:
+    branches:
+      - work/744-canonical-operator-console-consolidation
+    paths:
+      - scripts/ci/.frontend-convergence-finalizer/**
+      - .github/workflows/frontend-convergence-finalizer.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frontend-convergence-finalizer
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Apply and verify canonical convergence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          show-progress: false
+
+      - name: Assert exact checkout
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Fetch bounded donor evidence
+        run: git fetch --no-tags origin 4906188ac77d5d6c1e8409bbb1d5d7e519674a73
+
+      - name: Assemble and validate bounded executor
+        run: |
+          cat scripts/ci/.frontend-convergence-finalizer/part-*.pyfrag > scripts/ci/frontend_convergence_finalizer.py
+          python -m py_compile scripts/ci/frontend_convergence_finalizer.py
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Apply canonical convergence migration
+        run: |
+          python scripts/ci/frontend_convergence_finalizer.py
+          rm -rf scripts/ci/.frontend-convergence-finalizer
+
+      - name: Regenerate dependency lock from current package graph
+        working-directory: webapp
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund --loglevel=error
+
+      - name: Install regenerated locked dependencies
+        working-directory: webapp
+        run: npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
+
+      - name: Node contract suite
+        working-directory: webapp
+        run: npm test
+
+      - name: Typecheck
+        working-directory: webapp
+        run: npm run typecheck -- --pretty false
+
+      - name: Lint
+        working-directory: webapp
+        run: npm run lint
+
+      - name: Production build
+        working-directory: webapp
+        run: npm run build
+
+      - name: Architecture and residue gates
+        working-directory: webapp
+        run: npm run architecture
+
+      - name: Diff integrity
+        run: git diff --check
+
+      - name: Commit verified convergence to the canonical branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "$(git status --porcelain)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor(frontend): converge canonical console and retire duplicate frontend"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:work/744-canonical-operator-console-consolidation
