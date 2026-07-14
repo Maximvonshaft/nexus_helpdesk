@@ -17,22 +17,40 @@ def test_source_release_script_defaults_to_current_release_and_includes_current_
     assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' in script or 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' in script
 
 
-def test_frontend_routes_expose_canonical_workspace_and_transitional_webchat():
+def test_frontend_routes_expose_canonical_product_domains_and_transitional_webchat():
     router = (PROJECT / 'webapp' / 'src' / 'router.tsx').read_text()
     root = (PROJECT / 'webapp' / 'src' / 'routes' / 'root.tsx').read_text()
     workspace = (PROJECT / 'webapp' / 'src' / 'routes' / 'workspace.tsx').read_text()
+    knowledge = (PROJECT / 'webapp' / 'src' / 'routes' / 'knowledge.tsx').read_text()
+    channels = (PROJECT / 'webapp' / 'src' / 'routes' / 'channels.tsx').read_text()
+    runtime = (PROJECT / 'webapp' / 'src' / 'routes' / 'runtime.tsx').read_text()
+    control_tower = (PROJECT / 'webapp' / 'src' / 'routes' / 'control-tower.tsx').read_text()
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
     console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
 
-    assert 'WorkspaceRoute' in router
-    assert 'WebchatRoute' in router
-    assert 'RuntimeRoute' not in router
+    for route_name in (
+        'WorkspaceRoute',
+        'KnowledgeRoute',
+        'ChannelsRoute',
+        'RuntimeRoute',
+        'ControlTowerRoute',
+        'WebchatRoute',
+    ):
+        assert route_name in router
     assert 'AccountsRoute' not in router
     assert '当前入口不存在' in root
     assert "to={getSupportToken() ? '/workspace' : '/login'}" in root
     assert "path: '/workspace'" in workspace
     assert 'beforeLoad' in workspace
     assert 'getSupportToken()' in workspace
+    assert "path: '/knowledge'" in knowledge
+    assert "path: '/channels'" in channels
+    assert "path: '/runtime'" in runtime
+    assert "path: '/control-tower'" in control_tower
+    assert 'AuthenticatedAppPage' in knowledge
+    assert 'AuthenticatedAppPage' in channels
+    assert 'AuthenticatedAppPage' in runtime
+    assert 'AuthenticatedAppPage' in control_tower
     assert "path: '/webchat'" in webchat
     assert 'beforeLoad' in webchat
     assert 'getSupportToken()' in webchat
