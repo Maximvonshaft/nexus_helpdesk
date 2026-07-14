@@ -85,6 +85,13 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: frontend-ci-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
-          path: webapp/artifacts/frontend-ci/*.log
+          path: |
+            webapp/artifacts/frontend-ci/*.log
+            webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx
+            webapp/src/lib/operatorWorkspaceApi.ts
+            webapp/src/lib/operatorWorkspaceTypes.ts
+            webapp/src/routes/workspace.tsx
+            backend/app/settings.py
+            backend/app/main.py
           if-no-files-found: ignore
-          retention-days: 2
+          retention-days: 1
