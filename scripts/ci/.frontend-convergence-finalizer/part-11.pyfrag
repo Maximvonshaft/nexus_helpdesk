@@ -1,6 +1,7 @@
         ROOT / ".github/workflows/generate-radix-lockfile.yml",
         ROOT / ".github/workflows/frontend-convergence-finalizer.yml",
         ROOT / "scripts/ci/frontend_convergence_finalizer.py",
+        ROOT / "docs/ai/frontend-convergence-finalizer-diagnostic.txt",
     ]:
         if path.exists():
             path.unlink()
