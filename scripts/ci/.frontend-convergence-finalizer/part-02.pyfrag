@@ -1,0 +1,70 @@
+function requestPathname(path: string) {
+  if (!/^https?:\/\//i.test(path)) return path.startsWith('/') ? path : `/${path}`
+  try { return new URL(path).pathname } catch { return path }
+}
+
+function isPublicRequest(path: string) {
+  const pathname = requestPathname(path)
+  return PUBLIC_API_PATHS.some((publicPath) => pathname === publicPath || pathname.endsWith(publicPath))
+}
+
+function createRequestId(prefix = 'req') {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function now() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function emitFrontendLatency(detail: { path: string; method: string; status: string; duration_ms: number; ok: boolean; timeout?: boolean }) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('nexusdesk:api-latency', { detail }))
+}
+
+export function getSupportToken() {
+  if (typeof sessionStorage === 'undefined') return null
+  return sessionStorage.getItem(STORAGE_KEY)
+}
+
+export function setSupportToken(token: string | null) {
+  authExpiryHandled = false
+  if (typeof sessionStorage === 'undefined') return
+  if (!token) sessionStorage.removeItem(STORAGE_KEY)
+  else sessionStorage.setItem(STORAGE_KEY, token)
+}
+
+export function clearSupportToken() {
+  if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(STORAGE_KEY)
+}
+
+async function readErrorBody(response: Response, fallback: string) {
+  try {
+    const data = await response.json() as { detail?: unknown; message?: unknown }
+    const detail = data?.detail
+    const rawFallback = typeof data?.message === 'string' && data.message.trim()
+      ? data.message
+      : JSON.stringify(data) || fallback
+    return {
+      message: mapApiErrorMessage(response.status, detail, rawFallback),
+      detail,
+      payload: data,
+    }
+  } catch {
+    return { message: fallback, detail: undefined, payload: undefined }
+  }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  let externalAbortHandler: (() => void) | undefined
+  const timeout = globalThis.setTimeout(() => controller.abort(), Math.max(timeoutMs, 1000))
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort()
+    externalAbortHandler = () => controller.abort()
+    init.signal.addEventListener('abort', externalAbortHandler, { once: true })
+  }
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    globalThis.clearTimeout(timeout)
