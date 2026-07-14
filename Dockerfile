@@ -32,6 +32,10 @@ ARG IMAGE_TAG=nexusdesk/helpdesk:server
 ARG APP_VERSION=server
 ARG FRONTEND_BUILD_SHA=unknown
 
+LABEL org.opencontainers.image.revision=${GIT_SHA}
+LABEL org.opencontainers.image.created=${BUILD_TIME}
+LABEL org.opencontainers.image.version=${APP_VERSION}
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
