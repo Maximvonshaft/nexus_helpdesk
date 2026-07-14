@@ -7,8 +7,15 @@ on:
     paths:
       - .github/workflows/frontend-truth-gate.yml
       - webapp/e2e/smoke.spec.ts
-      - webapp/src/features/support-console/SupportConsolePage.tsx
-      - webapp/src/features/support-console/support-console.css
+      - webapp/e2e/canonical-knowledge-control-tower.spec.ts
+      - webapp/e2e/canonical-supporting-routes.spec.ts
+      - webapp/src/app/**
+      - webapp/src/features/operator-workspace/**
+      - webapp/src/features/knowledge/**
+      - webapp/src/features/channels/**
+      - webapp/src/features/runtime/**
+      - webapp/src/features/control-tower/**
+      - webapp/src/lib/operatorWorkspacePresentation.ts
       - webapp/src/lib/supportStatus.ts
       - webapp/tests/frontend-truth-contract.test.mjs
 
