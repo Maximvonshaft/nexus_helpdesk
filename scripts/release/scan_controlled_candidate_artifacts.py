@@ -13,6 +13,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -33,6 +34,7 @@ from scanner import (  # noqa: E402
 FINAL_PREFIX = "artifacts/final-controlled-candidate/"
 FINAL_MANIFEST = FINAL_PREFIX + "controlled-candidate-manifest.json"
 RC_MANIFEST = FINAL_PREFIX + "candidate-manifest.json"
+COMPLIANCE_BINDING = FINAL_PREFIX + "release-image-compliance-binding.json"
 PUBLISH_RECEIPT = FINAL_PREFIX + "registry-publish-receipt.json"
 
 ATTESTATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
@@ -40,6 +42,7 @@ BUILD_TIME_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 GENERATED_AT_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
 )
+EVALUATED_ON_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 APP_VERSION_RE = re.compile(r"^controlled-[0-9a-f]{12}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:rc-test-[0-9a-f]{40}$")
 
@@ -81,6 +84,16 @@ def _attestation_url_is_bound(value: str, attestation_id: str) -> bool:
     )
 
 
+def _evaluated_on_is_bound(value: str) -> bool:
+    if not EVALUATED_ON_RE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _safe_value(
     *,
     relative: str,
@@ -112,6 +125,12 @@ def _safe_value(
 
     if relative == RC_MANIFEST and schema == "nexus.osr.rc-test-candidate.v1":
         return key_path == ("candidate", "image_tag") and bool(IMAGE_TAG_RE.fullmatch(value))
+
+    if (
+        relative == COMPLIANCE_BINDING
+        and schema == "nexus_release_image_compliance_binding_v1"
+    ):
+        return key_path == ("evaluated_on",) and _evaluated_on_is_bound(value)
 
     if relative == PUBLISH_RECEIPT and schema == "nexus.osr.registry-publish-receipt.v1":
         if key_path == ("build_time",):
