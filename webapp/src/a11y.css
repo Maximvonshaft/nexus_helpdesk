@@ -1,16 +1,3 @@
-.sr-only {
-  border: 0;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  padding: 0;
-  position: absolute;
-  white-space: nowrap;
-  width: 1px;
-}
-
 .service-app__skip-link {
   background: var(--nd-color-surface);
   border: 2px solid var(--nd-color-accent);
@@ -52,9 +39,7 @@ summary:focus-visible,
     scroll-behavior: auto !important;
     transition-duration: .01ms !important;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
   .nd-button:hover,
   .case-queue-item:hover {
     transform: none !important;
