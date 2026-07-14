@@ -6,6 +6,7 @@ import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { AppShell } from './AppShell'
 import type { AppRouteKey } from './navigation'
+import './app-shell.css'
 
 export function AuthenticatedAppPage({
   activeRoute,
