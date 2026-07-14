@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { basename, join, relative, resolve } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 
 const webappRoot = resolve(import.meta.dirname, '..')
 const repoRoot = resolve(webappRoot, '..')
 const srcRoot = join(webappRoot, 'src')
+const uiRoot = join(srcRoot, 'components', 'ui')
+const apiClientPath = join(srcRoot, 'lib', 'apiClient.ts')
+const tokenPath = join(srcRoot, 'styles', 'tokens.css')
 
 function walk(root) {
   if (!existsSync(root)) return []
@@ -23,13 +26,27 @@ function read(path) {
   return readFileSync(path, 'utf8')
 }
 
+function relativePath(path) {
+  return relative(webappRoot, path).replaceAll('\\', '/')
+}
+
 function lineCount(path) {
   return read(path).split(/\r?\n/).length
 }
 
-assert.equal(existsSync(join(repoRoot, 'frontend')), false, 'legacy frontend/ must be physically deleted')
-assert.equal(existsSync(join(srcRoot, 'features', 'support-console')), false, 'duplicate Support Console must be deleted')
-assert.equal(existsSync(join(srcRoot, 'shared', 'ui')), false, 'duplicate shared/ui authority must be deleted')
+const retiredPaths = [
+  join(repoRoot, 'frontend'),
+  join(srcRoot, 'features', 'support-console'),
+  join(srcRoot, 'shared', 'ui'),
+  join(srcRoot, 'lib', 'api.ts'),
+  join(srcRoot, 'lib', 'webchatRealtime.ts'),
+  join(srcRoot, 'lib', 'supportStatus.ts'),
+  join(srcRoot, 'lib', 'webchatVoiceTypes.ts'),
+  join(srcRoot, 'lib', 'outboundChannels.ts'),
+]
+for (const path of retiredPaths) {
+  assert.equal(existsSync(path), false, `retired frontend authority must be physically deleted: ${relative(repoRoot, path)}`)
+}
 
 const routeNames = readdirSync(join(srcRoot, 'routes')).filter((name) => name.endsWith('.tsx')).sort()
 assert.deepEqual(routeNames, ['channels.tsx', 'index.tsx', 'knowledge.tsx', 'login.tsx', 'root.tsx', 'system.tsx', 'webchat.tsx', 'workspace.tsx'])
@@ -38,47 +55,56 @@ const webchatRoute = read(join(srcRoot, 'routes', 'webchat.tsx'))
 assert.match(webchatRoute, /redirect\(\{ to: getSupportToken\(\) \? '\/workspace' : '\/login'/)
 assert.doesNotMatch(webchatRoute, /support-console|SupportConsole|lazy\(/)
 
-const sourceFiles = walk(srcRoot).filter((path) => /\.(?:ts|tsx|css)$/.test(path))
-for (const path of sourceFiles) {
+const sourceFiles = walk(srcRoot).filter((path) => /\.(?:ts|tsx|css)$/.test(path)).sort()
+const codeFiles = sourceFiles.filter((path) => /\.(?:ts|tsx)$/.test(path))
+const cssFiles = sourceFiles.filter((path) => path.endsWith('.css'))
+
+for (const path of codeFiles) {
   const source = read(path)
-  assert.doesNotMatch(source, /@\/shared\/ui|features\/support-console/, `obsolete UI import in ${relative(webappRoot, path)}`)
+  const label = relativePath(path)
+  assert.doesNotMatch(
+    source,
+    /@\/shared\/ui|features\/support-console|@\/lib\/api(?:['"]|$)|webchatRealtime|webchatVoiceTypes|supportStatus|outboundChannels/,
+    `obsolete frontend import or reference in ${label}`,
+  )
+
+  if (path !== apiClientPath) {
+    assert.doesNotMatch(source, /\bfetch\s*\(/, `raw fetch outside apiClient authority: ${label}`)
+    assert.doesNotMatch(source, /\bnew\s+AbortController\s*\(/, `duplicate timeout boundary outside apiClient: ${label}`)
+    assert.doesNotMatch(source, /helpdesk-webapp-token/, `duplicate auth-token ownership outside apiClient: ${label}`)
+    assert.doesNotMatch(source, /headers\.set\(\s*['"]Authorization['"]|['"]Authorization['"]\s*:/, `duplicate Authorization handling outside apiClient: ${label}`)
+  }
 }
 
-const buttonFiles = sourceFiles.filter((path) => path.endsWith('Button.tsx'))
-assert.deepEqual(buttonFiles.map((path) => relative(webappRoot, path)), ['src/components/ui/Button.tsx'])
-const badgeFiles = sourceFiles.filter((path) => path.endsWith('Badge.tsx'))
-assert.deepEqual(badgeFiles.map((path) => relative(webappRoot, path)), ['src/components/ui/Badge.tsx'])
+const apiAuthorityFiles = codeFiles.filter((path) => /export\s+async\s+function\s+apiRequest\b/.test(read(path)))
+assert.deepEqual(apiAuthorityFiles.map(relativePath), ['src/lib/apiClient.ts'])
+assert.match(read(apiClientPath), /export async function apiRequest/)
+assert.equal(
+  codeFiles.filter((path) => /function\s+normalizeApiBaseUrl\b/.test(read(path))).map(relativePath).join(','),
+  'src/lib/apiClient.ts',
+  'API base normalization must have one owner',
+)
+
+const uiFiles = walk(uiRoot).filter((path) => path.endsWith('.tsx')).sort()
+for (const authorityPath of uiFiles) {
+  const name = basename(authorityPath)
+  const matches = codeFiles.filter((path) => path.endsWith('.tsx') && basename(path) === name).map(relativePath)
+  assert.deepEqual(matches, [relativePath(authorityPath)], `duplicate shared UI authority for ${name}`)
+}
 
 const pagePath = join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
 assert.ok(lineCount(pagePath) <= 420, `OperatorWorkspacePage exceeds 420 lines: ${lineCount(pagePath)}`)
 for (const path of walk(join(srcRoot, 'features', 'operator-workspace', 'components')).filter((value) => value.endsWith('.tsx'))) {
-  assert.ok(lineCount(path) <= 420, `${relative(webappRoot, path)} exceeds 420 lines: ${lineCount(path)}`)
+  assert.ok(lineCount(path) <= 420, `${relativePath(path)} exceeds 420 lines: ${lineCount(path)}`)
 }
 for (const path of [
   join(srcRoot, 'features', 'operator-workspace', 'operator-workspace.css'),
   join(srcRoot, 'styles', 'service-shell.css'),
 ]) {
-  assert.ok(lineCount(path) <= 800, `${relative(webappRoot, path)} exceeds 800 lines: ${lineCount(path)}`)
+  assert.ok(lineCount(path) <= 800, `${relativePath(path)} exceeds 800 lines: ${lineCount(path)}`)
 }
 
-const apiClient = read(join(srcRoot, 'lib', 'apiClient.ts'))
-const supportApi = read(join(srcRoot, 'lib', 'supportApi.ts'))
-const workspaceApi = read(join(srcRoot, 'lib', 'operatorWorkspaceApi.ts'))
-assert.match(apiClient, /export async function apiRequest/)
-assert.doesNotMatch(supportApi, /\bfetch\(/)
-assert.doesNotMatch(workspaceApi, /\bfetch\(|new AbortController/)
-assert.match(supportApi, /apiRequest/)
-assert.match(workspaceApi, /apiRequest/)
-
-const visibleRoots = [
-  join(srcRoot, 'routes'),
-  join(srcRoot, 'features'),
-  join(srcRoot, 'components', 'layout'),
-]
-const forbiddenVisibleTerms = /\b(?:AI|Artificial Intelligence|Runtime|Provider|RAG|Prompt|Model|Agent)\b/i
-const findings = []
-
-function collectVisibleStrings(sourceFile) {
+function collectJsxVisibleStrings(sourceFile) {
   const values = []
   function collectWithinJsx(node) {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) values.push(node.text)
@@ -98,34 +124,79 @@ function collectVisibleStrings(sourceFile) {
   return values
 }
 
-for (const root of visibleRoots) {
-  for (const path of walk(root).filter((value) => value.endsWith('.tsx'))) {
-    const source = read(path)
-    const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-    for (const value of collectVisibleStrings(sourceFile)) {
-      if (forbiddenVisibleTerms.test(value)) findings.push(`${relative(webappRoot, path)}: ${value.trim()}`)
+function collectStringLiterals(sourceFile) {
+  const values = []
+  function visit(node) {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) values.push(node.text)
+    else if (ts.isTemplateExpression(node)) {
+      values.push(node.head.text)
+      for (const span of node.templateSpans) values.push(span.literal.text)
     }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return values
+}
+
+const forbiddenVisibleTerms = /\b(?:AI|Artificial Intelligence|Runtime|Provider|RAG|Prompt|Model|Agent)\b/i
+const visibleFindings = []
+for (const path of codeFiles.filter((value) => value.endsWith('.tsx'))) {
+  const sourceFile = ts.createSourceFile(path, read(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  for (const value of collectJsxVisibleStrings(sourceFile)) {
+    if (forbiddenVisibleTerms.test(value)) visibleFindings.push(`${relativePath(path)}: ${value.trim()}`)
   }
 }
-assert.deepEqual(findings, [], `operator-visible technical/AI terminology remains:\n${findings.join('\n')}`)
+for (const path of codeFiles.filter((value) => value.endsWith('.ts') && /(?:Presentation|Status|Copy|Map|Labels|Messages)\.ts$/i.test(basename(value)))) {
+  const sourceFile = ts.createSourceFile(path, read(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  for (const value of collectStringLiterals(sourceFile)) {
+    if (forbiddenVisibleTerms.test(value)) visibleFindings.push(`${relativePath(path)}: ${value.trim()}`)
+  }
+}
+assert.deepEqual(visibleFindings, [], `operator-visible internal terminology remains:\n${visibleFindings.join('\n')}`)
 
-const tokenPath = join(srcRoot, 'styles', 'tokens.css')
-for (const path of [
-  join(srcRoot, 'styles.css'),
-  join(srcRoot, 'styles', 'components.css'),
-  join(srcRoot, 'styles', 'auth.css'),
-  join(srcRoot, 'styles', 'service-shell.css'),
-  join(srcRoot, 'features', 'operator-workspace', 'operator-workspace.css'),
-]) {
+for (const path of cssFiles) {
+  if (path === tokenPath) continue
   const source = read(path)
-  assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b/i, `raw color found outside token authority: ${relative(webappRoot, path)}`)
+  const label = relativePath(path)
+  assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b/i, `raw hex color outside token authority: ${label}`)
+  assert.doesNotMatch(source, /\b(?:rgb|rgba|hsl|hsla)\s*\(/i, `raw functional color outside token authority: ${label}`)
+}
+for (const path of codeFiles.filter((value) => value.endsWith('.tsx'))) {
+  assert.doesNotMatch(
+    read(path),
+    /(?:color|background(?:Color)?|borderColor)\s*:\s*['"`]#[0-9a-f]{3,8}\b/i,
+    `raw inline color outside token authority: ${relativePath(path)}`,
+  )
 }
 assert.match(read(tokenPath), /--nd-color-/)
+
+const packageJson = JSON.parse(read(join(webappRoot, 'package.json')))
+const packageLock = JSON.parse(read(join(webappRoot, 'package-lock.json')))
+const dependencies = packageJson.dependencies ?? {}
+const retiredPackages = [
+  '@radix-ui/react-dropdown-menu',
+  '@radix-ui/react-popover',
+  '@radix-ui/react-select',
+  '@radix-ui/react-tabs',
+  '@radix-ui/react-tooltip',
+  'livekit-client',
+]
+for (const packageName of retiredPackages) {
+  assert.equal(packageName in dependencies, false, `retired direct dependency remains: ${packageName}`)
+  assert.equal(packageName in (packageLock.packages?.['']?.dependencies ?? {}), false, `retired lockfile dependency remains: ${packageName}`)
+  assert.equal(Boolean(packageLock.packages?.[`node_modules/${packageName}`]), false, `retired package node remains in lockfile: ${packageName}`)
+}
+assert.deepEqual(Object.keys(dependencies).filter((name) => name.startsWith('@radix-ui/')).sort(), ['@radix-ui/react-dialog'])
+assert.equal(Object.keys(packageLock.packages ?? {}).some((name) => name.startsWith('node_modules/@livekit/')), false, 'LiveKit transitive packages remain in lockfile')
+assert.doesNotMatch(read(join(webappRoot, 'vite.config.ts')), /livekit|vendor-livekit/i)
 
 console.log(JSON.stringify({
   ok: true,
   routes: routeNames,
   sourceFiles: sourceFiles.length,
-  visibleTerminologyFindings: findings.length,
+  uiAuthorities: uiFiles.length,
+  apiAuthorities: apiAuthorityFiles.map(relativePath),
+  visibleTerminologyFindings: visibleFindings.length,
+  retiredDependencies: retiredPackages,
   workspacePageLines: lineCount(pagePath),
 }, null, 2))
