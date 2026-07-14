@@ -96,7 +96,7 @@ def _grant(
     )
 
 
-def test_current_user_receives_only_own_active_team_country_scopes(db_session):
+def test_current_user_receives_only_own_active_grant_scopes(db_session):
     me_team = _team(db_session, code="ME", country="ME")
     admin = _user(db_session, username="admin", role=UserRole.admin)
     agent = _user(db_session, username="agent", role=UserRole.agent, team_id=me_team.id)
@@ -111,18 +111,13 @@ def test_current_user_receives_only_own_active_team_country_scopes(db_session):
     result = list_current_scope_grants(db_session, current_user=agent)
     validated = OperatorQueueCurrentScopesResponse.model_validate(result)
 
-    assert validated.requires_explicit_admin_scope is False
-    assert [item.model_dump() for item in validated.items] == [
-        {
-            "tenant_key": "tenant-me",
-            "tenant_hash": validated.items[0].tenant_hash,
-            "country_code": "ME",
-            "channel_key": "webchat",
-        }
+    assert [(item.tenant_key, item.country_code, item.channel_key) for item in validated.items] == [
+        ("tenant-wrong-country", "CH", "webchat"),
+        ("tenant-me", "ME", "webchat"),
     ]
     serialized = validated.model_dump_json()
     assert "tenant-disabled" not in serialized
-    assert "tenant-wrong-country" not in serialized
+    assert "tenant-wrong-country" in serialized
     assert "tenant-other-user-secret" not in serialized
     assert "user_id" not in serialized
     assert "grant_id" not in serialized
@@ -143,7 +138,6 @@ def test_manager_receives_each_active_scope_owned_by_that_manager(db_session):
         ("CH", "webchat", "tenant-a"),
         ("ME", "whatsapp", "tenant-b"),
     ]
-    assert result.requires_explicit_admin_scope is False
 
 
 def test_admin_without_explicit_scope_is_not_given_a_guessed_tenant(db_session):
@@ -155,7 +149,6 @@ def test_admin_without_explicit_scope_is_not_given_a_guessed_tenant(db_session):
     )
 
     assert result.items == []
-    assert result.requires_explicit_admin_scope is True
 
 
 def test_admin_explicit_scope_can_drive_the_same_selector_without_broad_inventory(db_session):
@@ -170,4 +163,3 @@ def test_admin_explicit_scope_can_drive_the_same_selector_without_broad_inventor
 
     assert len(result.items) == 1
     assert result.items[0].tenant_key == "tenant-admin"
-    assert result.requires_explicit_admin_scope is False

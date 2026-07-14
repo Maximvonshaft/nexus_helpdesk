@@ -23,7 +23,6 @@ export interface AuthorizedWorkspaceScope {
 
 export interface AuthorizedWorkspaceScopesResponse {
   items: AuthorizedWorkspaceScope[]
-  requires_explicit_admin_scope: boolean
 }
 
 export function workspaceScopeFromAuthorized(scope: AuthorizedWorkspaceScope): WorkspaceScope {

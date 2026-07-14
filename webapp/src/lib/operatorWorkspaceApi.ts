@@ -8,7 +8,6 @@ import type {
   WorkspaceSourceRecord,
 } from '@/lib/operatorWorkspaceTypes'
 
-const WORKSPACE_SCOPE_STORAGE_KEY = 'nexus-operator-workspace-scope'
 const UNIFIED_OPERATOR_QUEUE_PATH = '/api/admin/operator-queue/unified'
 const CURRENT_OPERATOR_SCOPES_PATH = '/api/admin/operator-queue/my-scopes'
 
@@ -24,29 +23,6 @@ function applyFilter(search: URLSearchParams, key: string, value: string, emptyV
   if (!emptyValues.includes(value)) search.set(key, value)
 }
 
-export function loadWorkspaceScope(): WorkspaceScope {
-  const fallback: WorkspaceScope = {
-    tenantKey: String(import.meta.env.VITE_NEXUS_TENANT_KEY || '').trim(),
-    countryCode: String(import.meta.env.VITE_NEXUS_COUNTRY_CODE || 'CH').trim().toUpperCase(),
-    channelKey: String(import.meta.env.VITE_NEXUS_CHANNEL_KEY || 'webchat').trim().toLowerCase(),
-  }
-  if (typeof window === 'undefined') return fallback
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(WORKSPACE_SCOPE_STORAGE_KEY) || '{}') as Partial<WorkspaceScope>
-    return {
-      tenantKey: String(stored.tenantKey || fallback.tenantKey).trim(),
-      countryCode: String(stored.countryCode || fallback.countryCode).trim().toUpperCase(),
-      channelKey: String(stored.channelKey || fallback.channelKey).trim().toLowerCase(),
-    }
-  } catch {
-    return fallback
-  }
-}
-
-export function saveWorkspaceScope(scope: WorkspaceScope) {
-  if (typeof window === 'undefined') return
-  sessionStorage.setItem(WORKSPACE_SCOPE_STORAGE_KEY, JSON.stringify(scope))
-}
 
 export const operatorWorkspaceApi = {
   currentScopes: (init?: RequestInit) => apiRequest<AuthorizedWorkspaceScopesResponse>(CURRENT_OPERATOR_SCOPES_PATH, {

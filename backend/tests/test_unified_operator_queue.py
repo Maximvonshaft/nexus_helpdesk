@@ -284,13 +284,12 @@ def test_forged_tenant_scope_is_denied_even_with_other_grant(db_session):
     assert exc.value.status_code == 403
 
 
-def test_team_country_intersection_cannot_be_expanded_by_grant(db_session):
+def test_exact_grant_country_is_authorized_without_team_country_inference(db_session):
     admin, agent, *_ = _seed_all(db_session)
     _grant(db_session, admin=admin, user=agent, country="CH")
     db_session.commit()
-    with pytest.raises(HTTPException) as exc:
-        _list(db_session, agent, country_code="CH")
-    assert exc.value.detail == "operator_queue_team_scope_mismatch"
+    result = _list(db_session, agent, country_code="CH")
+    assert result["scope"]["country_code"] == "CH"
 
 
 def test_grant_does_not_expand_ticket_team_visibility(db_session):

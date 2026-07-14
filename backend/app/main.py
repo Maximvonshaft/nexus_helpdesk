@@ -159,12 +159,10 @@ def _migration_readiness(observed_heads: tuple[str | None, ...]) -> tuple[dict[s
 
 
 def _frontend_readiness() -> dict[str, object]:
-    active_index = settings.frontend_root / 'index.html'
     dist_index_exists = settings.frontend_dist_index.exists()
-    active_index_exists = active_index.exists()
     return {
-        'ok': active_index_exists and (settings.app_env != 'production' or dist_index_exists),
-        'active_root': 'legacy' if settings.frontend_uses_legacy_fallback else 'frontend_dist',
+        'ok': dist_index_exists,
+        'active_root': 'frontend_dist',
         'frontend_dist_index': 'present' if dist_index_exists else 'missing',
     }
 
