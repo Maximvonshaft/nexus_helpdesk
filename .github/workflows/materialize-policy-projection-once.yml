@@ -1,0 +1,74 @@
+name: Materialize canonical policy projection once
+
+on:
+  push:
+    branches:
+      - stack/571-canonical-policy-projection-on-748
+    paths:
+      - .github/workflows/materialize-policy-projection-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-policy-projection-once
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.repository == 'Maximvonshaft/nexus_helpdesk'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact trigger source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          show-progress: false
+
+      - name: Assert exact trigger identity
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Materialize committed source
+        run: |
+          set -Eeuo pipefail
+          python scripts/ci/policy_projection_materializer_support.py pre
+          python scripts/ci/apply_policy_projection_frontend.py
+          python scripts/ci/policy_projection_materializer_support.py post
+          python -m py_compile \
+            backend/app/settings.py \
+            backend/app/main.py \
+            backend/app/operator_schemas.py \
+            backend/tests/test_operator_queue_current_scopes.py \
+            backend/tests/test_unified_operator_queue.py
+          node --check webapp/tests/canonical-shell-contract.test.mjs
+          ! grep -R -n -E 'VITE_NEXUS_|loadWorkspaceScope|saveWorkspaceScope|requires_explicit_admin_scope|LegacyWorkspaceFallback|legacy_frontend_root|frontend_uses_legacy_fallback|function ScopeEditor|<ScopeEditor' \
+            webapp/src/features/operator-workspace \
+            webapp/src/lib/operatorWorkspaceApi.ts \
+            webapp/src/lib/operatorWorkspaceTypes.ts \
+            webapp/src/routes/workspace.tsx \
+            backend/app/settings.py \
+            backend/app/main.py \
+            backend/app/operator_schemas.py
+
+      - name: Remove one-shot materialization assets
+        run: |
+          rm scripts/ci/apply_policy_projection_frontend.py
+          rm scripts/ci/policy_projection_materializer_support.py
+          rm .github/workflows/materialize-policy-projection-once.yml
+
+      - name: Commit final bounded source
+        env:
+          EXPECTED_PARENT: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_PARENT}"
+          git config user.name "Nexus implementation bot"
+          git config user.email "noreply@github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor(auth): project only server-authorized workspace scope"
+          git push origin HEAD:stack/571-canonical-policy-projection-on-748
