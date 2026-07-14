@@ -21,6 +21,13 @@ MUTATION_RE = re.compile(
     r"(?:^|\s)(?:git\s+(?:commit|push|tag)|gh\s+(?:release|api)|curl\b.*?/contents/)",
     re.IGNORECASE,
 )
+SAFE_EVENT_SHELL_RE = re.compile(
+    r"\$\{\{\s*(?:github\.event\.pull_request\.(?:head|base)\.sha(?:\s*\|\|\s*github\.sha)?|github\.event\.(?:pull_request|issue)\.number)\s*\}\}"
+)
+PR_HEAD_CHECKOUT_RE = re.compile(
+    r"uses:\s*actions/checkout@[^\n]+\n(?:(?:\s+[^\n]*\n){0,14}?)\s+ref:\s*\$\{\{[^}]*github\.event\.pull_request\.head\.sha[^}]*\}\}",
+    re.MULTILINE,
+)
 
 
 class ActionsAuthorityError(ValueError):
@@ -174,10 +181,16 @@ def audit_workflow(path: Path, *, classification: str, authority: str) -> list[d
     for run_value in run_values:
         if triggers_pr and MUTATION_RE.search(run_value):
             add("pull_request_repository_mutation", "PR validation contains commit/push/tag/API mutation")
-        if "${{ github.event." in run_value or "${{ github.head_ref" in run_value:
+        sanitized = SAFE_EVENT_SHELL_RE.sub("", run_value)
+        if "${{ github.event." in sanitized or "${{ github.head_ref" in sanitized:
             add("untrusted_event_shell_interpolation", "attacker-controlled event value is interpolated into executable script")
 
-    if privileged and "github.event.pull_request.head.sha" in text and run_values:
+    trusted_split_checkout = (
+        "path: .trusted" in text
+        and "path: target" in text
+        and (".trusted/scripts/" in text or "working-directory: trusted" in text)
+    )
+    if privileged and PR_HEAD_CHECKOUT_RE.search(text) and not trusted_split_checkout:
         add("privileged_trigger_executes_untrusted_head", "privileged trigger checks out and executes PR head")
 
     if triggers_pr and "actions/checkout@" in text and "persist-credentials: false" not in text:
@@ -194,7 +207,7 @@ def _duplicate_setup_findings(rows: list[dict[str, Any]]) -> list[dict[str, str]
     ):
         candidates: list[str] = []
         for row in rows:
-            if row["authority"] != authority or row["classification"] in {"reusable", "historical_delete", "publication"}:
+            if row["authority"] != authority or row["classification"] in {"reusable", "matrix_component", "historical_delete", "publication"}:
                 continue
             text = row["text"]
             if any(all(marker in text for marker in markers) for markers in marker_sets):
@@ -226,7 +239,6 @@ def audit_repository(repo_root: Path, inventory_path: Path) -> dict[str, Any]:
         path for path in (
             list(inventory["authoritative"].values())
             + list(inventory["publication_allowlist"])
-            + list(inventory["historical_delete"])
             + list(inventory["classification_overrides"])
         ) if path not in tracked
     )
