@@ -38,6 +38,14 @@ product_authority:
     delete_blockers:
       - tenant_authority_546
       - release_profile_authority_549
+  historical_round_artifacts:
+    disposition: UNKNOWN_BLOCK_DELETE
+    owning_work_item: 574
+    delete_blockers:
+      - workflow_graph_stable
+      - current_consumer_inventory
+      - stable_capability_replacement
+      - historical_retention_policy
 existing_retirement_evidence:
   governing_index: docs/governance/historical-delivery-evidence.md
   regression_test: scripts/ci/tests/test_agent_coordination_retired_root_reports.py
@@ -58,22 +66,14 @@ existing_retirement_evidence:
     - ROUND_B_VERIFY_RESULTS.md
     - VERIFY_RESULTS.md
 deletion_slices:
-  - id: root_historical_overlay_and_round20
+  - id: root_overlay_limitation_note
     disposition: DEAD_DELETE
     state: deleted_on_work_branch
     branch: work/744-codebase-rationalization
     paths:
       - README_LIMITATION.md
-      - ROUND20A_RECTIFICATION_REPORT.md
-      - ROUND20B_LEGACY_PRODUCTION_REPORT.md
     evidence:
-      static_consumers:
-        README_LIMITATION.md: none_outside_self
-        ROUND20A_RECTIFICATION_REPORT.md:
-          - optional_copy_in_superseded_source_release_script
-        ROUND20B_LEGACY_PRODUCTION_REPORT.md:
-          - optional_copy_in_superseded_source_release_script
-          - stale_source_release_assertions
+      static_consumers: none_outside_self
       runtime_consumers: none
       build_or_deploy_requirement: none
       retention:
@@ -82,11 +82,13 @@ deletion_slices:
       anti_reintroduction: scripts/ci/tests/test_agent_coordination_retired_root_reports.py
 open_candidates:
   - capability: obsolete_round_source_release_path
-    disposition: SUPERSEDED_DELETE
-    owning_work_item: 744
+    disposition: UNKNOWN_BLOCK_DELETE
+    owning_work_item: 574
     paths:
       - backend/scripts/build_source_release.sh
       - backend/scripts/smoke_verify_round20b.py
+      - ROUND20A_RECTIFICATION_REPORT.md
+      - ROUND20B_LEGACY_PRODUCTION_REPORT.md
     related_test_cleanup:
       - backend/tests/test_round24_hardening.py
       - backend/tests/test_round27_frontend_hardening.py
@@ -94,8 +96,9 @@ open_candidates:
       The source-release script still names a round27 archive, packages the legacy
       frontend, and optionally injects historical Round reports. The Round20B smoke
       script asserts an inconsistent round20B archive name and old cloud-compose
-      contract. Delete as one coherent slice after removing only the obsolete
-      packaging assertions while retaining unrelated security and behavior tests.
+      contract. These are strong retirement candidates, but #574 owns all ROUND-named
+      reports, smoke scripts and tests and currently forbids destructive work until
+      the active workflow graph and consumer inventory are stable.
   - capability: external_channel_root_artifacts
     disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
     owning_work_item: 572
@@ -110,5 +113,5 @@ open_candidates:
       Removal requires an owning #572 slice and a synchronized fail-closed inventory update.
 notes:
   - Absence from GitHub search results is not sufficient deletion evidence; exact branch fetch and tracked-file gates are authoritative.
-  - Blocked runtime scopes remain under their owning Work Items and are not bypassed by #744.
+  - Blocked runtime and historical domains remain under their owning Work Items and are not bypassed by #744.
   - Production deployment, production-data mutation, live outbound and Provider enablement remain unauthorized.
