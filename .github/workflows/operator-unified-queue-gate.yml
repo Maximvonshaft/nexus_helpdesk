@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: operator-unified-queue-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -50,13 +50,22 @@ jobs:
       POSTGRES_DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+          show-progress: false
+
+      - name: Assert checkout identity
+        if: github.event_name == 'pull_request'
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: pip
@@ -87,7 +96,6 @@ jobs:
           python - <<'PY'
           from alembic.config import Config
           from alembic.script import ScriptDirectory
-
           script = ScriptDirectory.from_config(Config("alembic.ini"))
           heads = script.get_heads()
           assert len(heads) == 1, heads
@@ -114,12 +122,19 @@ jobs:
       - name: Run complete queue regression
         env:
           DATABASE_URL: sqlite:////tmp/operator-unified-queue-gate.db
-        run: pytest -q backend/tests/test_operator_queue*.py backend/tests/test_unified_operator_queue.py
+        run: |
+          mkdir -p artifacts/operator-queue
+          pytest -q \
+            backend/tests/test_operator_queue*.py \
+            backend/tests/test_unified_operator_queue.py \
+            --junitxml=artifacts/operator-queue/sqlite.xml
 
       - name: Run PostgreSQL representative-volume cursor proof
         env:
           DATABASE_URL: ${{ env.POSTGRES_DATABASE_URL }}
-        run: pytest -q backend/tests/test_unified_operator_queue_postgres.py
+        run: |
+          pytest -q backend/tests/test_unified_operator_queue_postgres.py \
+            --junitxml=artifacts/operator-queue/postgres.xml
 
       - name: Check exact-head whitespace
         run: |
@@ -128,3 +143,12 @@ jobs:
           else
             git diff --check HEAD~1...HEAD
           fi
+
+      - name: Upload bounded queue diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: operator-queue-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/operator-queue/*.xml
+          if-no-files-found: ignore
+          retention-days: 2
