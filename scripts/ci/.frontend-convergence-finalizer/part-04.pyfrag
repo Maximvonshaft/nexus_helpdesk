@@ -1,0 +1,70 @@
+        status: timedOut ? 'timeout' : 'network_error',
+        duration_ms: Math.round(now() - started),
+        ok: false,
+        timeout: timedOut,
+      })
+      if (!retryable || attempt > 0) {
+        throw new ApiError(timedOut ? timeoutMessage : networkMessage, 0)
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new ApiError(networkMessage, 0)
+}
+'''
+    write("webapp/src/lib/apiClient.ts", content)
+
+
+def refactor_transport_adapters() -> None:
+    support_path = "webapp/src/lib/supportApi.ts"
+    support = read(support_path)
+    start = support.index("\nconst STORAGE_KEY")
+    end = support.index("\nexport const supportApi = {")
+    replacement = """
+import {
+  ApiError,
+  AuthExpiredError,
+  apiRequest,
+  clearSupportToken,
+  getSupportToken,
+  normalizeApiBaseUrl,
+  setSupportToken,
+} from '@/lib/apiClient'
+
+export { ApiError, AuthExpiredError, clearSupportToken, getSupportToken, setSupportToken }
+export const normalizeSupportApiBaseUrl = normalizeApiBaseUrl
+const request = apiRequest
+"""
+    support = support[:start] + "\n" + replacement.strip("\n") + support[end:]
+    write(support_path, support)
+
+    api_path = "webapp/src/lib/api.ts"
+    api = read(api_path)
+    api = api.replace("import { mapApiErrorMessage } from '@/lib/apiErrorMap'\n", "")
+    start = api.index("\nconst STORAGE_KEY")
+    end = api.index("\nexport type TicketTimelinePage")
+    replacement = """
+import {
+  ApiError,
+  AuthExpiredError,
+  apiRequest,
+  clearSupportToken,
+  getSupportToken,
+  normalizeApiBaseUrl,
+  setSupportToken,
+} from '@/lib/apiClient'
+
+export { ApiError, AuthExpiredError, normalizeApiBaseUrl }
+export const getToken = getSupportToken
+export const setToken = setSupportToken
+export const clearToken = clearSupportToken
+const request = apiRequest
+"""
+    api = api[:start] + "\n" + replacement.strip("\n") + api[end:]
+    write(api_path, api)
+
+    workspace_path = "webapp/src/lib/operatorWorkspaceApi.ts"
+    workspace = read(workspace_path)
+    old_import = """import {
+  ApiError,
+  AuthExpiredError,
+  clearSupportToken,
