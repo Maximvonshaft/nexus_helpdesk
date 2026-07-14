@@ -66,7 +66,7 @@ test('new unowned route files cannot create another product spine', () => {
   assert.deepEqual(unknownImports, [], `router imports an unowned route: ${unknownImports.join(', ')}`)
 })
 
-test('all current and retired operator surfaces have explicit dispositions', () => {
+test('all current and retired operator surfaces have explicit tracked-tree dispositions', () => {
   const surfaces = byId(contract().implementation_surfaces)
   assert.equal(surfaces.get('modern_operator_workspace')?.disposition, 'CANONICAL')
 
@@ -85,24 +85,40 @@ test('all current and retired operator surfaces have explicit dispositions', () 
   }
   assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'features', 'support-console')), false)
 
-  assert.equal(surfaces.get('legacy_static_admin')?.disposition, 'LEGACY_ACTIVE_MIGRATE_THEN_DELETE')
+  const staticAdmin = surfaces.get('legacy_static_admin')
+  assert.equal(staticAdmin?.disposition, 'SUPERSEDED_DELETE')
+  assert.equal(staticAdmin?.deleted, true)
+  for (const path of staticAdmin?.deleted_paths ?? []) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), false, `legacy static admin path still exists: ${path}`)
+  }
+
   assert.equal(surfaces.get('public_webchat_widget')?.disposition, 'SEPARATE_PUBLIC_SURFACE')
   assert.equal(surfaces.size, 5, 'a new surface requires an explicit authority decision')
 })
 
-test('transport duplication is frozen and must converge on one target', () => {
+test('one canonical transport owns fetch and domain adapters only delegate', () => {
   const transport = contract().transport_authority
-  assert.equal(transport.target, 'webapp/src/lib/http/httpClient.ts')
-  assert.deepEqual([...transport.current_duplicates].sort(), [
-    'webapp/src/lib/api.ts',
-    'webapp/src/lib/operatorWorkspaceApi.ts',
-    'webapp/src/lib/supportApi.ts',
-  ])
-  for (const path of transport.current_duplicates) {
-    assert.equal(existsSync(join(REPO_ROOT, path)), true, `recorded transport source is missing: ${path}`)
+  assert.equal(transport.target, 'webapp/src/lib/apiClient.ts')
+  assert.deepEqual(transport.current_duplicates, [])
+  assert.equal(existsSync(join(REPO_ROOT, transport.target)), true)
+  assert.equal(existsSync(join(REPO_ROOT, 'webapp/src/lib/api.ts')), false)
+
+  const authority = read(join(REPO_ROOT, transport.target))
+  assert.match(authority, /export async function apiRequest/)
+  assert.match(authority, /SAFE_RETRY_METHODS/)
+  assert.match(authority, /nexusdesk:api-latency/)
+  assert.match(authority, /externalSignal/)
+
+  for (const path of transport.delegating_adapters) {
+    const source = read(join(REPO_ROOT, path))
+    assert.match(source, /apiRequest/)
+    assert.doesNotMatch(source, /\bfetch\s*\(/, `domain adapter owns fetch: ${path}`)
+    assert.doesNotMatch(source, /new AbortController\s*\(/, `domain adapter owns timeout: ${path}`)
   }
+
   assert.ok(transport.required_shared_behavior.includes('auth_expiry'))
   assert.ok(transport.required_shared_behavior.includes('error_normalization'))
+  assert.ok(transport.required_shared_behavior.includes('external_abort_propagation'))
 })
 
 test('login presentation is operational rather than promotional or AI-styled', () => {
