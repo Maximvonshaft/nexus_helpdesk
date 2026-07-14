@@ -8,7 +8,7 @@ const user = {
   username: 'operator',
   display_name: '客服一号',
   role: 'agent',
-  capabilities: ['ticket.read', 'operator_queue.read', 'outbound.send', 'webchat.handoff.accept', 'webchat.handoff.resume_ai', 'tool:speedaf.work_order.create:write'],
+  capabilities: ['ticket.read', 'operator_queue.read', 'outbound.send', 'webchat.handoff.accept', 'webchat.handoff.resume_ai', 'tool:speedaf.work_order.create:write', 'ai_config.read'],
 }
 
 function queueItem() {
