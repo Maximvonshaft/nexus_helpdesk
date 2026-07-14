@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -154,6 +156,18 @@ def resolve_capabilities(user, db: Session | None = None) -> set[str]:
         else:
             capabilities.discard(override.capability)
     return capabilities
+
+
+def capability_fingerprint(user, db: Session | None = None) -> str:
+    """Return a bounded identity for the effective server policy projection.
+
+    Domain services use this fingerprint instead of embedding role strings in
+    authorization/cursor state. Role defaults remain an implementation detail of
+    this central policy module; explicit overrides are included when a session is
+    available.
+    """
+    canonical = "\n".join(sorted(resolve_capabilities(user, db)))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def ensure_capability(user, capability: str, db: Session | None = None, *, message: str = "Permission denied") -> None:

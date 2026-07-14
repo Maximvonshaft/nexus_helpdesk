@@ -6,13 +6,13 @@ import re
 from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
-from ..enums import UserRole
-from ..models import AdminAuditLog, Market, Team, User
+from ..models import AdminAuditLog, User
 from ..operator_models import OperatorQueueScopeGrant
 from ..services.permissions import (
     CAP_OPERATOR_QUEUE_READ,
+    capability_fingerprint,
     ensure_capability,
     ensure_can_manage_users,
 )
@@ -45,18 +45,6 @@ def tenant_scope_hash(tenant_key: str) -> str:
     return hashlib.sha256(tenant_key.encode("utf-8")).hexdigest()[:12]
 
 
-def _team_country(db: Session, user) -> str | None:
-    if not getattr(user, "team_id", None):
-        return None
-    row = (
-        db.query(Market.country_code)
-        .join(Team, Team.market_id == Market.id)
-        .filter(Team.id == int(user.team_id), Team.is_active.is_(True), Market.is_active.is_(True))
-        .first()
-    )
-    return str(row[0]).strip().upper() if row and row[0] else None
-
-
 def active_scope_grant(
     db: Session,
     *,
@@ -85,7 +73,7 @@ def authorize_operator_scope(
     tenant_key: str,
     country_code: str,
     channel_key: str,
-) -> tuple[str, str, str, OperatorQueueScopeGrant | None]:
+) -> tuple[str, str, str, OperatorQueueScopeGrant]:
     ensure_capability(
         current_user,
         CAP_OPERATOR_QUEUE_READ,
@@ -97,17 +85,6 @@ def authorize_operator_scope(
         country_code=country_code,
         channel_key=channel_key,
     )
-    if current_user.role == UserRole.admin:
-        return tenant, country, channel, None
-
-    if current_user.role in {UserRole.agent, UserRole.lead}:
-        team_country = _team_country(db, current_user)
-        if team_country is None or team_country != country:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="operator_queue_team_scope_mismatch",
-            )
-
     grant = active_scope_grant(
         db,
         user_id=int(current_user.id),
@@ -124,15 +101,16 @@ def authorize_operator_scope(
 
 
 def scope_grant_version(grant: OperatorQueueScopeGrant | None, *, current_user) -> str:
-    auth_context = (
-        f"role:{getattr(getattr(current_user, 'role', None), 'value', getattr(current_user, 'role', 'unknown'))}:"
-        f"team:{getattr(current_user, 'team_id', None) or 'none'}"
-    )
+    session = object_session(grant) if grant is not None else None
+    policy_fingerprint = capability_fingerprint(current_user, session)
     if grant is None:
-        raw = f"admin:{int(current_user.id)}:{auth_context}"
+        raw = f"user:{int(current_user.id)}:capabilities:{policy_fingerprint}:grant:none"
     else:
         updated = grant.updated_at.isoformat() if isinstance(grant.updated_at, datetime) else str(grant.updated_at)
-        raw = f"grant:{grant.id}:{updated}:{int(bool(grant.enabled))}:{auth_context}"
+        raw = (
+            f"user:{int(current_user.id)}:capabilities:{policy_fingerprint}:"
+            f"grant:{grant.id}:{updated}:{int(bool(grant.enabled))}"
+        )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -160,10 +138,10 @@ def serialize_current_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, str
 
 
 def list_current_scope_grants(db: Session, *, current_user) -> dict[str, object]:
-    """Project existing queue grants into a safe current-user workspace selector.
+    """Project active current-user grants into the Canonical Workspace selector.
 
-    This is not a second authorization source. Every returned tuple is still
-    validated by ``authorize_operator_scope`` when the queue is read.
+    The grant tuple is the sole normal-work scope authority. Every projected
+    tuple is revalidated by ``authorize_operator_scope`` when queue data is read.
     """
     ensure_capability(
         current_user,
@@ -171,30 +149,20 @@ def list_current_scope_grants(db: Session, *, current_user) -> dict[str, object]
         db,
         message="Operator queue read permission required",
     )
-    query = db.query(OperatorQueueScopeGrant).filter(
-        OperatorQueueScopeGrant.user_id == int(current_user.id),
-        OperatorQueueScopeGrant.enabled.is_(True),
-    )
-    if current_user.role in {UserRole.agent, UserRole.lead}:
-        team_country = _team_country(db, current_user)
-        if team_country is None:
-            rows: list[OperatorQueueScopeGrant] = []
-        else:
-            rows = query.filter(OperatorQueueScopeGrant.country_code == team_country).order_by(
-                OperatorQueueScopeGrant.country_code.asc(),
-                OperatorQueueScopeGrant.channel_key.asc(),
-                OperatorQueueScopeGrant.tenant_key.asc(),
-            ).all()
-    else:
-        rows = query.order_by(
+    rows = (
+        db.query(OperatorQueueScopeGrant)
+        .filter(
+            OperatorQueueScopeGrant.user_id == int(current_user.id),
+            OperatorQueueScopeGrant.enabled.is_(True),
+        )
+        .order_by(
             OperatorQueueScopeGrant.country_code.asc(),
             OperatorQueueScopeGrant.channel_key.asc(),
             OperatorQueueScopeGrant.tenant_key.asc(),
-        ).all()
-    return {
-        "items": [serialize_current_scope_grant(row) for row in rows],
-        "requires_explicit_admin_scope": current_user.role == UserRole.admin and not rows,
-    }
+        )
+        .all()
+    )
+    return {"items": [serialize_current_scope_grant(row) for row in rows]}
 
 
 def _audit(
