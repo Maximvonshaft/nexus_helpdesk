@@ -192,28 +192,26 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         ):
             self.assertIn(service, self.runner)
 
-    def test_browser_binds_operator_thread_to_server_conversation_identity(self):
-        identity_extract = "new URL(messageResponse.url()).pathname.match"
-        session_key = "const operatorSessionKey = `webchat:${conversationId}`"
-        operator_path = "`/webchat?session=${encodeURIComponent(operatorSessionKey)}`"
-        body_selector = "page.locator('.support-message-body', { hasText: message }).first()"
-        self.assertIn(identity_extract, self.browser)
-        self.assertIn("^\\/api\\/webchat\\/conversations\\/(wc_[A-Za-z0-9_-]+)\\/messages$", self.browser)
-        self.assertIn(session_key, self.browser)
-        self.assertIn(operator_path, self.browser)
-        self.assertIn(body_selector, self.browser)
-        self.assertLess(self.browser.index(identity_extract), self.browser.index(session_key))
-        self.assertLess(self.browser.index(session_key), self.browser.index(operator_path))
-        self.assertLess(self.browser.index(operator_path), self.browser.index(body_selector))
-        self.assertNotIn("button.support-row', { hasText: message }", self.browser)
-        self.assertNotIn("await matchingRow.click()", self.browser)
+    def test_browser_proves_public_message_and_single_customer_service_workspace(self):
+        self.assertIn("const message = `RC browser synthetic message", self.browser)
+        self.assertIn("/api/webchat/conversations/", self.browser)
+        self.assertIn("const operatorResponse = await navigate(page, '/workspace')", self.browser)
+        self.assertIn("level: 1, name: '客服工作台'", self.browser)
+        self.assertIn("name: '主导航'", self.browser)
+        self.assertIn("not.toContainText", self.browser)
+        self.assertNotIn("/webchat?session=", self.browser)
+        self.assertNotIn(".support-message-body", self.browser)
+        self.assertLess(
+            self.browser.index("messageResponse.ok()"),
+            self.browser.index("const operatorResponse = await navigate(page, '/workspace')"),
+        )
 
     def test_rc_browser_stage_is_bound_without_stateful_retries(self):
         self.assertIn("RC_BROWSER_STAGE_FILE", self.browser)
         self.assertIn("writeFileSync(browserStageFile", self.browser)
         self.assertIn('browser_stage_file="${RUNNER_TEMP}/rc-browser-stage"', self.workflow)
         self.assertIn('RC_BROWSER_STAGE_FILE="${browser_stage_file}"', self.workflow)
-        self.assertIn('tr -d', self.workflow)
+        self.assertIn("tr -d", self.workflow)
         self.assertIn("retries: rcBrowser ? 0", self.playwright)
         self.assertNotIn("artifacts/rc-test/browser-stage", self.workflow)
 
