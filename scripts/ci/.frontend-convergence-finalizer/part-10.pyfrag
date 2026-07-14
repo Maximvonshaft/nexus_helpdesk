@@ -3,7 +3,10 @@
         "webapp/tests/frontend-truth-contract.test.mjs",
         "webapp/tests/frontend-route-splitting-contract.test.mjs",
     ]
+    active_consumer_paths = set(consumer_paths)
     for path in consumer_whitelist:
+        if path not in active_consumer_paths:
+            continue
         if (ROOT / path).exists() and path_exists_at(DONOR_SHA, path):
             selective_three_way(path)
 
@@ -67,4 +70,3 @@ def update_authority() -> None:
 
 def remove_temporary_controls() -> None:
     for path in [
-        ROOT / ".github/workflows/frontend-consolidation-diagnostics.yml",
