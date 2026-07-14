@@ -10,6 +10,7 @@ import '@/styles.css'
 import '@/a11y.css'
 import '@/styles/components.css'
 import '@/styles/auth.css'
+import '@/styles/service-shell.css'
 
 initWebVitals()
 
