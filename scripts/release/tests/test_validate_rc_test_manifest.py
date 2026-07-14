@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -160,8 +161,10 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
             "app-rc", "migrate-rc", "seed-rc", "worker-outbound-rc", "worker-background-rc",
             "worker-webchat-ai-rc", "worker-handoff-snapshot-rc",
         ):
-            block = self.compose.split(f"  {service}:\n", 1)[1].split("\n  ", 1)[0]
-            self.assertIn("<<: *rc_app", block)
+            self.assertRegex(
+                self.compose,
+                rf"(?ms)^  {re.escape(service)}:\n.*?^    <<: \*rc_app$",
+            )
         self.assertIn("COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist", self.dockerfile)
         self.assertNotIn("RC_FRONTEND_IMAGE", self.compose + self.env_example + self.runner)
         self.assertNotIn("frontend-rc:", self.compose)
@@ -195,16 +198,20 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("PROVIDER_RUNTIME_LIVE_PROBE_TOKEN", self.env_example)
 
     def test_exact_source_and_image_identity_are_fail_closed(self):
-        self.assertIn("RC_SOURCE_SHA=", self.env_example)
-        self.assertIn('git -C "${ROOT_DIR}" rev-parse HEAD', self.runner)
-        self.assertIn('expected_image_tag="nexusdesk/helpdesk:rc-test-${RC_SOURCE_SHA}"', self.runner)
-        self.assertIn('docker image inspect "${RC_IMAGE_TAG}"', self.runner)
-        self.assertIn("org.opencontainers.image.revision", self.runner)
+        self.assertIn("RC_SOURCE_SHA=<40-char-git-sha>", self.env_example)
+        self.assertIn('SOURCE_SHA="${GIT_SHA}"', self.runner)
+        self.assertIn('RC_SOURCE_SHA does not match GIT_SHA', self.runner)
+        self.assertIn('IMAGE_TAG_VALUE="${RC_IMAGE_TAG}"', self.runner)
+        self.assertIn('docker image inspect "${IMAGE_TAG_VALUE}"', self.runner)
         self.assertIn("LABEL org.opencontainers.image.revision=${GIT_SHA}", self.dockerfile)
+        self.assertIn('ref: ${{ github.event.pull_request.head.sha || github.sha }}', self.workflow)
+        self.assertIn('RC_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}', self.workflow)
 
     def test_runner_uses_explicit_isolated_compose_identity_and_cleanup(self):
-        self.assertIn('--project-name "${COMPOSE_PROJECT_NAME}"', self.runner)
-        self.assertIn('--env-file "${RC_ENV_FILE}"', self.runner)
+        self.assertIn("name: ${COMPOSE_PROJECT_NAME:-nexus_rc_test}", self.compose)
+        self.assertIn('PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexus_rc_test}"', self.runner)
+        self.assertIn('export COMPOSE_PROJECT_NAME="${PROJECT_NAME}"', self.runner)
+        self.assertIn('docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}"', self.runner)
         self.assertIn("down --volumes --remove-orphans", self.runner)
         self.assertIn("trap cleanup_stack EXIT", self.runner)
 
