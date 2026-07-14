@@ -12,10 +12,10 @@
   border-radius: var(--nd-radius-lg);
   box-shadow: var(--nd-shadow-panel);
   display: grid;
-  grid-template-columns: minmax(320px, .9fr) minmax(380px, 1fr);
+  grid-template-columns: minmax(280px, .78fr) minmax(380px, 1fr);
   margin: 0 auto;
-  max-width: 980px;
-  min-height: 600px;
+  max-width: 880px;
+  min-height: 540px;
   overflow: hidden;
   width: 100%;
 }
@@ -34,8 +34,8 @@
   gap: var(--nd-space-3);
 }
 
-.auth-context__kicker {
-  color: var(--nd-color-text-subtle);
+.auth-context__product {
+  color: var(--nd-color-border-strong);
   font-size: var(--nd-font-size-xs);
   font-weight: 700;
   letter-spacing: .04em;
@@ -44,8 +44,8 @@
 
 .auth-context h2 {
   color: var(--nd-color-on-ink);
-  font-size: clamp(26px, 3vw, 34px);
-  line-height: 1.18;
+  font-size: 30px;
+  line-height: 1.2;
   margin: 0;
   text-wrap: balance;
 }
@@ -54,54 +54,39 @@
   color: var(--nd-color-border-strong);
   line-height: var(--nd-line-height-body);
   margin: 0;
-  max-width: 44ch;
+  max-width: 34ch;
   text-wrap: pretty;
 }
 
-.auth-sequence {
+.auth-context__facts {
   display: grid;
-  gap: var(--nd-space-3);
-  list-style: none;
-  margin: var(--nd-space-10) 0 0;
-  padding: 0;
+  gap: var(--nd-space-4);
+  margin: var(--nd-space-8) 0;
 }
 
-.auth-sequence li {
-  align-items: start;
+.auth-context__facts div {
   border-top: 1px solid var(--nd-color-text-muted);
   display: grid;
-  gap: var(--nd-space-3);
-  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--nd-space-1);
   padding-top: var(--nd-space-3);
 }
 
-.auth-sequence__index {
-  color: var(--nd-color-text-subtle);
-  font-size: var(--nd-font-size-xs);
-  font-variant-numeric: tabular-nums;
+.auth-context__facts dt {
+  color: var(--nd-color-on-ink);
+  font-size: var(--nd-font-size-sm);
   font-weight: 700;
 }
 
-.auth-sequence li div {
-  display: grid;
-  gap: var(--nd-space-1);
-}
-
-.auth-sequence strong {
-  color: var(--nd-color-on-ink);
-  font-size: var(--nd-font-size-md);
-}
-
-.auth-sequence li div span,
+.auth-context__facts dd,
 .auth-context__boundary {
   color: var(--nd-color-border-strong);
   font-size: var(--nd-font-size-sm);
   line-height: var(--nd-line-height-body);
+  margin: 0;
 }
 
 .auth-context__boundary {
   border-top: 1px solid var(--nd-color-text-muted);
-  margin: var(--nd-space-8) 0 0;
   padding-top: var(--nd-space-4);
 }
 
@@ -178,17 +163,18 @@
   }
 
   .auth-context {
-    gap: var(--nd-space-5);
-    min-height: auto;
-    padding: var(--nd-space-6);
+    display: block;
+    padding: var(--nd-space-5) var(--nd-space-6);
   }
 
-  .auth-sequence {
-    margin-top: var(--nd-space-6);
+  .auth-context h2 {
+    font-size: var(--nd-font-size-xl);
   }
 
+  .auth-context__description,
+  .auth-context__facts,
   .auth-context__boundary {
-    margin-top: var(--nd-space-4);
+    display: none;
   }
 
   .auth-card {
