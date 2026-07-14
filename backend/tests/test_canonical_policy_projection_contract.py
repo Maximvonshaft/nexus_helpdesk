@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCOPE_SOURCE = ROOT / "backend/app/services/operator_queue_scope.py"
 PERMISSIONS_SOURCE = ROOT / "backend/app/services/permissions.py"
 WORKSPACE_API_SOURCE = ROOT / "webapp/src/lib/operatorWorkspaceApi.ts"
+WORKSPACE_ROUTE_SOURCE = ROOT / "webapp/src/routes/workspace.tsx"
 
 
 def _read(path: Path) -> str:
@@ -56,7 +57,11 @@ def test_normal_workspace_scope_has_no_environment_or_manual_authority() -> None
 
 
 def test_server_derived_scope_projection_remains_fail_closed() -> None:
-    source = _read(WORKSPACE_API_SOURCE)
+    api_source = _read(WORKSPACE_API_SOURCE)
+    route_source = _read(WORKSPACE_ROUTE_SOURCE)
 
-    assert "authorized" in source.lower()
-    assert "no authorized" in source.lower() or "未授权" in source or "无可用" in source
+    assert "currentScopes" in api_source
+    assert "operatorWorkspaceApi.currentScopes" in route_source
+    assert "当前账号没有可用工作范围" in route_source
+    assert "不会回退到手工 Tenant、国家或渠道" in route_source
+    assert "LegacyWorkspaceFallback" not in route_source
