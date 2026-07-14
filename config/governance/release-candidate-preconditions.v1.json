@@ -1,0 +1,10 @@
+{
+  "schema": "nexus.osr.release-candidate-preconditions.v1",
+  "exact_main": "4bc76c3607db2732388d33634bc26968a880ee07",
+  "required_authorities": {
+    "delivery_truth": "4bc76c3607db2732388d33634bc26968a880ee07"
+  },
+  "historical_candidates": [
+    "0cad026eec02ae3b3623273d04f422ead2bb63e8"
+  ]
+}
