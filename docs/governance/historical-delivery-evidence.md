@@ -61,6 +61,33 @@ The following point-in-time root artifact was removed under #744:
 
 `README_LIMITATION.md` described a one-time overlay-kit delivery constraint rather than a supported repository, build, deployment or recovery contract. It had no supported runtime, build, workflow, release or operator consumer.
 
+## Retired orphan backend prototypes
+
+The following backend modules were removed under #744 after complete tracked-entry analysis and repository-wide code search found no current runtime, script, test, workflow, documentation or open-PR consumer:
+
+- `backend/app/services/ai_runtime/safety_contract.py`
+- `backend/app/services/pubsub.py`
+- `backend/app/services/tracking_fact_redactor.py`
+- `backend/app/services/webchat_handoff_policy.py`
+- `backend/app/services/webchat_handoff_policy_config.py`
+- `backend/app/services/webchat_intent_service.py`
+
+These files were former prototypes, parallel implementations or once-active policies whose callers had already been removed. Their continued presence falsely implied current runtime authority. Reintroduction requires a current owner, a real entry-point consumer and the rationalization discovery gate to pass.
+
+## Retired compatibility-only path
+
+The following compatibility path was removed under #744:
+
+- `backend/app/services/outbound_message_semantics.py`
+
+`backend/app/services/outbound_message_semantics.py` was an explicit wildcard re-export whose own source named `backend/app/services/outbound_semantics.py` as canonical. Its tests were migrated to assert that the compatibility path stays absent and all application imports use the canonical module.
+
+## Retired test-only tracking prototype
+
+- `backend/tests/test_tracking_fact_no_trace.py`
+
+The dedicated test file and two legacy-normalizer cases in `backend/tests/test_webchat_tracking_fact_mvp.py` were retired together with `tracking_fact_redactor.py`. Current Speedaf payload redaction and tracking-fact construction remain covered through the canonical `speedaf/redactor.py`, `speedaf/formatter.py`, and their contract tests.
+
 Round-named reports, tests and smoke scripts remain governed by #574 and are not deleted through #744 while that Work Item is blocked.
 
 Their contents remain available through Git history and the commits that originally introduced or modified them. Restoring any retired artifact to the active tree requires a current owner, current consumer, explicit retention rationale and an update to the retirement regression.

@@ -1,0 +1,115 @@
+{
+  "schema": "nexus.osr.rationalization-deletion-evidence.v1",
+  "slices": {
+    "root_overlay_limitation_note": {
+      "owner_issue": 744,
+      "path_evidence": [
+        {
+          "finding_id": "manual_candidate:README_LIMITATION.md",
+          "domain_authorization": "Issue #744 accepted the root overlay limitation note deletion in merged rationalization foundation #745.",
+          "runtime_consumer_disposition": "No runtime, API, worker, deployment or generated-document consumer reads this root limitation note.",
+          "test_contract_disposition": "Repository governance and historical-evidence contracts retain the limitation decision after deletion.",
+          "build_deploy_disposition": "Build, image and deployment manifests do not include or reference this deleted root note.",
+          "security_privacy_impact": "Deletion removes no security control, credential boundary, customer data or privacy evidence.",
+          "verification": "Verify merge commit reachability, tracked absence and Agent Coordination rationalization tests.",
+          "rollback_recovery": "Recover the exact historical bytes from merge-parent Git history if the evidence note is required.",
+          "anti_reintroduction": "The root-document discovery rule reports any reintroduced non-allowlisted root note."
+        }
+      ]
+    },
+    "orphan_backend_and_compatibility_cleanup": {
+      "base_sha": "4bc76c3607db2732388d33634bc26968a880ee07",
+      "owner_issue": 744,
+      "path_evidence": [
+        {
+          "finding_id": "manual_candidate:backend/app/services/ai_runtime/safety_contract.py",
+          "domain_authorization": "Issue #744 owns this isolated AI runtime compatibility residue after consumer and entry-graph review.",
+          "runtime_consumer_disposition": "No application, worker, script, migration or deployment entry point imports the deleted module.",
+          "test_contract_disposition": "Current AI safety contracts remain in canonical runtime policy and regression suites; no sole test is removed.",
+          "build_deploy_disposition": "Python compile, backend full regression and release-image gates cover the surviving runtime graph.",
+          "security_privacy_impact": "Canonical safety enforcement remains active; deletion removes only unreachable duplicate code.",
+          "verification": "Base-to-Head deletion diff plus backend CI, full regression, security and release-image gates.",
+          "rollback_recovery": "Restore the exact module from base commit if a previously unknown consumer is proven.",
+          "anti_reintroduction": "Tracked-tree discovery and exact duplicate/unreachable scanners reject unowned reintroduction."
+        },
+        {
+          "finding_id": "manual_candidate:backend/app/services/pubsub.py",
+          "domain_authorization": "Issue #744 owns this unconsumed pubsub compatibility module after repository consumer review.",
+          "runtime_consumer_disposition": "No current API, worker, event loop, deployment process or script imports the deleted pubsub module.",
+          "test_contract_disposition": "Current event and queue behavior remains covered by canonical service and integration tests.",
+          "build_deploy_disposition": "Backend compile, full regression, integration and release-image gates verify the surviving graph.",
+          "security_privacy_impact": "Deletion removes no authentication, authorization, audit, retention or customer-data boundary.",
+          "verification": "Exact deleted-file diff and all current backend, integration, security and image checks.",
+          "rollback_recovery": "Recover the module byte-for-byte from the exact base commit if a consumer is discovered.",
+          "anti_reintroduction": "Unreachable-module and duplicate scanners require a current owner and consumer before reintroduction."
+        },
+        {
+          "finding_id": "manual_candidate:backend/app/services/tracking_fact_redactor.py",
+          "domain_authorization": "Issue #744 authorizes deletion after canonical Speedaf redaction and tracking-fact contracts replaced this module.",
+          "runtime_consumer_disposition": "All live tracking paths use the canonical current redaction implementation; legacy imports were removed.",
+          "test_contract_disposition": "Tracking MVP and Speedaf tests were migrated to canonical contracts and remain in full regression.",
+          "build_deploy_disposition": "Backend CI, Speedaf contract, full regression and release-image gates verify the replacement.",
+          "security_privacy_impact": "PII and tracking redaction remains enforced by the canonical implementation and negative tests.",
+          "verification": "Exact diff, Speedaf contract gate, backend full regression and security assurance.",
+          "rollback_recovery": "Restore from base only if replacement tests reveal a missing behavior; do not run both implementations.",
+          "anti_reintroduction": "Canonical-source assertions and duplicate scanner reject restoration of the parallel redactor."
+        },
+        {
+          "finding_id": "manual_candidate:backend/app/services/webchat_handoff_policy.py",
+          "domain_authorization": "Issue #744 owns deletion of the unreachable handoff policy duplicate after current service inventory.",
+          "runtime_consumer_disposition": "Current WebChat handoff APIs and workers resolve policy through the surviving canonical authority.",
+          "test_contract_disposition": "WebChat handoff, takeover, release and resume contracts remain covered in backend regression.",
+          "build_deploy_disposition": "Backend compile, WebCall/WebChat gates, integration and image assurance cover the surviving path.",
+          "security_privacy_impact": "Backend authorization and bounded handoff audit remain unchanged in the canonical service.",
+          "verification": "Exact diff plus WebChat, backend full regression, security and release-image workflows.",
+          "rollback_recovery": "Restore from base only after proving a canonical-policy gap and replacing rather than duplicating authority.",
+          "anti_reintroduction": "Unreachable and exact-duplicate scanners block a second handoff policy authority."
+        },
+        {
+          "finding_id": "manual_candidate:backend/app/services/webchat_handoff_policy_config.py",
+          "domain_authorization": "Issue #744 owns deletion of the orphaned handoff policy configuration compatibility layer.",
+          "runtime_consumer_disposition": "No current Settings, API, worker or deployment entry point consumes the deleted configuration module.",
+          "test_contract_disposition": "Canonical handoff configuration and fail-closed behavior remain covered by current WebChat tests.",
+          "build_deploy_disposition": "Backend compile, integration, production-readiness and image gates validate configuration imports.",
+          "security_privacy_impact": "No secret, authorization or tenant boundary is removed; stale duplicate configuration is eliminated.",
+          "verification": "Exact deletion diff and backend, integration, readiness, security and image checks.",
+          "rollback_recovery": "Recover from exact base history only if a current configured consumer is demonstrated.",
+          "anti_reintroduction": "Settings/consumer inventory and unreachable-module scanning reject unowned compatibility restoration."
+        },
+        {
+          "finding_id": "manual_candidate:backend/app/services/webchat_intent_service.py",
+          "domain_authorization": "Issue #744 owns deletion of the unreachable WebChat intent service after canonical intent-path review.",
+          "runtime_consumer_disposition": "Current WebChat AI decision and output paths do not import or instantiate the deleted service.",
+          "test_contract_disposition": "Intent, tracking and customer-visible response behavior remains covered by canonical WebChat tests.",
+          "build_deploy_disposition": "Backend full regression, WebChat/WebCall gates and release image verify surviving imports.",
+          "security_privacy_impact": "Deletion introduces no new model authority or customer-visible fallback and removes duplicate logic.",
+          "verification": "Exact diff, WebChat focused tests, backend full regression, security and release-image checks.",
+          "rollback_recovery": "Restore the exact base module only after an explicit current consumer and owner are established.",
+          "anti_reintroduction": "Unreachable-module and duplicate scanners require owner and consumer evidence for reintroduction."
+        },
+        {
+          "finding_id": "manual_candidate:backend/app/services/outbound_message_semantics.py",
+          "domain_authorization": "Issue #744 authorizes removal after outbound semantics converged on the canonical single source.",
+          "runtime_consumer_disposition": "Live outbound and dispatcher paths import the canonical semantics authority rather than this wildcard layer.",
+          "test_contract_disposition": "The single-source assertion test was retained and updated to prevent parallel outbound semantics.",
+          "build_deploy_disposition": "Outbound, Dispatch, backend full regression, integration and image gates cover the replacement.",
+          "security_privacy_impact": "Idempotency, confirmation and bounded outbound semantics remain enforced by the canonical authority.",
+          "verification": "Exact diff plus outbound single-source, Dispatch, backend, security and release-image checks.",
+          "rollback_recovery": "Restore from base only if canonical semantics loses a proven contract; never restore wildcard duplication.",
+          "anti_reintroduction": "Permanent canonical-source assertions and duplicate scanning reject the wildcard re-export."
+        },
+        {
+          "finding_id": "manual_candidate:backend/tests/test_tracking_fact_no_trace.py",
+          "domain_authorization": "Issue #744 authorizes intentional test deletion after equivalent canonical Speedaf and tracking contracts were retained.",
+          "runtime_consumer_disposition": "This path is test-only and has no runtime, worker, migration, script or deployment consumer.",
+          "test_contract_disposition": "Intentional test deletion is replaced by retained tracking MVP, Speedaf redaction and no-trace regressions.",
+          "build_deploy_disposition": "Focused Speedaf tests and the complete backend regression continue to execute replacement coverage.",
+          "security_privacy_impact": "No privacy assertion is lost; canonical tests still prohibit raw tracking trace leakage.",
+          "verification": "Exact diff, replacement-test inventory, Speedaf contract and backend full regression.",
+          "rollback_recovery": "Recover the historical test from base if coverage comparison proves a missing unique assertion.",
+          "anti_reintroduction": "Test inventory and stale/duplicate scanner reject restoring an unconnected duplicate test file."
+        }
+      ]
+    }
+  }
+}
