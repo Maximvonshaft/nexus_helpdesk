@@ -49,50 +49,35 @@ function LoginPage() {
     <main className="auth-shell">
       <div className="auth-frame">
         <section className="auth-context" aria-labelledby="auth-context-title">
-          <div>
-            <div className="auth-context__brand">
-              <p className="auth-context__kicker" translate="no">Nexus OSR · Operations Service Runtime</p>
-              <h2 id="auth-context-title">从可信事实到可验证结案</h2>
-              <p className="auth-context__description">
-                面向多国家物流客服与运营团队的案例解决驾驶舱。每一步都保留事实、权限和结果边界。
-              </p>
-            </div>
-
-            <ol className="auth-sequence" aria-label="Nexus OSR 处理原则">
-              <li>
-                <span className="auth-sequence__index">01</span>
-                <div>
-                  <strong>事实</strong>
-                  <span>先确认权威来源，再判断下一步。</span>
-                </div>
-              </li>
-              <li>
-                <span className="auth-sequence__index">02</span>
-                <div>
-                  <strong>受控动作</strong>
-                  <span>所有操作遵守权限、策略和审计边界。</span>
-                </div>
-              </li>
-              <li>
-                <span className="auth-sequence__index">03</span>
-                <div>
-                  <strong>安全结案</strong>
-                  <span>技术完成不等于业务结果，结案必须有证据。</span>
-                </div>
-              </li>
-            </ol>
+          <div className="auth-context__brand">
+            <p className="auth-context__product" translate="no">Nexus OSR</p>
+            <h2 id="auth-context-title">客服与运营工作台</h2>
+            <p className="auth-context__description">
+              用于处理客户会话、客服工单和运营任务。
+            </p>
           </div>
 
+          <dl className="auth-context__facts">
+            <div>
+              <dt>登录后</dt>
+              <dd>进入统一任务队列，查看案例信息并完成允许的处理动作。</dd>
+            </div>
+            <div>
+              <dt>访问范围</dt>
+              <dd>可见国家、渠道和操作权限由当前账号决定。</dd>
+            </div>
+          </dl>
+
           <p className="auth-context__boundary">
-            当前入口仅建立操作员身份。队列、案例和业务动作仍由后端权限与运行时策略决定。
+            无法登录或看不到应有任务时，请联系系统管理员检查账号和权限。
           </p>
         </section>
 
         <form className="auth-card" onSubmit={handleSubmit}>
           <PageHeader
-            eyebrow="操作员登录"
-            title="进入运营工作台"
-            description="使用已开通的客服或运营账号登录。系统将根据角色和范围加载可访问的工作内容。"
+            eyebrow="账号登录"
+            title="登录客服与运营工作台"
+            description="使用内部账号继续。系统会按你的权限加载可访问的工作内容。"
             headingLevel={1}
           />
 
@@ -144,7 +129,7 @@ function LoginPage() {
             ) : null}
 
             <div className="auth-helper">
-              请使用已开通的客服账号登录。登录状态只保存在当前浏览器会话中。
+              登录状态只保存在当前浏览器会话中。请勿在共享设备上保存密码。
             </div>
 
             <Button
@@ -155,7 +140,7 @@ function LoginPage() {
               loading={login.isPending}
               loadingLabel="正在验证账号…"
             >
-              登录运营工作台
+              登录
             </Button>
           </div>
         </form>
