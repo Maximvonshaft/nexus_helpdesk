@@ -172,6 +172,18 @@ def test_capability_override_changes_scope_cursor_authority_fingerprint(db_sessi
     assert before != after
 
 
+def test_team_relationship_changes_scope_cursor_authority_fingerprint(db_session) -> None:
+    user = _user(db_session, username="team-fingerprint-user", role=UserRole.agent)
+    grant = _grant(db_session, user=user)
+    user.team_id = 101
+    before = scope_grant_version(grant, current_user=user)
+
+    user.team_id = 202
+    after = scope_grant_version(grant, current_user=user)
+
+    assert before != after
+
+
 def test_current_scope_projection_contains_only_active_current_user_grants(db_session) -> None:
     user = _user(db_session, username="projection-user", role=UserRole.auditor)
     other = _user(db_session, username="projection-other", role=UserRole.auditor)
