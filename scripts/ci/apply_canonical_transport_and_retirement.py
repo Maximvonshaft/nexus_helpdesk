@@ -54,7 +54,8 @@ support = """import {
 """ + support
 support, count = re.subn(
     r"\nconst STORAGE_KEY = 'helpdesk-webapp-token'.*?\nasync function request<T>\(path: string, init\?: RequestInit\): Promise<T> \{.*?\n\}\n",
-    """\nexport { ApiError, AuthExpiredError }
+    """
+export { ApiError, AuthExpiredError }
 export const normalizeSupportApiBaseUrl = normalizeApiBaseUrl
 export const getSupportToken = getToken
 export const setSupportToken = setToken
@@ -202,9 +203,7 @@ contract = replace_once(
     "  const legacyAdmin = surfaces.get('legacy_static_admin')\n  assert.equal(legacyAdmin?.disposition, 'SUPERSEDED_DELETE')\n  assert.equal(legacyAdmin?.deleted, true)\n  for (const path of legacyAdmin?.paths ?? []) {\n    assert.equal(existsSync(join(REPO_ROOT, path)), false, `legacy static admin path still exists: ${path}`)\n  }\n",
     label="legacy disposition assertion",
 )
-contract, count = re.subn(
-    r"test\('transport duplication is frozen and must converge on one target', \(\) => \{.*?\n\}\)\n",
-    """test('one generic HTTP Transport Authority owns every typed adapter', () => {
+transport_contract = """test('one generic HTTP Transport Authority owns every typed adapter', () => {
   const transport = contract().transport_authority
   assert.equal(transport.target, 'webapp/src/lib/api.ts')
   assert.deepEqual(transport.current_duplicates, [])
@@ -216,14 +215,17 @@ contract, count = re.subn(
   assert.equal(existsSync(join(REPO_ROOT, transport.target)), true)
   for (const path of transport.typed_adapters) {
     const source = read(join(REPO_ROOT, path))
-    assert.doesNotMatch(source, /\\bfetch\\s*\\(/, `${path} reintroduced direct fetch`)
+    assert.doesNotMatch(source, /\bfetch\s*\(/, `${path} reintroduced direct fetch`)
     assert.doesNotMatch(source, /new AbortController/, `${path} reintroduced timeout transport`)
     assert.match(source, /apiRequest/, `${path} must delegate to api.ts`)
   }
   assert.ok(transport.required_shared_behavior.includes('auth_expiry'))
   assert.ok(transport.required_shared_behavior.includes('external_abort_propagation'))
 })
-""",
+"""
+contract, count = re.subn(
+    r"test\('transport duplication is frozen and must converge on one target', \(\) => \{.*?\n\}\)\n",
+    lambda _match: transport_contract,
     contract,
     count=1,
     flags=re.S,
