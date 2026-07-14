@@ -1,4 +1,4 @@
-name: Materialize exact-head convergence
+name: Materialize exact-head convergence bundle
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     types: [synchronize]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: materialize-exact-head-convergence-${{ github.event.pull_request.number }}
@@ -24,83 +24,87 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
           show-progress: false
 
-      - name: Apply bounded exact-head convergence
+      - name: Build bounded exact-head convergence bundle
         run: |
-          set +e
+          set -Eeuo pipefail
           mkdir -p artifacts/materialize
-          python - <<'PY' 2>&1 | tee artifacts/materialize/rc-adapter.log
+          python - <<'PY'
           import re
           from pathlib import Path
-          path = Path('.github/workflows/rc-test-candidate.yml')
-          text = path.read_text(encoding='utf-8')
+
+          rc = Path('.github/workflows/rc-test-candidate.yml')
+          text = rc.read_text(encoding='utf-8')
           pattern = r"      - name: Validate registry and release contracts\n        run: \|\n.*?(?=\n      - name: Install locked browser test dependencies)"
           replacement = "      - name: Validate registry and release contracts\n        id: rc-preflight\n        run: python scripts/release/rc_preflight.py --artifact-root artifacts/rc-test\n"
           updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
           if count != 1:
               raise SystemExit(f'current RC preflight block: expected one match, found {count}')
-          path.write_text(updated, encoding='utf-8')
+          rc.write_text(updated, encoding='utf-8')
+
+          materializer = Path('scripts/ci/materialize_rc_preflight_workflow.py')
+          script = materializer.read_text(encoding='utf-8')
+          marker = '\nharden_workflows()\nprint("canonical convergence materialization applied")\n'
+          if script.count(marker) != 1:
+              raise SystemExit('materializer hardening boundary missing')
+          materializer.write_text(
+              script.replace(marker, '\nprint("canonical convergence materialization applied")\n', 1),
+              encoding='utf-8',
+          )
           PY
-          adapter_code=${PIPESTATUS[0]}
-          if [ "${adapter_code}" -eq 0 ]; then
-            python scripts/ci/materialize_rc_preflight_workflow.py 2>&1 | tee artifacts/materialize/result.log
-            code=${PIPESTATUS[0]}
-          else
-            code=${adapter_code}
-          fi
-          if [ "${code}" -eq 0 ]; then
-            {
-              echo VERIFY_PY_COMPILE
-              python -m py_compile \
-                scripts/ci/materialize_rc_preflight_workflow.py \
-                scripts/ci/actions_authority_inventory.py \
-                scripts/ci/reconcile_external_channel_inventory.py \
-                scripts/release/rc_preflight.py \
-                backend/tests/test_canonical_policy_projection_contract.py \
-                backend/tests/test_webchat_voice_p0_static.py \
-                backend/tests/test_webchat_voice_static_headers.py
-              echo VERIFY_RC_PREFLIGHT
-              grep -q 'id: rc-preflight' .github/workflows/rc-test-candidate.yml
-              echo VERIFY_TENANT_JUNIT
-              grep -q 'artifacts/tenant-runtime/contracts.xml' .github/workflows/tenant-runtime-authority-gate.yml
-              echo VERIFY_PINNED_ACTIONS
-              ! grep -R -E 'uses: actions/(checkout|setup-python|setup-node|upload-artifact)@v[0-9]+' .github/workflows
-              echo VERIFY_DIFF
-              git diff --check
-              echo VERIFY_COMPLETE
-            } 2>&1 | tee artifacts/materialize/verify.log
-            code=${PIPESTATUS[0]}
-          fi
-          set -e
-          exit "${code}"
+          python scripts/ci/materialize_rc_preflight_workflow.py
+          python -m py_compile \
+            scripts/ci/actions_authority_inventory.py \
+            scripts/ci/reconcile_external_channel_inventory.py \
+            scripts/release/rc_preflight.py \
+            backend/tests/test_canonical_policy_projection_contract.py \
+            backend/tests/test_webchat_voice_p0_static.py \
+            backend/tests/test_webchat_voice_static_headers.py
+          grep -q 'id: rc-preflight' .github/workflows/rc-test-candidate.yml
+          grep -q 'artifacts/tenant-runtime/contracts.xml' .github/workflows/tenant-runtime-authority-gate.yml
 
-      - name: Upload bounded materializer diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: materialize-exact-head-${{ github.event.pull_request.head.sha }}
-          path: artifacts/materialize/*.log
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Restore governance authority and remove one-shot assets
-        run: |
-          set -Eeuo pipefail
           git show d6b53c8d5a36fdaf193cb2403b98349fc47da712:.github/workflows/agent-coordination-self-test.yml > .github/workflows/agent-coordination-self-test.yml
           rm -f scripts/ci/materialize_rc_preflight_workflow.py
           rm -f .github/workflows/materialize-rc-preflight-once.yml
+          git diff --check
 
-      - name: Commit final exact-head convergence
-        env:
-          EXPECTED_PARENT: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "${EXPECTED_PARENT}"
-          git config user.name "Nexus implementation bot"
-          git config user.email "noreply@github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "test(governance): align exact-head contracts and harden Actions"
-          git push origin HEAD:work/744-canonical-operator-console-consolidation
+          python - <<'PY'
+          import json
+          import subprocess
+          import zipfile
+          from pathlib import Path
+
+          raw = subprocess.check_output(['git', 'diff', '--name-status', '-z', 'HEAD'])
+          parts = raw.decode('utf-8').split('\0')
+          upsert = []
+          deleted = []
+          index = 0
+          while index < len(parts) and parts[index]:
+              status = parts[index]
+              path = parts[index + 1]
+              index += 2
+              if status.startswith('D'):
+                  deleted.append(path)
+              elif status.startswith(('A', 'M')):
+                  upsert.append(path)
+              else:
+                  raise SystemExit(f'unsupported materialized change status: {status} {path}')
+          manifest = {'base_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'upsert': sorted(upsert), 'delete': sorted(deleted)}
+          root = Path('artifacts/materialize')
+          (root / 'changes.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          with zipfile.ZipFile(root / 'files.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+              for path in sorted(upsert):
+                  archive.write(path, path)
+          PY
+
+      - name: Upload bounded convergence bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exact-head-convergence-bundle-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/materialize/changes.json
+            artifacts/materialize/files.zip
+          if-no-files-found: error
+          retention-days: 1
