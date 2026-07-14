@@ -56,25 +56,8 @@ jobs:
           cache-dependency-path: webapp/package-lock.json
 
       - name: Validate registry and release contracts
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          text = Path("docs/ai/remote-skills-registry.yaml").read_text(encoding="utf-8")
-          assert text.startswith("schema: nexus.osr.remote-skills-registry.v1\n")
-          assert "name: test_release_candidate_convergence" in text
-          assert "auto_upgrade: false" in text
-          PY
-          python -m py_compile \
-            scripts/release/generate_rc_test_env.py \
-            scripts/release/seed_rc_test_data.py \
-            scripts/release/rc_test_http_smoke.py \
-            scripts/release/rc_test_side_effects.py \
-            scripts/release/build_rc_test_manifest.py \
-            scripts/release/validate_rc_test_manifest.py \
-            scripts/release/validate_rc_test_evidence.py
-          python -m unittest discover -s scripts/release/tests -p 'test_*.py'
-          bash -n scripts/release/run_rc_test_candidate.sh
+        id: rc-preflight
+        run: python scripts/release/rc_preflight.py --artifact-root artifacts/rc-test
 
       - name: Install locked browser test dependencies
         working-directory: webapp
