@@ -235,6 +235,14 @@ def test_current_repository_deletion_authorization_is_valid() -> None:
         ROOT / "config/governance/rationalization-deletion-evidence.v1.json",
         REGISTRY,
     )
+    ledger = json.loads(
+        (ROOT / "docs/ai/codebase-rationalization-inventory.v1.yaml").read_text(encoding="utf-8")
+    )
+    slices = {row["id"]: row for row in ledger["deletion_slices"]}
+
     assert result["ok"] is True
-    assert result["work_branch_deleted_path_count"] == 8
-    assert result["validated_path_count"] == 9
+    assert result["work_branch_deleted_path_count"] == 20
+    assert result["validated_path_count"] == 21
+    assert len(slices["canonical_console_product_retirement"]["paths"]) == 11
+    assert len(slices["branch_specific_lockfile_workflow_retirement"]["paths"]) == 1
+    assert len(slices["orphan_backend_and_compatibility_cleanup"]["paths"]) == 8
