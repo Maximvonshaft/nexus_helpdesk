@@ -19,10 +19,11 @@ The objective is not cosmetic cleanup. The objective is to leave one explicit ca
 Apply authority in this order:
 
 1. Explicit user authorization.
-2. Current `main`, Issue #489, and the active Work Item and comments.
-3. Current PR reviews, checks, migrations, tests, deployment contracts, and exact runtime behavior.
-4. Nexus product, architecture, security, privacy, and delivery contracts.
-5. This skill.
+2. The cross-cutting legacy registry at `config/governance/legacy-surface-domains.v1.json` and its owner #650 for tracked-tree domain ownership, deletion authorization and protected history.
+3. Current `main`, Issue #489, and the active domain Work Item and comments.
+4. Current PR reviews, checks, migrations, tests, deployment contracts, and exact runtime behavior.
+5. Nexus product, architecture, security, privacy, and delivery contracts.
+6. This skill.
 
 This skill never authorizes production deployment, production-data mutation, live outbound/provider actions, credential access, or destructive database operations.
 
@@ -31,9 +32,10 @@ This skill never authorizes production deployment, production-data mutation, liv
 - Never write directly to `main`.
 - Claim the owning Work Item before branch, file, or PR writes.
 - Use one current branch and PR per Work Item.
-- Re-read `main`, the Work Item, current PRs, migrations, source, tests, and deployment paths before each destructive slice.
+- Re-read `main`, the Work Item, current PRs, migrations, source, tests, deployment paths, and the cross-cutting legacy registry before each destructive slice.
 - Keep deletion slices vertically coherent and independently reviewable.
 - Do not mix feature expansion, broad redesign, framework replacement, or dependency-major upgrades into rationalization work.
+- Do not create a second cross-cutting domain registry; rationalization inventories are execution ledgers under the existing authority.
 
 ## Mandatory dispositions
 
@@ -76,6 +78,7 @@ Absence of a text reference is not sufficient proof of dead code. Dynamic regist
 Read and record:
 
 - repository and Work Item governance;
+- the cross-cutting legacy registry and domain owner;
 - product/design authority for affected UI paths;
 - backend application startup and router registration;
 - worker and scheduled-job entry points;
@@ -91,7 +94,7 @@ Produce an entry-point map before deleting runtime code.
 
 For every capability, record:
 
-- capability name and owner;
+- capability name and existing domain owner;
 - canonical path;
 - alternative/legacy paths;
 - active callers and data dependencies;
@@ -100,7 +103,7 @@ For every capability, record:
 - owning Work Item;
 - proof links or exact code locations.
 
-Prefer machine-readable YAML or JSON plus a concise human summary.
+Prefer machine-readable YAML or JSON plus a concise human summary. Treat this output as an execution ledger; it must reference rather than replace the cross-cutting legacy registry.
 
 ### Phase 3 — Choose one canonical implementation
 
