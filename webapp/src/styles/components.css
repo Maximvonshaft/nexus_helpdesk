@@ -81,12 +81,6 @@ textarea.nd-control { line-height: var(--nd-line-height-body); resize: vertical;
 .nd-page-header__description { color: var(--nd-color-text-muted); line-height: var(--nd-line-height-body); margin: var(--nd-space-2) 0 0; max-width: 62ch; }
 .nd-page-header__actions { align-items: center; display: flex; flex-wrap: wrap; gap: var(--nd-space-2); }
 
-.nd-card { background: var(--nd-color-surface); border: 1px solid var(--nd-color-border); border-radius: var(--nd-radius-lg); }
-.nd-card__header { align-items: flex-start; border-bottom: 1px solid var(--nd-color-border); display: flex; gap: var(--nd-space-4); justify-content: space-between; padding: var(--nd-space-5); }
-.nd-card__title { color: var(--nd-color-text); font-size: var(--nd-font-size-lg); font-weight: 800; margin: 0; }
-.nd-card__subtitle { color: var(--nd-color-text-muted); font-size: var(--nd-font-size-sm); margin: var(--nd-space-1) 0 0; }
-.nd-card__body { padding: var(--nd-space-5); }
-
 .nd-empty-state {
   align-content: center;
   background: var(--nd-color-surface-subdued);
@@ -115,11 +109,6 @@ textarea.nd-control { line-height: var(--nd-line-height-body); resize: vertical;
 }
 .nd-error-summary ul { margin: 0; padding-left: var(--nd-space-5); }
 .nd-error-summary__action { display: flex; flex-wrap: wrap; gap: var(--nd-space-2); }
-
-.nd-details { border: 1px solid var(--nd-color-border); border-radius: var(--nd-radius-md); overflow: hidden; }
-.nd-details > summary { align-items: center; cursor: pointer; display: flex; gap: var(--nd-space-3); justify-content: space-between; min-height: var(--nd-control-height-md); padding: var(--nd-space-3); }
-.nd-details > summary small { color: var(--nd-color-text-muted); }
-.nd-details__body { border-top: 1px solid var(--nd-color-border); overflow: auto; padding: var(--nd-space-3); }
 
 .nd-dialog__overlay { background: color-mix(in srgb, var(--nd-color-ink) 46%, transparent); inset: 0; position: fixed; z-index: var(--nd-z-backdrop); }
 .nd-dialog__content { background: var(--nd-color-surface); border: 1px solid var(--nd-color-border); border-radius: var(--nd-radius-lg); box-shadow: var(--nd-shadow-popover); display: grid; gap: var(--nd-space-5); left: 50%; max-height: min(82dvh, 720px); max-width: min(560px, calc(100vw - 32px)); overflow: auto; overscroll-behavior: contain; padding: var(--nd-space-5); position: fixed; top: 50%; transform: translate(-50%, -50%); width: 100%; z-index: var(--nd-z-dialog); }
