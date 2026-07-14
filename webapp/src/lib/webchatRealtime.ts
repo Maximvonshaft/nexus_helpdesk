@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getToken, normalizeApiBaseUrl } from '@/lib/api'
+import { getToken, normalizeApiBaseUrl } from '@/lib/apiClient'
 import type { WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage } from '@/lib/types'
 
 export type WebchatRealtimeStatus = 'disabled' | 'connecting' | 'connected' | 'fallback'
