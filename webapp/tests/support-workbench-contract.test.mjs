@@ -8,6 +8,8 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const router = read('src/router.tsx')
 const workspaceRoute = read('src/routes/workspace.tsx')
+const channelsRoute = read('src/routes/channels.tsx')
+const runtimeRoute = read('src/routes/runtime.tsx')
 const webchatRoute = read('src/routes/webchat.tsx')
 const supportConsole = read('src/features/support-console/SupportConsolePage.tsx')
 const supportCss = read('src/features/support-console/support-console.css')
@@ -15,19 +17,25 @@ const confirmDialog = read('src/components/ui/ConfirmDialog.tsx')
 const componentCss = read('src/styles/components.css')
 const routeFiles = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
 
-test('production router exposes canonical workspace and transitional support workbench routes', () => {
-  assert.deepEqual(routeFiles, ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx', 'workspace.tsx'])
+
+test('production router exposes the canonical workspace, supporting routes, and transitional support workbench', () => {
+  assert.deepEqual(routeFiles, ['channels.tsx', 'index.tsx', 'login.tsx', 'root.tsx', 'runtime.tsx', 'webchat.tsx', 'workspace.tsx'])
   assert.match(router, /LoginRoute/)
   assert.match(router, /IndexRoute/)
   assert.match(router, /WorkspaceRoute/)
+  assert.match(router, /ChannelsRoute/)
+  assert.match(router, /RuntimeRoute/)
   assert.match(router, /WebchatRoute/)
   assert.match(workspaceRoute, /path: '\/workspace'/)
   assert.match(workspaceRoute, /features\/operator-workspace\/lazy/)
+  assert.match(channelsRoute, /path: '\/channels'/)
+  assert.match(channelsRoute, /AuthenticatedAppPage/)
+  assert.match(runtimeRoute, /path: '\/runtime'/)
+  assert.match(runtimeRoute, /AuthenticatedAppPage/)
   for (const staleRoute of [
     'EmailRoute',
     'WebCallRoute',
     'KnowledgeStudioRoute',
-    'RuntimeRoute',
     'ControlTowerRoute',
     'AccountsRoute',
     'UsersRoute',
@@ -36,6 +44,7 @@ test('production router exposes canonical workspace and transitional support wor
     assert.doesNotMatch(router, new RegExp(staleRoute))
   }
 })
+
 
 test('webchat route mounts the lightweight support console through an async boundary', () => {
   assert.match(webchatRoute, /lazy\(\(\) => import\(['"]@\/features\/support-console\/lazy['"]\)\)/)
@@ -46,7 +55,8 @@ test('webchat route mounts the lightweight support console through an async boun
   assert.doesNotMatch(webchatRoute, /WebchatInboxV5Page/)
 })
 
-test('support workbench consolidates conversations, knowledge, channels, and runtime', () => {
+
+test('transitional support workbench retains capabilities until canonical route parity is accepted', () => {
   for (const view of ['conversations', 'knowledge', 'channels', 'runtime']) {
     assert.match(supportConsole, new RegExp(`'${view}'`))
   }
@@ -70,6 +80,7 @@ test('support workbench consolidates conversations, knowledge, channels, and run
   assert.doesNotMatch(supportConsole, /api\.runtimeHealth/)
   assert.match(supportConsole, /supportApi\.supportConversationMetrics/)
 })
+
 
 test('support workbench keeps conversation search and message scrolling responsive', () => {
   assert.match(supportConsole, /useDeferredValue/)
@@ -95,6 +106,7 @@ test('support workbench keeps conversation search and message scrolling responsi
   assert.match(supportConsole, /support-runtime-trace/)
 })
 
+
 test('runtime view uses provider runtime diagnostics instead of legacy external channel health', () => {
   assert.match(supportConsole, /supportWorkbenchProviderRuntimeStatus/)
   assert.match(supportConsole, /private_ai_runtime/)
@@ -106,6 +118,7 @@ test('runtime view uses provider runtime diagnostics instead of legacy external 
   assert.doesNotMatch(supportConsole, /external_dead_outbound/)
 })
 
+
 test('support workbench does not reintroduce customer-visible template reply resources', () => {
   assert.doesNotMatch(supportConsole, /suggestedReply/)
   assert.doesNotMatch(supportConsole, /defaultReply/)
@@ -113,11 +126,13 @@ test('support workbench does not reintroduce customer-visible template reply res
   assert.doesNotMatch(supportConsole, /canned/i)
 })
 
+
 test('support workbench only presents active production channel accounts', () => {
   assert.match(supportConsole, /activeAccounts/)
   assert.match(supportConsole, /filter\(\(item: ChannelAccount\) => item\.is_active\)/)
   assert.doesNotMatch(supportConsole, /\(accounts\.data \?\? \[\]\)\.find\(\(item: ChannelAccount\) => item\.provider === 'whatsapp'\)/)
 })
+
 
 test('support workbench exposes controlled Speedaf actions without customer templates', () => {
   assert.match(supportConsole, /SpeedafControlledActionsPanel/)
@@ -135,6 +150,7 @@ test('support workbench exposes controlled Speedaf actions without customer temp
   assert.doesNotMatch(supportConsole, /Please provide your tracking number/)
   assert.doesNotMatch(supportConsole, /so I can check/i)
 })
+
 
 test('knowledge workbench is operator-maintainable instead of a read-only dashboard', () => {
   assert.match(supportConsole, /知识库维护/)
@@ -163,6 +179,7 @@ test('knowledge workbench is operator-maintainable instead of a read-only dashbo
   assert.doesNotMatch(supportConsole, /知识库接口未返回发布生命周期/)
 })
 
+
 test('support workbench keeps stable desktop and mobile zones', () => {
   assert.match(supportCss, /grid-template-columns: minmax\(290px, 360px\) minmax\(0, 1fr\) minmax\(280px, 340px\)/)
   assert.match(supportCss, /\.support-context/)
@@ -172,7 +189,6 @@ test('support workbench keeps stable desktop and mobile zones', () => {
   assert.match(supportCss, /@media \(max-width: 980px\)/)
   assert.match(supportCss, /@media \(max-width: 640px\)/)
 })
-
 
 
 test('knowledge drafts are guarded and publication crosses an explicit review boundary', () => {
