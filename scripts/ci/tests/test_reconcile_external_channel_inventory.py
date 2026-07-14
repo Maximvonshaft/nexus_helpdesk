@@ -5,6 +5,7 @@ import unittest
 from scripts.ci.check_external_channel_retirement import InventoryError
 from scripts.ci.reconcile_external_channel_inventory import (
     RECONCILIATION_CONTROL_PATHS,
+    actions_deleted_paths,
     add_reconciliation_control_rule,
     canonical_deleted_paths,
     reconcile_inventory_payload,
@@ -105,6 +106,31 @@ class CanonicalExternalChannelReconciliationTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(InventoryError, "canonical_transport_target_retired"):
             canonical_deleted_paths(target_retired_manifest)
+
+    def test_actions_manifest_governs_only_non_authoritative_workflow_deletions(self) -> None:
+        manifest = {
+            "schema": "nexus.osr.actions-authority.v1",
+            "authoritative": {
+                "frontend": ".github/workflows/frontend-truth-gate.yml",
+                "backend": ".github/workflows/backend-full-regression.yml",
+            },
+            "historical_delete": [
+                ".github/workflows/pr-webcall-guard.yml",
+                ".github/workflows/round-a-smoke.yml",
+            ],
+        }
+        self.assertEqual(
+            actions_deleted_paths(manifest),
+            frozenset({
+                ".github/workflows/pr-webcall-guard.yml",
+                ".github/workflows/round-a-smoke.yml",
+            }),
+        )
+
+        conflict = dict(manifest)
+        conflict["historical_delete"] = [".github/workflows/frontend-truth-gate.yml"]
+        with self.assertRaisesRegex(InventoryError, "actions_authoritative_workflow_retired"):
+            actions_deleted_paths(conflict)
 
     def test_reconciliation_controls_are_fixed_and_must_be_tracked(self) -> None:
         payload = {"rules": []}
