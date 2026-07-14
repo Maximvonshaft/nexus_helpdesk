@@ -80,7 +80,9 @@ export function ServiceAppShell({
   }
 
   return (
-    <main className="service-app">
+    <div className="service-app">
+      <a className="service-app__skip-link" href="#service-main">跳至主要内容</a>
+
       <header className="service-app__header">
         <div className="service-app__brand">
           <span className="service-app__brand-mark" aria-hidden="true">N</span>
@@ -127,16 +129,18 @@ export function ServiceAppShell({
         </div>
       </header>
 
-      <section className="service-app__page-head">
-        <div>
-          <p>客服作业</p>
-          <h1>{title}</h1>
-          <span>{description}</span>
-        </div>
-        {meta ? <div className="service-app__page-meta">{meta}</div> : null}
-      </section>
+      <main id="service-main" className="service-app__main" tabIndex={-1}>
+        <section className="service-app__page-head">
+          <div>
+            <p>客服作业</p>
+            <h1>{title}</h1>
+            <span>{description}</span>
+          </div>
+          {meta ? <div className="service-app__page-meta">{meta}</div> : null}
+        </section>
 
-      <div className="service-app__content">{children}</div>
-    </main>
+        <div className="service-app__content">{children}</div>
+      </main>
+    </div>
   )
 }
