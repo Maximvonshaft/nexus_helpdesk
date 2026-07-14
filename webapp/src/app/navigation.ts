@@ -22,9 +22,9 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
     key: 'knowledge',
     label: '知识',
     canonicalRoute: '/knowledge',
-    currentHref: '/webchat?tab=knowledge',
+    currentHref: '/knowledge',
     capabilityAny: ['ai_config.read', 'ai_config.manage'],
-    status: 'transitional',
+    status: 'canonical',
   },
   {
     key: 'channels',
