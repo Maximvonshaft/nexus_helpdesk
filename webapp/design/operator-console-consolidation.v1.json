@@ -1,6 +1,6 @@
 {
   "schema": "nexus.operator-console-consolidation.v1",
-  "version": "operator_console_consolidation.2026-07-14.3",
+  "version": "operator_console_consolidation.2026-07-14.4",
   "owner_issue": 747,
   "parent_issue": 744,
   "baseline_main_sha": "4bc76c3607db2732388d33634bc26968a880ee07",
@@ -50,11 +50,15 @@
       "deleted_capabilities":["duplicate_conversation_queue","duplicate_reply","duplicate_handoff_controls"]
     },
     {
-      "id":"ai_debug_console",
-      "path":"webapp/src/features/support-console/AiDebugConsolePage.tsx",
-      "disposition":"VALUABLE_ORPHAN_MIGRATE_TO_RUNTIME",
-      "deleted":false,
-      "target":"webapp/src/features/runtime/ai-debug",
+      "id":"ai_evidence_audit",
+      "path":"webapp/src/features/runtime/RuntimeEvidenceAudit.tsx",
+      "disposition":"CANONICAL_RUNTIME_CAPABILITY",
+      "migrated_from":"webapp/src/features/support-console/AiDebugConsolePage.tsx",
+      "deleted_legacy_paths":[
+        "webapp/src/features/support-console/AiDebugConsolePage.tsx",
+        "webapp/src/features/support-console/aiDebugApi.ts",
+        "webapp/src/features/support-console/ai-debug-console.css"
+      ],
       "capabilities":["ai_turn_evidence","tool_call_evidence","rag_evidence","safety_findings","eval_case_creation"]
     },
     {
@@ -79,8 +83,10 @@
   "design_authority": {
     "tokens":"webapp/src/styles/tokens.css",
     "components":"webapp/src/components/ui",
-    "retired_sources":["webapp/src/features/support-console/support-console.css"],
-    "transitional_sources":["webapp/src/features/support-console/ai-debug-console.css"],
+    "retired_sources":[
+      "webapp/src/features/support-console/support-console.css",
+      "webapp/src/features/support-console/ai-debug-console.css"
+    ],
     "legacy_sources_to_retire":["frontend/style.css","webapp/src/styles.css"]
   },
   "deletion_gate":["consumer_inventory","route_and_capability_parity","authorization_preserved","keyboard_and_accessibility_evidence","degraded_and_large_list_evidence","build_and_deployment_identity","rollback_proof","anti_reintroduction_gate","exact_head_ci"],
