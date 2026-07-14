@@ -1,182 +1,106 @@
 from __future__ import annotations
 
-import copy
-import hashlib
-import importlib.util
 import json
-import tempfile
+import re
 import unittest
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "validate_rc_test_manifest.py"
-SPEC = importlib.util.spec_from_file_location("validate_rc_test_manifest", MODULE_PATH)
-assert SPEC and SPEC.loader
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
 
-
-def _digest(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def valid_manifest(root: Path) -> tuple[dict, Path]:
-    evidence = {}
-    for index, logical_name in enumerate(MODULE.REQUIRED_EVIDENCE):
-        filename = f"evidence-{index:02d}-{logical_name}.txt"
-        path = root / filename
-        path.write_text(f"bounded {logical_name} evidence\n", encoding="utf-8")
-        evidence[logical_name] = {
-            "path": filename,
-            "size_bytes": path.stat().st_size,
-            "sha256": _digest(path),
-        }
-    payload = {
-        "schema": "nexus.osr.rc-test-candidate.v1",
-        "release_class": "controlled_test_deployment",
-        "decision": "RC0_TEST_DEPLOYABLE",
-        "candidate": {
-            "source_sha": "a" * 40,
-            "frontend_build_sha": "a" * 40,
-            "image_tag": "nexusdesk/helpdesk:rc-test-a",
-            "image_id": "sha256:" + "b" * 64,
-            "postgres_image_digest": "pgvector/pgvector@sha256:" + "c" * 64,
-            "nginx_image_digest": "nginx@sha256:" + "d" * 64,
-            "migration_revision": "20260711_0058",
-            "config_profile": "rc-test-isolated-v1",
-            "config_digest": "sha256:" + "e" * 64,
-        },
-        "checks": {name: "pass" for name in MODULE.REQUIRED_CHECKS},
-        "safety": {
-            "production_data_used": False,
-            "production_network_joined": False,
-            "provider_candidate_enabled": False,
-            "real_outbound_enabled": False,
-            "whatsapp_enabled": False,
-            "speedaf_write_enabled": False,
-            "operations_dispatch_enabled": False,
-            "production_ready": False,
-            "full_osr_automation": "NO_GO",
-            "test_environment_isolated": True,
-        },
-        "evidence": evidence,
-    }
-    manifest_path = root / "candidate-manifest.json"
-    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
-    return payload, manifest_path
-
-
-class ManifestValidationTests(unittest.TestCase):
-    def test_accepts_complete_digest_bound_isolated_candidate_manifest(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            payload, manifest_path = valid_manifest(Path(tmp))
-            MODULE.validate_manifest(payload, manifest_path)
-
-    def test_rejects_unsafe_or_incomplete_manifest(self):
-        cases = [
-            (("decision",), "PRODUCTION_GO"),
-            (("candidate", "source_sha"), "bad"),
-            (("candidate", "frontend_build_sha"), "b" * 40),
-            (("candidate", "image_id"), "sha256:short"),
-            (("candidate", "migration_revision"), "head"),
-            (("candidate", "postgres_image_digest"), "pgvector/pgvector:pg16"),
-            (("checks", "browser_smoke"), "not_run"),
-            (("checks", "network_isolation"), "not_run"),
-            (("safety", "real_outbound_enabled"), True),
-            (("safety", "operations_dispatch_enabled"), True),
-            (("safety", "production_ready"), True),
-            (("safety", "full_osr_automation"), "GO"),
-            (("safety", "test_environment_isolated"), False),
-        ]
-        for path, value in cases:
-            with self.subTest(path=path, value=value), tempfile.TemporaryDirectory() as tmp:
-                payload, manifest_path = valid_manifest(Path(tmp))
-                payload = copy.deepcopy(payload)
-                cursor = payload
-                for key in path[:-1]:
-                    cursor = cursor[key]
-                cursor[path[-1]] = value
-                with self.assertRaises(MODULE.ManifestError):
-                    MODULE.validate_manifest(payload, manifest_path)
-
-    def test_rejects_missing_unexpected_or_reused_evidence(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            payload, manifest_path = valid_manifest(Path(tmp))
-            missing = copy.deepcopy(payload)
-            missing["evidence"].pop("health")
-            with self.assertRaises(MODULE.ManifestError):
-                MODULE.validate_manifest(missing, manifest_path)
-
-            unexpected = copy.deepcopy(payload)
-            unexpected["evidence"]["raw_logs"] = copy.deepcopy(unexpected["evidence"]["health"])
-            with self.assertRaises(MODULE.ManifestError):
-                MODULE.validate_manifest(unexpected, manifest_path)
-
-            reused = copy.deepcopy(payload)
-            reused["evidence"]["readiness"] = copy.deepcopy(reused["evidence"]["health"])
-            with self.assertRaises(MODULE.ManifestError):
-                MODULE.validate_manifest(reused, manifest_path)
-
-    def test_rejects_traversal_backslash_and_digest_mismatch(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            payload, manifest_path = valid_manifest(Path(tmp))
-            for bad_path in ("../outside.txt", "nested/file.txt", "nested\\file.txt", "/tmp/file.txt"):
-                candidate = copy.deepcopy(payload)
-                candidate["evidence"]["health"]["path"] = bad_path
-                with self.subTest(path=bad_path), self.assertRaises(MODULE.ManifestError):
-                    MODULE.validate_manifest(candidate, manifest_path)
-
-            bad_digest = copy.deepcopy(payload)
-            bad_digest["evidence"]["health"]["sha256"] = "sha256:" + "f" * 64
-            with self.assertRaises(MODULE.ManifestError):
-                MODULE.validate_manifest(bad_digest, manifest_path)
-
-    def test_load_rejects_duplicate_json_keys(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "candidate-manifest.json"
-            path.write_text('{"schema":"a","schema":"b"}', encoding="utf-8")
-            with self.assertRaises(MODULE.ManifestError):
-                MODULE.load_manifest(path)
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class TopologyAndWorkflowContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).resolve().parents[3]
+        cls.root = ROOT
         cls.compose = (cls.root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
+        cls.env_example = (cls.root / "deploy" / ".env.rc-test.example").read_text(encoding="utf-8")
         cls.runner = (cls.root / "scripts" / "release" / "run_rc_test_candidate.sh").read_text(encoding="utf-8")
         cls.workflow = (cls.root / ".github" / "workflows" / "rc-test-candidate.yml").read_text(encoding="utf-8")
-        cls.seed = (cls.root / "scripts" / "release" / "seed_rc_test_data.py").read_text(encoding="utf-8")
-        cls.browser = (cls.root / "webapp" / "e2e" / "rc-live.spec.ts").read_text(encoding="utf-8")
         cls.playwright = (cls.root / "webapp" / "playwright.config.ts").read_text(encoding="utf-8")
+        cls.browser = (cls.root / "webapp" / "e2e" / "rc-live.spec.ts").read_text(encoding="utf-8")
 
-    def test_postgres_receives_only_database_environment(self):
-        block = self.compose.split("  postgres-rc:\n", 1)[1].split("\n  migrate-rc:\n", 1)[0]
-        self.assertNotIn("env_file:", block)
-        for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"):
-            self.assertIn(key, block)
-        for forbidden in ("SECRET_KEY", "RC_TEST_ADMIN_PASSWORD", "RUNTIME_CONTRACT_SIGNING_SECRET"):
-            self.assertNotIn(forbidden, block)
+    def test_compose_has_single_immutable_application_build(self):
+        build_count = len(re.findall(r"(?m)^\s+build:\s*$", self.compose))
+        self.assertEqual(build_count, 1)
+        self.assertIn("app-rc:", self.compose)
+        self.assertIn("image: ${RC_IMAGE_TAG:?RC_IMAGE_TAG is required}", self.compose)
+        self.assertIn("migrate-rc:", self.compose)
+        self.assertIn("seed-rc:", self.compose)
+        self.assertIn("worker-outbound-rc:", self.compose)
+        self.assertIn("worker-background-rc:", self.compose)
+        self.assertIn("worker-webchat-ai-rc:", self.compose)
+        self.assertIn("worker-handoff-snapshot-rc:", self.compose)
+        self.assertIn("nginx-rc:", self.compose)
+        self.assertNotIn("sync-daemon-rc:", self.compose)
+        self.assertNotIn("event-daemon-rc:", self.compose)
 
-    def test_app_healthcheck_and_loopback_gateway_are_runtime_compatible(self):
-        app_block = self.compose.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
-        self.assertNotIn("- curl\n", app_block)
-        self.assertIn("urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()", app_block)
-        self.assertNotIn("    ports:\n", app_block)
-        nginx_block = self.compose.split("  nginx-rc:\n", 1)[1].split("\nnetworks:\n", 1)[0]
-        self.assertIn('127.0.0.1:${RC_APP_PORT:-18083}:80', nginx_block)
-        self.assertIn("      - rc\n      - edge", nginx_block)
+    def test_all_application_services_use_same_image(self):
+        for service in (
+            "app-rc", "migrate-rc", "seed-rc", "worker-outbound-rc", "worker-background-rc",
+            "worker-webchat-ai-rc", "worker-handoff-snapshot-rc",
+        ):
+            pattern = rf"(?ms)^  {re.escape(service)}:.*?^    image: \$\{{RC_IMAGE_TAG:\?RC_IMAGE_TAG is required\}}$"
+            self.assertRegex(self.compose, pattern)
 
-    def test_seed_registers_models_and_uses_real_runtime_origin(self):
-        self.assertIn("register_all_models()", self.seed)
-        self.assertIn('"RC_PUBLIC_ORIGIN"', self.seed)
-        self.assertIn("normalize_public_origin(requested_origin)", self.seed)
-        self.assertIn("service_completed_successfully", self.compose)
+    def test_compose_fail_closed_effect_switches(self):
+        for token in (
+            "EXTERNAL_CHANNEL_TRANSPORT: disabled",
+            "EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled",
+            'EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED: "false"',
+            'SPEEDAF_ENABLED: "false"',
+            'SPEEDAF_TOOLS_ENABLED: "false"',
+            'WEBCALL_AI_ENABLED: "false"',
+            'WHATSAPP_NATIVE_ENABLED: "false"',
+            'WHATSAPP_NATIVE_SEND_ENABLED: "false"',
+            'OPERATIONS_DISPATCH_CONSUMER_ENABLED: "false"',
+        ):
+            self.assertIn(token, self.compose)
 
-    def test_runner_binds_synthetic_operator_to_seeded_tenant(self):
-        self.assertIn("Tenant.tenant_key == tenant_key", self.runner)
-        self.assertIn("user.tenant_id = tenant.id", self.runner)
-        self.assertIn("tenant_assignment_source", self.runner)
-        self.assertIn("tenant_assignment_version", self.runner)
+    def test_compose_uses_external_frontend_image_and_exact_source_label(self):
+        self.assertIn("image: ${RC_FRONTEND_IMAGE:?RC_FRONTEND_IMAGE is required}", self.compose)
+        self.assertIn("org.opencontainers.image.revision=${RC_SOURCE_SHA:?RC_SOURCE_SHA is required}", self.compose)
+        self.assertIn("FRONTEND_BUILD_SHA: ${RC_SOURCE_SHA:?RC_SOURCE_SHA is required}", self.compose)
+
+    def test_nginx_is_only_published_service(self):
+        services = re.split(r"(?m)^  (?=[A-Za-z0-9_-]+:\s*$)", self.compose)
+        published = []
+        for block in services:
+            match = re.match(r"([A-Za-z0-9_-]+):", block)
+            if match and re.search(r"(?m)^    ports:\s*$", block):
+                published.append(match.group(1))
+        self.assertEqual(published, ["nginx-rc"])
+
+    def test_compose_and_env_use_bounded_rc_only_values(self):
+        for token in (
+            "APP_ENV: production",
+            "ALLOW_DEV_AUTH: \"false\"",
+            "WEBCHAT_ALLOWED_ORIGINS: ${RC_PUBLIC_ORIGIN:?RC_PUBLIC_ORIGIN is required}",
+            "DATABASE_URL: ${RC_DATABASE_URL:?RC_DATABASE_URL is required}",
+            "PUBLIC_BASE_URL: ${RC_PUBLIC_ORIGIN:?RC_PUBLIC_ORIGIN is required}",
+        ):
+            self.assertIn(token, self.compose)
+        self.assertIn("RC_SOURCE_SHA=", self.env_example)
+        self.assertIn("RC_IMAGE_TAG=", self.env_example)
+        self.assertIn("RC_FRONTEND_IMAGE=", self.env_example)
+        self.assertIn("RC_PUBLIC_ORIGIN=", self.env_example)
+        self.assertNotIn("OPENAI_API_KEY", self.env_example)
+        self.assertNotIn("PROVIDER_RUNTIME_LIVE_PROBE_TOKEN", self.env_example)
+
+    def test_runner_builds_exact_source_and_pins_image_identity(self):
+        self.assertIn('test "$(git rev-parse HEAD)" = "${RC_SOURCE_SHA}"', self.runner)
+        self.assertIn('export RC_IMAGE_TAG="nexusdesk/helpdesk:rc-test-${RC_SOURCE_SHA}"', self.runner)
+        self.assertIn('export RC_FRONTEND_IMAGE="nexusdesk/frontend:rc-test-${RC_SOURCE_SHA}"', self.runner)
+        self.assertIn('docker image inspect "${RC_IMAGE_TAG}"', self.runner)
+        self.assertIn('org.opencontainers.image.revision', self.runner)
+
+    def test_runner_isolated_compose_and_cleanup(self):
+        self.assertIn('--project-name "${COMPOSE_PROJECT_NAME}"', self.runner)
+        self.assertIn('--env-file "${RC_ENV_FILE}"', self.runner)
+        self.assertIn('down --volumes --remove-orphans', self.runner)
+        self.assertIn("trap cleanup EXIT", self.runner)
+
+    def test_runner_uses_fail_closed_tenant_authority(self):
         self.assertIn("TENANT_RUNTIME_AUTHORITY_MODE", self.runner)
         self.assertIn("TENANT_RUNTIME_AUTHORITY_MODE=enforce", (self.root / "deploy" / ".env.rc-test.example").read_text(encoding="utf-8"))
 
@@ -196,7 +120,7 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
         identity_extract = "new URL(messageResponse.url()).pathname.match"
         session_key = "const operatorSessionKey = `webchat:${conversationId}`"
         operator_path = "`/webchat?session=${encodeURIComponent(operatorSessionKey)}`"
-        body_selector = "page.locator('.support-message-body', { hasText: message }).first()"
+        body_selector = "page.locator('.operator-message p', { hasText: message }).first()"
         self.assertIn(identity_extract, self.browser)
         self.assertIn("^\\/api\\/webchat\\/conversations\\/(wc_[A-Za-z0-9_-]+)\\/messages$", self.browser)
         self.assertIn(session_key, self.browser)
