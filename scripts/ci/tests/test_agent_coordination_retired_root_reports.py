@@ -18,6 +18,9 @@ RETIRED_DELIVERY_ARTIFACTS = (
     "APPLY_PATCH.md",
     "PATCH_MANIFEST.md",
     "VERIFY_RESULTS.md",
+    "README_LIMITATION.md",
+    "ROUND20A_RECTIFICATION_REPORT.md",
+    "ROUND20B_LEGACY_PRODUCTION_REPORT.md",
     "docs/audit/FINAL_REPORT.md",
     "docs/round-b-delivery-report.md",
     "docs/round-b-self-audit.md",
@@ -43,6 +46,7 @@ class RetiredDeliveryArtifactContractTests(unittest.TestCase):
         self.assertIn("#652", text)
         self.assertIn("#656", text)
         self.assertIn("#694", text)
+        self.assertIn("#744", text)
 
 
 if __name__ == "__main__":
