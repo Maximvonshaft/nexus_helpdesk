@@ -30,6 +30,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   speedaf-contract-gate:
     runs-on: ubuntu-latest
@@ -52,10 +55,12 @@ jobs:
           --health-retries 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
@@ -93,7 +98,7 @@ jobs:
           )
 
           write_flag = re.compile(r'SPEEDAF_(?:CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE|VOICE_CALLBACK)_ENABLED\s*=\s*(?:true|TRUE|1|yes|YES|on|ON)')
-          credential = re.compile(r'(?:appCode|secretKey|SPEEDAF_[A-Z0-9_]*(?:SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?(?P<value>[A-Za-z0-9_\-]{20,})')
+          credential = re.compile(r'(?:appCode|secretKey|SPEEDAF_[A-Z0-9_]*(?:SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*["\']?(?P<value>[A-Za-z0-9_\-]{20,})')
           placeholder = re.compile(r'(?:PASTE|PLACEHOLDER|EXAMPLE|DUMMY|REDACTED|CHANGEME|YOUR_|_HERE)', re.IGNORECASE)
 
           violations: list[str] = []
