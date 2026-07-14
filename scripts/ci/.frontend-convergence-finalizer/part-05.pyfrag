@@ -1,0 +1,70 @@
+  getSupportToken,
+  normalizeSupportApiBaseUrl,
+} from '@/lib/supportApi'
+"""
+    workspace = replace_once(
+        workspace,
+        old_import,
+        "import { ApiError, apiRequest } from '@/lib/apiClient'\n",
+        label="operator workspace transport import",
+    )
+    workspace = workspace.replace("const API_BASE_URL = normalizeSupportApiBaseUrl(import.meta.env.VITE_API_BASE_URL)\n", "")
+    start = workspace.index("\nfunction apiUrl(path: string)")
+    end = workspace.index("\nfunction applyFilter")
+    replacement = """
+function requireApiPath(path: string) {
+  const normalized = String(path || '').trim()
+  if (!normalized.startsWith('/api/')) {
+    throw new ApiError('服务器返回了不受支持的案例链接', 400)
+  }
+  return normalized
+}
+
+function operatorRequest<T>(path: string, init: RequestInit = {}, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<T> {
+  return apiRequest<T>(requireApiPath(path), {
+    ...init,
+    timeoutMs,
+    requestIdPrefix: 'workspace',
+    requireApiPath: true,
+    timeoutMessage: '请求超时。请确认工作范围或稍后重试。',
+    networkMessage: '网络请求失败。已保留当前页面，请稍后重试。',
+  })
+}
+"""
+    workspace = workspace[:start] + "\n" + replacement.strip("\n") + workspace[end:]
+    write(workspace_path, workspace)
+
+    runtime_path = "webapp/src/features/runtime/aiDebugApi.ts"
+    runtime = read(runtime_path)
+    type_index = runtime.index("\nexport type AiDebugRun")
+    runtime = """import { apiRequest } from '@/lib/apiClient'
+
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(path, {
+    ...init,
+    requestIdPrefix: 'runtime-audit',
+    requireApiPath: true,
+  })
+}
+""" + runtime[type_index:]
+    write(runtime_path, runtime)
+
+
+def fix_p2_defects() -> None:
+    knowledge_path = "webapp/src/features/knowledge/KnowledgePage.tsx"
+    knowledge = read(knowledge_path)
+    knowledge = replace_once(
+        knowledge,
+        "import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'\n",
+        "import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'\nimport { useBlocker } from '@tanstack/react-router'\n",
+        label="knowledge useBlocker import",
+    )
+    dirty_block = """  const isDirty = useMemo(
+    () => serializeKnowledgeDraft(draft) !== serializeKnowledgeDraft(savedDraft),
+    [draft, savedDraft],
+  )
+"""
+    blocker = dirty_block + """  const navigationBlocker = useBlocker({
+    shouldBlockFn: () => isDirty,
+    enableBeforeUnload: isDirty,
+    withResolver: true,
