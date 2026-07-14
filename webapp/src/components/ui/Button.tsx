@@ -27,14 +27,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <button
       ref={ref}
       type={type}
-      className={cn(
-        'button',
-        'nd-button',
-        `nd-button--${size}`,
-        `nd-button--${variant}`,
-        variant !== 'secondary' && variant,
-        className,
-      )}
+      className={cn('nd-button', `nd-button--${size}`, `nd-button--${variant}`, className)}
       aria-busy={loading ? true : undefined}
       disabled={disabled || loading}
       {...rest}
