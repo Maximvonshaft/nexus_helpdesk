@@ -75,8 +75,10 @@ test('workspace presents the case from the customer-service perspective without 
 test('keyboard users can skip the shell navigation', async ({ page }) => {
   await mockWorkspace(page)
   await page.goto('/workspace')
-  await page.keyboard.press('Tab')
   const skipLink = page.getByRole('link', { name: '跳至主要内容' })
+  await expect(page.getByRole('heading', { level: 1, name: '客服工作台' })).toBeVisible()
+  await expect(skipLink).toBeAttached()
+  await page.keyboard.press('Tab')
   await expect(skipLink).toBeFocused()
   await page.keyboard.press('Enter')
   await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('service-main')
