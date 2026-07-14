@@ -1,6 +1,6 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-13.4",
+  "inventory_version": "2026-07-14.5",
   "audited_main_sha": "df4863d4e4c77b47d694d4eca3f655fa93a8e67b",
   "discovery_tokens": [
     "ExternalChannel",
@@ -263,7 +263,8 @@
         ".github/workflows/external-channel-retirement-gate.yml",
         "config/governance/external-channel-assets.v1.json",
         "scripts/ci/check_external_channel_retirement.py",
-        "scripts/ci/tests/test_check_external_channel_retirement.py"
+        "scripts/ci/tests/test_check_external_channel_retirement.py",
+        "webapp/scripts/assert-frontend-workflow-security.mjs"
       ],
       "glob": null,
       "asset_type": "retirement_control",
