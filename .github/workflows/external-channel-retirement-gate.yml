@@ -31,22 +31,33 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Compile checker
+      - name: Compile checkers
         run: |
           set -Eeuo pipefail
-          python -m py_compile scripts/ci/check_external_channel_retirement.py
+          python -m py_compile \
+            scripts/ci/check_external_channel_retirement.py \
+            scripts/ci/render_external_channel_active_inventory.py
 
       - name: Run focused retirement tests
         run: |
           set -Eeuo pipefail
           python -m unittest -v scripts.ci.tests.test_check_external_channel_retirement
 
+      - name: Render active inventory and verify removed assets
+        run: |
+          set -Eeuo pipefail
+          python scripts/ci/render_external_channel_active_inventory.py \
+            --repo-root . \
+            --base config/governance/external-channel-assets.v1.json \
+            --removed config/governance/external-channel-removed-assets.v1.json \
+            --output .tmp/external-channel-active-assets.v1.json
+
       - name: Verify tracked repository inventory
         run: |
           set +e
           python scripts/ci/check_external_channel_retirement.py \
             --repo-root . \
-            --manifest config/governance/external-channel-assets.v1.json \
+            --manifest .tmp/external-channel-active-assets.v1.json \
             > external-channel-retirement-result.json 2>&1
           status=$?
           cat external-channel-retirement-result.json
@@ -57,6 +68,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: external-channel-retirement-result
-          path: external-channel-retirement-result.json
+          path: |
+            external-channel-retirement-result.json
+            .tmp/external-channel-active-assets.v1.json
           if-no-files-found: error
           retention-days: 14
