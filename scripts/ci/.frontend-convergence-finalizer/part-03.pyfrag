@@ -1,0 +1,70 @@
+    if (init.signal && externalAbortHandler) init.signal.removeEventListener('abort', externalAbortHandler)
+  }
+}
+
+export type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number
+  requestIdPrefix?: string
+  requireApiPath?: boolean
+  timeoutMessage?: string
+  networkMessage?: string
+}
+
+export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  const {
+    timeoutMs = DEFAULT_API_TIMEOUT_MS,
+    requestIdPrefix = 'req',
+    requireApiPath = false,
+    timeoutMessage = '请求超时，请稍后重试',
+    networkMessage = '网络请求失败，请稍后重试',
+    ...init
+  } = options
+  const normalizedPath = String(path || '').trim()
+  if (requireApiPath && !normalizedPath.startsWith('/api/')) {
+    throw new ApiError('服务器返回了不受支持的页面链接', 400)
+  }
+
+  const publicRequest = isPublicRequest(normalizedPath)
+  const method = String(init.method || 'GET').toUpperCase()
+  const retryable = SAFE_RETRY_METHODS.has(method)
+  const headers = new Headers(init.headers ?? {})
+  const requestId = headers.get(REQUEST_ID_HEADER) || createRequestId(requestIdPrefix)
+  const token = getSupportToken()
+  const apiPath = requestPathname(normalizedPath)
+  const url = buildApiUrl(normalizedPath)
+
+  if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
+  headers.set(REQUEST_ID_HEADER, requestId)
+  if (token && !publicRequest) headers.set('Authorization', `Bearer ${token}`)
+
+  let lastError: unknown
+  for (let attempt = 0; attempt < (retryable ? 2 : 1); attempt += 1) {
+    const started = now()
+    try {
+      const response = await fetchWithTimeout(url, { ...init, method, headers }, timeoutMs)
+      const duration_ms = Math.round(now() - started)
+      emitFrontendLatency({ path: apiPath, method, status: String(response.status), duration_ms, ok: response.ok })
+      if (response.status === 401) {
+        if (publicRequest) {
+          const failure = await readErrorBody(response, '登录失败，请检查账号或密码')
+          throw new ApiError(failure.message, response.status, failure.detail, failure.payload)
+        }
+        if (!authExpiryHandled) {
+          authExpiryHandled = true
+          clearSupportToken()
+        }
+        throw new AuthExpiredError()
+      }
+      if (!response.ok) {
+        const failure = await readErrorBody(response, `请求失败：${response.status}`)
+        throw new ApiError(failure.message, response.status, failure.detail, failure.payload)
+      }
+      if (response.status === 204) return undefined as T
+      return await response.json() as T
+    } catch (error) {
+      lastError = error
+      if (error instanceof ApiError || error instanceof AuthExpiredError) throw error
+      const timedOut = error instanceof DOMException && error.name === 'AbortError'
+      emitFrontendLatency({
+        path: apiPath,
+        method,
