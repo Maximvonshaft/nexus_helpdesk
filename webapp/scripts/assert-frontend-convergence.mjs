@@ -35,18 +35,17 @@ function lineCount(path) {
 }
 
 const retiredPaths = [
-  join(repoRoot, 'frontend'),
-  join(srcRoot, 'features', 'support-console'),
-  join(srcRoot, 'shared', 'ui'),
-  join(srcRoot, 'lib', 'api.ts'),
-  join(srcRoot, 'lib', 'webchatRealtime.ts'),
-  join(srcRoot, 'lib', 'supportStatus.ts'),
-  join(srcRoot, 'lib', 'webchatVoiceTypes.ts'),
-  join(srcRoot, 'lib', 'outboundChannels.ts'),
+  [join(repoRoot, 'frontend'), 'legacy frontend/ must be physically deleted'],
+  [join(srcRoot, 'features', 'support-console'), 'duplicate Support Console must be deleted'],
+  [join(srcRoot, 'shared', 'ui'), 'duplicate shared/ui authority must be deleted'],
+  [join(srcRoot, 'shared', 'api'), 'obsolete shared/api migration authority must be deleted'],
+  [join(srcRoot, 'lib', 'api.ts'), 'duplicate frontend API client must be deleted'],
+  [join(srcRoot, 'lib', 'webchatRealtime.ts'), 'orphaned WebChat realtime client must be deleted'],
+  [join(srcRoot, 'lib', 'supportStatus.ts'), 'retired Support Console status presenter must be deleted'],
+  [join(srcRoot, 'lib', 'webchatVoiceTypes.ts'), 'orphaned voice AI frontend types must be deleted'],
+  [join(srcRoot, 'lib', 'outboundChannels.ts'), 'orphaned outbound-channel helper must be deleted'],
 ]
-for (const path of retiredPaths) {
-  assert.equal(existsSync(path), false, `retired frontend authority must be physically deleted: ${relative(repoRoot, path)}`)
-}
+for (const [path, message] of retiredPaths) assert.equal(existsSync(path), false, message)
 
 const routeNames = readdirSync(join(srcRoot, 'routes')).filter((name) => name.endsWith('.tsx')).sort()
 assert.deepEqual(routeNames, ['channels.tsx', 'index.tsx', 'knowledge.tsx', 'login.tsx', 'root.tsx', 'system.tsx', 'webchat.tsx', 'workspace.tsx'])
@@ -64,7 +63,7 @@ for (const path of codeFiles) {
   const label = relativePath(path)
   assert.doesNotMatch(
     source,
-    /@\/shared\/ui|features\/support-console|@\/lib\/api(?:['"]|$)|webchatRealtime|webchatVoiceTypes|supportStatus|outboundChannels/,
+    /@\/shared\/(?:ui|api)|features\/support-console|@\/lib\/api(?:['"]|$)|webchatRealtime|webchatVoiceTypes|supportStatus|outboundChannels/,
     `obsolete frontend import or reference in ${label}`,
   )
 
@@ -79,9 +78,9 @@ for (const path of codeFiles) {
 const apiAuthorityFiles = codeFiles.filter((path) => /export\s+async\s+function\s+apiRequest\b/.test(read(path)))
 assert.deepEqual(apiAuthorityFiles.map(relativePath), ['src/lib/apiClient.ts'])
 assert.match(read(apiClientPath), /export async function apiRequest/)
-assert.equal(
-  codeFiles.filter((path) => /function\s+normalizeApiBaseUrl\b/.test(read(path))).map(relativePath).join(','),
-  'src/lib/apiClient.ts',
+assert.deepEqual(
+  codeFiles.filter((path) => /function\s+normalizeApiBaseUrl\b/.test(read(path))).map(relativePath),
+  ['src/lib/apiClient.ts'],
   'API base normalization must have one owner',
 )
 
