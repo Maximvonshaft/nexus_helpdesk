@@ -194,7 +194,8 @@ class TopologyAndWorkflowContractTests(unittest.TestCase):
 
     def test_browser_proves_public_message_and_single_customer_service_workspace(self):
         self.assertIn("const message = `RC browser synthetic message", self.browser)
-        self.assertIn("/api/webchat/conversations/", self.browser)
+        self.assertIn("candidate.request().method() === 'POST'", self.browser)
+        self.assertIn("messages$/.test(url.pathname)", self.browser)
         self.assertIn("const operatorResponse = await navigate(page, '/workspace')", self.browser)
         self.assertIn("level: 1, name: '客服工作台'", self.browser)
         self.assertIn("name: '主导航'", self.browser)
