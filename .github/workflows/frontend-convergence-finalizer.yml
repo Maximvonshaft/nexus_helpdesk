@@ -6,23 +6,17 @@ on:
     paths:
       - scripts/ci/.frontend-convergence-finalizer/**
       - .github/workflows/frontend-convergence-finalizer.yml
-  push:
-    branches:
-      - work/744-canonical-operator-console-consolidation
-    paths:
-      - scripts/ci/.frontend-convergence-finalizer/**
-      - .github/workflows/frontend-convergence-finalizer.yml
 
 permissions:
   contents: write
 
 concurrency:
   group: frontend-convergence-finalizer-748
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   finalize:
-    if: github.event_name == 'push' || github.event.pull_request.number == 748
+    if: github.event.pull_request.number == 748
     name: Apply and verify canonical convergence
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -37,7 +31,7 @@ jobs:
 
       - name: Assert exact branch identity
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$(git branch --show-current)" = "work/744-canonical-operator-console-consolidation"
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
@@ -59,7 +53,7 @@ jobs:
 
       - name: Apply canonical convergence migration
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
