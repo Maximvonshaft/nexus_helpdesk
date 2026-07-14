@@ -72,6 +72,16 @@ test('workspace presents the case from the customer-service perspective without 
   await expect(page.getByText(/\b(?:AI|Runtime|Provider|RAG|Prompt|Model|Agent)\b/i)).toHaveCount(0)
 })
 
+test('keyboard users can skip the shell navigation', async ({ page }) => {
+  await mockWorkspace(page)
+  await page.goto('/workspace')
+  await page.keyboard.press('Tab')
+  const skipLink = page.getByRole('link', { name: '跳至主要内容' })
+  await expect(skipLink).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('service-main')
+})
+
 test('375px keeps all four service tasks reachable and touch sized', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 })
   await mockWorkspace(page)
