@@ -325,7 +325,7 @@ def test_settings_rejects_legacy_frontend_fallback_in_production(monkeypatch):
 
     monkeypatch.setattr(Path, 'exists', fake_exists)
 
-    with pytest.raises(RuntimeError, match='refusing legacy frontend fallback'):
+    with pytest.raises(RuntimeError, match='frontend_dist/index.html must exist in production'):
         Settings()
 
 
