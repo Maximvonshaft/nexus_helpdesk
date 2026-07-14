@@ -49,7 +49,7 @@ function LoginPage() {
           <div>
             <div className="auth-context__brand">
               <p className="auth-context__kicker" translate="no">Nexus Customer Service</p>
-              <h2 id="auth-context-title">把客户问题处理到结果</h2>
+              <p id="auth-context-title" className="auth-context__title">把客户问题处理到结果</p>
               <p className="auth-context__description">
                 面向物流客服团队的统一案例工作台。先理解客户诉求，再核实事实、执行处理、回复客户并确认结果。
               </p>
@@ -77,7 +77,7 @@ function LoginPage() {
 
           <div className="auth-form">
             <Field label="账号" required>
-              <Input name="username" value={username} onChange={(event) => { setUsername(event.target.value); clearLoginError() }} autoComplete="username" spellCheck={false} required />
+              <Input name="username" value={username} onChange={(event) => { setUsername(event.target.value); clearLoginError() }} autoComplete="username" autoCapitalize="none" spellCheck={false} required />
             </Field>
 
             <div className="auth-password-row">
