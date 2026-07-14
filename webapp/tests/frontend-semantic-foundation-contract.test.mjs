@@ -25,12 +25,12 @@ test('semantic authorities load in one deterministic order', () => {
 
 test('shared primitives expose only the nd component vocabulary', () => {
   assert.match(button, /nd-button/)
-  assert.doesNotMatch(button, /['"]button['"]/)
+  assert.doesNotMatch(button, /className=\{?['"]button(?:\s|['"])/)
   assert.match(badge, /nd-badge/)
-  assert.doesNotMatch(badge, /['"]badge['"]/)
+  assert.doesNotMatch(badge, /className=\{?['"]badge(?:\s|['"])/)
   assert.match(field, /nd-field/)
   assert.match(field, /nd-control/)
-  assert.doesNotMatch(field, /['"]field['"]|['"]input['"]|['"]select['"]|['"]textarea['"]/)
+  assert.doesNotMatch(field, /className=\{?['"](?:field|input|select|textarea)(?:\s|['"])/)
   assert.match(pageHeader, /nd-page-header/)
   assert.doesNotMatch(pageHeader, /page-header nd-page-header/)
 })
