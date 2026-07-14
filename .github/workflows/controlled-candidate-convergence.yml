@@ -333,6 +333,7 @@ jobs:
           subject-name: ${{ steps.identity.outputs.image }}
           subject-digest: ${{ steps.identity.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Build final evidence-bound candidate
         env:
