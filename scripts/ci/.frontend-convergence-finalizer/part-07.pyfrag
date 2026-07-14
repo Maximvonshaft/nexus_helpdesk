@@ -1,0 +1,70 @@
+    )
+    workspace = replace_once(
+        workspace,
+        '<Input type="tel" inputMode="tel" value={caller} onChange={(event) => setCaller(event.target.value)} autoComplete="off" placeholder="输入客户电话" />',
+        '''<Input
+                  type="tel"
+                  inputMode="tel"
+                  value={caller}
+                  onChange={(event) => {
+                    setCaller(event.target.value)
+                    setCancelPreview(null)
+                    cancelConfirmMutation.reset()
+                  }}
+                  autoComplete="off"
+                  placeholder="输入客户电话"
+                />''',
+        label="cancel caller invalidation",
+    )
+    workspace = replace_once(
+        workspace,
+        """                    setWaybill(textValue(candidate.waybillCode))
+                    setAction('work_order')
+                    actionMutation.reset()
+""",
+        """                    setWaybill(textValue(candidate.waybillCode))
+                    setAction('work_order')
+                    setCancelPreview(null)
+                    actionMutation.reset()
+                    cancelConfirmMutation.reset()
+""",
+        label="candidate invalidates cancel preview",
+    )
+    write(workspace_path, workspace)
+
+
+def migrate_accessibility() -> None:
+    shell_path = "webapp/src/app/AppShell.tsx"
+    shell = read(shell_path)
+    shell = replace_once(
+        shell,
+        '<div id="nd-main-content" className="nd-app-content" tabIndex={-1}>\n        {children}\n      </div>',
+        '<main id="nd-main-content" className="nd-app-content" tabIndex={-1}>\n        {children}\n      </main>',
+        label="AppShell main landmark",
+    )
+    write(shell_path, shell)
+
+
+def add_regression_contracts() -> None:
+    test_path = "webapp/tests/operator-console-consolidation-contract.test.mjs"
+    test = read(test_path)
+    test = test.replace(
+        "assert.equal(transport.target, 'webapp/src/lib/http/httpClient.ts')",
+        "assert.equal(transport.target, 'webapp/src/lib/apiClient.ts')",
+    )
+    test = test.replace(
+        """    'webapp/src/lib/api.ts',
+    'webapp/src/lib/operatorWorkspaceApi.ts',
+    'webapp/src/lib/supportApi.ts',
+""",
+        """    'webapp/src/features/runtime/aiDebugApi.ts',
+    'webapp/src/lib/api.ts',
+    'webapp/src/lib/operatorWorkspaceApi.ts',
+    'webapp/src/lib/supportApi.ts',
+""",
+    )
+    test = test.replace(
+        """  for (const path of transport.current_duplicates) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), true, `recorded transport source is missing: ${path}`)
+  }
+""",
