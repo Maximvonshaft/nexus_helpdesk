@@ -1,11 +1,27 @@
 {
   "schema": "nexus.operator-console-consolidation.v1",
-  "version": "operator_console_consolidation.2026-07-14.4",
+  "version": "operator_console_consolidation.2026-07-14.5",
   "owner_issue": 747,
   "parent_issue": 744,
   "baseline_main_sha": "4bc76c3607db2732388d33634bc26968a880ee07",
   "integration_branch": "work/744-canonical-operator-console-consolidation",
   "status": "in_progress",
+  "delivery_authority": {
+    "canonical_issue": 747,
+    "canonical_pr": 748,
+    "canonical_branch": "work/744-canonical-operator-console-consolidation",
+    "superseded_issue": 742,
+    "donor_pr": 743,
+    "donor_head": "4906188ac77d5d6c1e8409bbb1d5d7e519674a73",
+    "donor_state": "closed_read_only_evidence",
+    "merge_policy": "selective_capability_migration_only",
+    "forbidden": [
+      "wholesale_branch_merge",
+      "wholesale_cherry_pick",
+      "parallel_implementation_writes",
+      "second_integration_authority"
+    ]
+  },
   "product": {
     "name": "Nexus OSR",
     "operator_label": "客服与运营工作台",
@@ -76,9 +92,13 @@
     }
   ],
   "transport_authority": {
-    "target":"webapp/src/lib/http/httpClient.ts",
-    "current_duplicates":["webapp/src/lib/api.ts","webapp/src/lib/operatorWorkspaceApi.ts","webapp/src/lib/supportApi.ts"],
-    "required_shared_behavior":["api_base_url","token_storage","request_id","timeout","safe_retry","auth_expiry","error_normalization","latency_telemetry"]
+    "target":"webapp/src/lib/apiClient.ts",
+    "selection":"ADAPT_VERIFIED_DONOR_IMPLEMENTATION",
+    "donor_source":{"pr":743,"head":"4906188ac77d5d6c1e8409bbb1d5d7e519674a73","path":"webapp/src/lib/apiClient.ts"},
+    "current_duplicates":["webapp/src/lib/api.ts","webapp/src/lib/operatorWorkspaceApi.ts","webapp/src/lib/supportApi.ts","webapp/src/features/runtime/aiDebugApi.ts"],
+    "required_shared_behavior":["api_base_url","token_storage","request_id","timeout","safe_retry","auth_expiry","error_normalization","latency_telemetry","external_abort_propagation"],
+    "migration_rule":"domain adapters may remain typed but must delegate transport, auth, timeout, retry and error behavior to apiClient.ts",
+    "forbidden_targets":["webapp/src/lib/http/httpClient.ts","a_second_generic_fetch_wrapper"]
   },
   "design_authority": {
     "tokens":"webapp/src/styles/tokens.css",
@@ -89,6 +109,97 @@
     ],
     "legacy_sources_to_retire":["frontend/style.css","webapp/src/styles.css"]
   },
+  "donor_convergence": [
+    {
+      "id":"static_frontend_retirement",
+      "decision":"ADAPT",
+      "source_pr":743,
+      "source_paths":["frontend/app.js","frontend/index.html","frontend/style.css"],
+      "destination":"delete_on_748_after_capability_consumer_parity",
+      "required_evidence":["build_and_deploy_consumer_inventory","browser_parity","fallback_free_release_identity","rollback"],
+      "reason":"PR #743 proved a complete deletion shape, but #748 must bind it to the current route and capability authority."
+    },
+    {
+      "id":"single_transport_authority",
+      "decision":"ADAPT",
+      "source_pr":743,
+      "source_paths":["webapp/src/lib/apiClient.ts"],
+      "destination":"webapp/src/lib/apiClient.ts",
+      "required_evidence":["merge_safe_retry_and_latency_from_current_api","migrate_all_domain_adapters","delete_generic_duplicates","focused_network_and_auth_tests"],
+      "reason":"Reuse the verified donor boundary instead of creating a new httpClient implementation."
+    },
+    {
+      "id":"frontend_architecture_gates",
+      "decision":"ADAPT_INTO_EXISTING_GATES",
+      "source_pr":743,
+      "source_paths":[
+        "webapp/scripts/assert-frontend-reachability.mjs",
+        "webapp/scripts/assert-frontend-css-usage.mjs",
+        "webapp/scripts/assert-frontend-toolchain-usage.mjs",
+        "webapp/scripts/assert-frontend-visible-copy.mjs",
+        "webapp/scripts/assert-frontend-workflow-security.mjs"
+      ],
+      "destination":"existing_748_architecture_and_truth_gate_chain",
+      "required_evidence":["no_second_workflow_authority","route_allowlist_matches_747","privileged_runtime_copy_exception_is_bounded","negative_reintroduction_tests"],
+      "reason":"The detection logic is valuable; a parallel workflow/registry is not."
+    },
+    {
+      "id":"component_and_token_authority",
+      "decision":"ADOPT_AUTHORITY_ADAPT_DIFF",
+      "source_pr":743,
+      "source_paths":["webapp/src/components/ui","webapp/src/styles/tokens.css"],
+      "destination":["webapp/src/components/ui","webapp/src/styles/tokens.css"],
+      "required_evidence":["remove_shared_ui_duplicates","remove_raw_feature_palettes","preserve_748_shell_and_runtime_components","accessibility_contracts"],
+      "reason":"Keep one authority while adapting components to the newer product shell."
+    },
+    {
+      "id":"dependency_and_dead_css_cleanup",
+      "decision":"ADAPT",
+      "source_pr":743,
+      "source_paths":["webapp/package.json","webapp/package-lock.json","webapp/src/styles/components.css"],
+      "destination":"748_current_dependency_and_css_graph",
+      "required_evidence":["current_import_graph","generated_lockfile","unused_selector_test","production_build"],
+      "reason":"Recompute against #748; do not copy a stale lockfile or delete dependencies now used by Runtime/Control Tower."
+    },
+    {
+      "id":"accessibility_corrections",
+      "decision":"ADAPT",
+      "source_pr":743,
+      "source_paths":["webapp/src/a11y.css","webapp/e2e/login-semantic.spec.ts","webapp/e2e/operator-workspace.spec.ts"],
+      "destination":["webapp/src/app/AppShell.tsx","webapp/src/styles","webapp/e2e"],
+      "required_evidence":["skip_link","landmark_order","focus_target","reduced_motion","keyboard_e2e"],
+      "reason":"Port behavior into #748 AppShell; do not reintroduce the superseded ServiceAppShell."
+    },
+    {
+      "id":"system_route_and_old_shell",
+      "decision":"REJECT_SUPERSEDED",
+      "source_pr":743,
+      "source_paths":["webapp/src/features/service-admin/SystemPage.tsx","webapp/src/components/layout/ServiceAppShell.tsx","webapp/src/routes/system.tsx"],
+      "destination":["/runtime","/control-tower","webapp/src/app/AppShell.tsx"],
+      "reason":"#747 defines the newer route and shell authority."
+    },
+    {
+      "id":"operator_visible_technical_copy_rule",
+      "decision":"ADAPT",
+      "source_pr":743,
+      "source_paths":["webapp/scripts/assert-frontend-visible-copy.mjs"],
+      "destination":"primary_operator_routes_strict_plus_privileged_runtime_bounded",
+      "required_evidence":["ordinary_operator_no_raw_model_runtime_terms","runtime_route_capability_gate","progressive_disclosure"],
+      "reason":"The primary operator hierarchy remains non-technical, while privileged Runtime evidence is an intentional canonical capability."
+    },
+    {
+      "id":"known_donor_defects",
+      "decision":"BLOCK_MIGRATION_UNTIL_RESOLVED",
+      "source_pr":743,
+      "findings":[
+        "knowledge_new_draft_must_not_be_overwritten",
+        "dirty_knowledge_draft_must_block_same_document_navigation",
+        "cancel_preview_token_must_reset_when_request_fields_change"
+      ],
+      "required_evidence":["focused_regression_tests_on_748","exact_head_review_resolution"],
+      "reason":"Closed donor PR contains three unresolved P2 findings."
+    }
+  ],
   "deletion_gate":["consumer_inventory","route_and_capability_parity","authorization_preserved","keyboard_and_accessibility_evidence","degraded_and_large_list_evidence","build_and_deployment_identity","rollback_proof","anti_reintroduction_gate","exact_head_ci"],
   "forbidden_end_state":["second_operator_product_spine","second_production_frontend","second_queue_truth","second_transport_authority","second_design_system_authority","technical_status_as_business_closure"]
 }
