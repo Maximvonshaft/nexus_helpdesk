@@ -5,7 +5,6 @@ import { Route as RootRoute } from './root'
 import { AppShell } from '@/app/AppShell'
 import '@/app/app-shell.css'
 import { Button } from '@/components/ui/Button'
-import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
@@ -119,10 +118,10 @@ function AuthorizedWorkspaceRoutePage() {
         onLogout={handleLogout}
       >
         <main className="nd-app-boundary-state">
-          <EmptyState
-            title="当前账号没有可用工作范围"
-            description="请联系管理员为账号分配国家和渠道。系统不会自动猜测或扩大访问范围。"
-          />
+          <section className="empty-state" role="status" aria-labelledby="workspace-no-scope-title">
+            <h1 id="workspace-no-scope-title">当前账号没有可用工作范围</h1>
+            <p>请联系管理员为账号分配国家和渠道。系统不会自动猜测或扩大访问范围。</p>
+          </section>
         </main>
       </AppShell>
     )
