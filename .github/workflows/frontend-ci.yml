@@ -17,36 +17,54 @@ permissions:
   contents: read
 
 concurrency:
-  group: frontend-ci-${{ github.ref }}
+  group: frontend-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   frontend:
-    name: Typecheck, lint, and build webapp
+    name: Exact-head frontend contracts
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: webapp
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout exact proposed head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+
+      - name: Assert checkout identity
+        if: github.event_name == 'pull_request'
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        working-directory: .
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund --loglevel=error
+
+      - name: Node contracts
+        run: npm test
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run typecheck -- --pretty false
 
       - name: Lint
         run: npm run lint
 
-      - name: Build
+      - name: Production build
         run: npm run build
+
+      - name: Route splitting and retired-surface proof
+        run: node scripts/assert-route-splitting.mjs
