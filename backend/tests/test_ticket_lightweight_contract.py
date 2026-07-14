@@ -3,26 +3,26 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SUPPORT_CONSOLE = ROOT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx'
-SUPPORT_API = ROOT / 'webapp' / 'src' / 'lib' / 'supportApi.ts'
-E2E_SMOKE = ROOT / 'webapp' / 'e2e' / 'smoke.spec.ts'
+WORKSPACE = ROOT / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'OperatorWorkspacePage.tsx'
+WORKSPACE_API = ROOT / 'webapp' / 'src' / 'lib' / 'operatorWorkspaceApi.ts'
+E2E_SMOKE = ROOT / 'webapp' / 'e2e' / 'operator-workspace.spec.ts'
 
 
 def test_ticket_lightweight_frontend_contract_files_exist():
-    assert SUPPORT_CONSOLE.exists()
-    assert SUPPORT_API.exists()
+    assert WORKSPACE.exists()
+    assert WORKSPACE_API.exists()
     assert E2E_SMOKE.exists()
 
 
-def test_ticket_detail_first_paint_uses_summary_and_timeline_not_heavy_endpoint():
-    console = SUPPORT_CONSOLE.read_text(encoding='utf-8')
-    api = SUPPORT_API.read_text(encoding='utf-8')
+def test_ticket_detail_first_paint_uses_queue_summary_and_bounded_source_reads():
+    workspace = WORKSPACE.read_text(encoding='utf-8')
+    api = WORKSPACE_API.read_text(encoding='utf-8')
 
-    assert "supportApi.supportConversations" in console
-    assert "supportApi.supportConversationDetail" in console
-    assert "supportApi.supportConversationState" in console
-    assert "supportApi.supportConversationMetrics" in console
-    assert "supportApi.supportConversationReply" in console
-    assert "supportApi.ticket(" not in console
-    assert "/api/support/conversations/detail" in api
-    assert "/api/support/conversations/metrics" in api
+    assert "operatorWorkspaceApi.unifiedQueue" in workspace
+    assert "operatorWorkspaceApi.conversationThread" in workspace
+    assert "operatorWorkspaceApi.sourceRecord" in workspace
+    assert "operatorWorkspaceApi.reply" in workspace
+    assert "supportApi.ticket(" not in workspace
+    assert "/api/admin/operator-queue/unified" in api
+    assert "limit: '50'" in api
+    assert "sourceRecord" in api
