@@ -264,7 +264,7 @@ def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(m
     )
 
     demo_response = client.get("/webchat/demo.html")
-    api_response = client.get("/api/webchat/not-found")
+    api_response = client.get("/api/not-a-real-route")
 
     assert demo_response.status_code in {200, 404}
     assert _permissions(demo_response) == "camera=(), microphone=(self), geolocation=()"
