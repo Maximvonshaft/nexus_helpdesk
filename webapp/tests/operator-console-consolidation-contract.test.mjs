@@ -72,15 +72,26 @@ test('new unowned route files cannot create another product spine', () => {
   assert.deepEqual(unknownImports, [], `router imports an unowned route: ${unknownImports.join(', ')}`)
 })
 
-test('all current and retired operator surfaces have explicit dispositions', () => {
+test('all current, retired, and orphaned operator surfaces have explicit dispositions', () => {
   const surfaces = byId(contract().implementation_surfaces)
   assert.equal(surfaces.get('modern_operator_workspace')?.disposition, 'CANONICAL')
-  assert.equal(surfaces.get('modern_support_console')?.disposition, 'SUPERSEDED_DELETE')
-  assert.equal(surfaces.get('modern_support_console')?.deleted, true)
-  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'features', 'support-console')), false)
+
+  const retiredConsole = surfaces.get('modern_support_console_product')
+  assert.equal(retiredConsole?.disposition, 'SUPERSEDED_DELETE')
+  assert.equal(retiredConsole?.deleted, true)
+  for (const path of retiredConsole?.paths ?? []) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), false, `retired console path still exists: ${path}`)
+  }
+
+  const debugConsole = surfaces.get('ai_debug_console')
+  assert.equal(debugConsole?.disposition, 'VALUABLE_ORPHAN_MIGRATE_TO_RUNTIME')
+  assert.equal(debugConsole?.deleted, false)
+  assert.equal(existsSync(join(REPO_ROOT, debugConsole.path)), true)
+  assert.equal(debugConsole?.target, 'webapp/src/features/runtime/ai-debug')
+
   assert.equal(surfaces.get('legacy_static_admin')?.disposition, 'LEGACY_ACTIVE_MIGRATE_THEN_DELETE')
   assert.equal(surfaces.get('public_webchat_widget')?.disposition, 'SEPARATE_PUBLIC_SURFACE')
-  assert.equal(surfaces.size, 4, 'a new surface requires an explicit authority decision')
+  assert.equal(surfaces.size, 5, 'a new surface requires an explicit authority decision')
 })
 
 test('transport duplication is frozen and must converge on one target', () => {
