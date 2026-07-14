@@ -1,144 +1,43 @@
 {
   "schema": "nexus.frontend-product-foundation.v1",
-  "version": "frontend_product_foundation.v1",
-  "owner": "nexus_osr_product_design",
-  "product_job": "Help an authorized logistics operator identify the case, distinguish authoritative evidence from claims and recommendations, take the next governed action, understand the actual operational and customer outcome, and determine whether the case is blocked, under observation, repair-required, reopenable, or safely closed.",
-  "visual_thesis": "Dense calm logistics cockpit",
+  "version": "frontend_product_foundation.v2",
+  "owner": "nexus_customer_service_product_design",
+  "product_job": "Help an authorized logistics customer-service operator understand the customer request, verify facts, own the case, take the next permitted action, confirm the operational and customer outcome, and complete or follow up the case.",
+  "visual_thesis": "Dense calm customer-service desk",
   "signature": {
-    "key": "case_spine",
-    "label": "Case Spine",
-    "purpose": "Represent scope, evidence, decision, action, operational result, customer notification and closure or observation as one truthful case journey.",
-    "runtime_authorities": [585, 587, 526],
-    "implementation_authority": 525
+    "key": "customer_case_flow",
+    "label": "Customer case flow",
+    "purpose": "Represent customer request, facts, ownership, action, operational result, customer update and completion or follow-up as one understandable journey.",
+    "implementation_authority": 742
   },
   "route_domains": [
-    {
-      "domain": "authentication",
-      "route": "/login",
-      "canonical": true,
-      "status": "current",
-      "job": "Establish operator identity"
-    },
-    {
-      "domain": "operator_work",
-      "route": "/workspace",
-      "canonical": true,
-      "status": "planned",
-      "job": "Open the scoped queue and complete the governed case journey"
-    },
-    {
-      "domain": "knowledge_and_sop",
-      "route": "/knowledge",
-      "canonical": true,
-      "status": "planned",
-      "job": "Govern customer Knowledge and internal operating guidance"
-    },
-    {
-      "domain": "channels",
-      "route": "/channels",
-      "canonical": true,
-      "status": "planned",
-      "job": "Manage channel and account configuration and health"
-    },
-    {
-      "domain": "runtime_and_audit",
-      "route": "/runtime",
-      "canonical": true,
-      "status": "planned",
-      "job": "Inspect technical readiness, debug, evaluation and bounded audit evidence"
-    },
-    {
-      "domain": "management",
-      "route": "/control-tower",
-      "canonical": true,
-      "status": "planned",
-      "job": "Review scoped workload, risk, outcomes and management drill-down"
-    },
-    {
-      "domain": "operator_work_compatibility",
-      "route": "/webchat",
-      "canonical": false,
-      "status": "transitional",
-      "job": "Preserve the current Support Console during canonical Workspace migration"
-    }
+    { "domain": "authentication", "route": "/login", "canonical": true, "status": "current", "job": "Establish operator identity" },
+    { "domain": "customer_service_work", "route": "/workspace", "canonical": true, "status": "current", "job": "Process customer cases from request to result" },
+    { "domain": "knowledge_and_rules", "route": "/knowledge", "canonical": true, "status": "current", "job": "Maintain customer-service facts, policies and procedures" },
+    { "domain": "customer_channels", "route": "/channels", "canonical": true, "status": "current", "job": "Confirm customer contact channels are available" },
+    { "domain": "service_assurance", "route": "/system", "canonical": true, "status": "current", "job": "Confirm supporting services are available and escalate faults" },
+    { "domain": "compatibility_redirect", "route": "/webchat", "canonical": false, "status": "redirect_only", "job": "Redirect historical links to the customer-service workspace" }
   ],
   "token_authority": {
     "semantic_tokens_path": "webapp/src/styles/tokens.css",
     "component_primitives_path": "webapp/src/components/ui",
-    "enforcement_status": "target_not_yet_enforced",
-    "feature_raw_hex_policy": "prohibited_after_migration",
-    "legacy_sources": [
-      "webapp/src/styles.css",
-      "webapp/src/features/support-console/support-console.css"
-    ],
-    "migration_strategy": "staged_by_route_domain",
-    "big_bang_rewrite": false
+    "enforcement_status": "enforced",
+    "feature_raw_hex_policy": "prohibited",
+    "legacy_sources": [],
+    "migration_strategy": "single_authority_complete",
+    "big_bang_rewrite": true
   },
   "state_vocabulary": {
-    "source": [
-      "source_open",
-      "source_resolved",
-      "source_closed",
-      "source_cancelled"
-    ],
-    "ownership": [
-      "ownership_unassigned",
-      "ownership_assigned",
-      "ownership_handoff_requested",
-      "ownership_handoff_accepted",
-      "ownership_waiting_customer",
-      "ownership_waiting_operations"
-    ],
-    "evidence": [
-      "evidence_authoritative",
-      "evidence_stale",
-      "evidence_unavailable",
-      "evidence_contradictory",
-      "evidence_customer_claim",
-      "evidence_approved_knowledge",
-      "evidence_ai_recommendation"
-    ],
-    "action_and_outcome": [
-      "action_requested",
-      "action_accepted",
-      "action_technical_completed",
-      "action_operational_completed",
-      "customer_notified",
-      "business_result_confirmed",
-      "repair_required"
-    ],
-    "closure": [
-      "closure_blocked",
-      "closure_observation",
-      "closure_eligible",
-      "closure_safely_closed",
-      "closure_reopened"
-    ]
+    "source": ["source_open", "source_resolved", "source_closed", "source_cancelled"],
+    "ownership": ["ownership_unassigned", "ownership_assigned", "ownership_handoff_requested", "ownership_handoff_accepted", "ownership_waiting_customer", "ownership_waiting_operations"],
+    "evidence": ["evidence_authoritative", "evidence_stale", "evidence_unavailable", "evidence_contradictory", "evidence_customer_claim", "evidence_approved_knowledge", "evidence_historical_guidance"],
+    "action_and_outcome": ["action_requested", "action_accepted", "action_technical_completed", "action_operational_completed", "customer_notified", "business_result_confirmed", "repair_required"],
+    "closure": ["closure_blocked", "closure_follow_up", "closure_eligible", "closure_safely_closed", "closure_reopened"]
   },
   "terminology": {
-    "prohibited_operator_labels": [
-      "记忆证据",
-      "已结束"
-    ],
-    "prohibited_label_conditions": {
-      "已结束": "Prohibited when derived only from Ticket resolved or closed status",
-      "成功": "Prohibited when derived only from request acceptance, queueing, transport or local technical completion"
-    },
-    "false_success_sources": [
-      "http_200",
-      "job_queued",
-      "job_done",
-      "message_sent",
-      "dispatch_dispatched",
-      "ticket_closed"
-    ],
-    "preferred_evidence_labels": [
-      "案例证据",
-      "事实与依据",
-      "客户主张",
-      "知识与政策",
-      "AI 建议"
-    ]
+    "prohibited_operator_labels": ["AI", "Artificial Intelligence", "Runtime", "Provider", "RAG", "Prompt", "Model", "Agent", "记忆证据", "已结束"],
+    "false_success_sources": ["http_200", "job_queued", "job_done", "message_sent", "dispatch_dispatched", "ticket_closed"],
+    "preferred_evidence_labels": ["事实与待确认信息", "已核实事实", "客户最新说明", "知识与规则", "历史处理建议"]
   },
   "quality_floor": {
     "wcag_level": "AA",
@@ -153,12 +52,12 @@
     "no_color_only_meaning": true,
     "representative_viewports": [375, 768, 1024, 1440]
   },
-  "downstream_work_items": [525, 564, 573],
+  "downstream_work_items": [564],
   "lifecycle": {
-    "status": "approved_contract",
-    "effective_from": "2026-07-12T00:00:00Z",
-    "review_due": "2027-01-12T00:00:00Z",
-    "runtime_activation": false,
-    "production_ui_migration_complete": false
+    "status": "implemented",
+    "effective_from": "2026-07-14T00:00:00Z",
+    "review_due": "2027-01-14T00:00:00Z",
+    "runtime_activation": true,
+    "production_ui_migration_complete": true
   }
 }
