@@ -14,6 +14,7 @@ const relevantWorkflows = [
 const temporaryWorkflows = [
   'generate-radix-lockfile.yml',
   'refresh-frontend-lockfile.yml',
+  'sync-frontend-branch-main.yml',
 ]
 
 function read(path) {
