@@ -1,0 +1,70 @@
+        """  assert.equal(existsSync(join(REPO_ROOT, transport.target)), true, 'canonical transport implementation is missing')
+  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'lib', 'http', 'httpClient.ts')), false, 'second transport target must not exist')
+""",
+    )
+    additional = r'''
+
+test('the three donor P2 defects are permanently covered on the canonical implementation', () => {
+  const knowledge = read(join(WEBAPP_ROOT, 'src', 'features', 'knowledge', 'KnowledgePage.tsx'))
+  const workspace = read(join(WEBAPP_ROOT, 'src', 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx'))
+
+  assert.match(knowledge, /if \(isCreating \|\| selectedId !== null\) return/)
+  assert.match(knowledge, /useBlocker\(\{/)
+  assert.match(knowledge, /enableBeforeUnload: isDirty/)
+  assert.match(knowledge, /navigationBlocker\.proceed\(\)/)
+  assert.match(knowledge, /navigationBlocker\.reset\(\)/)
+
+  const waybillChange = workspace.match(/value=\{waybill\}[\s\S]{0,500}?placeholder="输入完整运单号"/)?.[0] ?? ''
+  const callerChange = workspace.match(/value=\{caller\}[\s\S]{0,500}?placeholder="输入客户电话"/)?.[0] ?? ''
+  for (const block of [waybillChange, callerChange]) {
+    assert.match(block, /setCancelPreview\(null\)/)
+    assert.match(block, /cancelConfirmMutation\.reset\(\)/)
+  }
+})
+
+test('the canonical shell owns the accessible document landmarks', () => {
+  const shell = read(join(WEBAPP_ROOT, 'src', 'app', 'AppShell.tsx'))
+  assert.match(shell, /className="nd-skip-link" href="#nd-main-content"/)
+  assert.match(shell, /<header className="nd-app-header">/)
+  assert.match(shell, /<main id="nd-main-content" className="nd-app-content" tabIndex=\{-1\}>/)
+  assert.doesNotMatch(shell, /ServiceAppShell/)
+})
+
+test('one apiClient owns transport while typed domain adapters delegate', () => {
+  const authority = read(join(WEBAPP_ROOT, 'src', 'lib', 'apiClient.ts'))
+  assert.match(authority, /export async function apiRequest/)
+  assert.match(authority, /SAFE_RETRY_METHODS/)
+  assert.match(authority, /nexusdesk:api-latency/)
+  assert.match(authority, /externalAbortHandler/)
+
+  for (const relativePath of [
+    ['src', 'lib', 'api.ts'],
+    ['src', 'lib', 'supportApi.ts'],
+    ['src', 'lib', 'operatorWorkspaceApi.ts'],
+    ['src', 'features', 'runtime', 'aiDebugApi.ts'],
+  ]) {
+    const source = read(join(WEBAPP_ROOT, ...relativePath))
+    assert.doesNotMatch(source, /\bfetch\s*\(/)
+    assert.doesNotMatch(source, /helpdesk-webapp-token/)
+  }
+})
+'''
+    marker = "\ntest('login presentation is operational rather than promotional or AI-styled', () => {"
+    if additional.strip() not in test:
+        test = test.replace(marker, additional + marker)
+    write(test_path, test)
+
+
+def adapt_architecture_gates() -> None:
+    donor_scripts = [
+        "webapp/scripts/assert-frontend-reachability.mjs",
+        "webapp/scripts/assert-frontend-css-usage.mjs",
+        "webapp/scripts/assert-frontend-toolchain-usage.mjs",
+        "webapp/scripts/assert-frontend-workflow-security.mjs",
+    ]
+    for path in donor_scripts:
+        write(path, git_show(DONOR_SHA, path))
+
+    package_path = WEBAPP / "package.json"
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    package.setdefault("scripts", {})["architecture"] = (
