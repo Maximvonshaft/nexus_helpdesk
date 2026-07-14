@@ -1,32 +1,44 @@
-import { lazy, Suspense } from 'react'
-import { createRoute, redirect } from '@tanstack/react-router'
+import { useEffect } from 'react'
+import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
 import { getSupportToken } from '@/lib/supportApi'
 
-const LazySupportConsolePage = lazy(() => import('@/features/support-console/lazy'))
+function WebchatCompatibilityRedirect() {
+  const navigate = useNavigate()
 
-function SupportConsoleLoading() {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const tab = params.get('tab')
+    if (tab === 'knowledge') {
+      navigate({ to: '/knowledge', replace: true })
+      return
+    }
+    if (tab === 'channels') {
+      navigate({ to: '/channels', replace: true })
+      return
+    }
+    if (tab === 'runtime') {
+      navigate({ to: '/runtime', replace: true })
+      return
+    }
+    navigate({ to: '/workspace', replace: true })
+  }, [navigate])
+
   return (
     <main className="content" aria-busy="true">
       <section className="empty-state" role="status" aria-live="polite">
-        <strong>加载运营工作台中…</strong>
-        <p>正在载入已授权的工作界面。</p>
+        <strong>正在进入新的工作页面…</strong>
+        <p>旧客服后台入口已合并到统一操作员后台。</p>
       </section>
     </main>
-  )
-}
-
-function WebchatRoutePage() {
-  return (
-    <Suspense fallback={<SupportConsoleLoading />}>
-      <LazySupportConsolePage />
-    </Suspense>
   )
 }
 
 export const Route = createRoute({
   getParentRoute: () => RootRoute,
   path: '/webchat',
-  beforeLoad: () => { if (!getSupportToken()) throw redirect({ to: '/login' }) },
-  component: WebchatRoutePage,
+  beforeLoad: () => {
+    if (!getSupportToken()) throw redirect({ to: '/login' })
+  },
+  component: WebchatCompatibilityRedirect,
 })
