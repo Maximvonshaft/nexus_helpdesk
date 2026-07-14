@@ -50,9 +50,9 @@ test('there is exactly one canonical operator product spine and route', () => {
   assert.deepEqual(canonicalOperatorRoutes.map((item) => item.route), ['/workspace'])
 
   const routes = byRoute(value.route_authority)
-  assert.equal(routes.get('/webchat')?.status, 'transitional_redirect_required')
+  assert.equal(routes.get('/webchat')?.status, 'redirect_only')
   for (const route of ['/knowledge', '/channels', '/runtime', '/control-tower']) {
-    assert.ok(routes.has(route), `missing target canonical route: ${route}`)
+    assert.equal(routes.get(route)?.status, 'canonical', `route is not canonical: ${route}`)
   }
 })
 
@@ -72,10 +72,12 @@ test('new unowned route files cannot create another product spine', () => {
   assert.deepEqual(unknownImports, [], `router imports an unowned route: ${unknownImports.join(', ')}`)
 })
 
-test('all current operator surfaces have explicit dispositions', () => {
+test('all current and retired operator surfaces have explicit dispositions', () => {
   const surfaces = byId(contract().implementation_surfaces)
   assert.equal(surfaces.get('modern_operator_workspace')?.disposition, 'CANONICAL')
-  assert.equal(surfaces.get('modern_support_console')?.disposition, 'LEGACY_ACTIVE_MIGRATE_THEN_DELETE')
+  assert.equal(surfaces.get('modern_support_console')?.disposition, 'SUPERSEDED_DELETE')
+  assert.equal(surfaces.get('modern_support_console')?.deleted, true)
+  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'features', 'support-console')), false)
   assert.equal(surfaces.get('legacy_static_admin')?.disposition, 'LEGACY_ACTIVE_MIGRATE_THEN_DELETE')
   assert.equal(surfaces.get('public_webchat_widget')?.disposition, 'SEPARATE_PUBLIC_SURFACE')
   assert.equal(surfaces.size, 4, 'a new surface requires an explicit authority decision')
