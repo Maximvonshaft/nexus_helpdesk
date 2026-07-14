@@ -71,6 +71,18 @@ class OperatorQueueScopeGrantRead(BaseModel):
     updated_at: str
 
 
+class OperatorQueueCurrentScopeRead(BaseModel):
+    tenant_key: str = Field(min_length=1, max_length=80)
+    tenant_hash: str = Field(min_length=12, max_length=12)
+    country_code: str = Field(min_length=2, max_length=16)
+    channel_key: str = Field(min_length=1, max_length=40)
+
+
+class OperatorQueueCurrentScopesResponse(BaseModel):
+    items: list[OperatorQueueCurrentScopeRead] = Field(default_factory=list)
+    requires_explicit_admin_scope: bool = False
+
+
 class UnifiedQueueOwner(BaseModel):
     kind: Literal["user", "team", "worker_lease", "unassigned"]
     user_id: int | None = Field(default=None, gt=0)
