@@ -53,6 +53,11 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
                 "image_tag": "nexusdesk/helpdesk:rc-test-" + self.source,
             },
         }
+        binding = {
+            "schema_version": "nexus_release_image_compliance_binding_v1",
+            "status": "pass",
+            "evaluated_on": "2026-07-14",
+        }
         receipt = {
             "schema": "nexus.osr.registry-publish-receipt.v1",
             "status": "pass",
@@ -64,6 +69,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
         return [
             self._write(root, "controlled-candidate-manifest.json", final),
             self._write(root, "candidate-manifest.json", rc),
+            self._write(root, "release-image-compliance-binding.json", binding),
             self._write(root, "registry-publish-receipt.json", receipt),
         ]
 
@@ -73,7 +79,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             paths = self._fixtures(root)
             findings, suppressed = MODULE.scan_controlled_candidate_files(root, paths)
             self.assertEqual(findings, [])
-            self.assertGreaterEqual(suppressed, 7)
+            self.assertGreaterEqual(suppressed, 8)
 
     def test_secret_finding_is_never_suppressed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -96,6 +102,17 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
                 "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/987654321"
             )
             final_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_invalid_compliance_date_is_not_suppressed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            binding_path = root / paths[2]
+            payload = json.loads(binding_path.read_text(encoding="utf-8"))
+            payload["evaluated_on"] = "2026-02-31"
+            binding_path.write_text(json.dumps(payload), encoding="utf-8")
             findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
             self.assertIn("artifact:phone", {finding.rule for finding in findings})
 
