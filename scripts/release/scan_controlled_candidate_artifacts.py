@@ -13,6 +13,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -33,6 +34,7 @@ from scanner import (  # noqa: E402
 FINAL_PREFIX = "artifacts/final-controlled-candidate/"
 FINAL_MANIFEST = FINAL_PREFIX + "controlled-candidate-manifest.json"
 RC_MANIFEST = FINAL_PREFIX + "candidate-manifest.json"
+COMPLIANCE_BINDING = FINAL_PREFIX + "release-image-compliance-binding.json"
 PUBLISH_RECEIPT = FINAL_PREFIX + "registry-publish-receipt.json"
 
 ATTESTATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
@@ -42,6 +44,7 @@ GENERATED_AT_RE = re.compile(
 )
 APP_VERSION_RE = re.compile(r"^controlled-[0-9a-f]{12}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:rc-test-[0-9a-f]{40}$")
+ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 
 def _load_json(root: Path, relative: str) -> dict[str, object] | None:
@@ -53,6 +56,16 @@ def _load_json(root: Path, relative: str) -> dict[str, object] | None:
     except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _valid_iso_date(value: str) -> bool:
+    if not ISO_DATE_RE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _attestation_url_is_bound(value: str, attestation_id: str) -> bool:
@@ -112,6 +125,16 @@ def _safe_value(
 
     if relative == RC_MANIFEST and schema == "nexus.osr.rc-test-candidate.v1":
         return key_path == ("candidate", "image_tag") and bool(IMAGE_TAG_RE.fullmatch(value))
+
+    if (
+        relative == COMPLIANCE_BINDING
+        and schema == "nexus_release_image_compliance_binding_v1"
+    ):
+        return (
+            payload.get("status") == "pass"
+            and key_path == ("evaluated_on",)
+            and _valid_iso_date(value)
+        )
 
     if relative == PUBLISH_RECEIPT and schema == "nexus.osr.registry-publish-receipt.v1":
         if key_path == ("build_time",):
