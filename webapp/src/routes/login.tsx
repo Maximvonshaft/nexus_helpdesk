@@ -16,12 +16,10 @@ function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const errorRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { document.title = '登录 · Nexus OSR' }, [])
+  useEffect(() => { document.title = '登录 · Nexus 客服中心' }, [])
 
   useEffect(() => {
-    if (session.data && !login.isPending && !login.isSuccess) {
-      navigate({ to: '/', replace: true })
-    }
+    if (session.data && !login.isPending && !login.isSuccess) navigate({ to: '/', replace: true })
   }, [login.isPending, login.isSuccess, navigate, session.data])
 
   useEffect(() => {
@@ -36,12 +34,11 @@ function LoginPage() {
     event.preventDefault()
     const normalizedUsername = username.trim()
     if (login.isPending || !normalizedUsername || !password) return
-
     try {
       await login.mutateAsync({ username: normalizedUsername, password })
       navigate({ to: '/', replace: true })
     } catch {
-      // React Query retains failure state; the bounded alert below receives focus.
+      // The error panel below receives focus.
     }
   }
 
@@ -51,112 +48,50 @@ function LoginPage() {
         <section className="auth-context" aria-labelledby="auth-context-title">
           <div>
             <div className="auth-context__brand">
-              <p className="auth-context__kicker" translate="no">Nexus OSR · Operations Service Runtime</p>
-              <h2 id="auth-context-title">从可信事实到可验证结案</h2>
+              <p className="auth-context__kicker" translate="no">Nexus Customer Service</p>
+              <h2 id="auth-context-title">把客户问题处理到结果</h2>
               <p className="auth-context__description">
-                面向多国家物流客服与运营团队的案例解决驾驶舱。每一步都保留事实、权限和结果边界。
+                面向物流客服团队的统一案例工作台。先理解客户诉求，再核实事实、执行处理、回复客户并确认结果。
               </p>
             </div>
 
-            <ol className="auth-sequence" aria-label="Nexus OSR 处理原则">
-              <li>
-                <span className="auth-sequence__index">01</span>
-                <div>
-                  <strong>事实</strong>
-                  <span>先确认权威来源，再判断下一步。</span>
-                </div>
-              </li>
-              <li>
-                <span className="auth-sequence__index">02</span>
-                <div>
-                  <strong>受控动作</strong>
-                  <span>所有操作遵守权限、策略和审计边界。</span>
-                </div>
-              </li>
-              <li>
-                <span className="auth-sequence__index">03</span>
-                <div>
-                  <strong>安全结案</strong>
-                  <span>技术完成不等于业务结果，结案必须有证据。</span>
-                </div>
-              </li>
+            <ol className="auth-sequence" aria-label="客服处理原则">
+              <li><span className="auth-sequence__index">01</span><div><strong>听懂客户</strong><span>先确认客户真正需要解决的问题。</span></div></li>
+              <li><span className="auth-sequence__index">02</span><div><strong>核实事实</strong><span>以运单和运营记录为准，不凭猜测承诺。</span></div></li>
+              <li><span className="auth-sequence__index">03</span><div><strong>跟到结果</strong><span>提交动作后继续确认运营结果和客户通知。</span></div></li>
             </ol>
           </div>
 
           <p className="auth-context__boundary">
-            当前入口仅建立操作员身份。队列、案例和业务动作仍由后端权限与运行时策略决定。
+            登录后，系统会根据账号权限加载客户待办和可执行动作。
           </p>
         </section>
 
         <form className="auth-card" onSubmit={handleSubmit}>
           <PageHeader
-            eyebrow="操作员登录"
-            title="进入运营工作台"
-            description="使用已开通的客服或运营账号登录。系统将根据角色和范围加载可访问的工作内容。"
+            eyebrow="客服登录"
+            title="进入客服工作台"
+            description="使用已开通的客服或主管账号登录。"
             headingLevel={1}
           />
 
           <div className="auth-form">
             <Field label="账号" required>
-              <Input
-                name="username"
-                value={username}
-                onChange={(event) => {
-                  setUsername(event.target.value)
-                  clearLoginError()
-                }}
-                autoComplete="username"
-                spellCheck={false}
-                required
-              />
+              <Input name="username" value={username} onChange={(event) => { setUsername(event.target.value); clearLoginError() }} autoComplete="username" spellCheck={false} required />
             </Field>
 
             <div className="auth-password-row">
               <Field label="密码" required>
-                <Input
-                  id="login-password"
-                  name="password"
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value)
-                    clearLoginError()
-                  }}
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  required
-                />
+                <Input id="login-password" name="password" value={password} onChange={(event) => { setPassword(event.target.value); clearLoginError() }} type={showPassword ? 'text' : 'password'} autoComplete="current-password" required />
               </Field>
-              <Button
-                variant="ghost"
-                size="md"
-                aria-controls="login-password"
-                aria-pressed={showPassword}
-                onClick={() => setShowPassword((current) => !current)}
-              >
+              <Button variant="ghost" size="md" aria-controls="login-password" aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}>
                 {showPassword ? '隐藏密码' : '显示密码'}
               </Button>
             </div>
 
-            {login.error ? (
-              <div ref={errorRef} className="auth-error" role="alert" tabIndex={-1}>
-                无法登录。请检查账号和密码后重试。
-              </div>
-            ) : null}
-
-            <div className="auth-helper">
-              请使用已开通的客服账号登录。登录状态只保存在当前浏览器会话中。
-            </div>
-
-            <Button
-              className="auth-submit"
-              variant="primary"
-              size="lg"
-              type="submit"
-              loading={login.isPending}
-              loadingLabel="正在验证账号…"
-            >
-              登录运营工作台
-            </Button>
+            {login.error ? <div ref={errorRef} className="auth-error" role="alert" tabIndex={-1}>无法登录。请检查账号和密码后重试。</div> : null}
+            <div className="auth-helper">登录状态只保存在当前浏览器会话中。离开公共电脑前请退出登录。</div>
+            <Button className="auth-submit" variant="primary" size="lg" type="submit" loading={login.isPending} loadingLabel="正在验证账号…">登录客服工作台</Button>
           </div>
         </form>
       </div>
