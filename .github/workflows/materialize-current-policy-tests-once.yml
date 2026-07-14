@@ -1,0 +1,63 @@
+name: Materialize current policy test corrections once
+
+on:
+  push:
+    branches:
+      - work/744-canonical-operator-console-consolidation
+    paths:
+      - .github/workflows/materialize-current-policy-tests-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-current-policy-tests-once
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.repository == 'Maximvonshaft/nexus_helpdesk'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact trigger source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          show-progress: false
+
+      - name: Assert exact trigger identity
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Apply bounded source corrections
+        run: |
+          set -Eeuo pipefail
+          python scripts/ci/materialize_current_policy_tests.py
+          python -m py_compile \
+            backend/app/services/operator_queue_scope.py \
+            backend/tests/test_round24_hardening.py \
+            backend/tests/test_round27_frontend_hardening.py
+          grep -q 'team:{team_identity}' backend/app/services/operator_queue_scope.py
+          grep -q 'frontend_dist/index.html must exist in production' backend/tests/test_round24_hardening.py
+          ! grep -q 'refusing legacy frontend fallback' backend/tests/test_round24_hardening.py
+
+      - name: Remove one-shot materialization assets
+        run: |
+          rm scripts/ci/materialize_current_policy_tests.py
+          rm .github/workflows/materialize-current-policy-tests-once.yml
+
+      - name: Commit final bounded source
+        env:
+          EXPECTED_PARENT: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_PARENT}"
+          git config user.name "Nexus implementation bot"
+          git config user.email "noreply@github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(policy): bind queue cursor to server relationship"
+          git push origin HEAD:work/744-canonical-operator-console-consolidation
