@@ -112,7 +112,7 @@ def _write_rc_failure_summary(output: Path, findings: list[object]) -> None:
 
 
 def _finding_fingerprint(rule: str, path: str, value: str) -> str:
-    payload = f"{rule}\0{path}\00\0{value}".encode("utf-8", errors="replace")
+    payload = f"{rule}\0{path}\0{0}\0{value}".encode("utf-8", errors="replace")
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
