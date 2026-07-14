@@ -1,190 +1,124 @@
-# Nexus OSR Frontend Product Register
+# Nexus Customer Service Frontend Product Register
 
 ## Product identity
 
-Nexus OSR is a **case-resolution cockpit for multi-country logistics operations**.
+Nexus is a **customer-case resolution console for logistics customer service**.
 
-It is not primarily a chatbot, a WebChat inbox, a Knowledge CMS, a Runtime console, or a generic administration dashboard. Those capabilities support the operator journey; they do not define it.
+The authenticated frontend is not a chatbot dashboard, engineering console, model console, generic admin portal, or collection of disconnected tools. It is one work surface that helps a customer-service operator understand the customer, verify facts, take responsibility, complete the next permitted action, communicate clearly, and follow the case through to a confirmed result.
 
-The product helps an authorized operator establish the case, inspect authoritative evidence, take ownership, perform governed actions, understand the operational and customer outcome, and determine whether the case is blocked, under observation, eligible to close, safely closed, or must reopen.
+## Primary job
 
-## Primary product job
+For every case, the interface must make seven answers obvious:
 
-For every customer contact or governed operational signal, the frontend must make five answers clear:
-
-1. **What is this case?**
-2. **Which evidence is authoritative?**
-3. **What must happen next, and who owns it?**
-4. **What actually happened after an action was requested?**
-5. **Can this case be safely completed, observed, repaired, or reopened?**
+1. Who is the customer and what do they need?
+2. Which facts are verified and which details are still missing?
+3. Who owns the case and when is it due?
+4. What is the next permitted action?
+5. What actually happened after the action was submitted?
+6. Has the customer received a clear update?
+7. Can the case be completed, observed, repaired, or reopened?
 
 The canonical journey is:
 
-`Login → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
+`Login → Scoped customer queue → Case → Verified facts → Ownership → Service action → Operational result → Customer reply → Completion or follow-up`
 
 ## Users
 
-### Support Agent
+### Customer-service operator
 
-- Works from the scoped operator queue.
-- Reviews customer messages, authoritative facts, approved Knowledge, risk and missing information.
-- Accepts ownership or handoff.
-- Performs permitted actions and communicates through governed channels.
-- Does not infer business closure from a technical status.
+- Works from a scoped queue.
+- Reads the customer request before internal records.
+- Distinguishes customer claims from verified operational facts.
+- Performs only permitted actions.
+- Communicates in clear customer language.
+- Does not treat a submitted request or technical status as a solved customer problem.
 
-### Team Lead
+### Team lead
 
-- Monitors unowned work, SLA risk, escalations and repair-required cases.
-- Takes over, assigns, releases or reroutes work through governed commands.
-- Reviews blocked closure and repeated-contact patterns.
+- Monitors unowned work, overdue work, escalations, and repair-required cases.
+- Takes over, assigns, releases, or reroutes work through controlled actions.
+- Reviews why cases cannot be completed.
 
-### Operations Manager
+### Knowledge steward
 
-- Reviews workload, action effectiveness, closure quality and country/channel performance.
-- Uses management evidence without replacing operational source truth.
+- Maintains approved customer-service facts, policies, and procedures.
+- Reviews scope, wording, and publication status.
+- Cannot override live operational facts or action authority.
 
-### Knowledge and SOP Steward
+### Channel administrator
 
-- Maintains approved customer-visible Knowledge and, after M11, internal SOP skills.
-- Cannot override live facts, action authority or case closure.
+- Confirms customer contact channels are active and healthy.
+- Resolves connection issues without receiving unrelated case access.
 
-### Channel Administrator
+### System administrator
 
-- Manages channel/account configuration and health.
-- Does not gain case access solely from channel configuration permission.
+- Reviews bounded service availability and raises technical incidents.
+- Internal diagnostics are not part of the ordinary customer-service workflow.
 
-### Runtime and Audit Operator
+## Supported routes
 
-- Inspects bounded Runtime, debug, evaluation and audit evidence.
-- Technical access does not imply customer-data or operational-action authority.
+| Route | Customer-service job |
+|---|---|
+| `/login` | Establish operator identity |
+| `/workspace` | Process customer cases from request to result |
+| `/knowledge` | Maintain customer-service facts, policies, and procedures |
+| `/channels` | Confirm customer contact channels are available |
+| `/system` | Confirm supporting services are available and escalate faults |
 
-## Canonical route domains
-
-| Domain | Route | Job |
-|---|---|---|
-| Authentication | `/login` | Establish operator identity |
-| Operator work | `/workspace` | Queue, case, evidence, ownership, action, communication and closure target |
-| Knowledge and SOP | `/knowledge` | Govern Knowledge and internal operating guidance |
-| Channels | `/channels` | Channel/account configuration and health |
-| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded evidence |
-| Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
-
-`/webchat` is transitional. It may redirect or retain a compatibility view during migration, but it is not the canonical product spine.
-
-Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
-
-## Operator work model
-
-The primary object is a **case**, opened from a canonical queue identity. A case may link Ticket, Handoff, conversation, Dispatch and other channel/source records, but no individual source record becomes a second case truth.
-
-The Workspace must visibly separate:
-
-- authoritative evidence;
-- customer claim;
-- approved Knowledge or policy;
-- AI recommendation or prior AI output;
-- human decision;
-- system event;
-- action outcome;
-- customer-notification receipt;
-- closure and observation state.
-
-## Product vocabulary
-
-### Evidence
-
-Use:
-
-- Authoritative and current
-- Stale
-- Unavailable
-- Contradictory
-- Customer claim
-- Approved Knowledge/policy
-- AI recommendation/history
-
-Do not label short-lived Case Context as customer memory. **No C-end long-term customer memory** is permitted.
-
-### Ownership
-
-Use:
-
-- Unassigned
-- Assigned
-- Handoff requested
-- Handoff accepted
-- Waiting for customer
-- Waiting for operations
-
-### Action and business result
-
-Keep these distinct:
-
-- Requested
-- Accepted
-- Technical completion
-- Operational completion
-- Customer notified
-- Business result confirmed
-- Repair required
-
-An API success, queued Job, Job `done`, message `sent`, or Dispatch `dispatched` is not business result confirmation.
-
-### Closure
-
-Use:
-
-- Closure blocked
-- Observation period
-- Eligible to close
-- Safely closed
-- Reopened
-
-Ticket `resolved` or `closed` is a source status. It must not be presented as safely closed without the active scenario, required action outcomes, customer-notification policy and lifecycle evidence.
+`/webchat` is compatibility-only and redirects to `/workspace`. It never mounts a second console.
 
 ## Information hierarchy
 
-For operator work, show information in this order:
+Every case screen uses this order:
 
-1. Case identity, scope, risk and ownership.
-2. Closure target and the missing requirement that currently blocks progress.
-3. Authoritative evidence and conflicting/customer-supplied information.
-4. Next permitted action and its confirmation requirement.
-5. Current action/outcome state.
-6. Customer conversation and communication composer.
-7. Technical evidence behind progressive disclosure.
+1. Customer identity, request, urgency, ownership, and due time.
+2. The most important next action.
+3. Verified facts, customer claims, missing information, and conflicts.
+4. Customer conversation and reply composer.
+5. Permitted service and operational actions.
+6. Actual action and notification results.
+7. Completion blocker, follow-up, or reopen state.
 
-Runtime model identity, raw Job identifiers and implementation traces are not primary operator content. They belong in bounded technical detail or the Runtime domain.
+Raw identifiers, transport states, internal service names, and implementation traces are not primary customer-service content.
 
-## Product behavior principles
+## Product language
 
-- One primary action per current task state.
-- Server-calculated permissions and action availability.
-- UI success only after durable backend confirmation.
-- No false success language.
-- Empty states teach the next valid action.
-- Errors state what failed and what the operator can do.
-- Degraded, unavailable, stale, conflict and repair-required are first-class states.
-- Refresh preserves durable state and never duplicates commands.
-- Keyboard operation and screen-reader structure are part of product behavior.
+Use customer-service language:
 
-## Non-goals
+- Customer request
+- Verified fact
+- Customer statement
+- Missing information
+- Assigned / unassigned
+- Due soon / overdue
+- Next action
+- Request accepted
+- Operational result confirmed
+- Customer notified
+- Needs repair
+- Follow-up required
+- Ready to complete
+- Reopened
 
-- No direct Provider execution from UI code.
-- No second queue, case truth or action truth.
-- No probabilistic silent cross-channel merge.
-- No raw tracking/contact/provider identifiers on unsafe surfaces.
-- No customer-visible reply bypass.
-- No autonomous refund, compensation, legal, identity or funds action.
-- No technical-status-as-closure language.
-- No C-end long-term customer memory.
+Do not expose internal automation, model, provider, prompt, inference, or runtime terminology to customer-service operators.
 
-## Delivery ownership
+## Behavior principles
 
-- #525 implements the canonical queue-driven Case Workspace.
-- #587 defines action and business-result outcomes.
-- #526 defines complete, close, observation and reopen.
-- #564 proves scale, accessibility and degraded-state quality.
-- #573 retires the legacy frontend after parity.
+- One primary action for the current case state.
+- Backend permissions remain final.
+- Empty states explain the next valid step.
+- Disabled actions explain why they are unavailable.
+- A submitted request is not displayed as a solved problem.
+- Customer notification is distinct from operational completion.
+- Unsaved replies and knowledge edits are protected before navigation.
+- Refresh preserves durable state and does not duplicate commands.
+- Keyboard, screen-reader, touch, responsive, slow-network, and large-list behavior are product requirements.
 
-This register defines product intent. It does not claim those runtime capabilities are already implemented.
+## Frontend authority
+
+- Production source: `webapp/` only.
+- Route spine: `/workspace` only for operator case work.
+- Tokens: `webapp/src/styles/tokens.css`.
+- Shared components: `webapp/src/components/ui/`.
+- Feature styles may consume semantic tokens but may not create a second palette or component vocabulary.
+- Legacy `frontend/`, Support Console, and `shared/ui` authorities are prohibited.
