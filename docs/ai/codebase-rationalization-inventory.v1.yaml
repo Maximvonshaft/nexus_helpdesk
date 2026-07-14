@@ -23,7 +23,7 @@ product_authority:
       - workspace_and_route_parity_525
       - accessibility_degraded_state_and_scale_564
       - build_and_static_delivery_parity
-  external_channel_compatibility:
+  retired_channel_compatibility:
     disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
     owning_work_item: 572
     delete_blockers:
@@ -99,18 +99,14 @@ open_candidates:
       contract. These are strong retirement candidates, but #574 owns all ROUND-named
       reports, smoke scripts and tests and currently forbids destructive work until
       the active workflow graph and consumer inventory are stable.
-  - capability: external_channel_root_artifacts
+  - capability: retired_channel_root_artifacts
     disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
     owning_work_item: 572
-    paths:
-      - LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md
-      - ROUND26_FRONTEND_HARDENING_REPORT.md
-      - ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md
-      - check_bridge.py
-      - pr_body.md
+    governed_paths: issue_572_exact_inventory
     blocker: >
-      These paths are exact-classified by the ExternalChannel retirement inventory.
-      Removal requires an owning #572 slice and a synchronized fail-closed inventory update.
+      The owning retirement inventory exact-classifies the remaining root reports,
+      compatibility guard and historical PR text. Removal requires an owning #572
+      slice and a synchronized fail-closed inventory update.
 notes:
   - Absence from GitHub search results is not sufficient deletion evidence; exact branch fetch and tracked-file gates are authoritative.
   - Blocked runtime and historical domains remain under their owning Work Items and are not bypassed by #744.
