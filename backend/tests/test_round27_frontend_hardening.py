@@ -26,7 +26,7 @@ def test_frontend_routes_expose_canonical_product_domains_and_transitional_webch
     runtime = (PROJECT / 'webapp' / 'src' / 'routes' / 'runtime.tsx').read_text()
     control_tower = (PROJECT / 'webapp' / 'src' / 'routes' / 'control-tower.tsx').read_text()
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
-    console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
+    shell = (PROJECT / 'webapp' / 'src' / 'app' / 'AppShell.tsx').read_text()
 
     for route_name in (
         'WorkspaceRoute',
@@ -54,15 +54,17 @@ def test_frontend_routes_expose_canonical_product_domains_and_transitional_webch
     assert "path: '/webchat'" in webchat
     assert 'beforeLoad' in webchat
     assert 'getSupportToken()' in webchat
-    assert '客服后台视图' in console
-    assert 'AI Runtime' in console
-    assert '渠道账号' in console
+    assert 'WebchatCompatibilityRedirect' in webchat
+    assert 'support-console' not in webchat
+    assert '客服与运营工作台' in shell
 
 
-def test_frontend_governance_is_concentrated_in_support_api_and_login_boundary():
+def test_frontend_governance_is_concentrated_in_shared_shell_support_api_and_login_boundary():
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
     support_api = (PROJECT / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text()
-    console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
+    shell = (PROJECT / 'webapp' / 'src' / 'app' / 'AppShell.tsx').read_text()
+    channels = (PROJECT / 'webapp' / 'src' / 'features' / 'channels' / 'ChannelsPage.tsx').read_text()
+    runtime = (PROJECT / 'webapp' / 'src' / 'features' / 'runtime' / 'RuntimePage.tsx').read_text()
 
     assert "redirect({ to: '/login' })" in webchat
     assert 'Authorization' in support_api
@@ -70,8 +72,10 @@ def test_frontend_governance_is_concentrated_in_support_api_and_login_boundary()
     assert '/api/auth/me' in support_api
     assert '/api/admin/provider-runtime/status' in support_api
     assert '/api/admin/channel-accounts' in support_api
-    assert 'isOpsSupervisorRole' not in console
-    assert 'routeAccess' not in console
+    assert 'AppNavigation' in shell
+    assert '渠道管理' in channels
+    assert '运行与审计' in runtime
+    assert not (PROJECT / 'webapp' / 'src' / 'features' / 'support-console').exists()
 
 
 def test_webchat_governance_hardening_invariants():
