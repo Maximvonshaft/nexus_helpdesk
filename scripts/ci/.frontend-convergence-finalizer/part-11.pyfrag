@@ -1,0 +1,55 @@
+        ROOT / ".github/workflows/generate-radix-lockfile.yml",
+        ROOT / ".github/workflows/frontend-convergence-finalizer.yml",
+        ROOT / "scripts/ci/frontend_convergence_finalizer.py",
+    ]:
+        if path.exists():
+            path.unlink()
+
+
+def assert_zero_legacy_consumers() -> None:
+    allowed = {
+        "webapp/design/legacy-frontend-retirement.v1.json",
+        "webapp/design/operator-console-consolidation.v1.json",
+        "docs/superpowers/plans/2026-07-14-canonical-operator-console-consolidation.md",
+    }
+    result = run("git", "grep", "-n", "-I", "-e", "frontend/", check=False, capture=True)
+    remaining = []
+    for line in result.stdout.splitlines():
+        path = line.split(":", 1)[0]
+        if path not in allowed:
+            remaining.append(line)
+    if remaining:
+        raise RuntimeError("legacy frontend references remain:\n" + "\n".join(remaining[:100]))
+
+
+def main() -> None:
+    current_branch = run("git", "branch", "--show-current", capture=True).stdout.strip()
+    if current_branch != CANONICAL_BRANCH:
+        raise RuntimeError(f"wrong branch: {current_branch}")
+    expected = os.environ.get("GITHUB_SHA", "").strip()
+    actual = run("git", "rev-parse", "HEAD", capture=True).stdout.strip()
+    if expected and actual != expected:
+        raise RuntimeError(f"head moved: expected {expected}, got {actual}")
+
+    fix_p2_defects()
+    add_api_client()
+    refactor_transport_adapters()
+    migrate_accessibility()
+    add_regression_contracts()
+    adapt_architecture_gates()
+    removed_dependencies = compute_dependency_cleanup()
+    inventory_and_retire_frontend()
+    update_authority()
+    remove_temporary_controls()
+    assert_zero_legacy_consumers()
+
+    print(json.dumps({
+        "ok": True,
+        "removed_dependencies": removed_dependencies,
+        "canonical_transport": "webapp/src/lib/apiClient.ts",
+        "legacy_frontend": "deleted",
+    }, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
