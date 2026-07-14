@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact canonical branch head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.sha }}
+          ref: work/744-canonical-operator-console-consolidation
           fetch-depth: 0
           persist-credentials: false
           show-progress: false
@@ -32,7 +32,9 @@ jobs:
       - name: Assert exact checkout
         env:
           EXPECTED_HEAD: ${{ github.sha }}
-        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+        run: |
+          test "$(git branch --show-current)" = "work/744-canonical-operator-console-consolidation"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
 
       - name: Fetch bounded donor evidence
         run: git fetch --no-tags origin 4906188ac77d5d6c1e8409bbb1d5d7e519674a73
