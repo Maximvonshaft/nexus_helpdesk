@@ -29,20 +29,35 @@ jobs:
 
       - name: Apply bounded exact-head convergence
         run: |
-          set -Eeuo pipefail
-          python scripts/ci/materialize_rc_preflight_workflow.py
-          python -m py_compile \
-            scripts/ci/materialize_rc_preflight_workflow.py \
-            scripts/ci/actions_authority_inventory.py \
-            scripts/ci/reconcile_external_channel_inventory.py \
-            scripts/release/rc_preflight.py \
-            backend/tests/test_canonical_policy_projection_contract.py \
-            backend/tests/test_webchat_voice_p0_static.py \
-            backend/tests/test_webchat_voice_static_headers.py
-          grep -q 'id: rc-preflight' .github/workflows/rc-test-candidate.yml
-          grep -q 'artifacts/tenant-runtime/contracts.xml' .github/workflows/tenant-runtime-authority-gate.yml
-          ! grep -R -E 'uses: actions/(checkout|setup-python|setup-node|upload-artifact)@v[0-9]+' .github/workflows
-          git diff --check
+          set +e
+          mkdir -p artifacts/materialize
+          python scripts/ci/materialize_rc_preflight_workflow.py 2>&1 | tee artifacts/materialize/result.log
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "${code}" -eq 0 ]; then
+            python -m py_compile \
+              scripts/ci/materialize_rc_preflight_workflow.py \
+              scripts/ci/actions_authority_inventory.py \
+              scripts/ci/reconcile_external_channel_inventory.py \
+              scripts/release/rc_preflight.py \
+              backend/tests/test_canonical_policy_projection_contract.py \
+              backend/tests/test_webchat_voice_p0_static.py \
+              backend/tests/test_webchat_voice_static_headers.py
+            grep -q 'id: rc-preflight' .github/workflows/rc-test-candidate.yml
+            grep -q 'artifacts/tenant-runtime/contracts.xml' .github/workflows/tenant-runtime-authority-gate.yml
+            ! grep -R -E 'uses: actions/(checkout|setup-python|setup-node|upload-artifact)@v[0-9]+' .github/workflows
+            git diff --check
+          fi
+          exit "${code}"
+
+      - name: Upload bounded materializer diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: materialize-exact-head-${{ github.event.pull_request.head.sha }}
+          path: artifacts/materialize/result.log
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Restore governance authority and remove one-shot assets
         run: |
