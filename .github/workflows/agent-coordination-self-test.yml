@@ -31,8 +31,25 @@ jobs:
         run: |
           set +e
           mkdir -p artifacts/materialize
-          python scripts/ci/materialize_rc_preflight_workflow.py 2>&1 | tee artifacts/materialize/result.log
-          code=${PIPESTATUS[0]}
+          python - <<'PY' 2>&1 | tee artifacts/materialize/rc-adapter.log
+          import re
+          from pathlib import Path
+          path = Path('.github/workflows/rc-test-candidate.yml')
+          text = path.read_text(encoding='utf-8')
+          pattern = r"      - name: Validate registry and release contracts\n        run: \|\n.*?(?=\n      - name: Install locked browser test dependencies)"
+          replacement = "      - name: Validate registry and release contracts\n        id: rc-preflight\n        run: python scripts/release/rc_preflight.py --artifact-root artifacts/rc-test\n"
+          updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'current RC preflight block: expected one match, found {count}')
+          path.write_text(updated, encoding='utf-8')
+          PY
+          adapter_code=${PIPESTATUS[0]}
+          if [ "${adapter_code}" -eq 0 ]; then
+            python scripts/ci/materialize_rc_preflight_workflow.py 2>&1 | tee artifacts/materialize/result.log
+            code=${PIPESTATUS[0]}
+          else
+            code=${adapter_code}
+          fi
           set -e
           if [ "${code}" -eq 0 ]; then
             python -m py_compile \
@@ -55,14 +72,14 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: materialize-exact-head-${{ github.event.pull_request.head.sha }}
-          path: artifacts/materialize/result.log
+          path: artifacts/materialize/*.log
           if-no-files-found: error
           retention-days: 1
 
       - name: Restore governance authority and remove one-shot assets
         run: |
           set -Eeuo pipefail
-          git show HEAD^:.github/workflows/agent-coordination-self-test.yml > .github/workflows/agent-coordination-self-test.yml
+          git show d6b53c8d5a36fdaf193cb2403b98349fc47da712:.github/workflows/agent-coordination-self-test.yml > .github/workflows/agent-coordination-self-test.yml
           rm -f scripts/ci/materialize_rc_preflight_workflow.py
           rm -f .github/workflows/materialize-rc-preflight-once.yml
 
