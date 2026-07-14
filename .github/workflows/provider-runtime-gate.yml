@@ -27,9 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
+      - name: Checkout exact proposed head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Python
@@ -62,15 +64,67 @@ jobs:
             exit 1
           fi
 
-      - name: Reject retired provider and canned-reply markers
+      - name: Audit retired provider and canned-reply markers
         run: |
           set -Eeuo pipefail
-          matches="$(git grep -lE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts || true)"
-          if [ -n "${matches}" ]; then
-            echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
-            printf '%s\n' "${matches}" | head -n 40
-            exit 1
-          fi
+          mkdir -p artifacts/provider-runtime
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import subprocess
+          from pathlib import Path
+
+          roots = ("backend/app", "backend/scripts", "deploy", "webapp/src", "scripts")
+          markers = (
+              "codex_app_server",
+              "codex_direct",
+              "openai_responses",
+              "webchat_fast_reply",
+              "Please provide your tracking number",
+          )
+          completed = subprocess.run(
+              ["git", "ls-files", "-z", "--", *roots],
+              check=True,
+              stdout=subprocess.PIPE,
+          )
+          findings: list[dict[str, str]] = []
+          for raw_path in completed.stdout.decode("utf-8", errors="strict").split("\0"):
+              if not raw_path:
+                  continue
+              try:
+                  text = Path(raw_path).read_text(encoding="utf-8")
+              except (OSError, UnicodeError):
+                  continue
+              for marker in markers:
+                  if marker in text:
+                      findings.append({"marker": marker, "path": raw_path})
+          findings.sort(key=lambda row: (row["path"], row["marker"]))
+          payload = {
+              "schema": "nexus.provider-runtime.hygiene.v1",
+              "status": "pass" if not findings else "fail",
+              "finding_count": len(findings),
+              "findings": findings[:100],
+              "truncated": len(findings) > 100,
+          }
+          Path("artifacts/provider-runtime/hygiene.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if findings:
+              print(f"PROVIDER_RUNTIME_HYGIENE=false finding_count={len(findings)}")
+              raise SystemExit(1)
+          print("PROVIDER_RUNTIME_HYGIENE=true finding_count=0")
+          PY
+
+      - name: Upload bounded provider hygiene evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-runtime-hygiene-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/provider-runtime/hygiene.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Alembic revision integrity gate
         run: |
