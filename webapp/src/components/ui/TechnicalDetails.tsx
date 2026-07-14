@@ -1,13 +1,10 @@
-import { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
-export function TechnicalDetails({ title = '高级技术详情', summary, children }: { title?: string; summary?: string; children: ReactNode }) {
+export function TechnicalDetails({ title = '详细信息', summary, children }: { title?: string; summary?: string; children: ReactNode }) {
   return (
-    <details className="technical-details">
-      <summary>
-        <span>{title}</span>
-        {summary ? <small>{summary}</small> : null}
-      </summary>
-      <div className="technical-details-body">{children}</div>
+    <details className="nd-details">
+      <summary><span>{title}</span>{summary ? <small>{summary}</small> : null}</summary>
+      <div className="nd-details__body">{children}</div>
     </details>
   )
 }
