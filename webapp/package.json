@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "test": "node scripts/run-contract-tests.mjs",
     "typecheck": "tsc --noEmit",
-    "architecture": "node scripts/assert-frontend-convergence.mjs && node scripts/assert-frontend-reachability.mjs && node scripts/assert-frontend-css-usage.mjs && node scripts/assert-frontend-toolchain-usage.mjs && node scripts/assert-frontend-workflow-security.mjs",
+    "architecture": "node scripts/assert-frontend-convergence.mjs && node scripts/assert-frontend-reachability.mjs && node scripts/assert-frontend-css-usage.mjs && node scripts/assert-frontend-visible-copy.mjs && node scripts/assert-frontend-toolchain-usage.mjs && node scripts/assert-frontend-workflow-security.mjs",
     "size-report": "node scripts/size-report.mjs"
   },
   "dependencies": {
