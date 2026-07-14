@@ -1,0 +1,35 @@
+{
+  "schema": "nexus.osr.actions-authority.v1",
+  "authoritative": {
+    "frontend": ".github/workflows/frontend-truth-gate.yml",
+    "backend": ".github/workflows/backend-full-regression.yml",
+    "migration": ".github/workflows/postgres-migration.yml",
+    "security": ".github/workflows/security-assurance.yml",
+    "release": ".github/workflows/rc-test-candidate.yml",
+    "governance": ".github/workflows/agent-coordination-self-test.yml"
+  },
+  "publication_allowlist": [],
+  "historical_delete": [],
+  "classification_overrides": {
+    ".github/workflows/frontend-ci.yml": {
+      "classification": "matrix_component",
+      "authority": "frontend"
+    },
+    ".github/workflows/webapp-build.yml": {
+      "classification": "matrix_component",
+      "authority": "frontend"
+    },
+    ".github/workflows/release-image-assurance.yml": {
+      "classification": "matrix_component",
+      "authority": "release"
+    },
+    ".github/workflows/production-readiness.yml": {
+      "classification": "matrix_component",
+      "authority": "release"
+    },
+    ".github/workflows/external-channel-retirement-gate.yml": {
+      "classification": "matrix_component",
+      "authority": "governance"
+    }
+  }
+}
