@@ -25,12 +25,10 @@ class Settings:
             "READINESS_REQUIRE_RELEASE_METADATA",
             self.app_env == "production",
         )
-        self.legacy_frontend_root = self.project_root / "frontend"
         self.frontend_dist_root = self.project_root / "frontend_dist"
         self.frontend_dist_index = self.frontend_dist_root / "index.html"
         self.frontend_dist_available = self.frontend_dist_index.exists()
-        self.frontend_root = self.frontend_dist_root if self.frontend_dist_available else self.legacy_frontend_root
-        self.frontend_uses_legacy_fallback = not self.frontend_dist_available
+        self.frontend_root = self.frontend_dist_root
 
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./helpdesk.db").strip()
         self.database_echo = os.getenv("DATABASE_ECHO", "false").strip().lower() == "true"
@@ -342,7 +340,7 @@ class Settings:
                 if not self.whatsapp_connector_hmac_secret:
                     raise RuntimeError("WHATSAPP_CONNECTOR_HMAC_SECRET is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
             if not self.frontend_dist_available:
-                raise RuntimeError("frontend_dist/index.html must exist in production; refusing legacy frontend fallback")
+                raise RuntimeError("frontend_dist/index.html must exist in production")
             if self.knowledge_runtime_version == "v2":
                 if not self.knowledge_embeddings_enabled:
                     raise RuntimeError("KNOWLEDGE_EMBEDDINGS_ENABLED=true is required in production for Knowledge Runtime v2")

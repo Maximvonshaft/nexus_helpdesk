@@ -21,7 +21,8 @@ test('workspace route consumes the server-owned current scope projection', () =>
   assert.match(api, /\/api\/admin\/operator-queue\/my-scopes/)
   assert.match(api, /currentScopes:/)
   assert.match(route, /operatorWorkspaceApi\.currentScopes/)
-  assert.match(route, /saveWorkspaceScope\(workspaceScopeFromAuthorized\(selectedScope\)\)/)
+  assert.match(route, /scope=\{workspaceScopeFromAuthorized\(selectedScope\)\}/)
+  assert.doesNotMatch(route, /loadWorkspaceScope|saveWorkspaceScope|LegacyWorkspaceFallback/)
   assert.match(types, /AuthorizedWorkspaceScopesResponse/)
   assert.match(types, /workspaceScopeFromAuthorized/)
   assert.doesNotMatch(route, /tenantKey:\s*['"][^'"]+['"]/)
@@ -53,8 +54,8 @@ test('normal operators fail closed when no authorized scope exists', () => {
   const route = read('src/routes/workspace.tsx')
   assert.match(route, /当前账号没有可用工作范围/)
   assert.match(route, /系统不会自动猜测或扩大访问范围/)
-  assert.match(route, /requires_explicit_admin_scope/)
-  assert.match(route, /LegacyWorkspaceFallback/)
+  assert.doesNotMatch(route, /requires_explicit_admin_scope|LegacyWorkspaceFallback/)
+  assert.match(route, /不会回退到手工 Tenant、国家或渠道/)
 })
 
 test('canonical shell controls meet target and reduced-motion contracts', () => {

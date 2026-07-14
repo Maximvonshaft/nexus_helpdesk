@@ -80,7 +80,6 @@ class OperatorQueueCurrentScopeRead(BaseModel):
 
 class OperatorQueueCurrentScopesResponse(BaseModel):
     items: list[OperatorQueueCurrentScopeRead] = Field(default_factory=list)
-    requires_explicit_admin_scope: bool = False
 
 
 class UnifiedQueueOwner(BaseModel):

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { ApiError, supportApi } from '@/lib/supportApi'
-import { operatorWorkspaceApi, loadWorkspaceScope, saveWorkspaceScope } from '@/lib/operatorWorkspaceApi'
+import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
 import type {
   UnifiedOperatorQueueItem,
   WorkspaceFilters,
@@ -131,68 +131,6 @@ function PresentationBadge({ presentation }: { presentation: { label: string; de
       <Badge tone={presentation.tone}>{presentation.label}</Badge>
       {presentation.detail ? <small>{presentation.detail}</small> : null}
     </span>
-  )
-}
-
-function ScopeEditor({
-  draft,
-  onChange,
-  onApply,
-  applied,
-}: {
-  draft: WorkspaceScope
-  onChange: (scope: WorkspaceScope) => void
-  onApply: () => void
-  applied: boolean
-}) {
-  const errors = [
-    !draft.tenantKey.trim() ? '请输入部署方分配的 Tenant。系统不会猜测工作范围。' : '',
-    draft.countryCode.trim().length < 2 ? '国家代码至少需要 2 个字符。' : '',
-    !draft.channelKey.trim() ? '请输入渠道键。' : '',
-  ].filter(Boolean)
-  return (
-    <section className="operator-scope" aria-labelledby="operator-scope-title">
-      <div className="operator-section-head">
-        <div>
-          <h2 id="operator-scope-title">工作范围</h2>
-          <p>队列只会读取后端授权的 Tenant、国家和渠道。范围错误时将拒绝加载。</p>
-        </div>
-        {applied ? <Badge tone="success">已应用</Badge> : <Badge tone="warning">待应用</Badge>}
-      </div>
-      <div className="operator-scope-grid">
-        <Field label="Tenant" required description="使用管理员分配的工作域标识。">
-          <Input
-            name="workspace-tenant"
-            value={draft.tenantKey}
-            onChange={(event) => onChange({ ...draft, tenantKey: event.target.value })}
-            autoComplete="organization"
-            placeholder="例如：default"
-          />
-        </Field>
-        <Field label="国家" required description="ISO 国家代码或后台配置的国家键。">
-          <Input
-            name="workspace-country"
-            value={draft.countryCode}
-            onChange={(event) => onChange({ ...draft, countryCode: event.target.value.toUpperCase() })}
-            autoComplete="country"
-            placeholder="CH"
-          />
-        </Field>
-        <Field label="渠道" required description="必须与授权范围完全一致。">
-          <Input
-            name="workspace-channel"
-            value={draft.channelKey}
-            onChange={(event) => onChange({ ...draft, channelKey: event.target.value.toLowerCase() })}
-            autoComplete="off"
-            placeholder="webchat"
-          />
-        </Field>
-      </div>
-      {errors.length ? <ErrorSummary title="当前范围还不能使用" errors={errors} /> : null}
-      <Button variant="primary" disabled={Boolean(errors.length)} onClick={onApply}>
-        应用工作范围
-      </Button>
-    </section>
   )
 }
 
@@ -1147,17 +1085,12 @@ function AppNavigation({
   )
 }
 
-export function OperatorWorkspacePage() {
+export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const logout = useLogout()
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
-  const [scopeDraft, setScopeDraft] = useState<WorkspaceScope>(() => loadWorkspaceScope())
-  const [scope, setScope] = useState<WorkspaceScope | null>(() => {
-    const initial = loadWorkspaceScope()
-    return initial.tenantKey && initial.countryCode && initial.channelKey ? initial : null
-  })
   const [filters, setFilters] = useState<WorkspaceFilters>(defaultFilters)
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(() => initialQueueId())
   const [mobileView, setMobileView] = useState<WorkspaceMobileView>('queue')
@@ -1262,17 +1195,6 @@ export function OperatorWorkspacePage() {
     action?.()
   }
 
-  const applyScope = () => runWithReplyDraftGuard(() => {
-    const normalizedScope = {
-      tenantKey: scopeDraft.tenantKey.trim(),
-      countryCode: scopeDraft.countryCode.trim().toUpperCase(),
-      channelKey: scopeDraft.channelKey.trim().toLowerCase(),
-    }
-    saveWorkspaceScope(normalizedScope)
-    setScope(normalizedScope)
-    setSelectedQueueId(null)
-    setMobileView('queue')
-  })
 
   const selectItem = (item: UnifiedOperatorQueueItem) => {
     if (item.queue_id === selectedItem?.queue_id) {
@@ -1307,12 +1229,6 @@ export function OperatorWorkspacePage() {
   })
 
   const memory = supportMemoryFromThread(thread.data)
-  const appliedScopeMatches = Boolean(
-    scope
-    && scope.tenantKey === scopeDraft.tenantKey.trim()
-    && scope.countryCode === scopeDraft.countryCode.trim().toUpperCase()
-    && scope.channelKey === scopeDraft.channelKey.trim().toLowerCase(),
-  )
 
   return (
     <main className={`operator-workspace is-mobile-${mobileView}`} data-testid="operator-workspace">
@@ -1359,12 +1275,6 @@ export function OperatorWorkspacePage() {
       {session.data && canReadQueue ? (
         <div className="operator-layout">
           <aside id="workspace-queue" className="operator-queue-pane" tabIndex={-1}>
-            <ScopeEditor
-              draft={scopeDraft}
-              onChange={setScopeDraft}
-              onApply={applyScope}
-              applied={appliedScopeMatches}
-            />
             <QueueFilters
               filters={filters}
               onChange={(next) => runWithReplyDraftGuard(() => {
