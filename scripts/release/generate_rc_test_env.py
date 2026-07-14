@@ -144,6 +144,7 @@ def build_values(
     build_time = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return {
         "COMPOSE_PROJECT_NAME": compose_project,
+        "RC_SOURCE_SHA": source_sha,
         "RC_IMAGE_TAG": image_tag,
         "IMAGE_TAG": image_tag,
         "RC_POSTGRES_IMAGE": "pgvector/pgvector:pg16",
