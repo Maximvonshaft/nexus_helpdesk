@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import tempfile
@@ -31,6 +32,12 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _string_list(value: Any, reason: str, detail: object | None = None) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise InventoryError(reason, detail)
+    return list(value)
+
+
 def canonical_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
     if manifest.get("schema") != "nexus.operator-console-consolidation.v1":
         raise InventoryError("canonical_console_manifest_invalid")
@@ -50,9 +57,28 @@ def canonical_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
             values = row.get(field, [])
             if values is None:
                 continue
-            if not isinstance(values, list) or any(not isinstance(item, str) or not item for item in values):
-                raise InventoryError("canonical_console_deleted_paths_invalid", row.get("id"))
-            deleted.update(values)
+            deleted.update(_string_list(values, "canonical_console_deleted_paths_invalid", row.get("id")))
+
+    transport = manifest.get("transport_authority")
+    if not isinstance(transport, dict):
+        raise InventoryError("canonical_transport_authority_invalid")
+    target = transport.get("target")
+    if not isinstance(target, str) or not target:
+        raise InventoryError("canonical_transport_target_invalid")
+    duplicates = _string_list(
+        transport.get("current_duplicates"),
+        "canonical_transport_duplicates_invalid",
+    )
+    if duplicates:
+        raise InventoryError("canonical_transport_duplicates_remain", duplicates)
+    retired_sources = _string_list(
+        transport.get("retired_sources"),
+        "canonical_transport_retired_sources_invalid",
+    )
+    if target in retired_sources:
+        raise InventoryError("canonical_transport_target_retired", target)
+    deleted.update(retired_sources)
+
     return frozenset(deleted)
 
 
@@ -122,7 +148,7 @@ def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_m
         result = check_repository(repo_root, path)
     result["canonical_deleted_exact_rule_count"] = len(removed)
     result["canonical_deleted_exact_rule_fingerprints"] = [
-        __import__("hashlib").sha256(path.encode("utf-8")).hexdigest()[:16]
+        hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
         for path in removed
     ]
     return result
