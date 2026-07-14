@@ -40,9 +40,9 @@ jobs:
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
-      - name: Install locked dependencies
+      - name: Install locked dependencies without lifecycle scripts
         working-directory: webapp
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Verify single frontend and browser behavior
         working-directory: webapp
