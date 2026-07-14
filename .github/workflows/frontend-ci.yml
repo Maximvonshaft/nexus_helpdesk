@@ -5,18 +5,17 @@ on:
     paths:
       - "webapp/**"
       - "backend/app/settings.py"
+      - "backend/app/main.py"
       - "backend/tests/test_round27_frontend_hardening.py"
-      - "scripts/ci/apply_canonical_transport_and_retirement.py"
       - ".github/workflows/frontend-ci.yml"
   push:
     branches:
       - main
-      - "feature/**"
     paths:
       - "webapp/**"
       - "backend/app/settings.py"
+      - "backend/app/main.py"
       - "backend/tests/test_round27_frontend_hardening.py"
-      - "scripts/ci/apply_canonical_transport_and_retirement.py"
       - ".github/workflows/frontend-ci.yml"
 
 permissions:
@@ -36,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout exact proposed head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
@@ -50,33 +49,8 @@ jobs:
         working-directory: .
         run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
 
-      - name: Apply bounded Canonical Transport and retirement patch
-        working-directory: .
-        run: |
-          set -o pipefail
-          mkdir -p artifacts/canonical-transport
-          python scripts/ci/apply_canonical_transport_and_retirement.py 2>&1 | tee artifacts/canonical-transport/patch.log
-
-      - name: Upload generated implementation files and diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: canonical-transport-generated-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            artifacts/canonical-transport/patch.log
-            webapp/src/lib/api.ts
-            webapp/src/lib/supportApi.ts
-            webapp/src/lib/operatorWorkspaceApi.ts
-            webapp/src/features/runtime/aiDebugApi.ts
-            backend/app/settings.py
-            webapp/design/operator-console-consolidation.v1.json
-            webapp/tests/operator-console-consolidation-contract.test.mjs
-            backend/tests/test_round27_frontend_hardening.py
-          if-no-files-found: error
-          retention-days: 2
-
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
