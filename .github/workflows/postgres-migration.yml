@@ -33,10 +33,12 @@ jobs:
           --health-retries 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
           cache: pip
@@ -95,27 +97,27 @@ jobs:
 
           report = Path("model-drift-report.json").resolve()
           report.write_text(json.dumps({
-              "schema": "nexus.model_migration_drift.v1",
-              "status": "bootstrap_started",
-              "registered_model_modules": [],
-              "drift_count": 0,
-              "drift": [],
-              "error": None,
+            "schema": "nexus.model_migration_drift.v1",
+            "status": "bootstrap_started",
+            "registered_model_modules": [],
+            "drift_count": 0,
+            "drift": [],
+            "error": None,
           }, indent=2, sort_keys=True), encoding="utf-8")
 
           result = subprocess.run([
-              sys.executable,
-              "backend/scripts/check_model_migration_drift.py",
-              "--report-json",
-              str(report),
+            sys.executable,
+            "backend/scripts/check_model_migration_drift.py",
+            "--report-json",
+            str(report),
           ], env=os.environ.copy(), check=False)
           Path("model-drift-exit-code.txt").write_text(str(result.returncode), encoding="utf-8")
 
           data = json.loads(report.read_text(encoding="utf-8"))
           if data.get("status") == "bootstrap_started":
-              data["status"] = "pre_main_failure"
-              data["error"] = f"process_exit_{result.returncode}"
-              report.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+            data["status"] = "pre_main_failure"
+            data["error"] = f"process_exit_{result.returncode}"
+            report.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
           PY
           echo "exit_code=$(cat model-drift-exit-code.txt)" >> "$GITHUB_OUTPUT"
 
