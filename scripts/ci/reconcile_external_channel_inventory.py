@@ -69,21 +69,29 @@ def canonical_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
     target = transport.get("target")
     if not isinstance(target, str) or not target:
         raise InventoryError("canonical_transport_target_invalid")
-    duplicates = _string_list(
-        transport.get("current_duplicates"),
-        "canonical_transport_duplicates_invalid",
-    )
+    duplicates = _string_list(transport.get("current_duplicates"), "canonical_transport_duplicates_invalid")
     if duplicates:
         raise InventoryError("canonical_transport_duplicates_remain", duplicates)
-    retired_sources = _string_list(
-        transport.get("retired_sources"),
-        "canonical_transport_retired_sources_invalid",
-    )
+    retired_sources = _string_list(transport.get("retired_sources"), "canonical_transport_retired_sources_invalid")
     if target in retired_sources:
         raise InventoryError("canonical_transport_target_retired", target)
     deleted.update(retired_sources)
-
     return frozenset(deleted)
+
+
+def actions_deleted_paths(manifest: Mapping[str, Any]) -> frozenset[str]:
+    if manifest.get("schema") != "nexus.osr.actions-authority.v1":
+        raise InventoryError("actions_authority_manifest_invalid")
+    authoritative = manifest.get("authoritative")
+    if not isinstance(authoritative, dict) or any(not isinstance(value, str) or not value for value in authoritative.values()):
+        raise InventoryError("actions_authoritative_paths_invalid")
+    retired = _string_list(manifest.get("historical_delete"), "actions_historical_delete_invalid")
+    if any(not path.startswith(".github/workflows/") for path in retired):
+        raise InventoryError("actions_historical_delete_path_invalid")
+    conflicts = sorted(set(authoritative.values()) & set(retired))
+    if conflicts:
+        raise InventoryError("actions_authoritative_workflow_retired", conflicts)
+    return frozenset(retired)
 
 
 def reconcile_inventory_payload(
@@ -153,7 +161,7 @@ def add_reconciliation_control_rule(payload: dict[str, Any], tracked_paths: Sequ
             "asset_type": "retirement_control",
             "disposition": "retirement_control",
             "owner": "release-governance",
-            "rationale": "The fixed Canonical Console reconciliation checker and its negative tests keep retired ExternalChannel inventory fail closed without mutating the historical inventory source.",
+            "rationale": "The fixed Canonical Console and Actions reconciliation checker keeps retired ExternalChannel inventory fail closed without mutating the historical inventory source.",
             "write_surface": False,
             "stop_new_writes_required": False,
             "prerequisites": [],
@@ -161,14 +169,21 @@ def add_reconciliation_control_rule(payload: dict[str, Any], tracked_paths: Sequ
     )
 
 
-def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_manifest_path: Path) -> dict[str, object]:
+def check_reconciled_repository(
+    repo_root: Path,
+    inventory_path: Path,
+    console_manifest_path: Path,
+    actions_manifest_path: Path,
+) -> dict[str, object]:
     inventory = _load_json(inventory_path)
     console_manifest = _load_json(console_manifest_path)
+    actions_manifest = _load_json(actions_manifest_path)
     tracked = list_tracked_files(repo_root)
+    governed_deleted = canonical_deleted_paths(console_manifest) | actions_deleted_paths(actions_manifest)
     reconciled, removed = reconcile_inventory_payload(
         inventory,
         tracked_paths=tracked,
-        deleted_paths=canonical_deleted_paths(console_manifest),
+        deleted_paths=governed_deleted,
     )
     add_reconciliation_control_rule(reconciled, tracked)
     with tempfile.TemporaryDirectory(prefix="nexus-external-channel-") as tmp:
@@ -177,24 +192,25 @@ def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_m
         result = check_repository(repo_root, path)
     result["canonical_deleted_exact_rule_count"] = len(removed)
     result["canonical_deleted_exact_rule_fingerprints"] = [
-        hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
-        for path in removed
+        hashlib.sha256(path.encode("utf-8")).hexdigest()[:16] for path in removed
     ]
     result["reconciliation_control_path_count"] = len(RECONCILIATION_CONTROL_PATHS)
     return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Reconcile ExternalChannel inventory with governed Canonical Console deletions.")
+    parser = argparse.ArgumentParser(description="Reconcile ExternalChannel inventory with governed Canonical Console and Actions deletions.")
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--inventory", type=Path, default=Path("config/governance/external-channel-assets.v1.json"))
     parser.add_argument("--console-manifest", type=Path, default=Path("webapp/design/operator-console-consolidation.v1.json"))
+    parser.add_argument("--actions-manifest", type=Path, default=Path("config/governance/actions-authority.v1.json"))
     args = parser.parse_args(argv)
     root = args.repo_root.resolve()
     inventory = args.inventory if args.inventory.is_absolute() else root / args.inventory
-    manifest = args.console_manifest if args.console_manifest.is_absolute() else root / args.console_manifest
+    console_manifest = args.console_manifest if args.console_manifest.is_absolute() else root / args.console_manifest
+    actions_manifest = args.actions_manifest if args.actions_manifest.is_absolute() else root / args.actions_manifest
     try:
-        result = check_reconciled_repository(root, inventory, manifest)
+        result = check_reconciled_repository(root, inventory, console_manifest, actions_manifest)
     except InventoryError as exc:
         result = {"ok": False, "reason": exc.reason, "detail": exc.detail}
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
