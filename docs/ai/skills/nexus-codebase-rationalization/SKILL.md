@@ -156,7 +156,7 @@ Do not delete until all static, dynamic, startup, worker, route, fallback, confi
 
 `webapp/` and the accepted product/design authority govern survival. Deletion of `frontend/`, legacy styles, routes, or components remains owned by #573 and requires route, authorization, accessibility, degraded-state, build, and deployment parity.
 
-### ExternalChannel compatibility
+### Retired channel compatibility
 
 Retirement remains owned by #572. Historical reads, active writers, caller migration, observation, recovery, and migration evidence must complete before final code/schema deletion.
 
