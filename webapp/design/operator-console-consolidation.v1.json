@@ -1,6 +1,6 @@
 {
   "schema": "nexus.operator-console-consolidation.v1",
-  "version": "operator_console_consolidation.2026-07-14.2",
+  "version": "operator_console_consolidation.2026-07-14.3",
   "owner_issue": 747,
   "parent_issue": 744,
   "baseline_main_sha": "4bc76c3607db2732388d33634bc26968a880ee07",
@@ -21,161 +21,68 @@
     ]
   },
   "route_authority": [
-    {
-      "route": "/login",
-      "domain": "authentication",
-      "status": "canonical",
-      "source": "webapp/src/routes/login.tsx"
-    },
-    {
-      "route": "/workspace",
-      "domain": "operator_work",
-      "status": "canonical",
-      "source": "webapp/src/routes/workspace.tsx"
-    },
-    {
-      "route": "/knowledge",
-      "domain": "knowledge_and_sop",
-      "status": "canonical",
-      "source": "webapp/src/routes/knowledge.tsx"
-    },
-    {
-      "route": "/channels",
-      "domain": "channel_management",
-      "status": "canonical",
-      "source": "webapp/src/routes/channels.tsx"
-    },
-    {
-      "route": "/runtime",
-      "domain": "runtime_and_audit",
-      "status": "canonical",
-      "source": "webapp/src/routes/runtime.tsx"
-    },
-    {
-      "route": "/control-tower",
-      "domain": "management",
-      "status": "canonical",
-      "source": "webapp/src/routes/control-tower.tsx"
-    },
-    {
-      "route": "/webchat",
-      "domain": "compatibility",
-      "status": "redirect_only",
-      "source": "webapp/src/routes/webchat.tsx",
-      "exit_condition": "remove after the compatibility observation window and generated-link inventory reach zero"
-    }
+    {"route":"/login","domain":"authentication","status":"canonical","source":"webapp/src/routes/login.tsx"},
+    {"route":"/workspace","domain":"operator_work","status":"canonical","source":"webapp/src/routes/workspace.tsx"},
+    {"route":"/knowledge","domain":"knowledge_and_sop","status":"canonical","source":"webapp/src/routes/knowledge.tsx"},
+    {"route":"/channels","domain":"channel_management","status":"canonical","source":"webapp/src/routes/channels.tsx"},
+    {"route":"/runtime","domain":"runtime_and_audit","status":"canonical","source":"webapp/src/routes/runtime.tsx"},
+    {"route":"/control-tower","domain":"management","status":"canonical","source":"webapp/src/routes/control-tower.tsx"},
+    {"route":"/webchat","domain":"compatibility","status":"redirect_only","source":"webapp/src/routes/webchat.tsx","exit_condition":"remove after the compatibility observation window and generated-link inventory reach zero"}
   ],
-  "allowed_route_files": [
-    "channels.tsx",
-    "control-tower.tsx",
-    "index.tsx",
-    "knowledge.tsx",
-    "login.tsx",
-    "root.tsx",
-    "runtime.tsx",
-    "webchat.tsx",
-    "workspace.tsx"
-  ],
+  "allowed_route_files": ["channels.tsx","control-tower.tsx","index.tsx","knowledge.tsx","login.tsx","root.tsx","runtime.tsx","webchat.tsx","workspace.tsx"],
   "implementation_surfaces": [
     {
-      "id": "modern_operator_workspace",
-      "path": "webapp/src/features/operator-workspace",
-      "disposition": "CANONICAL",
-      "capabilities": [
-        "unified_queue",
-        "case_identity",
-        "evidence",
-        "conversation",
-        "governed_actions",
-        "outcomes"
-      ]
+      "id":"modern_operator_workspace",
+      "path":"webapp/src/features/operator-workspace",
+      "disposition":"CANONICAL",
+      "capabilities":["unified_queue","case_identity","evidence","conversation","governed_actions","outcomes"]
     },
     {
-      "id": "modern_support_console",
-      "path": "webapp/src/features/support-console",
-      "disposition": "SUPERSEDED_DELETE",
-      "deleted": true,
-      "replacement_routes": [
-        "/workspace",
-        "/knowledge",
-        "/channels",
-        "/runtime"
+      "id":"modern_support_console_product",
+      "paths":[
+        "webapp/src/features/support-console/SupportConsolePage.tsx",
+        "webapp/src/features/support-console/lazy.tsx",
+        "webapp/src/features/support-console/support-console.css"
       ],
-      "deleted_capabilities": [
-        "duplicate_conversation_queue",
-        "duplicate_reply",
-        "duplicate_handoff_controls"
-      ]
+      "disposition":"SUPERSEDED_DELETE",
+      "deleted":true,
+      "replacement_routes":["/workspace","/knowledge","/channels","/runtime"],
+      "deleted_capabilities":["duplicate_conversation_queue","duplicate_reply","duplicate_handoff_controls"]
     },
     {
-      "id": "legacy_static_admin",
-      "path": "frontend",
-      "disposition": "LEGACY_ACTIVE_MIGRATE_THEN_DELETE",
-      "capabilities": [
-        "overview",
-        "cases",
-        "bulletins",
-        "channel_settings",
-        "signoff"
-      ],
-      "exit_condition": "route parity, browser evidence, build identity and fallback-free release observation"
+      "id":"ai_debug_console",
+      "path":"webapp/src/features/support-console/AiDebugConsolePage.tsx",
+      "disposition":"VALUABLE_ORPHAN_MIGRATE_TO_RUNTIME",
+      "deleted":false,
+      "target":"webapp/src/features/runtime/ai-debug",
+      "capabilities":["ai_turn_evidence","tool_call_evidence","rag_evidence","safety_findings","eval_case_creation"]
     },
     {
-      "id": "public_webchat_widget",
-      "path": "backend/app/static/webchat",
-      "disposition": "SEPARATE_PUBLIC_SURFACE",
-      "capabilities": [
-        "customer_webchat",
-        "customer_voice_demo"
-      ]
+      "id":"legacy_static_admin",
+      "path":"frontend",
+      "disposition":"LEGACY_ACTIVE_MIGRATE_THEN_DELETE",
+      "capabilities":["overview","cases","bulletins","channel_settings","signoff"],
+      "exit_condition":"route parity, browser evidence, build identity and fallback-free release observation"
+    },
+    {
+      "id":"public_webchat_widget",
+      "path":"backend/app/static/webchat",
+      "disposition":"SEPARATE_PUBLIC_SURFACE",
+      "capabilities":["customer_webchat","customer_voice_demo"]
     }
   ],
   "transport_authority": {
-    "target": "webapp/src/lib/http/httpClient.ts",
-    "current_duplicates": [
-      "webapp/src/lib/api.ts",
-      "webapp/src/lib/operatorWorkspaceApi.ts",
-      "webapp/src/lib/supportApi.ts"
-    ],
-    "required_shared_behavior": [
-      "api_base_url",
-      "token_storage",
-      "request_id",
-      "timeout",
-      "safe_retry",
-      "auth_expiry",
-      "error_normalization",
-      "latency_telemetry"
-    ]
+    "target":"webapp/src/lib/http/httpClient.ts",
+    "current_duplicates":["webapp/src/lib/api.ts","webapp/src/lib/operatorWorkspaceApi.ts","webapp/src/lib/supportApi.ts"],
+    "required_shared_behavior":["api_base_url","token_storage","request_id","timeout","safe_retry","auth_expiry","error_normalization","latency_telemetry"]
   },
   "design_authority": {
-    "tokens": "webapp/src/styles/tokens.css",
-    "components": "webapp/src/components/ui",
-    "retired_sources": [
-      "webapp/src/features/support-console/support-console.css"
-    ],
-    "legacy_sources_to_retire": [
-      "frontend/style.css",
-      "webapp/src/styles.css"
-    ]
+    "tokens":"webapp/src/styles/tokens.css",
+    "components":"webapp/src/components/ui",
+    "retired_sources":["webapp/src/features/support-console/support-console.css"],
+    "transitional_sources":["webapp/src/features/support-console/ai-debug-console.css"],
+    "legacy_sources_to_retire":["frontend/style.css","webapp/src/styles.css"]
   },
-  "deletion_gate": [
-    "consumer_inventory",
-    "route_and_capability_parity",
-    "authorization_preserved",
-    "keyboard_and_accessibility_evidence",
-    "degraded_and_large_list_evidence",
-    "build_and_deployment_identity",
-    "rollback_proof",
-    "anti_reintroduction_gate",
-    "exact_head_ci"
-  ],
-  "forbidden_end_state": [
-    "second_operator_product_spine",
-    "second_production_frontend",
-    "second_queue_truth",
-    "second_transport_authority",
-    "second_design_system_authority",
-    "technical_status_as_business_closure"
-  ]
+  "deletion_gate":["consumer_inventory","route_and_capability_parity","authorization_preserved","keyboard_and_accessibility_evidence","degraded_and_large_list_evidence","build_and_deployment_identity","rollback_proof","anti_reintroduction_gate","exact_head_ci"],
+  "forbidden_end_state":["second_operator_product_spine","second_production_frontend","second_queue_truth","second_transport_authority","second_design_system_authority","technical_status_as_business_closure"]
 }
