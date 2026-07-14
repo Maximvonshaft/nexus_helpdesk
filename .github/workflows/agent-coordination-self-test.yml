@@ -2,7 +2,8 @@ name: Agent Coordination Self Test
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
     types: [opened, reopened, synchronize, edited, ready_for_review]
 
 permissions:
@@ -16,17 +17,17 @@ jobs:
   proposed-agent-coordination-self-test:
     name: proposed-agent-coordination-self-test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Checkout exact proposed head for tests only
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -46,7 +47,9 @@ jobs:
             scripts/ci/agent_coordination_policy_gate.py \
             scripts/ci/agent_coordination_path_policy.py \
             scripts/ci/agent_coordination_open_pr_policy.py \
-            scripts/ci/agent_coordination_entrypoint.py
+            scripts/ci/agent_coordination_entrypoint.py \
+            scripts/ci/actions_authority_inventory.py \
+            scripts/release/exact_main_candidate_preconditions.py
 
       - name: Run proposed policy tests
         run: |
@@ -56,6 +59,23 @@ jobs:
             scripts/ci/tests/test_agent_coordination*.py \
             --junitxml=artifacts/agent-coordination/tests.xml
 
+      - name: Capture bounded governance diagnostics
+        if: always()
+        env:
+          EXPECTED_MAIN: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          mkdir -p artifacts/agent-coordination
+          python scripts/ci/actions_authority_inventory.py \
+            > artifacts/agent-coordination/actions-authority.json
+          python scripts/release/exact_main_candidate_preconditions.py \
+            --config config/governance/release-candidate-preconditions.v1.json \
+            --current-main-sha "${EXPECTED_MAIN}" \
+            --candidate-sha "${CANDIDATE_SHA}" \
+            > artifacts/agent-coordination/rc-preconditions.json
+          exit 0
+
       - name: Check proposed diff whitespace
         run: |
           set -Eeuo pipefail
@@ -63,9 +83,9 @@ jobs:
 
       - name: Upload bounded self-test evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agent-coordination-self-test-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-          path: artifacts/agent-coordination/tests.xml
+          path: artifacts/agent-coordination/*
           if-no-files-found: warn
           retention-days: 7
