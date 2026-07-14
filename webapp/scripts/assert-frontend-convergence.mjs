@@ -36,6 +36,7 @@ function lineCount(path) {
 
 const retiredPaths = [
   [join(repoRoot, 'frontend'), 'legacy frontend/ must be physically deleted'],
+  [join(repoRoot, '.github', 'workflows', 'generate-radix-lockfile.yml'), 'obsolete Radix dependency generator must be deleted'],
   [join(srcRoot, 'features', 'support-console'), 'duplicate Support Console must be deleted'],
   [join(srcRoot, 'shared', 'ui'), 'duplicate shared/ui authority must be deleted'],
   [join(srcRoot, 'shared', 'api'), 'obsolete shared/api migration authority must be deleted'],
