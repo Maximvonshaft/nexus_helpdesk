@@ -34,28 +34,28 @@ export function Field({ label, children, hint, description, example, error, requ
     : children
 
   return (
-    <div className="field nd-field">
-      <label className="field-label nd-field__label" htmlFor={controlId}>
-        {label}{required ? <span className="field-required"> 必填</span> : null}
+    <div className="nd-field">
+      <label className="nd-field__label" htmlFor={controlId}>
+        {label}{required ? <span className="nd-field__required">必填</span> : null}
       </label>
-      {description ? <span id={`${generatedId}-description`} className="field-description nd-field__description">{description}</span> : null}
+      {description ? <span id={`${generatedId}-description`} className="nd-field__description">{description}</span> : null}
       {enhancedChildren}
-      {hint ? <span id={`${generatedId}-hint`} className="field-hint nd-field__hint">{hint}</span> : null}
-      {example ? <span id={`${generatedId}-example`} className="field-example nd-field__example">示例：{example}</span> : null}
-      {disabledReason ? <span id={`${generatedId}-disabled`} className="field-hint nd-field__hint">当前不可用：{disabledReason}</span> : null}
-      {error ? <span id={`${generatedId}-error`} className="field-error nd-field__error" role="alert">{error}</span> : null}
+      {hint ? <span id={`${generatedId}-hint`} className="nd-field__hint">{hint}</span> : null}
+      {example ? <span id={`${generatedId}-example`} className="nd-field__example">示例：{example}</span> : null}
+      {disabledReason ? <span id={`${generatedId}-disabled`} className="nd-field__hint">当前不可用：{disabledReason}</span> : null}
+      {error ? <span id={`${generatedId}-error`} className="nd-field__error" role="alert">{error}</span> : null}
     </div>
   )
 }
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn('input', 'nd-control', props.className)} {...props} />
+  return <input {...props} className={cn('nd-control', props.className)} />
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn('select', 'nd-control', props.className)} {...props} />
+  return <select {...props} className={cn('nd-control', props.className)} />
 }
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn('textarea', 'nd-control', props.className)} {...props} />
+  return <textarea {...props} className={cn('nd-control', props.className)} />
 }
