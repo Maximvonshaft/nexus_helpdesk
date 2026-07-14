@@ -1,6 +1,11 @@
 name: frontend-convergence-finalizer
 
 on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - scripts/ci/.frontend-convergence-finalizer/**
+      - .github/workflows/frontend-convergence-finalizer.yml
   push:
     branches:
       - work/744-canonical-operator-console-consolidation
@@ -13,11 +18,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: frontend-convergence-finalizer
+  group: frontend-convergence-finalizer-748
   cancel-in-progress: false
 
 jobs:
   finalize:
+    if: github.event_name == 'push' || github.event.pull_request.number == 748
     name: Apply and verify canonical convergence
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -39,7 +45,7 @@ jobs:
 
       - name: Execute fail-closed convergence transaction
         env:
-          EXPECTED_HEAD: ${{ github.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           GH_TOKEN: ${{ github.token }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -96,7 +102,6 @@ jobs:
           git add -A
           test -n "$(git status --porcelain)"
           git commit -m "refactor(frontend): converge canonical console and retire duplicate frontend"
-          NEW_HEAD="$(git rev-parse HEAD)"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:work/744-canonical-operator-console-consolidation
           trap - ERR
