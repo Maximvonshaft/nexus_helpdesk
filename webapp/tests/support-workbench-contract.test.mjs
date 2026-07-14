@@ -95,7 +95,7 @@ test('channels and runtime are separate bounded administrative domains', () => {
 
 
 test('control tower is a management projection that drills into canonical routes', () => {
-  assert.match(controlTower, /api\.controlTower/)
+  assert.match(controlTower, /supportApi\.controlTower/)
   assert.match(controlTower, /canonicalHref/)
   assert.match(controlTower, /\/workspace/)
   assert.match(controlTower, /\/channels/)
