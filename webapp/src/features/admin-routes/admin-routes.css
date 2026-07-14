@@ -137,6 +137,93 @@
   font-size: var(--nd-font-size-sm);
 }
 
+.nd-control-kpis {
+  display: grid;
+  gap: var(--nd-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.nd-control-kpis article {
+  background: var(--nd-color-surface);
+  border: 1px solid var(--nd-color-border);
+  border-radius: var(--nd-radius-md);
+  display: grid;
+  gap: var(--nd-space-1);
+  padding: var(--nd-space-4);
+}
+
+.nd-control-kpis span,
+.nd-control-kpis small {
+  color: var(--nd-color-text-muted);
+}
+
+.nd-control-kpis strong {
+  font-size: var(--nd-font-size-2xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.nd-control-actions {
+  display: grid;
+  gap: var(--nd-space-2);
+}
+
+.nd-control-action {
+  align-items: center;
+  border-bottom: 1px solid var(--nd-color-border);
+  display: grid;
+  gap: var(--nd-space-4);
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: var(--nd-space-3) 0;
+}
+
+.nd-control-action:last-child {
+  border-bottom: 0;
+}
+
+.nd-control-action__title {
+  align-items: center;
+  display: flex;
+  gap: var(--nd-space-2);
+}
+
+.nd-control-action p {
+  color: var(--nd-color-text-muted);
+  margin: var(--nd-space-1) 0 0;
+}
+
+.nd-control-team {
+  background: var(--nd-color-surface-subdued);
+  border: 1px solid var(--nd-color-border);
+  border-radius: var(--nd-radius-md);
+  display: grid;
+  gap: var(--nd-space-3);
+  padding: var(--nd-space-3);
+}
+
+.nd-control-team dl {
+  display: grid;
+  gap: var(--nd-space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.nd-control-team dl > div {
+  display: grid;
+  gap: 2px;
+}
+
+.nd-control-team dt {
+  color: var(--nd-color-text-muted);
+  font-size: var(--nd-font-size-xs);
+}
+
+.nd-control-team dd {
+  font-size: var(--nd-font-size-lg);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .nd-admin-grid {
     grid-template-columns: 1fr;
@@ -190,7 +277,13 @@
     font-weight: 700;
   }
 
-  .nd-admin-facts {
+  .nd-admin-facts,
+  .nd-control-team dl {
+    grid-template-columns: 1fr;
+  }
+
+  .nd-control-action {
+    align-items: start;
     grid-template-columns: 1fr;
   }
 }
