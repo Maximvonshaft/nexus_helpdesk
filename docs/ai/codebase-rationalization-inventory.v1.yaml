@@ -1,0 +1,103 @@
+schema: nexus.osr.codebase-rationalization-inventory.v1
+work_item: 744
+baseline_main_sha: 0cad026eec02ae3b3623273d04f422ead2bb63e8
+status: active_execution_ledger
+authority:
+  cross_cutting_legacy_registry: config/governance/legacy-surface-domains.v1.json
+  authority_work_item: 650
+  rule: >
+    This file is a deletion execution ledger. It must not redefine domain ownership,
+    deletion authorization, protected history, or prerequisites already governed by
+    the cross-cutting legacy registry and its owning Work Items.
+  domain_work_items:
+    release_identity_and_legacy_worker: 549
+    application_and_settings_composition: 570
+    retired_channel_compatibility: 572
+    legacy_static_frontend: 573
+    historical_round_and_workflow_assets: 574
+    destructive_schema_and_recovery: 532
+    lite_api_and_versioned_contracts: 650
+ledger_policy:
+  permitted_states:
+    - discovered
+    - evidence_incomplete
+    - blocked_by_owner
+    - ready_for_deletion_slice
+    - deleted_on_work_branch
+    - accepted_and_merged
+  deletion_requires:
+    - owning_work_item_authority
+    - exact_baseline_and_head
+    - static_runtime_build_and_deploy_consumer_evidence
+    - replacement_or_no_consumer_proof
+    - applicable_data_security_and_rollback_evidence
+    - anti_reintroduction_gate
+    - exact_head_verification
+deletion_slices:
+  - id: root_overlay_limitation_note
+    state: deleted_on_work_branch
+    disposition: DEAD_DELETE
+    branch: work/744-codebase-rationalization
+    paths:
+      - README_LIMITATION.md
+    evidence:
+      static_consumers: none_outside_self
+      runtime_consumers: none
+      workflow_consumers: none
+      build_or_deploy_requirement: none
+      retention:
+        - git_history
+        - docs/governance/historical-delivery-evidence.md
+      anti_reintroduction: scripts/ci/tests/test_agent_coordination_retired_root_reports.py
+investigation_findings:
+  - id: obsolete_round_source_release_chain
+    state: blocked_by_owner
+    owning_work_item: 574
+    paths:
+      - backend/scripts/build_source_release.sh
+      - backend/scripts/smoke_verify_round20b.py
+      - ROUND20A_RECTIFICATION_REPORT.md
+      - ROUND20B_LEGACY_PRODUCTION_REPORT.md
+    related_tests:
+      - backend/tests/test_round24_hardening.py
+      - backend/tests/test_round27_frontend_hardening.py
+    evidence: >
+      The source-release script still names a round27 archive, packages the legacy
+      frontend and optionally injects historical Round reports. The Round20B smoke
+      script asserts a different archive name and an old cloud-compose contract.
+    blocker_evidence:
+      owner_registry_deletion_authorized: false
+      owner_issue_lifecycle: blocked
+      current_conflicting_pr: 593
+      current_conflicting_pr_state: open_draft
+  - id: legacy_static_frontend
+    state: blocked_by_owner
+    owning_work_item: 573
+    authority: config/governance/legacy-surface-domains.v1.json
+  - id: retired_channel_compatibility
+    state: blocked_by_owner
+    owning_work_item: 572
+    authority: config/governance/legacy-surface-domains.v1.json
+  - id: application_and_settings_composition
+    state: blocked_by_owner
+    owning_work_item: 570
+    authority: config/governance/legacy-surface-domains.v1.json
+  - id: release_identity_and_legacy_worker
+    state: blocked_by_owner
+    owning_work_item: 549
+    authority: config/governance/legacy-surface-domains.v1.json
+  - id: lite_api_compatibility
+    state: evidence_incomplete
+    owning_work_item: 650
+    authority: config/governance/legacy-surface-domains.v1.json
+protected_assets:
+  - id: historical_alembic_revisions
+    owning_work_item: 532
+    reason: protected_history_not_mechanical_cleanup
+  - id: versioned_machine_readable_contracts
+    owning_work_item: 650
+    reason: version_suffix_is_not_obsolescence_evidence
+notes:
+  - GitHub search results are discovery hints only; exact tracked-tree and gate evidence are authoritative.
+  - A blocked entry is not retained forever; it must be executed by the owning Work Item when its recorded prerequisites clear.
+  - Production deployment, production-data mutation, live outbound and Provider enablement remain unauthorized.
