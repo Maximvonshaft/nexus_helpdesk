@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "test": "node scripts/run-contract-tests.mjs",
     "typecheck": "tsc --noEmit",
-    "architecture": "node scripts/assert-frontend-convergence.mjs",
+    "architecture": "node scripts/assert-frontend-convergence.mjs && node scripts/assert-frontend-reachability.mjs",
     "size-report": "node scripts/size-report.mjs"
   },
   "dependencies": {
