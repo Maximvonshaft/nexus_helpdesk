@@ -149,6 +149,54 @@ def serialize_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, object]:
     }
 
 
+def serialize_current_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, str]:
+    """Return the exact scope only to the user who already owns the active grant."""
+    return {
+        "tenant_key": row.tenant_key,
+        "tenant_hash": tenant_scope_hash(row.tenant_key),
+        "country_code": row.country_code,
+        "channel_key": row.channel_key,
+    }
+
+
+def list_current_scope_grants(db: Session, *, current_user) -> dict[str, object]:
+    """Project existing queue grants into a safe current-user workspace selector.
+
+    This is not a second authorization source. Every returned tuple is still
+    validated by ``authorize_operator_scope`` when the queue is read.
+    """
+    ensure_capability(
+        current_user,
+        CAP_OPERATOR_QUEUE_READ,
+        db,
+        message="Operator queue read permission required",
+    )
+    query = db.query(OperatorQueueScopeGrant).filter(
+        OperatorQueueScopeGrant.user_id == int(current_user.id),
+        OperatorQueueScopeGrant.enabled.is_(True),
+    )
+    if current_user.role in {UserRole.agent, UserRole.lead}:
+        team_country = _team_country(db, current_user)
+        if team_country is None:
+            rows: list[OperatorQueueScopeGrant] = []
+        else:
+            rows = query.filter(OperatorQueueScopeGrant.country_code == team_country).order_by(
+                OperatorQueueScopeGrant.country_code.asc(),
+                OperatorQueueScopeGrant.channel_key.asc(),
+                OperatorQueueScopeGrant.tenant_key.asc(),
+            ).all()
+    else:
+        rows = query.order_by(
+            OperatorQueueScopeGrant.country_code.asc(),
+            OperatorQueueScopeGrant.channel_key.asc(),
+            OperatorQueueScopeGrant.tenant_key.asc(),
+        ).all()
+    return {
+        "items": [serialize_current_scope_grant(row) for row in rows],
+        "requires_explicit_admin_scope": current_user.role == UserRole.admin and not rows,
+    }
+
+
 def _audit(
     db: Session,
     *,
