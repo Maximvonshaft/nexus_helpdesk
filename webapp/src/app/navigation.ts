@@ -47,8 +47,16 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
     label: '运营总览',
     canonicalRoute: '/control-tower',
     currentHref: '/control-tower',
-    capabilityAny: ['control_tower.read'],
-    status: 'planned',
+    capabilityAny: [
+      'ticket.assign',
+      'bulletin.manage',
+      'channel_account.manage',
+      'runtime.manage',
+      'ai_config.read',
+      'ai_config.manage',
+      'user.manage',
+    ],
+    status: 'canonical',
   },
 ]
 
