@@ -34,10 +34,10 @@ python scripts/release/build_controlled_candidate_manifest.py \
   --recovery-evidence "${FINAL_DIR}/recovery-evidence.json" \
   --publish-receipt "${FINAL_DIR}/registry-publish-receipt.json" \
   --output "${FINAL_DIR}/controlled-candidate-manifest.json"
-python scripts/security/scan_artifacts.py \
-  --root . \
-  --output "${FINAL_DIR}/artifact-scan.json" \
-  "${FINAL_DIR}"/*.json
+python scripts/release/scan_controlled_candidate_artifacts.py \
+  --root "${FINAL_DIR}" \
+  --output "${FINAL_DIR}/artifact-scan.json"
+test "$(jq -r '.status' "${FINAL_DIR}/artifact-scan.json")" = "pass"
 test "$(jq -r '.status' "${FINAL_DIR}/controlled-candidate-manifest.json")" = "pass"
 test "$(jq -r '.safety.production_ready' "${FINAL_DIR}/controlled-candidate-manifest.json")" = "false"
 test "$(jq -r '.safety.issue_533_go' "${FINAL_DIR}/controlled-candidate-manifest.json")" = "false"
