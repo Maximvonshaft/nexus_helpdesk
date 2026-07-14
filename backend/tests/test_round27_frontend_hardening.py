@@ -17,43 +17,48 @@ def test_source_release_script_defaults_to_current_release_and_includes_current_
     assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' in script or 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' in script
 
 
-def test_frontend_routes_expose_canonical_workspace_and_transitional_webchat():
+def test_frontend_routes_expose_one_customer_service_console():
     router = (PROJECT / 'webapp' / 'src' / 'router.tsx').read_text()
     root = (PROJECT / 'webapp' / 'src' / 'routes' / 'root.tsx').read_text()
     workspace = (PROJECT / 'webapp' / 'src' / 'routes' / 'workspace.tsx').read_text()
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
-    console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
+    shell = (PROJECT / 'webapp' / 'src' / 'components' / 'layout' / 'ServiceAppShell.tsx').read_text()
 
-    assert 'WorkspaceRoute' in router
-    assert 'WebchatRoute' in router
+    for route in ['WorkspaceRoute', 'KnowledgeRoute', 'ChannelsRoute', 'SystemRoute', 'WebchatRoute']:
+        assert route in router
     assert 'RuntimeRoute' not in router
     assert 'AccountsRoute' not in router
-    assert '当前入口不存在' in root
+    assert '这个页面不存在' in root
     assert "to={getSupportToken() ? '/workspace' : '/login'}" in root
     assert "path: '/workspace'" in workspace
     assert 'beforeLoad' in workspace
     assert 'getSupportToken()' in workspace
     assert "path: '/webchat'" in webchat
-    assert 'beforeLoad' in webchat
-    assert 'getSupportToken()' in webchat
-    assert '客服后台视图' in console
-    assert 'AI Runtime' in console
-    assert '渠道账号' in console
+    assert "redirect({ to: getSupportToken() ? '/workspace' : '/login'" in webchat
+    assert 'Nexus 客服中心' in shell
+    assert '客服工作台' in shell
+    assert '知识与规则' in shell
+    assert '渠道状态' in shell
+    assert '系统保障' in shell
 
 
-def test_frontend_governance_is_concentrated_in_support_api_and_login_boundary():
+def test_frontend_governance_uses_one_api_client_and_login_boundary():
     webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
     support_api = (PROJECT / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text()
-    console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
+    workspace_api = (PROJECT / 'webapp' / 'src' / 'lib' / 'operatorWorkspaceApi.ts').read_text()
+    api_client = (PROJECT / 'webapp' / 'src' / 'lib' / 'apiClient.ts').read_text()
 
-    assert "redirect({ to: '/login' })" in webchat
-    assert 'Authorization' in support_api
-    assert 'clearSupportToken()' in support_api
+    assert "'/login'" in webchat
+    assert 'export async function apiRequest' in api_client
+    assert 'Authorization' in api_client
+    assert 'clearSupportToken()' in api_client
     assert '/api/auth/me' in support_api
     assert '/api/admin/provider-runtime/status' in support_api
     assert '/api/admin/channel-accounts' in support_api
-    assert 'isOpsSupervisorRole' not in console
-    assert 'routeAccess' not in console
+    assert 'apiRequest' in support_api
+    assert 'apiRequest' in workspace_api
+    assert 'fetch(' not in support_api
+    assert 'fetch(' not in workspace_api
 
 
 def test_webchat_governance_hardening_invariants():
@@ -87,6 +92,8 @@ def test_ai_config_governance_reads_are_capability_guarded():
 def test_ci_readiness_checks_are_blocking():
     backend_ci = (PROJECT / '.github' / 'workflows' / 'backend-ci.yml').read_text()
     pg_ci = (PROJECT / '.github' / 'workflows' / 'postgres-migration.yml').read_text()
+    frontend_ci = (PROJECT / '.github' / 'workflows' / 'frontend-ci.yml').read_text()
+    convergence_ci = (PROJECT / '.github' / 'workflows' / 'frontend-convergence-gate.yml').read_text()
     settings = (ROOT / 'app' / 'settings.py').read_text()
     main = (ROOT / 'app' / 'main.py').read_text()
 
@@ -94,6 +101,8 @@ def test_ci_readiness_checks_are_blocking():
     assert 'validate_production_readiness.py || true' not in pg_ci
     assert 'Strict readiness' in backend_ci
     assert 'Strict production-like readiness' in pg_ci
+    assert 'npm run architecture' in frontend_ci
+    assert 'npm run architecture' in convergence_ci
     assert 'refusing legacy frontend fallback' in settings
     assert "'frontend': frontend_readiness" in main
 
@@ -111,22 +120,18 @@ def test_deployment_templates_prevent_server_drift():
     assert 'event-daemon' not in server_compose
     assert 'EXTERNAL_CHANNEL_TRANSPORT: disabled' in server_compose
     assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false' in env_template
-    assert 'Server deployment drift prevention' in readme
+    assert 'Server Deployment Drift Prevention' in readme
     assert 'git reset --hard' in readme
 
 
-def test_legacy_frontend_copy_is_business_friendly():
-    legacy_index = (PROJECT / 'frontend' / 'index.html').read_text()
-    legacy_app = (PROJECT / 'frontend' / 'app.js').read_text()
-
-    assert '客服工作台 final console' not in legacy_index
-    assert 'Issue and customer context' not in legacy_index
-    assert 'Human workbench' not in legacy_index
-    assert 'Action center' not in legacy_index
-    assert 'Auto inject to AI' not in legacy_index
-    assert 'Go to overview' not in legacy_app
-    assert 'Refresh all data' not in legacy_app
-    assert 'Issue summary and customer request are required' not in legacy_app
+def test_legacy_and_duplicate_frontends_are_physically_removed():
+    assert not (PROJECT / 'frontend').exists()
+    assert not (PROJECT / 'webapp' / 'src' / 'features' / 'support-console').exists()
+    assert not (PROJECT / 'webapp' / 'src' / 'shared' / 'ui').exists()
+    architecture = (PROJECT / 'webapp' / 'scripts' / 'assert-frontend-convergence.mjs').read_text()
+    assert "legacy frontend/ must be physically deleted" in architecture
+    assert "duplicate Support Console must be deleted" in architecture
+    assert "duplicate shared/ui authority must be deleted" in architecture
 
 
 def test_round27_smoke_script_exists_and_checks_public_copy():
