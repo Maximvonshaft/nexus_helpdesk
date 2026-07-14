@@ -21,6 +21,9 @@ RECONCILIATION_CONTROL_PATHS = (
     "scripts/ci/reconcile_external_channel_inventory.py",
     "scripts/ci/tests/test_reconcile_external_channel_inventory.py",
 )
+CROSS_DOMAIN_RELEASE_CONTROL_PATHS = (
+    "scripts/release/tests/test_validate_rc_test_manifest.py",
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -145,11 +148,28 @@ def reconcile_inventory_payload(
     return payload, tuple(sorted(removed))
 
 
+def _require_tracked_controls(
+    tracked: set[str],
+    paths: Sequence[str],
+    reason: str,
+) -> None:
+    missing = sorted(set(paths) - tracked)
+    if missing:
+        raise InventoryError(reason, missing)
+
+
 def add_reconciliation_control_rule(payload: dict[str, Any], tracked_paths: Sequence[str]) -> None:
     tracked = set(tracked_paths)
-    missing = sorted(set(RECONCILIATION_CONTROL_PATHS) - tracked)
-    if missing:
-        raise InventoryError("canonical_reconciliation_control_missing", missing)
+    _require_tracked_controls(
+        tracked,
+        RECONCILIATION_CONTROL_PATHS,
+        "canonical_reconciliation_control_missing",
+    )
+    _require_tracked_controls(
+        tracked,
+        CROSS_DOMAIN_RELEASE_CONTROL_PATHS,
+        "canonical_release_control_missing",
+    )
     rules = payload.get("rules")
     if not isinstance(rules, list):
         raise InventoryError("inventory_rules_invalid")
@@ -162,6 +182,20 @@ def add_reconciliation_control_rule(payload: dict[str, Any], tracked_paths: Sequ
             "disposition": "retirement_control",
             "owner": "release-governance",
             "rationale": "The fixed Canonical Console and Actions reconciliation checker keeps retired ExternalChannel inventory fail closed without mutating the historical inventory source.",
+            "write_surface": False,
+            "stop_new_writes_required": False,
+            "prerequisites": [],
+        }
+    )
+    rules.append(
+        {
+            "path": None,
+            "paths": list(CROSS_DOMAIN_RELEASE_CONTROL_PATHS),
+            "glob": None,
+            "asset_type": "cross_domain_release_contract",
+            "disposition": "retirement_control",
+            "owner": "release-governance",
+            "rationale": "The exact RC topology contract proves ExternalChannel effect switches remain fail closed in the canonical single-image candidate without creating a parallel frontend or transport authority.",
             "write_surface": False,
             "stop_new_writes_required": False,
             "prerequisites": [],
@@ -194,7 +228,9 @@ def check_reconciled_repository(
     result["canonical_deleted_exact_rule_fingerprints"] = [
         hashlib.sha256(path.encode("utf-8")).hexdigest()[:16] for path in removed
     ]
-    result["reconciliation_control_path_count"] = len(RECONCILIATION_CONTROL_PATHS)
+    result["reconciliation_control_path_count"] = (
+        len(RECONCILIATION_CONTROL_PATHS) + len(CROSS_DOMAIN_RELEASE_CONTROL_PATHS)
+    )
     return result
 
 
