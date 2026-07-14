@@ -91,7 +91,7 @@ test('375px keeps all four service tasks reachable and touch sized', async ({ pa
 test('unsent reply is protected before route navigation', async ({ page }) => {
   await mockWorkspace(page)
   await page.goto('/workspace')
-  await page.getByLabel('回复客户').fill('我正在核实，请稍候。')
+  await page.getByRole('textbox', { name: '回复客户' }).fill('我正在核实，请稍候。')
   await page.getByRole('link', { name: /知识与规则/ }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await expect(page.getByText('放弃未发送的回复？')).toBeVisible()
