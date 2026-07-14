@@ -63,7 +63,8 @@ test('production build emits a manifest used for route-closure proof', () => {
   assert.match(assertion, /frontend_dist/)
   assert.match(assertion, /isDynamicEntry/)
   assert.match(assertion, /initial static import closure/)
-  assert.match(assertion, /retired Support Console remains in the production manifest/)
+  assert.match(assertion, /retired Support Console product code remains in the production manifest/)
+  assert.doesNotMatch(assertion, /transitionalDebugSources/)
   for (const path of canonicalLazyModules) assert.match(assertion, new RegExp(path.replaceAll('/', '\\/').replace('.', '\\.')))
 })
 
