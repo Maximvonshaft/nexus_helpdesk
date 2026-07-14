@@ -1,0 +1,70 @@
+  })
+"""
+    knowledge = replace_once(knowledge, dirty_block, blocker, label="knowledge blocker state")
+    before_unload = """  useEffect(() => {
+    if (!isDirty) return
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [isDirty])
+
+"""
+    blocker_effect = """  useEffect(() => {
+    if (navigationBlocker.status !== 'blocked') return
+    pendingDraftActionRef.current = null
+    setDiscardDraftOpen(true)
+  }, [navigationBlocker.status])
+
+"""
+    knowledge = replace_once(knowledge, before_unload, blocker_effect, label="knowledge same-document blocker")
+    old_confirm = """  const confirmDraftDiscard = () => {
+    const action = pendingDraftActionRef.current
+    pendingDraftActionRef.current = null
+    setDiscardDraftOpen(false)
+    action?.()
+  }
+"""
+    new_confirm = """  const confirmDraftDiscard = () => {
+    const action = pendingDraftActionRef.current
+    pendingDraftActionRef.current = null
+    setDiscardDraftOpen(false)
+    if (action) action()
+    else if (navigationBlocker.status === 'blocked') navigationBlocker.proceed()
+  }
+"""
+    knowledge = replace_once(knowledge, old_confirm, new_confirm, label="knowledge discard resolver")
+    old_close = """        onOpenChange={(open) => {
+          setDiscardDraftOpen(open)
+          if (!open) pendingDraftActionRef.current = null
+        }}
+"""
+    new_close = """        onOpenChange={(open) => {
+          setDiscardDraftOpen(open)
+          if (!open) {
+            pendingDraftActionRef.current = null
+            if (navigationBlocker.status === 'blocked') navigationBlocker.reset()
+          }
+        }}
+"""
+    knowledge = replace_once(knowledge, old_close, new_close, label="knowledge cancel blocker reset")
+    write(knowledge_path, knowledge)
+
+    workspace_path = "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx"
+    workspace = read(workspace_path)
+    workspace = replace_once(
+        workspace,
+        '<Input value={waybill} onChange={(event) => setWaybill(event.target.value.toUpperCase())} autoComplete="off" placeholder="输入完整运单号" />',
+        '''<Input
+                    value={waybill}
+                    onChange={(event) => {
+                      setWaybill(event.target.value.toUpperCase())
+                      setCancelPreview(null)
+                      cancelConfirmMutation.reset()
+                    }}
+                    autoComplete="off"
+                    placeholder="输入完整运单号"
+                  />''',
+        label="cancel waybill invalidation",
