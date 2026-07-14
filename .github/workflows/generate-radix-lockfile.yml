@@ -1,9 +1,9 @@
-name: Generate Radix lockfile
+name: Refresh frontend lockfile
 
 on:
   push:
     branches:
-      - feature/radix-primitives-dependencies
+      - feat/customer-service-console-purge
     paths:
       - ".github/workflows/generate-radix-lockfile.yml"
 
@@ -11,15 +11,16 @@ permissions:
   contents: write
 
 jobs:
-  generate-lockfile:
-    name: Install Radix packages and commit lockfile
+  refresh-lockfile:
+    name: Prune retired frontend dependencies
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout branch
+      - name: Checkout frontend convergence branch
         uses: actions/checkout@v4
         with:
-          ref: feature/radix-primitives-dependencies
+          ref: feat/customer-service-console-purge
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
@@ -29,36 +30,35 @@ jobs:
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
-      - name: Install current dependencies
+      - name: Regenerate lockfile from declared dependencies
         working-directory: webapp
-        run: npm ci
+        run: npm install --package-lock-only --ignore-scripts
 
-      - name: Install Radix primitives
-        working-directory: webapp
-        run: |
-          npm install \
-            @radix-ui/react-dialog \
-            @radix-ui/react-popover \
-            @radix-ui/react-tooltip \
-            @radix-ui/react-dropdown-menu \
-            @radix-ui/react-tabs \
-            @radix-ui/react-select
+      - name: Verify package manifest was not rewritten
+        run: git diff --exit-code -- webapp/package.json
 
-      - name: Validate webapp
-        working-directory: webapp
-        run: |
-          npm run typecheck
-          npm run lint
-          npm run build
-
-      - name: Commit generated package files
+      - name: Commit pruned lockfile
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add webapp/package.json webapp/package-lock.json
+          git add webapp/package-lock.json
           if git diff --cached --quiet; then
-            echo "No package changes to commit."
+            echo "Lockfile already matches package.json."
           else
-            git commit -m "chore: add Radix primitive dependencies"
-            git push origin feature/radix-primitives-dependencies
+            git commit -m "chore(frontend): prune retired dependencies from lockfile"
+            git push origin HEAD:feat/customer-service-console-purge
           fi
+
+      - name: Install locked dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Validate converged frontend
+        working-directory: webapp
+        run: |
+          npm run architecture
+          npm test
+          npm run typecheck
+          npm run lint
+          npm run build
+          npm run size-report
