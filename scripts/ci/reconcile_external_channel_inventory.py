@@ -17,6 +17,10 @@ from scripts.ci.check_external_channel_retirement import (
 )
 
 ALLOWED_DELETED_DISPOSITIONS = {"SUPERSEDED_DELETE"}
+RECONCILIATION_CONTROL_PATHS = (
+    "scripts/ci/reconcile_external_channel_inventory.py",
+    "scripts/ci/tests/test_reconcile_external_channel_inventory.py",
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -133,6 +137,30 @@ def reconcile_inventory_payload(
     return payload, tuple(sorted(removed))
 
 
+def add_reconciliation_control_rule(payload: dict[str, Any], tracked_paths: Sequence[str]) -> None:
+    tracked = set(tracked_paths)
+    missing = sorted(set(RECONCILIATION_CONTROL_PATHS) - tracked)
+    if missing:
+        raise InventoryError("canonical_reconciliation_control_missing", missing)
+    rules = payload.get("rules")
+    if not isinstance(rules, list):
+        raise InventoryError("inventory_rules_invalid")
+    rules.append(
+        {
+            "path": None,
+            "paths": list(RECONCILIATION_CONTROL_PATHS),
+            "glob": None,
+            "asset_type": "retirement_control",
+            "disposition": "retirement_control",
+            "owner": "release-governance",
+            "rationale": "The fixed Canonical Console reconciliation checker and its negative tests keep retired ExternalChannel inventory fail closed without mutating the historical inventory source.",
+            "write_surface": False,
+            "stop_new_writes_required": False,
+            "prerequisites": [],
+        }
+    )
+
+
 def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_manifest_path: Path) -> dict[str, object]:
     inventory = _load_json(inventory_path)
     console_manifest = _load_json(console_manifest_path)
@@ -142,6 +170,7 @@ def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_m
         tracked_paths=tracked,
         deleted_paths=canonical_deleted_paths(console_manifest),
     )
+    add_reconciliation_control_rule(reconciled, tracked)
     with tempfile.TemporaryDirectory(prefix="nexus-external-channel-") as tmp:
         path = Path(tmp) / "reconciled-inventory.json"
         path.write_text(json.dumps(reconciled, sort_keys=True, separators=(",", ":")), encoding="utf-8")
@@ -151,6 +180,7 @@ def check_reconciled_repository(repo_root: Path, inventory_path: Path, console_m
         hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
         for path in removed
     ]
+    result["reconciliation_control_path_count"] = len(RECONCILIATION_CONTROL_PATHS)
     return result
 
 
