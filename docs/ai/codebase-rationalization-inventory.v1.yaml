@@ -1,0 +1,88 @@
+schema: nexus.osr.codebase-rationalization-inventory.v1
+work_item: 744
+baseline_main_sha: 0cad026eec02ae3b3623273d04f422ead2bb63e8
+status: initial_inventory
+product_authority:
+  backend_runtime:
+    canonical_paths:
+      - backend/app
+      - backend/alembic
+      - backend/scripts/run_worker.py
+    disposition: CANONICAL
+  operator_frontend:
+    canonical_paths:
+      - webapp
+    disposition: CANONICAL
+    owning_work_item: 573
+  legacy_frontend:
+    candidate_paths:
+      - frontend
+    disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
+    owning_work_item: 573
+    delete_blockers:
+      - workspace_and_route_parity_525
+      - accessibility_degraded_state_and_scale_564
+      - build_and_static_delivery_parity
+  external_channel_compatibility:
+    disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
+    owning_work_item: 572
+    delete_blockers:
+      - canonical_caller_migration
+      - zero_new_writes
+      - observation_window
+      - historical_data_recovery
+      - migration_and_rollback_rehearsal
+  application_composition_and_settings:
+    disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
+    owning_work_item: 570
+    delete_blockers:
+      - tenant_authority_546
+      - release_profile_authority_549
+initial_safe_slice:
+  scope: repository_root_scratch_reports_and_unreferenced_utilities
+  candidates:
+    - path: APPLY_PATCH.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: NEXT_PHASE_MAX_PUSH_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: PATCH_MANIFEST.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: PATCH_NOTES.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: PRODUCTION_HARDENING_FIX_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: PRODUCTION_SIGNOFF_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: README_LIMITATION.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND20A_RECTIFICATION_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND20B_LEGACY_PRODUCTION_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND24_HARDENING_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND25_HARDENING_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND26_FRONTEND_HARDENING_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND_A_DELIVERY_REPORT.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND_A_VERIFY_RESULTS.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND_B_MOBILE_APPLY.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: ROUND_B_VERIFY_RESULTS.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: VERIFY_RESULTS.md
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: check_bridge.py
+      disposition: UNKNOWN_BLOCK_DELETE
+    - path: pr_body.md
+      disposition: UNKNOWN_BLOCK_DELETE
+notes:
+  - UNKNOWN_BLOCK_DELETE candidates require exact reference, history, workflow, runbook, and runtime/deployment checks before deletion.
+  - Blocked runtime scopes remain under their owning Work Items and are not bypassed by this inventory.
