@@ -36,13 +36,11 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("packages: write", WORKFLOW)
         self.assertIn("attestations: write", WORKFLOW)
         self.assertIn("id-token: write", WORKFLOW)
-        bind_job = WORKFLOW.split("  bind-and-attest:", 1)[1]
-        self.assertIn("artifact-metadata: write", bind_job)
-        self.assertEqual(WORKFLOW.count("artifact-metadata: write"), 1)
+        self.assertNotIn("artifact-metadata: write", WORKFLOW)
 
     def test_actions_are_pinned_and_no_mutable_action_tags(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
-        self.assertGreaterEqual(len(uses), 8)
+        self.assertGreaterEqual(len(uses), 9)
         for reference in uses:
             if reference.startswith("./"):
                 continue
@@ -114,7 +112,17 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
         self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
         self.assertIn("push-to-registry: true", WORKFLOW)
-        self.assertIn("create-storage-record: true", WORKFLOW)
+        self.assertIn("create-storage-record: false", WORKFLOW)
+
+    def test_personal_repository_attestation_is_authenticated_without_org_storage_record(self) -> None:
+        login = "docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772"
+        attest = "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373"
+        self.assertIn(login, WORKFLOW)
+        self.assertIn("registry: ghcr.io", WORKFLOW)
+        self.assertIn("username: ${{ github.actor }}", WORKFLOW)
+        self.assertIn("password: ${{ github.token }}", WORKFLOW)
+        self.assertLess(WORKFLOW.index(login), WORKFLOW.index(attest))
+        self.assertNotIn("create-storage-record: true", WORKFLOW)
 
     def test_recovery_and_external_effect_safety_are_required(self) -> None:
         self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW + "\n" + HELPERS)
