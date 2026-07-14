@@ -97,7 +97,7 @@ def render_active_inventory(
         raise ValueError(f"removed asset is not present in base inventory: {missing_from_base[0]}")
 
     active = dict(base)
-    active["inventory_version"] = f"{base['inventory_version']}+removed-{removed['version']}"
+    active["inventory_version"] = f"{base['inventory_version']}.removed-{removed['version']}"
     active["rules"] = active_rules
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(active, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
