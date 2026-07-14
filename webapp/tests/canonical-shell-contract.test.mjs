@@ -37,14 +37,16 @@ test('one shared application shell owns product identity, navigation, session an
   assert.match(shell, /客服与运营工作台/)
   assert.match(shell, /工作范围/)
   assert.match(shell, /跳到主要内容/)
+  assert.match(shell, /scope\.country_code/)
+  assert.match(shell, /channelLabel\(scope\.channel_key\)/)
   assert.match(navigationView, /APP_NAVIGATION\.filter/)
   for (const route of ['/workspace', '/knowledge', '/channels', '/runtime', '/control-tower']) {
     assert.match(navigation, new RegExp(route.replace('/', '\\/')))
   }
   assert.match(styles, /\.nd-app-content > \.operator-workspace \.operator-app-header/)
   assert.match(styles, /\.nd-app-content > \.operator-workspace \.operator-scope/)
-  assert.doesNotMatch(shell, /tenant_key/)
-  assert.doesNotMatch(shell, /tenant_hash/)
+  assert.doesNotMatch(shell, />\s*\{scope\.tenant_key\}\s*</)
+  assert.doesNotMatch(shell, />\s*\{scope\.tenant_hash\}\s*</)
 })
 
 test('normal operators fail closed when no authorized scope exists', () => {
