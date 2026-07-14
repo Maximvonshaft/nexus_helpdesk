@@ -87,31 +87,36 @@ def test_operator_lookup_endpoints_are_available_to_agent_role(db_session):
     assert bulletins and bulletins[0].title == '延误提醒'
 
 
-def test_round20a_support_workbench_uses_single_authenticated_operator_surface():
-    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
-    webchat_route = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text(encoding='utf-8')
+def test_round20a_capabilities_are_available_through_one_authenticated_product_shell():
+    router = (ROOT.parent / 'webapp' / 'src' / 'router.tsx').read_text(encoding='utf-8')
+    shell = (ROOT.parent / 'webapp' / 'src' / 'app' / 'AppShell.tsx').read_text(encoding='utf-8')
+    workspace = (ROOT.parent / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'OperatorWorkspacePage.tsx').read_text(encoding='utf-8')
+    knowledge = (ROOT.parent / 'webapp' / 'src' / 'features' / 'knowledge' / 'KnowledgePage.tsx').read_text(encoding='utf-8')
+    channels = (ROOT.parent / 'webapp' / 'src' / 'features' / 'channels' / 'ChannelsPage.tsx').read_text(encoding='utf-8')
+    runtime = (ROOT.parent / 'webapp' / 'src' / 'features' / 'runtime' / 'RuntimePage.tsx').read_text(encoding='utf-8')
     support_api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text(encoding='utf-8')
 
-    assert "beforeLoad" in webchat_route
-    assert "getSupportToken()" in webchat_route
-    assert "useSession()" in console
-    assert "客服后台视图" in console
-    assert "会话" in console
-    assert "知识" in console
-    assert "渠道" in console
-    assert "运行" in console
-    assert "/api/support/conversations" in support_api
-    assert "/api/admin/channel-accounts" in support_api
+    for route_name in ('WorkspaceRoute', 'KnowledgeRoute', 'ChannelsRoute', 'RuntimeRoute'):
+        assert route_name in router
+    assert 'Nexus OSR' in shell
+    assert '客服与运营工作台' in shell
+    assert '统一队列' in workspace
+    assert '知识与处理规则' in knowledge
+    assert '渠道管理' in channels
+    assert '运行与审计' in runtime
+    assert '/api/support/conversations' in support_api
+    assert '/api/admin/channel-accounts' in support_api
 
 
-def test_workspace_hides_session_key_from_customer_service_view():
-    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
-    legacy = (ROOT.parent / 'frontend' / 'app.js').read_text(encoding='utf-8')
+def test_canonical_operator_surfaces_hide_internal_session_and_account_identifiers():
+    workspace = (ROOT.parent / 'webapp' / 'src' / 'features' / 'operator-workspace' / 'OperatorWorkspacePage.tsx').read_text(encoding='utf-8')
+    channels = (ROOT.parent / 'webapp' / 'src' / 'features' / 'channels' / 'ChannelsPage.tsx').read_text(encoding='utf-8')
 
-    assert '会话编号' not in console
-    assert '客户、联系方式' in console
-    assert '会话编号' not in legacy
-    assert '已绑定来信来源' in legacy
+    assert '会话编号' not in workspace
+    assert 'session_key' not in workspace
+    assert 'maskPhone' in channels
+    assert 'TechnicalDetails' in channels
+    assert '>wa-primary-private<' not in channels
 
 
 def test_init_dev_db_seeds_committed_demo_ticket_and_bulletin(tmp_path, monkeypatch):
