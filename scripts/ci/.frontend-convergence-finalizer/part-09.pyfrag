@@ -1,0 +1,70 @@
+        "node scripts/assert-frontend-reachability.mjs && "
+        "node scripts/assert-frontend-css-usage.mjs && "
+        "node scripts/assert-frontend-toolchain-usage.mjs && "
+        "node scripts/assert-frontend-workflow-security.mjs"
+    )
+    package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    ci_path = ".github/workflows/frontend-ci.yml"
+    ci = read(ci_path)
+    if "Architecture and residue gates" not in ci:
+        ci += "\n      - name: Architecture and residue gates\n        run: npm run architecture\n"
+    write(ci_path, ci)
+
+
+def compute_dependency_cleanup() -> list[str]:
+    package_path = WEBAPP / "package.json"
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    candidates = [
+        "@radix-ui/react-dropdown-menu",
+        "@radix-ui/react-popover",
+        "@radix-ui/react-select",
+        "@radix-ui/react-tabs",
+        "@radix-ui/react-tooltip",
+        "clsx",
+        "livekit-client",
+    ]
+    scan_roots = [WEBAPP / "src", WEBAPP / "scripts", WEBAPP / "tests", WEBAPP / "e2e", WEBAPP / "vite.config.ts"]
+    corpus_parts: list[str] = []
+    for root in scan_roots:
+        if root.is_file():
+            corpus_parts.append(root.read_text(encoding="utf-8", errors="ignore"))
+        elif root.exists():
+            for path in root.rglob("*"):
+                if path.is_file() and path.suffix in {".ts", ".tsx", ".js", ".mjs", ".json"}:
+                    corpus_parts.append(path.read_text(encoding="utf-8", errors="ignore"))
+    corpus = "\n".join(corpus_parts)
+    removed: list[str] = []
+    for name in candidates:
+        if name in package.get("dependencies", {}) and not re.search(rf"['\"]{re.escape(name)}(?:/[^'\"]*)?['\"]", corpus):
+            package["dependencies"].pop(name, None)
+            removed.append(name)
+    package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return removed
+
+
+def inventory_and_retire_frontend() -> None:
+    frontend = ROOT / "frontend"
+    tracked = []
+    if frontend.exists():
+        tracked = sorted(str(path.relative_to(ROOT)).replace("\\", "/") for path in frontend.rglob("*") if path.is_file())
+
+    grep = run("git", "grep", "-n", "-I", "-e", "frontend/", "--", ":!docs/ai/codebase-rationalization-inventory.v1.yaml", check=False, capture=True)
+    consumer_lines = [line for line in grep.stdout.splitlines() if line.strip()]
+    consumer_paths = sorted({line.split(":", 1)[0] for line in consumer_lines})
+
+    # Selectively apply only donor changes for known static-frontend consumers.
+    consumer_whitelist = [
+        "README.md",
+        "backend/scripts/smoke_verify_round27.py",
+        "backend/tests/test_next_phase_max_push.py",
+        "backend/tests/test_round20a_rectification.py",
+        "backend/tests/test_round20b_legacy_frontend.py",
+        "backend/tests/test_round27_frontend_hardening.py",
+        "backend/tests/test_ticket_lightweight_contract.py",
+        "backend/tests/test_webchat_voice_p0_static.py",
+        "backend/tests/test_webchat_voice_static_headers.py",
+        "config/governance/external-channel-assets.v1.json",
+        "config/governance/external-channel-removed-assets.v1.json",
+        "scripts/ci/render_external_channel_active_inventory.py",
+        "scripts/release/tests/test_validate_rc_test_manifest.py",
