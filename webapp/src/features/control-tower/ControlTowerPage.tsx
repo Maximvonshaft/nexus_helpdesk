@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
-import { api } from '@/lib/api'
 import { sanitizeDisplayText } from '@/lib/format'
+import { supportApi } from '@/lib/supportApi'
 import type { BadgeTone, ControlTowerAction, ControlTowerGovernanceLane } from '@/lib/types'
 import '@/features/admin-routes/admin-routes.css'
 
@@ -63,7 +63,7 @@ function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
 export function ControlTowerPage() {
   const tower = useQuery({
     queryKey: ['canonicalControlTower'],
-    queryFn: api.controlTower,
+    queryFn: supportApi.controlTower,
     refetchInterval: 30_000,
     retry: false,
   })
