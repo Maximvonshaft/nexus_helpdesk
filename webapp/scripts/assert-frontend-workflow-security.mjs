@@ -6,6 +6,7 @@ const webappRoot = resolve(import.meta.dirname, '..')
 const repoRoot = resolve(webappRoot, '..')
 const workflowRoot = join(repoRoot, '.github', 'workflows')
 const relevantWorkflows = [
+  'backend-ci.yml',
   'external-channel-retirement-gate.yml',
   'frontend-ci.yml',
   'frontend-convergence-gate.yml',
@@ -13,6 +14,8 @@ const relevantWorkflows = [
 ]
 const temporaryWorkflows = [
   'generate-radix-lockfile.yml',
+  'patch-voice-header-contract.yml',
+  'patch-webcall-install.yml',
   'refresh-frontend-lockfile.yml',
   'register-frontend-retirement-control.yml',
   'sync-frontend-branch-main.yml',
