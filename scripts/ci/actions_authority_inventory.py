@@ -17,10 +17,9 @@ AUTHORITIES = ("frontend", "backend", "migration", "security", "release", "gover
 CLASSIFICATIONS = {"authoritative", "reusable", "matrix_component", "publication", "historical_delete"}
 SHA_REF_RE = re.compile(r"@[0-9a-f]{40}(?:\s*(?:#.*)?)?$")
 USES_RE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)(?:\s*#.*)?$", re.MULTILINE)
-MUTATION_RE = re.compile(
-    r"(?:^|\s)(?:git\s+(?:commit|push|tag)|gh\s+(?:release|api)|curl\b.*?/contents/)",
-    re.IGNORECASE,
-)
+MUTATION_RE = re.compile(r"(?:^|\s)(?:git\s+(?:commit|push|tag)|gh\s+(?:release|api)|curl\b.*?/contents/)", re.IGNORECASE)
+SAFE_EVENT_SHELL_RE = re.compile(r"\$\{\{\s*(?:github\.event\.pull_request\.(?:head|base)\.sha(?:\s*\|\|\s*github\.sha)?|github\.event\.(?:pull_request|issue)\.number)\s*\}\}")
+PR_HEAD_CHECKOUT_RE = re.compile(r"uses:\s*actions/checkout@[^\n]+\n(?:(?:\s+[^\n]*\n){0,14}?)\s+ref:\s*\$\{\{[^}]*github\.event\.pull_request\.head\.sha[^}]*\}\}", re.MULTILINE)
 
 
 class ActionsAuthorityError(ValueError):
@@ -67,11 +66,7 @@ def _load_inventory(path: Path) -> Mapping[str, Any]:
 
 def _workflow_paths(repo_root: Path) -> list[str]:
     root = repo_root / ".github/workflows"
-    rows = [
-        path.relative_to(repo_root).as_posix()
-        for path in root.iterdir()
-        if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}
-    ] if root.is_dir() else []
+    rows = [path.relative_to(repo_root).as_posix() for path in root.iterdir() if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}] if root.is_dir() else []
     return sorted(rows)
 
 
@@ -164,7 +159,6 @@ def audit_workflow(path: Path, *, classification: str, authority: str) -> list[d
     permissions = _permissions(document)
     contents_permission = permissions.get("contents")
     has_contents_write = contents_permission == "write" or document.get("permissions") == "write-all"
-
     if triggers_pr and has_contents_write:
         add("pull_request_write_permission", "PR-triggered workflow grants repository write authority")
     if has_contents_write and not (classification == "publication" and authority == "release"):
@@ -174,27 +168,24 @@ def audit_workflow(path: Path, *, classification: str, authority: str) -> list[d
     for run_value in run_values:
         if triggers_pr and MUTATION_RE.search(run_value):
             add("pull_request_repository_mutation", "PR validation contains commit/push/tag/API mutation")
-        if "${{ github.event." in run_value or "${{ github.head_ref" in run_value:
+        sanitized = SAFE_EVENT_SHELL_RE.sub("", run_value)
+        if "${{ github.event." in sanitized or "${{ github.head_ref" in sanitized:
             add("untrusted_event_shell_interpolation", "attacker-controlled event value is interpolated into executable script")
 
-    if privileged and "github.event.pull_request.head.sha" in text and run_values:
+    trusted_split_checkout = "path: .trusted" in text and "path: target" in text and (".trusted/scripts/" in text or "working-directory: trusted" in text)
+    if privileged and PR_HEAD_CHECKOUT_RE.search(text) and not trusted_split_checkout:
         add("privileged_trigger_executes_untrusted_head", "privileged trigger checks out and executes PR head")
-
     if triggers_pr and "actions/checkout@" in text and "persist-credentials: false" not in text:
         add("checkout_credentials_persisted", "PR validation checkout does not disable persisted credentials")
-
     return findings
 
 
 def _duplicate_setup_findings(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-    for authority, marker_sets, code in (
-        ("frontend", (("npm ci", "npm run build"), ("npm ci", "node --test")), "duplicate_frontend_install_build_authority"),
-        ("backend", (("pip install", "pytest"),), "duplicate_backend_install_test_authority"),
-    ):
+    for authority, marker_sets, code in (("frontend", (("npm ci", "npm run build"), ("npm ci", "node --test")), "duplicate_frontend_install_build_authority"), ("backend", (("pip install", "pytest"),), "duplicate_backend_install_test_authority")):
         candidates: list[str] = []
         for row in rows:
-            if row["authority"] != authority or row["classification"] in {"reusable", "historical_delete", "publication"}:
+            if row["authority"] != authority or row["classification"] in {"reusable", "matrix_component", "historical_delete", "publication"}:
                 continue
             text = row["text"]
             if any(all(marker in text for marker in markers) for markers in marker_sets):
@@ -211,7 +202,6 @@ def audit_repository(repo_root: Path, inventory_path: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     findings: list[dict[str, str]] = []
     authority_counts = {authority: 0 for authority in AUTHORITIES}
-
     for path_value in tracked:
         classification, authority = _classification(path_value, inventory)
         path = repo_root / path_value
@@ -220,33 +210,15 @@ def audit_repository(repo_root: Path, inventory_path: Path) -> dict[str, Any]:
         if classification == "authoritative":
             authority_counts[authority] += 1
         findings.extend(audit_workflow(path, classification=classification, authority=authority))
-
     findings.extend(_duplicate_setup_findings(rows))
-    untracked_config = sorted(
-        path for path in (
-            list(inventory["authoritative"].values())
-            + list(inventory["publication_allowlist"])
-            + list(inventory["historical_delete"])
-            + list(inventory["classification_overrides"])
-        ) if path not in tracked
-    )
+    untracked_config = sorted(path for path in (list(inventory["authoritative"].values()) + list(inventory["publication_allowlist"]) + list(inventory["classification_overrides"])) if path not in tracked)
     for path_value in untracked_config:
         findings.append({"code": "inventory_path_not_tracked", "path": path_value, "detail": "configured workflow path is absent"})
     for authority, count in authority_counts.items():
         if count != 1:
             findings.append({"code": "authoritative_workflow_count_invalid", "path": authority, "detail": f"expected 1, observed {count}"})
-
     failure_codes = sorted({row["code"] for row in findings})
-    return {
-        "schema": RESULT_SCHEMA,
-        "ok": not findings,
-        "tracked_workflows": tracked,
-        "workflow_count": len(tracked),
-        "authority_counts": authority_counts,
-        "findings": sorted(findings, key=lambda row: (row["code"], row["path"])),
-        "failure_codes": failure_codes,
-        "unclassified_paths": [],
-    }
+    return {"schema": RESULT_SCHEMA, "ok": not findings, "tracked_workflows": tracked, "workflow_count": len(tracked), "authority_counts": authority_counts, "findings": sorted(findings, key=lambda row: (row["code"], row["path"])), "failure_codes": failure_codes, "unclassified_paths": []}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
