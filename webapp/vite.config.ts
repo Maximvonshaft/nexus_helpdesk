@@ -43,10 +43,6 @@ export default defineConfig({
             return 'vendor-react'
           }
 
-          if (pkg === 'livekit-client' || pkg.startsWith('@livekit') || pkg === '@bufbuild/protobuf' || pkg === 'sdp') {
-            return 'vendor-livekit'
-          }
-
           if (pkg.startsWith('@tanstack')) return 'vendor-tanstack'
           if (pkg.startsWith('@radix-ui')) return 'vendor-radix'
 
