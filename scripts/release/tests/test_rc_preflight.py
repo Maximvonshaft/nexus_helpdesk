@@ -3,7 +3,13 @@ from __future__ import annotations
 import hashlib
 import unittest
 
-from scripts.release.rc_preflight import SCHEMA, bounded_result, validate_registry_text
+from scripts.release.rc_preflight import (
+    FAILURE_SCHEMA,
+    SCHEMA,
+    bounded_result,
+    failure_summary,
+    validate_registry_text,
+)
 
 
 class RcPreflightTests(unittest.TestCase):
@@ -31,6 +37,27 @@ class RcPreflightTests(unittest.TestCase):
         self.assertEqual(result["output_bytes"], len(raw))
         self.assertNotIn("output", result)
         self.assertNotIn(raw.decode(), str(result))
+
+    def test_failure_summary_uses_rc_artifact_contract(self) -> None:
+        summary = failure_summary(
+            stage="rc-preflight",
+            exit_code=1,
+            reason_code="release_unit_tests_failed",
+        )
+        self.assertEqual(summary, {
+            "schema": FAILURE_SCHEMA,
+            "status": "failed",
+            "stage": "rc-preflight",
+            "exit_code": 1,
+            "reason_code": "release_unit_tests_failed",
+            "service_states": {},
+        })
+
+    def test_bounded_fields_reject_unbounded_tokens(self) -> None:
+        with self.assertRaisesRegex(ValueError, "stage_invalid"):
+            bounded_result(status="fail", stage="contains spaces", exit_code=1)
+        with self.assertRaisesRegex(ValueError, "reason_code_invalid"):
+            failure_summary(stage="rc-preflight", exit_code=1, reason_code="raw output")
 
 
 if __name__ == "__main__":
