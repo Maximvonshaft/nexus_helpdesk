@@ -18,7 +18,7 @@ The objective is not cosmetic cleanup. The objective is to leave one explicit ca
 
 Apply authority in this order:
 
-1. Explicit user authorization.
+1. Explicit, scope-specific user authorization. A broad cleanup request does not by itself override a fail-closed domain blocker, protected history, data-migration prerequisite, or separately owned destructive Work Item.
 2. The cross-cutting legacy registry at `config/governance/legacy-surface-domains.v1.json` and its owner #650 for tracked-tree domain ownership, deletion authorization and protected history.
 3. Current `main`, Issue #489, and the active domain Work Item and comments.
 4. Current PR reviews, checks, migrations, tests, deployment contracts, and exact runtime behavior.
@@ -36,6 +36,7 @@ This skill never authorizes production deployment, production-data mutation, liv
 - Keep deletion slices vertically coherent and independently reviewable.
 - Do not mix feature expansion, broad redesign, framework replacement, or dependency-major upgrades into rationalization work.
 - Do not create a second cross-cutting domain registry; rationalization inventories are execution ledgers under the existing authority.
+- Do not interpret general pressure to delete as permission to bypass a named domain owner or unresolved fail-closed prerequisite.
 
 ## Mandatory dispositions
 
