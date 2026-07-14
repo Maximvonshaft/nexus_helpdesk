@@ -1,0 +1,59 @@
+name: Register frontend retirement control
+
+on:
+  push:
+    branches:
+      - feat/customer-service-console-purge
+    paths:
+      - .github/workflows/register-frontend-retirement-control.yml
+
+permissions:
+  contents: write
+
+jobs:
+  register-control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout convergence branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: feat/customer-service-console-purge
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Register the frontend workflow security audit
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('config/governance/external-channel-assets.v1.json')
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          target = 'webapp/scripts/assert-frontend-workflow-security.mjs'
+          matching = [
+              rule for rule in payload['rules']
+              if rule.get('asset_type') == 'retirement_control'
+              and '.github/workflows/external-channel-retirement-gate.yml' in (rule.get('paths') or [])
+          ]
+          if len(matching) != 1:
+              raise SystemExit(f'expected one retirement control rule, found {len(matching)}')
+          paths = matching[0]['paths']
+          if target not in paths:
+              paths.append(target)
+              paths.sort()
+          payload['inventory_version'] = '2026-07-14.5'
+          path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          json.loads(path.read_text(encoding='utf-8'))
+          PY
+
+      - name: Commit governance registration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add config/governance/external-channel-assets.v1.json
+          if git diff --cached --quiet; then
+            echo "Registration already present."
+          else
+            git commit -m "chore(governance): register frontend workflow security control"
+            git push origin HEAD:feat/customer-service-console-purge
+          fi
