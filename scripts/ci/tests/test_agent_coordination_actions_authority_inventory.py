@@ -27,8 +27,12 @@ jobs:
 """
 
 
-def _inventory(tmp_path: Path, *, overrides: dict[str, dict[str, str]] | None = None) -> Path:
-    workflows = tmp_path / ".github/workflows"
+def _inventory(
+    tmp_path: Path,
+    *,
+    overrides: dict[str, dict[str, str]] | None = None,
+    historical_delete: list[str] | None = None,
+) -> Path:
     authoritative = {
         "frontend": ".github/workflows/frontend-authority.yml",
         "backend": ".github/workflows/backend-authority.yml",
@@ -46,7 +50,7 @@ def _inventory(tmp_path: Path, *, overrides: dict[str, dict[str, str]] | None = 
                 "schema": audit.INVENTORY_SCHEMA,
                 "authoritative": authoritative,
                 "publication_allowlist": [],
-                "historical_delete": [],
+                "historical_delete": historical_delete or [],
                 "classification_overrides": overrides or {},
             },
             sort_keys=True,
@@ -140,45 +144,87 @@ jobs:
     assert "untrusted_event_shell_interpolation" in codes
 
 
-def test_duplicate_frontend_install_build_chains_are_rejected(tmp_path: Path) -> None:
-    shared = """on: [pull_request]
+def test_bounded_sha_and_number_event_values_are_allowed(tmp_path: Path) -> None:
+    workflow = _write(
+        tmp_path / ".github/workflows/read-only.yml",
+        """name: read-only
+on: [pull_request]
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
-"""
-    _write(tmp_path / ".github/workflows/one.yml", "name: one\n" + shared)
-    _write(tmp_path / ".github/workflows/two.yml", "name: two\n" + shared)
-    inventory = _inventory(
-        tmp_path,
-        overrides={
-            ".github/workflows/one.yml": {"classification": "matrix_component", "authority": "frontend"},
-            ".github/workflows/two.yml": {"classification": "matrix_component", "authority": "frontend"},
-        },
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - run: test "${{ github.event.pull_request.head.sha }}" != "${{ github.event.pull_request.base.sha }}"
+      - run: printf '%s' "${{ github.event.pull_request.number }}"
+""",
     )
+    codes = {
+        row["code"]
+        for row in audit.audit_workflow(workflow, classification="matrix_component", authority="governance")
+    }
+    assert "untrusted_event_shell_interpolation" not in codes
 
-    result = audit.audit_repository(tmp_path, inventory)
 
-    assert not result["ok"]
-    assert "duplicate_frontend_install_build_authority" in result["failure_codes"]
+def test_matrix_components_do_not_create_parallel_install_authority(tmp_path: Path) -> None:
+    rows = [
+        {
+            "path": ".github/workflows/one.yml",
+            "classification": "matrix_component",
+            "authority": "frontend",
+            "text": "npm ci\nnpm run build\n",
+        },
+        {
+            "path": ".github/workflows/two.yml",
+            "classification": "matrix_component",
+            "authority": "frontend",
+            "text": "npm ci\nnpm run build\n",
+        },
+    ]
+    assert audit._duplicate_setup_findings(rows) == []
 
 
-def test_stale_inventory_path_fails_closed(tmp_path: Path) -> None:
+def test_parallel_authoritative_install_chains_are_rejected() -> None:
+    rows = [
+        {
+            "path": ".github/workflows/one.yml",
+            "classification": "authoritative",
+            "authority": "frontend",
+            "text": "npm ci\nnpm run build\n",
+        },
+        {
+            "path": ".github/workflows/two.yml",
+            "classification": "authoritative",
+            "authority": "frontend",
+            "text": "npm ci\nnpm run build\n",
+        },
+    ]
+    findings = audit._duplicate_setup_findings(rows)
+    assert {row["code"] for row in findings} == {"duplicate_frontend_install_build_authority"}
+
+
+def test_stale_active_inventory_path_fails_closed(tmp_path: Path) -> None:
     inventory = _inventory(
         tmp_path,
         overrides={
             ".github/workflows/missing.yml": {"classification": "matrix_component", "authority": "backend"}
         },
     )
-
     result = audit.audit_repository(tmp_path, inventory)
-
     assert "inventory_path_not_tracked" in result["failure_codes"]
+
+
+def test_historical_delete_path_is_expected_to_be_absent(tmp_path: Path) -> None:
+    inventory = _inventory(
+        tmp_path,
+        historical_delete=[".github/workflows/retired.yml"],
+    )
+    result = audit.audit_repository(tmp_path, inventory)
+    assert "inventory_path_not_tracked" not in result["failure_codes"]
 
 
 def test_repository_actions_authority_is_converged() -> None:
