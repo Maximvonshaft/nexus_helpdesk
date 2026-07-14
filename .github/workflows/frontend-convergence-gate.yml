@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout exact proposed head
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -34,7 +34,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
           cache: npm
@@ -48,7 +48,7 @@ jobs:
         working-directory: webapp
         run: |
           set -Eeuo pipefail
-          npm run architecture
+          npm run architecture 2>&1 | tee frontend-architecture.log
           npm test
           npm run typecheck
           npm run lint
@@ -61,3 +61,15 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git diff --check "${BASE_SHA}"...HEAD
+
+      - name: Upload exact-head audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-convergence-audit
+          path: |
+            webapp/frontend-architecture.log
+            webapp/playwright-report
+            webapp/test-results
+          if-no-files-found: ignore
+          retention-days: 14
