@@ -1,0 +1,61 @@
+schema: nexus.osr.native-skills-registry.v1
+registry_version: "2026-07-14-codebase-rationalization.2"
+owner: nexus_osr_engineering_governance
+status: active
+authority_order:
+  - explicit_scope_specific_user_authorization
+  - cross_cutting_legacy_registry_and_domain_owner
+  - current_nexus_main_and_issue_489
+  - target_work_item_comments_current_pr_reviews_and_checks
+  - nexus_product_architecture_security_and_delivery_contracts
+  - target_work_item_acceptance_criteria
+  - nexus_native_skill_instructions
+selection_policy:
+  maximum_roles_per_task: 4
+  allowed_roles:
+    - process
+    - primary_domain
+    - security
+    - verification
+task_profiles:
+  codebase_rationalization_audit:
+    process: superpowers_using
+    primary_domain: nexus_codebase_rationalization
+    security: secpriv
+    verification: superpowers_verification
+  codebase_rationalization_slice:
+    process: superpowers_systematic_debugging
+    primary_domain: nexus_codebase_rationalization
+    security: secpriv
+    verification: superpowers_verification
+skills:
+  nexus_codebase_rationalization:
+    enabled: true
+    role: primary_domain
+    artifact_type: nexus_native_skill
+    entrypoint: docs/ai/skills/nexus-codebase-rationalization/SKILL.md
+    authority: current_main_domain_owner_target_work_item_and_nexus_contracts
+    use_when:
+      - repository_wide_codebase_archaeology
+      - duplicate_implementation_convergence
+      - dead_or_superseded_code_deletion
+      - legacy_migration_and_retirement
+      - ai_generated_code_accumulation
+      - repository_hygiene_with_runtime_risk
+    required_dispositions:
+      - CANONICAL
+      - DUPLICATE_DELETE
+      - DEAD_DELETE
+      - SUPERSEDED_DELETE
+      - LEGACY_ACTIVE_MIGRATE_THEN_DELETE
+      - COMPATIBILITY_WITH_DEADLINE
+      - GENERATED_OR_VENDOR_MANAGED
+      - UNKNOWN_BLOCK_DELETE
+    constraints:
+      - no_direct_main_writes
+      - no_blind_repository_wide_delete
+      - broad_cleanup_request_does_not_override_fail_closed_domain_blockers
+      - owning_work_item_controls_blocked_runtime_scopes
+      - exact_head_evidence_required
+      - source_deletion_does_not_authorize_production_or_data_mutation
+    execution_mode: instructions_only
