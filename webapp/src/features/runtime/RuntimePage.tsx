@@ -10,9 +10,9 @@ import { supportApi } from '@/lib/supportApi'
 import { runtimePresentation } from '@/lib/supportStatus'
 import '@/features/admin-routes/admin-routes.css'
 
-const LazyAiDebugConsole = lazy(async () => {
-  const module = await import('@/features/support-console/AiDebugConsolePage')
-  return { default: module.AiDebugConsolePage }
+const LazyRuntimeEvidenceAudit = lazy(async () => {
+  const module = await import('./RuntimeEvidenceAudit')
+  return { default: module.RuntimeEvidenceAudit }
 })
 
 function compactLatency(value: number | null | undefined) {
@@ -26,7 +26,7 @@ function errorCopy(error: unknown, fallback: string) {
 }
 
 export function RuntimePage() {
-  const [showEvidenceConsole, setShowEvidenceConsole] = useState(false)
+  const [showEvidenceAudit, setShowEvidenceAudit] = useState(false)
   const runtime = useQuery({
     queryKey: ['canonicalProviderRuntimeStatus'],
     queryFn: supportApi.providerRuntimeStatus,
@@ -57,18 +57,16 @@ export function RuntimePage() {
         </div>
         <div className="nd-admin-stack">
           <Badge tone={state.tone}>{state.label}</Badge>
-          <Button variant="secondary" onClick={() => setShowEvidenceConsole((current) => !current)}>
-            {showEvidenceConsole ? '返回运行概览' : '打开 AI 证据审计'}
+          <Button variant="secondary" onClick={() => setShowEvidenceAudit((current) => !current)}>
+            {showEvidenceAudit ? '返回运行概览' : '打开 AI 证据审计'}
           </Button>
         </div>
       </header>
 
-      {showEvidenceConsole ? (
-        <section aria-label="AI 证据审计">
-          <Suspense fallback={<EmptyState title="正在加载证据审计" description="正在读取 AI turn、工具调用、知识命中和 Safety 证据。" />}>
-            <LazyAiDebugConsole />
-          </Suspense>
-        </section>
+      {showEvidenceAudit ? (
+        <Suspense fallback={<EmptyState title="正在加载证据审计" description="正在读取 AI 处理、工具调用、知识命中和安全证据。" />}>
+          <LazyRuntimeEvidenceAudit />
+        </Suspense>
       ) : (
         <div className="nd-admin-grid">
           <section className="nd-admin-panel" aria-labelledby="service-readiness-title">
