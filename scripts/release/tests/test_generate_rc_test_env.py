@@ -63,12 +63,17 @@ class GenerateRcTestEnvTests(unittest.TestCase):
                 MODULE.discover_alembic_head(versions)
 
     def test_generated_environment_is_shell_loadable_and_fail_closed(self) -> None:
+        source_sha = "a" * 40
         values = MODULE.build_values(
-            source_sha="a" * 40,
+            source_sha=source_sha,
             compose_project="nexus_rc_test_123",
             origin="http://127.0.0.1:18083/",
             expected_migration_head="20260711_0058",
         )
+        self.assertEqual(values["RC_SOURCE_SHA"], source_sha)
+        self.assertEqual(values["GIT_SHA"], source_sha)
+        self.assertEqual(values["FRONTEND_BUILD_SHA"], source_sha)
+        self.assertEqual(values["RC_IMAGE_TAG"], f"nexusdesk/helpdesk:rc-test-{source_sha}")
         self.assertEqual(values["RC_BASE_URL"], "http://127.0.0.1:18083")
         self.assertEqual(values["RC_PUBLIC_ORIGIN"], values["RC_BASE_URL"])
         self.assertEqual(values["RC_TEST_DISPLAY_NAME"], "RC-Test-Website")
@@ -96,7 +101,7 @@ class GenerateRcTestEnvTests(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    f"set -a; source {path}; set +a; printf '%s|%s|%s|%s' \"$GIT_SHA\" \"$RC_PUBLIC_ORIGIN\" \"$RC_TEST_DISPLAY_NAME\" \"$EXPECTED_MIGRATION_HEAD\"",
+                    f"set -a; source {path}; set +a; printf '%s|%s|%s|%s|%s' \"$RC_SOURCE_SHA\" \"$GIT_SHA\" \"$RC_PUBLIC_ORIGIN\" \"$RC_TEST_DISPLAY_NAME\" \"$EXPECTED_MIGRATION_HEAD\"",
                 ],
                 text=True,
                 capture_output=True,
@@ -106,7 +111,7 @@ class GenerateRcTestEnvTests(unittest.TestCase):
             self.assertEqual(loaded.returncode, 0, loaded.stderr)
             self.assertEqual(
                 loaded.stdout,
-                "a" * 40 + "|http://127.0.0.1:18083|RC-Test-Website|20260711_0058",
+                source_sha + "|" + source_sha + "|http://127.0.0.1:18083|RC-Test-Website|20260711_0058",
             )
 
     def test_rejects_remote_insecure_http_and_invalid_identity(self) -> None:
