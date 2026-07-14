@@ -1,6 +1,6 @@
 {
   "schema": "nexus.operator-console-consolidation.v1",
-  "version": "operator_console_consolidation.2026-07-14.1",
+  "version": "operator_console_consolidation.2026-07-14.2",
   "owner_issue": 747,
   "parent_issue": 744,
   "baseline_main_sha": "4bc76c3607db2732388d33634bc26968a880ee07",
@@ -36,33 +36,33 @@
     {
       "route": "/knowledge",
       "domain": "knowledge_and_sop",
-      "status": "target_extract",
+      "status": "canonical",
       "source": "webapp/src/routes/knowledge.tsx"
     },
     {
       "route": "/channels",
       "domain": "channel_management",
-      "status": "target_extract",
+      "status": "canonical",
       "source": "webapp/src/routes/channels.tsx"
     },
     {
       "route": "/runtime",
       "domain": "runtime_and_audit",
-      "status": "target_extract",
+      "status": "canonical",
       "source": "webapp/src/routes/runtime.tsx"
     },
     {
       "route": "/control-tower",
       "domain": "management",
-      "status": "target_build",
+      "status": "canonical",
       "source": "webapp/src/routes/control-tower.tsx"
     },
     {
       "route": "/webchat",
       "domain": "compatibility",
-      "status": "transitional_redirect_required",
+      "status": "redirect_only",
       "source": "webapp/src/routes/webchat.tsx",
-      "exit_condition": "workspace conversation parity and supporting route extraction"
+      "exit_condition": "remove after the compatibility observation window and generated-link inventory reach zero"
     }
   ],
   "allowed_route_files": [
@@ -93,16 +93,19 @@
     {
       "id": "modern_support_console",
       "path": "webapp/src/features/support-console",
-      "disposition": "LEGACY_ACTIVE_MIGRATE_THEN_DELETE",
-      "capabilities": [
+      "disposition": "SUPERSEDED_DELETE",
+      "deleted": true,
+      "replacement_routes": [
+        "/workspace",
+        "/knowledge",
+        "/channels",
+        "/runtime"
+      ],
+      "deleted_capabilities": [
         "duplicate_conversation_queue",
         "duplicate_reply",
-        "duplicate_handoff_controls",
-        "knowledge",
-        "channels",
-        "runtime"
-      ],
-      "exit_condition": "supporting capabilities extracted and workspace conversation parity proven"
+        "duplicate_handoff_controls"
+      ]
     },
     {
       "id": "legacy_static_admin",
@@ -148,9 +151,11 @@
   "design_authority": {
     "tokens": "webapp/src/styles/tokens.css",
     "components": "webapp/src/components/ui",
+    "retired_sources": [
+      "webapp/src/features/support-console/support-console.css"
+    ],
     "legacy_sources_to_retire": [
       "frontend/style.css",
-      "webapp/src/features/support-console/support-console.css",
       "webapp/src/styles.css"
     ]
   },
