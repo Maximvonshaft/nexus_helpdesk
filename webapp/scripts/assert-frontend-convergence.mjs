@@ -41,6 +41,8 @@ const retiredPaths = [
   [join(srcRoot, 'shared', 'ui'), 'duplicate shared/ui authority must be deleted'],
   [join(srcRoot, 'shared', 'api'), 'obsolete shared/api migration authority must be deleted'],
   [join(srcRoot, 'lib', 'api.ts'), 'duplicate frontend API client must be deleted'],
+  [join(srcRoot, 'lib', 'apiErrorMap.ts'), 'orphaned legacy API error map must be deleted'],
+  [join(srcRoot, 'lib', 'uxCopy.ts'), 'orphaned legacy copy registry must be deleted'],
   [join(srcRoot, 'lib', 'webchatRealtime.ts'), 'orphaned WebChat realtime client must be deleted'],
   [join(srcRoot, 'lib', 'supportStatus.ts'), 'retired Support Console status presenter must be deleted'],
   [join(srcRoot, 'lib', 'webchatVoiceTypes.ts'), 'orphaned voice AI frontend types must be deleted'],
@@ -64,7 +66,7 @@ for (const path of codeFiles) {
   const label = relativePath(path)
   assert.doesNotMatch(
     source,
-    /@\/shared\/(?:ui|api)|features\/support-console|@\/lib\/api(?:['"]|$)|webchatRealtime|webchatVoiceTypes|supportStatus|outboundChannels/,
+    /@\/shared\/(?:ui|api)|features\/support-console|@\/lib\/api(?:['"]|$)|apiErrorMap|uxCopy|webchatRealtime|webchatVoiceTypes|supportStatus|outboundChannels/,
     `obsolete frontend import or reference in ${label}`,
   )
 
