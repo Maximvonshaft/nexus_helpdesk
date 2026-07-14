@@ -6,8 +6,8 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
-from typing import Iterable, Sequence
+from pathlib import Path
+from typing import Sequence
 
 SCHEMA = "nexus.provider-runtime.hygiene.v1"
 PRODUCTION_ROOTS = ("backend/app", "backend/scripts", "deploy", "webapp/src", "scripts")
@@ -26,10 +26,6 @@ OPENAI_RESPONSE_PROBE_ALLOWED_LINES = (
 )
 
 
-class HygieneError(ValueError):
-    pass
-
-
 def _is_allowed_openai_response_probe_line(path: str, line: str) -> bool:
     return path == OPENAI_RESPONSE_PROBE_PATH and any(
         pattern.search(line) for pattern in OPENAI_RESPONSE_PROBE_ALLOWED_LINES
@@ -43,11 +39,13 @@ def scan_text(path: str, text: str) -> list[dict[str, object]]:
             if marker in line:
                 findings.append({"code": code, "path": path, "line": line_number})
         if OPENAI_RESPONSES_MARKER in line and not _is_allowed_openai_response_probe_line(path, line):
-            findings.append({
-                "code": "retired_openai_responses_provider_identifier",
-                "path": path,
-                "line": line_number,
-            })
+            findings.append(
+                {
+                    "code": "retired_openai_responses_provider_identifier",
+                    "path": path,
+                    "line": line_number,
+                }
+            )
     return findings
 
 
@@ -59,15 +57,21 @@ def _tracked_paths(repo_root: Path, roots: Sequence[str]) -> list[str]:
         stderr=subprocess.PIPE,
     )
     return sorted(
-        path for path in completed.stdout.decode("utf-8", errors="strict").split("\0") if path
+        path
+        for path in completed.stdout.decode("utf-8", errors="strict").split("\0")
+        if path
     )
 
 
-def scan_repository(repo_root: Path, *, roots: Sequence[str] = PRODUCTION_ROOTS) -> dict[str, object]:
+def scan_repository(
+    repo_root: Path,
+    *,
+    roots: Sequence[str] = PRODUCTION_ROOTS,
+) -> dict[str, object]:
     root = repo_root.resolve()
     findings: list[dict[str, object]] = []
     for relative in _tracked_paths(root, roots):
-        path = root / PurePosixPath(relative)
+        path = root / relative
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -89,14 +93,16 @@ def write_result(path: Path, payload: dict[str, object]) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Audit retired Provider Runtime identifiers in tracked executable paths.")
+    parser = argparse.ArgumentParser(
+        description="Audit retired Provider Runtime identifiers in tracked executable paths."
+    )
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         payload = scan_repository(args.repo_root)
         write_result(args.output, payload)
-    except (OSError, UnicodeError, subprocess.SubprocessError, HygieneError, ValueError) as exc:
+    except (OSError, UnicodeError, subprocess.SubprocessError, ValueError) as exc:
         payload = {
             "schema": SCHEMA,
             "status": "error",
@@ -106,7 +112,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "reason_code": "hygiene_checker_error",
         }
         write_result(args.output, payload)
-        print(f"PROVIDER_RUNTIME_HYGIENE=false reason_code=hygiene_checker_error error_type={type(exc).__name__}")
+        print(
+            "PROVIDER_RUNTIME_HYGIENE=false "
+            f"reason_code=hygiene_checker_error error_type={type(exc).__name__}"
+        )
         return 2
     if payload["status"] != "pass":
         print(f"PROVIDER_RUNTIME_HYGIENE=false finding_count={payload['finding_count']}")
