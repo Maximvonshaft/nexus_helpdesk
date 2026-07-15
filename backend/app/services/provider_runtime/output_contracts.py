@@ -13,10 +13,6 @@ _SECRET_PATTERNS = [
     re.compile(("Bear" + "er") + r"\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
 ]
 _INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "external_channel", "provider_runtime"]
-_STATUS_WORDS = [
-    "delivered", "in transit", "out for delivery", "customs", "returned", "failed delivery",
-    "派送", "已签收", "运输中", "清关", "退回",
-]
 _MAX_RUNTIME_REPLY_CHARS = 1200
 WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus.webchat_runtime_reply"
 _COUNTRY_CONFLICT_GROUPS = (
@@ -265,7 +261,6 @@ class OutputContracts:
         intent = parsed.get("intent")
         nested_reply = parsed.get("reply") if isinstance(parsed.get("reply"), dict) else {}
         reply = str(parsed.get("customer_reply") or parsed.get("customer_visible_reply") or nested_reply.get("text") or "")
-        reply_lower = reply.lower()
         if intent == "tracking":
             if not parsed.get("tracking_number"):
                 raise ValueError("Tracking intent without a tracking_number is prohibited")
@@ -273,13 +268,7 @@ class OutputContracts:
                 raise ValueError("Tracking status output requires trusted tracking evidence")
         if (
             not evidence_present
-            and any(word in reply_lower for word in _STATUS_WORDS)
-            and not OutputContracts._is_safe_grounded_business_reply(
-                parsed=parsed,
-                reply=reply,
-                request_body=request_body,
-                knowledge_context=knowledge_context,
-            )
+            and OutputContracts._looks_like_specific_parcel_status_claim(reply)
         ):
             raise ValueError("Parcel status language requires trusted tracking evidence")
         if (
@@ -367,44 +356,6 @@ class OutputContracts:
         )
         return any(marker in text for marker in service_markers)
 
-    @staticmethod
-    def _is_safe_grounded_business_reply(
-        *,
-        parsed: dict[str, Any],
-        reply: str,
-        request_body: Any,
-        knowledge_context: dict[str, Any] | None,
-    ) -> bool:
-        if parsed.get("intent") == "tracking" or parsed.get("tracking_number"):
-            return False
-        if parsed.get("handoff_required") is True:
-            return False
-        if OutputContracts._looks_like_specific_parcel_status_claim(reply):
-            return False
-        if not isinstance(knowledge_context, dict):
-            return False
-        hits = knowledge_context.get("hits")
-        if not isinstance(hits, list):
-            return False
-        try:
-            from ..knowledge_grounding_service import select_grounding_candidate
-
-            candidate = select_grounding_candidate(
-                query=str(request_body or ""),
-                hits=hits,
-                tracking_fact_evidence_present=False,
-            )
-        except Exception:
-            return False
-        if not candidate:
-            return False
-        return OutputContracts._reply_matches_direct_answer(
-            reply,
-            str(candidate.get("answer") or ""),
-            request_body=request_body,
-        )
-
-    @staticmethod
     def _looks_like_specific_parcel_status_claim(reply: str) -> bool:
         text = " ".join(str(reply or "").strip().lower().split())
         if not text:

@@ -2290,6 +2290,47 @@ def test_unified_greeting_prompt_uses_published_persona_instead_of_generic_one_l
     assert "mention two or three relevant capabilities from persona_context" in prompt
 
 
+def test_reduced_unified_greeting_prompt_preserves_persona_quality_contract(monkeypatch):
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS", "3500")
+    adapter = PrivateAIRuntimeAdapter()
+    prompt = adapter._build_prompt(
+        _request(
+            body="你好",
+            recent_context=[],
+            metadata={
+                "language": "zh",
+                "latency_class": "unified_ai_runtime",
+                "runtime_prompt_profile": "unified_ai_runtime",
+                "knowledge_context": {"original_query": "你好", "total_matches": 0},
+                "persona_context": {
+                    "identity_context": {
+                        "brand_name": "Speedaf",
+                        "assistant_name": "Speedy",
+                        "role_label": "Speedaf Customer Support AI Assistant",
+                        "capabilities": [
+                            "Track parcels from trusted facts",
+                            "Help with delivery exceptions",
+                            "Route explicit human requests",
+                        ],
+                        "tone": "Natural, useful, and not canned",
+                        "guardrails": ["Do not expose internal systems"] * 12,
+                    }
+                },
+            },
+        ),
+        model="qwen2.5:3b",
+        mode="direct",
+    )
+
+    assert len(prompt) <= 3500
+    assert '"brand_name":"Speedaf"' in prompt
+    assert '"assistant_name":"Speedy"' in prompt
+    assert "briefly mention two or three relevant persona capabilities" in prompt
+    assert "ask one open support question in two or three complete sentences" in prompt
+    assert "without trusted facts, do not claim parcel status or ETA" in prompt
+    assert "Return compact JSON only: customer_reply" in prompt
+
+
 def test_unified_prompt_knows_tracking_reference_was_already_supplied():
     adapter = PrivateAIRuntimeAdapter()
     prompt = adapter._build_prompt(

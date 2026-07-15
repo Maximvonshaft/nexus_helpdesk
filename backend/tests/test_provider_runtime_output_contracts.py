@@ -145,6 +145,35 @@ def test_live_parcel_status_still_fails_without_trusted_tracking_evidence():
         )
 
 
+def test_greeting_capability_description_is_not_treated_as_live_parcel_status():
+    reply = (
+        "您好，我是Speedy，来自Speedaf的客户支持助手。"
+        "我可以帮您查询派送进度、解答服务范围或协助处理运输异常等问题。"
+        "请问您今天有什么需要我协助的呢？"
+    )
+    raw_json = json.dumps(
+        {
+            "customer_reply": reply,
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    parsed = OutputContracts.validate_and_parse(
+        "nexus.webchat_runtime_reply",
+        raw_json,
+        evidence_present=False,
+        request_body="你好",
+        knowledge_context={"hits": []},
+    )
+
+    assert parsed["customer_reply"] == reply
+
+
 def test_direct_answer_does_not_excuse_extra_live_parcel_status_claim():
     raw_json = json.dumps(
         {
