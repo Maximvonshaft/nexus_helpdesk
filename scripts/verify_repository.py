@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW_DIR = ROOT / ".github/workflows"
+CANONICAL_WORKFLOW = WORKFLOW_DIR / "canonical-verification.yml"
 
 RETIRED_PATHS = (
     "frontend",
@@ -20,7 +22,6 @@ RETIRED_PATHS = (
 )
 
 ACTIONS_RESIDUE = (
-    ".github/workflows",
     "config/governance/actions-authority.v1.json",
     "config/governance/release-candidate-preconditions.v1.json",
     "scripts/ci/actions_authority_inventory.py",
@@ -29,6 +30,7 @@ ACTIONS_RESIDUE = (
 )
 
 REQUIRED_CANONICAL_PATHS = (
+    ".github/workflows/canonical-verification.yml",
     "webapp/src/app/AppShell.tsx",
     "webapp/src/app/navigation.ts",
     "webapp/src/lib/apiClient.ts",
@@ -65,15 +67,28 @@ FORBIDDEN_WORKSPACE_MARKERS = (
 
 def static_failures() -> list[str]:
     failures: list[str] = []
+
+    workflow_files = {
+        path.relative_to(ROOT).as_posix()
+        for path in WORKFLOW_DIR.rglob("*")
+        if path.is_file()
+    } if WORKFLOW_DIR.is_dir() else set()
+    expected_workflows = {CANONICAL_WORKFLOW.relative_to(ROOT).as_posix()}
+    if workflow_files != expected_workflows:
+        failures.append(
+            "GitHub Actions must contain exactly the canonical verification workflow: "
+            f"expected={sorted(expected_workflows)}, actual={sorted(workflow_files)}"
+        )
+
     for relative in RETIRED_PATHS:
         if (ROOT / relative).exists():
             failures.append(f"retired path exists: {relative}")
     for relative in ACTIONS_RESIDUE:
         path = ROOT / relative
         if path.is_dir() and any(path.iterdir()):
-            failures.append(f"GitHub Actions workflow residue exists: {relative}")
+            failures.append(f"retired Actions authority directory exists: {relative}")
         elif path.is_file():
-            failures.append(f"GitHub Actions authority residue exists: {relative}")
+            failures.append(f"retired Actions authority residue exists: {relative}")
     for relative in REQUIRED_CANONICAL_PATHS:
         if not (ROOT / relative).is_file():
             failures.append(f"canonical authority missing: {relative}")
@@ -142,7 +157,9 @@ def run(command: list[str], *, cwd: Path | None = None) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify the single canonical Nexus implementation without GitHub Actions.")
+    parser = argparse.ArgumentParser(
+        description="Verify the single canonical Nexus implementation and its sole GitHub Actions entrypoint."
+    )
     parser.add_argument("--static-only", action="store_true", help="Run repository structure checks only.")
     parser.add_argument("--skip-browser", action="store_true", help="Skip Playwright browser journeys.")
     parser.add_argument("--focused-backend", action="store_true", help="Run the focused backend acceptance suite instead of every backend test.")
