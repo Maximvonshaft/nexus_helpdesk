@@ -3,10 +3,10 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..enums import UserRole
 from ..models import AIConfigResource, Market, MarketBulletin, Tag, Team, User
 from ..schemas import AIConfigResourceRead, MarketBulletinRead, MarketRead, TagRead, TeamRead, UserRead
 from ..services.ai_config_service import list_published_resources
+from ..services.scope_permissions import has_global_case_visibility
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/lookups", tags=["lookups"])
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/lookups", tags=["lookups"])
 @router.get("/users", response_model=list[UserRead])
 def list_users(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     query = db.query(User).filter(User.is_active.is_(True))
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if not has_global_case_visibility(current_user, db):
         query = query.filter(or_(User.team_id == current_user.team_id, User.id == current_user.id))
     return query.order_by(User.display_name.asc()).all()
 
@@ -23,18 +23,18 @@ def list_users(db: Session = Depends(get_db), current_user=Depends(get_current_u
 @router.get("/teams", response_model=list[TeamRead])
 def list_teams(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     query = db.query(Team).filter(Team.is_active.is_(True))
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor} and current_user.team_id is not None:
+    if not has_global_case_visibility(current_user, db) and current_user.team_id is not None:
         query = query.filter(Team.id == current_user.team_id)
     return query.order_by(Team.name.asc()).all()
-
-
 
 
 @router.get("/markets", response_model=list[MarketRead])
 def list_markets(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     query = db.query(Market).filter(Market.is_active.is_(True))
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor} and current_user.team_id is not None:
-        query = query.order_by(Market.country_code.asc(), Market.name.asc())
+    if not has_global_case_visibility(current_user, db) and current_user.team_id is not None:
+        team = db.get(Team, current_user.team_id)
+        if team is not None and team.market_id is not None:
+            query = query.filter(Market.id == team.market_id)
     return [MarketRead.model_validate(row) for row in query.order_by(Market.country_code.asc(), Market.name.asc()).all()]
 
 
