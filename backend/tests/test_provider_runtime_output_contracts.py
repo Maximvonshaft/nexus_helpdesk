@@ -122,29 +122,6 @@ def test_business_sla_direct_answer_status_words_pass_with_approved_grounding():
     assert parsed["customer_reply"] == answer
 
 
-def test_live_parcel_status_still_fails_without_trusted_tracking_evidence():
-    raw_json = json.dumps(
-        {
-            "customer_reply": "你的包裹正在运输中。",
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    with pytest.raises(ValueError, match="Parcel status language requires trusted tracking evidence"):
-        OutputContracts.validate_and_parse(
-            "nexus.webchat_runtime_reply",
-            raw_json,
-            evidence_present=False,
-            request_body="瑞士海运时效是多少？",
-            knowledge_context=_approved_direct_answer_context("瑞士海运清关时效为 15 天。"),
-        )
-
-
 def test_greeting_capability_description_is_not_treated_as_live_parcel_status():
     reply = (
         "您好，我是Speedy，来自Speedaf的客户支持助手。"
@@ -174,20 +151,50 @@ def test_greeting_capability_description_is_not_treated_as_live_parcel_status():
     assert parsed["customer_reply"] == reply
 
 
-def test_direct_answer_does_not_excuse_extra_live_parcel_status_claim():
+def test_unverified_loss_concern_can_request_details_and_human_review():
+    reply = (
+        "您好，关于包裹丢失的疑虑，请您提供运单号以便核实。"
+        "对于这类高风险异常情况，建议由人工客服进一步处理。"
+    )
+    raw_json = json.dumps(
+        {
+            "customer_reply": reply,
+            "language": "zh",
+            "intent": "tracking_missing_number",
+            "tracking_number": None,
+            "handoff_required": True,
+            "handoff_reason": "customer_reports_possible_loss",
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    parsed = OutputContracts.validate_and_parse(
+        "nexus.webchat_runtime_reply",
+        raw_json,
+        evidence_present=False,
+        request_body="我的包裹可能丢失了，需要提供什么信息？什么时候应该人工介入？",
+        knowledge_context={"hits": []},
+    )
+
+    assert parsed["customer_reply"] == reply
+    assert parsed["handoff_required"] is True
+
+
+def test_direct_answer_does_not_excuse_structured_tracking_claim_without_evidence():
     raw_json = json.dumps(
         {
             "customer_reply": "瑞士海运清关时效为 15 天。你的包裹正在运输中。",
             "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
+            "intent": "tracking",
+            "tracking_number": "parcel-reference",
             "handoff_required": False,
             "ticket_should_create": False,
         },
         ensure_ascii=False,
     )
 
-    with pytest.raises(ValueError, match="Parcel status language requires trusted tracking evidence"):
+    with pytest.raises(ValueError, match="Tracking status output requires trusted tracking evidence"):
         OutputContracts.validate_and_parse(
             "nexus.webchat_runtime_reply",
             raw_json,

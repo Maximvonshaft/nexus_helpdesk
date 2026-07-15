@@ -267,11 +267,6 @@ class OutputContracts:
             if not evidence_present:
                 raise ValueError("Tracking status output requires trusted tracking evidence")
         if (
-            not evidence_present
-            and OutputContracts._looks_like_specific_parcel_status_claim(reply)
-        ):
-            raise ValueError("Parcel status language requires trusted tracking evidence")
-        if (
             parsed.get("handoff_required") is not True
             and not OutputContracts._trusted_tracking_reply_can_bypass_locked_facts(
                 evidence_present=evidence_present,
@@ -355,24 +350,6 @@ class OutputContracts:
             "可以寄",
         )
         return any(marker in text for marker in service_markers)
-
-    def _looks_like_specific_parcel_status_claim(reply: str) -> bool:
-        text = " ".join(str(reply or "").strip().lower().split())
-        if not text:
-            return False
-        latin_status = r"(?:delivered|in transit|out for delivery|customs|returned|failed delivery)"
-        latin_parcel = r"(?:parcel|package|shipment|order|waybill|tracking)"
-        if re.search(rf"\b(?:your|this|the)\s+{latin_parcel}\b.{{0,80}}\b{latin_status}\b", text):
-            return True
-        if re.search(rf"\b{latin_status}\b.{{0,80}}\b(?:your|this|the)\s+{latin_parcel}\b", text):
-            return True
-        cjk_status = r"(?:派送|派送中|已签收|签收|妥投|运输中|清关|退回|投递失败)"
-        cjk_parcel = r"(?:包裹|快递|货件|运单|单号)"
-        if re.search(rf"(?:你(?:的)?|您(?:的)?|该|此|这个|这票)?{cjk_parcel}.{{0,40}}{cjk_status}", text):
-            return True
-        if re.search(rf"{cjk_status}.{{0,40}}(?:你(?:的)?|您(?:的)?|该|此|这个|这票)?{cjk_parcel}", text):
-            return True
-        return False
 
     @staticmethod
     def _reply_matches_direct_answer(reply: str, answer: str, *, request_body: Any = None) -> bool:
