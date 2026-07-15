@@ -7,18 +7,17 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import TicketStatus
-from ..models import Customer, Market, Team, Ticket, User
+from ..models import Customer, Ticket, User
 from ..utils.time import utc_now
-from . import ticket_service as _legacy
+from . import ticket_service_core as _core
 from .scope_permissions import has_global_case_visibility
 from .tenant_authority import (
-    ensure_resource_tenant,
     ensure_team_tenant,
     ensure_ticket_tenant_authority,
     ensure_user_tenant,
     resolve_actor_tenant_id,
 )
-from .ticket_service import *  # noqa: F401,F403
+from .ticket_service_core import *  # noqa: F401,F403
 
 
 def validate_assignee_team(
@@ -35,9 +34,9 @@ def validate_assignee_team(
     team = None
     effective_team_id = team_id if team_id is not None else fallback_team_id
     if effective_team_id is not None:
-        team = _legacy.get_team_or_404(db, effective_team_id)
+        team = _core.get_team_or_404(db, effective_team_id)
     if assignee_id is not None:
-        assignee = _legacy.get_user_or_404(db, assignee_id)
+        assignee = _core.get_user_or_404(db, assignee_id)
     if team is not None:
         ensure_team_tenant(db, actor_tenant_id, team)
     if assignee is not None:
@@ -47,10 +46,10 @@ def validate_assignee_team(
     return assignee, team
 
 
-# The retained state-machine functions resolve this global at call time. Bind it
-# once to the canonical capability-safe implementation so create/assign paths do
-# not execute the historical role bypass.
-_legacy.validate_assignee_team = validate_assignee_team
+# Retained state-machine functions resolve this global at call time. Bind it once
+# to the canonical capability-safe implementation so create/assign paths cannot
+# execute the historical role bypass in the internal core.
+_core.validate_assignee_team = validate_assignee_team
 
 
 def list_tickets(
