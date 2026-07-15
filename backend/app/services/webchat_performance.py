@@ -136,8 +136,8 @@ def _assert_ticket_read(user: User, db: Session) -> set[str]:
     return capabilities
 
 
-def _ticket_visible_from_preloaded(user: User, ticket: Ticket, db: Session) -> bool:
-    if has_global_case_visibility(user, db):
+def _ticket_visible_from_preloaded(user: User, ticket: Ticket, *, global_visibility: bool) -> bool:
+    if global_visibility:
         return True
     if ticket.assignee_id == user.id:
         return True
@@ -148,6 +148,7 @@ def _ticket_visible_from_preloaded(user: User, ticket: Ticket, db: Session) -> b
 
 def admin_list_conversations_optimized(db: Session, current_user: User, *, limit: int = 50) -> list[dict[str, Any]]:
     _assert_ticket_read(current_user, db)
+    global_visibility = has_global_case_visibility(current_user, db)
     safe_limit = max(1, min(int(limit or 50), 100))
 
     latest_message_ids = (
@@ -176,7 +177,7 @@ def admin_list_conversations_optimized(db: Session, current_user: User, *, limit
 
     items: list[dict[str, Any]] = []
     for conversation, ticket, last_message in rows:
-        if not _ticket_visible_from_preloaded(current_user, ticket, db):
+        if not _ticket_visible_from_preloaded(current_user, ticket, global_visibility=global_visibility):
             continue
         status_value = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
         state_value = ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state)

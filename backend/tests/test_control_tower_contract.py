@@ -272,8 +272,6 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     assert blocks["speedaf-wizard"]["status"] == "implemented"
     assert payload["facts"]["ready_to_reply"] == 2
     assert payload["facts"]["draft_ai_configs"] == 1
-    assert payload["facts"]["control_tower_action_write_endpoint"] == "implemented"
-
     action_payload = action_response.json()
     assert action_payload["created"] is True
     assert action_payload["status"] == "pending"

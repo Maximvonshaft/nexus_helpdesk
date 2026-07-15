@@ -188,13 +188,9 @@ def test_openai_compatible_embedding_provider_rejects_invalid_native_output(monk
         provider.embed_texts(["first"])
 
 
-def test_pg_hybrid_action_proves_production_like_retrieval_path():
-    workflow = (ROOT / ".github" / "workflows" / "knowledge-runtime-pg-hybrid.yml").read_text(encoding="utf-8")
+def test_pg_hybrid_probe_proves_production_like_retrieval_path():
     probe = (ROOT / "backend" / "scripts" / "probe_knowledge_runtime_pg_hybrid.py").read_text(encoding="utf-8")
 
-    assert "pgvector/pgvector:pg16" in workflow
-    assert "alembic upgrade head" in workflow
-    assert "probe_knowledge_runtime_pg_hybrid.py" in workflow
     assert 'KNOWLEDGE_EMBEDDING_PROVIDER"] = "openai_compatible"' in probe
     assert "get_embedding_provider(" in probe
     assert 'vector.get("storage") != "pgvector"' in probe

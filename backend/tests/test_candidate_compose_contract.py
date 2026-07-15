@@ -94,23 +94,6 @@ def test_candidate_compose_includes_runtime_warmer() -> None:
     assert "whatsapp-sidecar-candidate" in compose
 
 
-def test_candidate_whatsapp_native_gate_workflow_covers_compose_sidecar_and_backend_contracts() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "candidate-whatsapp-native-gate.yml").read_text(encoding="utf-8")
-
-    assert "docker compose" in workflow
-    assert "config --quiet" in workflow
-    assert "whatsapp-sidecar-candidate" in workflow
-    assert "worker-outbound-candidate" in workflow
-    assert "http://app-candidate:8080" in workflow
-    assert "NEXUS_BACKEND_URL: http://app:8080" in workflow
-    assert "WA_SIDECAR_CONNECTOR_MODE: mock" in workflow
-    assert "whatsapp_sidecar_candidate_smoke.sh" in workflow
-    assert "test_admin_whatsapp_native_api.py" in workflow
-    assert "test_whatsapp_native_inbound_integration.py" in workflow
-    assert "test_whatsapp_native_outbound_adapter.py" in workflow
-    assert "test_webchat_ai_decision_runtime.py" in workflow
-
-
 def test_whatsapp_sidecar_candidate_smoke_script_defaults_to_no_live_send() -> None:
     script = (ROOT / "scripts" / "smoke" / "whatsapp_sidecar_candidate_smoke.sh").read_text(encoding="utf-8")
 

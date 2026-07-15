@@ -50,9 +50,8 @@ def test_voice_call_evidence_flows_through_canonical_case_evidence_without_secre
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
     assert "EvidencePanel" in workspace
-    assert "EvidenceCard" in workspace
     assert "evidence_timeline" in workspace
-    assert "事实与依据" in workspace
+    assert "evidencePresentation" in workspace
     assert "TechnicalDetails" in workspace
     assert "JSON.stringify(item.summary" in workspace
     assert "voiceStatus" in widget

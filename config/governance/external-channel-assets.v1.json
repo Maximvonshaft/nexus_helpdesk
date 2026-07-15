@@ -210,16 +210,13 @@
     {
       "path": null,
       "paths": [
-        ".github/workflows/backend-ci.yml",
-        ".github/workflows/postgres-migration.yml",
-        ".github/workflows/pr-webcall-guard.yml",
-        ".github/workflows/production-readiness.yml"
+        ".github/workflows/canonical-verification.yml"
       ],
       "glob": null,
-      "asset_type": "workflow_compatibility",
-      "disposition": "active_compatibility",
+      "asset_type": "canonical_workflow",
+      "disposition": "canonical",
       "owner": "release-governance",
-      "rationale": "Existing required workflows still verify legacy compatibility assumptions during the migration window.",
+      "rationale": "The single canonical workflow verifies repository authority and full product behavior.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": []

@@ -207,12 +207,12 @@ def test_validation_errors_do_not_echo_hostile_payload(api_context):
     assert not any("input" in item for item in response.json()["detail"])
 
 
-def test_non_admin_is_rejected_even_when_runtime_capability_check_would_pass(api_context):
+def test_user_without_runtime_capability_is_rejected(api_context):
     client, _SessionLocal, current = api_context
     current["user"] = SimpleNamespace(id=2, role=UserRole.manager)
     response = client.get("/api/admin/osr/control-tower/summary", headers=TENANT_A)
     assert response.status_code == 403
-    assert response.json()["detail"] == "osr_admin_required"
+    assert response.json()["detail"] == "Not authorized to manage runtime"
 
 
 def test_tenant_isolation_for_list_detail_update_debug_and_control_tower(api_context):

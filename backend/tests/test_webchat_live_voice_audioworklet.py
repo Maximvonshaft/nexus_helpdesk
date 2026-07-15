@@ -8,7 +8,6 @@ WIDGET = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
 WORKLET = ROOT / "backend" / "app" / "static" / "webchat" / "live-voice-capture-worklet.js"
 BROWSER_SPEC = ROOT / "webapp" / "e2e" / "live-voice-audioworklet.spec.ts"
 RUNTIME_TEST = ROOT / "webapp" / "tests" / "live-voice-worklet-runtime.test.mjs"
-BROWSER_WORKFLOW = ROOT / ".github" / "workflows" / "webchat-live-voice-browser-smoke.yml"
 
 
 def test_widget_uses_versioned_audioworklet_before_socket_and_permission() -> None:
@@ -73,10 +72,9 @@ def test_worklet_is_fixed_rate_pcm16_bounded_and_stoppable() -> None:
     assert "if (!this.running) return false" in worklet
 
 
-def test_durable_exact_head_browser_and_runtime_smokes_are_wired() -> None:
+def test_browser_and_runtime_smokes_cover_durable_resource_lifecycle() -> None:
     browser = BROWSER_SPEC.read_text(encoding="utf-8")
     runtime = RUNTIME_TEST.read_text(encoding="utf-8")
-    workflow = BROWSER_WORKFLOW.read_text(encoding="utf-8")
 
     assert "synchronous double activation cancels before allocating browser resources" in browser
     assert "explicit start streams bounded PCM and hidden cleanup is deterministic" in browser
@@ -87,6 +85,3 @@ def test_durable_exact_head_browser_and_runtime_smokes_are_wired() -> None:
     assert "socketBoundary.host" in browser
     assert "expect(events).not.toContain('getUserMedia')" in browser
     assert "requested frame size is bounded" in runtime
-    assert "playwright.voice-smoke.config.ts" in workflow
-    assert "github.event.pull_request.head.sha" in workflow
-    assert "node --check ../backend/app/static/webchat/widget.js" in workflow

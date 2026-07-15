@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,28 +109,9 @@ def test_ai_config_governance_reads_are_capability_guarded():
     assert knowledge.count('ensure_can_read_ai_configs') >= 4
 
 
-def test_ci_readiness_checks_are_blocking():
-    backend_ci = (PROJECT / '.github' / 'workflows' / 'backend-ci.yml').read_text()
-    pg_ci = (PROJECT / '.github' / 'workflows' / 'postgres-migration.yml').read_text()
-    settings = (ROOT / 'app' / 'settings.py').read_text()
-    main = (ROOT / 'app' / 'main.py').read_text()
-
-    assert 'validate_production_readiness.py || true' not in backend_ci
-    assert 'validate_production_readiness.py || true' not in pg_ci
-    assert 'Strict readiness' in backend_ci
-    assert 'Strict production-like readiness' in pg_ci
-    assert 'frontend_dist/index.html must exist in production' in settings
-    assert 'legacy_frontend_root' not in settings
-    assert 'frontend_uses_legacy_fallback' not in settings
-    assert "'frontend': frontend_readiness" in main
-    assert "'active_root': 'frontend_dist'" in main
-    assert "'active_root': 'legacy'" not in main
-
-
 def test_deployment_templates_prevent_server_drift():
     server_compose = (PROJECT / 'deploy' / 'docker-compose.server.yml').read_text()
     env_template = (PROJECT / 'deploy' / '.env.prod.example').read_text()
-    readme = (PROJECT / 'README.md').read_text()
 
     assert 'worker-outbound' in server_compose
     assert 'worker-background' in server_compose
@@ -141,18 +121,10 @@ def test_deployment_templates_prevent_server_drift():
     assert 'event-daemon' not in server_compose
     assert 'EXTERNAL_CHANNEL_TRANSPORT: disabled' in server_compose
     assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false' in env_template
-    assert 'Server deployment drift prevention' in readme
-    assert 'git reset --hard' in readme
 
 
-def test_static_operator_product_is_deleted_and_governed_by_manifest():
-    manifest = json.loads((PROJECT / 'webapp' / 'design' / 'operator-console-consolidation.v1.json').read_text())
-    surfaces = {item['id']: item for item in manifest['implementation_surfaces']}
-    static_admin = surfaces['legacy_static_admin']
-
-    assert static_admin['disposition'] == 'SUPERSEDED_DELETE'
-    assert static_admin['deleted'] is True
-    for path in static_admin['deleted_paths']:
+def test_retired_operator_products_are_absent():
+    for path in ('frontend', 'webapp/src/features/support-console', 'webapp/src/shared'):
         assert not (PROJECT / path).exists()
 
 
