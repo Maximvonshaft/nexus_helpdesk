@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -28,7 +27,7 @@ from app.services.tenant_authority import (
     RUNTIME_TENANT_ASSIGNMENT_SOURCE,
     RUNTIME_TENANT_ASSIGNMENT_VERSION,
 )
-from app.services.webchat_tenant_binding import normalize_public_origin
+from app.services.webchat_tenant_binding import normalize_country_code, normalize_public_origin
 
 DEFAULT_ORIGIN = "https://rc-test.invalid"
 DEFAULT_TENANT_KEY = "rc-test"
@@ -36,20 +35,12 @@ DEFAULT_COUNTRY_CODE = "CH"
 DEFAULT_CHANNEL_KEY = "website"
 DEFAULT_DISPLAY_NAME = "RC-Test-Website"
 DEFAULT_ADMIN_USERNAME = "rc_admin"
-_COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 
 
 def _bounded_env(name: str, default: str, *, max_length: int) -> str:
     value = str(os.getenv(name, default)).strip()
     if not value or len(value) > max_length or any(char in value for char in "\r\n\x00"):
         raise ValueError(f"invalid {name}")
-    return value
-
-
-def _country_code() -> str:
-    value = _bounded_env("RC_TEST_COUNTRY_CODE", DEFAULT_COUNTRY_CODE, max_length=8).upper()
-    if not _COUNTRY_RE.fullmatch(value):
-        raise ValueError("invalid RC_TEST_COUNTRY_CODE")
     return value
 
 
@@ -61,7 +52,11 @@ def seed_rc_authorities() -> WebchatPublicOriginBinding:
     if origin is None:
         raise ValueError("invalid RC_PUBLIC_ORIGIN")
     tenant_key = _bounded_env("RC_TEST_TENANT_KEY", DEFAULT_TENANT_KEY, max_length=80)
-    country_code = _country_code()
+    country_code = normalize_country_code(
+        _bounded_env("RC_TEST_COUNTRY_CODE", DEFAULT_COUNTRY_CODE, max_length=8)
+    )
+    if country_code is None:
+        raise ValueError("invalid RC_TEST_COUNTRY_CODE")
     channel_key = _bounded_env("RC_TEST_CHANNEL_KEY", DEFAULT_CHANNEL_KEY, max_length=120)
     display_name = _bounded_env("RC_TEST_DISPLAY_NAME", DEFAULT_DISPLAY_NAME, max_length=160)
     username = _bounded_env("RC_TEST_ADMIN_USERNAME", DEFAULT_ADMIN_USERNAME, max_length=80)
