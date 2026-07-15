@@ -3,7 +3,7 @@ import type { BadgeTone } from '@/lib/types'
 export type OperationalPresentation = {
   tone: BadgeTone
   label: string
-  detail?: string | null
+  detail?: string
 }
 
 export type OperationalPhase =
@@ -60,34 +60,16 @@ export function operationalPhase(value: unknown): OperationalPhase {
 
 export function operationalPresentation(statusValue: unknown, messageValue?: unknown): OperationalPresentation {
   const phase = operationalPhase(statusValue)
-  const detail = String(messageValue ?? '').trim() || null
+  const detail = String(messageValue ?? '').trim() || undefined
 
-  if (phase === 'accepted') {
-    return { tone: 'default', label: '请求已接受', detail: detail || '系统已接受请求，仍需等待最终结果。' }
-  }
-  if (phase === 'queued') {
-    return { tone: 'warning', label: '请求已排队', detail: detail || '后台尚未完成执行。' }
-  }
-  if (phase === 'processing') {
-    return { tone: 'warning', label: '请求处理中', detail: detail || '当前没有可验证的最终业务结果。' }
-  }
-  if (phase === 'technical_complete') {
-    return { tone: 'default', label: '技术处理完成', detail: detail || '技术成功不等于运营完成、客户通知或安全结案。' }
-  }
-  if (phase === 'operational_complete') {
-    return { tone: 'success', label: '运营已完成', detail: detail || '仍需按业务要求确认客户通知与结案条件。' }
-  }
-  if (phase === 'business_confirmed') {
-    return { tone: 'success', label: '业务结果已确认', detail }
-  }
-  if (phase === 'customer_notified') {
-    return { tone: 'success', label: '客户通知已确认', detail: detail || '通知状态不自动等于客户已读。' }
-  }
-  if (phase === 'failed') {
-    return { tone: 'danger', label: '请求失败', detail: detail || '操作未形成可接受结果。' }
-  }
-  if (phase === 'repair_required') {
-    return { tone: 'danger', label: '需要修复', detail: detail || '自动处理已停止，需要人工修复或重试。' }
-  }
+  if (phase === 'accepted') return { tone: 'default', label: '请求已接受', detail: detail || '系统已接受请求，仍需等待最终结果。' }
+  if (phase === 'queued') return { tone: 'warning', label: '请求已排队', detail: detail || '后台尚未完成执行。' }
+  if (phase === 'processing') return { tone: 'warning', label: '请求处理中', detail: detail || '当前没有可验证的最终业务结果。' }
+  if (phase === 'technical_complete') return { tone: 'default', label: '技术处理完成', detail: detail || '技术成功不等于运营完成、客户通知或安全结案。' }
+  if (phase === 'operational_complete') return { tone: 'success', label: '运营已完成', detail: detail || '仍需按业务要求确认客户通知与结案条件。' }
+  if (phase === 'business_confirmed') return { tone: 'success', label: '业务结果已确认', detail }
+  if (phase === 'customer_notified') return { tone: 'success', label: '客户通知已确认', detail: detail || '通知状态不自动等于客户已读。' }
+  if (phase === 'failed') return { tone: 'danger', label: '请求失败', detail: detail || '操作未形成可接受结果。' }
+  if (phase === 'repair_required') return { tone: 'danger', label: '需要修复', detail: detail || '自动处理已停止，需要人工修复或重试。' }
   return { tone: 'warning', label: '结果待确认', detail: detail || '当前记录不足以判断业务结果。' }
 }
