@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceSession
 from ..webchat_voice_config import load_webchat_voice_runtime_config
-from .webcall_ai.demo_lab import get_demo_lab_status
 from .webchat_runtime_config import get_webchat_runtime_settings
 
 
@@ -254,7 +253,6 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
         "configured_provider": "private_ai_runtime",
         "fallback_provider": None,
         "human_webcall": get_human_webcall_runtime_status(db),
-        "webcall_ai_demo_lab": get_demo_lab_status(db),
         "providers": providers,
         "warnings": warnings,
         "boundary": {

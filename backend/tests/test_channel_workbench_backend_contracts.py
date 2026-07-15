@@ -186,7 +186,7 @@ def _attach_webcall_operator_context(db_session, *, ticket_id: int, conversation
         queue_name="webchat_ai_reply",
         job_type="webchat.ai_reply",
         payload_json="{}",
-        dedupe_key=f"channel-workbench-webcall-ai-turn:{message.id}",
+        dedupe_key=f"channel-workbench-voice-runtime-turn:{message.id}",
         status=JobStatus.pending,
     )
     db_session.add(job)

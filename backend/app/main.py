@@ -13,8 +13,6 @@ from sqlalchemy.engine import Connection
 from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
-from .api.admin_webcall_ai import router as admin_webcall_ai_router
-from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
 from .api.admin_whatsapp_native import router as admin_whatsapp_native_router
 from .api import admin as admin_api
 from .api.admin import router as admin_router
@@ -44,7 +42,6 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_live_voice import router as webchat_live_voice_router
 from .api.webchat_ws import router as webchat_ws_router
 from .api.webchat_voice import router as webchat_voice_router
-from .api.webcall_ai import router as webcall_ai_router
 from .api.whatsapp_native_integration import router as whatsapp_native_integration_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
@@ -322,8 +319,6 @@ def readyz():
 app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
-app.include_router(admin_webcall_ai_router)
-app.include_router(admin_webcall_ai_demo_router)
 app.include_router(admin_whatsapp_native_router)
 app.include_router(ticket_perf_router)
 app.include_router(admin_router)
@@ -350,7 +345,6 @@ app.include_router(support_intelligence_router)
 app.include_router(webchat_events_router)
 app.include_router(webchat_live_voice_router)
 app.include_router(webchat_ws_router)
-app.include_router(webcall_ai_router)
 app.include_router(webchat_voice_router)
 app.include_router(whatsapp_native_integration_router)
 app.include_router(webchat_router)

@@ -70,23 +70,15 @@ the heavier RAG model has its own isolated Runtime host. In production, Nexus
 fails closed if `rag|auto` would load a different RAG model on the same Runtime
 origin while `PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL=false`.
 
-For WebCall AI production providers:
+For the live voice media edge, configure the Nexus callback and shared token on
+the media host. The media edge performs VAD, STT and TTS only; it must not call
+an LLM or knowledge service directly:
 
 ```env
-WEBCALL_AI_PRODUCTION_ENABLED=true
-WEBCALL_AI_AGENT_ENABLED=true
-WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal
-WEBCALL_AI_PROVIDER_PROFILE=external
-STT_PROVIDER=external
-LLM_PROVIDER=external
-TTS_PROVIDER=external
-STT_ENDPOINT=http://47.87.143.41:18081/voice/stt
-LLM_ENDPOINT=http://47.87.143.41:18081/chat/direct
-TTS_ENDPOINT=http://47.87.143.41:18081/voice/tts
-STT_API_KEY_FILE=/run/nexus/ai_runtime_token
-LLM_API_KEY_FILE=/run/nexus/ai_runtime_token
-TTS_API_KEY_FILE=/run/nexus/ai_runtime_token
-TTS_VOICE=af_heart
+NEXUS_LIVE_VOICE_TURN_URL=https://<nexus-host>/api/internal/live-voice/turn
+LIVE_VOICE_SHARED_TOKEN_FILE=/run/nexus/live_voice_token
+LIVE_VOICE_API_URL=http://127.0.0.1:8010
+LIVE_VOICE_GERMAN_TTS_URL=http://127.0.0.1:8040
 ```
 
 For Knowledge Runtime, only enable OpenAI-compatible embeddings after confirming the runtime exposes `/v1/embeddings` and the vector dimension:

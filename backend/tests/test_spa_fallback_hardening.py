@@ -47,7 +47,6 @@ SPA_PRODUCT_PATHS = [
     "/outbound-email",
     "/users",
     "/runtime",
-    "/webcall-ai",
     "/webchat-voice",
 ]
 

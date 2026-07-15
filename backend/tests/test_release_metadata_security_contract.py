@@ -15,6 +15,21 @@ APP_VERSION = f"candidate-{SHA[:12]}"
 IMAGE_TAG = f"ghcr.io/example/nexus:{APP_VERSION}-{BUILD_TIME}"
 
 
+def _bash_path(path: Path) -> str:
+    value = str(path)
+    if os.name != "nt":
+        return value
+    drive, tail = os.path.splitdrive(value)
+    return f"/{drive[0].lower()}{tail.replace(chr(92), '/')}"
+
+
+def _bash_executable() -> str:
+    if os.name != "nt":
+        return "bash"
+    git_bash = Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Git" / "bin" / "bash.exe"
+    return str(git_bash) if git_bash.is_file() else "bash"
+
+
 def _metadata(**overrides: str) -> str:
     values = {
         "GIT_SHA": SHA,
@@ -41,24 +56,25 @@ def _run(
     metadata_path = tmp_path / "release-metadata.env"
     prod_path = tmp_path / ".env.prod"
     output_path = tmp_path / ".env.prod.next"
-    metadata_path.write_text(metadata, encoding="utf-8")
+    metadata_path.write_text(metadata, encoding="utf-8", newline="\n")
     prod_path.write_text(
         "APP_ENV=production\n"
         "ENABLE_OUTBOUND_DISPATCH=false\n"
         "CUSTOM_SETTING=keep\n",
         encoding="utf-8",
+        newline="\n",
     )
-    output_path.write_text("STALE_CANDIDATE=true\n", encoding="utf-8")
+    output_path.write_text("STALE_CANDIDATE=true\n", encoding="utf-8", newline="\n")
     env = os.environ.copy()
     env.update(
         {
-            "PROD_ENV": str(prod_path),
-            "OUTPUT_ENV": str(output_path),
+            "PROD_ENV": _bash_path(prod_path),
+            "OUTPUT_ENV": _bash_path(output_path),
             "APP_HOST_PORT_OVERRIDE": host_port,
         }
     )
     completed = subprocess.run(
-        ["bash", str(SCRIPT), str(metadata_path)],
+        [_bash_executable(), _bash_path(SCRIPT), _bash_path(metadata_path)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -80,7 +96,8 @@ def test_canonical_metadata_is_written_atomically_with_mode_0600(
     assert f"GIT_SHA={SHA}\n" in output
     assert f"IMAGE_TAG={IMAGE_TAG}\n" in output
     assert "APP_HOST_PORT=18086\n" in output
-    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
 
 
 @pytest.mark.parametrize(
@@ -118,9 +135,9 @@ def test_carriage_return_metadata_fails_without_output(tmp_path: Path) -> None:
     prod_path.write_text("APP_ENV=production\n", encoding="utf-8")
     output_path.write_text("STALE_CANDIDATE=true\n", encoding="utf-8")
     env = os.environ.copy()
-    env.update({"PROD_ENV": str(prod_path), "OUTPUT_ENV": str(output_path)})
+    env.update({"PROD_ENV": _bash_path(prod_path), "OUTPUT_ENV": _bash_path(output_path)})
     completed = subprocess.run(
-        ["bash", str(SCRIPT), str(metadata_path)],
+        [_bash_executable(), _bash_path(SCRIPT), _bash_path(metadata_path)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

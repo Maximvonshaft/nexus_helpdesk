@@ -10,10 +10,10 @@ It covers:
 - OpenAI-compatible and Ollama embeddings, including returned vector dimension;
 - RAG query health and declared ingestion path without invoking ingestion;
 - common read-only Qdrant, Weaviate and Chroma metadata surfaces;
-- Nexus WebCall STT, LLM and TTS bridge contracts;
+- STT and TTS media endpoint contracts;
 - OpenAI-compatible STT/TTS transport availability;
 - declared WebSocket/LiveKit-style voice endpoint handshakes;
-- Nexus configuration recommendations for Provider Runtime, Knowledge Runtime v2 and WebCall AI.
+- Nexus configuration recommendations for Provider Runtime and Knowledge Runtime v2.
 
 The probe is an inventory tool. It is not a production readiness decision and does not authorize Provider traffic or deployment.
 
@@ -168,15 +168,16 @@ Nexus currently requires the configured embedding dimension to equal its knowled
 
 The probe may record `/rag/upsert` as declared, but it never calls it. Use the existing `backend/scripts/sync_ai_runtime_rag.py --dry-run` path before separately authorized ingestion.
 
-### WebCall AI
+### Live voice media
 
-The direct Nexus voice bridge contracts are:
+The live voice media edge probes STT and TTS resources only:
 
 - STT multipart field `audio`, plus `language`, `sample_rate`, `channels`; JSON response `text`, `language`, `confidence`;
-- LLM JSON body `system`, `input`, `language`, `response_format`; response `response_text`, `intent`, `handoff_required`, `handoff_reason`;
 - TTS JSON body `text`, `language`, `voice`, `format=wav`; response WAV or PCM.
 
-OpenAI STT uses multipart field `file`, so it is reported as requiring a bridge for the current WebCall contract. TTS compatibility must be confirmed against the configured bridge request and audio response types.
+The probe does not define customer-service orchestration. Live voice transcripts
+must enter the Nexus Runtime turn endpoint so voice and text use the same
+conversation history, tools, knowledge and customer-visible reply contract.
 
 ## What to provide for a real server review
 

@@ -191,8 +191,6 @@ def build_values(
         "WEBCHAT_WS_ADMIN_ENABLED": "false",
         "WEBCHAT_WS_BROKER": "database",
         "WEBCHAT_VOICE_ENABLED": "false",
-        "WEBCALL_AI_PRODUCTION_ENABLED": "false",
-        "WEBCALL_AI_AGENT_ENABLED": "false",
         "STORAGE_BACKEND": "local",
         "UPLOAD_ROOT": "/app/backend/uploads",
         "LOCAL_STORAGE_BACKUP_REQUIRED": "true",

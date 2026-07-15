@@ -581,7 +581,7 @@ if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
     return value;
   }
 
-  function buildLiveWsUrl(langCode, voice, speed) {
+  function buildLiveWsUrl(langCode, voice, speed, conversationId, voiceSessionId, connectionTicket) {
     var url = new URL(safeLiveVoicePath(liveVoiceWsPath), window.location.href);
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.host = window.location.host;
@@ -589,7 +589,23 @@ if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
     url.searchParams.set('lang_code', langCode);
     url.searchParams.set('voice', voice);
     url.searchParams.set('speed', speed);
+    url.searchParams.set('conversation_id', conversationId);
+    url.searchParams.set('voice_session_id', voiceSessionId);
+    url.searchParams.set('connection_ticket', connectionTicket);
     return url.toString();
+  }
+
+  function createLiveVoiceSession(langCode) {
+    return ensureLegacySession().then(function () {
+      if (!state.legacyConversationId || !state.legacyVisitorToken) {
+        throw new Error('WebChat session is unavailable.');
+      }
+      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/live-voice/session', {
+        method: 'POST',
+        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
+        body: JSON.stringify({ locale: langCode || null })
+      }, 12000);
+    });
   }
 
   function playPcm16(arrayBuffer, sampleRate) {
@@ -658,7 +674,14 @@ if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
       }
       var socket;
       try {
-        socket = new WebSocket(buildLiveWsUrl(langCode, voice, speed));
+        socket = new WebSocket(buildLiveWsUrl(
+          langCode,
+          voice,
+          speed,
+          state.legacyConversationId,
+          live.voiceSessionId,
+          live.connectionTicket
+        ));
       } catch (err) {
         reject(err);
         return;
@@ -718,12 +741,21 @@ return;
       captureResumeAt: 0,
       playbackGeneration: 0,
       playbackReadyTimer: null,
+      voiceSessionId: null,
+      connectionTicket: null,
       released: false
     };
     state.liveVoice = live;
     voiceStatus('Preparing secure voice capture...');
 
     Promise.resolve().then(function () {
+      return createLiveVoiceSession(langCode);
+    }).then(function (voiceSession) {
+      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
+      live.voiceSessionId = String(voiceSession.voice_session_id || '');
+      live.connectionTicket = String(voiceSession.connection_ticket || '');
+      if (!live.voiceSessionId || !live.connectionTicket) throw new Error('Voice session could not be created.');
+    }).then(function () {
       if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
       live.audioContext = new AudioContextConstructor();
       if (!live.audioContext.audioWorklet || !live.audioContext.audioWorklet.addModule) {

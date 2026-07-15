@@ -216,29 +216,6 @@ def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypat
     assert "unsafe-eval" not in policy
 
 
-def test_voice_enabled_webcall_path_allows_microphone_and_configured_wss(monkeypatch):
-    client = _client(
-        monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
-        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
-    )
-
-    response = client.get("/webcall/wv_demo")
-
-    assert response.status_code in {200, 404}
-    assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
-    policy = _csp(response)
-    _assert_connect_sources(
-        policy,
-        "'self'",
-        "https://cloudflareinsights.com",
-        "https://static.cloudflareinsights.com",
-        "wss://voice.example.test",
-        "https://voice.example.test",
-    )
-    assert "unsafe-eval" not in policy
-
-
 def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
     client = _client(
         monkeypatch,
@@ -285,7 +262,7 @@ def test_voice_connect_src_rejects_wildcard(monkeypatch):
         load_webchat_voice_runtime_config()
 
 
-def test_voice_enabled_webchat_and_webchat_voice_paths_allow_microphone(monkeypatch):
+def test_voice_enabled_webchat_path_allows_microphone(monkeypatch):
     client = _client(
         monkeypatch,
         WEBCHAT_VOICE_ENABLED="true",
@@ -293,22 +270,11 @@ def test_voice_enabled_webchat_and_webchat_voice_paths_allow_microphone(monkeypa
     )
 
     webchat_response = client.get("/webchat")
-    webchat_voice_response = client.get("/webchat-voice")
 
     assert webchat_response.status_code in {200, 404}
-    assert webchat_voice_response.status_code in {200, 404}
     assert _permissions(webchat_response) == "camera=(), microphone=(self), geolocation=()"
-    assert _permissions(webchat_voice_response) == "camera=(), microphone=(self), geolocation=()"
     _assert_connect_sources(
         _csp(webchat_response),
-        "'self'",
-        "https://cloudflareinsights.com",
-        "https://static.cloudflareinsights.com",
-        "wss://voice.example.test",
-        "https://voice.example.test",
-    )
-    _assert_connect_sources(
-        _csp(webchat_voice_response),
         "'self'",
         "https://cloudflareinsights.com",
         "https://static.cloudflareinsights.com",

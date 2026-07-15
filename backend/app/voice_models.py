@@ -111,7 +111,7 @@ class WebchatVoiceTranscriptSegment(Base):
 
 
 class WebchatVoiceAITurn(Base):
-    """Redacted AI turn record for future WebCall AI worker execution."""
+    """Redacted AI turn record for the unified Runtime voice path."""
 
     __tablename__ = "webchat_voice_ai_turns"
     __table_args__ = (
@@ -140,7 +140,7 @@ class WebchatVoiceAITurn(Base):
 
 
 class WebchatVoiceAIAction(Base):
-    """NexusDesk decision record for AI-requested WebCall actions."""
+    """NexusDesk decision record for AI-requested voice actions."""
 
     __tablename__ = "webchat_voice_ai_actions"
 

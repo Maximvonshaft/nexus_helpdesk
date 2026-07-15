@@ -1,0 +1,24 @@
+[Unit]
+Description=Nexus Live Voice Media Edge
+After=network-online.target local-voice-api.service local-german-tts-api.service
+Wants=network-online.target local-voice-api.service local-german-tts-api.service
+
+[Service]
+Type=simple
+User=ecs-user
+WorkingDirectory=/data/ai-runtime/services/nexus_live_voice_media
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=LIVE_VOICE_SHARED_TOKEN_FILE=/run/credentials/nexus-live-voice-media.service/live_voice_token
+EnvironmentFile=/etc/nexus/live_voice_media.env
+LoadCredential=live_voice_token:/etc/nexus/secrets/live_voice_token
+ExecStart=/data/ai-runtime/probe-venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8060 --workers 1
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/data/ai-runtime/services/nexus_live_voice_media
+
+[Install]
+WantedBy=multi-user.target

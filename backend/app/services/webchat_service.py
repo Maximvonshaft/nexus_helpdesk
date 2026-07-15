@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ..models import Customer, Tenant, Ticket, TicketComment, TicketEvent, User
 from ..utils.time import utc_now
-from ..settings import get_settings
 from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
 from .customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
@@ -466,10 +465,40 @@ def _maybe_resume_stale_requested_handoff(
 
 
 def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, body: str, request: Request, *, client_message_id: str | None = None) -> dict[str, Any]:
+    conversation = get_authorized_webchat_conversation(db, public_id=public_id, visitor_token=visitor_token)
+    return add_visitor_message_to_conversation(
+        db,
+        conversation=conversation,
+        body=body,
+        client_message_id=client_message_id,
+        message_type="text",
+        origin=_origin_from_request(request),
+    )
+
+
+def get_authorized_webchat_conversation(
+    db: Session,
+    *,
+    public_id: str,
+    visitor_token: str | None,
+) -> WebchatConversation:
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="webchat conversation not found")
     _validate_token(conversation, visitor_token)
+    return conversation
+
+
+def add_visitor_message_to_conversation(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    body: str,
+    client_message_id: str | None = None,
+    message_type: str = "text",
+    origin: str | None = None,
+) -> dict[str, Any]:
+    public_id = conversation.public_id
     normalized_body = _clip_body(body)
     normalized_client_id = _clip(client_message_id, 120)
 
@@ -492,10 +521,10 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
         direction="visitor",
         body=normalized_body,
         body_text=normalized_body,
-        message_type="text",
+        message_type=_clip(message_type, 32) or "text",
         client_message_id=normalized_client_id,
         delivery_status="sent",
-        metadata_json=_metadata(generated_by="visitor", origin=_origin_from_request(request), fact_evidence_present=False),
+        metadata_json=_metadata(generated_by="visitor", origin=_clip(origin, 255), fact_evidence_present=False),
         author_label=conversation.visitor_name or "Visitor",
     )
     db.add(message)

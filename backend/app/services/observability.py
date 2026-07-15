@@ -82,15 +82,10 @@ _OUTBOUND_PROVIDER_DISPATCH = Histogram('nexusdesk_outbound_provider_dispatch_ms
 _OUTBOUND_PROVIDER_RESULT = Counter('nexusdesk_outbound_provider_result_total', 'Outbound provider dispatch result count', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
 _FRONTEND_API_LATENCY = Histogram('nexusdesk_frontend_api_latency_ms', 'Frontend-observed API latency in milliseconds', ['method', 'path', 'status'], registry=_PROM_REGISTRY, buckets=(25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000)) if Histogram else None
 _WEB_VITALS = Histogram('nexusdesk_web_vitals_value', 'Frontend Web Vitals values reported without PII', ['name', 'rating'], registry=_PROM_REGISTRY, buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)) if Histogram else None
-_VOICE_SESSION_EVENTS = Counter('nexusdesk_voice_session_events_total', 'WebCall voice lifecycle events without credentials', ['provider', 'status', 'event_type'], registry=_PROM_REGISTRY) if Counter else None
-_VOICE_PROVIDER_ERRORS = Counter('nexusdesk_voice_provider_errors_total', 'WebCall voice provider operation errors', ['provider', 'operation'], registry=_PROM_REGISTRY) if Counter else None
-_VOICE_CALL_DURATION = Histogram('nexusdesk_voice_call_duration_seconds', 'Completed WebCall duration in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600)) if Histogram else None
-_VOICE_RINGING_DURATION = Histogram('nexusdesk_voice_ringing_duration_seconds', 'WebCall ringing duration before accept or terminal state in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900)) if Histogram else None
-_WEBCALL_AI_EVENTS = Counter('nexusdesk_webcall_ai_events_total', 'WebCall AI event count without customer text', ['event_type'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCALL_AI_STAGE_DURATION = Histogram('nexusdesk_webcall_ai_stage_duration_ms', 'WebCall AI stage duration in milliseconds', ['stage', 'status', 'provider'], registry=_PROM_REGISTRY, buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
-_WEBCALL_AI_AUDIO_CHUNKS = Counter('nexusdesk_webcall_ai_audio_chunks_total', 'WebCall AI audio chunks published or attempted', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCALL_AI_AUDIO_BYTES = Counter('nexusdesk_webcall_ai_audio_bytes_total', 'WebCall AI audio bytes published or attempted', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCALL_AI_BARGE_IN = Counter('nexusdesk_webcall_ai_barge_in_total', 'WebCall AI barge-in interruption count', ['reason'], registry=_PROM_REGISTRY) if Counter else None
+_VOICE_SESSION_EVENTS = Counter('nexusdesk_voice_session_events_total', 'Voice session lifecycle events without credentials', ['provider', 'status', 'event_type'], registry=_PROM_REGISTRY) if Counter else None
+_VOICE_PROVIDER_ERRORS = Counter('nexusdesk_voice_provider_errors_total', 'Voice provider operation errors', ['provider', 'operation'], registry=_PROM_REGISTRY) if Counter else None
+_VOICE_CALL_DURATION = Histogram('nexusdesk_voice_call_duration_seconds', 'Completed voice call duration in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600)) if Histogram else None
+_VOICE_RINGING_DURATION = Histogram('nexusdesk_voice_ringing_duration_seconds', 'Voice ringing duration before accept or terminal state in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900)) if Histogram else None
 _WEBCHAT_WS_CONNECTED = Counter('nexusdesk_webchat_websocket_connected_total', 'WebChat WebSocket accepted connections', ['client_type'], registry=_PROM_REGISTRY) if Counter else None
 _WEBCHAT_WS_DISCONNECTED = Counter('nexusdesk_webchat_websocket_disconnected_total', 'WebChat WebSocket closed connections', ['client_type'], registry=_PROM_REGISTRY) if Counter else None
 _WEBCHAT_WS_AUTH_FAILED = Counter('nexusdesk_webchat_websocket_auth_failed_total', 'WebChat WebSocket rejected handshakes and subscriptions', ['client_type', 'reason'], registry=_PROM_REGISTRY) if Counter else None
@@ -329,30 +324,6 @@ def record_voice_call_duration(provider: str | None, status: str | None, duratio
 def record_voice_ringing_duration(provider: str | None, status: str | None, duration_seconds: int | float | None) -> None:
     if duration_seconds is not None and _VOICE_RINGING_DURATION:
         _VOICE_RINGING_DURATION.labels(provider=_label(provider), status=_label(status)).observe(max(float(duration_seconds), 0.0))
-
-
-def record_webcall_ai_event_metric(event_type: str | None) -> None:
-    if _WEBCALL_AI_EVENTS:
-        _WEBCALL_AI_EVENTS.labels(event_type=_label(event_type)).inc()
-
-
-def record_webcall_ai_stage_metric(stage: str | None, status: str | None = "ok", provider: str | None = None, elapsed_ms: int | float | None = None) -> None:
-    if elapsed_ms is not None and _WEBCALL_AI_STAGE_DURATION:
-        _WEBCALL_AI_STAGE_DURATION.labels(stage=_label(stage), status=_label(status), provider=_label(provider)).observe(max(float(elapsed_ms), 0.0))
-
-
-def record_webcall_ai_audio_metric(provider: str | None, status: str | None, *, chunks: int = 0, bytes_count: int = 0) -> None:
-    safe_provider = _label(provider)
-    safe_status = _label(status)
-    if chunks and _WEBCALL_AI_AUDIO_CHUNKS:
-        _WEBCALL_AI_AUDIO_CHUNKS.labels(provider=safe_provider, status=safe_status).inc(max(int(chunks), 0))
-    if bytes_count and _WEBCALL_AI_AUDIO_BYTES:
-        _WEBCALL_AI_AUDIO_BYTES.labels(provider=safe_provider, status=safe_status).inc(max(int(bytes_count), 0))
-
-
-def record_webcall_ai_barge_in(reason: str | None = None) -> None:
-    if _WEBCALL_AI_BARGE_IN:
-        _WEBCALL_AI_BARGE_IN.labels(reason=_label(reason, "barge_in")).inc()
 
 
 def log_signoff_state(state: str, **fields) -> None:

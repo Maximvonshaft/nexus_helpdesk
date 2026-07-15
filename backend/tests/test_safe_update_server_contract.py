@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="safe update contract requires POSIX filesystem semantics")
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "safe_update_server.sh"
 PROTECTED_FILES = {

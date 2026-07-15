@@ -65,6 +65,9 @@ def test_widget_voice_boundary_is_same_origin_and_secret_free() -> None:
     assert "url.host = window.location.host" in widget
     assert "token=" not in combined
     assert "LIVE_VOICE_UPSTREAM_TOKEN" not in combined
+    assert "visitor_token" not in widget[widget.index("  function buildLiveWsUrl") : widget.index("  function playPcm16")]
+    assert "connection_ticket" in widget
+    assert "/live-voice/session" in widget
     assert "47.87.143.41" not in combined
     assert "fetch(" not in worklet
     assert "WebSocket" not in worklet

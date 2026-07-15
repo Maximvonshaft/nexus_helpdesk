@@ -9,6 +9,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT = REPO_ROOT / "scripts" / "deploy" / "preflight.sh"
 
 
+def _bash_path(path: Path) -> str:
+    value = str(path)
+    if os.name != "nt":
+        return value
+    drive, tail = os.path.splitdrive(value)
+    return f"/{drive[0].lower()}{tail.replace(chr(92), '/')}"
+
+
+def _bash_executable() -> str:
+    if os.name != "nt":
+        return "bash"
+    git_bash = Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Git" / "bin" / "bash.exe"
+    return str(git_bash) if git_bash.is_file() else "bash"
+
+
 def _run_preflight(
     tmp_path: Path,
     *,
@@ -37,13 +52,13 @@ printf 'Preflight OK\\n'
     fake_python.chmod(0o755)
 
     env = os.environ.copy()
-    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["PATH"] = f"{_bash_path(bin_dir)}:/usr/bin:/bin"
     env["TRACE_FILE"] = str(trace_file)
     env["READINESS_EXIT_CODE"] = str(readiness_exit_code)
     env["SETTINGS_EXIT_CODE"] = str(settings_exit_code)
 
     completed = subprocess.run(
-        ["bash", str(PREFLIGHT)],
+        [_bash_executable(), str(PREFLIGHT)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

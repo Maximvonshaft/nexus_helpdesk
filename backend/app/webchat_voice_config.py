@@ -88,7 +88,7 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
     read_livekit_credentials = bool(enabled and provider == "livekit")
     config = WebchatVoiceRuntimeConfig(
         enabled=enabled,
-        allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat,/webchat/voice,/webcall,/webcall-ai,/webchat-voice"))),
+        allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat,/api/webchat"))),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
         provider=provider,
         session_ttl_seconds=int(os.getenv("WEBCHAT_VOICE_SESSION_TTL_SECONDS", "900")),

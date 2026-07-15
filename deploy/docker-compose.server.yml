@@ -32,6 +32,7 @@ x-app-image: &app_image
   volumes: &app_volumes
     - /run/secrets:/run/secrets:ro
     - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro
+    - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/live_voice_token:/run/nexus/live_voice_token:ro
     - ${NEXUSDESK_UPLOADS_DIR:-/opt/nexus_helpdesk/data/uploads}:/app/backend/uploads
   logging: &json_logging
     driver: json-file
@@ -164,24 +165,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  webcall-ai-agent:
-    <<: *app_image
-    profiles:
-      - webcall-ai
-    command: python -m app.services.webcall_ai_production.agent_worker
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'webcall_ai_production.agent_worker' in cmd, cmd; from app.services.webcall_ai_production.agent_worker import health; assert health()['ok']; print('webcall-ai-agent-ok')"
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    depends_on:
-      app:
-        condition: service_healthy
 
   legacy-worker:
     <<: *app_image

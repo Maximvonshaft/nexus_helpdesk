@@ -7,26 +7,30 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "infra" / "private-ai-runtime" / "live_voice_runtime" / "app.py"
 
 
-def test_voice_runtime_has_no_rule_or_empty_model_customer_reply() -> None:
+def test_voice_media_edge_has_no_customer_reply_generation() -> None:
     source = RUNTIME.read_text(encoding="utf-8")
 
     assert "def fast_rule_answer" not in source
-    assert "answer = fast_rule_answer" not in source
     assert "Please provide your tracking number" not in source
     assert "Could you please repeat your request?" not in source
-    assert 'raise RuntimeError("AI Runtime returned an empty voice reply")' in source
-    assert "answer = llm_answer_sync(customer_text, context, lang_code)" in source
+    assert "def llm_answer_sync" not in source
+    assert "def needs_rag" not in source
+    assert "def rag_context_sync" not in source
+    assert "OLLAMA_URL" not in source
+    assert "RAG_URL" not in source
+    assert "orchestrate_sync" in source
+    assert "NEXUS_LIVE_VOICE_TURN_URL" in source
     assert "HTML =" not in source
     assert "HTMLResponse" not in source
 
 
-def test_voice_runtime_allows_complete_natural_generation() -> None:
+def test_voice_media_edge_uses_runtime_reply_language_for_tts() -> None:
     source = RUNTIME.read_text(encoding="utf-8")
 
-    assert '"num_predict": 192' in source
-    assert '"num_ctx": 4096' in source
-    assert "usually two to four" in source
-    assert "One or two short sentences." not in source
+    assert 'response_language = str(result.get("language")' in source
+    assert "tts_sync, answer, response_language" in source
+    assert "kokoro-fallback" not in source
+    assert 'raise RuntimeError("tts_language_not_supported")' in source
 
 
 def test_voice_runtime_prevents_echo_barge_in_and_streams_complete_audio() -> None:

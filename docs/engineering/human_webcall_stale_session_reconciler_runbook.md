@@ -4,7 +4,7 @@
 
 The reconciler closes expired non-terminal Human WebCall sessions that were left open after a missed callback, browser disconnect, worker interruption, or provider lifecycle gap.
 
-It does not enable WebCall AI, recording, transcription, raw audio storage, outbound writes, or any customer-visible AI voice entry.
+It does not enable recording, raw audio storage, outbound writes, or the live voice Runtime entry.
 
 ## Behavior
 

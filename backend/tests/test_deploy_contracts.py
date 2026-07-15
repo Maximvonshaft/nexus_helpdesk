@@ -73,12 +73,12 @@ def test_private_ai_runtime_uses_app_readable_runtime_secret_mount():
     server_compose = _read("deploy/docker-compose.server.yml")
     candidate_compose = _read("deploy/docker-compose.candidate.yml")
     server_expected_mount = "${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro"
+    server_voice_mount = "${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/live_voice_token:/run/nexus/live_voice_token:ro"
     candidate_expected_mount = "/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro"
+    candidate_voice_mount = "/opt/nexus_helpdesk/deploy/runtime_secrets/live_voice_token:/run/nexus/live_voice_token:ro"
 
     assert env["PRIVATE_AI_RUNTIME_TOKEN_FILE"] == "/run/nexus/ai_runtime_token"
-    assert env["STT_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
-    assert env["LLM_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
-    assert env["TTS_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
+    assert env["LIVE_VOICE_UPSTREAM_TOKEN_FILE"] == "/run/nexus/live_voice_token"
     assert env["KNOWLEDGE_EMBEDDING_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
     assert env["PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS"] == "20"
     assert env["PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS"] == "3500"
@@ -88,17 +88,19 @@ def test_private_ai_runtime_uses_app_readable_runtime_secret_mount():
     assert env["WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS"] == "0.02"
     assert env["WEBCHAT_WS_REPLAY_POLL_MS"] == "100"
     assert env["PRIVATE_AI_RUNTIME_OLLAMA_KEEP_ALIVE"] == "24h"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_SHORT"] == "24"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_SERVICE"] == "96"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_STANDARD"] == "192"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_SHORT"] == "1024"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_SERVICE"] == "1024"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_STANDARD"] == "1024"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_REPAIR"] == "1024"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_SHORT"] == "80"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_SERVICE"] == "192"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_STANDARD"] == "320"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_SHORT"] == "2048"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_SERVICE"] == "4096"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_STANDARD"] == "4096"
+    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_REPAIR"] == "4096"
     assert env["PROVIDER_RUNTIME_TIMEOUT_MS"] == "30000"
     assert env["NEXUSDESK_RUNTIME_SECRETS_DIR"] == "/opt/nexus_helpdesk/deploy/runtime_secrets"
     assert server_expected_mount in server_compose
+    assert server_voice_mount in server_compose
     assert candidate_expected_mount in candidate_compose
+    assert candidate_voice_mount in candidate_compose
 
 
 def test_controlled_compose_keeps_live_voice_token_separate_from_ai_runtime_token():
@@ -107,4 +109,4 @@ def test_controlled_compose_keeps_live_voice_token_separate_from_ai_runtime_toke
 
     assert env["LIVE_VOICE_TOKEN_HOST_PATH"].endswith("/live_voice_token")
     assert env["LIVE_VOICE_UPSTREAM_TOKEN_FILE"] == "/run/nexus/live_voice_token"
-    assert "${LIVE_VOICE_TOKEN_HOST_PATH:-/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token}:/run/nexus/live_voice_token:ro" in compose
+    assert "${LIVE_VOICE_TOKEN_HOST_PATH:?set live voice token host path}:/run/nexus/live_voice_token:ro" in compose
