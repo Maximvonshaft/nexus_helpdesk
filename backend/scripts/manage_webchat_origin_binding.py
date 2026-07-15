@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -17,9 +18,18 @@ from app.models_webchat_binding import WebchatPublicOriginBinding
 from app.services.webchat_tenant_binding import normalize_public_origin
 from app.utils.time import utc_now
 
+_COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
+
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _country(value: str) -> str:
+    normalized = value.strip().upper()
+    if not _COUNTRY_RE.fullmatch(normalized):
+        raise SystemExit("invalid_country_code")
+    return normalized
 
 
 def _safe_row(row: WebchatPublicOriginBinding) -> dict[str, object]:
@@ -27,6 +37,7 @@ def _safe_row(row: WebchatPublicOriginBinding) -> dict[str, object]:
         "id": row.id,
         "origin": row.normalized_origin,
         "tenant_hash": _hash(row.tenant_key),
+        "country_code": row.country_code,
         "channel_key": row.channel_key,
         "display_name": row.display_name,
         "is_active": bool(row.is_active),
@@ -45,6 +56,7 @@ def main() -> int:
     upsert = sub.add_parser("upsert")
     upsert.add_argument("--origin", required=True)
     upsert.add_argument("--tenant", required=True)
+    upsert.add_argument("--country", required=True)
     upsert.add_argument("--channel", required=True)
     upsert.add_argument("--display-name")
 
@@ -80,10 +92,12 @@ def main() -> int:
             print(json.dumps(_safe_row(row), sort_keys=True))
             return 0
 
+        country_code = _country(args.country)
         if row is None:
             row = WebchatPublicOriginBinding(
                 normalized_origin=origin,
                 tenant_key=args.tenant.strip(),
+                country_code=country_code,
                 channel_key=args.channel.strip(),
                 display_name=(args.display_name or "").strip() or None,
                 is_active=True,
@@ -91,6 +105,7 @@ def main() -> int:
             db.add(row)
         else:
             row.tenant_key = args.tenant.strip()
+            row.country_code = country_code
             row.channel_key = args.channel.strip()
             row.display_name = (args.display_name or "").strip() or None
             row.is_active = True
