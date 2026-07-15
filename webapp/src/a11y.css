@@ -43,10 +43,9 @@ select:focus-visible,
     scroll-behavior: auto !important;
   }
 
-  .button,
   .nd-button,
   .nd-control,
-  .queue-card,
+  .operator-queue-row,
   .command-item,
   .auth-frame,
   .auth-card,
@@ -56,9 +55,8 @@ select:focus-visible,
     transition-duration: .01ms !important;
   }
 
-  .button:hover,
   .nd-button:hover,
-  .queue-card:hover,
+  .operator-queue-row:hover,
   .command-item:hover {
     transform: none !important;
   }
