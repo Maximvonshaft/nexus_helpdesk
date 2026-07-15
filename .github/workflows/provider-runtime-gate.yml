@@ -145,12 +145,54 @@ jobs:
           PYTHONPATH: backend
         run: |
           set -Eeuo pipefail
+          mkdir -p artifacts/provider-runtime
           python - <<'PY'
+          import json
+          from pathlib import Path
+
           from app.main import app
-          routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert '/api/admin/provider-runtime/status' in routes, routes
-          assert '/api/webchat/init' in routes, routes
-          assert not any('provider-credentials/codex' in path for path in routes), routes
-          assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), routes
-          print('route_smoke_ok')
+
+          routes = sorted({getattr(route, 'path', '') for route in app.routes if getattr(route, 'path', '')})
+          required = {
+              '/api/admin/provider-runtime/status',
+              '/api/webchat/init',
+          }
+          missing = sorted(required - set(routes))
+          retired_route_fragments = (
+              ('provider', 'codex'),
+              ('webchat', 'fast'),
+              ('fast', 'reply'),
+          )
+          forbidden_hits = sorted(
+              path
+              for path in routes
+              if any(all(fragment in path for fragment in fragments) for fragments in retired_route_fragments)
+          )[:20]
+          payload = {
+              'schema': 'nexus.provider-runtime.route-safety.v1',
+              'status': 'pass' if not missing and not forbidden_hits else 'fail',
+              'route_count': len(routes),
+              'missing_required': missing,
+              'forbidden_hits': forbidden_hits,
+              'truncated': len(forbidden_hits) >= 20,
+          }
+          Path('artifacts/provider-runtime/route-safety.json').write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(
+              'PROVIDER_ROUTE_SAFETY=' + str(payload['status'])
+              + f" missing_count={len(missing)} forbidden_count={len(forbidden_hits)}"
+          )
+          if payload['status'] != 'pass':
+              raise SystemExit(1)
           PY
+
+      - name: Upload bounded route safety evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-runtime-route-safety-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/provider-runtime/route-safety.json
+          if-no-files-found: error
+          retention-days: 7
