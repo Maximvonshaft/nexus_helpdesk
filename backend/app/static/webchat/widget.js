@@ -58,6 +58,7 @@ var MAX_CAPTURE_PACKET_BYTES = 4096;
     legacyPollTimer: null,
     legacyWs: null,
     legacyWsReconnectTimer: null,
+    legacyRecoveryPromise: null,
     voiceOpen: false,
     liveVoice: null,
     rendered: {}
@@ -876,6 +877,35 @@ return;
     } catch (err) {}
   }
 
+  function isLegacySessionAuthError(err) {
+    return Boolean(err && (err.status === 401 || err.status === 403 || err.status === 404));
+  }
+
+  function clearLegacySession() {
+    if (state.legacyWsReconnectTimer) clearTimeout(state.legacyWsReconnectTimer);
+    state.legacyWsReconnectTimer = null;
+    try {
+      if (state.legacyWs && state.legacyWs.readyState < WebSocket.CLOSING) state.legacyWs.close(1000, 'session_reset');
+    } catch (err) {}
+    state.legacyWs = null;
+    state.legacyConversationId = null;
+    state.legacyVisitorToken = null;
+    state.legacyLastMessageId = 0;
+    state.legacyLastEventId = 0;
+    try { window.sessionStorage.removeItem(storageKey + ':legacy'); } catch (err) {}
+  }
+
+  function recoverLegacySession() {
+    if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
+    clearLegacySession();
+    state.legacyRecoveryPromise = ensureLegacySession().then(function () {
+      if (!state.legacyConversationId || !state.legacyVisitorToken) throw new Error('webchat_session_recovery_failed');
+    }).finally(function () {
+      state.legacyRecoveryPromise = null;
+    });
+    return state.legacyRecoveryPromise;
+  }
+
   function rememberPublicSession(data) {
     var session = data && (data.webchat_session || data);
     if (!session || !session.conversation_id || !session.visitor_token) return;
@@ -913,8 +943,9 @@ return;
       setStatus('');
       startLegacyWs();
       return pollLegacy(true);
-    }).catch(function () {
+    }).catch(function (err) {
       setStatus('');
+      if (isLegacySessionAuthError(err)) return recoverLegacySession();
     });
   }
 
@@ -988,6 +1019,7 @@ return;
         try { data = JSON.parse(String(event.data || '{}')); } catch (err) { return; }
         if (data.type === 'connection.ready' || data.type === 'subscription.ready' || data.type === 'pong') return;
         if (data.type === 'error') {
+          if (data.code === 'request_failed' && data.retryable !== true) recoverLegacySession().catch(function () {});
           try { state.legacyWs.close(1000, 'server_error'); } catch (err) {}
           return;
         }
@@ -1026,12 +1058,18 @@ return;
     inputEl.value = '';
     setStatus('');
     showTyping();
-    ensureLegacySession().then(function () {
+    function submit() {
       return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages', {
         method: 'POST',
         headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
         body: JSON.stringify({ body: body, client_message_id: cmid })
       }, 12000);
+    }
+    ensureLegacySession().then(function () {
+      return submit().catch(function (err) {
+        if (!isLegacySessionAuthError(err)) throw err;
+        return recoverLegacySession().then(submit);
+      });
     }).then(function (data) {
       updateMessage(bubble, body, 'visitor');
       if (data && data.message) {

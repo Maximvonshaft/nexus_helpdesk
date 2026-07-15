@@ -156,8 +156,20 @@ def test_webchat_static_assets_force_cache_revalidation():
     assert "request.url.path.startswith('/webchat/')" in main
     assert "request.url.path.startswith('/static/webchat/')" in main
     assert "no-cache, max-age=0, must-revalidate" in main
-    assert "/webchat/widget.js?v=webchat-recovery-35ba9488" in demo
+    assert "/webchat/widget.js?v=webchat-session-recovery-v1" in demo
     assert "nexus-widget-consolidated-20260706" not in demo
+
+
+def test_static_widget_recovers_stale_visitor_session_before_retrying_send():
+    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+
+    assert "function isLegacySessionAuthError(err)" in text
+    assert "err.status === 401 || err.status === 403 || err.status === 404" in text
+    assert "function clearLegacySession()" in text
+    assert "window.sessionStorage.removeItem(storageKey + ':legacy')" in text
+    assert "function recoverLegacySession()" in text
+    assert "return recoverLegacySession().then(submit);" in text
+    assert "body: JSON.stringify({ body: body, client_message_id: cmid })" in text
 
 
 def test_webchat_ws_observability_and_connection_limits_contract():
