@@ -17,6 +17,10 @@ from app.schemas_control_plane import KnowledgeItemCreate  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.knowledge_retrieval_service import retrieve_published_chunks  # noqa: E402
 from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
+from app.services.knowledge_runtime.runtime import (  # noqa: E402
+    KnowledgeRuntimeHit,
+    _apply_answerability_policy,
+)
 
 
 @pytest.fixture()
@@ -253,3 +257,39 @@ def test_country_code_not_used_as_plain_text_term(db_session):
     assert runtime.hits == []
     assert "ch" not in runtime.trace["query"]["filtered_terms"]
     assert "ch" in runtime.trace["query"]["country_terms"]
+
+
+def test_vector_only_similarity_cannot_authorize_customer_knowledge():
+    hit = KnowledgeRuntimeHit(
+        item_id=1,
+        item_key="fact.unrelated",
+        title="Unrelated policy",
+        published_version=1,
+        chunk_index=0,
+        score=27.8,
+        text="Unrelated customer policy.",
+        metadata={"authority_level": "official_policy", "risk_level": "low"},
+        retrieval_method="pgvector+vector",
+        matched_terms=[],
+        score_breakdown={"vector": 20.94, "priority": 5.94},
+    )
+
+    assert _apply_answerability_policy([hit]) == []
+
+
+def test_vector_can_rerank_an_explainable_knowledge_match():
+    hit = KnowledgeRuntimeHit(
+        item_id=1,
+        item_key="fact.service.availability",
+        title="Service availability",
+        published_version=1,
+        chunk_index=0,
+        score=80.0,
+        text="Switzerland domestic service availability.",
+        metadata={"authority_level": "official_policy", "risk_level": "low"},
+        retrieval_method="fts+pgvector+vector",
+        matched_terms=["switzerland", "service"],
+        score_breakdown={"fts": 10.0, "vector": 20.0, "priority": 5.0},
+    )
+
+    assert _apply_answerability_policy([hit]) == [hit]

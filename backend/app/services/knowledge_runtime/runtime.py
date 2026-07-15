@@ -345,6 +345,7 @@ def retrieve_knowledge(
             )
 
     fused = _rrf_fuse(list(candidate_hits.values()))
+    vector_only_rejected = sum(not _has_explainable_query_match(hit) for hit in fused)
     fused = _apply_answerability_policy(fused)
     fused.sort(
         key=lambda hit: (
@@ -386,6 +387,10 @@ def retrieve_knowledge(
         "rerank": {
             "strategy": "deterministic_policy",
             "top_item_keys": [hit.item_key for hit in hits[:5]],
+        },
+        "relevance_gate": {
+            "policy": "lexical_or_alias_evidence_required",
+            "vector_only_rejected": vector_only_rejected,
         },
         "evidence_selected": [_trace_hit(hit) for hit in hits[:8]],
         "retrieval_methods": methods,
@@ -1292,10 +1297,16 @@ def _apply_answerability_policy(
 ) -> list[KnowledgeRuntimeHit]:
     if not hits:
         return []
-    if not any(str(hit.metadata.get("risk_level") or "low").lower() in {"high", "critical"} for hit in hits):
-        return hits
+    answerable = [hit for hit in hits if _has_explainable_query_match(hit)]
+    if not answerable:
+        return []
+    if not any(
+        str(hit.metadata.get("risk_level") or "low").lower() in {"high", "critical"}
+        for hit in answerable
+    ):
+        return answerable
     gated: list[KnowledgeRuntimeHit] = []
-    for hit in hits:
+    for hit in answerable:
         authority = str(hit.metadata.get("authority_level") or "faq")
         if (
             authority in {"tool", "official_policy", "policy"}
@@ -1303,6 +1314,13 @@ def _apply_answerability_policy(
         ):
             gated.append(hit)
     return gated
+
+
+def _has_explainable_query_match(hit: KnowledgeRuntimeHit) -> bool:
+    if hit.matched_terms:
+        return True
+    breakdown = hit.score_breakdown or {}
+    return any(float(breakdown.get(key) or 0.0) > 0 for key in ("exact_phrase", "alias", "fts"))
 def _blocked_result(
     *,
     reason: str,
