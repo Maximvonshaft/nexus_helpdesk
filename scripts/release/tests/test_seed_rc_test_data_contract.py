@@ -19,9 +19,9 @@ class RcSeedContractTest(unittest.TestCase):
 
     def _seed_function(self) -> ast.FunctionDef:
         for node in self.tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name == "seed_public_origin_binding":
+            if isinstance(node, ast.FunctionDef) and node.name == "seed_rc_authorities":
                 return node
-        self.fail("seed_public_origin_binding function is missing")
+        self.fail("seed_rc_authorities function is missing")
 
     def test_standalone_helpers_bootstrap_backend_before_app_imports(self) -> None:
         for name, source in (
@@ -50,22 +50,38 @@ class RcSeedContractTest(unittest.TestCase):
         self.assertIn("SessionLocal", positions)
         self.assertLess(positions["register_all_models"], positions["SessionLocal"])
 
-    def test_origin_is_runtime_configurable_and_normalized(self) -> None:
+    def test_origin_and_country_are_runtime_configurable_and_normalized(self) -> None:
         self.assertIn('"RC_PUBLIC_ORIGIN"', self.source)
         self.assertIn("normalize_public_origin(requested_origin)", self.source)
+        self.assertIn('"RC_TEST_COUNTRY_CODE"', self.source)
+        self.assertIn("normalize_country_code(", self.source)
         self.assertNotIn('origin = "https://rc-test.invalid"', self.source)
 
     def test_seed_creates_active_authoritative_tenant_before_binding(self) -> None:
-        self.assertIn("from app.models import Tenant", self.source)
+        self.assertIn("from app.models import Tenant, User", self.source)
         self.assertIn("Tenant.tenant_key == tenant_key", self.source)
         self.assertIn("if tenant is None:", self.source)
         self.assertIn("Tenant(", self.source)
         self.assertIn("tenant.is_active = True", self.source)
         self.assertLess(self.source.index("Tenant.tenant_key == tenant_key"), self.source.index("WebchatPublicOriginBinding.normalized_origin == origin"))
 
+    def test_seed_materializes_one_exact_operator_scope_grant(self) -> None:
+        for marker in (
+            "OperatorQueueScopeGrant(",
+            "OperatorQueueScopeGrant.user_id == user.id",
+            "OperatorQueueScopeGrant.tenant_key == tenant_key",
+            "OperatorQueueScopeGrant.country_code == country_code",
+            "OperatorQueueScopeGrant.channel_key == channel_key",
+            "grant.enabled = True",
+            "granted_by=user.id",
+        ):
+            self.assertIn(marker, self.source)
+        self.assertNotIn("current_user.role", self.source)
+
     def test_seed_is_idempotent_and_committed(self) -> None:
         self.assertIn("WebchatPublicOriginBinding.normalized_origin == origin", self.source)
         self.assertIn("if binding is None:", self.source)
+        self.assertIn("if grant is None:", self.source)
         self.assertIn("db.commit()", self.source)
         self.assertIn("db.refresh(binding)", self.source)
         self.assertIn("db.rollback()", self.source)
@@ -76,8 +92,11 @@ class RcSeedContractTest(unittest.TestCase):
         for name in (
             "RC_PUBLIC_ORIGIN",
             "RC_TEST_TENANT_KEY",
+            "RC_TEST_COUNTRY_CODE",
             "RC_TEST_CHANNEL_KEY",
             "RC_TEST_DISPLAY_NAME",
+            "RC_TEST_ADMIN_USERNAME",
+            "RC_TEST_ADMIN_PASSWORD",
         ):
             self.assertIn(f'"{name}"', self.source)
 
