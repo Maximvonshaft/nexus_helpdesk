@@ -19,6 +19,8 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/data/ai-runtime/services/nexus_live_voice_media
+ReadWritePaths=/data/ai-runtime/services/local_voice_api/output
+ReadWritePaths=/data/ai-runtime/services/local_german_tts_api/output
 
 [Install]
 WantedBy=multi-user.target
