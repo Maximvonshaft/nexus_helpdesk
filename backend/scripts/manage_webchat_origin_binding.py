@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -15,21 +14,12 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.db import db_context
 from app.model_registry import register_all_models
 from app.models_webchat_binding import WebchatPublicOriginBinding
-from app.services.webchat_tenant_binding import normalize_public_origin
+from app.services.webchat_tenant_binding import normalize_country_code, normalize_public_origin
 from app.utils.time import utc_now
-
-_COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-
-
-def _country(value: str) -> str:
-    normalized = value.strip().upper()
-    if not _COUNTRY_RE.fullmatch(normalized):
-        raise SystemExit("invalid_country_code")
-    return normalized
 
 
 def _safe_row(row: WebchatPublicOriginBinding) -> dict[str, object]:
@@ -92,7 +82,9 @@ def main() -> int:
             print(json.dumps(_safe_row(row), sort_keys=True))
             return 0
 
-        country_code = _country(args.country)
+        country_code = normalize_country_code(args.country)
+        if country_code is None:
+            raise SystemExit("country_required")
         if row is None:
             row = WebchatPublicOriginBinding(
                 normalized_origin=origin,
