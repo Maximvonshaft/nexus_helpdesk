@@ -41,7 +41,7 @@ from ..schemas import (
     TagRead,
     MarketBulletinRead,
 )
-from ..services.ticket_service import (
+from ..services.canonical_ticket_service import (
     add_ai_intake,
     add_attachment,
     add_comment,
@@ -89,123 +89,50 @@ def _serialize_attachment(row) -> dict:
 def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
     settings = get_settings()
     channel_value = row.channel.value if hasattr(row.channel, "value") else str(row.channel)
-    external_send = outbound_is_external_send(row.channel, row.provider_status)
-    if external_send:
-        delivery_semantics = "external_provider_send"
-    elif channel_value == SourceChannel.web_chat.value:
-        delivery_semantics = "local_webchat_delivery"
-    else:
-        delivery_semantics = "local_or_non_dispatchable"
     return {
         "id": row.id,
         "ticket_id": row.ticket_id,
-        "channel": row.channel,
-        "status": row.status,
-        "subject": getattr(row, "subject", None),
+        "channel": channel_value,
+        "channel_ui_label": outbound_ui_label(channel_value),
+        "subject": row.subject,
         "body": row.body,
+        "recipients": row.recipients,
+        "status": row.status.value if hasattr(row.status, "value") else str(row.status),
+        "external_message_id": row.external_message_id,
+        "error_message": row.error_message,
+        "created_at": row.created_at,
+        "sent_at": row.sent_at,
+        "updated_at": row.updated_at,
         "provider_status": row.provider_status,
-        "provider_message_id": row.provider_message_id,
+        "delivery_status": row.delivery_status,
         "mailbox_thread_id": row.mailbox_thread_id,
         "mailbox_message_id": row.mailbox_message_id,
         "mailbox_references": row.mailbox_references,
-        "error_message": row.error_message,
-        "retry_count": row.retry_count,
-        "max_retries": row.max_retries,
-        "sent_at": row.sent_at,
-        "created_at": row.created_at,
-        "failure_code": getattr(row, "failure_code", None),
-        "failure_reason": getattr(row, "failure_reason", None),
-        "delivery_status": getattr(row, "delivery_status", None),
-        "delivery_event_type": getattr(row, "delivery_event_type", None),
-        "delivery_receipt_provider": getattr(row, "delivery_receipt_provider", None),
-        "delivery_receipt_id": getattr(row, "delivery_receipt_id", None),
-        "delivery_receipt_at": getattr(row, "delivery_receipt_at", None),
-        "delivery_detail": getattr(row, "delivery_detail", None),
-        "external_send": external_send,
-        "delivery_semantics": delivery_semantics,
-        "dispatch_enabled": bool(settings.enable_outbound_dispatch),
-        "outbound_provider": settings.outbound_provider,
-        "ui_label": outbound_ui_label(row.channel, row.status, row.provider_status),
-        "operator_note": "Queued for external provider dispatch; wait for sent/dead/review final state" if external_send else "Local-only delivery; no external provider send occurred",
-        "attachments": [_serialize_attachment(attachment) for attachment in getattr(row, "attachments", [])],
-        "attachment_ids": [attachment.id for attachment in getattr(row, "attachments", [])],
-        "attachments_count": len(getattr(row, "attachments", [])),
+        "from_address": row.from_address,
+        "reply_to_address": row.reply_to_address,
+        "provider_message_id": row.provider_message_id,
+        "failure_reason": row.failure_reason,
+        "outbound_is_external_send": outbound_is_external_send(channel_value),
+        "external_channel_runtime_enabled": bool(settings.external_channel_transport != "disabled"),
     }
 
 
-def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
-    tag_rows = db.query(Tag).join(TicketTag, TicketTag.tag_id == Tag.id).filter(TicketTag.ticket_id == ticket.id).all()
-    external_channel_rows = db.query(ExternalChannelTranscriptMessage).filter(ExternalChannelTranscriptMessage.ticket_id == ticket.id).order_by(ExternalChannelTranscriptMessage.created_at.desc()).limit(50).all()
-    return TicketRead(
-        id=ticket.id,
-        ticket_no=ticket.ticket_no,
-        title=ticket.title,
-        description=ticket.description,
-        source=ticket.source,
-        source_channel=ticket.source_channel,
-        priority=ticket.priority,
-        status=ticket.status,
-        category=ticket.category,
-        sub_category=ticket.sub_category,
-        tracking_number=ticket.tracking_number,
-        case_type=ticket.case_type,
-        issue_summary=ticket.issue_summary,
-        customer_request=ticket.customer_request,
-        source_chat_id=ticket.source_chat_id,
-        required_action=ticket.required_action,
-        missing_fields=ticket.missing_fields,
-        last_customer_message=ticket.last_customer_message,
-        customer_update=ticket.customer_update,
-        resolution_summary=ticket.resolution_summary,
-        last_human_update=ticket.last_human_update,
-        requested_time=ticket.requested_time,
-        destination=ticket.destination,
-        preferred_reply_channel=ticket.preferred_reply_channel,
-        preferred_reply_contact=ticket.preferred_reply_contact,
-        market_id=ticket.market_id,
-        market_code=ticket.market.code if getattr(ticket, 'market', None) else None,
-        country_code=ticket.country_code,
-        conversation_state=ticket.conversation_state,
-        customer=CustomerRead.model_validate(ticket.customer) if ticket.customer else None,
-        assignee=UserRead.model_validate(ticket.assignee) if ticket.assignee else None,
-        team=TeamRead.model_validate(ticket.team) if ticket.team else None,
-        tags=[TagRead.model_validate(tag) for tag in tag_rows],
-        ai_summary=ticket.ai_summary,
-        ai_classification=ticket.ai_classification,
-        ai_confidence=ticket.ai_confidence,
-        first_response_at=ticket.first_response_at,
-        first_response_due_at=ticket.first_response_due_at,
-        resolution_due_at=ticket.resolution_due_at,
-        first_response_breached=ticket.first_response_breached,
-        resolution_breached=ticket.resolution_breached,
-        reopen_count=ticket.reopen_count,
-        resolution_category=ticket.resolution_category,
-        created_at=ticket.created_at,
-        updated_at=ticket.updated_at,
-        comments=[CommentRead.model_validate(x) for x in ticket.comments],
-        internal_notes=[InternalNoteRead.model_validate(x) for x in ticket.internal_notes],
-        attachments=[AttachmentRead.model_validate(x) for x in ticket.attachments],
-        outbound_messages=[OutboundMessageRead.model_validate(x) for x in ticket.outbound_messages],
-        ai_intakes=[AIIntakeRead.model_validate(x) for x in ticket.ai_intakes],
-        external_channel_conversation=ExternalChannelConversationRead.model_validate(ticket.external_channel_link) if ticket.external_channel_link else None,
-        external_channel_transcript=[ExternalChannelTranscriptRead.model_validate(x) for x in reversed(external_channel_rows)],
-        external_channel_attachment_references=[ExternalChannelAttachmentReferenceRead.model_validate(x) for x in ticket.external_channel_attachment_references],
-        active_market_bulletins=[MarketBulletinRead.model_validate(x) for x in list_active_bulletins(db, market_id=ticket.market_id, country_code=ticket.country_code, channel=ticket.preferred_reply_channel or (ticket.source_channel.value if ticket.source_channel else None))],
-    )
-
-
-@router.post("", response_model=TicketRead)
-def create_ticket_endpoint(payload: TicketCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    with managed_session(db):
-        ticket = create_ticket(db, payload, current_user)
-        db.flush()
-    return _serialize_ticket(ticket, db)
+def _serialize_ticket(ticket: Ticket, db: Session, current_user) -> TicketRead:
+    ensure_ticket_visible(current_user, ticket, db)
+    result = TicketRead.model_validate(ticket)
+    result.sla = compute_sla_snapshot(ticket)
+    result.outbound_messages = [OutboundMessageRead(**_serialize_outbound_message(row)) for row in ticket.outbound_messages]
+    result.timeline = [TimelineItemRead(**item) for item in build_unified_timeline(db, ticket, current_user)]
+    result.active_bulletins = [MarketBulletinRead.model_validate(row) for row in list_active_bulletins(db, market_id=ticket.market_id, country_code=ticket.country_code)]
+    result.outbound_channel_capabilities = list_outbound_channel_capabilities(db, ticket=ticket, current_user=current_user)
+    return result
 
 
 @router.get("", response_model=list[TicketListItem])
-def list_tickets_endpoint(
+def tickets_list(
     q: str | None = None,
     status: str | None = None,
+    status_in: str | None = None,
     priority: str | None = None,
     assignee_id: int | None = None,
     team_id: int | None = None,
@@ -215,11 +142,13 @@ def list_tickets_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    tickets = list_tickets(
+    status_values = [item.strip() for item in status_in.split(",") if item.strip()] if status_in else None
+    rows = list_tickets(
         db,
         current_user,
         q=q,
         status_value=status,
+        status_in=status_values,
         priority_value=priority,
         assignee_id=assignee_id,
         team_id=team_id,
@@ -227,216 +156,177 @@ def list_tickets_endpoint(
         limit=limit,
         skip=skip,
     )
-    result = []
-    for t in tickets:
-        result.append(
-            TicketListItem(
-                id=t.id,
-                ticket_no=t.ticket_no,
-                title=t.title,
-                status=t.status,
-                priority=t.priority,
-                source_channel=t.source_channel,
-                category=t.category,
-                sub_category=t.sub_category,
-                tracking_number=t.tracking_number,
-                customer_name=t.customer.name if t.customer else None,
-                assignee_name=t.assignee.display_name if t.assignee else None,
-                team_name=t.team.name if t.team else None,
-                updated_at=t.updated_at,
-                resolution_due_at=t.resolution_due_at,
-                overdue=compute_sla_snapshot(t).get("overdue", False),
-            )
-        )
-    return result
+    return [TicketListItem.model_validate(row) for row in rows]
+
+
+@router.post("", response_model=TicketRead)
+def tickets_create(payload: TicketCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        ticket = create_ticket(db, payload, current_user)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)
-def get_ticket_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_get(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.patch("/{ticket_id}", response_model=TicketRead)
-def update_ticket_endpoint(ticket_id: int, payload: TicketUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_update(ticket_id: int, payload: TicketUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         ticket = update_ticket(db, ticket_id, payload, current_user)
-        db.flush()
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.post("/{ticket_id}/assign", response_model=TicketRead)
-def assign_ticket_endpoint(ticket_id: int, payload: TicketAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_assign(ticket_id: int, payload: TicketAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         ticket = assign_ticket(db, ticket_id, payload, current_user)
-        db.flush()
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.post("/{ticket_id}/status", response_model=TicketRead)
-def change_status_endpoint(ticket_id: int, payload: TicketStatusChangeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_status(ticket_id: int, payload: TicketStatusChangeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         ticket = change_status(db, ticket_id, payload, current_user)
-        db.flush()
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.post("/{ticket_id}/escalate", response_model=TicketRead)
-def escalate_ticket_endpoint(ticket_id: int, payload: TicketEscalateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_escalate(ticket_id: int, payload: TicketEscalateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         ticket = escalate_ticket(db, ticket_id, payload, current_user)
-        db.flush()
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.post("/{ticket_id}/reopen", response_model=TicketRead)
-def reopen_ticket_endpoint(ticket_id: int, payload: TicketReopenRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_reopen(ticket_id: int, payload: TicketReopenRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         ticket = reopen_ticket(db, ticket_id, payload, current_user)
-        db.flush()
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(ticket, db, current_user)
 
 
 @router.post("/{ticket_id}/comments", response_model=CommentRead)
-def add_comment_endpoint(ticket_id: int, payload: CommentCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_comment(ticket_id: int, payload: CommentCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         row = add_comment(db, ticket_id, payload, current_user)
-        db.flush()
-    return row
+    return CommentRead.model_validate(row)
 
 
 @router.post("/{ticket_id}/internal-notes", response_model=InternalNoteRead)
-def add_internal_note_endpoint(ticket_id: int, payload: InternalNoteCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def tickets_internal_note(ticket_id: int, payload: InternalNoteCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         row = add_internal_note(db, ticket_id, payload, current_user)
-        db.flush()
-    return row
+    return InternalNoteRead.model_validate(row)
+
+
+@router.post("/{ticket_id}/ai-intakes", response_model=AIIntakeRead)
+def tickets_ai_intake(ticket_id: int, payload: AIIntakeCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        row = add_ai_intake(db, ticket_id, payload, current_user)
+    return AIIntakeRead.model_validate(row)
 
 
 @router.post("/{ticket_id}/attachments", response_model=AttachmentRead)
-def upload_attachment_endpoint(
+def tickets_attachment(
     ticket_id: int,
     file: UploadFile = File(...),
-    visibility: str = Form("external"),
+    visibility: NoteVisibility = Form(default=NoteVisibility.internal),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     with managed_session(db):
-        item = add_attachment(
-            db,
-            ticket_id,
-            file,
-            NoteVisibility(visibility),
-            current_user,
-        )
-        db.flush()
-    return item
+        row = add_attachment(db, ticket_id, file, visibility, current_user)
+    return AttachmentRead(**_serialize_attachment(row))
 
 
-@router.get("/{ticket_id}/outbound/channels/capabilities")
-def ticket_outbound_channel_capabilities(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
-    return {
-        "channels": [item.to_dict() for item in list_outbound_channel_capabilities(db=db, ticket=ticket)],
-    }
-
-
-@router.post("/{ticket_id}/outbound/draft", response_model=OutboundMessageRead)
-def save_draft_endpoint(ticket_id: int, payload: OutboundDraftCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post("/{ticket_id}/outbound/drafts", response_model=OutboundMessageRead)
+def tickets_outbound_draft(ticket_id: int, payload: OutboundDraftCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         row = save_outbound_draft(db, ticket_id, payload, current_user)
-        db.flush()
-    return row
+    return OutboundMessageRead(**_serialize_outbound_message(row))
 
 
-@router.post("/{ticket_id}/outbound/send")
-def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post("/{ticket_id}/outbound/send", response_model=OutboundMessageRead)
+def tickets_outbound_send(ticket_id: int, payload: OutboundSendRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_outbound_channel_sendable(payload.channel)
     with managed_session(db):
-        ticket = get_ticket_or_404(db, ticket_id)
-        ensure_ticket_visible(current_user, ticket, db)
-        require_outbound_channel_sendable(db, ticket=ticket, channel=payload.channel)
         row = send_outbound_message(db, ticket_id, payload, current_user)
-        db.flush()
-    return _serialize_outbound_message(row)
+    return OutboundMessageRead(**_serialize_outbound_message(row))
 
 
-@router.post("/{ticket_id}/email/inbound", response_model=InboundEmailIngestResponse)
-def ingest_inbound_email_endpoint(ticket_id: int, payload: InboundEmailIngestRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post("/{ticket_id}/inbound/email", response_model=InboundEmailIngestResponse)
+def tickets_inbound_email(ticket_id: int, payload: InboundEmailIngestRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
-        result = ingest_ticket_inbound_email(db, ticket_id=ticket_id, payload=payload, current_user=current_user)
-        db.flush()
+        result = ingest_ticket_inbound_email(db, ticket_id=ticket_id, payload=payload, actor=current_user)
     return InboundEmailIngestResponse(
-        ok=True,
+        ticket=TicketRead.model_validate(result.ticket),
+        message=InboundEmailMessageRead.model_validate(result.message),
         created=result.created,
-        message=InboundEmailMessageRead.model_validate(result.row),
-        ticket_event_id=result.row.ticket_event_id,
-        audit_id=result.row.audit_id,
     )
 
 
-@router.post("/{ticket_id}/email/outbound/{message_id}/delivery-receipt", response_model=EmailDeliveryReceiptResponse)
-def record_email_delivery_receipt_endpoint(ticket_id: int, message_id: int, payload: EmailDeliveryReceiptRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post("/{ticket_id}/outbound/{message_id}/delivery-receipt", response_model=EmailDeliveryReceiptResponse)
+def tickets_email_delivery_receipt(ticket_id: int, message_id: int, payload: EmailDeliveryReceiptRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
-        result = record_email_delivery_receipt(db, ticket_id=ticket_id, message_id=message_id, payload=payload, current_user=current_user)
-        db.flush()
-    message = result.message
-    return EmailDeliveryReceiptResponse(
-        ok=True,
-        created=result.created,
-        message_id=message.id,
-        ticket_id=message.ticket_id,
-        status=message.status,
-        provider_status=message.provider_status,
-        delivery_status=message.delivery_status or payload.delivery_status,
-        delivery_event_type=message.delivery_event_type,
-        delivery_receipt_provider=message.delivery_receipt_provider,
-        delivery_receipt_id=message.delivery_receipt_id,
-        delivery_receipt_at=message.delivery_receipt_at,
-        delivery_detail=message.delivery_detail,
-        failure_code=message.failure_code,
-        failure_reason=message.failure_reason,
-        ticket_event_id=result.ticket_event_id,
-        audit_id=result.audit_id,
-    )
-
-
-@router.post("/{ticket_id}/ai-intakes", response_model=AIIntakeRead)
-def add_ai_intake_endpoint(ticket_id: int, payload: AIIntakeCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    with managed_session(db):
-        row = add_ai_intake(db, ticket_id, payload, current_user)
-        db.flush()
-    return row
-
-
-@router.get("/{ticket_id}/ai-intakes", response_model=list[AIIntakeRead])
-def list_ai_intakes(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
-    return [AIIntakeRead.model_validate(x) for x in ticket.ai_intakes]
-
-
-@router.get("/{ticket_id}/timeline-legacy", response_model=list[TimelineItemRead], deprecated=True)
-def get_ticket_timeline(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
-    items = build_unified_timeline(db, ticket_id)
-    return [TimelineItemRead(**item) for item in items]
+        result = record_email_delivery_receipt(db, ticket_id=ticket_id, message_id=message_id, payload=payload, actor=current_user)
+    return EmailDeliveryReceiptResponse(message=OutboundMessageRead(**_serialize_outbound_message(result.message)), created=result.created)
 
 
 @router.get("/{ticket_id}/events")
-def get_ticket_events_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    events = get_ticket_events(db, ticket_id, current_user)
-    return [
-        {
-            "id": event.id,
-            "event_type": event.event_type.value,
-            "field_name": event.field_name,
-            "old_value": event.old_value,
-            "new_value": event.new_value,
-            "note": event.note,
-            "created_at": format_utc(event.created_at),
-        }
-        for event in events
-    ]
+def tickets_events(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    return get_ticket_events(db, ticket_id)
+
+
+@router.get("/{ticket_id}/timeline", response_model=list[TimelineItemRead])
+def tickets_timeline(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    return [TimelineItemRead(**item) for item in build_unified_timeline(db, ticket, current_user)]
+
+
+@router.get("/{ticket_id}/external-channel/transcript", response_model=ExternalChannelTranscriptRead)
+def tickets_external_channel_transcript(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    settings = get_settings()
+    if settings.external_channel_transport != "disabled":
+        raise RuntimeError("ExternalChannel runtime must remain disabled")
+    messages = (
+        db.query(ExternalChannelTranscriptMessage)
+        .filter(ExternalChannelTranscriptMessage.ticket_id == ticket.id)
+        .order_by(ExternalChannelTranscriptMessage.sent_at.asc(), ExternalChannelTranscriptMessage.id.asc())
+        .all()
+    )
+    conversation = ExternalChannelConversationRead(
+        external_channel_conversation_id=ticket.external_channel_conversation_id,
+        external_channel_case_id=ticket.external_channel_case_id,
+        external_channel_inbox_id=ticket.external_channel_inbox_id,
+        external_channel_contact_id=ticket.external_channel_contact_id,
+        external_channel_account_id=ticket.external_channel_account_id,
+        external_channel_sync_status=ticket.external_channel_sync_status,
+        external_channel_last_synced_at=ticket.external_channel_last_synced_at,
+    )
+    return ExternalChannelTranscriptRead(
+        ticket_id=ticket.id,
+        conversation=conversation,
+        messages=[
+            ExternalChannelTranscriptMessageRead(
+                id=row.id,
+                direction=row.direction,
+                message_type=row.message_type,
+                body=row.body,
+                content_type=row.content_type,
+                sender=row.sender,
+                recipients=row.recipients,
+                sent_at=row.sent_at,
+                external_message_id=row.external_message_id,
+                metadata_json=row.metadata_json,
+                attachments=[ExternalChannelAttachmentReferenceRead.model_validate(item) for item in row.attachment_references],
+            )
+            for row in messages
+        ],
+    )
