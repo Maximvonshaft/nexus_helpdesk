@@ -325,6 +325,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 response_payload = repair_response_payload
                 repair_applied = True
 
+        normalized.pop("_runtime_reported_intent", None)
         return ProviderResult(
             ok=True,
             provider=self.name,
@@ -1595,6 +1596,14 @@ def _runtime_output_contract_violation(output: dict[str, Any], *, request: Provi
         return "echoed_customer_message"
     if _customer_intent_hint(request.body) == "general_support" and _reply_asks_for_logistics_identifier(reply):
         return "general_support_identifier_request"
+    runtime_intent = str(output.get("_runtime_reported_intent") or output.get("intent") or "").strip().lower()
+    if (
+        not request.tracking_fact_evidence_present
+        and _customer_intent_hint(request.body) == "logistics_or_tracking"
+        and _tracking_reference_present(request)
+        and runtime_intent not in {"tracking", "tracking_unresolved", "logistics_or_tracking", "shipment_tracking"}
+    ):
+        return "tracking_unresolved_bad_clarification"
     if _tracking_unresolved_bad_clarification(reply, request=request):
         return "tracking_unresolved_bad_clarification"
     if (
@@ -1692,12 +1701,14 @@ def _reply_requests_missing_logistics_identifier(reply: str) -> bool:
         re.IGNORECASE,
     ):
         return True
-    return bool(
-        re.search(
-            r"(?:请|麻烦)?(?:提供|发送|重发|发一下|给我|告诉我)[^。！？.!?]{0,40}(?:运单号|单号|包裹编号|订单号)",
-            text,
-        )
+    identifier_zh = r"(?:运单号|单号|包裹编号|订单号)"
+    request_patterns = (
+        rf"(?:请|麻烦)(?:您)?(?:提供|发送|重发|重新发送|重新提供)[^。！？.!?]{{0,40}}{identifier_zh}",
+        rf"(?:请|麻烦)?(?:把|将)[^。！？.!?]{{0,40}}{identifier_zh}[^。！？.!?]{{0,20}}(?:发|发送|重发|提供|给我)",
+        rf"(?:告诉我|给我)[^。！？.!?]{{0,30}}{identifier_zh}",
+        rf"{identifier_zh}[^。！？.!?]{{0,20}}(?:发一下|再发|重发)",
     )
+    return any(re.search(pattern, text) for pattern in request_patterns)
 
 
 def _reply_requests_logistics_identifier_after_verified_fact(reply: str) -> bool:
@@ -1894,17 +1905,7 @@ def _polish_normalized_tracking_safe_reference(reply: str, *, suffix: str) -> st
 def _tracking_unresolved_bad_clarification(reply: str, *, request: ProviderRequest) -> bool:
     if request.tracking_fact_evidence_present:
         return False
-    metadata = request.metadata if isinstance(request.metadata, dict) else {}
-    conversation_state = metadata.get("conversation_state") if isinstance(metadata.get("conversation_state"), dict) else {}
-    tracking_metadata = metadata.get("tracking_fact_metadata") if isinstance(metadata.get("tracking_fact_metadata"), dict) else {}
-    tracking_reference_present = bool(
-        _TRACKING_TOKEN_RE.search(str(request.body or ""))
-        or conversation_state.get("tracking_reference_present")
-        or conversation_state.get("safe_tracking_reference")
-        or tracking_metadata.get("tracking_number_hash")
-        or tracking_metadata.get("safe_tracking_reference")
-    )
-    if not tracking_reference_present:
+    if not _tracking_reference_present(request):
         return False
     text = str(reply or "").strip().lower()
     if not text:
@@ -1926,6 +1927,19 @@ def _tracking_unresolved_bad_clarification(reply: str, *, request: ProviderReque
         "what should i query",
     )
     return any(marker in text for marker in bad_markers)
+
+
+def _tracking_reference_present(request: ProviderRequest) -> bool:
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    conversation_state = metadata.get("conversation_state") if isinstance(metadata.get("conversation_state"), dict) else {}
+    tracking_metadata = metadata.get("tracking_fact_metadata") if isinstance(metadata.get("tracking_fact_metadata"), dict) else {}
+    return bool(
+        _TRACKING_TOKEN_RE.search(str(request.body or ""))
+        or conversation_state.get("tracking_reference_present")
+        or conversation_state.get("safe_tracking_reference")
+        or tracking_metadata.get("tracking_number_hash")
+        or tracking_metadata.get("safe_tracking_reference")
+    )
 
 
 def _tracking_fact_status_guidance_mismatch(reply: str, *, tracking_fact_summary: str | None) -> bool:
@@ -2258,6 +2272,7 @@ def _build_contract_repair_prompt(
             "The customer already provided a tracking or waybill reference, but there is no trusted tracking_fact_summary. "
             "Do not ask what the number is, how to query it, what it means, or what you need in order to query. "
             "Ask only for the customer to confirm that the provided number is complete and correct. "
+            "Set intent to tracking_unresolved. "
             "Do not claim live parcel status, ETA, delivery outcome, customs state, route progress, or exception status. "
             "Set handoff_required=false unless customer_message explicitly asks for a human agent. "
             "Reply in the customer's language and keep customer_reply to one short sentence. "
@@ -2508,6 +2523,7 @@ def _normalize_runtime_output(payload: Any, *, request: ProviderRequest, max_out
         "customer_reply": reply,
         "reply": reply,
         "language": _clean_string(parsed.get("language"), 32) or "unknown",
+        "_runtime_reported_intent": (_clean_string(parsed.get("intent"), 80) or "other").lower(),
         "intent": intent,
         "tracking_number": tracking_number,
         "handoff_required": handoff_required,

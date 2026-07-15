@@ -17,6 +17,7 @@ from app.services.provider_runtime.adapters.private_ai_runtime import (
     _normalize_runtime_output,
     _remove_verified_tracking_identifier_request_sentences,
     _request_language_hint,
+    _reply_requests_missing_logistics_identifier,
     _reply_requests_logistics_identifier_after_verified_fact,
     _tracking_safe_reference_misuse,
 )
@@ -53,6 +54,14 @@ def test_private_ai_runtime_language_hint_uses_latest_german_message() -> None:
     )
 
     assert _request_language_hint(request) == "de"
+
+
+def test_tracking_identifier_validator_allows_confirmation_of_existing_chinese_reference() -> None:
+    assert _reply_requests_missing_logistics_identifier("请确认您提供的运单号是否完整且正确。") is False
+
+
+def test_tracking_identifier_validator_blocks_request_to_send_chinese_reference_again() -> None:
+    assert _reply_requests_missing_logistics_identifier("请重新发送您的运单号。") is True
 
 
 def test_private_ai_runtime_language_hint_ignores_reference_only_default_language() -> None:
@@ -2909,6 +2918,15 @@ async def test_private_ai_runtime_repairs_tracking_unresolved_bad_clarification(
                 "handoff_required": False,
                 "ticket_should_create": False,
             }
+        if len(prompts) == 2:
+            return {
+                "customer_reply": "How may I help you today?",
+                "language": "en",
+                "intent": "other",
+                "tracking_number": None,
+                "handoff_required": False,
+                "ticket_should_create": False,
+            }
         return {
             "customer_reply": "Please confirm that the tracking number you provided is complete and correct.",
             "language": "en",
@@ -2923,8 +2941,9 @@ async def test_private_ai_runtime_repairs_tracking_unresolved_bad_clarification(
     result = await adapter.generate(Mock(), _request(body="Please check tracking number CH020000129135"))
 
     assert result.ok is True
-    assert len(prompts) == 2
+    assert len(prompts) == 3
     assert "Tracking unresolved wording repair task" in prompts[1]
+    assert "Tracking unresolved wording repair task" in prompts[2]
     assert result.structured_output["customer_reply"] == "Please confirm that the tracking number you provided is complete and correct."
     assert result.raw_payload_safe_summary["output_contract_repair_applied"] is True
     assert result.raw_payload_safe_summary["output_contract_repair_reason"] == "tracking_unresolved_bad_clarification"
