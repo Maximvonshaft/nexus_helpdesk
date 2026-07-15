@@ -9,6 +9,7 @@ const statusPath = resolve(root, 'src/lib/supportStatus.ts')
 const supportStatus = existsSync(statusPath) ? read('src/lib/supportStatus.ts') : ''
 const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
 const workspacePresentation = read('src/lib/operatorWorkspacePresentation.ts')
+const operationalPresentation = read('src/domain/operationalPresentation.ts')
 const channels = read('src/features/channels/ChannelsPage.tsx')
 const runtime = read('src/features/runtime/RuntimePage.tsx')
 const appShellCss = read('src/app/app-shell.css')
@@ -41,13 +42,13 @@ test('source state and ownership never claim business success', () => {
 
 test('controlled actions distinguish request acceptance from verified outcome', () => {
   assert.match(workspacePresentation, /outcomePresentation/)
-  assert.match(workspacePresentation, /queued/)
-  assert.match(workspacePresentation, /submitted/)
-  assert.match(workspacePresentation, /operational_completed/)
-  assert.match(workspacePresentation, /business_result_confirmed/)
+  assert.match(operationalPresentation, /queued/)
+  assert.match(operationalPresentation, /submitted/)
+  assert.match(operationalPresentation, /operational_completed/)
+  assert.match(operationalPresentation, /business_result_confirmed/)
   assert.match(workspace, /TechnicalDetails/)
   assert.match(workspace, /预检不是取消完成/)
-  assert.match(workspace, /请求已排队/)
+  assert.match(operationalPresentation, /请求已排队/)
   assert.doesNotMatch(workspace, /<small>Job #\{actionResult\.jobId\}<\/small>/)
 })
 
@@ -73,8 +74,8 @@ test('canonical surfaces meet bounded accessibility truth requirements', () => {
 
 
 test('workspace queue and selected conversation freshness remain visible and bounded', () => {
-  assert.match(workspace, /refetchInterval:\s*15000/)
-  assert.match(workspace, /refetchInterval: selectedItem\?\.source_links\.conversation \? 5000 : false/)
+  assert.match(workspace, /refetchInterval:\s*15_?000/)
+  assert.match(workspace, /refetchInterval: selectedItem\?\.source_links\.conversation \? 5_?000 : false/)
   assert.match(workspace, /刷新中/)
   assert.match(workspace, /加载更多任务/)
 })

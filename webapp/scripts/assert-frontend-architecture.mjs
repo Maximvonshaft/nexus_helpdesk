@@ -3,8 +3,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
-const webappRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+const webappRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repositoryRoot = path.resolve(webappRoot, '..')
 const srcRoot = path.join(webappRoot, 'src')
 const entrypoint = path.join(srcRoot, 'main.tsx')

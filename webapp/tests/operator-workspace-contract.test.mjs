@@ -17,6 +17,9 @@ const workspaceCss = readIfPresent('src/features/operator-workspace/operator-wor
 const workspaceApi = readIfPresent('src/lib/operatorWorkspaceApi.ts')
 const workspaceTypes = readIfPresent('src/lib/operatorWorkspaceTypes.ts')
 const workspacePresentation = readIfPresent('src/lib/operatorWorkspacePresentation.ts')
+const operationalPresentation = readIfPresent('src/domain/operationalPresentation.ts')
+const appShell = readIfPresent('src/app/AppShell.tsx')
+const navigation = readIfPresent('src/app/navigation.ts')
 
 
 test('workspace is the canonical authenticated operator route', () => {
@@ -40,31 +43,31 @@ test('workspace consumes the canonical unified queue with explicit scope', () =>
   assert.match(workspaceApi, /cursor/)
   assert.match(workspaceTypes, /source_type:\s*'handoff'\s*\|\s*'ticket'\s*\|\s*'dispatch'/)
   assert.match(workspaceTypes, /next_cursor:\s*string\s*\|\s*null/)
-  assert.match(workspacePage, /工作范围/)
-  assert.match(workspacePage, /Tenant/)
-  assert.match(workspacePage, /国家/)
-  assert.match(workspacePage, /渠道/)
+  assert.match(appShell, /工作范围/)
+  assert.match(appShell, /country_code/)
+  assert.match(appShell, /channel_key/)
+  assert.match(workspaceRoute, /authorizedScopes/)
 })
 
 
 test('primary navigation is capability-derived and separates system administration', () => {
-  assert.match(workspacePage, /operator_queue\.read/)
-  assert.match(workspacePage, /ai_config\.read/)
-  assert.match(workspacePage, /channel_account\.manage/)
-  assert.match(workspacePage, /runtime\.manage/)
-  assert.match(workspacePage, /工作台/)
-  assert.match(workspacePage, /知识/)
-  assert.match(workspacePage, /渠道管理/)
-  assert.match(workspacePage, /运行与审计/)
+  assert.match(navigation, /operator_queue\.read/)
+  assert.match(navigation, /ai_config\.read/)
+  assert.match(navigation, /channel_account\.manage/)
+  assert.match(navigation, /runtime\.manage/)
+  assert.match(navigation, /工作台/)
+  assert.match(navigation, /知识/)
+  assert.match(navigation, /渠道/)
+  assert.match(navigation, /运行与审计/)
 })
 
 
 test('case spine and closure blocker keep technical state separate from business closure', () => {
-  assert.match(workspacePage, /CaseSpine/)
-  for (const stage of ['范围', '证据', '判断', '动作', '运营结果', '客户通知', '结案或观察']) {
-    assert.match(workspacePage, new RegExp(stage))
+  for (const authority of ['CaseHeader', 'EvidencePanel', 'ConversationPanel', 'ActionPanel']) {
+    assert.match(workspacePage, new RegExp(authority))
   }
-  assert.match(workspacePage, /尚不能判定安全结案/)
+  assert.match(workspacePage, /前端建议不替代服务端权限、政策和结果权威/)
+  assert.match(operationalPresentation, /技术成功不等于运营完成、客户通知或安全结案/)
   assert.doesNotMatch(workspacePage, />已结束</)
   assert.doesNotMatch(workspacePage, />处理成功</)
 })
@@ -75,12 +78,12 @@ test('evidence classes and action outcomes are explicit and fail closed', () => 
   for (const label of ['事实与依据', '客户主张', '知识与政策', 'AI 建议', '人工决定', '系统事件', '动作结果', '客户通知回执']) {
     assert.match(workspacePresentation + workspacePage, new RegExp(label))
   }
-  for (const label of ['请求已排队', '技术处理完成', '运营已完成', '已通知客户', '业务结果已确认', '需要修复']) {
-    assert.match(workspacePresentation + workspacePage, new RegExp(label))
+  for (const label of ['请求已排队', '技术处理完成', '运营已完成', '客户通知已确认', '业务结果已确认', '需要修复']) {
+    assert.match(operationalPresentation + workspacePage, new RegExp(label))
   }
-  assert.match(workspacePresentation, /business_result_confirmed/)
-  assert.match(workspacePresentation, /operational_completed/)
-  assert.match(workspacePresentation, /repair_required/)
+  assert.match(operationalPresentation, /business_result_confirmed/)
+  assert.match(operationalPresentation, /operational_completed/)
+  assert.match(operationalPresentation, /repair_required/)
 })
 
 
@@ -134,9 +137,9 @@ test('workspace preserves scroll ownership, protects drafts, and transfers mobil
 test('workspace keeps a dirty reply attached when polling removes the selected queue item', () => {
   assert.match(workspacePage, /retainedSelectedItem/)
   assert.match(workspacePage, /preserveMissingSelection/)
-  assert.match(workspacePage, /replyDraftDirty\s*&&\s*selectedQueueItemMissing/)
+  assert.match(workspacePage, /replyDraftDirty\s*&&\s*selectedQueueItemMissing|selectedQueueItemMissing\s*&&\s*replyDraftDirty/)
   assert.match(workspacePage, /!replyDraftDirty/)
-  assert.match(workspacePage, /当前任务已离开队列，回复草稿仍已保留/)
+  assert.match(workspacePage, /当前任务已离开队列，回复草稿仍保留/)
   assert.match(workspacePage, /selectionUnavailable/)
   assert.match(workspacePage, /当前任务动作已暂停/)
 })

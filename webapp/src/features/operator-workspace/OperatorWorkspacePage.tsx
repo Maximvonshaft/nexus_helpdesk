@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, supportApi } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
@@ -196,11 +196,12 @@ function QueueRow({ item, active, currentUserId, onSelect }: {
   )
 }
 
-function QueueRail({ items, selectedQueueId, currentUserId, isLoading, hasNextPage, isFetchingNextPage, onSelect, onLoadMore }: {
+function QueueRail({ items, selectedQueueId, currentUserId, isLoading, isRefreshing, hasNextPage, isFetchingNextPage, onSelect, onLoadMore }: {
   items: UnifiedOperatorQueueItem[]
   selectedQueueId: string | null
   currentUserId?: number
   isLoading: boolean
+  isRefreshing: boolean
   hasNextPage: boolean
   isFetchingNextPage: boolean
   onSelect: (item: UnifiedOperatorQueueItem) => void
@@ -208,7 +209,7 @@ function QueueRail({ items, selectedQueueId, currentUserId, isLoading, hasNextPa
 }) {
   return (
     <section className="operator-queue-list" aria-label="统一操作队列" aria-busy={isLoading}>
-      <div className="operator-section-head compact"><div><h2>统一队列</h2><p>人工接管、客服工单和运营派发使用同一任务入口。</p></div></div>
+      <div className="operator-section-head compact"><div><h2>统一队列</h2><p>人工接管、客服工单和运营派发使用同一任务入口。</p></div>{isRefreshing ? <Badge>刷新中</Badge> : null}</div>
       {isLoading ? <EmptyState title="正在读取队列" description="正在读取当前授权范围内的任务。" /> : null}
       {!isLoading && !items.length ? <EmptyState title="当前没有待处理任务" description="可以调整筛选条件或稍后刷新。" /> : null}
       <div className="operator-queue-items">
@@ -216,7 +217,7 @@ function QueueRail({ items, selectedQueueId, currentUserId, isLoading, hasNextPa
           <QueueRow key={item.queue_id} item={item} active={item.queue_id === selectedQueueId} currentUserId={currentUserId} onSelect={() => onSelect(item)} />
         ))}
       </div>
-      {hasNextPage ? <Button size="sm" loading={isFetchingNextPage} onClick={onLoadMore}>加载更多</Button> : null}
+      {hasNextPage ? <Button size="sm" loading={isFetchingNextPage} onClick={onLoadMore}>加载更多任务</Button> : null}
     </section>
   )
 }
@@ -269,10 +270,11 @@ function replyMutationSafety(error: unknown) {
   return detail.safety ? { reasons: detail.safety.reasons ?? [] } : null
 }
 
-function ConversationPanel({ item, thread, isLoading, error, capabilities, onRefresh, onReplyDirtyChange, selectionUnavailable }: {
+function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capabilities, onRefresh, onReplyDirtyChange, selectionUnavailable }: {
   item: UnifiedOperatorQueueItem
   thread: WebchatThread | null
   isLoading: boolean
+  isRefreshing: boolean
   error: unknown
   capabilities: Set<string>
   onRefresh: () => Promise<void>
@@ -281,12 +283,32 @@ function ConversationPanel({ item, thread, isLoading, error, capabilities, onRef
 }) {
   const [reply, setReply] = useState('')
   const [confirmReview, setConfirmReview] = useState(false)
+  const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
+  const [newMessageCount, setNewMessageCount] = useState(0)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
+  const previousMessageCountRef = useRef(thread?.messages.length ?? 0)
   const canReply = Boolean(item.ticket_id && thread && !selectionUnavailable && hasCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'))
 
   useEffect(() => {
     setReply('')
     setConfirmReview(false)
+    setNewMessageCount(0)
+    previousMessageCountRef.current = 0
   }, [item.queue_id])
+
+  useLayoutEffect(() => {
+    const currentCount = thread?.messages.length ?? 0
+    const added = Math.max(0, currentCount - previousMessageCountRef.current)
+    previousMessageCountRef.current = currentCount
+    if (!added) return
+    const list = messagesRef.current
+    if (list && isNearMessageBottom) {
+      list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
+      setNewMessageCount(0)
+    } else {
+      setNewMessageCount((count) => count + added)
+    }
+  }, [isNearMessageBottom, thread?.messages.length])
 
   useEffect(() => onReplyDirtyChange(Boolean(reply.trim())), [onReplyDirtyChange, reply])
   useEffect(() => () => onReplyDirtyChange(false), [onReplyDirtyChange])
@@ -307,24 +329,35 @@ function ConversationPanel({ item, thread, isLoading, error, capabilities, onRef
 
   return (
     <section id="workspace-conversation" className="operator-conversation-panel" aria-labelledby="operator-conversation-title" tabIndex={-1}>
-      <div className="operator-section-head compact"><div><h2 id="operator-conversation-title">客户沟通</h2><p>回复始终经过服务端权限、事实和安全检查。</p></div></div>
+      <div className="operator-section-head compact"><div><h2 id="operator-conversation-title">客户沟通</h2><p>回复始终经过服务端权限、事实和安全检查。</p></div>{isRefreshing ? <Badge>刷新中</Badge> : null}</div>
       {isLoading ? <EmptyState title="正在读取会话" description="正在载入客户消息。" /> : null}
       {error ? <ErrorSummary title="会话暂不可用" errors={[errorCopy(error, '仍可基于案例摘要继续分诊')]} /> : null}
       {thread ? (
         <>
-          <div className="operator-message-list" aria-live="polite">
+          <div
+            ref={messagesRef}
+            className="operator-message-list"
+            aria-live="polite"
+            onScroll={(event) => {
+              const target = event.currentTarget
+              const nearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 80
+              setIsNearMessageBottom(nearBottom)
+              if (nearBottom) setNewMessageCount(0)
+            }}
+          >
             {thread.messages.map((message) => {
               const delivery = messageDeliveryPresentation(message.delivery_status)
               return (
                 <article key={message.id} className={`operator-message is-${message.direction}`}>
                   <header><strong>{sanitizeDisplayText(message.author_label || directionLabel(message.direction))}</strong>{message.created_at ? <time>{formatDateTime(message.created_at)}</time> : null}</header>
                   <p>{sanitizeDisplayText(message.body_text || message.body)}</p>
-                  {isOutboundMessage(message) ? <footer><Badge tone={delivery.tone}>{delivery.label}</Badge>{delivery.detail ? <span>{delivery.detail}</span> : null}</footer> : null}
+                  {isOutboundMessage(message) ? <footer aria-label="送达状态"><Badge tone={delivery.tone}>{delivery.label}</Badge>{delivery.detail ? <span>{delivery.detail}</span> : null}</footer> : null}
                 </article>
               )
             })}
             {!thread.messages.length ? <EmptyState title="暂无消息" description="该会话尚无可显示内容。" /> : null}
           </div>
+          {newMessageCount ? <Button size="sm" variant="secondary" onClick={() => { messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }); setNewMessageCount(0) }}>{newMessageCount} 条新消息</Button> : null}
           {mutationSafety ? <ErrorSummary title="回复需要人工复核" errors={mutationSafety.reasons.length ? mutationSafety.reasons : ['请检查内容后再次确认发送']} /> : null}
           {replyMutation.isError && !mutationSafety ? <ErrorSummary title="发送失败" errors={[errorCopy(replyMutation.error, '请稍后重试')]} /> : null}
           <form className="operator-reply" onSubmit={(event) => { event.preventDefault(); if (canReply && reply.trim()) replyMutation.mutate() }}>
@@ -334,7 +367,7 @@ function ConversationPanel({ item, thread, isLoading, error, capabilities, onRef
             <Button type="submit" variant="primary" loading={replyMutation.isPending} loadingLabel="发送中…" disabled={!canReply || !reply.trim()}>{confirmReview ? '确认发送' : '发送回复'}</Button>
           </form>
         </>
-      ) : null}
+      ) : !isLoading ? <EmptyState title="当前案例没有可用会话" description="可以继续查看案例证据，回复和人工接管暂不可用。" /> : null}
     </section>
   )
 }
@@ -491,7 +524,7 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
         {disabledReason ? <p className="operator-disabled-reason"><strong>不可执行原因：</strong>{disabledReason}</p> : null}
         {actionError ? <ErrorSummary title="动作未完成" errors={[errorCopy(actionError, '请稍后重试')]} /> : null}
         {candidates.length ? <div className="operator-candidates"><strong>候选运单</strong>{candidates.map((candidate) => <div key={textValue(candidate.waybillCode)}><span>{sanitizeDisplayText(textValue(candidate.waybillCode))}</span><Button size="sm" onClick={() => { setWaybill(textValue(candidate.waybillCode)); setAction('work_order'); invalidateCancelPreview() }}>填入催派</Button></div>)}</div> : null}
-        {cancelPreview ? <div className={`operator-action-receipt ${cancelPreview.result.cancelAllowed ? 'is-neutral' : 'is-warning'}`} role="status"><strong>{cancelPreview.result.cancelAllowed ? '预检允许提交取消请求' : '当前状态不允许取消'}</strong><p>{sanitizeDisplayText(cancelPreview.result.currentStatusLabel || cancelPreview.result.reasonLabel || '未返回原因')}</p><small>预检绑定当前 Ticket、运单、电话和原因；任一输入变化后必须重新预检。</small></div> : null}
+        {cancelPreview ? <div className={`operator-action-receipt ${cancelPreview.result.cancelAllowed ? 'is-neutral' : 'is-warning'}`} role="status"><strong>{cancelPreview.result.cancelAllowed ? '预检允许提交取消请求' : '当前状态不允许取消'}</strong><p>{sanitizeDisplayText(cancelPreview.result.currentStatusLabel || cancelPreview.result.reasonLabel || '未返回原因')}</p><small>预检不是取消完成；预检绑定当前 Ticket、运单、电话和原因，任一输入变化后必须重新预检。</small></div> : null}
         {resultPresentation ? <div className={`operator-action-receipt is-${resultPresentation.tone}`} role="status"><strong>{resultPresentation.label}</strong><p>{resultPresentation.detail}</p>{numberValue(resultRecord.jobId) ? <TechnicalDetails title="请求追踪" summary="技术标识"><code>Job #{numberValue(resultRecord.jobId)}</code></TechnicalDetails> : null}</div> : null}
         <div className="operator-button-row">
           {action === 'cancel' ? <><Button loading={cancelPreviewMutation.isPending} disabled={Boolean(disabledReason) || busy} onClick={() => cancelPreviewMutation.mutate()}>先做取消预检</Button><Button variant="danger" loading={cancelConfirmMutation.isPending} disabled={!cancelPreview?.result.cancelAllowed || !cancelPreview.result.confirmToken || cancelPreview.fingerprint !== currentCancelFingerprint || busy} onClick={() => cancelConfirmMutation.mutate()}>确认提交取消请求</Button></> : action !== 'none' ? <Button variant={action === 'work_order' ? 'primary' : 'secondary'} loading={actionMutation.isPending} disabled={Boolean(disabledReason) || busy} onClick={() => actionMutation.mutate()}>{action === 'waybill_lookup' ? '查询运单' : action === 'work_order' ? '创建催派工单' : '提交联系号码更新'}</Button> : null}
@@ -514,6 +547,24 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const [retainedSelectedItem, setRetainedSelectedItem] = useState<UnifiedOperatorQueueItem | null>(null)
 
   useEffect(() => { document.title = '操作员工作台 · Nexus OSR' }, [])
+  useEffect(() => {
+    if (!replyDraftDirty) return undefined
+    const protectDraft = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', protectDraft)
+    return () => window.removeEventListener('beforeunload', protectDraft)
+  }, [replyDraftDirty])
+  useLayoutEffect(() => {
+    const targetId: Record<WorkspaceMobileView, string> = {
+      queue: 'workspace-queue',
+      case: 'workspace-case',
+      conversation: 'workspace-conversation',
+      actions: 'workspace-actions',
+    }
+    document.getElementById(targetId[mobileView])?.focus({ preventScroll: true })
+  }, [mobileView])
   useEffect(() => {
     const url = new URL(window.location.href)
     if (selectedQueueId) url.searchParams.set('queue', selectedQueueId)
@@ -583,10 +634,10 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
           <aside id="workspace-queue" className="operator-queue-pane" tabIndex={-1}>
             <QueueFilters filters={filters} onChange={(next) => runWithReplyDraftGuard(() => { setFilters(next); setSelectedQueueId(null) })} />
             {queue.isError ? <ErrorSummary title="统一队列不可用" errors={[errorCopy(queue.error, '请检查当前授权范围')]} action={<Button onClick={() => queue.refetch()}>重新加载</Button>} /> : null}
-            <QueueRail items={queueItems} selectedQueueId={selectedItem?.queue_id ?? null} currentUserId={session.data.id} isLoading={queue.isLoading} hasNextPage={Boolean(queue.hasNextPage)} isFetchingNextPage={queue.isFetchingNextPage} onSelect={selectItem} onLoadMore={() => queue.fetchNextPage()} />
+            <QueueRail items={queueItems} selectedQueueId={selectedItem?.queue_id ?? null} currentUserId={session.data.id} isLoading={queue.isLoading} isRefreshing={queue.isFetching && !queue.isLoading} hasNextPage={Boolean(queue.hasNextPage)} isFetchingNextPage={queue.isFetchingNextPage} onSelect={selectItem} onLoadMore={() => queue.fetchNextPage()} />
           </aside>
           <section id="workspace-case" className="operator-case-pane" aria-label="当前案例" tabIndex={-1}>
-            {selectedItem ? <><CaseHeader item={selectedItem} currentUserId={session.data.id} />{preserveMissingSelection ? <div className="operator-selection-stale" role="status"><strong>当前任务已离开队列，回复草稿仍保留</strong><p>发送和受控动作已暂停；切换任务前需要确认是否放弃草稿。</p></div> : null}{sourceRecord.data && !thread.data ? <section className="operator-source-summary"><h2>来源记录摘要</h2><dl><div><dt>标题</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.title) || '未提供')}</dd></div><div><dt>状态</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.status) || selectedItem.source_status)}</dd></div><div><dt>优先级</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.priority) || selectedItem.priority)}</dd></div></dl></section> : null}<EvidencePanel memory={memory} /><ConversationPanel item={selectedItem} thread={thread.data ?? null} isLoading={thread.isLoading} error={thread.error} capabilities={capabilities} onRefresh={refreshSelected} onReplyDirtyChange={setReplyDraftDirty} selectionUnavailable={preserveMissingSelection} /></> : <EmptyState title="选择一个任务开始处理" description="从统一队列选择人工接管、客服工单或运营派发任务。" />}
+            {selectedItem ? <><CaseHeader item={selectedItem} currentUserId={session.data.id} />{preserveMissingSelection ? <div className="operator-selection-stale" role="status"><strong>当前任务已离开队列，回复草稿仍保留</strong><p>发送和受控动作已暂停；切换任务前需要确认是否放弃草稿。</p></div> : null}{sourceRecord.data && !thread.data ? <section className="operator-source-summary"><h2>来源记录摘要</h2><dl><div><dt>标题</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.title) || '未提供')}</dd></div><div><dt>状态</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.status) || selectedItem.source_status)}</dd></div><div><dt>优先级</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.priority) || selectedItem.priority)}</dd></div></dl></section> : null}<EvidencePanel memory={memory} /><ConversationPanel item={selectedItem} thread={thread.data ?? null} isLoading={thread.isLoading} isRefreshing={thread.isFetching && !thread.isLoading} error={thread.error} capabilities={capabilities} onRefresh={refreshSelected} onReplyDirtyChange={setReplyDraftDirty} selectionUnavailable={preserveMissingSelection} /></> : <EmptyState title="选择一个任务开始处理" description="从统一队列选择人工接管、客服工单或运营派发任务。" />}
           </section>
           <aside className="operator-context-pane" aria-label="案例动作与结果">
             {selectedItem ? <><section className="operator-current-task"><h2>当前任务</h2><strong>{sanitizeDisplayText(memory?.required_action || memory?.next_actions?.[0]?.label || '核实当前事实并决定下一步')}</strong><small>前端建议不替代服务端权限、政策和结果权威。</small></section>{preserveMissingSelection ? <EmptyState title="当前任务动作已暂停" description="该任务已不在授权队列中。" /> : <ActionPanel item={selectedItem} thread={thread.data ?? null} capabilities={capabilities} onRefresh={refreshSelected} />}</> : <EmptyState title="暂无动作" description="选择案例后显示允许动作和结果。" />}

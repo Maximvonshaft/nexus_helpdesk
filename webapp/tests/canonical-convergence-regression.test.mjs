@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-const webappRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+const webappRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repositoryRoot = path.resolve(webappRoot, '..')
 const read = (relative) => fs.readFileSync(path.join(webappRoot, relative), 'utf8')
 

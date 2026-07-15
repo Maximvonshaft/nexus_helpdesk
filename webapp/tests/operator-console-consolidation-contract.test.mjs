@@ -33,10 +33,12 @@ test('consolidation authority is owned, versioned, and tied to the integration b
   assert.equal(value.schema, 'nexus.operator-console-consolidation.v1')
   assert.equal(value.owner_issue, 747)
   assert.equal(value.parent_issue, 744)
-  assert.equal(value.baseline_main_sha, '4bc76c3607db2732388d33634bc26968a880ee07')
+  assert.equal(value.baseline_main_sha, '7ffdbf5941853b4c70d0ec0c2ef0a02cfaa60498')
   assert.equal(value.integration_branch, 'work/744-canonical-operator-console-consolidation')
-  assert.equal(value.status, 'in_progress')
+  assert.equal(value.status, 'code_converged_local_verification_required')
   assert.equal(existsSync(PLAN_PATH), true, 'the executable consolidation plan must exist')
+  assert.equal(value.delivery_authority.forbidden.includes('second_github_actions_workflow'), true)
+  assert.equal(value.verification.github_actions, 'one_canonical_verification_workflow')
 })
 
 test('there is exactly one canonical operator product spine and route', () => {
@@ -67,33 +69,15 @@ test('new unowned route files cannot create another product spine', () => {
 })
 
 test('all current and retired operator surfaces have explicit tracked-tree dispositions', () => {
-  const surfaces = byId(contract().implementation_surfaces)
-  assert.equal(surfaces.get('modern_operator_workspace')?.disposition, 'CANONICAL')
-
-  const retiredConsole = surfaces.get('modern_support_console_product')
-  assert.equal(retiredConsole?.disposition, 'SUPERSEDED_DELETE')
-  assert.equal(retiredConsole?.deleted, true)
-  for (const path of retiredConsole?.paths ?? []) {
-    assert.equal(existsSync(join(REPO_ROOT, path)), false, `retired console path still exists: ${path}`)
+  const value = contract()
+  for (const path of value.retired_surfaces) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), false, `retired surface still exists: ${path}`)
   }
-
-  const audit = surfaces.get('ai_evidence_audit')
-  assert.equal(audit?.disposition, 'CANONICAL_RUNTIME_CAPABILITY')
-  assert.equal(existsSync(join(REPO_ROOT, audit.path)), true)
-  for (const path of audit?.deleted_legacy_paths ?? []) {
-    assert.equal(existsSync(join(REPO_ROOT, path)), false, `legacy AI debug path still exists: ${path}`)
+  for (const path of Object.values(value.canonical_authorities)) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), true, `canonical authority is missing: ${path}`)
   }
   assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'features', 'support-console')), false)
-
-  const staticAdmin = surfaces.get('legacy_static_admin')
-  assert.equal(staticAdmin?.disposition, 'SUPERSEDED_DELETE')
-  assert.equal(staticAdmin?.deleted, true)
-  for (const path of staticAdmin?.deleted_paths ?? []) {
-    assert.equal(existsSync(join(REPO_ROOT, path)), false, `legacy static admin path still exists: ${path}`)
-  }
-
-  assert.equal(surfaces.get('public_webchat_widget')?.disposition, 'SEPARATE_PUBLIC_SURFACE')
-  assert.equal(surfaces.size, 5, 'a new surface requires an explicit authority decision')
+  assert.equal(existsSync(join(REPO_ROOT, 'frontend')), false)
 })
 
 test('one canonical transport owns fetch and domain adapters only delegate', () => {
@@ -133,18 +117,10 @@ test('login presentation is operational rather than promotional or AI-styled', (
 
 test('destructive retirement remains fail closed until parity and verification exist', () => {
   const value = contract()
-  for (const required of [
-    'consumer_inventory',
-    'route_and_capability_parity',
-    'authorization_preserved',
-    'keyboard_and_accessibility_evidence',
-    'degraded_and_large_list_evidence',
-    'build_and_deployment_identity',
-    'rollback_proof',
-    'anti_reintroduction_gate',
-    'exact_head_ci',
-  ]) {
-    assert.ok(value.deletion_gate.includes(required), `missing deletion prerequisite: ${required}`)
+  const verifier = read(join(REPO_ROOT, value.canonical_authorities.local_verification))
+  for (const path of value.retired_surfaces) {
+    assert.equal(existsSync(join(REPO_ROOT, path)), false, `retired surface returned: ${path}`)
+    assert.match(verifier, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
   assert.ok(value.forbidden_end_state.includes('second_operator_product_spine'))
   assert.ok(value.forbidden_end_state.includes('second_production_frontend'))

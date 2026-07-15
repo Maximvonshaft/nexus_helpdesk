@@ -19,7 +19,7 @@
     "forbidden": [
       "parallel_product_branch",
       "second_integration_authority",
-      "github_actions_workflow",
+      "second_github_actions_workflow",
       "second_http_transport",
       "second_ui_authority",
       "frontend_role_inference"
@@ -41,6 +41,17 @@
     {"route":"/control-tower","domain":"management","status":"canonical","source":"webapp/src/routes/control-tower.tsx"},
     {"route":"/webchat","domain":"compatibility","status":"redirect_only","source":"webapp/src/routes/webchat.tsx"}
   ],
+  "allowed_route_files": [
+    "channels.tsx",
+    "control-tower.tsx",
+    "index.tsx",
+    "knowledge.tsx",
+    "login.tsx",
+    "root.tsx",
+    "runtime.tsx",
+    "webchat.tsx",
+    "workspace.tsx"
+  ],
   "canonical_authorities": {
     "application_shell": "webapp/src/app/AppShell.tsx",
     "navigation": "webapp/src/app/navigation.ts",
@@ -55,14 +66,26 @@
     "rationalization_ledger": "docs/ai/codebase-rationalization-inventory.v1.yaml",
     "local_verification": "scripts/verify_repository.py"
   },
+  "transport_authority": {
+    "target": "webapp/src/lib/apiClient.ts",
+    "current_duplicates": [],
+    "delegating_adapters": [
+      "webapp/src/lib/operatorWorkspaceApi.ts",
+      "webapp/src/lib/supportApi.ts"
+    ],
+    "required_shared_behavior": [
+      "auth_expiry",
+      "error_normalization",
+      "external_abort_propagation"
+    ]
+  },
   "retired_surfaces": [
     "frontend",
     "webapp/src/features/support-console",
     "webapp/src/shared/ui",
     "webapp/src/shared/api",
     "webapp/src/lib/api.ts",
-    "webapp/src/lib/webchatRealtime.ts",
-    ".github/workflows"
+    "webapp/src/lib/webchatRealtime.ts"
   ],
   "completed_convergence": [
     "single_product_shell",
@@ -79,10 +102,10 @@
     "channel_onboarding_and_repair_operations",
     "cancel_preview_input_fingerprint",
     "dead_frontend_and_backend_module_retirement",
-    "actions_free_local_verification"
+    "single_local_verification_authority"
   ],
   "verification": {
-    "github_actions": "disabled_and_absent",
+    "github_actions": "one_canonical_verification_workflow",
     "static": "python scripts/verify_repository.py --static-only",
     "complete": "python scripts/verify_repository.py",
     "frontend": "cd webapp && npm run verify",
