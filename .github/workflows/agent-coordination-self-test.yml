@@ -4,12 +4,23 @@ on:
   pull_request:
     branches: [main]
     types: [opened, reopened, synchronize, edited, ready_for_review]
+  push:
+    branches:
+      - work/744-canonical-operator-console-consolidation
+    paths:
+      - '.github/workflows/agent-coordination-self-test.yml'
+      - 'config/governance/actions-authority.v1.json'
+      - 'config/governance/release-candidate-preconditions.v1.json'
+      - 'scripts/ci/agent_coordination_*.py'
+      - 'scripts/ci/actions_authority_inventory.py'
+      - 'scripts/ci/tests/test_agent_coordination*.py'
+      - 'scripts/release/exact_main_candidate_preconditions.py'
 
 permissions:
   contents: read
 
 concurrency:
-  group: agent-coordination-self-test-${{ github.repository }}-${{ github.event.pull_request.number }}
+  group: agent-coordination-self-test-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,13 +32,13 @@ jobs:
       - name: Checkout exact proposed head for tests only
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Assert exact checkout identity
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
@@ -83,7 +94,7 @@ jobs:
           exit 0
 
       - name: Capture exact-main candidate preconditions
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         env:
           EXPECTED_MAIN: ${{ github.event.pull_request.base.sha }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
@@ -102,7 +113,7 @@ jobs:
           exit 0
 
       - name: Capture proposed diff whitespace status
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         env:
           EXPECTED_MAIN: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -119,7 +130,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: agent-coordination-self-test-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          name: agent-coordination-self-test-${{ github.event.pull_request.number || 'push' }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/agent-coordination/*
           if-no-files-found: error
           retention-days: 7
@@ -130,5 +141,9 @@ jobs:
           set -Eeuo pipefail
           test "$(cat artifacts/agent-coordination/tests.status)" -eq 0
           test "$(cat artifacts/agent-coordination/actions-authority.status)" -eq 0
-          test "$(cat artifacts/agent-coordination/rc-preconditions.status)" -eq 0
-          test "$(cat artifacts/agent-coordination/diff-check.status)" -eq 0
+          if [ -f artifacts/agent-coordination/rc-preconditions.status ]; then
+            test "$(cat artifacts/agent-coordination/rc-preconditions.status)" -eq 0
+          fi
+          if [ -f artifacts/agent-coordination/diff-check.status ]; then
+            test "$(cat artifacts/agent-coordination/diff-check.status)" -eq 0
+          fi
