@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from ..enums import MessageStatus, SourceChannel, TicketStatus, UserRole
+from ..enums import MessageStatus, SourceChannel, TicketStatus
 from ..models import Customer, Ticket, TicketInboundEmailMessage, TicketOutboundMessage, User
 from ..schemas import EmailMailboxQueueItem, EmailMailboxQueueResponse
 from ..utils.time import utc_now
@@ -18,6 +18,7 @@ from .permissions import (
     ensure_capability,
     resolve_capabilities,
 )
+from .scope_permissions import has_global_case_visibility
 
 EMAIL_QUEUE_TOKENS = {"email", "mail", "smtp", "imap", "pop3"}
 TERMINAL_STATUSES = {TicketStatus.closed, TicketStatus.canceled}
@@ -271,7 +272,7 @@ def build_email_mailbox_queue(
         selectinload(Ticket.inbound_email_messages),
         selectinload(Ticket.outbound_messages),
     )
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if not has_global_case_visibility(current_user, db):
         query = query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
     query = query.filter(or_(inbound_exists, outbound_exists, _marker_prefilter()))
