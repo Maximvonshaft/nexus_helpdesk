@@ -32,7 +32,7 @@ from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .webchat_handoff_service import request_webchat_handoff
 from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
 from .ai_runtime_context import build_webchat_runtime_context
-from .ai_reply_contract import build_ai_reply_contract
+from .ai_reply_contract import AI_REPLY_CONTRACT_V3, build_ai_reply_contract
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
@@ -296,6 +296,46 @@ def _message_metadata(*, generated_by: str, decision_level: str, fallback_reason
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _ai_reply_contract_v3_fields(
+    *,
+    body: str,
+    channel: SourceChannel,
+    handoff_required: bool,
+    fact_evidence_present: bool,
+    tracking_fact: TrackingFactResult | None,
+    grounding_applied: bool,
+    grounding_source: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if handoff_required:
+        reply_type = "handoff_notice"
+    elif body.rstrip().endswith(("?", "\uff1f")):
+        reply_type = "clarifying_question"
+    else:
+        reply_type = "answer"
+
+    used_sources: list[str] = []
+    if fact_evidence_present and tracking_fact is not None:
+        tool_name = str(getattr(tracking_fact, "tool_name", "") or "tracking_lookup").strip()
+        used_sources.append(f"tool:{tool_name}"[:240])
+    if grounding_applied and isinstance(grounding_source, dict):
+        item_key = str(grounding_source.get("item_key") or "").strip()
+        if item_key:
+            used_sources.append(f"knowledge:{item_key}"[:240])
+    if reply_type == "answer" and not used_sources:
+        used_sources.append("runtime:provider_generation")
+
+    confidence = 1.0 if fact_evidence_present else 0.8 if grounding_applied else 0.5
+    return {
+        "contract_version": AI_REPLY_CONTRACT_V3,
+        "reply_type": reply_type,
+        "used_sources": used_sources,
+        "unsupported_claims": [],
+        "conflicts": [],
+        "confidence": confidence,
+        "channel": channel.value,
+    }
+
+
 def process_webchat_ai_reply_job(
     db: Session,
     *,
@@ -503,6 +543,15 @@ def process_webchat_ai_reply_job(
         body=final_body,
         runtime_trace=runtime_trace,
         safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
+        **_ai_reply_contract_v3_fields(
+            body=final_body,
+            channel=reply_channel,
+            handoff_required=runtime_handoff_required,
+            fact_evidence_present=fact_evidence_present,
+            tracking_fact=tracking_fact,
+            grounding_applied=grounding_applied,
+            grounding_source=grounding_source,
+        ),
     )
 
     if runtime_handoff_required:

@@ -10,7 +10,7 @@ from sqlalchemy.orm import object_session
 from app.db import Base, SessionLocal, engine
 from app.enums import ConversationState, UserRole
 from app.main import app
-from app.models import BackgroundJob, Ticket, User
+from app.models import BackgroundJob, Ticket, TicketOutboundMessage, User
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_webchat_ai_reply_jobs
 from app.utils.time import utc_now
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage  # noqa: F401
@@ -89,6 +89,26 @@ def _clear_webchat_ai_jobs() -> None:
         db.commit()
     finally:
         db.close()
+
+
+def test_v3_conversational_answer_records_runtime_generation_source():
+    from app.enums import SourceChannel
+    from app.services.webchat_ai_service import _ai_reply_contract_v3_fields
+
+    fields = _ai_reply_contract_v3_fields(
+        body='Your request has been received.',
+        channel=SourceChannel.web_chat,
+        handoff_required=False,
+        fact_evidence_present=False,
+        tracking_fact=None,
+        grounding_applied=False,
+        grounding_source=None,
+    )
+
+    assert fields['contract_version'] == 'nexus.ai_reply.v3'
+    assert fields['reply_type'] == 'answer'
+    assert fields['used_sources'] == ['runtime:provider_generation']
+    assert fields['unsupported_claims'] == []
 
 
 def test_webchat_ai_turn_is_created_and_public_poll_reports_pending():
@@ -328,6 +348,13 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         assert "SHOULD_NOT_PERSIST" not in trace_text
         assert "CH020000129135" not in trace_text
         assert db.query(WebchatMessage).filter(WebchatMessage.ai_turn_id == ai_turn_id, WebchatMessage.direction == 'agent').count() == 1
+        outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == turn.ticket_id).order_by(TicketOutboundMessage.id.desc()).first()
+        assert outbound is not None
+        assert outbound.runtime_contract_version == 'nexus.ai_reply.v3'
+        assert outbound.runtime_reply_type == 'clarifying_question'
+        contract_payload = json.loads(outbound.runtime_contract_payload_json or '{}')
+        assert contract_payload['grounding']['used_sources'] == []
+        assert contract_payload['grounding']['unsupported_claims'] == []
     finally:
         db.close()
 
@@ -443,6 +470,10 @@ def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
         assert ticket.conversation_state == ConversationState.human_review_required
         assert ticket.required_action == 'Human agent should review the customer request.'
         assert db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.conversation_id == conversation.id).count() == 1
+        outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == turn.ticket_id).order_by(TicketOutboundMessage.id.desc()).first()
+        assert outbound is not None
+        assert outbound.runtime_contract_version == 'nexus.ai_reply.v3'
+        assert outbound.runtime_reply_type == 'handoff_notice'
     finally:
         db.close()
 
