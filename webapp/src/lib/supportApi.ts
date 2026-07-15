@@ -19,6 +19,12 @@ import type {
   WhatsAppNativeAccountStatus,
 } from '@/lib/types'
 import type {
+  ChannelOnboardingTask,
+  ChannelOnboardingTaskComplete,
+  ChannelOnboardingTaskCreate,
+  ChannelOnboardingTaskList,
+} from '@/lib/channelControlTypes'
+import type {
   SpeedafActionResponse,
   SpeedafAddressUpdatePayload,
   SpeedafCancelPayload,
@@ -98,6 +104,33 @@ export const supportApi = {
 
   channelAccounts: () => apiRequest<ChannelAccount[]>('/api/admin/channel-accounts'),
   whatsappNativeStatus: (accountId: string) => apiRequest<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
+  channelOnboardingTasks: (params?: { provider?: string; status?: string; limit?: number; offset?: number }) => {
+    const search = new URLSearchParams({
+      limit: String(params?.limit ?? 50),
+      offset: String(params?.offset ?? 0),
+    })
+    if (params?.provider?.trim()) search.set('provider', params.provider.trim())
+    if (params?.status?.trim()) search.set('status', params.status.trim())
+    return apiRequest<ChannelOnboardingTaskList>(`/api/channel-control/onboarding-tasks?${search.toString()}`)
+  },
+  createChannelOnboardingTask: (payload: ChannelOnboardingTaskCreate) => apiRequest<ChannelOnboardingTask>('/api/channel-control/onboarding-tasks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  startChannelOnboardingTask: (taskId: number) => apiRequest<ChannelOnboardingTask>(`/api/channel-control/onboarding-tasks/${taskId}/start`, {
+    method: 'POST',
+  }),
+  completeChannelOnboardingTask: (taskId: number, payload: ChannelOnboardingTaskComplete) => apiRequest<ChannelOnboardingTask>(`/api/channel-control/onboarding-tasks/${taskId}/complete`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  failChannelOnboardingTask: (taskId: number, lastError: string) => apiRequest<ChannelOnboardingTask>(`/api/channel-control/onboarding-tasks/${taskId}/fail`, {
+    method: 'POST',
+    body: JSON.stringify({ last_error: lastError }),
+  }),
+  cancelChannelOnboardingTask: (taskId: number) => apiRequest<ChannelOnboardingTask>(`/api/channel-control/onboarding-tasks/${taskId}/cancel`, {
+    method: 'POST',
+  }),
   providerRuntimeStatus: () => apiRequest<ProviderRuntimeStatus>('/api/admin/provider-runtime/status'),
 
   querySpeedafWaybills: (ticketId: number, payload: SpeedafWaybillLookupPayload) => apiRequest<SpeedafWaybillLookupResponse>(`/api/tickets/${ticketId}/speedaf/waybills/query`, {
