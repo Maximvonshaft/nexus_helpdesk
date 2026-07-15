@@ -1,3 +1,5 @@
+export type { ChannelOnboardingTask, ChannelOnboardingTaskList } from '@/lib/types'
+
 export interface ChannelOnboardingTaskCreate {
   provider: string
   market_id?: number | null
