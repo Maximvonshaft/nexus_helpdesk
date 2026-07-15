@@ -56,6 +56,10 @@ pre {
   color: var(--nd-color-text);
 }
 
+.nd-field__required {
+  color: var(--nd-color-danger);
+}
+
 .service-entry-state {
   display: grid;
   min-height: 100dvh;
