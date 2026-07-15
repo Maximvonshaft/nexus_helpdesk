@@ -9,8 +9,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..services.permissions import ensure_can_manage_runtime
 from ..services.provider_runtime_status import get_provider_runtime_status
+from ..services.runtime_permissions import ensure_can_manage_runtime, ensure_can_read_runtime
 from .deps import get_current_user
 
 
@@ -40,7 +40,7 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
 
 @router.get("/status")
 def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_runtime(current_user, db)
+    ensure_can_read_runtime(current_user, db)
     return get_provider_runtime_status(db)
 
 
@@ -51,7 +51,7 @@ def provider_runtime_audit_recent(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_runtime(current_user, db)
+    ensure_can_read_runtime(current_user, db)
     capped_limit = min(max(int(limit or 20), 1), 100)
     params = {"limit": capped_limit}
     where = ""
