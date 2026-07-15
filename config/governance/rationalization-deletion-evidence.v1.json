@@ -1,0 +1,31 @@
+{
+  "schema": "nexus.osr.rationalization-deletion-evidence.v1",
+  "work_item": 744,
+  "canonical_pr": 748,
+  "baseline_main_sha": "7ffdbf5941853b4c70d0ec0c2ef0a02cfaa60498",
+  "verification_authority": "scripts/verify_repository.py",
+  "slices": {
+    "github_actions_full_retirement": {
+      "disposition": "SUPERSEDED_DELETE",
+      "replacement": "local repository verification",
+      "proof": "No workflow or Actions authority path may exist; static verification fails on reintroduction."
+    },
+    "canonical_console_product_retirement": {
+      "disposition": "SUPERSEDED_DELETE",
+      "replacement": "webapp/src/app/AppShell.tsx and canonical routes",
+      "proof": "Legacy static frontend, Support Console and generic api.ts are physically absent."
+    },
+    "duplicate_design_system_retirement": {
+      "disposition": "DUPLICATE_DELETE",
+      "replacement": "webapp/src/components/ui and webapp/src/styles/tokens.css",
+      "proof": "shared/ui and shared/api are physically absent; architecture scan rejects a second primitive authority."
+    },
+    "orphan_backend_cleanup": {
+      "disposition": "DEAD_DELETE",
+      "replacement": "canonical outbound, tracking, handoff and AI services",
+      "proof": "Compatibility and unreachable modules are absent and retained tests reject their import names."
+    }
+  },
+  "rollback": "Recover exact historical bytes from Git history for bounded diagnosis only; do not restore parallel production authorities.",
+  "production_authority": false
+}
