@@ -99,8 +99,8 @@ ALL_CAPABILITIES = [
 
 ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     UserRole.admin: set(ALL_CAPABILITIES),
-    # Production hardening: manager remains an operations role, not a default system-governance role.
-    # System capabilities can still be granted explicitly through UserCapabilityOverride when needed.
+    # Role defaults are centralized policy inputs only. Runtime authorization
+    # consumes the resulting capability set and never branches on role names.
     UserRole.manager: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
         CAP_TICKET_STATUS_CHANGE, CAP_TICKET_CLOSE, CAP_ATTACHMENT_READ_EXTERNAL,
@@ -140,6 +140,9 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     },
 }
 
+_GLOBAL_CASE_VISIBILITY = frozenset({CAP_TICKET_ASSIGN, CAP_AUDIT_READ, CAP_USER_MANAGE})
+_GLOBAL_ADMIN_VISIBILITY = frozenset({CAP_AUDIT_READ, CAP_USER_MANAGE})
+
 
 def _base_capabilities(role: UserRole) -> set[str]:
     return set(ROLE_CAPABILITIES.get(role, set()))
@@ -159,15 +162,18 @@ def resolve_capabilities(user, db: Session | None = None) -> set[str]:
 
 
 def capability_fingerprint(user, db: Session | None = None) -> str:
-    """Return a bounded identity for the effective server policy projection.
+    """Return a bounded identity for the effective server policy projection."""
 
-    Domain services use this fingerprint instead of embedding role strings in
-    authorization/cursor state. Role defaults remain an implementation detail of
-    this central policy module; explicit overrides are included when a session is
-    available.
-    """
     canonical = "\n".join(sorted(resolve_capabilities(user, db)))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def has_global_case_visibility(user, db: Session | None = None) -> bool:
+    return bool(resolve_capabilities(user, db) & _GLOBAL_CASE_VISIBILITY)
+
+
+def has_global_admin_visibility(user, db: Session | None = None) -> bool:
+    return bool(resolve_capabilities(user, db) & _GLOBAL_ADMIN_VISIBILITY)
 
 
 def ensure_capability(user, capability: str, db: Session | None = None, *, message: str = "Permission denied") -> None:
@@ -183,7 +189,7 @@ def ensure_ticket_visible(user, ticket, db: Session | None = None):
             detail="Tenant authority requires a database session",
         )
     ensure_ticket_tenant_authority(db, user, ticket)
-    if user.role in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if has_global_case_visibility(user, db):
         return
     if ticket.assignee_id == user.id:
         return
@@ -216,17 +222,10 @@ def ensure_can_update_core_fields(user, db: Session | None = None):
 
 
 def ensure_can_change_status(user, ticket, new_status, db: Session | None = None):
-    capabilities = resolve_capabilities(user, db)
-    if CAP_TICKET_STATUS_CHANGE not in capabilities:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
-    privileged_close = CAP_TICKET_CLOSE in capabilities
-    if new_status in {TicketStatus.closed, TicketStatus.canceled, TicketStatus.escalated} and not privileged_close:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
-    if user.role == UserRole.agent:
-        if ticket.assignee_id != user.id and ticket.team_id != user.team_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent cannot operate this ticket")
-        if new_status in {TicketStatus.closed, TicketStatus.canceled, TicketStatus.escalated} and not privileged_close:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent cannot perform this status change")
+    ensure_capability(user, CAP_TICKET_STATUS_CHANGE, db, message="Permission denied")
+    ensure_ticket_visible(user, ticket, db)
+    if new_status in {TicketStatus.closed, TicketStatus.canceled, TicketStatus.escalated}:
+        ensure_capability(user, CAP_TICKET_CLOSE, db, message="Permission denied")
 
 
 def ensure_can_upload_attachment(user, db: Session | None = None):
