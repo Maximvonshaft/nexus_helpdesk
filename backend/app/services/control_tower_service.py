@@ -1,8 +1,8 @@
-"""Compatibility import for the canonical Control Tower service.
+"""Compatibility import for the canonical Control Tower service."""
 
-No business, authorization, scope or route logic may be added here.
-"""
+from . import canonical_control_tower_service as _canonical
+from .canonical_control_tower_service import *  # noqa: F401,F403
 
-from .canonical_control_tower_service import build_control_tower, submit_control_tower_action
 
-__all__ = ["build_control_tower", "submit_control_tower_action"]
+def __getattr__(name: str):
+    return getattr(_canonical, name)
