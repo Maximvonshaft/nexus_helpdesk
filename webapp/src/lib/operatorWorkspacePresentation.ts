@@ -1,3 +1,4 @@
+import { operationalPresentation } from '@/domain/operationalPresentation'
 import type { BadgeTone, SupportMemoryTimelineItem } from '@/lib/types'
 import type {
   UnifiedOperatorQueueItem,
@@ -166,32 +167,13 @@ export function evidencePresentation(item: SupportMemoryTimelineItem): EvidenceP
 }
 
 export function outcomePresentation(statusValue: unknown, messageValue?: unknown): WorkspacePresentation {
-  const status = normalized(statusValue)
-  const message = String(messageValue || '').trim()
-  if (status === 'business_result_confirmed') return { label: '业务结果已确认', detail: message || undefined, tone: 'success' }
-  if (status === 'customer_notified' || status === 'delivered') return { label: '已通知客户', detail: message || undefined, tone: 'success' }
-  if (status === 'operational_completed') return { label: '运营已完成', detail: message || undefined, tone: 'success' }
-  if (['repair_required', 'failed', 'error', 'dead', 'dead_letter', 'exhausted'].includes(status)) {
-    return { label: '需要修复', detail: message || '操作未形成可接受结果', tone: 'danger' }
-  }
-  if (['completed', 'done', 'succeeded', 'sent', 'dispatched'].includes(status)) {
-    return { label: '技术处理完成', detail: message || '仍需确认运营、客户和业务结果', tone: 'default' }
-  }
-  if (['queued', 'pending', 'retryable', 'retry_scheduled'].includes(status)) {
-    return { label: '请求已排队', detail: message || '后台尚未完成执行', tone: 'warning' }
-  }
-  if (['accepted', 'submitted', 'processing'].includes(status)) {
-    return { label: '请求已接受', detail: message || '系统已接受请求，仍需等待最终结果', tone: 'default' }
-  }
-  if (status === 'cancel_requested') {
-    return { label: '取消请求已提交', detail: message || '仍需确认外部系统和业务结果', tone: 'warning' }
-  }
-  return { label: '结果待确认', detail: message || '当前记录不足以判断业务结果', tone: 'warning' }
+  return operationalPresentation(statusValue, messageValue)
 }
 
 export function messageDeliveryPresentation(statusValue: unknown): WorkspacePresentation {
   const status = normalized(statusValue)
-  if (status === 'delivered' || status === 'read') return { label: status === 'read' ? '客户已读' : '已送达', tone: 'success' }
+  if (status === 'read') return { label: '客户已读', tone: 'success' }
+  if (status === 'delivered') return { label: '已送达', detail: '送达不自动等于客户已读', tone: 'success' }
   if (status === 'sent') return { label: '已发送到渠道', detail: '不等于客户已经收到', tone: 'default' }
   if (status === 'queued' || status === 'pending') return { label: '等待发送', detail: '消息仍在发送队列中', tone: 'warning' }
   if (status === 'failed' || status === 'dead') return { label: '发送失败', detail: '需要重试或人工处理', tone: 'danger' }
