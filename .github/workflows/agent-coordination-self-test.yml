@@ -1,0 +1,134 @@
+name: Agent Coordination Self Test
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-coordination-self-test-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  proposed-agent-coordination-self-test:
+    name: proposed-agent-coordination-self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact proposed head for tests only
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert exact checkout identity
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+
+      - name: Install pinned governance dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check 'pytest==8.3.5' 'PyYAML==6.0.2'
+
+      - name: Compile governance authority
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            scripts/ci/agent_coordination_model.py \
+            scripts/ci/agent_coordination_core.py \
+            scripts/ci/agent_coordination_gate.py \
+            scripts/ci/agent_coordination_reclaim_adapter.py \
+            scripts/ci/agent_coordination_policy_gate.py \
+            scripts/ci/agent_coordination_path_policy.py \
+            scripts/ci/agent_coordination_open_pr_policy.py \
+            scripts/ci/agent_coordination_entrypoint.py \
+            scripts/ci/actions_authority_inventory.py \
+            scripts/release/exact_main_candidate_preconditions.py
+
+      - name: Capture proposed policy test evidence
+        run: |
+          set +e
+          mkdir -p artifacts/agent-coordination
+          python -m pytest -q \
+            scripts/ci/tests/test_agent_coordination*.py \
+            --junitxml=artifacts/agent-coordination/tests.xml
+          status=$?
+          set -e
+          printf '%s' "${status}" > artifacts/agent-coordination/tests.status
+          exit 0
+
+      - name: Capture Actions authority inventory
+        if: always()
+        run: |
+          set +e
+          mkdir -p artifacts/agent-coordination
+          python scripts/ci/actions_authority_inventory.py \
+            > artifacts/agent-coordination/actions-authority.json
+          status=$?
+          set -e
+          printf '%s' "${status}" > artifacts/agent-coordination/actions-authority.status
+          cat artifacts/agent-coordination/actions-authority.json
+          exit 0
+
+      - name: Capture exact-main candidate preconditions
+        if: always()
+        env:
+          EXPECTED_MAIN: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          mkdir -p artifacts/agent-coordination
+          python scripts/release/exact_main_candidate_preconditions.py \
+            --config config/governance/release-candidate-preconditions.v1.json \
+            --current-main-sha "${EXPECTED_MAIN}" \
+            --candidate-sha "${CANDIDATE_SHA}" \
+            > artifacts/agent-coordination/rc-preconditions.json
+          status=$?
+          set -e
+          printf '%s' "${status}" > artifacts/agent-coordination/rc-preconditions.status
+          cat artifacts/agent-coordination/rc-preconditions.json
+          exit 0
+
+      - name: Capture proposed diff whitespace status
+        if: always()
+        env:
+          EXPECTED_MAIN: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          git diff --check "${EXPECTED_MAIN}"...HEAD \
+            > artifacts/agent-coordination/diff-check.log 2>&1
+          status=$?
+          set -e
+          printf '%s' "${status}" > artifacts/agent-coordination/diff-check.status
+          cat artifacts/agent-coordination/diff-check.log
+          exit 0
+
+      - name: Upload bounded exact-head governance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-coordination-self-test-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: artifacts/agent-coordination/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require governance recovery gates
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          test "$(cat artifacts/agent-coordination/tests.status)" -eq 0
+          test "$(cat artifacts/agent-coordination/actions-authority.status)" -eq 0
+          test "$(cat artifacts/agent-coordination/rc-preconditions.status)" -eq 0
+          test "$(cat artifacts/agent-coordination/diff-check.status)" -eq 0
