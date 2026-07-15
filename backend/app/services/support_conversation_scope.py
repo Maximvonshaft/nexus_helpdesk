@@ -6,29 +6,28 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, false, or_
 from sqlalchemy.orm import Query, Session
 
-from ..enums import UserRole
 from ..models import Ticket
+from .permissions import CAP_AUDIT_READ, CAP_TICKET_ASSIGN, CAP_USER_MANAGE, resolve_capabilities
 from .tenant_authority import resolve_actor_tenant_id
 
-_GLOBAL_SUPPORT_ROLES = {UserRole.admin, UserRole.auditor}
+_GLOBAL_SUPPORT_CAPABILITIES = {CAP_AUDIT_READ, CAP_USER_MANAGE}
 
 
-def support_ticket_scope_predicate(current_user: Any, *, actor_tenant_id: int | None):
-    """Return one Tenant-contained Ticket predicate for support reads.
-
-    An authenticated relational Tenant is always the outer boundary, including
-    privileged roles. In bounded shadow compatibility a fully unowned actor can
-    see only fully unowned Ticket rows; it never widens into owned Tenant data.
-    Legacy role/team/market rules are then applied inside that Tenant boundary.
-    """
+def support_ticket_scope_predicate(
+    current_user: Any,
+    *,
+    actor_tenant_id: int | None,
+    capabilities: set[str] | None = None,
+):
+    """Return one tenant-contained, capability-derived Ticket predicate."""
 
     tenant_predicate = (
         Ticket.tenant_id == actor_tenant_id
         if actor_tenant_id is not None
         else Ticket.tenant_id.is_(None)
     )
-    role = getattr(current_user, "role", None)
-    if role in _GLOBAL_SUPPORT_ROLES:
+    effective = capabilities or set()
+    if effective & _GLOBAL_SUPPORT_CAPABILITIES:
         return tenant_predicate
 
     predicates = []
@@ -40,7 +39,7 @@ def support_ticket_scope_predicate(current_user: Any, *, actor_tenant_id: int | 
     if team_id is not None:
         predicates.append(Ticket.team_id == team_id)
 
-    if role == UserRole.manager:
+    if CAP_TICKET_ASSIGN in effective:
         team = getattr(current_user, "team", None)
         market_id = getattr(team, "market_id", None) if team is not None else None
         if market_id is not None:
@@ -51,10 +50,12 @@ def support_ticket_scope_predicate(current_user: Any, *, actor_tenant_id: int | 
 
 def apply_support_ticket_scope(query: Query, current_user: Any, db: Session) -> Query:
     actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    capabilities = resolve_capabilities(current_user, db)
     return query.filter(
         support_ticket_scope_predicate(
             current_user,
             actor_tenant_id=actor_tenant_id,
+            capabilities=capabilities,
         )
     )
 
@@ -66,8 +67,6 @@ def ensure_support_ticket_visible(db: Session, current_user: Any, ticket_id: int
         db,
     ).first()
     if visible is None:
-        # Deliberately use 404 so an unauthorized actor cannot distinguish a
-        # hidden support case from a non-existent one.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="support_conversation_not_found",
