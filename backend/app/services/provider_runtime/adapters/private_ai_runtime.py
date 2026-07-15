@@ -1671,6 +1671,35 @@ def _reply_asks_for_logistics_identifier(reply: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _reply_requests_missing_logistics_identifier(reply: str) -> bool:
+    text = " ".join(str(reply or "").lower().split())
+    if not text:
+        return False
+    identifier = (
+        r"tracking\s+(?:number|reference)",
+        r"waybill(?:\s+(?:number|reference))?",
+        r"shipment\s+(?:reference|id|number)",
+        r"parcel\s+(?:number|reference)",
+        r"package\s+(?:number|reference)",
+        r"order\s+(?:reference|number|id)",
+    )
+    identifier_pattern = "(?:" + "|".join(identifier) + ")"
+    if re.search(
+        rf"\b(?:provide|send|resend|share|give)\b.{{0,60}}\b{identifier_pattern}\b|"
+        rf"\b(?:need|require)\b.{{0,40}}\b{identifier_pattern}\b|"
+        rf"\bwhat(?:'s|\s+is)\b.{{0,30}}\b{identifier_pattern}\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    return bool(
+        re.search(
+            r"(?:请|麻烦)?(?:提供|发送|重发|发一下|给我|告诉我)[^。！？.!?]{0,40}(?:运单号|单号|包裹编号|订单号)",
+            text,
+        )
+    )
+
+
 def _reply_requests_logistics_identifier_after_verified_fact(reply: str) -> bool:
     text = " ".join(str(reply or "").lower().split())
     if not text:
@@ -1865,13 +1894,23 @@ def _polish_normalized_tracking_safe_reference(reply: str, *, suffix: str) -> st
 def _tracking_unresolved_bad_clarification(reply: str, *, request: ProviderRequest) -> bool:
     if request.tracking_fact_evidence_present:
         return False
-    if _customer_intent_hint(request.body) != "logistics_or_tracking":
-        return False
-    if not _TRACKING_TOKEN_RE.search(str(request.body or "")):
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    conversation_state = metadata.get("conversation_state") if isinstance(metadata.get("conversation_state"), dict) else {}
+    tracking_metadata = metadata.get("tracking_fact_metadata") if isinstance(metadata.get("tracking_fact_metadata"), dict) else {}
+    tracking_reference_present = bool(
+        _TRACKING_TOKEN_RE.search(str(request.body or ""))
+        or conversation_state.get("tracking_reference_present")
+        or conversation_state.get("safe_tracking_reference")
+        or tracking_metadata.get("tracking_number_hash")
+        or tracking_metadata.get("safe_tracking_reference")
+    )
+    if not tracking_reference_present:
         return False
     text = str(reply or "").strip().lower()
     if not text:
         return False
+    if _reply_requests_missing_logistics_identifier(reply):
+        return True
     bad_markers = (
         "怎么查询",
         "如何查询",

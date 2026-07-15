@@ -405,6 +405,9 @@ def process_webchat_ai_reply_job(
         visitor_message=visitor_message,
         history_rows=history_rows,
     )
+    # The stale-turn guard refreshes the conversation before commit. Persist
+    # continuity first so a valid tracking reference cannot be discarded.
+    db.flush([conversation, ticket])
     fact_evidence_present = bool(tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted)
     tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
     tracking_fact_metadata.pop("fact_evidence_present", None)

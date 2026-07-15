@@ -2902,16 +2902,16 @@ async def test_private_ai_runtime_repairs_tracking_unresolved_bad_clarification(
         assert endpoint.endswith("/api/chat")
         if len(prompts) == 1:
             return {
-                "customer_reply": "请确认一下这个号码是否完整且正确，然后告诉我我需要怎么查询。",
-                "language": "zh",
+                "customer_reply": "I can check the status for you. Could you please provide the tracking number?",
+                "language": "en",
                 "intent": "tracking_unresolved",
                 "tracking_number": None,
                 "handoff_required": False,
                 "ticket_should_create": False,
             }
         return {
-            "customer_reply": "请确认一下这个号码是否完整且正确。",
-            "language": "zh",
+            "customer_reply": "Please confirm that the tracking number you provided is complete and correct.",
+            "language": "en",
             "intent": "tracking_unresolved",
             "tracking_number": None,
             "handoff_required": False,
@@ -2920,12 +2920,12 @@ async def test_private_ai_runtime_repairs_tracking_unresolved_bad_clarification(
 
     monkeypatch.setattr(adapter, "_post_json", fake_post_json)
 
-    result = await adapter.generate(Mock(), _request(body="请帮我查询运单 CH020000129135 的状态"))
+    result = await adapter.generate(Mock(), _request(body="Please check tracking number CH020000129135"))
 
     assert result.ok is True
     assert len(prompts) == 2
     assert "Tracking unresolved wording repair task" in prompts[1]
-    assert result.structured_output["customer_reply"] == "请确认一下这个号码是否完整且正确。"
+    assert result.structured_output["customer_reply"] == "Please confirm that the tracking number you provided is complete and correct."
     assert result.raw_payload_safe_summary["output_contract_repair_applied"] is True
     assert result.raw_payload_safe_summary["output_contract_repair_reason"] == "tracking_unresolved_bad_clarification"
 
@@ -2954,9 +2954,9 @@ async def test_private_ai_runtime_repairs_live_tracking_claim_without_evidence(m
                 "ticket_should_create": False,
             }
         return {
-            "customer_reply": "I do not have verified live tracking evidence for that parcel yet. Could you send the waybill number again so I can check it?",
+            "customer_reply": "I do not have verified live tracking evidence for the waybill you provided yet. Please check whether the number is complete and correct.",
             "language": "en",
-            "intent": "tracking_missing_number",
+            "intent": "tracking_unresolved",
             "tracking_number": None,
             "handoff_required": False,
             "ticket_should_create": False,
