@@ -63,9 +63,9 @@ class FakeProvider:
 
 def _settings(**overrides):
     values = {
-        "knowledge_embedding_dim": 384,
+        "knowledge_embedding_dim": 1024,
         "knowledge_embedding_batch_size": 16,
-        "knowledge_embedding_model": "contract-384",
+        "knowledge_embedding_model": "contract-1024",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -90,7 +90,7 @@ def _row(row_id=1, text="safe knowledge"):
 
 def test_sqlite_backfill_is_idempotent_and_uses_text_fallback():
     row = _row()
-    provider = FakeProvider([[0.25] * 384])
+    provider = FakeProvider([[0.25] * 1024])
     db = FakeDB([row], dialect="sqlite")
 
     first = run_backfill(db, provider, _settings())
@@ -103,13 +103,13 @@ def test_sqlite_backfill_is_idempotent_and_uses_text_fallback():
         "skipped": 0,
         "failed": 0,
         "dry_run": False,
-        "dimension": 384,
+        "dimension": 1024,
         "storage": "text_fallback",
     }
     assert second["embedded"] == 0
     assert second["skipped"] == 1
     assert len(provider.calls) == 1
-    assert row.embedding == [0.25] * 384
+    assert row.embedding == [0.25] * 1024
     assert row.embedding_vector.startswith("[")
     assert row.semantic_hash == semantic_hash("safe knowledge")
 
@@ -117,23 +117,23 @@ def test_sqlite_backfill_is_idempotent_and_uses_text_fallback():
 def test_null_vector_is_retried_even_when_metadata_claims_embedded():
     row = _row()
     row.semantic_hash = semantic_hash(row.normalized_text)
-    row.embedding_model = "contract-384"
-    row.embedding_dim = 384
+    row.embedding_model = "contract-1024"
+    row.embedding_dim = 1024
     row.embedding_status = "embedded"
-    row.embedding = [0.1] * 384
+    row.embedding = [0.1] * 1024
     row.embedding_vector = None
-    provider = FakeProvider([[0.2] * 384])
+    provider = FakeProvider([[0.2] * 1024])
 
     result = run_backfill(FakeDB([row]), provider, _settings())
 
     assert result["embedded"] == 1
     assert provider.calls == [[row.normalized_text]]
-    assert row.embedding == [0.2] * 384
+    assert row.embedding == [0.2] * 1024
 
 
 def test_provider_cardinality_mismatch_marks_entire_batch_failed():
     rows = [_row(1, "first"), _row(2, "second")]
-    provider = FakeProvider([[0.1] * 384])
+    provider = FakeProvider([[0.1] * 1024])
 
     result = run_backfill(FakeDB(rows), provider, _settings())
 
@@ -146,9 +146,9 @@ def test_provider_cardinality_mismatch_marks_entire_batch_failed():
 @pytest.mark.parametrize(
     "vector",
     [
-        [0.1] * 383,
-        [0.1] * 383 + [float("nan")],
-        [0.1] * 383 + [float("inf")],
+        [0.1] * 1023,
+        [0.1] * 1023 + [float("nan")],
+        [0.1] * 1023 + [float("inf")],
     ],
 )
 def test_invalid_provider_vector_never_persists(vector):
@@ -165,21 +165,21 @@ def test_postgres_uses_single_explicit_type_safe_vector_write():
     row = _row()
     db = FakeDB([row], dialect="postgresql")
 
-    result = run_backfill(db, FakeProvider([[0.5] * 384]), _settings())
+    result = run_backfill(db, FakeProvider([[0.5] * 1024]), _settings())
 
     assert result["storage"] == "pgvector"
-    assert row.embedding == [0.5] * 384
+    assert row.embedding == [0.5] * 1024
     assert row.embedding_vector is None
     assert len(db.executed) == 1
     sql, params = db.executed[0]
-    assert "CAST(:vector AS vector(384))" in sql
+    assert "CAST(:vector AS vector(1024))" in sql
     assert params["id"] == 1
     assert params["vector"].startswith("[")
 
 
 def test_backfill_rejects_invalid_configured_dimension_before_provider_call():
     row = _row()
-    provider = FakeProvider([[0.1] * 384])
+    provider = FakeProvider([[0.1] * 1024])
 
     with pytest.raises(KnowledgeVectorContractError, match="knowledge_vector_dimension_mismatch"):
         run_backfill(

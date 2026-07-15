@@ -33,8 +33,8 @@ def _settings(**overrides):
         "knowledge_embeddings_enabled": False,
         "knowledge_vector_fallback_allowed": True,
         "knowledge_embedding_provider": "deterministic_hash",
-        "knowledge_embedding_model": "contract-384",
-        "knowledge_embedding_dim": 384,
+        "knowledge_embedding_model": "contract-1024",
+        "knowledge_embedding_dim": 1024,
         "knowledge_embedding_base_url": "",
         "knowledge_embedding_api_key": "",
         "knowledge_embedding_api_key_file": "",
@@ -317,4 +317,4 @@ def test_postgres_sql_enforces_customer_scope_and_valid_vector_contract():
     assert "ki.audience_scope = :audience_scope" in sql
     assert "kc.embedding_status = 'embedded'" in sql
     assert "kc.embedding_dim = :vector_dim" in sql
-    assert params["vector_dim"] == 384
+    assert params["vector_dim"] == 1024

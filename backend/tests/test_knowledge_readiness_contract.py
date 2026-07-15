@@ -186,7 +186,7 @@ def test_provider_contract_requires_v2_enabled_model_dimension_credentials_and_r
         knowledge_embeddings_enabled=True,
         knowledge_embedding_provider="openai_compatible",
         knowledge_embedding_model="model-a",
-        knowledge_embedding_dim=384,
+        knowledge_embedding_dim=1024,
         knowledge_embedding_api_key="super-secret-key",
         knowledge_embedding_api_key_file=None,
         app_env="production",
@@ -225,7 +225,7 @@ class _ScalarResult:
 
 
 class _IndexDB:
-    def __init__(self, dialect, vector_type="vector(384)", indexes=None, fail=False):
+    def __init__(self, dialect, vector_type="vector(1024)", indexes=None, fail=False):
         self.dialect = dialect
         self.vector_type = vector_type
         self.indexes = indexes or []
@@ -396,9 +396,9 @@ def _add_item(db, key: str, **overrides):
         "status": "active",
         "knowledge_kind": item.knowledge_kind,
         "fact_status": item.fact_status,
-        "embedding": [0.0] * 384,
+        "embedding": [0.0] * 1024,
         "embedding_vector": "[0.0]",
-        "embedding_dim": 384,
+        "embedding_dim": 1024,
         "embedding_status": "embedded",
     }
     chunk_values.update(overrides.pop("chunk", {}))

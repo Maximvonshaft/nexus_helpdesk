@@ -59,6 +59,33 @@ QUERY_STOPWORDS = {
     "you",
     "your",
 }
+GERMAN_QUERY_STOPWORDS = {
+    "aber",
+    "bitte",
+    "das",
+    "der",
+    "die",
+    "dir",
+    "du",
+    "ein",
+    "eine",
+    "für",
+    "hallo",
+    "helfen",
+    "ich",
+    "ist",
+    "kann",
+    "kannst",
+    "mir",
+    "mit",
+    "oder",
+    "sie",
+    "und",
+    "was",
+    "wie",
+    "womit",
+    "zu",
+}
 CJK_STOPWORDS = {"一下", "一个", "什么", "怎么", "可以", "请问", "如果", "这个", "那个", "我们", "你们", "客户"}
 COUNTRY_CODE_TERMS = {"ch", "cn", "de", "eg", "es", "fr", "gh", "ke", "ma", "mk", "mx", "ng", "pk", "sa", "uae", "uk", "usa"}
 COUNTRY_ENTITY_TERMS = {
@@ -433,7 +460,7 @@ def _raw_terms(normalized: str) -> list[str]:
 
 
 def _is_query_stopword(term: str) -> bool:
-    if term in QUERY_STOPWORDS or term in CJK_STOPWORDS:
+    if term in QUERY_STOPWORDS or term in GERMAN_QUERY_STOPWORDS or term in CJK_STOPWORDS:
         return True
     if _contains_cjk(term):
         return False

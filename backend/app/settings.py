@@ -161,7 +161,7 @@ class Settings:
         self.knowledge_embeddings_enabled = _env_bool("KNOWLEDGE_EMBEDDINGS_ENABLED", self.app_env == "production")
         self.knowledge_embedding_provider = os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "deterministic_hash").strip().lower() or "deterministic_hash"
         self.knowledge_embedding_model = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "nexus-deterministic-hash-v1").strip()
-        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "384"))
+        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "1024"))
         self.knowledge_embedding_batch_size = int(os.getenv("KNOWLEDGE_EMBEDDING_BATCH_SIZE", "32"))
         self.knowledge_embedding_timeout_seconds = int(os.getenv("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS", "20"))
         self.knowledge_vector_fallback_allowed = _env_bool("KNOWLEDGE_VECTOR_FALLBACK_ALLOWED", True)

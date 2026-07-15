@@ -57,7 +57,7 @@ def _write_postgres_vector(db: Any, *, row_id: int, vector: list[float]) -> None
     db.execute(
         text(
             "UPDATE knowledge_chunks "
-            "SET embedding_vector = CAST(:vector AS vector(384)) "
+            f"SET embedding_vector = CAST(:vector AS vector({KNOWLEDGE_VECTOR_DIMENSION})) "
             "WHERE id = :id"
         ),
         {"id": row_id, "vector": vector_literal(vector)},

@@ -60,7 +60,7 @@ def test_knowledge_chunk_pg_hybrid_columns_use_postgres_types():
     dialect = postgresql.dialect()
 
     assert KnowledgeChunk.__table__.c.search_tsvector.type.dialect_impl(dialect).compile(dialect=dialect) == "TSVECTOR"
-    assert KnowledgeChunk.__table__.c.embedding_vector.type.dialect_impl(dialect).compile(dialect=dialect) == "vector(384)"
+    assert KnowledgeChunk.__table__.c.embedding_vector.type.dialect_impl(dialect).compile(dialect=dialect) == "vector(1024)"
 
 
 def test_openai_compatible_embedding_provider_requests_and_parses_ordered_vectors(monkeypatch):
@@ -121,7 +121,7 @@ def test_openai_compatible_embedding_provider_fails_closed_without_dimension_cap
             base_url="https://embedding.example/v1",
             api_key="secret",
             model="fixed-native-model",
-            dim=384,
+            dim=1024,
             timeout_seconds=7,
             dimension_request_supported=False,
         )
@@ -133,7 +133,7 @@ def test_embedding_provider_factory_fails_closed_when_dimension_requests_are_uns
     with pytest.raises(ValueError, match="embedding_provider_dimension_request_unsupported"):
         get_embedding_provider(
             "openai_compatible",
-            dim=384,
+            dim=1024,
             model="fixed-native-model",
             base_url="https://embedding.example/v1",
             api_key="secret",
@@ -147,7 +147,7 @@ def test_embedding_provider_factory_rejects_invalid_dimension_capability(monkeyp
     with pytest.raises(ValueError, match="embedding_provider_dimension_request_capability_invalid"):
         get_embedding_provider(
             "openai_compatible",
-            dim=384,
+            dim=1024,
             model="text-embedding-3-small",
             base_url="https://embedding.example/v1",
             api_key="secret",
@@ -158,10 +158,10 @@ def test_embedding_provider_factory_rejects_invalid_dimension_capability(monkeyp
 @pytest.mark.parametrize(
     "embedding",
     [
-        [0.0] * 383,
-        [0.0] * 383 + [float("nan")],
-        [0.0] * 383 + [float("inf")],
-        [0.0] * 383 + ["not-a-number"],
+        [0.0] * 1023,
+        [0.0] * 1023 + [float("nan")],
+        [0.0] * 1023 + [float("inf")],
+        [0.0] * 1023 + ["not-a-number"],
     ],
 )
 def test_openai_compatible_embedding_provider_rejects_invalid_native_output(monkeypatch, embedding):
@@ -180,7 +180,7 @@ def test_openai_compatible_embedding_provider_rejects_invalid_native_output(monk
         base_url="https://embedding.example/v1",
         api_key="secret",
         model="text-embedding-3-small",
-        dim=384,
+        dim=1024,
         timeout_seconds=7,
     )
 

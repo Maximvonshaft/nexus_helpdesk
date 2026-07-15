@@ -12,7 +12,7 @@ from .db import Base
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
-KNOWLEDGE_VECTOR_DIMENSION = 384
+KNOWLEDGE_VECTOR_DIMENSION = 1024
 
 
 class PGVector(UserDefinedType):

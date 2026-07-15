@@ -136,6 +136,34 @@ def test_stopwords_do_not_retrieve_direct_answer(db_session):
     assert "hi" in result.runtime_trace["query"]["dropped_stopwords"]
 
 
+def test_german_general_support_question_does_not_retrieve_business_fact(db_session):
+    admin = _user(db_session)
+    _business_fact(
+        db_session,
+        admin,
+        item_key="fact.delivery.acceleration",
+        title="Delivery acceleration",
+        fact_question="Kann die Zustellung beschleunigt werden?",
+        fact_answer="Eine Beschleunigung kann als Zustellanfrage erfasst werden.",
+        fact_aliases_json=["Zustellung beschleunigen", "Beschleunigung der Lieferung"],
+        language="de",
+    )
+
+    result = retrieve_published_chunks(
+        db_session,
+        q="Hallo, womit kannst du mir helfen?",
+        channel="webchat",
+        audience_scope="customer",
+        language="de",
+    )
+
+    assert result.hits == []
+    assert result.grounding_would_apply is False
+    assert {"hallo", "womit", "kannst", "du", "mir", "helfen"}.issubset(
+        set(result.runtime_trace["query"]["dropped_stopwords"])
+    )
+
+
 def test_hi_does_not_match_shipment_substring(db_session):
     admin = _user(db_session)
     _shipment_fact(db_session, admin)
