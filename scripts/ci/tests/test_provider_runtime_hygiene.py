@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from scripts.ci.provider_runtime_hygiene import (
     OPENAI_RESPONSE_PROBE_PATH,
+    POLICY_SOURCE_PATHS,
     SCHEMA,
     scan_text,
+    scannable_paths,
 )
 
 
@@ -14,6 +16,10 @@ def _codes(path: str, text: str) -> set[str]:
 def test_exact_openai_response_api_probe_declarations_are_allowed() -> None:
     text = """
 TEST_OPENAI_RESPONSES = "openai_responses"
+
+ACTIVE_TEST_NAMES = {
+    "openai_responses",
+}
 
 def _test_openai_responses_api(
     context,
@@ -38,11 +44,24 @@ def test_openai_responses_provider_authority_remains_forbidden() -> None:
     ) == {"retired_openai_responses_provider_identifier"}
 
 
-def test_same_probe_key_is_not_allowed_in_other_executable_paths() -> None:
+def test_same_probe_labels_are_not_allowed_in_other_executable_paths() -> None:
     assert _codes(
         "scripts/ai/parallel_probe.py",
-        'TEST_OPENAI_RESPONSES = "openai_responses"\n',
+        'TEST_OPENAI_RESPONSES = "openai_responses"\nACTIVE_TEST_NAMES = {"openai_responses"}\n',
     ) == {"retired_openai_responses_provider_identifier"}
+
+
+def test_policy_sources_are_the_only_exact_repository_scan_exclusions() -> None:
+    candidates = [
+        "scripts/ci/provider_runtime_hygiene.py",
+        "scripts/ci/tests/test_provider_runtime_hygiene.py",
+        "scripts/ci/provider_runtime_hygiene_copy.py",
+        "scripts/ci/tests/provider_runtime_hygiene_fixture.py",
+        "backend/app/settings.py",
+    ]
+    assert set(candidates) - set(scannable_paths(candidates)) == set(POLICY_SOURCE_PATHS)
+    assert "scripts/ci/provider_runtime_hygiene_copy.py" in scannable_paths(candidates)
+    assert "scripts/ci/tests/provider_runtime_hygiene_fixture.py" in scannable_paths(candidates)
 
 
 def test_other_retired_provider_and_canned_reply_markers_fail_closed() -> None:

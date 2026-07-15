@@ -50,16 +50,14 @@ def test_voice_call_evidence_flows_through_canonical_case_evidence_without_secre
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
     assert "EvidencePanel" in workspace
+    assert "EvidenceCard" in workspace
     assert "evidence_timeline" in workspace
     assert "事实与依据" in workspace
     assert "TechnicalDetails" in workspace
     assert "JSON.stringify(item.summary" in workspace
-    for marker in [
-        "tracking",
-        "voiceStatus",
-        "nd-webchat-voice-transcript",
-    ]:
-        assert marker in workspace + "\n" + widget
+    assert "voiceStatus" in widget
+    assert "addVoiceTranscript" in widget
+    assert "nd-webchat-voice-transcript" in widget
 
     evidence_block = workspace.split("function EvidencePanel", 1)[-1]
     forbidden = ["participant_token", "visitor_token", "LIVEKIT_API_SECRET", "api_secret"]

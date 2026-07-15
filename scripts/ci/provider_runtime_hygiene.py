@@ -7,10 +7,16 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 SCHEMA = "nexus.provider-runtime.hygiene.v1"
 PRODUCTION_ROOTS = ("backend/app", "backend/scripts", "deploy", "webapp/src", "scripts")
+POLICY_SOURCE_PATHS = frozenset(
+    {
+        "scripts/ci/provider_runtime_hygiene.py",
+        "scripts/ci/tests/test_provider_runtime_hygiene.py",
+    }
+)
 GENERIC_RETIRED_MARKERS = (
     ("retired_codex_app_server", "codex_app_server"),
     ("retired_codex_direct", "codex_direct"),
@@ -23,6 +29,7 @@ OPENAI_RESPONSE_PROBE_ALLOWED_LINES = (
     re.compile(r'^\s*TEST_OPENAI_RESPONSES\s*=\s*["\']openai_responses["\']\s*$'),
     re.compile(r'^\s*def\s+_test_openai_responses_api\s*\('),
     re.compile(r'^\s*TEST_OPENAI_RESPONSES\s*:\s*_test_openai_responses_api\s*,?\s*$'),
+    re.compile(r'^\s*["\']openai_responses["\']\s*,?\s*$'),
 )
 
 
@@ -30,6 +37,11 @@ def _is_allowed_openai_response_probe_line(path: str, line: str) -> bool:
     return path == OPENAI_RESPONSE_PROBE_PATH and any(
         pattern.search(line) for pattern in OPENAI_RESPONSE_PROBE_ALLOWED_LINES
     )
+
+
+def scannable_paths(paths: Iterable[str]) -> list[str]:
+    """Exclude only the checker and its test corpus from executable scanning."""
+    return sorted(path for path in paths if path not in POLICY_SOURCE_PATHS)
 
 
 def scan_text(path: str, text: str) -> list[dict[str, object]]:
@@ -56,7 +68,7 @@ def _tracked_paths(repo_root: Path, roots: Sequence[str]) -> list[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    return sorted(
+    return scannable_paths(
         path
         for path in completed.stdout.decode("utf-8", errors="strict").split("\0")
         if path
