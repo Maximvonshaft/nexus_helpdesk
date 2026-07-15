@@ -83,8 +83,8 @@ jobs:
         working-directory: backend
         run: |
           set -Eeuo pipefail
-          alembic upgrade head
-          test "$(alembic current | awk '{print $1}')" = "20260715_0060"
+          alembic upgrade 20260713_0059
+          test "$(alembic current | awk '{print $1}')" = "20260713_0059"
 
       - name: Seed one unassigned coherent core ownership chain
         run: |
