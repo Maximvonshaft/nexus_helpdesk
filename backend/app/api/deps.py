@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 
 from ..auth_service import decode_access_token
 from ..db import get_db
-from ..enums import UserRole
 from ..models import User
+from ..services.permissions import CAP_USER_MANAGE, resolve_capabilities
 from ..settings import get_settings
 
 bearer = HTTPBearer(auto_error=False)
@@ -31,7 +31,10 @@ def get_current_user(
     return user
 
 
-def require_admin_user(current_user = Depends(get_current_user)):
-    if current_user.role != UserRole.admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+def require_admin_user(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if CAP_USER_MANAGE not in resolve_capabilities(current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User management capability required")
     return current_user
