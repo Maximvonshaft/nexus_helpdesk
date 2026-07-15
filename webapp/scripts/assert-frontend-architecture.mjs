@@ -14,10 +14,10 @@ const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|
 const PRIMITIVE_EXPORT_RE = /export\s+(?:const|function|class)\s+(Button|Badge|Card|Field|ConfirmDialog)\b/g
 const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/g
 const LEGACY_SELECTOR_RE = /(^|[,{\s])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
+const CANONICAL_WORKFLOW = 'canonical-verification.yml'
 
 const forbiddenPaths = [
   path.join(repositoryRoot, 'frontend'),
-  path.join(repositoryRoot, '.github', 'workflows'),
   path.join(srcRoot, 'features', 'support-console'),
   path.join(srcRoot, 'shared', 'ui'),
   path.join(srcRoot, 'shared', 'api'),
@@ -120,6 +120,21 @@ function duplicatePrimitiveAuthorities(files) {
     .map(([primitive, entries]) => `${primitive}: ${entries.join(', ')}`)
 }
 
+function assertCanonicalWorkflow(failures) {
+  const workflowDir = path.join(repositoryRoot, '.github', 'workflows')
+  if (!fs.existsSync(workflowDir)) {
+    failures.push(`canonical workflow missing: .github/workflows/${CANONICAL_WORKFLOW}`)
+    return
+  }
+  const workflowFiles = fs.readdirSync(workflowDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort()
+  if (workflowFiles.length !== 1 || workflowFiles[0] !== CANONICAL_WORKFLOW) {
+    failures.push(`workflow authority must be exactly ${CANONICAL_WORKFLOW}: ${workflowFiles.join(', ') || 'none'}`)
+  }
+}
+
 function assertCanonicalNavigation(files, failures) {
   const navigationOwners = files
     .filter((file) => /\.(?:ts|tsx)$/.test(file))
@@ -186,6 +201,7 @@ const failures = []
 for (const forbidden of forbiddenPaths) {
   if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
 }
+assertCanonicalWorkflow(failures)
 
 const files = sourceFiles()
 const reachable = reachableFiles()
@@ -210,4 +226,5 @@ console.log(JSON.stringify({
   production_files: files.length,
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
+  canonical_workflow: `.github/workflows/${CANONICAL_WORKFLOW}`,
 }, null, 2))
