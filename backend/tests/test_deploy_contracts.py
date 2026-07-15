@@ -99,3 +99,12 @@ def test_private_ai_runtime_uses_app_readable_runtime_secret_mount():
     assert env["NEXUSDESK_RUNTIME_SECRETS_DIR"] == "/opt/nexus_helpdesk/deploy/runtime_secrets"
     assert server_expected_mount in server_compose
     assert candidate_expected_mount in candidate_compose
+
+
+def test_controlled_compose_keeps_live_voice_token_separate_from_ai_runtime_token():
+    env = _env("deploy/.env.controlled.example")
+    compose = _read("deploy/docker-compose.controlled.yml")
+
+    assert env["LIVE_VOICE_TOKEN_HOST_PATH"].endswith("/live_voice_token")
+    assert env["LIVE_VOICE_UPSTREAM_TOKEN_FILE"] == "/run/nexus/live_voice_token"
+    assert "${LIVE_VOICE_TOKEN_HOST_PATH:-/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token}:/run/nexus/live_voice_token:ro" in compose
