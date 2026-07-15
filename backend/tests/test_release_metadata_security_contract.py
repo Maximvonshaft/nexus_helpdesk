@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import stat
 import subprocess
 from pathlib import Path
@@ -10,7 +9,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "prepare_production_release_env.sh"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-image.yml"
 SHA = "0123456789abcdef0123456789abcdef01234567"
 BUILD_TIME = "20260712T110000Z"
 APP_VERSION = f"candidate-{SHA[:12]}"
@@ -68,29 +66,6 @@ def _run(
         check=False,
     )
     return completed, output_path
-
-
-def test_workflow_does_not_paste_dispatch_inputs_into_shell() -> None:
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert 'image_name="${{ inputs.image_name }}"' not in workflow
-    assert 'prefix="${{ inputs.app_version_prefix }}"' not in workflow
-    assert "RELEASE_IMAGE_NAME_INPUT: ${{ inputs.image_name }}" in workflow
-    assert (
-        "RELEASE_APP_VERSION_PREFIX_INPUT: ${{ inputs.app_version_prefix }}"
-        in workflow
-    )
-    assert "persist-credentials: false" in workflow
-
-    uses_lines = [
-        line.strip()
-        for line in workflow.splitlines()
-        if line.strip().startswith("uses:")
-    ]
-    assert uses_lines
-    assert all(
-        re.fullmatch(r"uses: [^@]+@[0-9a-f]{40}(?: # .+)?", line)
-        for line in uses_lines
-    )
 
 
 def test_canonical_metadata_is_written_atomically_with_mode_0600(

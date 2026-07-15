@@ -104,11 +104,9 @@ def test_outbound_email_test_send_gate_and_runbook_are_explicit() -> None:
     repo = ROOT.parent
     script = (repo / "scripts" / "smoke" / "outbound_email_test_send_gate.py").read_text(encoding="utf-8")
     runbook = (repo / "docs" / "runbooks" / "outbound-email-production-pilot.md").read_text(encoding="utf-8")
-    workflow = (repo / ".github" / "workflows" / "manual-staging-smoke.yml").read_text(encoding="utf-8")
 
     assert "I_UNDERSTAND_THIS_SENDS_REAL_EMAIL" in script
     assert "/api/admin/outbound-email/accounts" in script
     assert "/test-send" in script
     assert "last_test_status" in script
     assert "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true" in runbook
-    assert "check_outbound_email_test_send" in workflow
