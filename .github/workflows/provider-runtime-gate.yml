@@ -14,6 +14,9 @@ on:
       - 'backend/tests/test_webchat_rate_limit_bucket.py'
       - 'backend/tests/test_speedaf*.py'
       - 'backend/alembic/versions/*provider*.py'
+      - 'scripts/ai/probe_ai_resource_server.py'
+      - 'scripts/ci/provider_runtime_hygiene.py'
+      - 'scripts/ci/tests/test_provider_runtime_hygiene.py'
       - '.github/workflows/provider-runtime-gate.yml'
   push:
     branches: [main]
@@ -68,54 +71,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p artifacts/provider-runtime
-          python - <<'PY'
-          from __future__ import annotations
-
-          import json
-          import subprocess
-          from pathlib import Path
-
-          roots = ("backend/app", "backend/scripts", "deploy", "webapp/src", "scripts")
-          markers = (
-              "codex_app_server",
-              "codex_direct",
-              "openai_responses",
-              "webchat_fast_reply",
-              "Please provide your tracking number",
-          )
-          completed = subprocess.run(
-              ["git", "ls-files", "-z", "--", *roots],
-              check=True,
-              stdout=subprocess.PIPE,
-          )
-          findings: list[dict[str, str]] = []
-          for raw_path in completed.stdout.decode("utf-8", errors="strict").split("\0"):
-              if not raw_path:
-                  continue
-              try:
-                  text = Path(raw_path).read_text(encoding="utf-8")
-              except (OSError, UnicodeError):
-                  continue
-              for marker in markers:
-                  if marker in text:
-                      findings.append({"marker": marker, "path": raw_path})
-          findings.sort(key=lambda row: (row["path"], row["marker"]))
-          payload = {
-              "schema": "nexus.provider-runtime.hygiene.v1",
-              "status": "pass" if not findings else "fail",
-              "finding_count": len(findings),
-              "findings": findings[:100],
-              "truncated": len(findings) > 100,
-          }
-          Path("artifacts/provider-runtime/hygiene.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          if findings:
-              print(f"PROVIDER_RUNTIME_HYGIENE=false finding_count={len(findings)}")
-              raise SystemExit(1)
-          print("PROVIDER_RUNTIME_HYGIENE=true finding_count=0")
-          PY
+          PYTHONPATH=. python scripts/ci/provider_runtime_hygiene.py \
+            --repo-root . \
+            --output artifacts/provider-runtime/hygiene.json
+          PYTHONPATH=. python -m pytest -q scripts/ci/tests/test_provider_runtime_hygiene.py
 
       - name: Upload bounded provider hygiene evidence
         if: always()
