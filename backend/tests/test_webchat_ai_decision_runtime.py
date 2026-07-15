@@ -189,7 +189,62 @@ def test_provider_decision_ignores_malformed_non_visible_control_fields():
 
     assert decision.customer_reply == "瑞士目前暂未开通本对本业务。"
     assert decision.tool_calls == []
+    assert decision.evidence_used == []
+
+
+def test_zero_match_runtime_context_does_not_create_rag_evidence():
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="您好，请告诉我您需要什么帮助。",
+        intent="general_support",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {"evidence_used": [{"source": "hybrid_rag"}]}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        runtime_context={
+            "knowledge_context": {
+                "retrieval": "hybrid_rag",
+                "total_matches": 0,
+                "candidate_count": 0,
+                "evidence_pack": [],
+                "hits": [],
+            }
+        },
+    )
+
+    assert decision.evidence_used == []
+
+
+def test_actual_runtime_knowledge_match_creates_system_rag_evidence():
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="已发布的客户政策回答。",
+        intent="general_support",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {"evidence_used": []}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        runtime_context={
+            "knowledge_context": {
+                "retrieval": "hybrid_rag",
+                "total_matches": 1,
+                "candidate_count": 1,
+                "evidence_pack": [{"item_key": "published-policy", "title": "Published policy"}],
+                "hits": [{"item_key": "published-policy", "title": "Published policy"}],
+            }
+        },
+    )
+
     assert [item.source for item in decision.evidence_used] == ["hybrid_rag"]
+    assert decision.evidence_used[0].fact_evidence_present is True
 
 
 def test_tracking_status_claim_requires_trusted_fact():

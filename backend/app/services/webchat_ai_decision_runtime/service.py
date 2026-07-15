@@ -16,9 +16,6 @@ from .schemas import AI_DECISION_SCHEMA_VERSION, AIDecision, AIDecisionEvidence,
 from .tool_registry import canonical_tool_name
 
 
-_TRACKING_EVIDENCE_SOURCES = {"speedaf_trusted_tracking_fact", "speedaf.order.query", "speedaf_tracking_fact_unavailable"}
-
-
 def _clip(value: Any, limit: int) -> str | None:
     cleaned = " ".join(str(value or "").strip().split())
     return cleaned[:limit] if cleaned else None
@@ -156,46 +153,6 @@ def _sanitize_reply_for_tracking_reference(reply: Any, *, tracking_number: str |
     return _polish_tracking_reference(" ".join(cleaned.split()), suffix=suffix)
 
 
-def _provider_evidence_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value[:20] if isinstance(item, dict)]
-
-
-def _safe_provider_evidence_item(item: dict[str, Any]) -> dict[str, Any] | None:
-    raw_source = item.get("source") or item.get("tool_name") or item.get("name") or item.get("type")
-    if not isinstance(raw_source, str):
-        return None
-    source = _clip(raw_source, 160)
-    if not source:
-        return None
-    tracking_hash = _clip(item.get("tracking_number_hash"), 120)
-    return {
-        "source": source,
-        "evidence_type": _clip(item.get("evidence_type") or item.get("type"), 120),
-        "evidence_id": _clip(item.get("evidence_id") or item.get("id") or item.get("item_key"), 240),
-        "fact_evidence_present": item.get("fact_evidence_present") if isinstance(item.get("fact_evidence_present"), bool) else None,
-        "policy_evidence_present": item.get("policy_evidence_present") if isinstance(item.get("policy_evidence_present"), bool) else None,
-        "tracking_number_hash": tracking_hash,
-        "raw_tracking_number_exposed": bool(item.get("raw_tracking_number_exposed", False)),
-    }
-
-
-def _normalized_provider_evidence(value: Any, *, tracking_fact_metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
-    evidence_used = [
-        cleaned
-        for item in _provider_evidence_items(value)
-        if (cleaned := _safe_provider_evidence_item(item)) is not None
-    ]
-    if not _trusted_tracking_fact_present(tracking_fact_metadata):
-        return evidence_used
-    return [
-        item
-        for item in evidence_used
-        if str(item.get("source") or "") not in _TRACKING_EVIDENCE_SOURCES
-    ]
-
-
 def _normalized_provider_tool_calls(value: Any, *, intent: str, tracking_number: str | None, tracking_fact_metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
     tool_calls = list(value or []) if isinstance(value or [], list) else []
     trusted_tracking = _trusted_tracking_fact_present(tracking_fact_metadata)
@@ -257,11 +214,19 @@ def _rag_evidence(runtime_context: dict[str, Any] | None) -> AIDecisionEvidence 
     trace = summarize_rag_trace(runtime_context)
     if not isinstance(trace, dict):
         return None
+    evidence_present = bool(
+        trace.get("total_matches")
+        or trace.get("candidate_count")
+        or trace.get("evidence_pack")
+        or trace.get("top_item_key")
+    )
+    if not evidence_present:
+        return None
     return AIDecisionEvidence(
         source="hybrid_rag",
         evidence_type="knowledge_context",
         evidence_id=str(trace.get("top_item_key") or trace.get("retrieval") or "hybrid_rag")[:240],
-        fact_evidence_present=bool(trace.get("total_matches") or trace.get("candidate_count") or trace.get("evidence_pack")),
+        fact_evidence_present=True,
         raw_tracking_number_exposed=False,
     )
 
@@ -317,7 +282,7 @@ def _decision_payload_from_provider(provider_result: Any, *, tracking_fact_metad
         tracking_number=provider_tracking,
         tracking_fact_metadata=tracking_fact_metadata,
     )
-    evidence_used = _normalized_provider_evidence(payload.get("evidence_used"), tracking_fact_metadata=tracking_fact_metadata)
+    evidence_used: list[dict[str, Any]] = []
     tracking_evidence = _tracking_fact_evidence(tracking_fact_metadata)
     if tracking_evidence is not None:
         evidence_used.append(tracking_evidence.model_dump(exclude_none=True))
