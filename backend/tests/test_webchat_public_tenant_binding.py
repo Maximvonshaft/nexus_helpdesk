@@ -13,8 +13,7 @@ from app.db import Base
 from app.model_registry import register_all_models
 from app.models import Customer, Tenant, Ticket
 from app.models_webchat_binding import WebchatPublicOriginBinding
-from app.services import webchat_rate_limit
-from app.services import webchat_service
+from app.services import webchat_rate_limit, webchat_service
 from app.services.webchat_service import create_or_resume_conversation
 from app.services.webchat_tenant_binding import (
     normalize_public_origin,
@@ -57,10 +56,18 @@ def db():
         engine.dispose()
 
 
-def _binding(db, *, origin: str = "https://tenant-a.example", tenant: str = "tenant-a", channel: str = "webchat"):
+def _binding(
+    db,
+    *,
+    origin: str = "https://tenant-a.example",
+    tenant: str = "tenant-a",
+    country: str | None = "CH",
+    channel: str = "webchat",
+):
     row = WebchatPublicOriginBinding(
         normalized_origin=origin,
         tenant_key=tenant,
+        country_code=country,
         channel_key=channel,
         display_name="Tenant A widget",
         is_active=True,
@@ -68,7 +75,6 @@ def _binding(db, *, origin: str = "https://tenant-a.example", tenant: str = "ten
     db.add(row)
     db.commit()
     return row
-
 
 
 def _tenant(db, *, tenant_key: str = "tenant-a", active: bool = True) -> Tenant:
@@ -118,6 +124,7 @@ def test_binding_overrides_legacy_default_scope(db) -> None:
         app_env="production",
     )
     assert scope.tenant_key == "tenant-a"
+    assert scope.country_code == "CH"
     assert scope.channel_key == "webchat"
     assert scope.normalized_origin == "https://tenant-a.example"
     assert scope.binding_id == row.id
@@ -220,6 +227,7 @@ def test_nonproduction_legacy_fallback_is_explicit(db) -> None:
         app_env="test",
     )
     assert scope.tenant_key == "local-tenant"
+    assert scope.country_code is None
     assert scope.authority == "non_production_legacy"
 
 
@@ -234,6 +242,7 @@ def test_origin_normalization_rejects_wildcard_credentials_and_insecure_remote_h
             normalize_public_origin(origin)
     assert normalize_public_origin("HTTPS://Example.COM:443/") == "https://example.com"
     assert normalize_public_origin("http://localhost:3000") == "http://localhost:3000"
+
 
 def test_public_webchat_stamps_customer_and_ticket_with_verified_relational_tenant(db) -> None:
     tenant = _tenant(db)
@@ -253,6 +262,7 @@ def test_public_webchat_stamps_customer_and_ticket_with_verified_relational_tena
     assert customer is not None
     assert ticket.tenant_id == tenant.id
     assert customer.tenant_id == tenant.id
+    assert ticket.country_code == "CH"
     assert ticket.tenant_assignment_source == "runtime_principal"
     assert customer.tenant_assignment_source == "runtime_principal"
     assert ticket.tenant_assignment_version == "nexus.tenant.runtime_authority.v1"
@@ -282,6 +292,7 @@ def test_public_webchat_rejects_missing_or_inactive_relational_tenant_before_cus
     assert db.query(Customer).count() == before_customers
     assert db.query(Ticket).count() == before_tickets
 
+
 def test_enforce_mode_never_uses_unverified_payload_tenant_as_authority(
     db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -295,6 +306,7 @@ def test_enforce_mode_never_uses_unverified_payload_tenant_as_authority(
     assert exc.value.status_code == 403
     assert exc.value.detail == "webchat_verified_scope_required"
     assert db.query(Customer).count() == before_customers
+
 
 def test_shadow_mode_never_promotes_nonproduction_client_scope_to_relational_tenant(
     db, monkeypatch: pytest.MonkeyPatch
@@ -322,5 +334,6 @@ def test_shadow_mode_never_promotes_nonproduction_client_scope_to_relational_ten
     assert customer is not None
     assert ticket.tenant_id is None
     assert customer.tenant_id is None
+    assert ticket.country_code is None
     assert ticket.tenant_assignment_source is None
     assert customer.tenant_assignment_source is None
