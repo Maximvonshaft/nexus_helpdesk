@@ -1,12 +1,10 @@
-import type { BadgeTone, SupportConversation } from '@/lib/types'
+import { normalizeOperationalStatus, operationalPresentation } from '@/domain/operationalPresentation'
+import type { OperationalPresentation } from '@/domain/operationalPresentation'
+import type { SupportConversation } from '@/lib/types'
 
-export type OperationalPresentation = {
-  tone: BadgeTone
-  label: string
-  detail?: string | null
-}
+export type { OperationalPresentation } from '@/domain/operationalPresentation'
 
-type RuntimePresentationInput = {
+export type RuntimePresentationInput = {
   isLoading: boolean
   isError: boolean
   ok?: boolean | null
@@ -50,37 +48,8 @@ const FAILED_HEALTH = new Set([
   'unhealthy',
 ])
 
-const REQUEST_PENDING = new Set([
-  'accepted',
-  'pending',
-  'processing',
-  'queued',
-  'requested',
-  'submitted',
-])
-
-const REQUEST_FAILED = new Set([
-  'blocked',
-  'error',
-  'failed',
-  'repair_required',
-  'rejected',
-])
-
-const VERIFIED_OUTCOME = new Set([
-  'business_result_confirmed',
-  'operational_completed',
-])
-
-function normalizeStatus(value: string | null | undefined): string {
-  return String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-}
-
 export function healthPresentation(value: string | null | undefined): OperationalPresentation {
-  const normalized = normalizeStatus(value)
+  const normalized = normalizeOperationalStatus(value)
   const visible = String(value ?? '').trim()
 
   if (FAILED_HEALTH.has(normalized)) {
@@ -96,7 +65,7 @@ export function healthPresentation(value: string | null | undefined): Operationa
 }
 
 export function knowledgeStatusPresentation(value: string | null | undefined): OperationalPresentation {
-  const normalized = normalizeStatus(value)
+  const normalized = normalizeOperationalStatus(value)
   if (normalized === 'active' || normalized === 'published') return { tone: 'success', label: '已上线' }
   if (normalized === 'draft') return { tone: 'warning', label: '草稿' }
   if (normalized === 'archived') return { tone: 'default', label: '已归档' }
@@ -104,7 +73,7 @@ export function knowledgeStatusPresentation(value: string | null | undefined): O
 }
 
 export function channelPresentation(channel: string | null | undefined): OperationalPresentation {
-  const normalized = normalizeStatus(channel)
+  const normalized = normalizeOperationalStatus(channel)
   if (normalized === 'whatsapp') return { tone: 'default', label: 'WhatsApp' }
   if (normalized === 'webchat') return { tone: 'default', label: 'WebChat' }
   return { tone: 'default', label: String(channel ?? '').trim() || '未知渠道' }
@@ -117,7 +86,7 @@ export function sourceConversationPresentation(
   if (item.handoff_status === 'accepted') return { tone: 'default', label: '人工处理中' }
   if (item.ai_pending) return { tone: 'warning', label: 'AI 处理中' }
 
-  const normalized = normalizeStatus(item.status)
+  const normalized = normalizeOperationalStatus(item.status)
   if (normalized === 'resolved') return { tone: 'default', label: '来源状态：已解决' }
   if (normalized === 'closed') return { tone: 'default', label: '来源状态：已关闭' }
   if (!normalized || normalized === 'open') return { tone: 'default', label: '打开' }
@@ -128,25 +97,7 @@ export function controlledActionPresentation(
   status: string | null | undefined,
   message?: string | null,
 ): OperationalPresentation {
-  const normalized = normalizeStatus(status)
-  const backendDetail = String(message ?? '').trim() || null
-
-  if (normalized === 'queued') {
-    return { tone: 'default', label: '请求已排队', detail: '请求已进入处理队列；这不代表运营结果已经完成。' }
-  }
-  if (normalized === 'submitted') {
-    return { tone: 'default', label: '请求已提交，等待确认', detail: '最终结果仍需人工或来源系统确认。' }
-  }
-  if (REQUEST_PENDING.has(normalized)) {
-    return { tone: 'warning', label: '请求处理中', detail: '请等待后端返回可验证的运营结果。' }
-  }
-  if (REQUEST_FAILED.has(normalized)) {
-    return { tone: 'danger', label: '请求失败或需要修复', detail: backendDetail }
-  }
-  if (VERIFIED_OUTCOME.has(normalized)) {
-    return { tone: 'success', label: '结果已确认', detail: backendDetail }
-  }
-  return { tone: 'warning', label: '结果状态待确认', detail: backendDetail }
+  return operationalPresentation(status, message)
 }
 
 export function runtimePresentation(input: RuntimePresentationInput): OperationalPresentation {
