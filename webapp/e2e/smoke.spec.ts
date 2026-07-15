@@ -235,19 +235,20 @@ test('unauthenticated protected route redirects back to login', async ({ page })
   await expect(page.getByText(/登录状态只保存在当前浏览器会话中/)).toBeVisible()
 })
 
-test('canonical workspace renders the unified queue, Case Spine, and delivery truth', async ({ page }) => {
+test('canonical workspace renders the unified queue, evidence, and delivery truth', async ({ page }) => {
   await mockAuthenticatedConsole(page)
   await page.goto('/workspace')
 
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Case Spine' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '事实与证据' })).toBeVisible()
   const queueRow = page.getByRole('button', { name: /ticket:11/ })
   const caseStatus = page.getByLabel('案例状态')
   await expect(queueRow).toBeVisible()
   await expect(caseStatus.getByText('SLA 即将超时')).toBeVisible()
-  await expect(page.locator('.operator-evidence').getByText('客户主张').first()).toBeVisible()
+  await expect(page.locator('.operator-evidence-panel').getByText('客户主张').first()).toBeVisible()
   await expect(page.locator('.operator-message').getByText('等待发送')).toBeVisible()
-  await expect(page.locator('.operator-blocker').getByText('尚不能判定安全结案')).toBeVisible()
+  await expect(page.getByText('回复始终经过服务端权限、事实和安全检查。')).toBeVisible()
+  await expect(page.getByText('业务结果已确认')).toHaveCount(0)
 })
 
 test('legacy support entry redirects into the canonical workspace', async ({ page }) => {

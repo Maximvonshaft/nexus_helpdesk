@@ -240,6 +240,7 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
         <PresentationBadge presentation={status} />
         <PresentationBadge presentation={owner} />
         <PresentationBadge presentation={sla} />
+        {item.reopened ? <Badge tone="warning">已重新打开</Badge> : null}
         {item.source_type === 'dispatch' ? <PresentationBadge presentation={retry} /> : null}
       </div>
     </header>
@@ -341,7 +342,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
         <>
           <div
             ref={messagesRef}
-            className="operator-message-list"
+            className="operator-messages"
             aria-live="polite"
             onScroll={(event) => {
               const target = event.currentTarget
@@ -362,7 +363,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
             })}
             {!thread.messages.length ? <EmptyState title="暂无消息" description="该会话尚无可显示内容。" /> : null}
           </div>
-          {newMessageCount ? <Button size="sm" variant="secondary" onClick={() => { messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }); setNewMessageCount(0) }}>{newMessageCount} 条新消息</Button> : null}
+          {newMessageCount ? <Button size="sm" variant="secondary" onClick={() => { messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }); setNewMessageCount(0) }}>{newMessageCount} 条新消息，查看最新</Button> : null}
           {mutationSafety ? <ErrorSummary title="回复需要人工复核" errors={mutationSafety.reasons.length ? mutationSafety.reasons : ['请检查内容后再次确认发送']} /> : null}
           {replyMutation.isError && !mutationSafety ? <ErrorSummary title="发送失败" errors={[errorCopy(replyMutation.error, '请稍后重试')]} /> : null}
           <form className="operator-reply" onSubmit={(event) => { event.preventDefault(); if (canReply && reply.trim()) replyMutation.mutate() }}>

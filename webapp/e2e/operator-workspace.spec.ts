@@ -228,8 +228,8 @@ test('dispatch-only work remains actionable without fabricating a conversation o
   await expect(caseStatus.getByText('已重新打开')).toBeVisible()
   await expect(page.getByRole('heading', { name: '来源记录摘要' })).toBeVisible()
   await expect(page.getByText('当前案例没有可用会话').first()).toBeVisible()
-  await expect(page.locator('.operator-blocker').getByText('尚不能判定安全结案')).toBeVisible()
-  await expect(page.locator('.operator-outcome-list').getByText('业务结果已确认')).toHaveCount(0)
+  await expect(page.getByText('服务端最终授权').first()).toBeVisible()
+  await expect(page.getByText('业务结果已确认')).toHaveCount(0)
 })
 
 test('operator navigation hides management surfaces that the current capability set cannot use', async ({ page }) => {
@@ -337,7 +337,7 @@ test('queue polling preserves a dirty reply when the selected task leaves the qu
   await page.clock.fastForward(16_000)
   await expect.poll(() => queueCalls).toBeGreaterThan(1)
 
-  await expect(page.getByText('当前任务已离开队列，回复草稿仍已保留')).toBeVisible()
+  await expect(page.getByText('当前任务已离开队列，回复草稿仍保留')).toBeVisible()
   await expect(reply).toHaveValue('Draft retained while queue authority changes')
   await expect(page.getByRole('button', { name: '发送回复' })).toBeDisabled()
   await expect(page.getByText('当前任务动作已暂停')).toBeVisible()
@@ -377,6 +377,6 @@ test('queue polling advances to a current task when no reply draft exists', asyn
   await expect.poll(() => queueCalls).toBeGreaterThan(1)
 
   await expect(page.getByRole('heading', { level: 1, name: 'ticket:12' })).toBeVisible()
-  await expect(page.getByText('当前任务已离开队列，回复草稿仍已保留')).toHaveCount(0)
+  await expect(page.getByText('当前任务已离开队列，回复草稿仍保留')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /ticket:12/ })).toHaveAttribute('aria-pressed', 'true')
 })

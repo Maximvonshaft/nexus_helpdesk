@@ -119,7 +119,7 @@ test('Knowledge retrieval test explains whether the current service can use the 
   await expect(page.getByText('当前服务可以使用这些知识')).toBeVisible()
 })
 
-test('Control Tower maps old management hrefs to canonical routes', async ({ page }) => {
+test('Control Tower accepts canonical hrefs and fails closed for retired routes', async ({ page }) => {
   await seedSession(page)
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
@@ -160,8 +160,8 @@ test('Control Tower maps old management hrefs to canonical routes', async ({ pag
   await expect(kpiRegion.getByText('未分配', { exact: true }).locator('..')).toContainText('12')
   const links = page.getByRole('link', { name: '打开处理页面' })
   await expect(links.nth(0)).toHaveAttribute('href', '/workspace')
-  await expect(links.nth(1)).toHaveAttribute('href', '/channels')
-  await expect(links.nth(2)).toHaveAttribute('href', '/knowledge')
+  await expect(links).toHaveCount(1)
+  await expect(page.getByText('后端未返回受支持的处理入口')).toHaveCount(2)
   await expect(page.locator('a[href="/accounts"]')).toHaveCount(0)
   await expect(page.locator('a[href="/ai-control"]')).toHaveCount(0)
 })
