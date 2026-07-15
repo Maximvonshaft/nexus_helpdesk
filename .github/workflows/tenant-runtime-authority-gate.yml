@@ -5,16 +5,20 @@ on:
     branches: [main]
     paths:
       - "backend/app/settings.py"
+      - "backend/app/models_webchat_binding.py"
       - "backend/app/services/permissions.py"
       - "backend/app/services/ticket_service.py"
       - "backend/app/services/lite_service.py"
       - "backend/app/services/lite_pagination.py"
       - "backend/app/services/tenant_authority.py"
       - "backend/app/services/webchat_service.py"
+      - "backend/app/services/webchat_tenant_binding.py"
       - "backend/app/services/support_conversation_scope.py"
       - "backend/app/api/support_conversations.py"
+      - "backend/alembic/versions/20260715_0060_webchat_country_authority.py"
       - "backend/tests/test_tenant_runtime_authority.py"
       - "backend/tests/test_webchat_public_tenant_binding.py"
+      - "backend/tests/test_webchat_country_authority.py"
       - "backend/tests/test_support_conversations_rbac.py"
       - "backend/tests/test_support_conversations_api.py"
       - "scripts/release/seed_rc_test_data.py"
@@ -86,16 +90,20 @@ jobs:
           set -Eeuo pipefail
           python -m py_compile \
             backend/app/settings.py \
+            backend/app/models_webchat_binding.py \
             backend/app/services/tenant_authority.py \
             backend/app/services/permissions.py \
             backend/app/services/ticket_service.py \
             backend/app/services/lite_service.py \
             backend/app/services/lite_pagination.py \
             backend/app/services/webchat_service.py \
+            backend/app/services/webchat_tenant_binding.py \
             backend/app/services/support_conversation_scope.py \
             backend/app/api/support_conversations.py \
+            backend/alembic/versions/20260715_0060_webchat_country_authority.py \
             backend/tests/test_tenant_runtime_authority.py \
             backend/tests/test_webchat_public_tenant_binding.py \
+            backend/tests/test_webchat_country_authority.py \
             backend/tests/test_support_conversations_rbac.py \
             scripts/release/seed_rc_test_data.py \
             scripts/release/generate_rc_test_env.py
@@ -111,6 +119,7 @@ jobs:
             backend/tests/test_production_settings_contract.py \
             backend/tests/test_settings.py \
             backend/tests/test_webchat_public_tenant_binding.py \
+            backend/tests/test_webchat_country_authority.py \
             backend/tests/test_support_conversations_rbac.py \
             backend/tests/test_support_conversations_api.py \
             scripts/release/tests/test_seed_rc_test_data_contract.py \
@@ -123,7 +132,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           alembic upgrade head
-          test "$(alembic current | awk '{print $1}')" = "20260713_0059"
+          test "$(alembic current | awk '{print $1}')" = "20260715_0060"
 
       - name: Prove privileged cross-Tenant access fails and same-Tenant dual-write succeeds
         env:
@@ -227,6 +236,7 @@ jobs:
               db.add(WebchatPublicOriginBinding(
                   normalized_origin=origin,
                   tenant_key=tenants[0].tenant_key,
+                  country_code="ME",
                   channel_key="website",
                   display_name="Tenant Runtime Gate",
                   is_active=True,
@@ -271,6 +281,7 @@ jobs:
                   Ticket.source_chat_id == webchat_result["conversation_id"]
               ).one()
               assert webchat_ticket.tenant_id == tenants[0].id
+              assert webchat_ticket.country_code == "ME"
               assert webchat_ticket.customer is not None
               assert webchat_ticket.customer.tenant_id == tenants[0].id
               scoped_ids = {
@@ -300,6 +311,7 @@ jobs:
               "same_tenant_access": "pass",
               "runtime_ticket_customer_dual_write": "pass",
               "public_webchat_relational_tenant_dual_write": "pass",
+              "public_webchat_country_scope_projection": "pass",
               "support_sql_tenant_isolation": "pass",
               "rc_synthetic_principal_tenant_binding": "covered_by_contract_and_rc_gate",
               "production_mutation_performed": False,
