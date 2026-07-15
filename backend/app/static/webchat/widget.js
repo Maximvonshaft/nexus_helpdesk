@@ -38,6 +38,7 @@ var LIVE_VOICE_WORKLET_URL = new URL('/webchat/live-voice-capture-worklet.js?v=1
 var LIVE_VOICE_PROCESSOR_NAME = 'nexus-live-voice-capture-v1';
 var LIVE_VOICE_FRAME_SAMPLES = 320;
 var MAX_CAPTURE_PACKET_BYTES = 4096;
+var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
 // Legacy createScriptProcessor capture was removed; AudioWorklet is mandatory.
 
   var state = {
@@ -488,6 +489,11 @@ var MAX_CAPTURE_PACKET_BYTES = 4096;
   function stopLivePlayback(liveOverride) {
     var live = liveOverride || state.liveVoice;
     if (!live) return;
+    live.playbackGeneration = (live.playbackGeneration || 0) + 1;
+    if (live.playbackReadyTimer) {
+      clearTimeout(live.playbackReadyTimer);
+      live.playbackReadyTimer = null;
+    }
     (live.playingSources || []).forEach(function (sourceNode) {
       try { sourceNode.stop(); } catch (err) {}
       try { sourceNode.disconnect(); } catch (err) {}
@@ -495,7 +501,26 @@ var MAX_CAPTURE_PACKET_BYTES = 4096;
     live.playingSources = [];
     if (live.audioContext && live.audioContext.state !== 'closed') {
       live.nextPlayTime = live.audioContext.currentTime + 0.03;
+      live.captureResumeAt = live.audioContext.currentTime;
     }
+  }
+
+  function livePlaybackActive(live) {
+    if (!live || !live.audioContext || live.audioContext.state === 'closed') return false;
+    return (live.playingSources || []).length > 0 ||
+      (live.captureResumeAt || 0) > live.audioContext.currentTime;
+  }
+
+  function scheduleLiveVoiceReady(live) {
+    if (!live || !live.audioContext || live.released) return;
+    if (live.playbackReadyTimer) clearTimeout(live.playbackReadyTimer);
+    var generation = live.playbackGeneration || 0;
+    var remainingSeconds = Math.max(0, (live.captureResumeAt || live.nextPlayTime || 0) - live.audioContext.currentTime);
+    live.playbackReadyTimer = setTimeout(function () {
+      if (live.released || state.liveVoice !== live || generation !== (live.playbackGeneration || 0)) return;
+      live.playbackReadyTimer = null;
+      voiceStatus('Ready. You can speak again.');
+    }, Math.ceil(remainingSeconds * 1000));
   }
 
   function resetLiveVoice(statusText) {
@@ -588,6 +613,7 @@ if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
     var startAt = Math.max(live.audioContext.currentTime + 0.03, live.nextPlayTime || 0);
     sourceNode.start(startAt);
     live.nextPlayTime = startAt + audioBuffer.duration;
+    live.captureResumeAt = live.nextPlayTime + LIVE_VOICE_PLAYBACK_GUARD_SECONDS;
     return Promise.resolve();
   }
 
@@ -615,10 +641,11 @@ if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
       voiceStatus('Speaking...');
     }
     if (payload.type === 'tts_start' && payload.sample_rate) {
+      live.playbackGeneration = (live.playbackGeneration || 0) + 1;
       live.currentTtsSampleRate = payload.sample_rate;
       if (live.audioContext) live.nextPlayTime = live.audioContext.currentTime + 0.03;
     }
-    if (payload.type === 'tts_end') voiceStatus('Ready. You can speak again.');
+    if (payload.type === 'tts_end') scheduleLiveVoiceReady(live);
     if (payload.type === 'turn_error') voiceStatus('Voice error: ' + (payload.message || payload.error || 'unknown'));
     return Promise.resolve();
   }
@@ -688,6 +715,9 @@ return;
       playingSources: [],
       currentTtsSampleRate: 24000,
       nextPlayTime: 0,
+      captureResumeAt: 0,
+      playbackGeneration: 0,
+      playbackReadyTimer: null,
       released: false
     };
     state.liveVoice = live;
@@ -733,6 +763,7 @@ frameSamples: LIVE_VOICE_FRAME_SAMPLES
         var data = event && event.data;
         var packet = data && data.type === 'pcm16' ? data.buffer : null;
         if (!(packet instanceof ArrayBuffer) || packet.byteLength === 0) return;
+        if (livePlaybackActive(live)) return;
         if (packet.byteLength > MAX_CAPTURE_PACKET_BYTES) {
 releaseLiveVoice(live, 'Voice capture stopped because an audio packet exceeded the safety limit.', true);
 return;

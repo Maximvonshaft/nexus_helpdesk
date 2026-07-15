@@ -45,6 +45,17 @@ def test_widget_bounds_packets_and_releases_every_browser_resource() -> None:
     assert "setTimeout(openLiveVoiceSocket" not in widget
 
 
+def test_widget_gates_microphone_until_complete_tts_playback() -> None:
+    widget = WIDGET.read_text(encoding="utf-8")
+
+    assert "LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35" in widget
+    assert "function livePlaybackActive(live)" in widget
+    assert "if (livePlaybackActive(live)) return;" in widget
+    assert "live.captureResumeAt = live.nextPlayTime + LIVE_VOICE_PLAYBACK_GUARD_SECONDS" in widget
+    assert "if (payload.type === 'tts_end') scheduleLiveVoiceReady(live);" in widget
+    assert "if (payload.type === 'tts_end') voiceStatus('Ready. You can speak again.');" not in widget
+
+
 def test_widget_voice_boundary_is_same_origin_and_secret_free() -> None:
     widget = WIDGET.read_text(encoding="utf-8")
     worklet = WORKLET.read_text(encoding="utf-8")

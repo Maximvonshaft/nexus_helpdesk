@@ -702,9 +702,9 @@ async def test_private_ai_runtime_ollama_chat_uses_generation_budget_and_reports
 
     assert result.ok is True
     assert captured_payload["keep_alive"] == "15m"
-    assert captured_payload["options"] == {"temperature": 0.2, "top_p": 0.85, "num_predict": 144, "num_ctx": 1024}
+    assert captured_payload["options"] == {"temperature": 0.2, "top_p": 0.85, "num_predict": 144, "num_ctx": 2048}
     assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 144
-    assert result.raw_payload_safe_summary["ollama_options"]["num_ctx"] == 1024
+    assert result.raw_payload_safe_summary["ollama_options"]["num_ctx"] == 2048
     assert result.raw_payload_safe_summary["runtime_usage"] == {
         "total_duration_ms": 1230,
         "load_duration_ms": 40,
@@ -751,8 +751,8 @@ async def test_private_ai_runtime_short_prompt_omits_request_id_and_uses_lower_d
     )
 
     assert result.ok is True
-    assert captured_payload["options"]["num_predict"] == 24
-    assert captured_payload["options"]["num_ctx"] == 1024
+    assert captured_payload["options"]["num_predict"] == 80
+    assert captured_payload["options"]["num_ctx"] == 2048
     assert "format" not in captured_payload
     rendered = json.dumps(captured_payload, ensure_ascii=False)
     assert "req-dynamic-cache-breaker" not in rendered
@@ -1553,8 +1553,8 @@ async def test_private_ai_runtime_short_general_support_uses_light_prompt(monkey
     assert "Return strict compact JSON only" not in rendered
     assert "Return compact JSON only" not in rendered
     assert "format" not in captured_payload
-    assert captured_payload["options"]["num_predict"] == 24
-    assert captured_payload["options"]["num_ctx"] == 1024
+    assert captured_payload["options"]["num_predict"] == 80
+    assert captured_payload["options"]["num_ctx"] == 2048
     assert "Language: en" in rendered
     assert "must-not-enter-short-prompt" not in rendered
     assert "older context should not be needed" not in rendered
@@ -1603,8 +1603,8 @@ async def test_private_ai_runtime_short_general_support_marks_non_tracking_numbe
     assert "non_tracking_numbers_present" not in rendered
     assert "Return strict compact JSON only" not in rendered
     assert "format" not in captured_payload
-    assert captured_payload["options"]["num_predict"] == 24
-    assert captured_payload["options"]["num_ctx"] == 1024
+    assert captured_payload["options"]["num_predict"] == 80
+    assert captured_payload["options"]["num_ctx"] == 2048
 
 
 @pytest.mark.asyncio
@@ -1961,7 +1961,7 @@ async def test_private_ai_runtime_ollama_trusted_tracking_uses_plain_reply_fast_
         captured_payload.update(payload)
         assert endpoint.endswith("/api/chat")
         assert "format" not in payload
-        assert payload["options"]["num_predict"] == 64
+        assert payload["options"]["num_predict"] == 192
         return {
             "message": {
                 "content": "Your parcel ending 129135 is currently pending pickup and waiting for collection."
@@ -1997,7 +1997,7 @@ async def test_private_ai_runtime_ollama_trusted_tracking_uses_plain_reply_fast_
     assert "do not mention status codes" in rendered
     assert "Return strict compact JSON" not in rendered
     assert result.structured_output["customer_reply"] == "Your parcel ending 129135 is currently pending pickup and waiting for collection."
-    assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 64
+    assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 192
     assert result.raw_payload_safe_summary["output_contract_repair_applied"] is False
     assert result.raw_payload_safe_summary["output_contract_repair_reason"] is None
 
@@ -2018,7 +2018,7 @@ async def test_private_ai_runtime_ollama_knowledge_direct_answer_uses_plain_repl
         captured_payload.update(payload)
         assert endpoint.endswith("/api/chat")
         assert "format" not in payload
-        assert payload["options"]["num_predict"] == 64
+        assert payload["options"]["num_predict"] == 192
         return {
             "message": {
                 "content": "Switzerland domestic-to-domestic service is currently unavailable."
@@ -2057,7 +2057,7 @@ async def test_private_ai_runtime_ollama_knowledge_direct_answer_uses_plain_repl
     assert result.structured_output["customer_reply"] == "Switzerland domestic-to-domestic service is currently unavailable."
     assert result.raw_payload_safe_summary["latency_class"] == "knowledge_direct_answer"
     assert result.raw_payload_safe_summary["prompt_profile"] == "knowledge_direct_answer"
-    assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 64
+    assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 192
     assert result.raw_payload_safe_summary["output_contract_repair_applied"] is False
 
 
@@ -2077,7 +2077,7 @@ async def test_private_ai_runtime_ollama_knowledge_direct_answer_does_not_requir
         captured_payload.update(payload)
         assert endpoint.endswith("/api/chat")
         assert "format" not in payload
-        assert payload["options"]["num_predict"] == 64
+        assert payload["options"]["num_predict"] == 192
         return {"message": {"content": "生产知识闭环暗号是 canyon-lime。"}}
 
     monkeypatch.setattr(adapter, "_post_json", fake_post_json)
@@ -2246,8 +2246,8 @@ async def test_private_ai_runtime_unified_profile_uses_one_json_runtime_prompt(m
     assert result.structured_output["customer_reply"] == "生产知识闭环暗号是 canyon-lime。"
     assert result.raw_payload_safe_summary["latency_class"] == "unified_ai_runtime"
     assert result.raw_payload_safe_summary["prompt_profile"] == "unified_ai_runtime"
-    assert result.raw_payload_safe_summary["prompt_chars"] < 2500
-    assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 64
+    assert result.raw_payload_safe_summary["prompt_chars"] < 2700
+    assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 192
 
 
 def test_unified_prompt_knows_tracking_reference_was_already_supplied():
