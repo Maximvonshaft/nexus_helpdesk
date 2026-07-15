@@ -83,7 +83,7 @@ def _normalize_scope_key(value: str | None, *, field: str, default: str) -> str:
     return text
 
 
-def _normalize_country_code(value: str | None) -> str | None:
+def normalize_country_code(value: str | None) -> str | None:
     text = str(value or "").strip().upper()
     if not text:
         return None
@@ -138,8 +138,13 @@ def resolve_public_webchat_scope(
         )
     else:
         tenant = _normalize_scope_key(binding.tenant_key, field="tenant", default="default")
-        country = _normalize_country_code(binding.country_code)
+        country = normalize_country_code(binding.country_code)
         channel = _normalize_scope_key(binding.channel_key, field="channel", default="default")
+        if country is None and environment not in _NON_PRODUCTION_ENVS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="webchat_public_country_scope_required",
+            )
         requested_tenant = str(requested_tenant_key or "").strip()
         requested_channel = str(requested_channel_key or "").strip()
         if requested_tenant not in {"", "default", tenant}:
@@ -164,7 +169,7 @@ def resolve_public_webchat_scope(
         if existing is not None:
             existing_origin = normalize_public_origin(existing.origin) if existing.origin else None
             ticket = db.get(Ticket, existing.ticket_id) if existing.ticket_id is not None else None
-            ticket_country = _normalize_country_code(ticket.country_code) if ticket is not None else None
+            ticket_country = normalize_country_code(ticket.country_code) if ticket is not None else None
             if (
                 existing.tenant_key != scope.tenant_key
                 or existing.channel_key != scope.channel_key
@@ -194,5 +199,10 @@ def _apply_verified_scope_to_new_records(session: Session, _flush_context, _inst
             continue
         if isinstance(row, Ticket):
             source_channel = getattr(getattr(row, "source_channel", None), "value", row.source_channel)
-            if source_channel == "web_chat" and scope.authority == "server_origin_binding":
+            if (
+                source_channel == "web_chat"
+                and bool(row.source_chat_id)
+                and scope.authority == "server_origin_binding"
+                and scope.country_code is not None
+            ):
                 row.country_code = scope.country_code
