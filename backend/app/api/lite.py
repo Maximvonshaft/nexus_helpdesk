@@ -27,11 +27,8 @@ from ..schemas import (
     TeamRead,
     UserRead,
 )
-from ..services.canonical_route_projection import project_control_tower_routes
-from ..services.control_tower_service import build_control_tower, submit_control_tower_action
-from ..services.knowledge_studio_service import build_knowledge_studio
-from ..services.lite_pagination import list_lite_cases_page
-from ..services.lite_service import (
+from ..services.canonical_control_tower_service import build_control_tower, submit_control_tower_action
+from ..services.canonical_lite_service import (
     LITE_STATUS_ORDER,
     assign_lite_case,
     change_lite_status,
@@ -43,9 +40,12 @@ from ..services.lite_service import (
     update_lite_case,
     workflow_update_lite_case,
 )
+from ..services.canonical_qa_training_service import build_qa_training, submit_agent_appeal, submit_knowledge_gap
+from ..services.canonical_route_projection import project_control_tower_routes
+from ..services.knowledge_studio_service import build_knowledge_studio
+from ..services.lite_pagination import list_lite_cases_page
 from ..services.permissions import CAP_AUDIT_READ, CAP_TICKET_ASSIGN, CAP_USER_MANAGE, resolve_capabilities
 from ..services.persona_builder_service import build_persona_builder
-from ..services.qa_training_service import build_qa_training, submit_agent_appeal, submit_knowledge_gap
 from ..services.today_workbench_service import build_today_workbench
 from ..unit_of_work import managed_session
 from .deps import get_current_user
