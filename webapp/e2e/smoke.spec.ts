@@ -18,6 +18,7 @@ function authUser() {
       'ai_config.manage',
       'ticket.assign',
       'user.manage',
+      'tool:speedaf.work_order.create:write',
     ],
   }
 }
