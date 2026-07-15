@@ -156,7 +156,8 @@ test('Control Tower maps old management hrefs to canonical routes', async ({ pag
 
   await expect(page).toHaveURL(/\/control-tower$/)
   await expect(page.getByRole('heading', { level: 1, name: '运营总览' })).toBeVisible()
-  await expect(page.getByText('未分配').locator('..')).toContainText('12')
+  const kpiRegion = page.getByRole('region', { name: '关键运营指标' })
+  await expect(kpiRegion.getByText('未分配', { exact: true }).locator('..')).toContainText('12')
   const links = page.getByRole('link', { name: '打开处理页面' })
   await expect(links.nth(0)).toHaveAttribute('href', '/workspace')
   await expect(links.nth(1)).toHaveAttribute('href', '/channels')
