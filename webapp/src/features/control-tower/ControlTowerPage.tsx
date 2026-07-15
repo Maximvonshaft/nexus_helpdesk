@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
+import { canonicalAppHref } from '@/app/canonicalRoutes'
 import { Badge } from '@/components/ui/Badge'
+import { ButtonLink } from '@/components/ui/ButtonLink'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { sanitizeDisplayText } from '@/lib/format'
@@ -17,17 +19,8 @@ function safeTone(value: string | null | undefined): BadgeTone {
     : 'default'
 }
 
-function canonicalHref(value: string | null | undefined) {
-  if (!value) return null
-  if (value.startsWith('/workspace')) return value
-  if (value.startsWith('/runtime')) return '/runtime'
-  if (value.startsWith('/accounts') || value.startsWith('/channels') || value.startsWith('/outbound-email')) return '/channels'
-  if (value.startsWith('/ai-control') || value.startsWith('/knowledge')) return '/knowledge'
-  return null
-}
-
 function ActionRow({ item }: { item: ControlTowerAction }) {
-  const href = canonicalHref(item.href)
+  const href = canonicalAppHref(item.href)
   return (
     <article className="nd-control-action">
       <div>
@@ -38,16 +31,16 @@ function ActionRow({ item }: { item: ControlTowerAction }) {
         <p>{sanitizeDisplayText(item.next)}</p>
       </div>
       {item.enabled && href ? (
-        <a className="button nd-button nd-button--md nd-button--secondary" href={href}>打开处理页面</a>
+        <ButtonLink href={href}>打开处理页面</ButtonLink>
       ) : (
-        <span className="nd-admin-muted">{item.enabled ? '目标页面迁移中' : '当前账号无执行权限'}</span>
+        <span className="nd-admin-muted">{item.enabled ? '后端未返回受支持的处理入口' : '当前账号无执行权限'}</span>
       )}
     </article>
   )
 }
 
 function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
-  const href = canonicalHref(item.href)
+  const href = canonicalAppHref(item.href)
   return (
     <tr>
       <td data-label="领域">{sanitizeDisplayText(item.area)}</td>
