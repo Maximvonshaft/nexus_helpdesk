@@ -17,7 +17,7 @@ from ..models import Ticket, TicketEvent
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
-from .customer_language import detect_customer_language
+from .customer_language import resolve_conversation_language
 from .customer_visible_message_service import create_customer_visible_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .background_jobs import enqueue_speedaf_work_order_create_job
@@ -791,8 +791,16 @@ def _run_runtime_reply_sync(**kwargs: Any) -> WebchatRuntimeReplyResult:
     raise RuntimeError("webchat_ai_runtime_event_loop_running")
 
 
-def _language_hint(text: str | None) -> str | None:
-    return detect_customer_language(text).language
+def _language_hint(text: str | None, *, history_rows: list[WebchatMessage]) -> str | None:
+    previous_customer_messages = [
+        row.body_text or row.body
+        for row in history_rows
+        if row.direction == "visitor"
+    ]
+    return resolve_conversation_language(
+        text,
+        previous_customer_messages=previous_customer_messages,
+    ).language
 
 
 _SERVICE_POLICY_MARKERS = (
@@ -877,7 +885,7 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     tracking_fact_summary = tracking_fact.prompt_summary() if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted else None
     tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
     tracking_fact_metadata.pop("fact_evidence_present", None)
-    target_language = _language_hint(visitor_message.body)
+    target_language = _language_hint(visitor_message.body, history_rows=history_rows)
     tracking_number_for_context = (
         getattr(tracking_fact, "tracking_number", None)
         or tracking_fact_metadata.get("tracking_number")

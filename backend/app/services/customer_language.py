@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Iterable
 
 SUPPORTED_CUSTOMER_LANGUAGES = {
     "zh",
@@ -62,6 +63,26 @@ def detect_customer_language(text: str | None, *, explicit: str | None = None) -
     if any("\u0400" <= ch <= "\u04ff" for ch in value):
         return CustomerLanguageDecision("ru", "script", 0.98)
     return _detect_latin_language(value)
+
+
+def resolve_conversation_language(
+    text: str | None,
+    *,
+    previous_customer_messages: Iterable[str | None] = (),
+) -> CustomerLanguageDecision:
+    """Resolve the latest reliable customer language without blocking language switches."""
+    current = detect_customer_language(text)
+    if current.language:
+        return current
+    for previous in reversed(tuple(previous_customer_messages)):
+        decision = detect_customer_language(previous)
+        if decision.language:
+            return CustomerLanguageDecision(
+                decision.language,
+                f"conversation_history:{decision.source}",
+                decision.confidence,
+            )
+    return current
 
 
 def _detect_latin_language(text: str) -> CustomerLanguageDecision:
