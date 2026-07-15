@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - main
+      - work/744-canonical-operator-console-consolidation
   workflow_dispatch:
 
 permissions:
