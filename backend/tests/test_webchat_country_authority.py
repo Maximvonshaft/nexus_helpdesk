@@ -96,6 +96,20 @@ def test_server_origin_country_is_stamped_on_canonical_ticket(db) -> None:
     assert ticket.country_code == "CH"
 
 
+def test_missing_configured_country_fails_closed(db) -> None:
+    _seed(db, country_code=None)
+    with pytest.raises(HTTPException) as exc:
+        resolve_public_webchat_scope(
+            db,
+            request=_request(),
+            requested_tenant_key="default",
+            requested_channel_key="default",
+            app_env="production",
+        )
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "webchat_public_country_scope_required"
+
+
 def test_invalid_configured_country_fails_closed(db) -> None:
     _seed(db, country_code="CHE")
     with pytest.raises(HTTPException) as exc:
