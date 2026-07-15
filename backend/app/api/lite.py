@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..enums import UserRole
 from ..models import Team, User
 from ..schemas import (
     LiteAIIntakeRequest,
@@ -28,6 +27,9 @@ from ..schemas import (
     TeamRead,
     UserRead,
 )
+from ..services.canonical_route_projection import project_control_tower_routes
+from ..services.control_tower_service import build_control_tower, submit_control_tower_action
+from ..services.knowledge_studio_service import build_knowledge_studio
 from ..services.lite_pagination import list_lite_cases_page
 from ..services.lite_service import (
     LITE_STATUS_ORDER,
@@ -41,13 +43,12 @@ from ..services.lite_service import (
     update_lite_case,
     workflow_update_lite_case,
 )
-from ..services.control_tower_service import build_control_tower, submit_control_tower_action
-from ..services.knowledge_studio_service import build_knowledge_studio
+from ..services.permissions import CAP_AUDIT_READ, CAP_TICKET_ASSIGN, CAP_USER_MANAGE, resolve_capabilities
 from ..services.persona_builder_service import build_persona_builder
 from ..services.qa_training_service import build_qa_training, submit_agent_appeal, submit_knowledge_gap
 from ..services.today_workbench_service import build_today_workbench
-from .deps import get_current_user
 from ..unit_of_work import managed_session
+from .deps import get_current_user
 
 router = APIRouter(prefix="/api/lite", tags=["lite"])
 
@@ -59,7 +60,9 @@ def lite_stream(current_user=Depends(get_current_user)):
 
 @router.get("/meta", response_model=LiteMetaRead)
 def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    if current_user.role in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    capabilities = resolve_capabilities(current_user, db)
+    can_view_all_operators = bool(capabilities & {CAP_TICKET_ASSIGN, CAP_AUDIT_READ, CAP_USER_MANAGE})
+    if can_view_all_operators:
         users = db.query(User).filter(User.is_active.is_(True)).order_by(User.display_name.asc()).all()
         teams = db.query(Team).filter(Team.is_active.is_(True)).order_by(Team.name.asc()).all()
     else:
@@ -82,7 +85,7 @@ def today_workbench(db: Session = Depends(get_db), current_user=Depends(get_curr
 
 @router.get("/control-tower")
 def control_tower(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return build_control_tower(db, current_user)
+    return project_control_tower_routes(build_control_tower(db, current_user))
 
 
 @router.post("/control-tower/actions", response_model=LiteControlTowerActionResponse)
