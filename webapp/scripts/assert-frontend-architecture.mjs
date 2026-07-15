@@ -12,13 +12,17 @@ const entrypoint = path.join(srcRoot, 'main.tsx')
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.css']
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
 const PRIMITIVE_EXPORT_RE = /export\s+(?:const|function|class)\s+(Button|Badge|Card|Field|ConfirmDialog)\b/g
+const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/g
+const LEGACY_SELECTOR_RE = /(^|[,{\s])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
 
 const forbiddenPaths = [
   path.join(repositoryRoot, 'frontend'),
+  path.join(repositoryRoot, '.github', 'workflows'),
   path.join(srcRoot, 'features', 'support-console'),
   path.join(srcRoot, 'shared', 'ui'),
   path.join(srcRoot, 'shared', 'api'),
   path.join(srcRoot, 'lib', 'api.ts'),
+  path.join(srcRoot, 'lib', 'webchatRealtime.ts'),
 ]
 
 function walk(directory) {
@@ -64,6 +68,20 @@ function importsFor(file) {
   for (const match of content.matchAll(IMPORT_RE)) {
     const resolved = resolveImport(file, match[1] ?? match[2])
     if (resolved) imports.push(normalize(resolved))
+  }
+  return imports
+}
+
+function externalImports(files) {
+  const imports = new Set()
+  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
+    const content = fs.readFileSync(file, 'utf8')
+    for (const match of content.matchAll(IMPORT_RE)) {
+      const specifier = match[1] ?? match[2]
+      if (!specifier || specifier.startsWith('.') || specifier.startsWith('@/')) continue
+      const packageName = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
+      imports.add(packageName)
+    }
   }
   return imports
 }
@@ -133,6 +151,37 @@ function assertTransportAuthority(files, failures) {
   if (unexpected.length) failures.push(`generic HTTP transport outside apiClient.ts: ${unexpected.join(', ')}`)
 }
 
+function assertCssAuthority(files, failures) {
+  for (const file of files.filter((candidate) => candidate.endsWith('.css'))) {
+    const content = fs.readFileSync(file, 'utf8')
+    const fileName = relative(file)
+    if (fileName !== 'webapp/src/styles/tokens.css' && LEGACY_PALETTE_RE.test(content)) {
+      failures.push(`second palette authority: ${fileName}`)
+    }
+    LEGACY_PALETTE_RE.lastIndex = 0
+    if (LEGACY_SELECTOR_RE.test(content)) failures.push(`legacy primitive selector outside nd-* authority: ${fileName}`)
+    LEGACY_SELECTOR_RE.lastIndex = 0
+    if (/transition\s*:\s*all\b/i.test(content)) failures.push(`transition: all is forbidden: ${fileName}`)
+  }
+}
+
+function assertRuntimeDependencies(files, failures) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(webappRoot, 'package.json'), 'utf8'))
+  const consumed = externalImports(files)
+  const configFiles = walk(webappRoot).filter((file) => /(?:vite\.config|playwright\.config|eslint\.config|\.mjs$)/.test(file))
+  for (const file of configFiles) {
+    const content = fs.readFileSync(file, 'utf8')
+    for (const match of content.matchAll(IMPORT_RE)) {
+      const specifier = match[1] ?? match[2]
+      if (!specifier || specifier.startsWith('.') || specifier.startsWith('@/') || specifier.startsWith('node:')) continue
+      consumed.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
+    }
+  }
+  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+    if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
+  }
+}
+
 const failures = []
 for (const forbidden of forbiddenPaths) {
   if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
@@ -148,6 +197,8 @@ if (duplicatePrimitives.length) failures.push(`duplicate UI authorities: ${dupli
 
 assertCanonicalNavigation(files, failures)
 assertTransportAuthority(files, failures)
+assertCssAuthority(files, failures)
+assertRuntimeDependencies(files, failures)
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2))
