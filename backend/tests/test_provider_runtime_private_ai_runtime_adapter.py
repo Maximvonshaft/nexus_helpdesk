@@ -2241,12 +2241,14 @@ async def test_private_ai_runtime_unified_profile_uses_one_json_runtime_prompt(m
     assert "生产知识闭环暗号是 canyon-lime。" in rendered
     assert "locked facts are authoritative" in rendered
     assert "do not ask what the customer's term means" in rendered
+    assert "Address every explicit question or request" in rendered
+    assert "do not collapse the whole reply into only a request for missing data" in rendered
     assert "Knowledge direct-answer task" not in rendered
     assert "Short general-support reply" not in rendered
     assert result.structured_output["customer_reply"] == "生产知识闭环暗号是 canyon-lime。"
     assert result.raw_payload_safe_summary["latency_class"] == "unified_ai_runtime"
     assert result.raw_payload_safe_summary["prompt_profile"] == "unified_ai_runtime"
-    assert result.raw_payload_safe_summary["prompt_chars"] < 2700
+    assert result.raw_payload_safe_summary["prompt_chars"] < 3200
     assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 192
 
 
