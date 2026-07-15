@@ -9,10 +9,10 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import TicketStatus, UserRole
+from ..enums import TicketStatus
 from ..models import Customer, Ticket, User
 from ..utils.time import utc_now
-from .lite_service import serialize_lite_list
+from .scope_permissions import has_global_case_visibility
 from .tenant_authority import ensure_ticket_tenant_authority, resolve_actor_tenant_id
 
 DEFAULT_LIMIT = 50
@@ -26,13 +26,7 @@ def _safe_limit(limit: int | None) -> int:
 
 
 def _encode_cursor(*, updated_at: datetime | None, ticket_id: int) -> str:
-    raw = json.dumps(
-        {
-            "updated_at": updated_at.isoformat() if updated_at else None,
-            "id": int(ticket_id),
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
+    raw = json.dumps({"updated_at": updated_at.isoformat() if updated_at else None, "id": int(ticket_id)}, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
@@ -43,9 +37,7 @@ def _decode_cursor(cursor: str | None) -> tuple[datetime | None, int] | None:
         padded = cursor + "=" * (-len(cursor) % 4)
         parsed = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
         updated_raw = parsed.get("updated_at")
-        updated_at = datetime.fromisoformat(updated_raw) if updated_raw else None
-        ticket_id = int(parsed["id"])
-        return updated_at, ticket_id
+        return (datetime.fromisoformat(updated_raw) if updated_raw else None, int(parsed["id"]))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="invalid cursor") from exc
 
@@ -54,29 +46,11 @@ def _lite_status_filter(status: str | None) -> tuple[str | None, list[str] | Non
     if not status:
         return None, None
     if status == "pending_human":
-        return None, [
-            TicketStatus.new.value,
-            TicketStatus.pending_assignment.value,
-            TicketStatus.waiting_internal.value,
-            TicketStatus.escalated.value,
-        ]
+        return None, [TicketStatus.new.value, TicketStatus.pending_assignment.value, TicketStatus.waiting_internal.value, TicketStatus.escalated.value]
     if status == "closed":
-        active = {
-            TicketStatus.new,
-            TicketStatus.pending_assignment,
-            TicketStatus.waiting_internal,
-            TicketStatus.escalated,
-            TicketStatus.in_progress,
-            TicketStatus.waiting_customer,
-            TicketStatus.resolved,
-        }
+        active = {TicketStatus.new, TicketStatus.pending_assignment, TicketStatus.waiting_internal, TicketStatus.escalated, TicketStatus.in_progress, TicketStatus.waiting_customer, TicketStatus.resolved}
         return None, [s.value for s in TicketStatus if s not in active]
-    mapping = {
-        "new": TicketStatus.new,
-        "in_progress": TicketStatus.in_progress,
-        "waiting_customer": TicketStatus.waiting_customer,
-        "resolved": TicketStatus.resolved,
-    }
+    mapping = {"new": TicketStatus.new, "in_progress": TicketStatus.in_progress, "waiting_customer": TicketStatus.waiting_customer, "resolved": TicketStatus.resolved}
     internal = mapping.get(status)
     if not internal:
         raise HTTPException(status_code=400, detail="Unsupported status")
@@ -101,18 +75,13 @@ def _enum_value(value: Any) -> Any:
 
 
 def _ticket_overdue(ticket: Ticket) -> bool:
-    if ticket.resolution_due_at is None:
-        return False
-    if ticket.status in {TicketStatus.closed, TicketStatus.canceled}:
+    if ticket.resolution_due_at is None or ticket.status in {TicketStatus.closed, TicketStatus.canceled}:
         return False
     return ticket.resolution_due_at < utc_now()
 
 
 def _serialize_workspace_list_item(ticket: Ticket) -> dict[str, Any]:
-    customer = ticket.customer
-    assignee = ticket.assignee
-    team = ticket.team
-    market = ticket.market
+    customer, assignee, team, market = ticket.customer, ticket.assignee, ticket.team, ticket.market
     return {
         "id": ticket.id,
         "ticket_no": ticket.ticket_no,
@@ -152,34 +121,15 @@ def list_lite_cases_page(
     safe_limit = _safe_limit(limit)
     status_value, status_in = _lite_status_filter(status)
     normalized_q = _normalize_q(q)
-
     actor_tenant_id = resolve_actor_tenant_id(db, current_user)
-    query = db.query(Ticket).options(
-        joinedload(Ticket.customer),
-        joinedload(Ticket.assignee),
-        joinedload(Ticket.creator),
-        joinedload(Ticket.team),
-        joinedload(Ticket.market),
-        joinedload(Ticket.channel_account),
-    )
-    if actor_tenant_id is not None:
-        query = query.filter(Ticket.tenant_id == actor_tenant_id)
-    else:
-        query = query.filter(Ticket.tenant_id.is_(None))
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    query = db.query(Ticket).options(joinedload(Ticket.customer), joinedload(Ticket.assignee), joinedload(Ticket.creator), joinedload(Ticket.team), joinedload(Ticket.market), joinedload(Ticket.channel_account))
+    query = query.filter(Ticket.tenant_id == actor_tenant_id) if actor_tenant_id is not None else query.filter(Ticket.tenant_id.is_(None))
+    if not has_global_case_visibility(current_user, db):
         query = query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
     if normalized_q:
         like = f"%{normalized_q}%"
-        query = query.outerjoin(Customer, Customer.id == Ticket.customer_id).filter(
-            or_(
-                Ticket.ticket_no.ilike(like),
-                Ticket.title.ilike(like),
-                Ticket.description.ilike(like),
-                Customer.name.ilike(like),
-                Ticket.tracking_number.ilike(like),
-            )
-        )
+        query = query.outerjoin(Customer, Customer.id == Ticket.customer_id).filter(or_(Ticket.ticket_no.ilike(like), Ticket.title.ilike(like), Ticket.description.ilike(like), Customer.name.ilike(like), Ticket.tracking_number.ilike(like)))
     if status_value:
         query = query.filter(Ticket.status == status_value)
     if status_in:
@@ -191,11 +141,7 @@ def list_lite_cases_page(
     if team_id:
         query = query.filter(Ticket.team_id == team_id)
     if overdue is True:
-        query = query.filter(
-            Ticket.resolution_due_at.is_not(None),
-            Ticket.resolution_due_at < utc_now(),
-            Ticket.status.notin_([TicketStatus.closed, TicketStatus.canceled]),
-        )
+        query = query.filter(Ticket.resolution_due_at.is_not(None), Ticket.resolution_due_at < utc_now(), Ticket.status.notin_([TicketStatus.closed, TicketStatus.canceled]))
 
     decoded = _decode_cursor(cursor)
     if decoded:
@@ -203,39 +149,17 @@ def list_lite_cases_page(
         if cursor_updated_at is None:
             query = query.filter(Ticket.id < cursor_id)
         else:
-            query = query.filter(
-                or_(
-                    Ticket.updated_at < cursor_updated_at,
-                    and_(Ticket.updated_at == cursor_updated_at, Ticket.id < cursor_id),
-                )
-            )
+            query = query.filter(or_(Ticket.updated_at < cursor_updated_at, and_(Ticket.updated_at == cursor_updated_at, Ticket.id < cursor_id)))
 
     rows = query.order_by(Ticket.updated_at.desc(), Ticket.id.desc()).limit(safe_limit + 1).all()
     for ticket in rows:
-        ensure_ticket_tenant_authority(
-            db,
-            current_user,
-            ticket,
-            actor_tenant_id=actor_tenant_id,
-        )
+        ensure_ticket_tenant_authority(db, current_user, ticket, actor_tenant_id=actor_tenant_id)
     visible = rows[:safe_limit]
     has_more = len(rows) > safe_limit
-    next_cursor = None
-    if has_more and visible:
-        last = visible[-1]
-        next_cursor = _encode_cursor(updated_at=last.updated_at, ticket_id=last.id)
-
+    next_cursor = _encode_cursor(updated_at=visible[-1].updated_at, ticket_id=visible[-1].id) if has_more and visible else None
     return {
         "items": [_serialize_workspace_list_item(ticket) for ticket in visible],
         "next_cursor": next_cursor,
         "has_more": has_more,
-        "filters": {
-            "q": normalized_q,
-            "status": status,
-            "priority": priority,
-            "assignee_id": assignee_id,
-            "team_id": team_id,
-            "overdue": overdue,
-            "limit": safe_limit,
-        },
+        "filters": {"q": normalized_q, "status": status, "priority": priority, "assignee_id": assignee_id, "team_id": team_id, "overdue": overdue, "limit": safe_limit},
     }
