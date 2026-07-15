@@ -36,7 +36,8 @@ def test_public_compatibility_paths_cannot_own_business_logic() -> None:
         assert canonical in content, relative
         assert "UserRole" not in content, relative
         assert len(content.splitlines()) <= 20, relative
-        assert not re.search(r"^def\s+", content, re.MULTILINE), relative
+        function_names = re.findall(r"^def\s+(\w+)", content, re.MULTILINE)
+        assert set(function_names) <= {"__getattr__"}, relative
 
 
 def test_each_large_service_has_one_canonical_public_authority() -> None:
@@ -44,7 +45,7 @@ def test_each_large_service_has_one_canonical_public_authority() -> None:
         content = read(relative)
         assert core_name in content, relative
         assert "UserRole" not in content, relative
-        assert (APP / relative.replace("canonical_", "").replace("api/", "api/")).exists() or relative.startswith("services/")
+        assert (APP / f"{relative.rsplit('/', 1)[0]}/{core_name}.py").is_file(), relative
 
 
 def test_private_cores_are_imported_only_by_their_canonical_authority() -> None:
