@@ -204,6 +204,10 @@ def _result_from_provider(
                 channel_key=channel_key,
                 session_id=session_id,
             )
+            safe_summary = {
+                **safe_summary,
+                **_ai_decision_trace_runtime_fields(ai_decision_trace),
+            }
             if not policy.ok:
                 negative_tracking_reply = _safe_negative_tracking_lookup_reply(
                     decision.customer_reply,
@@ -224,7 +228,9 @@ def _result_from_provider(
                     safe_summary = {
                         **safe_summary,
                         "ai_decision_soft_accept_reason": "negative_tracking_lookup_policy_allow",
+                        "ai_decision_policy_ok": True,
                     }
+                    safe_summary.pop("ai_decision_policy_violation_codes", None)
                     return WebchatRuntimeReplyResult(
                         ok=True,
                         ai_generated=True,
@@ -493,6 +499,7 @@ def _runtime_trace_from_summary(safe_summary: dict[str, Any]) -> dict[str, Any]:
         "ai_decision_intent",
         "ai_decision_next_action",
         "ai_decision_handoff_required",
+        "ai_decision_confidence",
         "grounding_validation",
         "grounding_violation",
         "error_code",
@@ -508,6 +515,13 @@ def _runtime_trace_from_summary(safe_summary: dict[str, Any]) -> dict[str, Any]:
         "max_contract_repair_attempts",
     )
     trace = {key: safe_summary.get(key) for key in keys if safe_summary.get(key) is not None}
+    used_sources = safe_summary.get("ai_decision_used_sources")
+    if isinstance(used_sources, list):
+        trace["ai_decision_used_sources"] = [
+            str(item)[:240]
+            for item in used_sources[:20]
+            if isinstance(item, str) and item.strip()
+        ]
     ollama_options = safe_summary.get("ollama_options")
     if isinstance(ollama_options, dict) and isinstance(ollama_options.get("num_predict"), (int, float)):
         trace["ollama_num_predict"] = ollama_options["num_predict"]
@@ -549,6 +563,20 @@ def _ai_decision_trace_runtime_fields(ai_decision_trace: dict[str, Any] | None) 
         value = decision.get(source_key)
         if isinstance(value, (bool, int, float, str)):
             fields[trace_key] = value
+    confidence = decision.get("confidence")
+    if isinstance(confidence, (int, float)):
+        fields["ai_decision_confidence"] = max(0.0, min(1.0, float(confidence)))
+    evidence_used = decision.get("evidence_used") if isinstance(decision.get("evidence_used"), list) else []
+    used_sources: list[str] = []
+    for item in evidence_used[:20]:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        evidence_id = str(item.get("evidence_id") or "").strip()
+        if source:
+            used_sources.append(f"{source}:{evidence_id}"[:240] if evidence_id else source[:240])
+    if used_sources:
+        fields["ai_decision_used_sources"] = used_sources
     return fields
 
 

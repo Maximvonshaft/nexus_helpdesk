@@ -16,7 +16,6 @@ from app.services.outbound_semantics import (
     outbound_ui_label,
 )
 from app.settings import get_settings
-from app.services.webchat_fact_gate import evaluate_webchat_fact_gate
 from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, parse_runtime_reply_provider_output
 from app.webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 from app.webchat_schemas import WebChatActionSubmitRequest, WebChatCardAction, WebChatCardPayload
@@ -347,16 +346,6 @@ def test_webchat_action_submit_rejects_unsafe_ids():
         with pytest.raises(ValueError):
             WebChatActionSubmitRequest(message_id=1, card_id='card_handoff_abc123', action_id=unsafe_action, action_type='handoff_request')
     assert WebChatActionSubmitRequest(message_id=1, card_id='card_handoff_abc123', action_id='request_handoff', action_type='handoff_request')
-
-
-def test_fact_gate_blocks_unverified_operational_claims():
-    for text in ['Your parcel was delivered today', 'Refund approved', 'Address changed successfully', 'Customs cleared']:
-        decision = evaluate_webchat_fact_gate(text, fact_evidence_present=False)
-        assert decision.allowed is False
-        assert decision.fact_evidence_present is False
-    assert evaluate_webchat_fact_gate('Could you send the shipment reference', fact_evidence_present=False).allowed is True
-    assert evaluate_webchat_fact_gate('Share the parcel number when you are ready and I will check the latest tracking details.', fact_evidence_present=False).allowed is True
-    assert evaluate_webchat_fact_gate('I can check whether it is out for delivery after you send the tracking number.', fact_evidence_present=False).allowed is True
 
 
 def test_runtime_parser_allows_shipment_outcome_only_with_tracking_evidence():

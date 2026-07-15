@@ -85,9 +85,7 @@ class WebchatSendRequest(BaseModel):
 class WebchatReplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     body: str = Field(min_length=1, max_length=2000)
-    has_fact_evidence: bool = False
     evidence_reference_id: int | None = Field(default=None, ge=1)
-    confirm_review: bool = False
 
 
 class WebchatHandoffDecisionRequest(BaseModel):
@@ -503,8 +501,6 @@ def reply_webchat(ticket_id: int, payload: WebchatReplyRequest, db: Session = De
             ticket_id,
             current_user,
             body=payload.body,
-            has_fact_evidence=payload.has_fact_evidence,
             evidence_reference_id=payload.evidence_reference_id,
-            confirm_review=payload.confirm_review,
         )
     return result

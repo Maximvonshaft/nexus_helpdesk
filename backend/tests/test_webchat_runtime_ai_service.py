@@ -330,7 +330,8 @@ def test_negative_tracking_lookup_policy_misfire_does_not_silence_runtime_reply(
     assert result.ok is True
     assert result.reply == "我暂时未查到运单尾号 129135 的验证结果，请确认号码是否完整。"
     assert result.runtime_trace == {
-        "ai_decision_soft_accept_reason": "negative_tracking_lookup_policy_allow"
+        "ai_decision_soft_accept_reason": "negative_tracking_lookup_policy_allow",
+        "ai_decision_policy_ok": True,
     }
 
 
@@ -416,7 +417,8 @@ def test_negative_tracking_lookup_does_not_auto_handoff_without_customer_request
     assert result.handoff_reason is None
     assert result.recommended_agent_action is None
     assert result.runtime_trace == {
-        "ai_decision_control_override_reason": "negative_tracking_lookup_no_auto_handoff"
+        "ai_decision_control_override_reason": "negative_tracking_lookup_no_auto_handoff",
+        "ai_decision_policy_ok": True,
     }
 
 
@@ -462,7 +464,8 @@ def test_explicit_customer_handoff_request_creates_control_signal(monkeypatch):
     assert result.handoff_reason == "customer_requested_human_review"
     assert result.recommended_agent_action
     assert result.runtime_trace == {
-        "ai_decision_control_override_reason": "explicit_customer_handoff_request"
+        "ai_decision_control_override_reason": "explicit_customer_handoff_request",
+        "ai_decision_policy_ok": True,
     }
 
 
@@ -551,7 +554,8 @@ def test_trusted_tracking_ordinary_status_does_not_auto_handoff(monkeypatch):
     assert result.handoff_reason is None
     assert result.recommended_agent_action is None
     assert result.runtime_trace == {
-        "ai_decision_control_override_reason": "trusted_tracking_no_auto_handoff"
+        "ai_decision_control_override_reason": "trusted_tracking_no_auto_handoff",
+        "ai_decision_policy_ok": True,
     }
 
 
@@ -737,7 +741,8 @@ async def test_generate_preserves_negative_tracking_metadata_for_policy_soft_all
     assert result.ok is True
     assert result.reply == "我暂时未查到运单尾号 129135 的验证结果，请确认号码是否完整。"
     assert result.runtime_trace == {
-        "ai_decision_soft_accept_reason": "negative_tracking_lookup_policy_allow"
+        "ai_decision_soft_accept_reason": "negative_tracking_lookup_policy_allow",
+        "ai_decision_policy_ok": True,
     }
 
 

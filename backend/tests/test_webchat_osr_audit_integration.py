@@ -115,12 +115,12 @@ def _agent_message(conversation_id: str) -> WebchatMessage:
         db.close()
 
 
-def test_webchat_ai_job_worker_uses_safe_service_entrypoint():
+def test_webchat_ai_job_worker_uses_orchestration_service_entrypoint():
     from app.services import background_jobs
-    from app.services.webchat_ai_safe_service import process_webchat_ai_reply_job
+    from app.services.webchat_ai_orchestration_service import process_webchat_ai_reply_job
 
     assert background_jobs.process_background_job.__globals__["WEBCHAT_AI_REPLY_JOB"] == "webchat.ai_reply"
-    assert process_webchat_ai_reply_job.__module__ == "app.services.webchat_ai_safe_service"
+    assert process_webchat_ai_reply_job.__module__ == "app.services.webchat_ai_orchestration_service"
 
 
 def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_change(monkeypatch):
@@ -130,8 +130,8 @@ def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_chang
     sent = _send(client, conversation_id, visitor_token, 'Where is CH020000129135?', 'osr-audit-trusted-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_tracking_fact(**_kwargs):
         return TrackingFactResult(
@@ -152,7 +152,11 @@ def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_chang
         webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 30
         webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
         webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_TRACE = {'ai_decision_intent': 'tracking', 'ai_decision_next_action': 'reply'}
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'tracking',
+            'ai_decision_next_action': 'reply',
+        }
         webchat_ai_service._LAST_RUNTIME_RAG_TRACE = None
         return 'Your parcel is out for delivery.'
 
@@ -196,8 +200,8 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
     sent = _send(client, conversation_id, visitor_token, 'Please help me track my parcel.', 'osr-audit-nofact-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
     monkeypatch.setattr(webchat_ai_service, '_maybe_lookup_tracking_fact', lambda **_kwargs: None)
 
     def fake_generate_ai_reply(**_kwargs):
@@ -206,7 +210,11 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
         webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 18
         webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
         webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_TRACE = {'ai_decision_intent': 'tracking', 'ai_decision_next_action': 'clarify'}
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'tracking_missing_number',
+            'ai_decision_next_action': 'ask_clarifying_question',
+        }
         return 'Please share the parcel number so I can check the latest status.'
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
@@ -228,21 +236,26 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
         db.close()
 
 
-def test_webchat_osr_audit_records_fact_gate_block_without_customer_visible_reply(monkeypatch):
+def test_webchat_runtime_contract_blocks_declared_unsupported_tracking_claim(monkeypatch):
     _ensure_schema_and_user()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client, 'nofact-live')
     sent = _send(client, conversation_id, visitor_token, 'Please track my parcel.', 'osr-audit-nofact-live-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
     monkeypatch.setattr(webchat_ai_service, '_maybe_lookup_tracking_fact', lambda **_kwargs: None)
 
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
         webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_RUNTIME_TRACE = {'ai_decision_intent': 'tracking', 'ai_decision_next_action': 'reply', 'runtime_trace_context_fields': {'tracking_intent_detected': True}}
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_intent': 'tracking',
+            'ai_decision_next_action': 'reply',
+            'ai_decision_policy_ok': False,
+            'ai_decision_policy_violation_codes': 'tracking_status_without_trusted_fact',
+        }
         return 'Your parcel is out for delivery.'
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
@@ -274,12 +287,17 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
     sent = _send(client, conversation_id, visitor_token, 'Hello', 'osr-audit-failure-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
         webchat_ai_service._LAST_AI_FALLBACK_REASON = None
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'general_support',
+            'ai_decision_next_action': 'ask_clarifying_question',
+        }
         return 'Hello, how can I help?'
 
     def raising_audit(db, **_kwargs):
@@ -287,7 +305,7 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
         db.flush()
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
-    monkeypatch.setattr(webchat_ai_safe_service, 'audit_completed_webchat_ai_turn', raising_audit)
+    monkeypatch.setattr(webchat_ai_orchestration_service, 'audit_completed_webchat_ai_turn', raising_audit)
 
     _run_ai_turn(ai_turn_id, worker='osr-audit-failure-worker')
     message = _agent_message(conversation_id)

@@ -49,6 +49,7 @@ AI_TURN_RUNTIME_TRACE_KEYS = {
     "ai_decision_intent",
     "ai_decision_next_action",
     "ai_decision_handoff_required",
+    "ai_decision_confidence",
     "ollama_keep_alive",
     "ollama_num_predict",
     "ollama_num_ctx",
@@ -56,7 +57,7 @@ AI_TURN_RUNTIME_TRACE_KEYS = {
 }
 
 
-def safe_ai_turn_runtime_trace(value: Any) -> dict[str, Any] | None:
+def sanitized_ai_turn_runtime_trace(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     trace: dict[str, Any] = {}
@@ -77,6 +78,13 @@ def safe_ai_turn_runtime_trace(value: Any) -> dict[str, Any] | None:
             for key in ("prompt_eval_count", "eval_count", "total_duration_ms", "load_duration_ms", "prompt_eval_duration_ms", "eval_duration_ms")
             if isinstance(runtime_usage.get(key), (int, float))
         }
+    used_sources = value.get("ai_decision_used_sources")
+    if isinstance(used_sources, list):
+        trace["ai_decision_used_sources"] = [
+            str(item)[:240]
+            for item in used_sources[:20]
+            if isinstance(item, str) and item.strip()
+        ]
     return trace or None
 DEFAULT_FALLBACK_TIMEOUT_SECONDS = 60
 
@@ -483,8 +491,8 @@ def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversatio
     if result.get("status") == "superseded":
         supersede_ai_turn(db, conversation=conversation, turn=turn, reason=result.get("reason") or "reply_suppressed")
         return
-    if result.get("status") in {"review_required", "failed_no_public_reply"}:
-        runtime_trace = safe_ai_turn_runtime_trace(result.get("runtime_trace"))
+    if result.get("status") in {"null_reply", "review_required", "failed_no_public_reply"}:
+        runtime_trace = sanitized_ai_turn_runtime_trace(result.get("runtime_trace"))
         turn.runtime_trace_json = json.dumps(runtime_trace, ensure_ascii=False) if runtime_trace else None
         turn.reply_source = result.get("reply_source")
         turn.fallback_reason = result.get("fallback_reason")
@@ -509,7 +517,7 @@ def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversatio
     wait_timeout_ms = result.get("bridge_wait_timeout_ms")
     if wait_timeout_ms is not None:
         turn.bridge_timeout_ms = int(wait_timeout_ms)
-    runtime_trace = safe_ai_turn_runtime_trace(result.get("runtime_trace"))
+    runtime_trace = sanitized_ai_turn_runtime_trace(result.get("runtime_trace"))
     turn.runtime_trace_json = json.dumps(runtime_trace, ensure_ascii=False) if runtime_trace else None
     turn.completed_at = now
     turn.updated_at = now

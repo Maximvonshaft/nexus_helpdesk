@@ -127,11 +127,11 @@ def test_outbound_ui_labels_are_semantic_not_raw_provider_statuses(db_session):
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-label')
     local_message = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_delivered')
     ai_reply = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_ai_delivered')
-    draft = add_outbound(db_session, ticket, channel=SourceChannel.whatsapp, status=MessageStatus.draft, provider_status='ai_review_required')
+    draft = add_outbound(db_session, ticket, channel=SourceChannel.whatsapp, status=MessageStatus.draft, provider_status='draft')
     pending = add_outbound(db_session, ticket, channel=SourceChannel.whatsapp, status=MessageStatus.pending, provider_status='queued')
     assert outbound_ui_label(local_message.channel, local_message.status, local_message.provider_status) == 'Local WebChat ACK'
     assert outbound_ui_label(ai_reply.channel, ai_reply.status, ai_reply.provider_status) == 'Local WebChat AI Reply'
-    assert outbound_ui_label(draft.channel, draft.status, draft.provider_status) == 'Draft / Review Required'
+    assert outbound_ui_label(draft.channel, draft.status, draft.provider_status) == 'Draft'
     assert outbound_ui_label(pending.channel, pending.status, pending.provider_status) == 'External Send Pending'
     assert serialize_outbound(local_message)['payload']['is_external_send'] is False
     assert serialize_outbound(pending)['payload']['is_external_send'] is True

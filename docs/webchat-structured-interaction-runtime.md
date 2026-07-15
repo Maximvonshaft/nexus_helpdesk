@@ -130,7 +130,7 @@ The implementation logs structured events including:
 - `webchat_card_action_submitted`
 - `webchat_card_action_rejected`
 - `webchat_handoff_triggered`
-- `webchat_fact_gate_blocked`
+- `webchat_runtime_reply_metric`
 - `webchat_tracking_fact_lookup_result`
 
 TicketEvent audit payloads include:

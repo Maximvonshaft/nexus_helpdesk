@@ -271,16 +271,6 @@ def _mark_retry(job: BackgroundJob, reason: str) -> None:
     job.updated_at = utc_now()
 
 
-def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: SourceChannel) -> TicketOutboundMessage:
-    message = TicketOutboundMessage(ticket_id=ticket.id, channel=channel, status=MessageStatus.draft, body=body, provider_status='ai_review_required', error_message='AI-generated auto reply saved as draft by outbound safety gate', failure_code='ai_review_required', failure_reason='AI-generated outbound requires human review before direct send', created_by=user.id, max_retries=settings.outbox_max_retries)
-    db.add(message)
-    db.flush()
-    if channel == SourceChannel.email:
-        ensure_outbound_mailbox_identity(message, ticket=ticket, include_message_id=False)
-        db.flush()
-    return message
-
-
 def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dict, field_name: str = 'speedaf_work_order', new_value: str | None = None) -> None:
     db.add(TicketEvent(ticket_id=ticket_id, event_type=EventType.field_updated, field_name=field_name, new_value=new_value, note=note, payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), created_at=utc_now()))
     db.flush()
@@ -426,7 +416,7 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
         if job.job_type == WEBCHAT_AI_REPLY_JOB:
-            from .webchat_ai_safe_service import process_webchat_ai_reply_job
+            from .webchat_ai_orchestration_service import process_webchat_ai_reply_job
             process_webchat_ai_reply_job(db, conversation_id=int(payload['conversation_id']), ticket_id=int(payload['ticket_id']), visitor_message_id=int(payload['visitor_message_id']))
             _mark_done(job)
             return job

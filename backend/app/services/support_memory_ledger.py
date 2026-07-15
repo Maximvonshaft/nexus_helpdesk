@@ -14,7 +14,7 @@ from ..services.tracking_fact_schema import hash_tracking_number
 from ..tool_models import ToolCallLog
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
-from .webchat_ai_turn_service import ai_snapshot, safe_ai_turn_runtime_trace
+from .webchat_ai_turn_service import ai_snapshot, sanitized_ai_turn_runtime_trace
 from .webchat_handoff_service import serialize_handoff_request
 
 SPEEDAF_EVIDENCE_MARKERS = ("speedaf", "tracking_fact", "waybill", "work_order")
@@ -268,7 +268,7 @@ def _ai_turn_evidence(row: WebchatAITurn) -> dict[str, Any]:
     runtime_trace = None
     if getattr(row, "runtime_trace_json", None):
         try:
-            runtime_trace = safe_ai_turn_runtime_trace(json.loads(row.runtime_trace_json))
+            runtime_trace = sanitized_ai_turn_runtime_trace(json.loads(row.runtime_trace_json))
         except (TypeError, ValueError):
             runtime_trace = None
     summary: dict[str, Any] = {

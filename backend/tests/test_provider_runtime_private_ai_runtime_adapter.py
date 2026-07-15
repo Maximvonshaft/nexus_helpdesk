@@ -1561,7 +1561,9 @@ async def test_private_ai_runtime_short_general_support_uses_light_prompt(monkey
     assert result.structured_output["customer_reply"] == "Hello, how can I help you today?"
     assert result.raw_payload_safe_summary["latency_class"] == "short_general_support"
     assert result.raw_payload_safe_summary["prompt_profile"] == "short_general_support"
-    assert result.raw_payload_safe_summary["prompt_chars"] < 260
+    assert "Persona:" in rendered
+    assert "introduce the assistant and brand" in rendered
+    assert result.raw_payload_safe_summary["prompt_chars"] < 480
 
 
 @pytest.mark.asyncio
@@ -2248,8 +2250,44 @@ async def test_private_ai_runtime_unified_profile_uses_one_json_runtime_prompt(m
     assert result.structured_output["customer_reply"] == "生产知识闭环暗号是 canyon-lime。"
     assert result.raw_payload_safe_summary["latency_class"] == "unified_ai_runtime"
     assert result.raw_payload_safe_summary["prompt_profile"] == "unified_ai_runtime"
-    assert result.raw_payload_safe_summary["prompt_chars"] < 3200
+    assert result.raw_payload_safe_summary["prompt_chars"] < 4000
     assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 192
+
+
+def test_unified_greeting_prompt_uses_published_persona_instead_of_generic_one_liner():
+    adapter = PrivateAIRuntimeAdapter()
+    prompt = adapter._build_prompt(
+        _request(
+            body="你好",
+            recent_context=[],
+            metadata={
+                "language": "zh",
+                "latency_class": "unified_ai_runtime",
+                "runtime_prompt_profile": "unified_ai_runtime",
+                "knowledge_context": {},
+                "persona_context": {
+                    "identity_context": {
+                        "brand_name": "Speedaf",
+                        "assistant_name": "Speedy",
+                        "role_label": "Speedaf Customer Support AI Assistant",
+                        "capabilities": [
+                            "Track parcels from trusted facts",
+                            "Help with delivery exceptions",
+                            "Route explicit human requests",
+                        ],
+                        "tone": "Natural, useful, and not canned",
+                    }
+                },
+            },
+        ),
+        model="nexus-gemma4-e4b:latest",
+        mode="direct",
+    )
+
+    assert '"brand_name":"Speedaf"' in prompt
+    assert '"assistant_name":"Speedy"' in prompt
+    assert "make the reply useful rather than generic" in prompt
+    assert "mention two or three relevant capabilities from persona_context" in prompt
 
 
 def test_unified_prompt_knows_tracking_reference_was_already_supplied():

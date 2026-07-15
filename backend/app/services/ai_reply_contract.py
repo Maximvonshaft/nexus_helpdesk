@@ -83,6 +83,7 @@ def build_ai_reply_contract(
         reply_type=reply_type,
         used_sources=used_sources,
         unsupported_claims=unsupported_claims,
+        conflicts=conflicts,
         customer_visible=reply_type != "null_reply",
     )
     if contract_violation:
@@ -175,6 +176,7 @@ def validate_ai_reply_contract(
         reply_type=reply_type,
         used_sources=used_sources,
         unsupported_claims=unsupported_claims,
+        conflicts=conflicts,
         customer_visible=customer_visible,
     )
     if contract_violation:
@@ -204,6 +206,7 @@ def validate_ai_reply_payload(
     reply_type: str = "answer",
     used_sources: list[str] | tuple[str, ...] | None = None,
     unsupported_claims: list[str] | tuple[str, ...] | None = None,
+    conflicts: list[str] | tuple[str, ...] | None = None,
     customer_visible: bool = True,
 ) -> str | None:
     if reply_type not in VALID_REPLY_TYPES:
@@ -216,6 +219,8 @@ def validate_ai_reply_payload(
         return "ai_reply_answer_requires_used_sources"
     if reply_type == "answer" and _clean_list(unsupported_claims):
         return "ai_reply_unsupported_claims_blocked"
+    if reply_type == "answer" and _clean_list(conflicts):
+        return "ai_reply_conflicts_blocked"
     if reply_type == "handoff_notice" and _clean_list(unsupported_claims):
         return "ai_reply_handoff_notice_unsupported_claims_blocked"
     return None

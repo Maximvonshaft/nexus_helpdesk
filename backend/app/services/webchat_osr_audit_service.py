@@ -144,12 +144,18 @@ def _tracking_intent_present(metadata: dict[str, Any], result: dict[str, Any] | 
         return True
     runtime_trace = (result or {}).get("runtime_trace")
     trace_fields = runtime_trace.get("runtime_trace_context_fields") if isinstance(runtime_trace, dict) and isinstance(runtime_trace.get("runtime_trace_context_fields"), dict) else {}
-    return bool(trace_fields.get("tracking_intent_detected") or metadata.get("tracking_number_hash") or metadata.get("safe_tracking_reference"))
+    runtime_intent = str(runtime_trace.get("ai_decision_intent") or "").strip().lower() if isinstance(runtime_trace, dict) else ""
+    return bool(
+        runtime_intent == "tracking"
+        or trace_fields.get("tracking_intent_detected")
+        or metadata.get("tracking_number_hash")
+        or metadata.get("safe_tracking_reference")
+    )
 
 
 def _business_reply_type(*, result: dict[str, Any] | None, metadata: dict[str, Any], tracking_fact: TrackingFactResult | None, knowledge_hits: list[KnowledgeChunkHit], reply_message: WebchatMessage | None) -> BusinessReplyType:
     status = str((result or {}).get("status") or "").lower()
-    if status in {"review_required", "failed_no_public_reply", "suppressed"}:
+    if status in {"null_reply", "review_required", "failed_no_public_reply", "suppressed"}:
         return BusinessReplyType.NO_ANSWER
     if bool((result or {}).get("runtime_handoff_required")) or bool(metadata.get("runtime_handoff_required")):
         return BusinessReplyType.HANDOFF_NOTICE

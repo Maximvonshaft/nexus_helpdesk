@@ -31,7 +31,7 @@ from .external_channel_bridge import dispatch_via_external_channel_bridge, dispa
 from .outbound_adapters.email import dispatch_email_outbound
 from .outbound_adapters.whatsapp_native import dispatch_whatsapp_native_outbound
 from .outbound_semantics import external_channel_values, is_external_outbound_message
-from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
+from .customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
 
 settings = get_settings()
 ALLOWED_OUTBOUND_PROVIDERS = {'native', 'smtp', 'email'}
@@ -264,18 +264,6 @@ def _mark_dead(message: TicketOutboundMessage, reason: str, *, failure_code: str
     message.locked_by = None
 
 
-def _mark_review_required(message: TicketOutboundMessage, reason: str) -> None:
-    message.status = MessageStatus.draft
-    message.provider_status = 'safety_review_required'
-    message.error_message = reason
-    message.failure_code = 'safety_review_required'
-    message.failure_reason = reason
-    message.last_attempt_at = utc_now()
-    message.next_retry_at = None
-    message.locked_at = None
-    message.locked_by = None
-
-
 def _mark_sent(message: TicketOutboundMessage, provider_status: str | None, sent_at) -> None:
     message.status = MessageStatus.sent
     message.provider_status = provider_status
@@ -372,38 +360,12 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
     )
 
 
-def _build_fact_evidence(ticket: Ticket | None) -> dict[str, Any] | None:
-    if ticket is None or not getattr(ticket, 'tracking_number', None):
-        return None
-    evidence_summary = ticket.customer_update or ticket.resolution_summary
-    if not evidence_summary:
-        return None
-    return {
-        'evidence_source': 'ticket_operator_context',
-        'tracking_number': ticket.tracking_number,
-        'checked_at': utc_now().isoformat(),
-        'evidence_summary': evidence_summary,
-    }
-
-
-def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket: Ticket | None) -> bool:
-    source = message.provider_status or 'manual_or_unknown'
-    fact_evidence = _build_fact_evidence(ticket)
-    decision = evaluate_outbound_safety(
-        ticket,
-        message.body,
-        source=source,
-        has_fact_evidence=fact_evidence is not None,
-        fact_evidence=fact_evidence,
-    )
-    reason = format_safety_reasons(decision)
-    if decision.level == 'block':
-        _mark_dead(message, reason, failure_code='safety_blocked')
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Outbound safety gate blocked customer-facing message', payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons})
-        return False
-    if decision.requires_human_review:
-        _mark_review_required(message, reason)
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Outbound safety gate requires human review before send', payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons, 'fact_evidence_present': fact_evidence is not None})
+def _enforce_customer_visible_policy(db: Session, message: TicketOutboundMessage, ticket: Ticket | None) -> bool:
+    decision = evaluate_customer_visible_policy(message.body)
+    reason = format_policy_reasons(decision)
+    if not decision.allowed:
+        _mark_dead(message, reason, failure_code='customer_visible_policy_blocked')
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Customer-visible content policy blocked outbound message', payload={'message_id': message.id, 'policy_level': decision.level, 'reasons': decision.reasons})
         return False
     if _normalize_customer_visible_origin(message.origin, created_by=message.created_by) in AI_ORIGINS and message.runtime_signature:
         if decision.normalized_body != message.body:
@@ -552,7 +514,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         return message
     idempotency_key = _ensure_provider_idempotency_key(message)
     ticket = message.ticket
-    if not _enforce_outbound_safety(db, message, ticket):
+    if not _enforce_customer_visible_policy(db, message, ticket):
         return message
 
     if message.channel == SourceChannel.whatsapp:

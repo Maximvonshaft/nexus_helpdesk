@@ -242,7 +242,7 @@ def test_native_dispatch_mode_non_retryable_sidecar_failure_marks_dead(db_sessio
     monkeypatch.setattr(message_dispatch_settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch_settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr(message_dispatch, "_enforce_customer_visible_policy", lambda *args, **kwargs: True)
 
     def fake_native(*args, **kwargs):
         return MessageStatus.failed, "invalid_target", None, {

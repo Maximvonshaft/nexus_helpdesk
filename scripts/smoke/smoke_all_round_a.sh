@@ -5,7 +5,6 @@ source "$SCRIPT_DIR/_lib.sh"
 parse_common_args "$@"
 
 SCRIPTS=(
-  smoke_e2e_outbound_safety.sh
   smoke_e2e_runtime_health.sh
   smoke_e2e_integration_task.sh
   smoke_webchat_ai_runtime.sh

@@ -41,10 +41,10 @@ The system must not send when:
 - `channel` or `recipient` is missing.
 - route provenance is ambiguous.
 - multiple open tickets match the same recipient and no ticket link exists.
-- the outbound safety gate returns `block`.
-- AI output requires review and has not been approved.
+- the customer-visible content policy returns `block`.
+- an AI message fails its signed Runtime contract.
 - the selected adapter is the retired ExternalChannel bridge.
 
 ## Proof Scope
 
-Mock smoke tests prove route preservation and safety gates. They do not replace live staging validation against the specific native provider or sidecar that will carry customer traffic.
+Mock smoke tests prove route preservation and customer-visible policy enforcement. They do not replace live staging validation against the specific native provider or sidecar that will carry customer traffic.

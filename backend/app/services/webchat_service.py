@@ -18,7 +18,7 @@ from ..utils.time import utc_now
 from ..settings import get_settings
 from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
-from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
+from .customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
 from .server_fact_evidence import resolve_server_fact_evidence
 from .permissions import ensure_ticket_visible
 from .tenant_authority import stamp_runtime_tenant, tenant_runtime_authority_mode
@@ -795,9 +795,7 @@ def admin_reply(
     current_user: User,
     *,
     body: str,
-    has_fact_evidence: bool = False,
     evidence_reference_id: int | None = None,
-    confirm_review: bool = False,
     conversation_public_id: str | None = None,
 ) -> dict[str, Any]:
     ticket = get_ticket_or_404(db, ticket_id)
@@ -817,20 +815,11 @@ def admin_reply(
         conversation=conversation,
         evidence_reference_id=evidence_reference_id,
     )
-    # Backwards-compatible parsing only.  The client boolean is never trusted.
-    _ = has_fact_evidence
-    decision = evaluate_outbound_safety(
-        ticket,
-        normalized_body,
-        source="manual",
-        has_fact_evidence=server_evidence.present,
-    )
+    decision = evaluate_customer_visible_policy(normalized_body)
     decision_payload = asdict(decision)
     decision_payload["evidence"] = server_evidence.audit_payload()
-    if decision.level == "block":
-        raise HTTPException(status_code=400, detail={"message": "Outbound reply blocked by safety gate", "safety": decision_payload})
-    if decision.requires_human_review and not confirm_review:
-        raise HTTPException(status_code=409, detail={"message": "Outbound reply requires human review confirmation", "safety": decision_payload})
+    if not decision.allowed:
+        raise HTTPException(status_code=400, detail={"message": "Outbound reply blocked by customer-visible content policy", "policy": decision_payload})
 
     if ticket.conversation_state == ConversationState.ai_active:
         ticket.conversation_state = ConversationState.human_owned
@@ -870,7 +859,7 @@ def admin_reply(
             "public_conversation_id": conversation.public_id,
             "safety_level": decision.level,
             "safety_reasons": decision.reasons,
-            "safety_reason_text": format_safety_reasons(decision),
+            "safety_reason_text": format_policy_reasons(decision),
             "external_send": is_external_reply,
             "reply_channel": reply_channel.value,
             "provider_status": provider_status,

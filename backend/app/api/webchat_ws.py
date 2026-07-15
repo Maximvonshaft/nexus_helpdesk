@@ -370,9 +370,7 @@ async def _handle_command(websocket: WebSocket, db: Session, state: ConnectionSt
                     int(message["ticket_id"]),
                     state.current_user,
                     body=str(message.get("body") or ""),
-                    has_fact_evidence=bool(message.get("has_fact_evidence")),
                     evidence_reference_id=message.get("evidence_reference_id"),
-                    confirm_review=bool(message.get("confirm_review")),
                 )
             await websocket.send_json({"type": "command.ok", "request_id": request_id, "command": message_type, "result": result})
             await _send_replay(websocket, db, state)

@@ -1703,8 +1703,6 @@ export interface WebchatReplyResult {
 export interface SupportConversationReplyPayload {
   session_key: string
   body: string
-  has_fact_evidence?: boolean
-  confirm_review?: boolean
 }
 
 export interface SupportConversationReplyResult extends WebchatReplyResult {

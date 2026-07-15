@@ -39,10 +39,6 @@ GLOBAL_CHANNEL_SCOPE = "all"
 CUSTOMER_VISIBILITY = "customer"
 CUSTOMER_SHAREABILITY = {"customer_visible"}
 AUTHORITY_RANK = {"tool": 0, "official_policy": 1, "policy": 2, "sop": 3, "faq": 4, "imported": 5}
-HIGH_RISK_TERMS = {
-    "refund", "赔付", "赔偿", "退款", "claim", "customs", "清关", "tax",
-    "duty", "delivery time", "时效", "物流状态", "tracking status",
-}
 MIN_HIGH_RISK_SCORE = 18.0
 
 
@@ -349,7 +345,7 @@ def retrieve_knowledge(
             )
 
     fused = _rrf_fuse(list(candidate_hits.values()))
-    fused = _apply_answerability_policy(fused, normalized_query=normalized)
+    fused = _apply_answerability_policy(fused)
     fused.sort(
         key=lambda hit: (
             _country_rank(hit, country),
@@ -1293,12 +1289,10 @@ def _authority_rank(hit: KnowledgeRuntimeHit) -> int:
 
 def _apply_answerability_policy(
     hits: list[KnowledgeRuntimeHit],
-    *,
-    normalized_query: str,
 ) -> list[KnowledgeRuntimeHit]:
     if not hits:
         return []
-    if not _looks_high_risk_policy_query(normalized_query):
+    if not any(str(hit.metadata.get("risk_level") or "low").lower() in {"high", "critical"} for hit in hits):
         return hits
     gated: list[KnowledgeRuntimeHit] = []
     for hit in hits:
@@ -1309,13 +1303,6 @@ def _apply_answerability_policy(
         ):
             gated.append(hit)
     return gated
-
-
-def _looks_high_risk_policy_query(value: str) -> bool:
-    lowered = value.lower()
-    return any(term in lowered for term in HIGH_RISK_TERMS)
-
-
 def _blocked_result(
     *,
     reason: str,

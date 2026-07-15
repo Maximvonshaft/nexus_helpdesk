@@ -19,7 +19,7 @@ from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .customer_language import resolve_conversation_language
 from .customer_visible_message_service import create_customer_visible_message
-from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
+from .customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
 from .background_jobs import enqueue_speedaf_work_order_create_job
 from .sla_service import evaluate_sla, update_first_response
 from .speedaf.redactor import safe_caller_payload, safe_waybill_payload
@@ -28,7 +28,6 @@ from .tracking_fact_schema import TrackingFactResult
 from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from .webchat_ai_decision_runtime.tool_registry import canonical_tool_name
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event, suppress_stale_reply_if_needed
-from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .webchat_handoff_service import request_webchat_handoff
 from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
 from .ai_runtime_context import build_webchat_runtime_context
@@ -47,6 +46,8 @@ _LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = None
 _LAST_RUNTIME_TRACE = None
 _LAST_RUNTIME_RAG_TRACE = None
 _LAST_RUNTIME_TOOL_CALLS = None
+_LAST_RUNTIME_GROUNDING_APPLIED = False
+_LAST_RUNTIME_GROUNDING_SOURCE = None
 
 AI_AUTHOR_LABEL = "AI Assistant"
 MAX_HISTORY_MESSAGES = 12
@@ -55,7 +56,7 @@ def _is_whatsapp_conversation(conversation: WebchatConversation) -> bool:
     return str(getattr(conversation, "channel_key", "") or "").lower() == SourceChannel.whatsapp.value
 
 
-def _mark_ai_review_required(
+def _record_runtime_null_reply(
     db: Session,
     *,
     conversation: WebchatConversation,
@@ -97,7 +98,7 @@ def _mark_ai_review_required(
         db,
         conversation_id=conversation.id,
         ticket_id=ticket.id,
-        event_type="ai_turn.review_required",
+        event_type="ai_turn.null_reply",
         payload={
             "ai_turn_id": turn.id if turn else None,
             "visitor_message_id": visitor_message.id,
@@ -110,7 +111,7 @@ def _mark_ai_review_required(
     )
     db.flush()
     return {
-        "status": "review_required",
+        "status": "null_reply",
         "reason": reason,
         "reply_source": reply_source or "suppressed",
         "fallback_reason": reason,
@@ -305,10 +306,18 @@ def _ai_reply_contract_fields(
     tracking_fact: TrackingFactResult | None,
     grounding_applied: bool,
     grounding_source: dict[str, Any] | None,
+    runtime_trace: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    trace = runtime_trace if isinstance(runtime_trace, dict) else {}
+    runtime_intent = str(trace.get("ai_decision_intent") or "").strip().lower()
+    runtime_next_action = str(trace.get("ai_decision_next_action") or "").strip().lower()
     if handoff_required:
         reply_type = "handoff_notice"
-    elif body.rstrip().endswith(("?", "\uff1f")):
+    elif (
+        runtime_next_action == "ask_clarifying_question"
+        or runtime_intent in {"tracking_missing_number", "tracking_unresolved", "unclear"}
+        or body.rstrip().endswith(("?", "\uff1f"))
+    ):
         reply_type = "clarifying_question"
     else:
         reply_type = "answer"
@@ -321,16 +330,37 @@ def _ai_reply_contract_fields(
         item_key = str(grounding_source.get("item_key") or "").strip()
         if item_key:
             used_sources.append(f"knowledge:{item_key}"[:240])
-    if reply_type == "answer" and not used_sources:
-        used_sources.append("runtime:provider_generation")
+    trace_sources = trace.get("ai_decision_used_sources")
+    if isinstance(trace_sources, list):
+        used_sources.extend(str(item)[:240] for item in trace_sources[:20] if isinstance(item, str) and item.strip())
+    used_sources = list(dict.fromkeys(used_sources))
+    if reply_type == "answer" and not used_sources and runtime_intent in {"general_support", "greeting", "other"}:
+        used_sources.append("context:customer_message")
 
-    confidence = 1.0 if fact_evidence_present else 0.8 if grounding_applied else 0.5
+    policy_ok = trace.get("ai_decision_policy_ok")
+    violation_codes = [
+        item.strip()
+        for item in str(trace.get("ai_decision_policy_violation_codes") or "").split(",")
+        if item.strip()
+    ]
+    unsupported_claims = violation_codes if policy_ok is False else []
+    conflicts = []
+    grounding_violation = str(trace.get("grounding_violation") or "").strip()
+    if grounding_violation:
+        conflicts.append(grounding_violation[:240])
+
+    trace_confidence = trace.get("ai_decision_confidence")
+    confidence = (
+        max(0.0, min(1.0, float(trace_confidence)))
+        if isinstance(trace_confidence, (int, float))
+        else 1.0 if fact_evidence_present else 0.8 if grounding_applied else 0.5
+    )
     return {
         "contract_version": AI_REPLY_CONTRACT,
         "reply_type": reply_type,
         "used_sources": used_sources,
-        "unsupported_claims": [],
-        "conflicts": [],
+        "unsupported_claims": unsupported_claims,
+        "conflicts": conflicts,
         "confidence": confidence,
         "channel": channel.value,
     }
@@ -427,10 +457,9 @@ def process_webchat_ai_reply_job(
     rag_trace = _LAST_RUNTIME_RAG_TRACE if isinstance(_LAST_RUNTIME_RAG_TRACE, dict) else None
     runtime_tool_calls = _LAST_RUNTIME_TOOL_CALLS if isinstance(_LAST_RUNTIME_TOOL_CALLS, list) else []
     sanitized_empty = False
-    fact_gate_reason = None
     if not ai_reply:
         fallback_reason = fallback_reason or "empty_ai_reply"
-        return _mark_ai_review_required(
+        return _record_runtime_null_reply(
             db,
             conversation=conversation,
             ticket=ticket,
@@ -445,13 +474,13 @@ def process_webchat_ai_reply_job(
         )
 
     ai_reply = _sanitize_public_ai_reply(ai_reply)
-    grounding_applied = False
-    grounding_source = None
+    grounding_applied = bool(_LAST_RUNTIME_GROUNDING_APPLIED)
+    grounding_source = _LAST_RUNTIME_GROUNDING_SOURCE if isinstance(_LAST_RUNTIME_GROUNDING_SOURCE, dict) else None
 
     if not ai_reply.strip():
         fallback_reason = fallback_reason or "sanitizer_empty"
         sanitized_empty = True
-        return _mark_ai_review_required(
+        return _record_runtime_null_reply(
             db,
             conversation=conversation,
             ticket=ticket,
@@ -465,45 +494,13 @@ def process_webchat_ai_reply_job(
             bridge_wait_timeout_ms=bridge_wait_timeout_ms,
         )
 
-    decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=fact_evidence_present)
+    decision = evaluate_customer_visible_policy(ai_reply)
     final_body = decision.normalized_body
     safety_payload = asdict(decision)
 
-    if decision.level != "allow" or decision.requires_human_review:
-        fallback_reason = fallback_reason or format_safety_reasons(decision)
-        return _mark_ai_review_required(
-            db,
-            conversation=conversation,
-            ticket=ticket,
-            visitor_message=visitor_message,
-            reason=fallback_reason,
-            turn=turn,
-            reply_source=reply_source,
-            runtime_trace=runtime_trace,
-            bridge_elapsed_ms=bridge_elapsed_ms,
-            bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
-            bridge_wait_timeout_ms=bridge_wait_timeout_ms,
-        )
-
-    fact_decision = evaluate_webchat_fact_gate(
-        final_body,
-        fact_evidence_present=fact_evidence_present,
-        allow_tracking_status_card=bool(getattr(settings, "webchat_tracking_fact_card_enabled", False)),
-    )
-    if not fact_decision.allowed:
-        fact_gate_reason = fact_decision.reason or "fact_gate_blocked"
-        fallback_reason = fallback_reason or fact_gate_reason
-        LOGGER.info(
-            "webchat_fact_gate_blocked",
-            extra={"event_payload": {
-                "conversation_id": conversation.id,
-                "ticket_id": ticket.id,
-                "visitor_message_id": visitor_message.id,
-                "ai_turn_id": ai_turn_id,
-                "reason": fact_gate_reason,
-            }},
-        )
-        return _mark_ai_review_required(
+    if not decision.allowed:
+        fallback_reason = fallback_reason or format_policy_reasons(decision)
+        return _record_runtime_null_reply(
             db,
             conversation=conversation,
             ticket=ticket,
@@ -542,20 +539,36 @@ def process_webchat_ai_reply_job(
     reply_channel = SourceChannel.whatsapp if is_external_whatsapp else SourceChannel.web_chat
     outbound_event_type = EventType.outbound_queued if is_external_whatsapp else EventType.outbound_sent
     outbound_event_note = "WhatsApp AI reply queued" if is_external_whatsapp else "Webchat AI reply sent"
-    ai_contract = build_ai_reply_contract(
-        body=final_body,
-        runtime_trace=runtime_trace,
-        safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
-        **_ai_reply_contract_fields(
+    try:
+        ai_contract = build_ai_reply_contract(
             body=final_body,
-            channel=reply_channel,
-            handoff_required=runtime_handoff_required,
-            fact_evidence_present=fact_evidence_present,
-            tracking_fact=tracking_fact,
-            grounding_applied=grounding_applied,
-            grounding_source=grounding_source,
-        ),
-    )
+            runtime_trace=runtime_trace,
+            safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
+            **_ai_reply_contract_fields(
+                body=final_body,
+                channel=reply_channel,
+                handoff_required=runtime_handoff_required,
+                fact_evidence_present=fact_evidence_present,
+                tracking_fact=tracking_fact,
+                grounding_applied=grounding_applied,
+                grounding_source=grounding_source,
+                runtime_trace=runtime_trace,
+            ),
+        )
+    except ValueError as exc:
+        return _record_runtime_null_reply(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            reason=f"runtime_contract_rejected:{exc}"[:240],
+            turn=turn,
+            reply_source=reply_source,
+            runtime_trace=runtime_trace,
+            bridge_elapsed_ms=bridge_elapsed_ms,
+            bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
+            bridge_wait_timeout_ms=bridge_wait_timeout_ms,
+        )
 
     if runtime_handoff_required:
         ticket.required_action = runtime_recommended_agent_action or "Runtime requested human review"
@@ -591,7 +604,6 @@ def process_webchat_ai_reply_job(
         "ai_turn_id": ai_turn_id,
         "safety": safety_payload,
         "fallback_reason": fallback_reason,
-        "fact_gate_reason": fact_gate_reason,
         "fact_evidence_present": fact_evidence_present,
         "tracking_fact": tracking_fact_metadata or None,
         "reply_source": reply_source,
@@ -636,7 +648,6 @@ def process_webchat_ai_reply_job(
             external_channel_session_key=session_policy['session_key'],
             external_channel_session_generation=session_policy['generation'],
             external_channel_session_rotation_reason=session_policy['rotation_reason'],
-            fact_gate_reason=fact_gate_reason,
             bridge_elapsed_ms=bridge_elapsed_ms,
             bridge_timeout_seconds=bridge_timeout_seconds,
             bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
@@ -695,7 +706,6 @@ def process_webchat_ai_reply_job(
             "fallback": bool(fallback_reason),
             "reply_source": reply_source,
             "fallback_reason": fallback_reason,
-            "fact_gate_reason": fact_gate_reason,
             "fact_evidence_present": fact_evidence_present,
             "tracking_fact_tool_status": tracking_fact.tool_status if tracking_fact else None,
             "provider_status": provider_status,
@@ -872,6 +882,7 @@ def _allows_history_tracking_lookup(text: str | None) -> bool:
 def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None) -> str:
     global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
     global _LAST_RUNTIME_HANDOFF_REQUIRED, _LAST_RUNTIME_HANDOFF_REASON, _LAST_RUNTIME_RECOMMENDED_AGENT_ACTION, _LAST_RUNTIME_TRACE, _LAST_RUNTIME_RAG_TRACE, _LAST_RUNTIME_TOOL_CALLS
+    global _LAST_RUNTIME_GROUNDING_APPLIED, _LAST_RUNTIME_GROUNDING_SOURCE
 
     _LAST_AI_REPLY_SOURCE = "private_ai_runtime"
     _LAST_AI_FALLBACK_REASON = None
@@ -884,6 +895,8 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     _LAST_RUNTIME_TRACE = None
     _LAST_RUNTIME_RAG_TRACE = None
     _LAST_RUNTIME_TOOL_CALLS = None
+    _LAST_RUNTIME_GROUNDING_APPLIED = False
+    _LAST_RUNTIME_GROUNDING_SOURCE = None
 
     tracking_fact_summary = tracking_fact.prompt_summary() if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted else None
     tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
@@ -953,6 +966,8 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     _LAST_RUNTIME_TRACE = result.runtime_trace
     _LAST_RUNTIME_RAG_TRACE = result.rag_trace
     _LAST_RUNTIME_TOOL_CALLS = result.tool_calls or []
+    _LAST_RUNTIME_GROUNDING_APPLIED = bool(result.grounding_applied)
+    _LAST_RUNTIME_GROUNDING_SOURCE = result.grounding_source
 
     if not result.ok or not result.reply:
         _LAST_AI_FALLBACK_REASON = result.error_code or "ai_runtime_no_reply"

@@ -38,12 +38,6 @@ WEBCHAT_LOCAL_ONLY_PROVIDER_STATUSES = frozenset().union(
     WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES,
 )
 
-DRAFT_REVIEW_PROVIDER_STATUSES = frozenset({
-    'ai_review_required',
-    'safety_review_required',
-})
-
-
 def _value(raw: Any) -> str:
     if raw is None:
         return ''
@@ -102,10 +96,6 @@ def is_webchat_local_only_message(message: TicketOutboundMessage) -> bool:
     )
 
 
-def is_draft_review_required(message: TicketOutboundMessage) -> bool:
-    return _value(message.status) == MessageStatus.draft.value or _value(message.provider_status) in DRAFT_REVIEW_PROVIDER_STATUSES
-
-
 def is_external_pending_message(message: TicketOutboundMessage) -> bool:
     return is_external_outbound_message(message) and _value(message.status) == MessageStatus.pending.value
 
@@ -127,8 +117,8 @@ def outbound_ui_label(channel: Any, status: Any, provider_status: str | None = N
         return 'Local WebChat Handoff ACK'
     if channel_value == SourceChannel.web_chat.value and provider_value in WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES:
         return 'Local WebChat AI Reply'
-    if provider_value in DRAFT_REVIEW_PROVIDER_STATUSES or status_value == MessageStatus.draft.value:
-        return 'Draft / Review Required'
+    if status_value == MessageStatus.draft.value:
+        return 'Draft'
     if channel_value in EXTERNAL_OUTBOUND_CHANNELS and status_value == MessageStatus.pending.value:
         return 'External Send Pending'
     if channel_value in EXTERNAL_OUTBOUND_CHANNELS and status_value == MessageStatus.sent.value:

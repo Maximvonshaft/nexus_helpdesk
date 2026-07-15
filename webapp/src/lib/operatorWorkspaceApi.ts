@@ -71,13 +71,9 @@ export const operatorWorkspaceApi = {
     requestIdPrefix: 'workspace',
   }),
 
-  reply: (ticketId: number, body: string, confirmReview: boolean) => apiRequest<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
+  reply: (ticketId: number, body: string) => apiRequest<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
     method: 'POST',
-    body: JSON.stringify({
-      body,
-      confirm_review: confirmReview,
-      has_fact_evidence: false,
-    }),
+    body: JSON.stringify({ body }),
     requestIdPrefix: 'workspace',
   }),
 

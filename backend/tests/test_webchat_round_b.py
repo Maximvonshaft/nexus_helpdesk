@@ -66,9 +66,9 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     conversation_id, visitor_token = _create_webchat_message_flow(client)
 
     from app.services import webchat_ai_service
-    from app.services import webchat_ai_safe_service
+    from app.services import webchat_ai_orchestration_service
 
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
         webchat_ai_service._LAST_AI_FALLBACK_REASON = None
@@ -78,6 +78,11 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
         webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = False
         webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = None
         webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = None
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'general_support',
+            'ai_decision_next_action': 'reply',
+        }
         return 'I can help with shipment questions, delivery updates, and general support requests.'
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)

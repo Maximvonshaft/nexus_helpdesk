@@ -24,7 +24,7 @@ from app import models, operator_models, webchat_models  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, EventType, JobStatus, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import BackgroundJob, ChannelAccount, Customer, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
-from app.services import message_dispatch, webchat_ai_safe_service, webchat_ai_service  # noqa: E402
+from app.services import message_dispatch, webchat_ai_orchestration_service, webchat_ai_service  # noqa: E402
 from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.permissions import CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER, resolve_capabilities  # noqa: E402
@@ -206,7 +206,7 @@ def test_admin_reply_to_whatsapp_inbox_queues_native_outbound(db_session):
     ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
     _accept_handoff(db_session, conversation=conversation, ticket=ticket, message=message, agent=agent)
 
-    reply = admin_reply(db_session, ticket.id, agent, body="你好", has_fact_evidence=False)
+    reply = admin_reply(db_session, ticket.id, agent, body="你好")
 
     assert reply["ok"] is True
     agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.id == reply["message"]["id"]).one()
@@ -234,7 +234,7 @@ def test_admin_reply_to_webchat_keeps_local_sent_ack(db_session):
     ticket, conversation, message = make_webchat(db_session)
     _accept_handoff(db_session, conversation=conversation, ticket=ticket, message=message, agent=agent)
 
-    reply = admin_reply(db_session, ticket.id, agent, body="Hello from webchat.", has_fact_evidence=False)
+    reply = admin_reply(db_session, ticket.id, agent, body="Hello from webchat.")
 
     assert reply["ok"] is True
     agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.id == reply["message"]["id"]).one()
@@ -259,14 +259,14 @@ def test_worker_processes_whatsapp_admin_reply_pending_row_with_native_sidecar(d
     agent = make_user(db_session, "whatsapp_worker_agent", UserRole.manager)
     ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
     _accept_handoff(db_session, conversation=conversation, ticket=ticket, message=message, agent=agent)
-    admin_reply(db_session, ticket.id, agent, body="你好", has_fact_evidence=False)
+    admin_reply(db_session, ticket.id, agent, body="你好")
     outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
     monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
     monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr(message_dispatch, "_enforce_customer_visible_policy", lambda *args, **kwargs: True)
 
     def fake_native(db, *, message, ticket, idempotency_key):
         assert message.id == outbound.id
@@ -286,10 +286,10 @@ def test_worker_processes_whatsapp_admin_reply_pending_row_with_native_sidecar(d
     assert processed.provider_status == "whatsapp_native_sent"
 
 
-def test_whatsapp_runtime_failure_requires_review_without_customer_visible_fallback(db_session, monkeypatch):
+def test_whatsapp_runtime_failure_records_null_reply_without_customer_visible_fallback(db_session, monkeypatch):
     ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
     turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
-    monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
 
     async def fake_generate_webchat_runtime_reply(**_kwargs):
         return WebchatRuntimeReplyResult(
@@ -309,14 +309,14 @@ def test_whatsapp_runtime_failure_requires_review_without_customer_visible_fallb
 
     monkeypatch.setattr(webchat_ai_service, "generate_webchat_runtime_reply", fake_generate_webchat_runtime_reply)
 
-    result = webchat_ai_safe_service.process_webchat_ai_reply_job(
+    result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
         db_session,
         conversation_id=conversation.id,
         ticket_id=ticket.id,
         visitor_message_id=message.id,
     )
 
-    assert result["status"] == "review_required"
+    assert result["status"] == "null_reply"
     assert result["message_id"] is None
     assert turn.status == "failed"
     assert conversation.ai_suspended is False
@@ -330,7 +330,7 @@ def test_whatsapp_ai_reply_queues_native_outbound(db_session, monkeypatch):
     message.body = "Can you help me check this parcel later?"
     message.body_text = message.body
     turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
-    monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
 
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = "private_ai_runtime"
@@ -338,11 +338,16 @@ def test_whatsapp_ai_reply_queues_native_outbound(db_session, monkeypatch):
         webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 42
         webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
         webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            "ai_decision_policy_ok": True,
+            "ai_decision_intent": "general_support",
+            "ai_decision_next_action": "reply",
+        }
         return "Hi, I can help check that with the information available here."
 
     monkeypatch.setattr(webchat_ai_service, "_generate_ai_reply", fake_generate_ai_reply)
 
-    result = webchat_ai_safe_service.process_webchat_ai_reply_job(
+    result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
         db_session,
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -377,7 +382,7 @@ def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, m
     message.body = "你好"
     message.body_text = message.body
     turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
-    monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
 
     async def fake_generate_webchat_runtime_reply(**kwargs):
         assert kwargs["channel_key"] == "whatsapp"
@@ -400,7 +405,7 @@ def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, m
 
     monkeypatch.setattr(webchat_ai_service, "generate_webchat_runtime_reply", fake_generate_webchat_runtime_reply)
 
-    result = webchat_ai_safe_service.process_webchat_ai_reply_job(
+    result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
         db_session,
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -423,10 +428,10 @@ def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, m
     assert outbound.provider_status == "whatsapp_ai_reply_queued"
 
 
-def test_whatsapp_ai_runtime_failure_requires_review_without_outbound(db_session, monkeypatch):
+def test_whatsapp_ai_runtime_failure_records_null_reply_without_outbound(db_session, monkeypatch):
     ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
     turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
-    monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
 
     async def fake_generate_webchat_runtime_reply(**_kwargs):
         return WebchatRuntimeReplyResult(
@@ -447,14 +452,14 @@ def test_whatsapp_ai_runtime_failure_requires_review_without_outbound(db_session
 
     monkeypatch.setattr(webchat_ai_service, "generate_webchat_runtime_reply", fake_generate_webchat_runtime_reply)
 
-    result = webchat_ai_safe_service.process_webchat_ai_reply_job(
+    result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
         db_session,
         conversation_id=conversation.id,
         ticket_id=ticket.id,
         visitor_message_id=message.id,
     )
 
-    assert result["status"] == "review_required"
+    assert result["status"] == "null_reply"
     assert result["message_id"] is None
     assert result["fallback_reason"] == "all_providers_failed"
     assert turn.status == "failed"
@@ -607,7 +612,7 @@ def test_force_takeover_blocks_new_ai_turns_and_agent_reply_is_audited(db_sessio
     )
     assert snapshot["ai_suppressed_by_handoff"] is True
 
-    reply = admin_reply(db_session, ticket.id, admin, body="I have taken over and will help from here.", has_fact_evidence=False)
+    reply = admin_reply(db_session, ticket.id, admin, body="I have taken over and will help from here.")
     assert reply["ok"] is True
     agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.id == reply["message"]["id"]).one()
     assert agent_message.author_user_id == admin.id
@@ -666,12 +671,12 @@ def test_force_capability_does_not_bypass_accept_before_reply(db_session):
     )
 
     with pytest.raises(HTTPException) as exc:
-        admin_reply(db_session, ticket.id, manager, body="I should not bypass accept.", has_fact_evidence=False)
+        admin_reply(db_session, ticket.id, manager, body="I should not bypass accept.")
     assert exc.value.status_code == 409
     assert "accepted" in str(exc.value.detail)
 
     force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=manager, reason_code="operator_forced_takeover")
-    reply = admin_reply(db_session, ticket.id, manager, body="I have now taken over.", has_fact_evidence=False)
+    reply = admin_reply(db_session, ticket.id, manager, body="I have now taken over.")
     assert reply["ok"] is True
     assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "handoff.force_takeover").count() == 1
     assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "handoff.agent_reply_sent").count() == 1
@@ -683,16 +688,16 @@ def test_direct_reply_to_ai_active_session_requires_force_takeover_first(db_sess
     attach_open_ai_turn(db_session, conversation, ticket, message)
 
     with pytest.raises(HTTPException) as exc:
-        admin_reply(db_session, ticket.id, manager, body="Reply while AI is still active.", has_fact_evidence=False)
+        admin_reply(db_session, ticket.id, manager, body="Reply while AI is still active.")
     assert exc.value.status_code == 409
     assert "force takeover" in str(exc.value.detail)
 
     force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=manager, reason_code="operator_forced_takeover")
-    reply = admin_reply(db_session, ticket.id, manager, body="Reply after takeover.", has_fact_evidence=False)
+    reply = admin_reply(db_session, ticket.id, manager, body="Reply after takeover.")
     assert reply["ok"] is True
 
 
-def test_admin_reply_safety_review_requires_explicit_confirmation(db_session):
+def test_admin_reply_business_text_does_not_require_keyword_review(db_session):
     agent = make_user(db_session, "review_agent", UserRole.manager)
     ticket, conversation, message = make_webchat(db_session)
     request = request_webchat_handoff(
@@ -707,19 +712,12 @@ def test_admin_reply_safety_review_requires_explicit_confirmation(db_session):
     accept_handoff_request(db_session, request_id=request.id, current_user=agent, note="taking over")
 
     body = "Your parcel will arrive today."
-    with pytest.raises(HTTPException) as review:
-        admin_reply(db_session, ticket.id, agent, body=body, has_fact_evidence=False, confirm_review=False)
-    assert review.value.status_code == 409
-    assert review.value.detail["safety"]["requires_human_review"] is True
-    assert review.value.detail["safety"]["normalized_body"] == body
-    assert "logistics factual claim requires evidence" in review.value.detail["safety"]["reasons"][0]
-
-    reply = admin_reply(db_session, ticket.id, agent, body=body, has_fact_evidence=False, confirm_review=True)
+    reply = admin_reply(db_session, ticket.id, agent, body=body)
     assert reply["ok"] is True
-    assert reply["safety"]["level"] == "review"
+    assert reply["safety"]["level"] == "allow"
 
 
-def test_admin_reply_confirm_review_does_not_bypass_block_level_safety(db_session):
+def test_admin_reply_content_policy_blocks_assigned_secret(db_session):
     agent = make_user(db_session, "block_agent", UserRole.manager)
     ticket, conversation, message = make_webchat(db_session)
     request = request_webchat_handoff(
@@ -734,7 +732,7 @@ def test_admin_reply_confirm_review_does_not_bypass_block_level_safety(db_sessio
     accept_handoff_request(db_session, request_id=request.id, current_user=agent, note="taking over")
 
     with pytest.raises(HTTPException) as blocked:
-        admin_reply(db_session, ticket.id, agent, body="Here is the access token and SECRET_KEY.", has_fact_evidence=True, confirm_review=True)
+        admin_reply(db_session, ticket.id, agent, body="access_token=abcdefghijklmnopqrstuvwxyz123456")
     assert blocked.value.status_code == 400
-    assert blocked.value.detail["safety"]["level"] == "block"
-    assert blocked.value.detail["safety"]["requires_human_review"] is False
+    assert blocked.value.detail["policy"]["level"] == "block"
+    assert blocked.value.detail["policy"]["reasons"] == ["assigned_secret_disclosure"]

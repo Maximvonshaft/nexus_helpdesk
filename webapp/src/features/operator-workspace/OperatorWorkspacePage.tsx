@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, supportApi } from '@/lib/supportApi'
+import { supportApi } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
 import type {
   UnifiedOperatorQueueItem,
@@ -270,12 +270,6 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
   )
 }
 
-function replyMutationSafety(error: unknown) {
-  if (!(error instanceof ApiError) || !error.detail || typeof error.detail !== 'object') return null
-  const detail = error.detail as { safety?: { reasons?: string[] } }
-  return detail.safety ? { reasons: detail.safety.reasons ?? [] } : null
-}
-
 function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capabilities, onRefresh, onReplyDirtyChange, selectionUnavailable }: {
   item: UnifiedOperatorQueueItem
   thread: WebchatThread | null
@@ -288,7 +282,6 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
   selectionUnavailable: boolean
 }) {
   const [reply, setReply] = useState('')
-  const [confirmReview, setConfirmReview] = useState(false)
   const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
@@ -297,7 +290,6 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
 
   useEffect(() => {
     setReply('')
-    setConfirmReview(false)
     setNewMessageCount(0)
     previousMessageCountRef.current = 0
   }, [item.queue_id])
@@ -320,18 +312,13 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
   useEffect(() => () => onReplyDirtyChange(false), [onReplyDirtyChange])
 
   const replyMutation = useMutation({
-    mutationFn: () => operatorWorkspaceApi.reply(item.ticket_id as number, reply.trim(), confirmReview),
+    mutationFn: () => operatorWorkspaceApi.reply(item.ticket_id as number, reply.trim()),
     onSuccess: async () => {
       setReply('')
-      setConfirmReview(false)
       onReplyDirtyChange(false)
       await onRefresh()
     },
-    onError: (mutationError) => {
-      if (replyMutationSafety(mutationError)) setConfirmReview(true)
-    },
   })
-  const mutationSafety = replyMutationSafety(replyMutation.error)
 
   return (
     <section id="workspace-conversation" className="operator-conversation-panel" aria-labelledby="operator-conversation-title" tabIndex={-1}>
@@ -364,13 +351,12 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
             {!thread.messages.length ? <EmptyState title="暂无消息" description="该会话尚无可显示内容。" /> : null}
           </div>
           {newMessageCount ? <Button size="sm" variant="secondary" onClick={() => { messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }); setNewMessageCount(0) }}>{newMessageCount} 条新消息，查看最新</Button> : null}
-          {mutationSafety ? <ErrorSummary title="回复需要人工复核" errors={mutationSafety.reasons.length ? mutationSafety.reasons : ['请检查内容后再次确认发送']} /> : null}
-          {replyMutation.isError && !mutationSafety ? <ErrorSummary title="发送失败" errors={[errorCopy(replyMutation.error, '请稍后重试')]} /> : null}
+          {replyMutation.isError ? <ErrorSummary title="发送失败" errors={[errorCopy(replyMutation.error, '请稍后重试')]} /> : null}
           <form className="operator-reply" onSubmit={(event) => { event.preventDefault(); if (canReply && reply.trim()) replyMutation.mutate() }}>
             <Field label="回复客户" description="技术发送成功不自动等于客户收到或案例结案。" disabledReason={!canReply ? '当前权限、会话或队列状态不允许回复' : undefined}>
-              <Textarea value={reply} onChange={(event) => { setReply(event.target.value); setConfirmReview(false) }} rows={4} placeholder="输入清晰、可验证的客户回复…" autoComplete="off" />
+              <Textarea value={reply} onChange={(event) => setReply(event.target.value)} rows={4} placeholder="输入清晰、可验证的客户回复…" autoComplete="off" />
             </Field>
-            <Button type="submit" variant="primary" loading={replyMutation.isPending} loadingLabel="发送中…" disabled={!canReply || !reply.trim()}>{confirmReview ? '确认发送' : '发送回复'}</Button>
+            <Button type="submit" variant="primary" loading={replyMutation.isPending} loadingLabel="发送中…" disabled={!canReply || !reply.trim()}>发送回复</Button>
           </form>
         </>
       ) : !isLoading ? <EmptyState title="当前案例没有可用会话" description="可以继续查看案例证据，回复和人工接管暂不可用。" /> : null}

@@ -28,8 +28,8 @@ from app.services.ai_reply_contract import AI_REPLY_CONTRACT, build_ai_reply_con
 from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.customer_visible_message_service import create_customer_visible_outbound, record_runtime_null_reply  # noqa: E402
-from app.services.message_dispatch import _build_fact_evidence, process_outbound_message, queue_outbound_message  # noqa: E402
-from app.services.outbound_safety import SafetyDecision  # noqa: E402
+from app.services.message_dispatch import process_outbound_message, queue_outbound_message  # noqa: E402
+from app.services.customer_visible_policy import CustomerVisiblePolicyDecision  # noqa: E402
 
 
 @pytest.fixture()
@@ -423,7 +423,7 @@ def test_v3_answer_with_used_sources_passes_outbound_gateway(db_session, monkeyp
         safety_status=contract.safety_status,
     )
     monkeypatch.setattr("app.services.message_dispatch._external_dispatch_block_reason", lambda: None)
-    monkeypatch.setattr("app.services.message_dispatch._enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr("app.services.message_dispatch._enforce_customer_visible_policy", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         "app.services.message_dispatch._dispatch_whatsapp_message",
         lambda *args, **kwargs: (MessageStatus.sent, "whatsapp_native_sent", None, {"adapter": "test", "idempotency_key": "idem"}),
@@ -496,6 +496,20 @@ def test_v3_unsupported_claims_blocked(db_session):
         )
 
 
+def test_v3_answer_with_conflicts_blocked():
+    with pytest.raises(ValueError, match="ai_reply_conflicts_blocked"):
+        build_ai_reply_contract(
+            body="Conflicting answer",
+            runtime_trace={"request_id": "rt-v3-conflict"},
+            contract_version=AI_REPLY_CONTRACT,
+            reply_type="answer",
+            used_sources=["knowledge:policy-a", "knowledge:policy-b"],
+            unsupported_claims=[],
+            conflicts=["policy-a and policy-b disagree"],
+            channel="webchat",
+        )
+
+
 def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, monkeypatch):
     ticket = _ticket(db_session)
     contract = build_ai_reply_contract(
@@ -520,8 +534,8 @@ def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, m
     )
     monkeypatch.setattr("app.services.message_dispatch._external_dispatch_block_reason", lambda: None)
     monkeypatch.setattr(
-        "app.services.message_dispatch.evaluate_outbound_safety",
-        lambda *args, **kwargs: SafetyDecision(True, "allow", [], False, "Exact signed body "),
+        "app.services.message_dispatch.evaluate_customer_visible_policy",
+        lambda *args, **kwargs: CustomerVisiblePolicyDecision(True, "allow", [], "Exact signed body "),
     )
     monkeypatch.setattr("app.services.message_dispatch.dispatch_whatsapp_native_outbound", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dispatch must not run")))
 
@@ -545,14 +559,10 @@ def test_ai_reply_does_not_update_last_human_update():
     assert "ticket.last_ai_update = final_body" in source
 
 
-def test_fact_evidence_does_not_use_ai_reply_as_human_evidence(db_session):
-    ticket = _ticket(db_session)
-    ticket.tracking_number = "CH020000129135"
-    ticket.last_human_update = "AI-generated reply that must not become operator evidence"
-    ticket.last_ai_update = "AI-generated reply that must not become operator evidence"
-    db_session.flush()
-
-    assert _build_fact_evidence(ticket) is None
+def test_dispatch_has_no_ticket_text_fact_evidence_fallback():
+    source = (ROOT / "app/services/message_dispatch.py").read_text(encoding="utf-8")
+    assert "_build_fact_evidence" not in source
+    assert "ticket_operator_context" not in source
 
 
 def test_v3_null_reply_not_sent_to_customer(db_session):

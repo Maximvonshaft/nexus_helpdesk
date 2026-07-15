@@ -136,7 +136,7 @@
         "backend/app/services/outbound_adapters/whatsapp.py",
         "backend/app/services/outbound_adapters/whatsapp_native.py",
         "backend/app/services/outbound_channel_registry.py",
-        "backend/app/services/outbound_safety.py",
+        "backend/app/services/customer_visible_policy.py",
         "backend/app/services/outbound_semantics.py",
         "backend/app/services/provider_runtime/output_contracts.py",
         "backend/app/services/tool_governance.py",

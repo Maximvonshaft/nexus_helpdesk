@@ -144,8 +144,7 @@ class Settings:
         self.admin_action_rate_limit_single_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_SINGLE_MAX", "20"))
         self.admin_action_rate_limit_batch_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX", "3"))
         self.admin_action_rate_limit_consume_once_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX", "5"))
-        self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ai").strip().lower() or "safe_ai"
-        self.osr_escalation_orchestration_enabled = _env_bool("OSR_ESCALATION_ORCHESTRATION_ENABLED", False)
+        self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "runtime").strip().lower() or "runtime"
         self.webchat_ai_turn_debounce_seconds = float(os.getenv("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS", "0.15"))
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
@@ -219,8 +218,8 @@ class Settings:
             raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX must be between 1 and 1000")
         if self.admin_action_rate_limit_consume_once_max < 1 or self.admin_action_rate_limit_consume_once_max > 1000:
             raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX must be between 1 and 1000")
-        if self.webchat_ai_auto_reply_mode not in {"off", "safe_ai"}:
-            raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off or safe_ai")
+        if self.webchat_ai_auto_reply_mode not in {"off", "runtime"}:
+            raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off or runtime")
         if self.worker_poll_seconds < 0.1 or self.worker_poll_seconds > 60:
             raise RuntimeError("WORKER_POLL_SECONDS must be between 0.1 and 60")
         if self.webchat_ai_worker_poll_seconds < 0.05 or self.webchat_ai_worker_poll_seconds > 10:

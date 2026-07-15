@@ -206,7 +206,7 @@ def test_support_memory_ledger_redacts_free_text_customer_identifiers(db_session
     assert ledger["tracking"]["raw_exposed"] is False
 
 
-def test_support_memory_ledger_derives_tracking_from_safe_ai_evidence(db_session):
+def test_support_memory_ledger_derives_tracking_from_runtime_evidence(db_session):
     user = make_user(db_session)
     ticket, conversation, message = make_ticket(db_session)
     ticket.tracking_number = None

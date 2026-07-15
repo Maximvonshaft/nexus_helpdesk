@@ -21,9 +21,7 @@ The WebChat admin inbox shows:
 
 ## Reply policy
 
-Agent replies are visible in the visitor widget. They go through the outbound safety gate. If the reply contains logistics facts, the agent should tick `has_fact_evidence` only after checking the source system or reliable evidence.
-
-If the safety gate requires review, use `confirm_review` only after human review.
+Agent replies are visible in the visitor widget after takeover. The customer-visible content policy blocks malformed messages and credential or internal-reasoning disclosure. Logistics facts should still be checked against the source system before an agent sends them.
 
 ## Action handling
 

@@ -91,7 +91,7 @@ def _clear_webchat_ai_jobs() -> None:
         db.close()
 
 
-def test_v3_conversational_answer_records_runtime_generation_source():
+def test_v3_conversational_answer_records_customer_context_source():
     from app.enums import SourceChannel
     from app.services.webchat_ai_service import _ai_reply_contract_fields
 
@@ -103,12 +103,46 @@ def test_v3_conversational_answer_records_runtime_generation_source():
         tracking_fact=None,
         grounding_applied=False,
         grounding_source=None,
+        runtime_trace={
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'general_support',
+            'ai_decision_confidence': 0.9,
+        },
     )
 
     assert fields['contract_version'] == 'nexus.ai_reply.v3'
     assert fields['reply_type'] == 'answer'
-    assert fields['used_sources'] == ['runtime:provider_generation']
+    assert fields['used_sources'] == ['context:customer_message']
     assert fields['unsupported_claims'] == []
+    assert fields['confidence'] == 0.9
+
+
+def test_v3_answer_uses_runtime_evidence_and_declared_policy_violations():
+    from app.enums import SourceChannel
+    from app.services.webchat_ai_service import _ai_reply_contract_fields
+
+    fields = _ai_reply_contract_fields(
+        body='The parcel is out for delivery.',
+        channel=SourceChannel.web_chat,
+        handoff_required=False,
+        fact_evidence_present=False,
+        tracking_fact=None,
+        grounding_applied=False,
+        grounding_source=None,
+        runtime_trace={
+            'ai_decision_policy_ok': False,
+            'ai_decision_policy_violation_codes': 'tracking_status_without_trusted_fact',
+            'ai_decision_intent': 'tracking',
+            'ai_decision_next_action': 'reply',
+            'ai_decision_used_sources': ['speedaf.order.query:lookup-42'],
+            'ai_decision_confidence': 0.25,
+        },
+    )
+
+    assert fields['used_sources'] == ['speedaf.order.query:lookup-42']
+    assert fields['unsupported_claims'] == ['tracking_status_without_trusted_fact']
+    assert fields['confidence'] == 0.25
+    assert 'runtime:provider_generation' not in fields['used_sources']
 
 
 def test_webchat_ai_turn_is_created_and_public_poll_reports_pending():
@@ -233,8 +267,8 @@ def test_processing_turn_queues_next_turn_for_new_message():
 
 def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
     _ensure_schema_and_user()
-    from app.services import webchat_ai_safe_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'off')
+    from app.services import webchat_ai_orchestration_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'off')
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
 
@@ -258,13 +292,13 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
 
     _send(client, conversation_id, visitor_token, 'Newer question', 'turn-runtime-stale-2')
 
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     db = SessionLocal()
     try:
         first_message_id = first['message']['id']
         first_message = db.query(WebchatMessage).filter(WebchatMessage.id == first_message_id).first()
-        result = webchat_ai_safe_service.process_webchat_ai_reply_job(db, conversation_id=first_message.conversation_id, ticket_id=first_message.ticket_id, visitor_message_id=first_message.id)
+        result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(db, conversation_id=first_message.conversation_id, ticket_id=first_message.ticket_id, visitor_message_id=first_message.id)
         db.commit()
         assert result['status'] == 'superseded'
         turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == first_turn_id).first()
@@ -284,8 +318,8 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     sent = _send(client, conversation_id, visitor_token, 'Hello', 'turn-runtime-dispatch-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
@@ -374,8 +408,8 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
     )
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
@@ -386,6 +420,11 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
         webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = False
         webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = None
         webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = None
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'tracking_missing_number',
+            'ai_decision_next_action': 'ask_clarifying_question',
+        }
         return 'Share the parcel number when you are ready and I will check the latest tracking details.'
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
@@ -432,8 +471,8 @@ def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
     sent = _send(client, conversation_id, visitor_token, 'I need a human to review this', 'turn-runtime-handoff-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_generate_ai_reply(**_kwargs):
         webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
@@ -444,6 +483,11 @@ def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
         webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = True
         webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = 'customer_requested_human'
         webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = 'Human agent should review the customer request.'
+        webchat_ai_service._LAST_RUNTIME_TRACE = {
+            'ai_decision_policy_ok': True,
+            'ai_decision_intent': 'handoff_request',
+            'ai_decision_next_action': 'request_handoff',
+        }
         return 'I will connect this conversation to a support agent.'
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
@@ -487,8 +531,8 @@ def test_ai_turn_runtime_human_takeover_during_generation_suppresses_ai_reply(mo
     sent = _send(client, conversation_id, visitor_token, 'I need a human to review this', 'turn-runtime-human-takeover-race')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_safe_service, webchat_ai_service
-    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_generate_ai_reply(**kwargs):
         conversation = kwargs['conversation']

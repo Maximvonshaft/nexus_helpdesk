@@ -156,7 +156,7 @@ def test_process_whatsapp_message_missing_account_schedules_retry_without_sideca
     monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr(message_dispatch, "_enforce_customer_visible_policy", lambda *args, **kwargs: True)
 
     processed = message_dispatch.process_outbound_message(db_session, message)
 
@@ -174,7 +174,7 @@ def test_process_whatsapp_message_native_success_sets_sent_and_waiting_customer(
     monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr(message_dispatch, "_enforce_customer_visible_policy", lambda *args, **kwargs: True)
 
     def fake_whatsapp_native_dispatch(db, *, message, ticket, idempotency_key):
         return MessageStatus.sent, "whatsapp_native_sent", utc_now(), {
@@ -204,7 +204,7 @@ def test_process_whatsapp_external_channel_mode_is_retired_non_retryable(db_sess
     monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "external_channel_bridge")
     monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr(message_dispatch, "_enforce_customer_visible_policy", lambda *args, **kwargs: True)
     called = {"native": False}
 
     def fake_native(*args, **kwargs):

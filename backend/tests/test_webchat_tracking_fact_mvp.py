@@ -3,7 +3,6 @@ from __future__ import annotations
 from app.services import tracking_fact_service
 from app.services.tracking_fact_schema import TrackingFactEvent, TrackingFactResult
 from app.services.webchat_ai_service import _allows_history_tracking_lookup, _looks_like_service_policy_question
-from app.services.webchat_fact_gate import evaluate_webchat_fact_gate
 
 
 def test_tracking_number_extraction_skips_plain_words_and_accepts_waybill():
@@ -34,16 +33,6 @@ def test_service_policy_question_does_not_inherit_history_tracking_lookup():
     assert _looks_like_service_policy_question("瑞士本地到本地现在支持寄送吗？") is True
     assert _allows_history_tracking_lookup("瑞士本地到本地现在支持寄送吗？") is False
     assert _allows_history_tracking_lookup("刚刚这个包裹如果收件人说没有收到怎么办？") is True
-
-
-def test_fact_gate_allows_delivered_only_with_fact_evidence():
-    blocked = evaluate_webchat_fact_gate("Your parcel has been delivered.", fact_evidence_present=False)
-    assert blocked.allowed is False
-    assert blocked.reason in {"missing_business_or_tool_evidence", "missing_tracking_tool_result"}
-
-    allowed = evaluate_webchat_fact_gate("Your parcel has been delivered.", fact_evidence_present=True)
-    assert allowed.allowed is True
-    assert allowed.fact_evidence_present is True
 
 
 def test_tracking_lookup_disabled_does_not_call_provider(monkeypatch):
