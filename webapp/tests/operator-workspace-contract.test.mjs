@@ -134,6 +134,14 @@ test('workspace preserves scroll ownership, protects drafts, and transfers mobil
   assert.doesNotMatch(workspacePage, /messagesRef\.current\.scrollTop\s*=\s*messagesRef\.current\.scrollHeight/)
 })
 
+test('workspace resolves legacy session deep links under canonical scope', () => {
+  assert.match(workspacePage, /operatorWorkspaceSessionDeepLink/)
+  assert.match(workspacePage, /supportApi\.supportConversationDetail/)
+  assert.match(workspacePage, /requestedQueueItem/)
+  assert.match(workspacePage, /queue\.fetchNextPage/)
+  assert.match(workspacePage, /url\.searchParams\.delete\('session'\)/)
+})
+
 test('workspace keeps a dirty reply attached when polling removes the selected queue item', () => {
   assert.match(workspacePage, /retainedSelectedItem/)
   assert.match(workspacePage, /preserveMissingSelection/)

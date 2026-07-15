@@ -109,6 +109,8 @@ test('control tower is a management projection that drills into canonical routes
 test('webchat remains compatibility-only and the competing support console cannot return', () => {
   assert.match(webchatRoute, /WebchatCompatibilityRedirect/)
   assert.match(webchatRoute, /旧客服后台入口已合并到统一操作员后台/)
+  assert.match(webchatRoute, /workspace\?session=/)
+  assert.doesNotMatch(webchatRoute, /supportConversationDetail/)
   assert.doesNotMatch(webchatRoute, /support-console/)
   assert.equal(exists('src/features/support-console/SupportConsolePage.tsx'), false)
   assert.equal(exists('src/features/support-console/lazy.tsx'), false)

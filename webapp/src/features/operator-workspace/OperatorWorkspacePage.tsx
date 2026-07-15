@@ -65,6 +65,11 @@ function initialQueueId() {
   return new URLSearchParams(window.location.search).get('queue')
 }
 
+function initialSessionKey() {
+  if (typeof window === 'undefined') return null
+  return new URLSearchParams(window.location.search).get('session')
+}
+
 function errorCopy(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
 }
@@ -540,6 +545,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
   const [filters, setFilters] = useState<WorkspaceFilters>(defaultFilters)
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(() => initialQueueId())
+  const [requestedSessionKey] = useState<string | null>(() => initialSessionKey())
   const [mobileView, setMobileView] = useState<WorkspaceMobileView>('queue')
   const [replyDraftDirty, setReplyDraftDirty] = useState(false)
   const [replyDiscardOpen, setReplyDiscardOpen] = useState(false)
@@ -567,12 +573,29 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   }, [mobileView])
   useEffect(() => {
     const url = new URL(window.location.href)
-    if (selectedQueueId) url.searchParams.set('queue', selectedQueueId)
-    else url.searchParams.delete('queue')
+    if (selectedQueueId) {
+      url.searchParams.set('queue', selectedQueueId)
+      url.searchParams.delete('session')
+    } else {
+      url.searchParams.delete('queue')
+      if (!requestedSessionKey) url.searchParams.delete('session')
+    }
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
-  }, [selectedQueueId])
+  }, [requestedSessionKey, selectedQueueId])
 
   const canReadQueue = hasCapability(capabilities, 'operator_queue.read')
+  const requestedConversation = useQuery({
+    queryKey: ['operatorWorkspaceSessionDeepLink', scope, requestedSessionKey],
+    queryFn: () => supportApi.supportConversationDetail(requestedSessionKey || ''),
+    enabled: Boolean(session.data && canReadQueue && requestedSessionKey),
+    retry: false,
+  })
+  const requestedQueueId = useMemo(() => {
+    const conversation = requestedConversation.data?.conversation
+    if (conversation?.handoff_request_id) return `handoff:${conversation.handoff_request_id}`
+    if (conversation?.ticket_id) return `ticket:${conversation.ticket_id}`
+    return null
+  }, [requestedConversation.data?.conversation])
   const queue = useInfiniteQuery({
     queryKey: ['operatorWorkspaceQueue', scope, filters],
     queryFn: ({ pageParam }) => operatorWorkspaceApi.unifiedQueue(scope, filters, pageParam as string | null),
@@ -584,15 +607,33 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   })
   const queueItems = useMemo(() => queue.data?.pages.flatMap((page) => page.items) ?? [], [queue.data?.pages])
   const selectedQueueItem = useMemo(() => queueItems.find((item) => item.queue_id === selectedQueueId) ?? null, [queueItems, selectedQueueId])
+  const requestedQueueItem = useMemo(() => queueItems.find((item) => item.queue_id === requestedQueueId) ?? null, [queueItems, requestedQueueId])
+  const resolvingSessionDeepLink = Boolean(
+    requestedSessionKey
+    && !requestedConversation.isError
+    && (
+      requestedConversation.isLoading
+      || (requestedQueueId && !requestedQueueItem && (queue.isLoading || queue.hasNextPage || queue.isFetchingNextPage))
+    ),
+  )
   const selectedQueueItemMissing = Boolean(selectedQueueId && !selectedQueueItem && retainedSelectedItem?.queue_id === selectedQueueId)
   const preserveMissingSelection = replyDraftDirty && selectedQueueItemMissing
-  const selectedItem = selectedQueueItem ?? (preserveMissingSelection ? retainedSelectedItem : queueItems[0] ?? null)
+  const selectedItem = selectedQueueItem
+    ?? (preserveMissingSelection ? retainedSelectedItem : null)
+    ?? requestedQueueItem
+    ?? (resolvingSessionDeepLink ? null : queueItems[0] ?? null)
 
   useEffect(() => { if (selectedQueueItem) setRetainedSelectedItem(selectedQueueItem) }, [selectedQueueItem])
   useEffect(() => {
-    if (!selectedQueueId && selectedItem) setSelectedQueueId(selectedItem.queue_id)
+    if (requestedQueueItem && selectedQueueId !== requestedQueueItem.queue_id) setSelectedQueueId(requestedQueueItem.queue_id)
+    else if (!selectedQueueId && selectedItem && !resolvingSessionDeepLink) setSelectedQueueId(selectedItem.queue_id)
     else if (selectedQueueId && !selectedQueueItem && !replyDraftDirty) setSelectedQueueId(queueItems[0]?.queue_id ?? null)
-  }, [queueItems, replyDraftDirty, selectedItem, selectedQueueId, selectedQueueItem])
+  }, [queueItems, replyDraftDirty, requestedQueueItem, resolvingSessionDeepLink, selectedItem, selectedQueueId, selectedQueueItem])
+  useEffect(() => {
+    if (requestedQueueId && !requestedQueueItem && queue.hasNextPage && !queue.isFetchingNextPage) {
+      void queue.fetchNextPage()
+    }
+  }, [queue, requestedQueueId, requestedQueueItem])
 
   const thread = useQuery({
     queryKey: ['operatorWorkspaceThread', selectedItem?.queue_id, selectedItem?.source_links.conversation],

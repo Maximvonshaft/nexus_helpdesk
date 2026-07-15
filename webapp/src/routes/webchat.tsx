@@ -1,10 +1,10 @@
 import { useEffect } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
-import { getSupportToken, supportApi } from '@/lib/supportApi'
+import { getSupportToken } from '@/lib/supportApi'
 
-function replaceWithWorkspace(queueId?: string | null) {
-  const destination = queueId ? `/workspace?queue=${encodeURIComponent(queueId)}` : '/workspace'
+function replaceWithWorkspace(sessionKey?: string | null) {
+  const destination = sessionKey ? `/workspace?session=${encodeURIComponent(sessionKey)}` : '/workspace'
   window.location.replace(destination)
 }
 
@@ -34,20 +34,9 @@ function WebchatCompatibilityRedirect() {
       return () => { active = false }
     }
 
-    void supportApi.supportConversationDetail(legacySession)
-      .then((detail) => {
-        if (!active) return
-        const conversation = detail.conversation
-        const queueId = conversation.handoff_request_id
-          ? `handoff:${conversation.handoff_request_id}`
-          : conversation.ticket_id
-            ? `ticket:${conversation.ticket_id}`
-            : null
-        replaceWithWorkspace(queueId)
-      })
-      .catch(() => {
-        if (active) replaceWithWorkspace()
-      })
+    // The canonical workspace resolves the session after its tenant, country,
+    // and channel scope is authoritative.
+    if (active) replaceWithWorkspace(legacySession)
 
     return () => { active = false }
   }, [navigate])
