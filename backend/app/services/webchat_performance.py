@@ -9,11 +9,12 @@ from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, UserRole
+from ..enums import ConversationState
 from ..models import Ticket, User
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .permissions import CAP_TICKET_READ, resolve_capabilities
+from .scope_permissions import has_global_case_visibility
 from .webchat_public_payload import public_webchat_metadata
 from .webchat_inbox_read_state import webchat_read_state_payloads
 
@@ -135,9 +136,8 @@ def _assert_ticket_read(user: User, db: Session) -> set[str]:
     return capabilities
 
 
-def _ticket_visible_from_preloaded(user: User, ticket: Ticket, capabilities: set[str]) -> bool:
-    _ = capabilities
-    if user.role in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+def _ticket_visible_from_preloaded(user: User, ticket: Ticket, db: Session) -> bool:
+    if has_global_case_visibility(user, db):
         return True
     if ticket.assignee_id == user.id:
         return True
@@ -147,7 +147,7 @@ def _ticket_visible_from_preloaded(user: User, ticket: Ticket, capabilities: set
 
 
 def admin_list_conversations_optimized(db: Session, current_user: User, *, limit: int = 50) -> list[dict[str, Any]]:
-    capabilities = _assert_ticket_read(current_user, db)
+    _assert_ticket_read(current_user, db)
     safe_limit = max(1, min(int(limit or 50), 100))
 
     latest_message_ids = (
@@ -176,7 +176,7 @@ def admin_list_conversations_optimized(db: Session, current_user: User, *, limit
 
     items: list[dict[str, Any]] = []
     for conversation, ticket, last_message in rows:
-        if not _ticket_visible_from_preloaded(current_user, ticket, capabilities):
+        if not _ticket_visible_from_preloaded(current_user, ticket, db):
             continue
         status_value = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
         state_value = ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state)
