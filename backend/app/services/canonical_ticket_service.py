@@ -46,9 +46,6 @@ def validate_assignee_team(
     return assignee, team
 
 
-# Retained state-machine functions resolve this global at call time. Bind it once
-# to the canonical capability-safe implementation so create/assign paths cannot
-# execute the historical role bypass in the internal core.
 _core.validate_assignee_team = validate_assignee_team
 
 
@@ -120,6 +117,10 @@ def list_tickets(
             actor_tenant_id=actor_tenant_id,
         )
     return tickets
+
+
+def __getattr__(name: str):
+    return getattr(_core, name)
 
 
 __all__ = [
