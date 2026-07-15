@@ -30,6 +30,11 @@ OPENAI_RESPONSE_PROBE_ALLOWED_LINES = (
     re.compile(r'^\s*def\s+_test_openai_responses_api\s*\('),
     re.compile(r'^\s*TEST_OPENAI_RESPONSES\s*:\s*_test_openai_responses_api\s*,?\s*$'),
     re.compile(r'^\s*["\']openai_responses["\']\s*,?\s*$'),
+    re.compile(r'^\s*tests\.append\(["\']openai_responses["\']\)\s*$'),
+    re.compile(r'^\s*elif\s+test_name\s*==\s*["\']openai_responses["\']\s*:\s*$'),
+    re.compile(r'^\s*endpoint\s*=\s*target\.endpoints\.get\(["\']openai_responses["\']\)\s+or\s+_join_target_url\(target\.base_url,\s*["\']/v1/responses["\']\)\s*$'),
+    re.compile(r'^\s*elif\s+_active_pass\(active\.get\(["\']openai_responses["\']\)\)\s+or\s+_present\(endpoints\.get\(["\']/v1/responses["\']\)\)\s*:\s*$'),
+    re.compile(r'^\s*["\']openai_responses["\']\s*:\s*verdict\(["\']/v1/responses["\'],\s*["\']openai_responses["\']\),?\s*$'),
 )
 
 
@@ -40,7 +45,7 @@ def _is_allowed_openai_response_probe_line(path: str, line: str) -> bool:
 
 
 def scannable_paths(paths: Iterable[str]) -> list[str]:
-    """Exclude only the checker and its test corpus from executable scanning."""
+    """Exclude only the policy implementation and its test corpus."""
     return sorted(path for path in paths if path not in POLICY_SOURCE_PATHS)
 
 

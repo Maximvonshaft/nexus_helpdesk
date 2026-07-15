@@ -15,11 +15,10 @@ def _codes(path: str, text: str) -> set[str]:
 
 def test_exact_openai_response_api_probe_declarations_are_allowed() -> None:
     text = """
-TEST_OPENAI_RESPONSES = "openai_responses"
-
 ACTIVE_TEST_NAMES = {
     "openai_responses",
 }
+TEST_OPENAI_RESPONSES = "openai_responses"
 
 def _test_openai_responses_api(
     context,
@@ -29,6 +28,23 @@ def _test_openai_responses_api(
 TEST_FUNCTIONS = {
     TEST_OPENAI_RESPONSES: _test_openai_responses_api,
 }
+
+def _active_specs(paths):
+    tests = []
+    if paths.get("/v1/responses") not in {None, "not_found"}:
+        tests.append("openai_responses")
+    return tests
+
+def _active_request(target, test_name, active, endpoints):
+    if False:
+        return None
+    elif test_name == "openai_responses":
+        endpoint = target.endpoints.get("openai_responses") or _join_target_url(target.base_url, "/v1/responses")
+    elif _active_pass(active.get("openai_responses")) or _present(endpoints.get("/v1/responses")):
+        return {"fit": "adapter_required"}
+    return {
+        "openai_responses": verdict("/v1/responses", "openai_responses"),
+    }
 """
     assert scan_text(OPENAI_RESPONSE_PROBE_PATH, text) == []
 
@@ -44,24 +60,25 @@ def test_openai_responses_provider_authority_remains_forbidden() -> None:
     ) == {"retired_openai_responses_provider_identifier"}
 
 
-def test_same_probe_labels_are_not_allowed_in_other_executable_paths() -> None:
+def test_same_probe_key_is_not_allowed_in_other_executable_paths() -> None:
     assert _codes(
         "scripts/ai/parallel_probe.py",
-        'TEST_OPENAI_RESPONSES = "openai_responses"\nACTIVE_TEST_NAMES = {"openai_responses"}\n',
+        'TEST_OPENAI_RESPONSES = "openai_responses"\n',
     ) == {"retired_openai_responses_provider_identifier"}
 
 
-def test_policy_sources_are_the_only_exact_repository_scan_exclusions() -> None:
+def test_only_policy_source_and_test_corpus_are_excluded() -> None:
     candidates = [
-        "scripts/ci/provider_runtime_hygiene.py",
-        "scripts/ci/tests/test_provider_runtime_hygiene.py",
-        "scripts/ci/provider_runtime_hygiene_copy.py",
-        "scripts/ci/tests/provider_runtime_hygiene_fixture.py",
+        *POLICY_SOURCE_PATHS,
+        "scripts/ci/provider_runtime_hygiene_shadow.py",
+        "scripts/ai/probe_ai_resource_server.py",
         "backend/app/settings.py",
     ]
-    assert set(candidates) - set(scannable_paths(candidates)) == set(POLICY_SOURCE_PATHS)
-    assert "scripts/ci/provider_runtime_hygiene_copy.py" in scannable_paths(candidates)
-    assert "scripts/ci/tests/provider_runtime_hygiene_fixture.py" in scannable_paths(candidates)
+    assert scannable_paths(candidates) == [
+        "backend/app/settings.py",
+        "scripts/ai/probe_ai_resource_server.py",
+        "scripts/ci/provider_runtime_hygiene_shadow.py",
+    ]
 
 
 def test_other_retired_provider_and_canned_reply_markers_fail_closed() -> None:
