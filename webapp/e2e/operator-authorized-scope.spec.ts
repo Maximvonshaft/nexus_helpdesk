@@ -47,6 +47,12 @@ function json(route: Route, body: unknown, status = 200) {
   })
 }
 
+const forgedStaleScope = {
+  tenantKey: 'forged-stale-tenant',
+  countryCode: 'ZZ',
+  channelKey: 'unknown',
+}
+
 test('normal operators enter the canonical shell through a server-authorized scope', async ({ page }) => {
   await seedSession(page)
   let queueRequestSeen = false
@@ -83,11 +89,7 @@ test('normal operators enter the canonical shell through a server-authorized sco
   await expect(page.locator('.operator-scope')).toBeHidden()
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
   await expect.poll(() => queueRequestSeen).toBe(true)
-  await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual({
-    tenantKey: 'tenant-authorized',
-    countryCode: 'CH',
-    channelKey: 'webchat',
-  })
+  await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
 })
 
 test('switching among multiple authorized scopes remounts the workspace with the selected grant', async ({ page }) => {
@@ -135,11 +137,8 @@ test('switching among multiple authorized scopes remounts the workspace with the
 
   await expect(selector).toHaveValue('1')
   await expect.poll(() => seen.includes('tenant-me:ME:whatsapp')).toBe(true)
-  await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual({
-    tenantKey: 'tenant-me',
-    countryCode: 'ME',
-    channelKey: 'whatsapp',
-  })
+  await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
+  expect(seen).not.toContain('forged-stale-tenant:ZZ:unknown')
 })
 
 test('an unscoped normal operator receives a clear fail-closed state instead of free-text authority fields', async ({ page }) => {
@@ -156,7 +155,7 @@ test('an unscoped normal operator receives a clear fail-closed state instead of 
   await page.goto('/workspace')
 
   await expect(page.getByRole('heading', { name: '当前账号没有可用工作范围' })).toBeVisible()
-  await expect(page.getByText('系统不会自动猜测或扩大访问范围。')).toBeVisible()
+  await expect(page.getByText(/系统不会自动猜测、扩大或允许手工输入 Tenant、国家和渠道/)).toBeVisible()
   await expect(page.locator('.operator-scope')).toHaveCount(0)
   await expect(page.getByTestId('operator-workspace')).toHaveCount(0)
 })

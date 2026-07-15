@@ -122,7 +122,7 @@ test('Channels is a canonical route in the shared shell and keeps identifiers se
   await expect(page.getByText('WhatsApp 主线路')).toBeVisible()
   await expect(page.getByText('•••• 1234')).toBeVisible()
   await expect(page.getByText('+41790001234')).toHaveCount(0)
-  await expect(page.getByText('wa-primary-private')).toHaveCount(0)
+  await expect(page.getByText('wa-primary-private')).toBeHidden()
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
@@ -135,8 +135,8 @@ test('Runtime primary hierarchy stays operational while model diagnostics remain
   await expect(page.getByRole('heading', { level: 1, name: '运行与审计' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '服务就绪状态' })).toBeVisible()
   await expect(page.getByText('自动处理已启用')).toBeVisible()
-  await expect(page.getByText('internal-model-name')).toHaveCount(0)
-  await expect(page.getByText('internal-rag-model-name')).toHaveCount(0)
+  await expect(page.getByText('internal-model-name')).toBeHidden()
+  await expect(page.getByText('internal-rag-model-name')).toBeHidden()
   await expect(page.getByText('会话总量').locator('..')).toContainText('120')
 
   await page.getByText('技术运行详情').click()

@@ -161,6 +161,17 @@ async function mockWorkspace(page: Page, scenario: Scenario, overrides?: { queue
       body: JSON.stringify(body),
     })
     if (url.pathname === '/api/auth/me') return json(user())
+    if (url.pathname === '/api/admin/operator-queue/my-scopes') {
+      return json({
+        items: [{
+          tenant_key: 'default',
+          tenant_hash: 'hash',
+          country_code: 'CH',
+          channel_key: channelKey,
+        }],
+        requires_explicit_admin_scope: false,
+      })
+    }
     if (url.pathname === '/api/admin/operator-queue/unified') {
       expect(route.request().headers()['x-nexus-tenant']).toBe('default')
       expect(url.searchParams.get('country_code')).toBe('CH')
@@ -225,7 +236,7 @@ test('operator navigation hides management surfaces that the current capability 
   await mockWorkspace(page, 'handoff')
   await page.goto('/workspace')
 
-  const navigation = page.getByRole('navigation', { name: 'Nexus OSR 主导航' })
+  const navigation = page.getByRole('navigation', { name: '主导航' })
   await expect(navigation.getByRole('link', { name: '工作台' })).toBeVisible()
   await expect(navigation.getByRole('link', { name: '知识' })).toHaveCount(0)
   await expect(navigation.getByRole('link', { name: '渠道管理' })).toHaveCount(0)
