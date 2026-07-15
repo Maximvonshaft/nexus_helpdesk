@@ -211,21 +211,27 @@ def _tracking_fact_evidence(metadata: dict[str, Any] | None) -> AIDecisionEviden
 def _rag_evidence(runtime_context: dict[str, Any] | None) -> AIDecisionEvidence | None:
     if not isinstance(runtime_context, dict):
         return None
-    trace = summarize_rag_trace(runtime_context)
-    if not isinstance(trace, dict):
+    knowledge = runtime_context.get("knowledge_context")
+    if not isinstance(knowledge, dict):
         return None
-    evidence_present = bool(
-        trace.get("total_matches")
-        or trace.get("candidate_count")
-        or trace.get("evidence_pack")
-        or trace.get("top_item_key")
+    evidence_pack = [item for item in knowledge.get("evidence_pack") or [] if isinstance(item, dict)]
+    hits = [item for item in knowledge.get("hits") or [] if isinstance(item, dict)]
+    locked_facts = [item for item in knowledge.get("locked_facts") or [] if isinstance(item, dict)]
+    accepted_evidence = evidence_pack or hits or locked_facts
+    if not accepted_evidence:
+        return None
+    evidence_id = next(
+        (
+            str(item.get("item_key") or "").strip()
+            for item in accepted_evidence
+            if str(item.get("item_key") or "").strip()
+        ),
+        "hybrid_rag",
     )
-    if not evidence_present:
-        return None
     return AIDecisionEvidence(
         source="hybrid_rag",
         evidence_type="knowledge_context",
-        evidence_id=str(trace.get("top_item_key") or trace.get("retrieval") or "hybrid_rag")[:240],
+        evidence_id=evidence_id[:240],
         fact_evidence_present=True,
         raw_tracking_number_exposed=False,
     )

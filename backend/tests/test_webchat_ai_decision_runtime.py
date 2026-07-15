@@ -209,7 +209,7 @@ def test_zero_match_runtime_context_does_not_create_rag_evidence():
             "knowledge_context": {
                 "retrieval": "hybrid_rag",
                 "total_matches": 0,
-                "candidate_count": 0,
+                "candidate_count": 12,
                 "evidence_pack": [],
                 "hits": [],
             }
@@ -244,6 +244,7 @@ def test_actual_runtime_knowledge_match_creates_system_rag_evidence():
     )
 
     assert [item.source for item in decision.evidence_used] == ["hybrid_rag"]
+    assert decision.evidence_used[0].evidence_id == "published-policy"
     assert decision.evidence_used[0].fact_evidence_present is True
 
 
