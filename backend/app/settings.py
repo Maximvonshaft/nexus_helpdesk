@@ -157,7 +157,6 @@ class Settings:
             self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
         self.webchat_knowledge_no_evidence_fallback_enabled = _env_bool("WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED", True)
-        self.knowledge_runtime_version = os.getenv("KNOWLEDGE_RUNTIME_VERSION", "v2").strip().lower() or "v2"
         self.knowledge_embeddings_enabled = _env_bool("KNOWLEDGE_EMBEDDINGS_ENABLED", self.app_env == "production")
         self.knowledge_embedding_provider = os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "deterministic_hash").strip().lower() or "deterministic_hash"
         self.knowledge_embedding_model = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "nexus-deterministic-hash-v1").strip()
@@ -232,8 +231,6 @@ class Settings:
             raise RuntimeError("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS must be between 0 and 10")
         if self.webchat_knowledge_reply_mode not in {"ai_grounded", "deterministic_direct_answer"}:
             raise RuntimeError("WEBCHAT_KNOWLEDGE_REPLY_MODE must be ai_grounded or deterministic_direct_answer")
-        if self.knowledge_runtime_version not in {"v2", "legacy"}:
-            raise RuntimeError("KNOWLEDGE_RUNTIME_VERSION must be v2 or legacy")
         if self.knowledge_embedding_dim < 8 or self.knowledge_embedding_dim > 4096:
             raise RuntimeError("KNOWLEDGE_EMBEDDING_DIM must be between 8 and 4096")
         if self.knowledge_embedding_batch_size < 1 or self.knowledge_embedding_batch_size > 512:
@@ -341,13 +338,12 @@ class Settings:
                     raise RuntimeError("WHATSAPP_CONNECTOR_HMAC_SECRET is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
             if not self.frontend_dist_available:
                 raise RuntimeError("frontend_dist/index.html must exist in production")
-            if self.knowledge_runtime_version == "v2":
-                if not self.knowledge_embeddings_enabled:
-                    raise RuntimeError("KNOWLEDGE_EMBEDDINGS_ENABLED=true is required in production for Knowledge Runtime v2")
-                if self.knowledge_embedding_provider in {"deterministic_hash", "hash", "test"}:
-                    raise RuntimeError("Production Knowledge Runtime v2 requires a real embedding provider")
-                if self.knowledge_embedding_provider == "openai_compatible" and not (self.knowledge_embedding_api_key or self.knowledge_embedding_api_key_file):
-                    raise RuntimeError("KNOWLEDGE_EMBEDDING_API_KEY_FILE or KNOWLEDGE_EMBEDDING_API_KEY is required for openai_compatible embeddings")
+            if not self.knowledge_embeddings_enabled:
+                raise RuntimeError("KNOWLEDGE_EMBEDDINGS_ENABLED=true is required in production")
+            if self.knowledge_embedding_provider in {"deterministic_hash", "hash", "test"}:
+                raise RuntimeError("Production Knowledge Runtime requires a real embedding provider")
+            if self.knowledge_embedding_provider == "openai_compatible" and not (self.knowledge_embedding_api_key or self.knowledge_embedding_api_key_file):
+                raise RuntimeError("KNOWLEDGE_EMBEDDING_API_KEY_FILE or KNOWLEDGE_EMBEDDING_API_KEY is required for openai_compatible embeddings")
             if self.require_prometheus_client_in_production:
                 try:
                     import prometheus_client  # noqa: F401

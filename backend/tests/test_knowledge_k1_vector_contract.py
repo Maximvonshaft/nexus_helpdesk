@@ -10,7 +10,7 @@ from app.models_control_plane import (
     PGVector,
     KnowledgeChunk,
 )
-from app.services.knowledge_runtime_v2.runtime import (
+from app.services.knowledge_runtime.runtime import (
     KnowledgeVectorContractError,
     validate_embedding_batch,
     validate_embedding_dimension,

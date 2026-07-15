@@ -21,8 +21,8 @@ from app.models import User  # noqa: E402
 from app.models_control_plane import KnowledgeItem  # noqa: E402
 from app.models_control_plane import KnowledgeChunk  # noqa: E402
 from app.services.knowledge_retrieval_service import index_published_item  # noqa: E402
-from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
-from app.services.knowledge_runtime_v2.embeddings import get_embedding_provider, semantic_hash, vector_literal  # noqa: E402
+from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
+from app.services.knowledge_runtime.embeddings import get_embedding_provider, semantic_hash, vector_literal  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 

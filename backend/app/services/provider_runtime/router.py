@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .health import ProviderRuntimeHealth
-from .output_contracts import OutputContracts
+from .output_contracts import OutputContracts, WEBCHAT_RUNTIME_OUTPUT_CONTRACT
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
 
@@ -124,7 +124,7 @@ class ProviderRuntimeRouter:
         if not rule:
             primary_provider = "private_ai_runtime"
             fallbacks = []
-            output_contract = "nexus_webchat_runtime_reply_v1"
+            output_contract = WEBCHAT_RUNTIME_OUTPUT_CONTRACT
             timeout_ms = 10000
             kill_switch = False
             canary_percent = 100
@@ -190,7 +190,7 @@ class ProviderRuntimeRouter:
             try:
                 if not result.structured_output:
                     raise ValueError("No structured output provided")
-                if request.scenario == "webchat_runtime_reply" and output_contract == "nexus_webchat_runtime_reply_v1":
+                if request.scenario == "webchat_runtime_reply" and output_contract == WEBCHAT_RUNTIME_OUTPUT_CONTRACT:
                     parsed = self._parse_webchat_runtime_output(request, result)
                 else:
                     parsed = OutputContracts.validate_and_parse(

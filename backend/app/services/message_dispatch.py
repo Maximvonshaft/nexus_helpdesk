@@ -17,7 +17,7 @@ from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .observability import LOGGER
 from .ai_reply_contract import (
     AI_ORIGINS,
-    AI_REPLY_CONTRACT_V2,
+    AI_REPLY_CONTRACT,
     FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS,
     HUMAN_ORIGIN,
     HUMAN_REPLY_STATES,
@@ -200,7 +200,7 @@ def _enforce_customer_visible_origin(
         contract_payload = parse_runtime_contract_payload(runtime_contract_payload_json)
         payload_args = contract_validation_args_from_payload(contract_payload) if contract_payload else {}
         if runtime_reply_type == "null_reply" or payload_args.get("reply_type") == "null_reply":
-            raise ValueError("ai_reply_v3_null_reply_not_customer_visible")
+            raise ValueError("ai_reply_null_reply_not_customer_visible")
         violation = validate_ai_reply_contract(
             body=body,
             runtime_trace_id=payload_args.get("runtime_trace_id") or runtime_trace_id,
@@ -542,7 +542,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     except ValueError as exc:
         reason = str(exc)
         _mark_origin_blocked(message, reason)
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Customer-visible outbound origin contract blocked dispatch', payload={'message_id': message.id, 'origin': message.origin, 'failure_code': reason, 'required_contract': AI_REPLY_CONTRACT_V2})
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Customer-visible outbound origin contract blocked dispatch', payload={'message_id': message.id, 'origin': message.origin, 'failure_code': reason, 'required_contract': AI_REPLY_CONTRACT})
         return message
     blocked = _external_dispatch_block_reason()
     if blocked:

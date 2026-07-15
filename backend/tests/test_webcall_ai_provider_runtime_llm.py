@@ -131,7 +131,7 @@ def test_provider_runtime_llm_maps_runtime_contract():
     assert result.handoff_required is False
     assert result.provider_name == "provider_runtime:private_ai_runtime"
     assert adapter.requests[0].scenario == "webcall_ai_decision"
-    assert adapter.requests[0].output_contract == "nexus_webchat_runtime_reply_v1"
+    assert adapter.requests[0].output_contract == "nexus.webchat_runtime_reply"
     assert adapter.requests[0].body == "where is my parcel?"
 
 

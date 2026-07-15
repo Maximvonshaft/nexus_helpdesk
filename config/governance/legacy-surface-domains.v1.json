@@ -185,29 +185,6 @@
       ]
     },
     {
-      "id": "knowledge_runtime_versioned_authority",
-      "owner_issue": 650,
-      "disposition": "active_authority",
-      "deletion_authorized": false,
-      "rationale": "knowledge_runtime_v2 is a current retrieval implementation; versioned naming alone is not evidence of obsolescence.",
-      "prerequisites": [
-        "retrieval_authority_decision",
-        "fallback_consumer_inventory",
-        "trace_schema_convergence"
-      ],
-      "selectors": {
-        "paths": [],
-        "globs": [
-          "backend/app/services/knowledge_runtime_v*/**",
-          "backend/tests/test_knowledge_runtime_v*_*.py"
-        ],
-        "content_rules": []
-      },
-      "authoritative_refs": [
-        "issue:#650"
-      ]
-    },
-    {
       "id": "protected_alembic_history",
       "owner_issue": 532,
       "disposition": "protected_history",
@@ -345,20 +322,6 @@
       "content_path_globs": [],
       "allowed_domain_ids": [
         "lite_api_compatibility"
-      ],
-      "allow_multiple_domains": false
-    },
-    {
-      "id": "knowledge_runtime_version_path",
-      "path_regex": null,
-      "path_globs": [
-        "backend/app/services/knowledge_runtime_v*/**",
-        "backend/tests/test_knowledge_runtime_v*_*.py"
-      ],
-      "content_markers": [],
-      "content_path_globs": [],
-      "allowed_domain_ids": [
-        "knowledge_runtime_versioned_authority"
       ],
       "allow_multiple_domains": false
     },

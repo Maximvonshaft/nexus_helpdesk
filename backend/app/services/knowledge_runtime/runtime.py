@@ -51,12 +51,6 @@ class KnowledgeVectorContractError(ValueError):
 
 
 @dataclass(frozen=True)
-class KnowledgeRuntimeOptions:
-    include_degraded: bool = True
-    allow_legacy_candidate_source: bool = True
-
-
-@dataclass(frozen=True)
 class KnowledgeRuntimeHit:
     item_id: int
     item_key: str
@@ -157,11 +151,9 @@ def retrieve_knowledge(
     audience_scope: str = "customer",
     language: str | None = None,
     limit: int = 8,
-    options: KnowledgeRuntimeOptions | None = None,
 ) -> KnowledgeRuntimeResult:
     started = time.monotonic()
     settings = get_settings()
-    options = options or KnowledgeRuntimeOptions()
     normalized = _normalize(query)
     terms = _terms(normalized)
     tenant_id = _scope_value(tenant_key, "default")
@@ -254,7 +246,7 @@ def retrieve_knowledge(
     )
     candidate_hits: dict[tuple[int, int, int], KnowledgeRuntimeHit] = {}
     source_counts = _empty_source_counts()
-    source_counts["legacy_candidate"] = len(candidate_rows)
+    source_counts["lexical_candidate"] = len(candidate_rows)
     vector_degraded: str | None = None
 
     for chunk, item in candidate_rows:
@@ -390,13 +382,13 @@ def retrieve_knowledge(
         methods.append("vector_degraded")
     latency_ms = int((time.monotonic() - started) * 1000)
     trace = {
-        "retrieval": "hybrid_rag_v2",
+        "retrieval": "hybrid_rag",
         "filters": filters,
         "query": {"normalized": normalized, "terms": terms},
         "candidates_by_source": source_counts,
         "fusion": "reciprocal_rank_fusion",
         "rerank": {
-            "strategy": "deterministic_policy_v1",
+            "strategy": "deterministic_policy",
             "top_item_keys": [hit.item_key for hit in hits[:5]],
         },
         "evidence_selected": [_trace_hit(hit) for hit in hits[:8]],
@@ -433,7 +425,7 @@ def _empty_source_counts() -> dict[str, int]:
         "postgres_fts": 0,
         "vector": 0,
         "pgvector": 0,
-        "legacy_candidate": 0,
+        "lexical_candidate": 0,
     }
 
 
@@ -1336,7 +1328,7 @@ def _blocked_result(
 ) -> KnowledgeRuntimeResult:
     latency_ms = max(0, int((time.monotonic() - started) * 1000))
     trace = {
-        "retrieval": "hybrid_rag_v2",
+        "retrieval": "hybrid_rag",
         "decision": "blocked",
         "reason": reason,
         "routing_target": routing_target,
@@ -1371,12 +1363,12 @@ def _vector_fail_closed_result(
     latency_ms: int,
 ) -> KnowledgeRuntimeResult:
     trace = {
-        "retrieval": "hybrid_rag_v2",
+        "retrieval": "hybrid_rag",
         "filters": filters,
         "query": {"normalized": normalized, "terms": terms},
         "candidates_by_source": source_counts,
         "fusion": "reciprocal_rank_fusion",
-        "rerank": {"strategy": "deterministic_policy_v1", "top_item_keys": []},
+        "rerank": {"strategy": "deterministic_policy", "top_item_keys": []},
         "evidence_selected": [],
         "retrieval_methods": ["vector_degraded"],
         "vector": {

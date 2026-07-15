@@ -35,7 +35,7 @@ def _request(**overrides) -> ProviderRequest:
         "recent_context": [{"role": "user", "content": "hello"}],
         "tracking_fact_summary": None,
         "tracking_fact_evidence_present": False,
-        "output_contract": "nexus_webchat_runtime_reply_v1",
+        "output_contract": "nexus.webchat_runtime_reply",
         "timeout_ms": 8000,
         "metadata": {
             "knowledge_context": {"hits": [], "raw_payload": "must-not-leak"},
@@ -685,7 +685,7 @@ async def test_private_ai_runtime_ollama_chat_uses_generation_budget_and_reports
             body="hello",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"retrieval": "skipped_short_general_support"},
             },
         ),
@@ -735,7 +735,7 @@ async def test_private_ai_runtime_short_prompt_omits_request_id_and_uses_lower_d
             body="hello",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"retrieval": "skipped_short_general_support"},
             },
         ),
@@ -1031,7 +1031,7 @@ async def test_private_ai_runtime_short_general_support_keeps_low_latency_model(
             recent_context=[],
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"retrieval": "skipped_short_general_support", "hits": []},
             },
         ),
@@ -1397,7 +1397,7 @@ async def test_private_ai_runtime_allows_explicit_handoff_without_tracking_ident
             body="what should I do if my parcel is delayed and I want a human agent?",
             metadata={
                 "latency_class": "explicit_handoff_request",
-                "runtime_prompt_profile": "explicit_handoff_request_v1",
+                "runtime_prompt_profile": "explicit_handoff_request",
                 "knowledge_context": {"retrieval": "skipped_explicit_handoff_request", "hits": [], "locked_facts": []},
                 "persona_context": {"name": "Speedaf Assistant"},
             },
@@ -1530,7 +1530,7 @@ async def test_private_ai_runtime_short_general_support_uses_light_prompt(monkey
             body="nigh",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"hits": [{"title": "must-not-enter-short-prompt"}]},
             },
             recent_context=[{"role": "customer", "text": "older context should not be needed"}],
@@ -1551,7 +1551,7 @@ async def test_private_ai_runtime_short_general_support_uses_light_prompt(monkey
     assert "older context should not be needed" not in rendered
     assert result.structured_output["customer_reply"] == "Hello, how can I help you today?"
     assert result.raw_payload_safe_summary["latency_class"] == "short_general_support"
-    assert result.raw_payload_safe_summary["prompt_profile"] == "short_general_support_v1"
+    assert result.raw_payload_safe_summary["prompt_profile"] == "short_general_support"
     assert result.raw_payload_safe_summary["prompt_chars"] < 260
 
 
@@ -1578,7 +1578,7 @@ async def test_private_ai_runtime_short_general_support_marks_non_tracking_numbe
             body="nigh smoke 188200",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"retrieval": "skipped_short_general_support", "hits": []},
             },
             recent_context=[],
@@ -1623,7 +1623,7 @@ async def test_private_ai_runtime_repairs_internal_placeholder_leak(monkeypatch,
             body="nigh smoke 188200",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"retrieval": "skipped_short_general_support", "hits": []},
             },
             recent_context=[],
@@ -1663,7 +1663,7 @@ async def test_private_ai_runtime_explicit_handoff_request_uses_light_prompt(mon
             metadata={
                 "language": "en",
                 "latency_class": "explicit_handoff_request",
-                "runtime_prompt_profile": "explicit_handoff_request_v1",
+                "runtime_prompt_profile": "explicit_handoff_request",
                 "knowledge_context": {"hits": [{"title": "must-not-enter-handoff-prompt"}]},
             },
             recent_context=[{"role": "customer", "text": "older context should not be needed"}],
@@ -1681,7 +1681,7 @@ async def test_private_ai_runtime_explicit_handoff_request_uses_light_prompt(mon
     assert captured_payload["options"]["num_predict"] <= 96
     assert result.structured_output["customer_reply"] == "I understand. Human support will review this conversation."
     assert result.raw_payload_safe_summary["latency_class"] == "explicit_handoff_request"
-    assert result.raw_payload_safe_summary["prompt_profile"] == "explicit_handoff_request_v1"
+    assert result.raw_payload_safe_summary["prompt_profile"] == "explicit_handoff_request"
     assert result.raw_payload_safe_summary["prompt_chars"] < 360
 
 
@@ -1734,7 +1734,7 @@ async def test_private_ai_runtime_short_general_support_accepts_runtime_greeting
             metadata={
                 "language": "zh",
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
                 "knowledge_context": {"retrieval": "skipped_short_general_support", "hits": []},
             },
         ),
@@ -1787,7 +1787,7 @@ async def test_private_ai_runtime_short_general_support_repairs_echo_reply(monke
             body="nigh",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
             },
         ),
     )
@@ -1921,7 +1921,7 @@ async def test_private_ai_runtime_question_shape_trusted_tracking_accepts_plain_
                 "- Latest event: pending pickup | 2026-07-04"
             ),
             tracking_fact_evidence_present=True,
-            metadata={"language": "en", "latency_class": "trusted_tracking_fact", "runtime_prompt_profile": "trusted_tracking_fact_v1"},
+            metadata={"language": "en", "latency_class": "trusted_tracking_fact", "runtime_prompt_profile": "trusted_tracking_fact"},
         ),
     )
 
@@ -1974,7 +1974,7 @@ async def test_private_ai_runtime_ollama_trusted_tracking_uses_plain_reply_fast_
                 "- Latest event: pending pickup"
             ),
             tracking_fact_evidence_present=True,
-            metadata={"language": "en", "latency_class": "trusted_tracking_fact", "runtime_prompt_profile": "trusted_tracking_fact_v1"},
+            metadata={"language": "en", "latency_class": "trusted_tracking_fact", "runtime_prompt_profile": "trusted_tracking_fact"},
         ),
     )
 
@@ -2025,7 +2025,7 @@ async def test_private_ai_runtime_ollama_knowledge_direct_answer_uses_plain_repl
             metadata={
                 "language": "en",
                 "latency_class": "knowledge_direct_answer",
-                "runtime_prompt_profile": "knowledge_direct_answer_v1",
+                "runtime_prompt_profile": "knowledge_direct_answer",
                 "knowledge_context": {
                     "locked_facts": [
                         {
@@ -2047,7 +2047,7 @@ async def test_private_ai_runtime_ollama_knowledge_direct_answer_uses_plain_repl
     assert "Locked facts" in rendered
     assert result.structured_output["customer_reply"] == "Switzerland domestic-to-domestic service is currently unavailable."
     assert result.raw_payload_safe_summary["latency_class"] == "knowledge_direct_answer"
-    assert result.raw_payload_safe_summary["prompt_profile"] == "knowledge_direct_answer_v1"
+    assert result.raw_payload_safe_summary["prompt_profile"] == "knowledge_direct_answer"
     assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 64
     assert result.raw_payload_safe_summary["output_contract_repair_applied"] is False
 
@@ -2080,7 +2080,7 @@ async def test_private_ai_runtime_ollama_knowledge_direct_answer_does_not_requir
             metadata={
                 "language": "zh",
                 "latency_class": "knowledge_direct_answer",
-                "runtime_prompt_profile": "knowledge_direct_answer_v1",
+                "runtime_prompt_profile": "knowledge_direct_answer",
                 "knowledge_context": {
                     "hits": [
                         {
@@ -2146,7 +2146,7 @@ async def test_private_ai_runtime_plain_reply_recovers_malformed_customer_reply_
             metadata={
                 "language": "zh",
                 "latency_class": "knowledge_direct_answer",
-                "runtime_prompt_profile": "knowledge_direct_answer_v1",
+                "runtime_prompt_profile": "knowledge_direct_answer",
                 "knowledge_context": {
                     "locked_facts": [
                         {
@@ -2210,7 +2210,7 @@ async def test_private_ai_runtime_unified_profile_uses_one_json_runtime_prompt(m
             metadata={
                 "language": "zh",
                 "latency_class": "unified_ai_runtime",
-                "runtime_prompt_profile": "unified_ai_runtime_v1",
+                "runtime_prompt_profile": "unified_ai_runtime",
                 "knowledge_context": {
                     "locked_facts": [
                         {
@@ -2236,9 +2236,40 @@ async def test_private_ai_runtime_unified_profile_uses_one_json_runtime_prompt(m
     assert "Short general-support reply" not in rendered
     assert result.structured_output["customer_reply"] == "生产知识闭环暗号是 canyon-lime。"
     assert result.raw_payload_safe_summary["latency_class"] == "unified_ai_runtime"
-    assert result.raw_payload_safe_summary["prompt_profile"] == "unified_ai_runtime_v1"
+    assert result.raw_payload_safe_summary["prompt_profile"] == "unified_ai_runtime"
     assert result.raw_payload_safe_summary["prompt_chars"] < 2500
     assert result.raw_payload_safe_summary["ollama_options"]["num_predict"] == 64
+
+
+def test_unified_prompt_knows_tracking_reference_was_already_supplied():
+    adapter = PrivateAIRuntimeAdapter()
+    prompt = adapter._build_prompt(
+        _request(
+            body="我上面已经提供过给你",
+            recent_context=[{"role": "customer", "text": "我的运单号已经提供"}],
+            metadata={
+                "language": "zh",
+                "latency_class": "unified_ai_runtime",
+                "runtime_prompt_profile": "unified_ai_runtime",
+                "conversation_state": {
+                    "tracking_reference_present": True,
+                    "safe_tracking_reference": "parcel ending 681375",
+                },
+                "tracking_fact_metadata": {
+                    "tool_status": "failed",
+                    "failure_reason": "tracking_lookup_no_match",
+                },
+                "knowledge_context": {},
+            },
+        ),
+        model="nexus-gemma4-e4b:latest",
+        mode="direct",
+    )
+
+    assert '"tracking_reference_present":true' in prompt
+    assert "parcel ending 681375" in prompt
+    assert "never ask again" in prompt
+    assert "CH01026681375" not in prompt
 
 
 @pytest.mark.asyncio
@@ -2297,7 +2328,7 @@ async def test_private_ai_runtime_unified_profile_repairs_traditional_chinese(mo
             body="你好",
             metadata={
                 "latency_class": "unified_ai_runtime",
-                "runtime_prompt_profile": "unified_ai_runtime_v1",
+                "runtime_prompt_profile": "unified_ai_runtime",
                 "knowledge_context": {},
             },
         ),
@@ -2375,7 +2406,7 @@ async def test_private_ai_runtime_normalizes_tracking_suffix_misused_as_full_ref
                 "- Latest event: pending pickup | 2026-07-04"
             ),
             tracking_fact_evidence_present=True,
-            metadata={"language": "en", "latency_class": "trusted_tracking_fact", "runtime_prompt_profile": "trusted_tracking_fact_v1"},
+            metadata={"language": "en", "latency_class": "trusted_tracking_fact", "runtime_prompt_profile": "trusted_tracking_fact"},
         ),
     )
 
@@ -2421,7 +2452,7 @@ async def test_private_ai_runtime_tracking_ignores_short_general_profile(monkeyp
             body="CH020000129135",
             metadata={
                 "latency_class": "short_general_support",
-                "runtime_prompt_profile": "short_general_support_v1",
+                "runtime_prompt_profile": "short_general_support",
             },
         ),
     )

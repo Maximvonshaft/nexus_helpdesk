@@ -41,7 +41,7 @@ def test_webchat_domain_shadow_trace_enabled_is_non_enforcing(monkeypatch) -> No
 
 
 def test_webchat_runtime_context_only_attaches_shadow_trace_when_flag_enabled(monkeypatch) -> None:
-    runtime_context = {"context_version": "nexus_webchat_runtime_context_v2"}
+    runtime_context = {"context_version": "nexus.webchat_runtime_context"}
     monkeypatch.delenv("DOMAIN_INTELLIGENCE_WEBCHAT_SHADOW_TRACE_ENABLED", raising=False)
 
     unchanged = _attach_domain_shadow_trace(

@@ -9,19 +9,18 @@ from ..ai_runtime.schemas import RuntimeAIProviderRequest, RuntimeAIProviderResu
 from ..ai_runtime_context import build_webchat_runtime_context
 from ..customer_language import detect_customer_language
 from ..knowledge_prompt_service import summarize_rag_trace
-from .output_contracts import OutputContracts
+from .output_contracts import OutputContracts, WEBCHAT_RUNTIME_OUTPUT_CONTRACT
 from .router import ProviderRuntimeRouter
 from .schemas import ProviderRequest
 
 logger = logging.getLogger(__name__)
 
 WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
-WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 
 
 def _fallback_runtime_context(request: RuntimeAIProviderRequest) -> dict[str, Any]:
     return {
-        "context_version": "nexus_webchat_runtime_context_v1",
+        "context_version": "nexus.webchat_runtime_context",
         "tenant_key": request.tenant_key,
         "metadata_filters": {
             "market_id": request.market_id,

@@ -648,9 +648,9 @@ def _customer_visible_structure_leak(reply: str | None) -> bool:
 
 
 _UNIFIED_RUNTIME_LATENCY_CLASS = "unified_ai_runtime"
-_UNIFIED_RUNTIME_PROMPT_PROFILE = "unified_ai_runtime_v1"
+_UNIFIED_RUNTIME_PROMPT_PROFILE = "unified_ai_runtime"
 _TRUSTED_TRACKING_LATENCY_CLASS = "trusted_tracking_fact"
-_TRUSTED_TRACKING_PROMPT_PROFILE = "trusted_tracking_fact_v1"
+_TRUSTED_TRACKING_PROMPT_PROFILE = "trusted_tracking_fact"
 
 
 def _latency_class_for_request(*, body: str | None, evidence_present: bool) -> str:
@@ -675,7 +675,7 @@ def _runtime_context_with_latency_profile(runtime_context: dict[str, Any] | None
     if not isinstance(runtime_context, dict):
         runtime_context = {}
     profiled = dict(runtime_context)
-    profiled.setdefault("context_version", "nexus_webchat_runtime_context_v1")
+    profiled.setdefault("context_version", "nexus.webchat_runtime_context")
     if latency_class == _TRUSTED_TRACKING_LATENCY_CLASS:
         profiled["latency_class"] = _TRUSTED_TRACKING_LATENCY_CLASS
         profiled["runtime_prompt_profile"] = _TRUSTED_TRACKING_PROMPT_PROFILE
@@ -708,7 +708,7 @@ def _runtime_context_with_language_policy(
 
 def _trusted_tracking_runtime_context() -> dict[str, Any]:
     return {
-        "context_version": "nexus_webchat_runtime_context_v1",
+        "context_version": "nexus.webchat_runtime_context",
         "knowledge_context": {},
         "retrieval": "trusted_tracking_fact_only",
         "candidate_count": 0,

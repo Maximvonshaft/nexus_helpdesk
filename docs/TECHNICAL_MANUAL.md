@@ -58,10 +58,10 @@ sequenceDiagram
 
 ## Performance Profiles
 
-- `short_general_support_v1`: greetings and very short non-logistics messages.
-- `trusted_tracking_fact_v1`: live Speedaf tracking facts are already verified;
+- `short_general_support`: greetings and very short non-logistics messages.
+- `trusted_tracking_fact`: live Speedaf tracking facts are already verified;
   Runtime receives compact facts and returns final reply text.
-- `knowledge_direct_answer_v1`: customer-visible locked knowledge facts are
+- `knowledge_direct_answer`: customer-visible locked knowledge facts are
   already selected; Runtime receives compact facts and returns final reply text.
 - `standard_v1`: general logistics questions that need broader context.
 

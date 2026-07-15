@@ -21,8 +21,8 @@ from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishReque
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
 from app.services.knowledge_retrieval_service import search_published_chunks  # noqa: E402
-from app.services.knowledge_runtime_v2 import runtime as knowledge_runtime  # noqa: E402
-from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
+from app.services.knowledge_runtime import runtime as knowledge_runtime  # noqa: E402
+from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
 
 
 @pytest.fixture()
@@ -189,8 +189,8 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
     )
 
     assert context["persona_context"]["profile_key"] == "default.website.en"
-    assert context["knowledge_context"]["retrieval"] == "hybrid_rag_v2"
-    assert context["rag_trace"]["retrieval"] == "hybrid_rag_v2"
+    assert context["knowledge_context"]["retrieval"] == "hybrid_rag"
+    assert context["rag_trace"]["retrieval"] == "hybrid_rag"
     assert context["knowledge_context"]["hits"][0]["item_key"] == "runtime.address"
     assert context["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
     assert "tracking_fact_evidence_present=true" in context["safety_policy"]["tracking_truth_boundary"]
@@ -284,6 +284,12 @@ def test_runtime_context_expands_tracking_no_evidence_query_to_waybill_rules(db_
     assert knowledge["query_expansion_terms"]
     assert knowledge["hits"][0]["item_key"] == "ch.waybill.format"
     assert knowledge["hits"][0]["metadata"]["knowledge_kind"] == "business_fact"
+    assert context["conversation_state"] == {
+        "tracking_reference_present": True,
+        "safe_tracking_reference": "parcel ending 011425",
+        "tracking_fact_evidence_present": False,
+    }
+    assert "CH1200000011425" not in str(context["conversation_state"])
 
 
 def test_runtime_context_does_not_expand_plain_numeric_smoke_text_to_waybill_rules(db_session):
@@ -397,7 +403,7 @@ def test_runtime_context_includes_persona_identity_context_without_description(d
     assert identity["capabilities"] == ["回答常见问题", "转人工"]
 
 
-def test_knowledge_runtime_v2_excludes_probe_knowledge_and_reports_trace(db_session):
+def test_knowledge_runtime_excludes_probe_knowledge_and_reports_trace(db_session):
     admin = _user(db_session)
     real = knowledge_service.create_item(
         db_session,
@@ -422,13 +428,13 @@ def test_knowledge_runtime_v2_excludes_probe_knowledge_and_reports_trace(db_sess
         limit=5,
     )
 
-    assert result.trace["retrieval"] == "hybrid_rag_v2"
+    assert result.trace["retrieval"] == "hybrid_rag"
     assert "structured_exact" in result.trace["retrieval_methods"] or "fts" in result.trace["retrieval_methods"]
     assert [hit.item_key for hit in result.hits] == ["production.address"]
     assert "[PROBE]" not in str(result.trace)
 
 
-def test_knowledge_runtime_v2_fails_closed_when_vector_fallback_is_disabled(monkeypatch, db_session):
+def test_knowledge_runtime_fails_closed_when_vector_fallback_is_disabled(monkeypatch, db_session):
     admin = _user(db_session)
     item = knowledge_service.create_item(
         db_session,

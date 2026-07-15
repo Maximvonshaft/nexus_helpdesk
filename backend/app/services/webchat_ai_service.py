@@ -32,7 +32,7 @@ from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .webchat_handoff_service import request_webchat_handoff
 from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
 from .ai_runtime_context import build_webchat_runtime_context
-from .ai_reply_contract import AI_REPLY_CONTRACT_V3, build_ai_reply_contract
+from .ai_reply_contract import AI_REPLY_CONTRACT, build_ai_reply_contract
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
@@ -296,7 +296,7 @@ def _message_metadata(*, generated_by: str, decision_level: str, fallback_reason
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _ai_reply_contract_v3_fields(
+def _ai_reply_contract_fields(
     *,
     body: str,
     channel: SourceChannel,
@@ -326,7 +326,7 @@ def _ai_reply_contract_v3_fields(
 
     confidence = 1.0 if fact_evidence_present else 0.8 if grounding_applied else 0.5
     return {
-        "contract_version": AI_REPLY_CONTRACT_V3,
+        "contract_version": AI_REPLY_CONTRACT,
         "reply_type": reply_type,
         "used_sources": used_sources,
         "unsupported_claims": [],
@@ -543,7 +543,7 @@ def process_webchat_ai_reply_job(
         body=final_body,
         runtime_trace=runtime_trace,
         safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
-        **_ai_reply_contract_v3_fields(
+        **_ai_reply_contract_fields(
             body=final_body,
             channel=reply_channel,
             handoff_required=runtime_handoff_required,
@@ -715,18 +715,31 @@ def process_webchat_ai_reply_job(
 
 
 def _maybe_lookup_tracking_fact(*, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> TrackingFactResult | None:
+    current_tracking = extract_tracking_number(visitor_message.body)
+    if current_tracking:
+        conversation.last_tracking_number = current_tracking
+        ticket.tracking_number = current_tracking
     if not getattr(settings, "webchat_tracking_fact_lookup_enabled", False):
         return None
-    current_tracking = extract_tracking_number(visitor_message.body)
     if current_tracking:
         tracking_number = current_tracking
     elif _allows_history_tracking_lookup(visitor_message.body):
         history_candidates = [row.body for row in reversed(history_rows)]
-        tracking_number = (ticket.tracking_number or "").strip() or extract_tracking_number(*history_candidates)
+        tracking_number = (
+            (conversation.last_tracking_number or "").strip()
+            or (ticket.tracking_number or "").strip()
+            or extract_tracking_number(*history_candidates)
+        )
     else:
-        return None
+        recent_history = [row.body for row in history_rows[-4:] if row.id != visitor_message.id]
+        recent_tracking = extract_tracking_number(*reversed(recent_history))
+        tracking_number = recent_tracking if recent_tracking == (conversation.last_tracking_number or "").strip() else None
     if not tracking_number:
         return None
+    if not conversation.last_tracking_number:
+        conversation.last_tracking_number = tracking_number
+    if not ticket.tracking_number:
+        ticket.tracking_number = tracking_number
     lookup_started = time.monotonic()
     result = lookup_tracking_fact(
         tracking_number=tracking_number,

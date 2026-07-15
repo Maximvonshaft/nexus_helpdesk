@@ -258,9 +258,9 @@ def _rag_evidence(runtime_context: dict[str, Any] | None) -> AIDecisionEvidence 
     if not isinstance(trace, dict):
         return None
     return AIDecisionEvidence(
-        source="hybrid_rag_v2",
+        source="hybrid_rag",
         evidence_type="knowledge_context",
-        evidence_id=str(trace.get("top_item_key") or trace.get("retrieval") or "hybrid_rag_v2")[:240],
+        evidence_id=str(trace.get("top_item_key") or trace.get("retrieval") or "hybrid_rag")[:240],
         fact_evidence_present=bool(trace.get("total_matches") or trace.get("candidate_count") or trace.get("evidence_pack")),
         raw_tracking_number_exposed=False,
     )

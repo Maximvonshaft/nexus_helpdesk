@@ -10,7 +10,7 @@ from ..enums import EventType, MessageStatus, NoteVisibility, SourceChannel
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
-from .ai_reply_contract import AIReplyContract, AI_REPLY_CONTRACT_V3
+from .ai_reply_contract import AIReplyContract
 from .message_dispatch import _enforce_customer_visible_origin, _normalize_customer_visible_origin, queue_outbound_message
 from .ticket_event_sanitizer import serialize_ticket_event_payload
 
@@ -38,7 +38,7 @@ def create_customer_visible_outbound(
     status: MessageStatus | None = None,
     subject: str | None = None,
 ) -> CustomerVisibleMessageResult:
-    if ai_contract and ai_contract.contract_version == AI_REPLY_CONTRACT_V3 and ai_contract.reply_type == "null_reply":
+    if ai_contract and ai_contract.reply_type == "null_reply":
         return CustomerVisibleMessageResult(outbound_message=None, customer_visible=False, provider_status="runtime_null_reply_not_sent")
 
     runtime_payload_json = None
@@ -139,7 +139,7 @@ def create_customer_visible_message(
     event_note: str | None = None,
     event_payload: dict[str, Any] | None = None,
 ) -> CustomerVisibleMessageResult:
-    if ai_contract and ai_contract.contract_version == AI_REPLY_CONTRACT_V3 and ai_contract.reply_type == "null_reply":
+    if ai_contract and ai_contract.reply_type == "null_reply":
         return CustomerVisibleMessageResult(outbound_message=None, customer_visible=False, provider_status="runtime_null_reply_not_sent")
 
     outbound_result = create_customer_visible_outbound(

@@ -7,12 +7,12 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.models_control_plane import KnowledgeChunk
-from app.services.knowledge_runtime_v2.embeddings import (
+from app.services.knowledge_runtime.embeddings import (
     OpenAICompatibleEmbeddingProvider,
     get_embedding_provider,
     vector_literal,
 )
-from app.services.knowledge_runtime_v2.runtime import _postgres_candidate_sql
+from app.services.knowledge_runtime.runtime import _postgres_candidate_sql
 
 
 ROOT = Path(__file__).resolve().parents[2]

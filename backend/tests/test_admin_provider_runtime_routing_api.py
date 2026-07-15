@@ -23,7 +23,7 @@ def test_admin_provider_runtime_routing_api_inserts_safe_default(monkeypatch):
     assert rule["scenario"] == "webchat_runtime_reply"
     assert rule["primary_provider"] == "private_ai_runtime"
     assert rule["fallback_providers"] == []
-    assert rule["output_contract"] == "nexus_webchat_runtime_reply_v1"
+    assert rule["output_contract"] == "nexus.webchat_runtime_reply"
     assert rule["canary_percent"] == 100
     assert rule["kill_switch"] is False
     assert db.commit.called

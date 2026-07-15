@@ -56,10 +56,10 @@ SAMPLES = [
 
 def _base_runtime_context() -> dict[str, Any]:
     return {
-        "context_version": "nexus_webchat_runtime_context_v2",
+        "context_version": "nexus.webchat_runtime_context",
         "tenant_key": "default",
         "knowledge_context": {
-            "retrieval": "hybrid_rag_v2",
+            "retrieval": "hybrid_rag",
             "total_matches": 0,
             "candidate_count": 0,
             "query_analysis": {"terms": []},
@@ -67,7 +67,7 @@ def _base_runtime_context() -> dict[str, Any]:
             "locked_facts": [],
             "evidence_pack": [],
         },
-        "rag_trace": {"retrieval": "hybrid_rag_v2", "top_hits": []},
+        "rag_trace": {"retrieval": "hybrid_rag", "top_hits": []},
         "safety_policy": {"knowledge_scope": "policy_sop_faq_only"},
     }
 

@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Coroutine
 
 from app.db import SessionLocal
-from app.services.provider_runtime.output_contracts import OutputContracts
+from app.services.provider_runtime.output_contracts import OutputContracts, WEBCHAT_RUNTIME_OUTPUT_CONTRACT
 from app.services.provider_runtime.registry import ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from .base import LLMProvider, LLMResult, ProviderError
 
-_DEFAULT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 _DEFAULT_PROVIDER = "router"
 _DEFAULT_SCENARIO = "webcall_ai_decision"
 _DEFAULT_CHANNEL = "webcall_ai"
@@ -108,7 +107,7 @@ def _build_request(*, text: str, language: str | None) -> ProviderRequest:
         recent_context=[{"role": "user", "content": body, "language": lang}],
         tracking_fact_summary=None,
         tracking_fact_evidence_present=False,
-        output_contract=_env("WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT", _DEFAULT_CONTRACT),
+        output_contract=_env("WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT", WEBCHAT_RUNTIME_OUTPUT_CONTRACT),
         timeout_ms=_int_env("WEBCALL_AI_PROVIDER_RUNTIME_TIMEOUT_MS", 10000, minimum=500, maximum=30000),
         metadata=metadata,
     )

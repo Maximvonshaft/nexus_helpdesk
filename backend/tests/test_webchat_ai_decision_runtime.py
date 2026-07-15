@@ -178,7 +178,7 @@ def test_provider_decision_ignores_malformed_non_visible_control_fields():
                 "evidence_used": [
                     {"source": {"internal": "object"}},
                     {"source": "", "evidence_type": "knowledge_context"},
-                    {"source": "hybrid_rag_v2", "evidence_type": "knowledge_context", "fact_evidence_present": True},
+                    {"source": "hybrid_rag", "evidence_type": "knowledge_context", "fact_evidence_present": True},
                 ],
                 "safety_notes": [],
             }
@@ -189,7 +189,7 @@ def test_provider_decision_ignores_malformed_non_visible_control_fields():
 
     assert decision.customer_reply == "瑞士目前暂未开通本对本业务。"
     assert decision.tool_calls == []
-    assert [item.source for item in decision.evidence_used] == ["hybrid_rag_v2"]
+    assert [item.source for item in decision.evidence_used] == ["hybrid_rag"]
 
 
 def test_tracking_status_claim_requires_trusted_fact():
@@ -475,7 +475,7 @@ def test_business_knowledge_codes_are_not_treated_as_raw_tracking_exposure():
         next_action="reply",
         handoff_required=False,
         tool_calls=[],
-        evidence_used=[AIDecisionEvidence(source="hybrid_rag_v2", evidence_type="knowledge_context", fact_evidence_present=True)],
+        evidence_used=[AIDecisionEvidence(source="hybrid_rag", evidence_type="knowledge_context", fact_evidence_present=True)],
         safety_notes=[],
     )
 
@@ -518,7 +518,7 @@ def test_provider_tracking_control_ignores_non_tracking_business_code():
                 "tracking_number": "canyon-lime-mr9b335p",
                 "handoff_required": False,
                 "tool_calls": [],
-                "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "knowledge_context", "fact_evidence_present": True}],
+                "evidence_used": [{"source": "hybrid_rag", "evidence_type": "knowledge_context", "fact_evidence_present": True}],
             }
         },
     )

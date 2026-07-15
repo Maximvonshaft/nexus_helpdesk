@@ -12,7 +12,6 @@ from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/helpdesk_suite_ai_customer_visible_contracts.db")
-os.environ.setdefault("KNOWLEDGE_RUNTIME_VERSION", "v2")
 os.environ.setdefault("KNOWLEDGE_EMBEDDINGS_ENABLED", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,8 +24,8 @@ from app.enums import ConversationState, MessageStatus, ResolutionCategory, Sour
 from app.models import Team, Ticket, TicketOutboundMessage, User  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest  # noqa: E402
 from app.settings import get_settings  # noqa: E402
-from app.services.ai_reply_contract import AI_REPLY_CONTRACT_V2, AI_REPLY_CONTRACT_V3, build_ai_reply_contract  # noqa: E402
-from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
+from app.services.ai_reply_contract import AI_REPLY_CONTRACT, build_ai_reply_contract  # noqa: E402
+from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.customer_visible_message_service import create_customer_visible_outbound, record_runtime_null_reply  # noqa: E402
 from app.services.message_dispatch import _build_fact_evidence, process_outbound_message, queue_outbound_message  # noqa: E402
@@ -134,9 +133,19 @@ def test_ai_visible_reply_requires_runtime_trace(db_session):
             body="AI generated reply",
             created_by=None,
             origin="provider_runtime",
-            runtime_contract_version=AI_REPLY_CONTRACT_V2,
+            runtime_contract_version=AI_REPLY_CONTRACT,
             runtime_signature="missing",
             safety_status="passed",
+        )
+
+
+def test_retired_ai_reply_contract_is_rejected():
+    with pytest.raises(ValueError, match="runtime_contract_version_invalid"):
+        build_ai_reply_contract(
+            body="Retired contract reply",
+            runtime_trace={"request_id": "rt-retired-contract"},
+            contract_version="nexus.ai_reply.v2",
+            reply_type="clarifying_question",
         )
 
 
@@ -170,7 +179,11 @@ def test_tool_service_cannot_return_customer_visible_text(db_session):
 
 def test_human_active_blocks_ai_autoreply(db_session):
     ticket = _ticket(db_session, state=ConversationState.human_owned)
-    contract = build_ai_reply_contract(body="AI reply", runtime_trace={"request_id": "rt-human-active"})
+    contract = build_ai_reply_contract(
+        body="AI reply",
+        runtime_trace={"request_id": "rt-human-active"},
+        reply_type="clarifying_question",
+    )
 
     with pytest.raises(ValueError, match="human_active_blocks_ai_autoreply"):
         queue_outbound_message(
@@ -284,6 +297,15 @@ def test_knowledge_retrieval_never_crosses_tenant(db_session):
 
 def test_process_outbound_message_rechecks_runtime_contract(db_session, monkeypatch):
     ticket = _ticket(db_session)
+    contract = build_ai_reply_contract(
+        body="AI reply",
+        runtime_trace={"request_id": "rt-1"},
+        reply_type="answer",
+        used_sources=["knowledge:test-source"],
+    )
+    payload = contract.payload_dict(body="AI reply", origin="provider_runtime")
+    payload["runtime_signature"] = "bad-signature"
+    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     row = TicketOutboundMessage(
         ticket_id=ticket.id,
         channel=SourceChannel.whatsapp,
@@ -291,8 +313,11 @@ def test_process_outbound_message_rechecks_runtime_contract(db_session, monkeypa
         body="AI reply",
         origin="provider_runtime",
         runtime_trace_id="rt-1",
-        runtime_contract_version=AI_REPLY_CONTRACT_V2,
+        runtime_contract_version=AI_REPLY_CONTRACT,
         runtime_signature="bad-signature",
+        runtime_contract_payload_json=payload_json,
+        runtime_contract_payload_sha256=hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+        runtime_reply_type="answer",
         safety_status="passed",
         provider_status="queued",
         max_retries=1,
@@ -307,23 +332,23 @@ def test_process_outbound_message_rechecks_runtime_contract(db_session, monkeypa
     assert processed.failure_code == "runtime_signature_invalid"
 
 
-def test_ai_reply_v3_answer_requires_used_sources():
-    with pytest.raises(ValueError, match="ai_reply_v3_answer_requires_used_sources"):
+def test_ai_reply_answer_requires_used_sources():
+    with pytest.raises(ValueError, match="ai_reply_answer_requires_used_sources"):
         build_ai_reply_contract(
             body="Grounded answer",
             runtime_trace={"request_id": "rt-v3-no-source"},
-            contract_version=AI_REPLY_CONTRACT_V3,
+            contract_version=AI_REPLY_CONTRACT,
             reply_type="answer",
             used_sources=[],
         )
 
 
 def test_ai_reply_v3_blocks_unsupported_claims():
-    with pytest.raises(ValueError, match="ai_reply_v3_unsupported_claims_blocked"):
+    with pytest.raises(ValueError, match="ai_reply_unsupported_claims_blocked"):
         build_ai_reply_contract(
             body="Grounded answer",
             runtime_trace={"request_id": "rt-v3-unsupported"},
-            contract_version=AI_REPLY_CONTRACT_V3,
+            contract_version=AI_REPLY_CONTRACT,
             reply_type="answer",
             used_sources=["kb.policy.1#v1:0"],
             unsupported_claims=["delivery takes one day"],
@@ -338,7 +363,7 @@ def test_runtime_signature_uses_hmac_secret(monkeypatch):
         contract = build_ai_reply_contract(
             body="Grounded answer",
             runtime_trace={"request_id": "rt-v3-hmac"},
-            contract_version=AI_REPLY_CONTRACT_V3,
+            contract_version=AI_REPLY_CONTRACT,
             reply_type="answer",
             used_sources=["kb.policy.1#v1:0"],
             unsupported_claims=[],
@@ -348,7 +373,7 @@ def test_runtime_signature_uses_hmac_secret(monkeypatch):
         payload = {
             "body_sha256": hashlib.sha256("Grounded answer".encode("utf-8")).hexdigest(),
             "runtime_trace_id": "rt-v3-hmac",
-            "contract_version": AI_REPLY_CONTRACT_V3,
+            "contract_version": AI_REPLY_CONTRACT,
             "safety_status": "passed",
             "reply": {
                 "type": "answer",
@@ -375,7 +400,7 @@ def test_v3_answer_with_used_sources_passes_outbound_gateway(db_session, monkeyp
     contract = build_ai_reply_contract(
         body="Switzerland address changes are allowed before dispatch.",
         runtime_trace={"request_id": "rt-v3-pass"},
-        contract_version=AI_REPLY_CONTRACT_V3,
+        contract_version=AI_REPLY_CONTRACT,
         reply_type="answer",
         used_sources=["knowledge:ch-address-policy"],
         unsupported_claims=[],
@@ -412,7 +437,7 @@ def test_v3_answer_with_used_sources_passes_outbound_gateway(db_session, monkeyp
 
 def test_v3_answer_without_used_sources_blocked(db_session):
     ticket = _ticket(db_session)
-    with pytest.raises(ValueError, match="ai_reply_v3_answer_requires_used_sources"):
+    with pytest.raises(ValueError, match="ai_reply_answer_requires_used_sources"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -421,7 +446,7 @@ def test_v3_answer_without_used_sources_blocked(db_session):
             created_by=None,
             origin="provider_runtime",
             runtime_trace_id="rt-v3-no-sources",
-            runtime_contract_version=AI_REPLY_CONTRACT_V3,
+            runtime_contract_version=AI_REPLY_CONTRACT,
             runtime_signature="bad",
             runtime_reply_type="answer",
             safety_status="passed",
@@ -430,11 +455,11 @@ def test_v3_answer_without_used_sources_blocked(db_session):
 
 def test_v3_unsupported_claims_blocked(db_session):
     ticket = _ticket(db_session)
-    with pytest.raises(ValueError, match="ai_reply_v3_unsupported_claims_blocked"):
+    with pytest.raises(ValueError, match="ai_reply_unsupported_claims_blocked"):
         build_ai_reply_contract(
             body="Unsupported claim",
             runtime_trace={"request_id": "rt-v3-unsupported-gateway"},
-            contract_version=AI_REPLY_CONTRACT_V3,
+            contract_version=AI_REPLY_CONTRACT,
             reply_type="answer",
             used_sources=["knowledge:policy"],
             unsupported_claims=["unsupported delivery promise"],
@@ -443,7 +468,7 @@ def test_v3_unsupported_claims_blocked(db_session):
     contract = build_ai_reply_contract(
         body="Unsupported claim",
         runtime_trace={"request_id": "rt-v3-unsupported-gateway-2"},
-        contract_version=AI_REPLY_CONTRACT_V3,
+        contract_version=AI_REPLY_CONTRACT,
         reply_type="answer",
         used_sources=["knowledge:policy"],
         unsupported_claims=[],
@@ -453,7 +478,7 @@ def test_v3_unsupported_claims_blocked(db_session):
     payload["grounding"]["unsupported_claims"] = ["mutated unsupported claim"]
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
-    with pytest.raises(ValueError, match="ai_reply_v3_unsupported_claims_blocked"):
+    with pytest.raises(ValueError, match="ai_reply_unsupported_claims_blocked"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -473,7 +498,11 @@ def test_v3_unsupported_claims_blocked(db_session):
 
 def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, monkeypatch):
     ticket = _ticket(db_session)
-    contract = build_ai_reply_contract(body="Exact signed body", runtime_trace={"request_id": "rt-mutation"})
+    contract = build_ai_reply_contract(
+        body="Exact signed body",
+        runtime_trace={"request_id": "rt-mutation"},
+        reply_type="clarifying_question",
+    )
     row = queue_outbound_message(
         db_session,
         ticket_id=ticket.id,
@@ -484,6 +513,9 @@ def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, m
         runtime_trace_id=contract.runtime_trace_id,
         runtime_contract_version=contract.contract_version,
         runtime_signature=contract.runtime_signature,
+        runtime_contract_payload_json=contract.payload_json(body="Exact signed body", origin="provider_runtime"),
+        runtime_contract_payload_sha256=contract.payload_sha256(body="Exact signed body", origin="provider_runtime"),
+        runtime_reply_type=contract.reply_type,
         safety_status=contract.safety_status,
     )
     monkeypatch.setattr("app.services.message_dispatch._external_dispatch_block_reason", lambda: None)
@@ -501,14 +533,14 @@ def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, m
 
 
 def test_webchat_ai_reply_uses_customer_visible_message_service():
-    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app/services/webchat_ai_service.py").read_text(encoding="utf-8")
     assert "create_customer_visible_message" in source
     assert "TicketOutboundMessage(" not in source
     assert "queue_outbound_message" not in source
 
 
 def test_ai_reply_does_not_update_last_human_update():
-    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app/services/webchat_ai_service.py").read_text(encoding="utf-8")
     assert "ticket.last_human_update" not in source
     assert "ticket.last_ai_update = final_body" in source
 
@@ -528,7 +560,7 @@ def test_v3_null_reply_not_sent_to_customer(db_session):
     contract = build_ai_reply_contract(
         body=None,
         runtime_trace={"request_id": "rt-null"},
-        contract_version=AI_REPLY_CONTRACT_V3,
+        contract_version=AI_REPLY_CONTRACT,
         reply_type="null_reply",
         channel="webchat",
     )
@@ -569,7 +601,7 @@ def test_handoff_notice_origin_cannot_bypass_contract(db_session):
     contract = build_ai_reply_contract(
         body="A support agent will review this conversation.",
         runtime_trace={"request_id": "rt-handoff-notice"},
-        contract_version=AI_REPLY_CONTRACT_V3,
+        contract_version=AI_REPLY_CONTRACT,
         reply_type="handoff_notice",
         unsupported_claims=[],
         channel="webchat",
@@ -586,30 +618,30 @@ def test_handoff_notice_origin_cannot_bypass_contract(db_session):
         status=MessageStatus.sent,
     ).outbound_message
     assert row is not None
-    assert row.runtime_contract_version == AI_REPLY_CONTRACT_V3
+    assert row.runtime_contract_version == AI_REPLY_CONTRACT
     assert row.runtime_reply_type == "handoff_notice"
 
 
 def test_webchat_handoff_ack_does_not_create_customer_visible_text_without_runtime_contract():
-    source = Path("backend/app/services/webchat_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app/services/webchat_service.py").read_text(encoding="utf-8")
     assert "webchat_handoff_ack" not in source
     assert 'origin="handoff_notice"' not in source
 
 
 def test_webchat_ai_does_not_directly_create_customer_visible_webchat_message():
-    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app/services/webchat_ai_service.py").read_text(encoding="utf-8")
     assert "create_customer_visible_message" in source
     assert "WebchatMessage(" not in source
 
 
 def test_webchat_ai_does_not_directly_create_external_ticket_comment():
-    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app/services/webchat_ai_service.py").read_text(encoding="utf-8")
     assert "TicketComment(" not in source
     assert "visibility=NoteVisibility.external" not in source
 
 
 def test_admin_reply_uses_customer_visible_message_service_for_visible_entities():
-    source = Path("backend/app/services/webchat_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app/services/webchat_service.py").read_text(encoding="utf-8")
     admin_reply = source.split("def admin_reply(", 1)[1]
     assert "create_customer_visible_message(" in admin_reply
     assert "WebchatMessage(" not in admin_reply

@@ -199,7 +199,6 @@ def build_values(
         "LOCAL_STORAGE_BACKUP_PATH": "/var/backups/nexusdesk/uploads",
         "LOCAL_STORAGE_BACKUP_ACKNOWLEDGED": "true",
         "REQUIRE_REMOTE_STORAGE_IN_PRODUCTION": "false",
-        "KNOWLEDGE_RUNTIME_VERSION": "legacy",
         "KNOWLEDGE_EMBEDDINGS_ENABLED": "false",
         "KNOWLEDGE_EMBEDDING_PROVIDER": "deterministic_hash",
         "WEBCHAT_KNOWLEDGE_REPLY_MODE": "deterministic_direct_answer",

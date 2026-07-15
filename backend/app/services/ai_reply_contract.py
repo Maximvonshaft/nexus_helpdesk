@@ -10,14 +10,13 @@ from typing import Any
 from ..enums import ConversationState
 from ..settings import get_settings
 
-AI_REPLY_CONTRACT_V2 = "nexus.ai_reply.v2"
-AI_REPLY_CONTRACT_V3 = "nexus.ai_reply.v3"
+AI_REPLY_CONTRACT = "nexus.ai_reply.v3"
 
 AI_ORIGINS = {"provider_runtime", "ai_runtime"}
 HUMAN_ORIGIN = "human_agent"
 FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS = {"business_system", "tool_service", "knowledge_runtime", "safety_service"}
 VALID_SAFETY_STATUSES = {"passed", "reviewed"}
-VALID_AI_REPLY_CONTRACTS = {AI_REPLY_CONTRACT_V2, AI_REPLY_CONTRACT_V3}
+VALID_AI_REPLY_CONTRACTS = {AI_REPLY_CONTRACT}
 VALID_REPLY_TYPES = {"answer", "clarifying_question", "handoff_notice", "null_reply"}
 WEAK_RUNTIME_CONTRACT_SECRETS = {"", "change-me", "changeme", "replace-me", "replace_this", "secret", "default", "dev-only"}
 HUMAN_REPLY_STATES = {
@@ -68,7 +67,7 @@ def build_ai_reply_contract(
     body: str | None,
     runtime_trace: dict[str, Any] | None,
     safety_status: str = "passed",
-    contract_version: str = AI_REPLY_CONTRACT_V2,
+    contract_version: str = AI_REPLY_CONTRACT,
     reply_type: str = "answer",
     used_sources: list[str] | tuple[str, ...] | None = None,
     unsupported_claims: list[str] | tuple[str, ...] | None = None,
@@ -78,15 +77,16 @@ def build_ai_reply_contract(
 ) -> AIReplyContract:
     trace = runtime_trace if isinstance(runtime_trace, dict) else {}
     trace_id = _trace_id(trace)
-    v3_violation = validate_ai_reply_v3_payload(
-        contract_version=contract_version,
+    if contract_version != AI_REPLY_CONTRACT:
+        raise ValueError("runtime_contract_version_invalid")
+    contract_violation = validate_ai_reply_payload(
         reply_type=reply_type,
         used_sources=used_sources,
         unsupported_claims=unsupported_claims,
         customer_visible=reply_type != "null_reply",
     )
-    if v3_violation:
-        raise ValueError(v3_violation)
+    if contract_violation:
+        raise ValueError(contract_violation)
     return AIReplyContract(
         runtime_trace_id=trace_id,
         contract_version=contract_version,
@@ -103,7 +103,7 @@ def build_ai_reply_contract(
             channel=channel,
         ),
         safety_status=safety_status,
-        reply_type=reply_type if contract_version == AI_REPLY_CONTRACT_V3 else None,
+        reply_type=reply_type,
         used_sources=tuple(_clean_list(used_sources)),
         unsupported_claims=tuple(_clean_list(unsupported_claims)),
         conflicts=tuple(_clean_list(conflicts)),
@@ -125,25 +125,26 @@ def sign_ai_reply_contract(
     confidence: float | None = None,
     channel: str | None = None,
 ) -> str:
+    if contract_version != AI_REPLY_CONTRACT:
+        raise ValueError("runtime_contract_version_invalid")
     payload = {
         "body_sha256": _body_sha256(body, reply_type=reply_type),
         "runtime_trace_id": runtime_trace_id,
         "contract_version": contract_version,
         "safety_status": safety_status,
     }
-    if contract_version == AI_REPLY_CONTRACT_V3:
-        payload.update(
-            {
-                "reply": {"type": reply_type, "text_sha256": payload["body_sha256"]},
-                "grounding": {
-                    "used_sources": _clean_list(used_sources),
-                    "unsupported_claims": _clean_list(unsupported_claims),
-                    "conflicts": _clean_list(conflicts),
-                },
-                "risk": {"confidence": confidence},
-                "channel": channel,
-            }
-        )
+    payload.update(
+        {
+            "reply": {"type": reply_type, "text_sha256": payload["body_sha256"]},
+            "grounding": {
+                "used_sources": _clean_list(used_sources),
+                "unsupported_claims": _clean_list(unsupported_claims),
+                "conflicts": _clean_list(conflicts),
+            },
+            "risk": {"confidence": confidence},
+            "channel": channel,
+        }
+    )
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     secret = runtime_contract_signing_secret()
     return hmac.new(secret.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -170,54 +171,53 @@ def validate_ai_reply_contract(
         return "runtime_contract_version_invalid"
     if safety_status not in VALID_SAFETY_STATUSES:
         return "runtime_safety_status_invalid"
-    v3_violation = validate_ai_reply_v3_payload(
-        contract_version=contract_version,
+    contract_violation = validate_ai_reply_payload(
         reply_type=reply_type,
         used_sources=used_sources,
         unsupported_claims=unsupported_claims,
         customer_visible=customer_visible,
     )
-    if v3_violation:
-        return v3_violation
-    expected = sign_ai_reply_contract(
-        body=body,
-        runtime_trace_id=runtime_trace_id,
-        contract_version=contract_version,
-        safety_status=safety_status,
-        reply_type=reply_type,
-        used_sources=used_sources,
-        unsupported_claims=unsupported_claims,
-        conflicts=conflicts,
-        confidence=confidence,
-        channel=channel,
-    )
+    if contract_violation:
+        return contract_violation
+    try:
+        expected = sign_ai_reply_contract(
+            body=body,
+            runtime_trace_id=runtime_trace_id,
+            contract_version=contract_version,
+            safety_status=safety_status,
+            reply_type=reply_type,
+            used_sources=used_sources,
+            unsupported_claims=unsupported_claims,
+            conflicts=conflicts,
+            confidence=confidence,
+            channel=channel,
+        )
+    except ValueError:
+        return "runtime_contract_version_invalid"
     if runtime_signature != expected:
         return "runtime_signature_invalid"
     return None
 
 
-def validate_ai_reply_v3_payload(
+def validate_ai_reply_payload(
     *,
-    contract_version: str | None,
     reply_type: str = "answer",
     used_sources: list[str] | tuple[str, ...] | None = None,
     unsupported_claims: list[str] | tuple[str, ...] | None = None,
     customer_visible: bool = True,
 ) -> str | None:
-    if contract_version != AI_REPLY_CONTRACT_V3:
-        return None
     if reply_type not in VALID_REPLY_TYPES:
-        return "ai_reply_v3_reply_type_invalid"
+        return "ai_reply_type_invalid"
     if reply_type == "null_reply":
         if customer_visible:
-            return "ai_reply_v3_null_reply_not_customer_visible"
+            return "ai_reply_null_reply_not_customer_visible"
         return None
     if reply_type == "answer" and not _clean_list(used_sources):
-        return "ai_reply_v3_answer_requires_used_sources"
+        return "ai_reply_answer_requires_used_sources"
     if reply_type == "answer" and _clean_list(unsupported_claims):
-        return "ai_reply_v3_unsupported_claims_blocked"
+        return "ai_reply_unsupported_claims_blocked"
     if reply_type == "handoff_notice" and _clean_list(unsupported_claims):
-        return "ai_reply_v3_handoff_notice_unsupported_claims_blocked"
+        return "ai_reply_handoff_notice_unsupported_claims_blocked"
     return None
 
 
@@ -268,6 +268,8 @@ def build_ai_reply_contract_payload(
     channel: str | None = None,
     customer_visible: bool = True,
 ) -> dict[str, Any]:
+    if contract_version != AI_REPLY_CONTRACT:
+        raise ValueError("runtime_contract_version_invalid")
     payload: dict[str, Any] = {
         "runtime_trace_id": runtime_trace_id,
         "contract_version": contract_version,
@@ -275,23 +277,22 @@ def build_ai_reply_contract_payload(
         "safety_status": safety_status,
         "origin": origin,
     }
-    if contract_version == AI_REPLY_CONTRACT_V3:
-        payload.update(
-            {
-                "reply": {
-                    "type": reply_type,
-                    "text": None if reply_type == "null_reply" else body,
-                },
-                "customer_visible": bool(customer_visible),
-                "grounding": {
-                    "used_sources": _clean_list(used_sources),
-                    "unsupported_claims": _clean_list(unsupported_claims),
-                    "conflicts": _clean_list(conflicts),
-                },
-                "risk": {"confidence": confidence},
-                "channel": channel,
-            }
-        )
+    payload.update(
+        {
+            "reply": {
+                "type": reply_type,
+                "text": None if reply_type == "null_reply" else body,
+            },
+            "customer_visible": bool(customer_visible),
+            "grounding": {
+                "used_sources": _clean_list(used_sources),
+                "unsupported_claims": _clean_list(unsupported_claims),
+                "conflicts": _clean_list(conflicts),
+            },
+            "risk": {"confidence": confidence},
+            "channel": channel,
+        }
+    )
     return payload
 
 

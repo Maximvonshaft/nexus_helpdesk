@@ -288,7 +288,6 @@ def collect_knowledge_snapshot(
 
 
 def provider_readiness(settings: Any) -> dict[str, Any]:
-    runtime_version = _scope(getattr(settings, "knowledge_runtime_version", None), "legacy").lower()
     enabled = bool(getattr(settings, "knowledge_embeddings_enabled", False))
     provider = _scope(getattr(settings, "knowledge_embedding_provider", None), "unconfigured").lower()
     model_present = bool(_scope(getattr(settings, "knowledge_embedding_model", None), ""))
@@ -301,8 +300,6 @@ def provider_readiness(settings: Any) -> dict[str, Any]:
     production = _scope(getattr(settings, "app_env", None), "development").lower() == "production"
     real_provider = provider not in {"deterministic_hash", "hash", "test", "unconfigured"}
     reasons: list[str] = []
-    if runtime_version != "v2":
-        reasons.append("knowledge_runtime_v2_required")
     if not enabled:
         reasons.append("knowledge_embeddings_disabled")
     if not model_present:
@@ -408,7 +405,7 @@ def retrieval_readiness(
     if not query:
         return {"status": "not_ready", "ready": False, "reason_codes": ["knowledge_retrieval_canary_query_missing"]}
     if retriever is None:
-        from .knowledge_runtime_v2 import retrieve_knowledge as retriever
+        from .knowledge_runtime import retrieve_knowledge as retriever
     try:
         result = retriever(
             db,
@@ -437,7 +434,7 @@ def retrieval_readiness(
 def live_tracking_boundary_readiness(db: Any, *, retriever: Callable[..., Any] | None = None) -> dict[str, Any]:
     """Prove a synthetic live-status request is routed away from Knowledge."""
     if retriever is None:
-        from .knowledge_runtime_v2 import retrieve_knowledge as retriever
+        from .knowledge_runtime import retrieve_knowledge as retriever
     try:
         result = retriever(
             db,

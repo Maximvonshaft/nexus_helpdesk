@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.knowledge_runtime_v2 import runtime
+from app.services.knowledge_runtime import runtime
 
 
 _NO_EVIDENCE_EXPANSION_SUFFIX = " ".join(

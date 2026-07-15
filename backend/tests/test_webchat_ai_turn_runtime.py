@@ -93,9 +93,9 @@ def _clear_webchat_ai_jobs() -> None:
 
 def test_v3_conversational_answer_records_runtime_generation_source():
     from app.enums import SourceChannel
-    from app.services.webchat_ai_service import _ai_reply_contract_v3_fields
+    from app.services.webchat_ai_service import _ai_reply_contract_fields
 
-    fields = _ai_reply_contract_v3_fields(
+    fields = _ai_reply_contract_fields(
         body='Your request has been received.',
         channel=SourceChannel.web_chat,
         handoff_required=False,
@@ -295,7 +295,7 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
         webchat_ai_service._LAST_RUNTIME_TRACE = {
             "latency_class": "trusted_tracking_fact",
-            "prompt_profile": "trusted_tracking_fact_v1",
+            "prompt_profile": "trusted_tracking_fact",
             "prompt_chars": 1709,
             "elapsed_ms": 10017,
             "model": "qwen2.5:3b",
@@ -341,7 +341,7 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         assert turn.reply_message_id is not None
         trace = json.loads(turn.runtime_trace_json or '{}')
         assert trace["latency_class"] == "trusted_tracking_fact"
-        assert trace["prompt_profile"] == "trusted_tracking_fact_v1"
+        assert trace["prompt_profile"] == "trusted_tracking_fact"
         assert trace["prompt_chars"] == 1709
         assert trace["model"] == "qwen2.5:3b"
         trace_text = json.dumps(trace, ensure_ascii=False)

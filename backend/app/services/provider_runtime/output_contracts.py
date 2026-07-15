@@ -18,6 +18,7 @@ _STATUS_WORDS = [
     "派送", "已签收", "运输中", "清关", "退回",
 ]
 _MAX_RUNTIME_REPLY_CHARS = 1200
+WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus.webchat_runtime_reply"
 _COUNTRY_CONFLICT_GROUPS = (
     ("nigeria", "尼日利亚"),
     ("switzerland", "swiss", "瑞士"),
@@ -109,41 +110,7 @@ class OutputContracts:
                 ],
                 "additionalProperties": False,
             }
-        if contract_name == "nexus.ai_reply.v2":
-            return {
-                "type": "object",
-                "properties": {
-                    "customer_reply": {"type": "string", "maxLength": 1200},
-                    "language": {"type": "string", "maxLength": 32},
-                    "intent": {"type": "string", "maxLength": 80},
-                    "tracking_number": {"type": ["string", "null"], "maxLength": 80},
-                    "handoff_required": {"type": "boolean"},
-                    "handoff_reason": {"type": ["string", "null"], "maxLength": 500},
-                    "recommended_agent_action": {"type": ["string", "null"], "maxLength": 500},
-                    "ticket_should_create": {"type": "boolean"},
-                    "internal_summary": {"type": ["string", "null"], "maxLength": 1000},
-                    "risk_flags": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20},
-                    "runtime_trace_id": {"type": "string", "maxLength": 120},
-                    "contract_version": {"type": "string", "const": "nexus.ai_reply.v2"},
-                    "runtime_signature": {"type": "string", "minLength": 32, "maxLength": 128},
-                    "safety_status": {"type": "string", "enum": ["passed", "reviewed"]},
-                    "origin": {"type": "string", "enum": ["provider_runtime", "ai_runtime"]},
-                },
-                "required": [
-                    "customer_reply",
-                    "language",
-                    "intent",
-                    "handoff_required",
-                    "ticket_should_create",
-                    "runtime_trace_id",
-                    "contract_version",
-                    "runtime_signature",
-                    "safety_status",
-                    "origin",
-                ],
-                "additionalProperties": False,
-            }
-        if contract_name == "nexus_webchat_runtime_reply_v1":
+        if contract_name == WEBCHAT_RUNTIME_OUTPUT_CONTRACT:
             return {
                 "type": "object",
                 "properties": {
@@ -159,36 +126,6 @@ class OutputContracts:
                     "risk_flags": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20},
                 },
                 "required": ["customer_reply", "language", "intent", "handoff_required", "ticket_should_create"],
-                "additionalProperties": False,
-            }
-        if contract_name == "speedaf_ticket_triage_v1":
-            return {
-                "type": "object",
-                "properties": {
-                    "ticket_title": {"type": "string", "maxLength": 200},
-                    "ticket_category": {"type": "string", "enum": ["delivery_exception", "tracking", "complaint", "address_change", "claim", "other"]},
-                    "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
-                    "customer_reply": {"type": "string", "maxLength": 1200},
-                    "agent_brief": {"type": "string", "maxLength": 2000},
-                    "required_human_action": {"type": ["string", "null"], "maxLength": 1000},
-                    "evidence_needed": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20},
-                    "handoff_required": {"type": "boolean"},
-                },
-                "required": ["ticket_title", "ticket_category", "priority", "customer_reply", "agent_brief", "handoff_required", "evidence_needed"],
-                "additionalProperties": False,
-            }
-        if contract_name == "speedaf_delivery_exception_analysis_v1":
-            return {
-                "type": "object",
-                "properties": {
-                    "exception_type": {"type": "string", "enum": ["failed_delivery", "delivered_not_received", "wrong_address", "customs", "damaged", "lost", "other"]},
-                    "root_cause_guess": {"type": ["string", "null"], "maxLength": 1000},
-                    "next_action": {"type": "string", "enum": ["reattempt", "investigate", "return", "manual_review", "none"]},
-                    "customer_visible_reply": {"type": "string", "maxLength": 1200},
-                    "internal_action_required": {"type": "boolean"},
-                    "evidence_needed": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20},
-                },
-                "required": ["exception_type", "next_action", "customer_visible_reply", "internal_action_required", "evidence_needed"],
                 "additionalProperties": False,
             }
         return {}
@@ -208,18 +145,19 @@ class OutputContracts:
             raise ValueError("Output must be valid JSON") from exc
         if not isinstance(parsed, dict):
             raise ValueError("Output must be a JSON object")
-        if contract_name == "nexus_webchat_runtime_reply_v1":
-            parsed = OutputContracts._normalize_runtime_reply_v1(parsed)
+        if contract_name == WEBCHAT_RUNTIME_OUTPUT_CONTRACT:
+            parsed = OutputContracts._normalize_runtime_reply(parsed)
             raw_output = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
         schema = OutputContracts.get_schema(contract_name)
-        if schema:
-            try:
-                jsonschema.validate(instance=parsed, schema=schema)
-            except jsonschema.exceptions.ValidationError as exc:
-                raise ValueError(f"Schema validation failed: {exc.message}") from exc
+        if not schema:
+            raise ValueError("Unsupported output contract")
+        try:
+            jsonschema.validate(instance=parsed, schema=schema)
+        except jsonschema.exceptions.ValidationError as exc:
+            raise ValueError(f"Schema validation failed: {exc.message}") from exc
         if contract_name == "nexus.ai_reply.v3":
-            OutputContracts._validate_ai_reply_v3(parsed)
+            OutputContracts._validate_ai_reply(parsed)
 
         OutputContracts.check_security_rules(
             raw_output=raw_output,
@@ -231,7 +169,7 @@ class OutputContracts:
         return parsed
 
     @staticmethod
-    def _validate_ai_reply_v3(parsed: dict[str, Any]) -> None:
+    def _validate_ai_reply(parsed: dict[str, Any]) -> None:
         reply = parsed.get("reply") if isinstance(parsed.get("reply"), dict) else {}
         grounding = parsed.get("grounding") if isinstance(parsed.get("grounding"), dict) else {}
         if reply.get("type") == "null_reply":
@@ -281,7 +219,7 @@ class OutputContracts:
         return {"status": "fail", "reason": "reply_not_fact_equivalent", "locked_fact_ids": ids}
 
     @staticmethod
-    def _normalize_runtime_reply_v1(parsed: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_runtime_reply(parsed: dict[str, Any]) -> dict[str, Any]:
         if "customer_reply" in parsed or not isinstance(parsed.get("reply"), str):
             return parsed
         parsed = {**parsed, "customer_reply": parsed["reply"]}

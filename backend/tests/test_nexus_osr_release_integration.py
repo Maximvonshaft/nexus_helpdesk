@@ -18,7 +18,7 @@ from app.models import Customer, Ticket, TicketEvent
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem
 from app.models_operations_dispatch import OperationsDispatchOutboxRecord
 from app.models_osr import CaseContextRecord, HumanHoursPolicyRecord, RuntimeDecisionAuditRecord, WhatsAppRoutingRuleRecord
-from app.services.knowledge_runtime_v2 import runtime as knowledge_runtime
+from app.services.knowledge_runtime import runtime as knowledge_runtime
 from app.services.nexus_osr.case_context import CaseContext
 from app.services.nexus_osr.escalation_orchestration_service import (
     EscalationOrchestrationAction,

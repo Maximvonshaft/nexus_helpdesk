@@ -14,12 +14,12 @@ sys.path.insert(0, str(ROOT))
 from app.db import SessionLocal  # noqa: E402
 from app.models_control_plane import KNOWLEDGE_VECTOR_DIMENSION, KnowledgeChunk  # noqa: E402
 from app.settings import get_settings  # noqa: E402
-from app.services.knowledge_runtime_v2.embeddings import (  # noqa: E402
+from app.services.knowledge_runtime.embeddings import (  # noqa: E402
     get_embedding_provider,
     semantic_hash,
     vector_literal,
 )
-from app.services.knowledge_runtime_v2.runtime import (  # noqa: E402
+from app.services.knowledge_runtime.runtime import (  # noqa: E402
     KnowledgeVectorContractError,
     validate_embedding_batch,
     validate_embedding_dimension,

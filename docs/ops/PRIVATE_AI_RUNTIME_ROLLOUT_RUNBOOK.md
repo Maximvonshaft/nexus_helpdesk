@@ -59,7 +59,7 @@ PRIVATE_AI_RUNTIME_OLLAMA_KEEP_ALIVE=30m
 
 PROVIDER_RUNTIME_PRIMARY_PROVIDER=private_ai_runtime
 PROVIDER_RUNTIME_FALLBACK_PROVIDERS=[]
-PROVIDER_RUNTIME_OUTPUT_CONTRACT=nexus_webchat_runtime_reply_v1
+PROVIDER_RUNTIME_OUTPUT_CONTRACT=nexus.webchat_runtime_reply
 PROVIDER_RUNTIME_TIMEOUT_MS=30000
 PROVIDER_RUNTIME_CANARY_PERCENT=100
 PROVIDER_RUNTIME_KILL_SWITCH=false
@@ -92,7 +92,6 @@ TTS_VOICE=af_heart
 For Knowledge Runtime, only enable OpenAI-compatible embeddings after confirming the runtime exposes `/v1/embeddings` and the vector dimension:
 
 ```env
-KNOWLEDGE_RUNTIME_VERSION=v2
 KNOWLEDGE_EMBEDDINGS_ENABLED=true
 KNOWLEDGE_EMBEDDING_PROVIDER=openai_compatible
 KNOWLEDGE_EMBEDDING_BASE_URL=http://47.87.143.41:18081/v1
@@ -158,7 +157,7 @@ PROVIDER_RUNTIME_KILL_SWITCH=true
 
 - Token is present only in a server-side file.
 - Browser network traces do not contain `47.87.143.41`, bearer tokens, or upstream WS query tokens.
-- WebChat runtime returns valid `nexus_webchat_runtime_reply_v1` output from `private_ai_runtime`.
+- WebChat runtime returns valid `nexus.webchat_runtime_reply` output from `private_ai_runtime`.
 - Live tracking status is never claimed without trusted tracking evidence.
 - WebCall voice remains same-origin through `/webchat/live/ws`.
 - RAG embedding dimension is confirmed before writing production vectors.

@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models, models_control_plane  # noqa: F401
 from app.db import Base
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem
-from app.services.knowledge_runtime_v2 import runtime
+from app.services.knowledge_runtime import runtime
 from app.utils.time import utc_now
 
 

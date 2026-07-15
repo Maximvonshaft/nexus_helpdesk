@@ -12,6 +12,7 @@ from ..webchat_models import WebchatMessage
 from .effective_country import effective_country_payload, resolve_effective_country
 from .knowledge_grounding_service import select_grounding_candidate
 from .knowledge_retrieval_service import KnowledgeChunkHit, retrieve_published_chunks
+from .tracking_fact_schema import safe_tracking_reference
 
 MAX_PERSONA_SUMMARY_CHARS = 1200
 MAX_PERSONA_JSON_CHARS = 1600
@@ -150,7 +151,7 @@ def build_webchat_runtime_context(
         kb_hits_count=len(knowledge_context.get("hits") or []),
     )
     return sanitize_runtime_context({
-        "context_version": "nexus_webchat_runtime_context_v2",
+        "context_version": "nexus.webchat_runtime_context",
         "tenant_key": tenant_key,
         "metadata_filters": {
             "market_id": market_id,
@@ -162,6 +163,11 @@ def build_webchat_runtime_context(
         "persona_context": _persona_context(profile, match_rank),
         "knowledge_context": knowledge_context,
         "rag_trace": rag_trace,
+        "conversation_state": {
+            "tracking_reference_present": bool((tracking_number or "").strip()),
+            "safe_tracking_reference": safe_tracking_reference(tracking_number) if (tracking_number or "").strip() else None,
+            "tracking_fact_evidence_present": bool(tracking_fact_evidence_present),
+        },
         "safety_policy": {
             "knowledge_scope": "policy_sop_faq_only",
             "locked_facts_contract": "Use locked_facts as authoritative facts. Natural rephrasing is allowed, but do not change countries, service types, timing, numbers, prices, or policy boundaries.",
@@ -481,7 +487,7 @@ def _knowledge_context(retrieval, *, query: str, original_query: str | None = No
     ]
     evidence_pack = [_evidence_pack_hit(hit) for hit in serialized_hits]
     return {
-        "retrieval": "hybrid_rag_v2",
+        "retrieval": "hybrid_rag",
         "total_matches": retrieval.total,
         "candidate_count": retrieval.candidate_count,
         "query_analysis": retrieval.query_analysis.as_trace(),

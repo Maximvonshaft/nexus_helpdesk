@@ -71,14 +71,14 @@ class LegacySurfaceRegistryTests(unittest.TestCase):
             'backend/alembic/versions/20260425_round_b_webchat.py',
             'backend/alembic/versions/20260601_0046_knowledge_runtime_v2.py',
             'webapp/design/frontend-product-foundation.v1.json',
-            'backend/app/services/knowledge_runtime_v2/runtime.py',
+            'backend/app/services/knowledge_runtime/runtime.py',
         ]
         result = legacy.scan_registry(self.registry, files, read_text=lambda _: '')
         self.assertTrue(result['ok'])
         self.assertEqual(result['unowned_count'], 0)
         self.assertEqual(result['overlap_count'], 0)
         self.assertGreaterEqual(result['disposition_match_counts']['protected_history'], 2)
-        self.assertGreaterEqual(result['disposition_match_counts']['active_authority'], 2)
+        self.assertGreaterEqual(result['disposition_match_counts']['active_authority'], 1)
 
     def test_external_channel_path_matching_is_case_insensitive(self):
         result = legacy.scan_registry(

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.provider_runtime_status import get_provider_runtime_status
+from ..services.provider_runtime.output_contracts import WEBCHAT_RUNTIME_OUTPUT_CONTRACT
 from ..services.runtime_permissions import ensure_can_manage_runtime, ensure_can_read_runtime
 from .deps import get_current_user
 
@@ -18,7 +19,6 @@ router = APIRouter(prefix="/api/admin/provider-runtime", tags=["admin-provider-r
 
 _ALLOWED_PRIMARY_PROVIDERS = {"private_ai_runtime"}
 _WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
-_WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 
 
 class WebchatRuntimeRoutingUpdate(BaseModel):
@@ -123,7 +123,7 @@ def update_webchat_runtime_routing(
         "scenario": _WEBCHAT_RUNTIME_SCENARIO,
         "primary_provider": payload.primary_provider,
         "fallback_providers": json.dumps(payload.fallback_providers, separators=(",", ":")),
-        "output_contract": _WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
+        "output_contract": WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
         "timeout_ms": payload.timeout_ms,
         "canary_percent": payload.canary_percent,
         "kill_switch": payload.kill_switch,

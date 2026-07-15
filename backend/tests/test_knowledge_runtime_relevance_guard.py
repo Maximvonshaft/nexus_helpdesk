@@ -16,7 +16,7 @@ from app.models import User  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.knowledge_retrieval_service import retrieve_published_chunks  # noqa: E402
-from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
+from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
 
 
 @pytest.fixture()

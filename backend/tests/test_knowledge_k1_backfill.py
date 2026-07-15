@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.knowledge_runtime_v2.embeddings import semantic_hash
-from app.services.knowledge_runtime_v2.runtime import KnowledgeVectorContractError
+from app.services.knowledge_runtime.embeddings import semantic_hash
+from app.services.knowledge_runtime.runtime import KnowledgeVectorContractError
 from scripts.backfill_knowledge_embeddings import run_backfill
 
 

@@ -42,53 +42,58 @@ def _locked_fact_context(answer: str) -> dict:
     return context
 
 
-def test_nexus_webchat_runtime_reply_v1_valid():
+def test_webchat_runtime_reply_valid():
     raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
-    parsed = OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json)
+    parsed = OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
     assert parsed["customer_reply"] == "hello"
 
 
-def test_nexus_webchat_runtime_reply_v1_invalid_schema():
+def test_webchat_runtime_reply_invalid_schema():
     raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false}'
     with pytest.raises(ValueError, match="Schema validation failed"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json)
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
 
 
-def test_nexus_webchat_runtime_reply_v1_additional_props():
+def test_webchat_runtime_reply_additional_props():
     raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false, "fake_prop": 1}'
     with pytest.raises(ValueError, match="Schema validation failed"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json)
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
 
 
 def test_invalid_json():
     with pytest.raises(ValueError, match="Output must be valid JSON"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", "not json")
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", "not json")
+
+
+def test_unknown_output_contract_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported output contract"):
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply.retired", "{}")
 
 
 def test_security_markdown():
     raw_json = '{"customer_reply": "```json\\nhello\\n```", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
     with pytest.raises(ValueError, match="Markdown code blocks are prohibited"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json)
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
 
 
 def test_security_reasoning():
     raw_json = '{"customer_reply": "<think>test</think>", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
     with pytest.raises(ValueError, match="Hidden reasoning is prohibited"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json)
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
 
 
 def test_security_secret_leakage():
     prefix = "ey" + "J"
     raw_json = '{"customer_reply": "' + prefix + 'abcdefghijklmno", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
     with pytest.raises(ValueError, match="Potential secret leakage detected"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json)
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
 
 
 def test_tracking_intent_requires_trusted_evidence():
     raw_json = '{"customer_reply": "Your parcel is in transit.", "language": "en", "intent": "tracking", "tracking_number": "ABC123", "handoff_required": false, "ticket_should_create": false}'
     with pytest.raises(ValueError, match="requires trusted tracking evidence"):
-        OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json, evidence_present=False)
-    parsed = OutputContracts.validate_and_parse("nexus_webchat_runtime_reply_v1", raw_json, evidence_present=True)
+        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json, evidence_present=False)
+    parsed = OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json, evidence_present=True)
     assert parsed["tracking_number"] == "ABC123"
 
 
@@ -107,7 +112,7 @@ def test_business_sla_direct_answer_status_words_pass_with_approved_grounding():
     )
 
     parsed = OutputContracts.validate_and_parse(
-        "nexus_webchat_runtime_reply_v1",
+        "nexus.webchat_runtime_reply",
         raw_json,
         evidence_present=False,
         request_body="瑞士海运时效是多少？",
@@ -132,7 +137,7 @@ def test_live_parcel_status_still_fails_without_trusted_tracking_evidence():
 
     with pytest.raises(ValueError, match="Parcel status language requires trusted tracking evidence"):
         OutputContracts.validate_and_parse(
-            "nexus_webchat_runtime_reply_v1",
+            "nexus.webchat_runtime_reply",
             raw_json,
             evidence_present=False,
             request_body="瑞士海运时效是多少？",
@@ -155,7 +160,7 @@ def test_direct_answer_does_not_excuse_extra_live_parcel_status_claim():
 
     with pytest.raises(ValueError, match="Parcel status language requires trusted tracking evidence"):
         OutputContracts.validate_and_parse(
-            "nexus_webchat_runtime_reply_v1",
+            "nexus.webchat_runtime_reply",
             raw_json,
             evidence_present=False,
             request_body="瑞士海运时效是多少？",
@@ -177,7 +182,7 @@ def test_locked_fact_equivalent_natural_reply_passes():
     )
 
     parsed = OutputContracts.validate_and_parse(
-        "nexus_webchat_runtime_reply_v1",
+        "nexus.webchat_runtime_reply",
         raw_json,
         evidence_present=False,
         request_body="尼日利亚海运时效是多少？",
@@ -202,7 +207,7 @@ def test_locked_fact_rejects_question_echo_without_answer_specific_fact():
 
     with pytest.raises(ValueError, match="Locked fact grounding conflict"):
         OutputContracts.validate_and_parse(
-            "nexus_webchat_runtime_reply_v1",
+            "nexus.webchat_runtime_reply",
             raw_json,
             evidence_present=False,
             request_body="请告诉我MCS唯一事实编号mr9ebkzk",
@@ -233,7 +238,7 @@ def test_locked_fact_conflicts_are_rejected(reply):
 
     with pytest.raises(ValueError, match="Locked fact grounding conflict"):
         OutputContracts.validate_and_parse(
-            "nexus_webchat_runtime_reply_v1",
+            "nexus.webchat_runtime_reply",
             raw_json,
             evidence_present=False,
             request_body="尼日利亚海运时效是多少？",
@@ -270,7 +275,7 @@ def test_any_locked_fact_conflict_rejects_even_when_another_fact_matches():
 
     with pytest.raises(ValueError, match="Locked fact grounding conflict"):
         OutputContracts.validate_and_parse(
-            "nexus_webchat_runtime_reply_v1",
+            "nexus.webchat_runtime_reply",
             raw_json,
             evidence_present=False,
             request_body="Do you provide domestic to domestic delivery in Switzerland?",
@@ -292,7 +297,7 @@ def test_mixed_language_locked_fact_allows_matching_customer_language_reply():
     )
 
     parsed = OutputContracts.validate_and_parse(
-        "nexus_webchat_runtime_reply_v1",
+        "nexus.webchat_runtime_reply",
         raw_json,
         evidence_present=False,
         request_body="瑞士本地到本地现在支持寄送吗？",
@@ -328,7 +333,7 @@ def test_trusted_tracking_followup_bypasses_unrelated_locked_fact():
     )
 
     parsed = OutputContracts.validate_and_parse(
-        "nexus_webchat_runtime_reply_v1",
+        "nexus.webchat_runtime_reply",
         raw_json,
         evidence_present=True,
         request_body="The recipient says they did not receive it. What should we do?",
@@ -362,7 +367,7 @@ def test_policy_question_still_obeys_locked_fact_with_stale_tracking_evidence():
 
     with pytest.raises(ValueError, match="Locked fact grounding conflict"):
         OutputContracts.validate_and_parse(
-            "nexus_webchat_runtime_reply_v1",
+            "nexus.webchat_runtime_reply",
             raw_json,
             evidence_present=True,
             request_body="Do you provide domestic to domestic delivery in Switzerland?",

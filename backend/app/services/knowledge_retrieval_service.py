@@ -6,18 +6,16 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
-from sqlalchemy import text, or_
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeChunk, KnowledgeItem
-from ..settings import get_settings
 from ..utils.time import utc_now
 from .knowledge_document_service import normalize_document_text
 
 MAX_CHUNK_CHARS = 900
 CHUNK_OVERLAP_CHARS = 120
 MAX_QUERY_TERMS = 24
-MAX_CANDIDATES = 260
 DIRECT_ANSWER_SCORE_THRESHOLD = 24.0
 
 STRUCTURED_KINDS = {"faq", "business_fact"}
@@ -139,7 +137,7 @@ class KnowledgeRetrievalResult:
             "top_hits": self.top_hits,
             "grounding_would_apply": self.grounding_would_apply,
             "grounding_source": self.grounding_source,
-            "retrieval": "legacy_keyword_v1",
+            "retrieval": "hybrid_rag",
         }
 
 
@@ -257,7 +255,7 @@ def index_published_item(db: Session, item: KnowledgeItem) -> int:
                 lexical_config="simple",
                 embedding_status="pending",
                 retrieval_metadata_json={
-                    "runtime": "hybrid_rag_v2",
+                    "runtime": "hybrid_rag",
                     "chunk_type": "structured_fact" if (item.knowledge_kind or "document") in STRUCTURED_KINDS else "paragraph",
                     "source_document_id": item.file_storage_key or item.item_key,
                 },
@@ -350,85 +348,54 @@ def retrieve_published_chunks(
     language: str | None = None,
     limit: int = 5,
 ) -> KnowledgeRetrievalResult:
-    if get_settings().knowledge_runtime_version == "v2":
-        from .knowledge_runtime_v2 import retrieve_knowledge
+    from .knowledge_runtime import retrieve_knowledge
 
-        runtime = retrieve_knowledge(
-            db,
-            query=q or "",
-            tenant_key=tenant_id or "default",
-            brand_id=brand_id or "default",
-            country_scope=country_scope or "GLOBAL",
-            channel_scope=channel_scope or channel or "all",
-            market_id=market_id,
-            channel=channel,
-            audience_scope=audience_scope or "customer",
-            language=language,
-            limit=limit,
-        )
-        analysis = analyze_query(q, language=language)
-        hits = [
-            KnowledgeChunkHit(
-                item_id=hit.item_id,
-                item_key=hit.item_key,
-                title=hit.title,
-                published_version=hit.published_version,
-                chunk_index=hit.chunk_index,
-                score=hit.score,
-                text=hit.text,
-                metadata=hit.metadata,
-                retrieval_method=hit.retrieval_method,
-                matched_terms=hit.matched_terms,
-                score_breakdown=hit.score_breakdown,
-                direct_answer=hit.direct_answer,
-                answer_mode=hit.answer_mode,
-                source_metadata=hit.source_metadata,
-            )
-            for hit in runtime.hits
-        ]
-        grounding_source = _grounding_source_from_hits(hits)
-        top_hits = [_top_hit_trace(hit) for hit in hits[:5]]
-        return KnowledgeRetrievalResult(
-            hits=hits,
-            total=len(hits),
-            query_analysis=analysis,
-            candidate_count=runtime.trace.get("candidates_by_source", {}).get("legacy_candidate", len(hits)),
-            top_hits=top_hits,
-            grounding_would_apply=grounding_source is not None,
-            grounding_source=grounding_source,
-            runtime_trace=runtime.trace,
-            retrieval_methods=runtime.retrieval_methods,
-            no_answer_reason=runtime.no_answer_reason,
-            latency_ms=runtime.latency_ms,
-        )
-
-    analysis = analyze_query(q, language=language)
-    rows = _candidate_rows(
+    runtime = retrieve_knowledge(
         db,
-        analysis=analysis,
+        query=q or "",
+        tenant_key=tenant_id or "default",
+        brand_id=brand_id or "default",
+        country_scope=country_scope or "GLOBAL",
+        channel_scope=channel_scope or channel or "all",
         market_id=market_id,
         channel=channel,
-        audience_scope=audience_scope,
+        audience_scope=audience_scope or "customer",
         language=language,
         limit=limit,
     )
-    scored = [
-        _hit_from_row(chunk, item, analysis=analysis, market_id=market_id, channel=channel, language=language)
-        for chunk, item in rows
+    analysis = analyze_query(q, language=language)
+    hits = [
+        KnowledgeChunkHit(
+            item_id=hit.item_id,
+            item_key=hit.item_key,
+            title=hit.title,
+            published_version=hit.published_version,
+            chunk_index=hit.chunk_index,
+            score=hit.score,
+            text=hit.text,
+            metadata=hit.metadata,
+            retrieval_method=hit.retrieval_method,
+            matched_terms=hit.matched_terms,
+            score_breakdown=hit.score_breakdown,
+            direct_answer=hit.direct_answer,
+            answer_mode=hit.answer_mode,
+            source_metadata=hit.source_metadata,
+        )
+        for hit in runtime.hits
     ]
-    scored = [hit for hit in scored if hit.score > 0 or not analysis.terms]
-    fused = _fuse_hits(scored)
-    fused.sort(key=lambda hit: (-hit.score, hit.metadata.get("priority", 10000), hit.item_key, hit.chunk_index))
-    hits = fused[: max(1, min(limit, 20))]
     grounding_source = _grounding_source_from_hits(hits)
     return KnowledgeRetrievalResult(
         hits=hits,
-        total=len(fused),
+        total=len(hits),
         query_analysis=analysis,
-        candidate_count=len(rows),
+        candidate_count=runtime.trace.get("candidates_by_source", {}).get("lexical_candidate", len(hits)),
         top_hits=[_top_hit_trace(hit) for hit in hits[:5]],
         grounding_would_apply=grounding_source is not None,
         grounding_source=grounding_source,
+        runtime_trace=runtime.trace,
+        retrieval_methods=runtime.retrieval_methods,
+        no_answer_reason=runtime.no_answer_reason,
+        latency_ms=runtime.latency_ms,
     )
 
 
@@ -461,251 +428,6 @@ def search_published_chunks(
     )
     return result.hits, result.total
 
-
-def _candidate_rows(
-    db: Session,
-    *,
-    analysis: QueryAnalysis,
-    market_id: int | None,
-    channel: str | None,
-    audience_scope: str | None,
-    language: str | None,
-    limit: int,
-) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
-    now = utc_now()
-    query = (
-        db.query(KnowledgeChunk, KnowledgeItem)
-        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeChunk.item_id)
-        .filter(
-            KnowledgeChunk.status == "active",
-            KnowledgeItem.status == "active",
-            KnowledgeChunk.published_version > 0,
-            KnowledgeChunk.published_version == KnowledgeItem.published_version,
-            or_(KnowledgeChunk.starts_at.is_(None), KnowledgeChunk.starts_at <= now),
-            or_(KnowledgeChunk.ends_at.is_(None), KnowledgeChunk.ends_at >= now),
-            or_(
-                KnowledgeItem.knowledge_kind.is_(None),
-                KnowledgeItem.knowledge_kind.notin_(tuple(STRUCTURED_KINDS)),
-                KnowledgeItem.fact_status == "approved",
-            ),
-        )
-    )
-    if market_id is not None:
-        query = query.filter(or_(KnowledgeChunk.market_id.is_(None), KnowledgeChunk.market_id == market_id))
-    if channel:
-        query = query.filter(or_(KnowledgeChunk.channel.is_(None), KnowledgeChunk.channel == channel.strip()))
-    if audience_scope:
-        query = query.filter(KnowledgeChunk.audience_scope == audience_scope.strip())
-    if language:
-        lang = language.strip().lower()
-        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language == "mixed", KnowledgeChunk.language.like(f"{lang}-%")))
-
-    sql_terms = _dedupe([analysis.normalized_query, *analysis.high_value_terms, *analysis.terms])[:MAX_QUERY_TERMS + 1]
-    if sql_terms:
-        predicates = []
-        for term in sql_terms:
-            if not term:
-                continue
-            needle = f"%{term}%"
-            predicates.extend(
-                [
-                    KnowledgeChunk.normalized_text.ilike(needle),
-                    KnowledgeChunk.title.ilike(needle),
-                    KnowledgeItem.item_key.ilike(needle),
-                    KnowledgeItem.title.ilike(needle),
-                    KnowledgeItem.summary.ilike(needle),
-                    KnowledgeItem.fact_question.ilike(needle),
-                    KnowledgeItem.fact_answer.ilike(needle),
-                ]
-            )
-        query = query.filter(or_(*predicates))
-
-    candidate_limit = max(MAX_CANDIDATES, limit * 30)
-    return (
-        query.order_by(
-            KnowledgeItem.priority.asc(),
-            KnowledgeChunk.priority.asc(),
-            KnowledgeItem.item_key.asc(),
-            KnowledgeChunk.chunk_index.asc(),
-        )
-        .limit(candidate_limit)
-        .all()
-    )
-
-
-def _hit_from_row(
-    chunk: KnowledgeChunk,
-    item: KnowledgeItem,
-    *,
-    analysis: QueryAnalysis,
-    market_id: int | None,
-    channel: str | None,
-    language: str | None,
-) -> KnowledgeChunkHit:
-    normalized_text = _normalize_query(chunk.normalized_text or chunk.chunk_text)
-    title = _normalize_query(chunk.title)
-    item_key = _normalize_query(chunk.item_key)
-    question = _normalize_query(item.fact_question)
-    answer = _normalize_query(item.fact_answer)
-    aliases = [_normalize_query(alias) for alias in (item.fact_aliases_json or []) if str(alias).strip()]
-    structured = (item.knowledge_kind or "document") in STRUCTURED_KINDS and item.fact_status == "approved"
-    direct = structured and (item.answer_mode or "") == "direct_answer" and bool((item.fact_answer or "").strip())
-    structured_fact_answer = (
-        (item.fact_answer or "").strip()
-        if structured and (item.answer_mode or "guided_answer") in {"direct_answer", "guided_answer"}
-        else None
-    )
-
-    fields = {
-        "title": title,
-        "item_key": item_key,
-        "text": normalized_text,
-        "question": question,
-        "answer": answer,
-        "aliases": " ".join(aliases),
-    }
-    all_text = " ".join(value for value in fields.values() if value)
-    matched_terms = [term for term in analysis.high_value_terms or analysis.terms if term and term in all_text]
-    breakdown: dict[str, float] = {}
-    methods: set[str] = set()
-
-    phrase = analysis.normalized_query
-    if phrase and len(phrase) >= 2:
-        if phrase in question or phrase in fields["aliases"]:
-            _add_score(breakdown, methods, "exact_phrase_recall", 18.0)
-        elif phrase in title:
-            _add_score(breakdown, methods, "exact_phrase_recall", 12.0)
-        elif phrase in normalized_text or phrase in answer:
-            _add_score(breakdown, methods, "exact_phrase_recall", 8.0)
-
-    if structured:
-        _add_score(breakdown, methods, "structured_fact_recall", 12.0)
-        if direct:
-            _add_score(breakdown, methods, "direct_answer_fact", 10.0)
-        if item.knowledge_kind == "business_fact":
-            _add_score(breakdown, methods, "business_fact_boost", 8.0)
-        elif item.knowledge_kind == "faq":
-            _add_score(breakdown, methods, "approved_qa_boost", 6.0)
-
-    for term in analysis.high_value_terms:
-        if not term:
-            continue
-        if term in title:
-            _add_score(breakdown, methods, "title_recall", 5.0)
-        if term in question or term in fields["aliases"]:
-            _add_score(breakdown, methods, "qa_business_recall", 4.5)
-        if term in answer:
-            _add_score(breakdown, methods, "answer_recall", 2.0)
-        if term in normalized_text:
-            _add_score(breakdown, methods, "keyword_recall", 1.0 + min(normalized_text.count(term), 3) * 0.35)
-        if term in item_key:
-            _add_score(breakdown, methods, "business_entity_recall", 2.5)
-
-    for term in analysis.entity_terms + analysis.service_terms + analysis.intent_terms:
-        if term and term in all_text:
-            _add_score(breakdown, methods, "business_entity_recall", 2.0)
-
-    for term in analysis.numeric_terms:
-        if term and term in all_text:
-            _add_score(breakdown, methods, "numeric_recall", 4.0)
-
-    coverage_terms = analysis.high_value_terms or analysis.terms
-    if coverage_terms:
-        coverage = len([term for term in coverage_terms if term in all_text]) / max(len(coverage_terms), 1)
-        if coverage:
-            _add_score(breakdown, methods, "full_text_style_scoring", round(coverage * 8.0, 3))
-        if coverage >= 0.75:
-            _add_score(breakdown, methods, "term_coverage_bonus", 4.0)
-    else:
-        _add_score(breakdown, methods, "metadata_default", max(0.0, 5.0 - min(chunk.priority or 100, 1000) / 200.0))
-
-    if market_id is not None and chunk.market_id == market_id:
-        _add_score(breakdown, methods, "metadata_market_exact", 0.75)
-    if channel and chunk.channel == channel:
-        _add_score(breakdown, methods, "metadata_channel_exact", 0.75)
-    if language and chunk.language == language:
-        _add_score(breakdown, methods, "metadata_language_exact", 0.75)
-
-    priority = int(chunk.priority or item.priority or 100)
-    _add_score(breakdown, methods, "priority_boost", max(0.0, 6.0 - min(priority, 600) / 100.0))
-
-    score = round(sum(breakdown.values()), 3)
-    metadata = _metadata_for_hit(chunk=chunk, item=item, methods=methods, matched_terms=matched_terms, breakdown=breakdown)
-    return KnowledgeChunkHit(
-        item_id=chunk.item_id,
-        item_key=chunk.item_key,
-        title=chunk.title,
-        published_version=chunk.published_version,
-        chunk_index=chunk.chunk_index,
-        score=score,
-        text=chunk.chunk_text,
-        metadata=metadata,
-        retrieval_method="+".join(sorted(methods)) if methods else "metadata_default",
-        matched_terms=_dedupe(matched_terms),
-        score_breakdown={key: round(value, 3) for key, value in sorted(breakdown.items())},
-        direct_answer=structured_fact_answer,
-        answer_mode=item.answer_mode,
-        source_metadata=_safe_source_metadata(item, chunk),
-    )
-
-
-def _fuse_hits(hits: Iterable[KnowledgeChunkHit]) -> list[KnowledgeChunkHit]:
-    best: dict[tuple[int, int, int], KnowledgeChunkHit] = {}
-    for hit in hits:
-        key = (hit.item_id, hit.published_version, hit.chunk_index)
-        previous = best.get(key)
-        if previous is None or hit.score > previous.score:
-            best[key] = hit
-        elif previous is not None and hit.score == previous.score and len(hit.matched_terms) > len(previous.matched_terms):
-            best[key] = hit
-    return list(best.values())
-
-
-def _metadata_for_hit(
-    *,
-    chunk: KnowledgeChunk,
-    item: KnowledgeItem,
-    methods: set[str],
-    matched_terms: list[str],
-    breakdown: dict[str, float],
-) -> dict[str, Any]:
-    metadata = dict(chunk.metadata_json or {})
-    metadata.update(
-        {
-            "source_type": chunk.source_type,
-            "file_name": chunk.file_name,
-            "market_id": chunk.market_id,
-            "channel": chunk.channel,
-            "audience_scope": chunk.audience_scope,
-            "language": chunk.language,
-            "priority": chunk.priority,
-            "knowledge_kind": item.knowledge_kind,
-            "fact_status": item.fact_status,
-            "answer_mode": item.answer_mode,
-            "fact_question": item.fact_question,
-            "fact_aliases": item.fact_aliases_json or [],
-            "citation": item.citation_metadata_json or {},
-            "retrieval_method": "+".join(sorted(methods)) if methods else "metadata_default",
-            "matched_terms": _dedupe(matched_terms),
-            "score_breakdown": {key: round(value, 3) for key, value in sorted(breakdown.items())},
-        }
-    )
-    return metadata
-
-
-def _safe_source_metadata(item: KnowledgeItem, chunk: KnowledgeChunk) -> dict[str, Any]:
-    metadata = dict(chunk.metadata_json or {})
-    safe = {key: metadata.get(key) for key in SAFE_SOURCE_FIELDS if key in metadata}
-    safe.update(
-        {
-            "item_key": item.item_key,
-            "title": item.title,
-            "published_version": item.published_version,
-            "chunk_index": chunk.chunk_index,
-            "citation": item.citation_metadata_json or metadata.get("citation") or {},
-        }
-    )
-    return safe
 
 
 def _grounding_source_from_hits(hits: list[KnowledgeChunkHit]) -> dict[str, Any] | None:
@@ -836,10 +558,3 @@ def _dedupe(values: Iterable[str]) -> list[str]:
         seen.add(cleaned)
         items.append(cleaned)
     return items
-
-
-def _add_score(breakdown: dict[str, float], methods: set[str], key: str, value: float) -> None:
-    if value <= 0:
-        return
-    methods.add(key)
-    breakdown[key] = breakdown.get(key, 0.0) + value

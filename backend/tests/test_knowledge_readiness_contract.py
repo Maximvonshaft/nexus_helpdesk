@@ -180,9 +180,8 @@ def test_future_expired_stale_ownerless_and_unreviewed_content_fails_closed() ->
     }
 
 
-def test_provider_contract_requires_v2_enabled_model_dimension_credentials_and_real_production_provider() -> None:
+def test_provider_contract_requires_enabled_model_dimension_credentials_and_real_production_provider() -> None:
     ready = service.provider_readiness(SimpleNamespace(
-        knowledge_runtime_version="v2",
         knowledge_embeddings_enabled=True,
         knowledge_embedding_provider="openai_compatible",
         knowledge_embedding_model="model-a",
@@ -192,7 +191,6 @@ def test_provider_contract_requires_v2_enabled_model_dimension_credentials_and_r
         app_env="production",
     ))
     broken = service.provider_readiness(SimpleNamespace(
-        knowledge_runtime_version="legacy",
         knowledge_embeddings_enabled=False,
         knowledge_embedding_provider="deterministic_hash",
         knowledge_embedding_model="",
@@ -512,7 +510,7 @@ def test_database_failure_rolls_back_and_never_exposes_error_text() -> None:
 
 def test_shell_probe_has_no_speedaf_secret_or_live_lookup_dependency() -> None:
     root = Path(__file__).resolve().parents[2]
-    shell = (root / "scripts" / "nexus_knowledge_runtime_v2_readiness_probe.sh").read_text(encoding="utf-8")
+    shell = (root / "scripts" / "nexus_knowledge_runtime_readiness_probe.sh").read_text(encoding="utf-8")
 
     assert "probe_knowledge_readiness.py" in shell
     assert "SPEEDAF_MCP_TEST" not in shell

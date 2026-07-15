@@ -642,7 +642,7 @@ def test_persona_identity_context_is_context_only_not_backend_reply_override(db_
         body="你是谁",
     )
     parsed = OutputContracts.validate_and_parse(
-        "nexus_webchat_runtime_reply_v1",
+        "nexus.webchat_runtime_reply",
         json.dumps({"customer_reply": "我是客服助手。", "language": "zh", "intent": "other", "handoff_required": False, "ticket_should_create": False}),
         evidence_present=False,
         persona_context=context["persona_context"],

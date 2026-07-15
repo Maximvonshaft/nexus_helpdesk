@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from app.services import webchat_ai_service
 import app.services.webchat_runtime_ai_service as webchat_runtime_ai_service
 from app.services.ai_runtime.schemas import RuntimeAIProviderResult
+from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_runtime_output_parser import RuntimeReplyParseError
 from app.services.webchat_runtime_ai_service import _result_from_provider
 
@@ -24,6 +28,59 @@ def test_tracking_number_for_policy_keeps_real_ch_waybill_metadata():
     )
 
     assert tracking == "CH020000129135"
+
+
+def test_webchat_remembers_tracking_reference_even_when_lookup_is_disabled(monkeypatch):
+    monkeypatch.setattr(webchat_ai_service.settings, "webchat_tracking_fact_lookup_enabled", False)
+    conversation = SimpleNamespace(last_tracking_number=None)
+    ticket = SimpleNamespace(tracking_number=None)
+    visitor_message = SimpleNamespace(body="我的运单号是 CH01026681375")
+
+    result = webchat_ai_service._maybe_lookup_tracking_fact(
+        conversation=conversation,
+        ticket=ticket,
+        visitor_message=visitor_message,
+        history_rows=[],
+    )
+
+    assert result is None
+    assert conversation.last_tracking_number == "CH01026681375"
+    assert ticket.tracking_number == "CH01026681375"
+
+
+def test_webchat_tracking_continuation_reuses_recent_reference(monkeypatch):
+    monkeypatch.setattr(webchat_ai_service.settings, "webchat_tracking_fact_lookup_enabled", True)
+    captured = {}
+
+    def fake_lookup_tracking_fact(**kwargs):
+        captured.update(kwargs)
+        return TrackingFactResult(
+            ok=False,
+            tracking_number=kwargs["tracking_number"],
+            tool_status="failed",
+            failure_reason="tracking_lookup_no_match",
+        )
+
+    monkeypatch.setattr(webchat_ai_service, "lookup_tracking_fact", fake_lookup_tracking_fact)
+    conversation = SimpleNamespace(id=12, public_id="conversation-12", last_tracking_number="CH01026681375")
+    ticket = SimpleNamespace(id=34, tracking_number="CH01026681375")
+    visitor_message = SimpleNamespace(id=3, body="我上面已经提供过给你")
+    history_rows = [
+        SimpleNamespace(id=1, body="我的运单号是 CH01026681375"),
+        SimpleNamespace(id=2, body="请提供运单号"),
+        visitor_message,
+    ]
+
+    result = webchat_ai_service._maybe_lookup_tracking_fact(
+        conversation=conversation,
+        ticket=ticket,
+        visitor_message=visitor_message,
+        history_rows=history_rows,
+    )
+
+    assert result is not None
+    assert captured["tracking_number"] == "CH01026681375"
+    assert result.failure_reason == "tracking_lookup_no_match"
 
 
 def test_latency_profile_uses_unified_runtime_for_general_knowledge_query():
@@ -109,7 +166,7 @@ def test_latency_profile_keeps_real_ch_waybill_on_unified_runtime_path():
 def test_runtime_profile_preserves_knowledge_context_in_unified_pipeline():
     runtime_context = {
         "knowledge_context": {
-            "retrieval": "hybrid_rag_v2",
+            "retrieval": "hybrid_rag",
             "total_matches": 1,
             "hits": [{"item_key": "qa.production.answer"}],
             "locked_facts": [{"item_key": "qa.production.answer", "answer": "生产知识闭环暗号是 canyon-lime。"}],
@@ -122,8 +179,8 @@ def test_runtime_profile_preserves_knowledge_context_in_unified_pipeline():
     )
 
     assert profiled["latency_class"] == "unified_ai_runtime"
-    assert profiled["runtime_prompt_profile"] == "unified_ai_runtime_v1"
-    assert profiled["knowledge_context"]["retrieval"] == "hybrid_rag_v2"
+    assert profiled["runtime_prompt_profile"] == "unified_ai_runtime"
+    assert profiled["knowledge_context"]["retrieval"] == "hybrid_rag"
     assert profiled["knowledge_context"]["locked_facts"]
 
 
@@ -740,8 +797,8 @@ async def test_generate_trusted_tracking_uses_light_runtime_profile(monkeypatch)
     assert result.ok is True
     assert request.recent_context == [{"role": "customer", "text": "old context"}]
     assert request.metadata["latency_class"] == "trusted_tracking_fact"
-    assert request.metadata["runtime_prompt_profile"] == "trusted_tracking_fact_v1"
-    assert request.metadata["context_version"] == "nexus_webchat_runtime_context_v1"
+    assert request.metadata["runtime_prompt_profile"] == "trusted_tracking_fact"
+    assert request.metadata["context_version"] == "nexus.webchat_runtime_context"
     assert request.metadata["knowledge_context"] == {}
     assert request.metadata["retrieval_methods"] == ["skipped_for_trusted_tracking_fact"]
     assert result.runtime_trace["runtime_usage"] == {
@@ -815,7 +872,7 @@ async def test_generate_knowledge_answer_uses_unified_runtime_profile(monkeypatc
     assert result.ok is True
     assert request.recent_context == [{"role": "customer", "text": "old context"}]
     assert request.metadata["latency_class"] == "unified_ai_runtime"
-    assert request.metadata["runtime_prompt_profile"] == "unified_ai_runtime_v1"
+    assert request.metadata["runtime_prompt_profile"] == "unified_ai_runtime"
     assert request.metadata["knowledge_context"]["locked_facts"]
 
 
@@ -863,8 +920,8 @@ async def test_generate_explicit_handoff_request_uses_unified_runtime_profile(mo
     assert result.ok is True
     assert request.recent_context == [{"role": "customer", "text": "older context should not be needed"}]
     assert request.metadata["latency_class"] == "unified_ai_runtime"
-    assert request.metadata["runtime_prompt_profile"] == "unified_ai_runtime_v1"
-    assert request.metadata["context_version"] == "nexus_webchat_runtime_context_v1"
+    assert request.metadata["runtime_prompt_profile"] == "unified_ai_runtime"
+    assert request.metadata["context_version"] == "nexus.webchat_runtime_context"
     assert request.metadata["knowledge_context"]["hits"] == [{"item_key": "must-not-enter"}]
     assert request.metadata["domain_intelligence_trace"] == {"used": True}
 

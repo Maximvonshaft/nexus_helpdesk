@@ -47,7 +47,7 @@ def _request() -> ProviderRequest:
         session_id="s1",
         scenario="webchat_runtime_reply",
         body="hello",
-        output_contract="nexus_webchat_runtime_reply_v1",
+        output_contract="nexus.webchat_runtime_reply",
         timeout_ms=1000,
     )
 
@@ -63,7 +63,7 @@ def _trusted_tracking_followup_request() -> ProviderRequest:
         body="The recipient says they did not receive it. What should we do?",
         tracking_fact_summary="Trusted tracking fact: parcel ending 007813 is delivered.",
         tracking_fact_evidence_present=True,
-        output_contract="nexus_webchat_runtime_reply_v1",
+        output_contract="nexus.webchat_runtime_reply",
         timeout_ms=1000,
         metadata={
             "knowledge_context": {
@@ -85,7 +85,7 @@ async def test_provider_runtime_router_single_runtime_success_and_audit():
         {
             "primary_provider": "private_ai_runtime",
             "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
+            "output_contract": "nexus.webchat_runtime_reply",
             "timeout_ms": 3000,
             "kill_switch": False,
             "canary_percent": 100,
@@ -124,7 +124,7 @@ async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
         {
             "primary_provider": "private_ai_runtime",
             "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
+            "output_contract": "nexus.webchat_runtime_reply",
             "timeout_ms": 3000,
             "kill_switch": False,
             "canary_percent": 100,
@@ -151,7 +151,7 @@ async def test_provider_runtime_router_accepts_trusted_tracking_followup_with_un
         {
             "primary_provider": "private_ai_runtime",
             "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
+            "output_contract": "nexus.webchat_runtime_reply",
             "timeout_ms": 3000,
             "kill_switch": False,
             "canary_percent": 100,

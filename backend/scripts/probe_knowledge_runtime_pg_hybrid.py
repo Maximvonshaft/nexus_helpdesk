@@ -21,8 +21,8 @@ from app.enums import UserRole  # noqa: E402
 from app.models import User  # noqa: E402
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem  # noqa: E402
 from app.services.knowledge_retrieval_service import index_published_item  # noqa: E402
-from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
-from app.services.knowledge_runtime_v2.embeddings import get_embedding_provider, semantic_hash, vector_literal  # noqa: E402
+from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
+from app.services.knowledge_runtime.embeddings import get_embedding_provider, semantic_hash, vector_literal  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 
@@ -64,7 +64,6 @@ def main() -> int:
     server = ThreadingHTTPServer(("127.0.0.1", 0), _EmbeddingHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    os.environ["KNOWLEDGE_RUNTIME_VERSION"] = "v2"
     os.environ["KNOWLEDGE_EMBEDDINGS_ENABLED"] = "true"
     os.environ["KNOWLEDGE_EMBEDDING_PROVIDER"] = "openai_compatible"
     os.environ["KNOWLEDGE_EMBEDDING_MODEL"] = "probe-openai-compatible-1024"
@@ -198,8 +197,8 @@ def _assert_result(result) -> dict[str, Any]:
     methods = set(trace.get("retrieval_methods") or [])
     vector = trace.get("vector") or {}
     top_keys = [hit.item_key for hit in result.hits[:5]]
-    if trace.get("retrieval") != "hybrid_rag_v2":
-        raise RuntimeError("retrieval_trace_not_hybrid_rag_v2")
+    if trace.get("retrieval") != "hybrid_rag":
+        raise RuntimeError("retrieval_trace_not_hybrid_rag")
     if vector.get("provider") != "openai_compatible":
         raise RuntimeError("embedding_provider_not_openai_compatible")
     if vector.get("storage") != "pgvector":
