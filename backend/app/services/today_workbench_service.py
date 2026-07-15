@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import ConversationState, JobStatus, MessageStatus, SourceChannel, TicketStatus, UserRole
+from ..enums import ConversationState, JobStatus, MessageStatus, SourceChannel, TicketStatus
 from ..models import BackgroundJob, Ticket, TicketOutboundMessage, User
 from ..operator_models import OperatorTask
 from ..utils.time import ensure_utc, utc_now
@@ -14,11 +14,13 @@ from .permissions import (
     CAP_OUTBOUND_DRAFT_SAVE,
     CAP_OUTBOUND_SEND,
     CAP_RUNTIME_MANAGE,
+    CAP_TICKET_ASSIGN,
     CAP_TICKET_READ,
     CAP_WEBCALL_VOICE_QUEUE_VIEW,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     resolve_capabilities,
 )
+from .scope_permissions import has_global_case_visibility
 
 ACTIVE_TICKET_STATUSES = (
     TicketStatus.new,
@@ -38,7 +40,7 @@ def _value(raw: Any) -> Any:
 
 def _visible_ticket_query(db: Session, user: User):
     query = db.query(Ticket)
-    if user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if not has_global_case_visibility(user, db):
         query = query.filter(or_(Ticket.team_id == user.team_id, Ticket.assignee_id == user.id))
     return query
 
@@ -69,14 +71,15 @@ def _email_case_filter():
     return or_(*predicates)
 
 
-def _active_handoff_count(db: Session) -> int:
+def _active_handoff_count(db: Session, user: User) -> int:
+    query = db.query(OperatorTask).outerjoin(Ticket, OperatorTask.ticket_id == Ticket.id)
+    if not has_global_case_visibility(user, db):
+        query = query.filter(or_(Ticket.team_id == user.team_id, Ticket.assignee_id == user.id, OperatorTask.assignee_id == user.id))
     return int(
-        db.query(func.count(OperatorTask.id))
-        .filter(
+        query.filter(
             OperatorTask.task_type == "handoff",
             OperatorTask.status.notin_(TERMINAL_TASK_STATUSES),
-        )
-        .scalar()
+        ).with_entities(func.count(OperatorTask.id)).scalar()
         or 0
     )
 
@@ -160,8 +163,8 @@ def _interaction_states() -> list[dict[str, str]]:
         {"key": "loading", "state": "loading", "user_copy": "正在加载今日任务；超过 8 秒显示重试入口。", "required": "skeleton + retry + request id", "status": "implemented"},
         {"key": "empty", "state": "empty", "user_copy": "当前没有待处理任务，提供下一步入口而不是空表。", "required": "empty state + next best action", "status": "implemented"},
         {"key": "error", "state": "error", "user_copy": "展示失败原因、重试动作和诊断编号。", "required": "error summary + retry", "status": "implemented"},
-        {"key": "permission", "state": "permission denied", "user_copy": "只展示当前 capability 可执行的入口；不可用动作说明找主管。", "required": "capability filtered command", "status": "implemented"},
-        {"key": "dirty", "state": "unsaved changes", "user_copy": "编辑类工作台保留离开确认，避免丢失回复或配置。", "required": "dirty form guard", "status": "implemented"},
+        {"key": "permission", "state": "permission denied", "user_copy": "只展示当前 capability 可执行的入口。", "required": "capability filtered command", "status": "implemented"},
+        {"key": "dirty", "state": "unsaved changes", "user_copy": "编辑类工作台保留离开确认。", "required": "dirty form guard", "status": "implemented"},
     ]
 
 
@@ -208,20 +211,20 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
     )
     email_cases = _count(_active_tickets(visible).filter(_email_case_filter()))
     webchat_cases = _count(_active_tickets(visible).filter(Ticket.source_channel == SourceChannel.web_chat))
-    handoff_count = _active_handoff_count(db) if CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities else 0
+    handoff_count = _active_handoff_count(db, current_user) if CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities else 0
     runtime_recovery = _dead_runtime_count(db) if CAP_RUNTIME_MANAGE in capabilities else 0
 
     tasks = [
-        _task("webchat-handoff", "待人工接入 WebChat", handoff_count, _tone(handoff_count, danger=5), "/api/webchat/admin/handoff/queue", "先接入等待最久且 AI 已暂停的会话", "webchat", "/webchat", enabled=CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities),
-        _task("my-tickets", "我的处理中工单", my_tickets, _tone(my_tickets, danger=12, warning=1), "/api/lite/cases?assignee_id=me", "按 SLA 剩余时间排序处理", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities),
-        _task("sla-risk", "30 分钟内 SLA 风险", sla_risk, _tone(sla_risk, danger=3, warning=1), "/api/lite/today-workbench", "先回复客户或升级组长", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities),
-        _task("customer-ready", "客户待回复", ready_to_reply, _tone(ready_to_reply, danger=8, warning=1), "/api/lite/cases?status=pending_human", "避免客户二次催问", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities),
-        _task("email-waiting", "等待中的 Email", email_cases, _tone(email_cases, danger=8, warning=1), "/api/lite/cases?channel=email", "打开 Email 工作台处理邮件队列", "email", "/email", enabled=bool({CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND} & capabilities)),
+        _task("webchat-handoff", "待人工接入 WebChat", handoff_count, _tone(handoff_count, danger=5), "/api/webchat/admin/handoff/queue", "先接入等待最久且 AI 已暂停的会话", "workspace", "/workspace", enabled=CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities),
+        _task("my-tickets", "我的处理中工单", my_tickets, _tone(my_tickets, danger=12), "/api/lite/cases?assignee_id=me", "按 SLA 剩余时间排序处理", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities),
+        _task("sla-risk", "30 分钟内 SLA 风险", sla_risk, _tone(sla_risk, danger=3), "/api/lite/today-workbench", "先回复客户或升级", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities),
+        _task("customer-ready", "客户待回复", ready_to_reply, _tone(ready_to_reply, danger=8), "/api/lite/cases?status=pending_human", "避免客户二次催问", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities),
+        _task("email-waiting", "等待中的 Email", email_cases, _tone(email_cases, danger=8), "/api/lite/cases?channel=email", "进入渠道与案例工作台处理邮件", "channels", "/channels", enabled=bool({CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND} & capabilities)),
     ]
-    if current_user.role in {UserRole.lead, UserRole.manager, UserRole.admin}:
-        tasks.append(_task("unassigned", "未分配队列", unassigned, _tone(unassigned, danger=10, warning=1), "/api/lite/cases?assignee_id=null", "按语言、市场、负载分配给 Agent", "workspace", "/workspace", enabled=CAP_TICKET_READ in capabilities))
+    if CAP_TICKET_ASSIGN in capabilities:
+        tasks.append(_task("unassigned", "未分配队列", unassigned, _tone(unassigned, danger=10), "/api/lite/cases?assignee_id=null", "按语言、市场和负载分配", "workspace", "/workspace", enabled=True))
     if CAP_RUNTIME_MANAGE in capabilities:
-        tasks.append(_task("runtime-recovery", "运行异常待恢复", runtime_recovery, _tone(runtime_recovery, danger=5, warning=1), "/api/admin/queue/summary", "走 dry-run 恢复向导", "runtime", "/runtime", enabled=True))
+        tasks.append(_task("runtime-recovery", "运行异常待恢复", runtime_recovery, _tone(runtime_recovery, danger=5), "/api/admin/queue/summary", "进入运行与审计页面修复", "runtime", "/runtime", enabled=True))
 
     return {
         "generated_at": now.isoformat(),
@@ -230,20 +233,20 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
         "capabilities": sorted(capabilities),
         "tasks": tasks,
         "metrics": [
-            _metric("active_tickets", "可见活动工单", active_count, "当前账号可处理的未关闭工单"),
-            _metric("webchat_cases", "WebChat 队列", webchat_cases, "网站会话与 handoff 来源工单", _tone(webchat_cases, danger=20, warning=1)),
-            _metric("email_cases", "Email 队列", email_cases, "邮件来源或邮件候选工单", _tone(email_cases, danger=20, warning=1)),
-            _metric("sla_risk", "SLA 风险", sla_risk, "30 分钟内到期或已违约", _tone(sla_risk, danger=3, warning=1)),
-            _metric("overdue", "已超时", overdue, "first response 或 resolution 已违约", _tone(overdue, danger=1, warning=1)),
-            _metric("ready_to_reply", "客户待回复", ready_to_reply, "需要人工回复或复核的会话", _tone(ready_to_reply, danger=8, warning=1)),
+            _metric("active_tickets", "可见活动工单", active_count, "当前账号授权范围内未关闭工单"),
+            _metric("webchat_cases", "WebChat 队列", webchat_cases, "网站会话与人工接管来源工单", _tone(webchat_cases, danger=20)),
+            _metric("email_cases", "Email 队列", email_cases, "邮件来源或邮件候选工单", _tone(email_cases, danger=20)),
+            _metric("sla_risk", "SLA 风险", sla_risk, "30 分钟内到期或已违约", _tone(sla_risk, danger=3)),
+            _metric("overdue", "已超时", overdue, "first response 或 resolution 已违约", _tone(overdue, danger=1)),
+            _metric("ready_to_reply", "客户待回复", ready_to_reply, "需要人工回复或复核的会话", _tone(ready_to_reply, danger=8)),
         ],
         "sla_priorities": _sla_priority_rows(db, current_user, now),
         "interaction_states": _interaction_states(),
         "command_center": [
-            _command("cmd-webchat", "接入等待最久的 WebChat", "Agent / Lead", "webchat", "/webchat", "打开接管台并按等待时间处理", enabled=CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities, capability=CAP_WEBCHAT_HANDOFF_ACCEPT),
-            _command("cmd-ticket", "处理临近 SLA 工单", "Agent / Lead / Manager", "workspace", "/workspace", "打开 Workspace 并处理 SLA 风险列表", enabled=CAP_TICKET_READ in capabilities, capability=CAP_TICKET_READ),
-            _command("cmd-email", "处理等待中的 Email", "Agent / Lead / Manager", "email", "/email", "打开 Email 工作台并优先处理风险邮件", enabled=bool({CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND} & capabilities), capability=CAP_OUTBOUND_SEND),
-            _command("cmd-webcall", "查看 WebCall 队列", "Agent / Lead / Manager", "webcall", "/webcall", "打开 WebCall 工作台处理来电", enabled=CAP_WEBCALL_VOICE_QUEUE_VIEW in capabilities, capability=CAP_WEBCALL_VOICE_QUEUE_VIEW),
-            _command("cmd-runtime", "运行恢复 / dead 重排", "Admin", "runtime", "/runtime", "打开运行恢复中心处理 dead jobs/outbound", enabled=CAP_RUNTIME_MANAGE in capabilities, capability=CAP_RUNTIME_MANAGE),
+            _command("cmd-webchat", "接入等待最久的 WebChat", "operator", "workspace", "/workspace", "打开统一工作台处理接管", enabled=CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities, capability=CAP_WEBCHAT_HANDOFF_ACCEPT),
+            _command("cmd-ticket", "处理临近 SLA 工单", "operator", "workspace", "/workspace", "打开统一工作台处理 SLA 风险", enabled=CAP_TICKET_READ in capabilities, capability=CAP_TICKET_READ),
+            _command("cmd-email", "处理等待中的 Email", "operator", "channels", "/channels", "查看渠道状态并进入相关案例", enabled=bool({CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND} & capabilities), capability=CAP_OUTBOUND_SEND),
+            _command("cmd-webcall", "查看 WebCall 队列", "operator", "workspace", "/workspace", "在统一队列处理来电案例", enabled=CAP_WEBCALL_VOICE_QUEUE_VIEW in capabilities, capability=CAP_WEBCALL_VOICE_QUEUE_VIEW),
+            _command("cmd-runtime", "运行恢复 / dead 重排", "runtime_manager", "runtime", "/runtime", "打开运行与审计页面", enabled=CAP_RUNTIME_MANAGE in capabilities, capability=CAP_RUNTIME_MANAGE),
         ],
     }
