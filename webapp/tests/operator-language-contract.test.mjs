@@ -23,8 +23,9 @@ test('operator language authority is versioned and bound to the sole UI delivery
   assert.equal(value.schema, 'nexus.operator-language.v1')
   assert.equal(value.work_item, 753)
   assert.equal(value.owner_pr, 754)
-  assert.equal(value.status, 'implemented_except_workspace_pending_performance_convergence')
+  assert.equal(value.status, 'code_convergence_complete_verification_pending')
   assert.match(value.goal, /current task, current state, available action and recovery step/)
+  assert.deepEqual(value.pending_surfaces, [])
 })
 
 test('primary surfaces are limited to task, state, action and recovery language', () => {
@@ -63,11 +64,27 @@ test('completed surfaces contain none of the retired narrative literals', () => 
 })
 
 test('operator-facing names replace internal platform vocabulary', () => {
+  const workspace = readRepositoryPath('webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx')
+  const workspacePresentation = readRepositoryPath('webapp/src/lib/operatorWorkspacePresentation.ts')
   const runtime = readRepositoryPath('webapp/src/features/runtime/RuntimePage.tsx')
   const channels = readRepositoryPath('webapp/src/features/channels/ChannelsPage.tsx')
   const knowledge = readRepositoryPath('webapp/src/features/knowledge/KnowledgePage.tsx')
   const audit = readRepositoryPath('webapp/src/features/runtime/RuntimeEvidenceAudit.tsx')
   const controlTower = readRepositoryPath('webapp/src/features/control-tower/ControlTowerPage.tsx')
+
+  for (const label of ['待处理任务', '任务类型', '当前负责人', '处理时限', '任务详情', '处理进度', '已知信息', '接手任务', '接手处理', '转回待处理', '恢复自动回复', '处理编号']) {
+    assert.ok(workspace.includes(label), `workspace operator label is missing: ${label}`)
+  }
+  assert.match(workspace, /mergeLatestThread/)
+  assert.match(workspace, /mergeOlderThread/)
+  assert.match(workspace, /conversationEvents/)
+  assert.match(workspace, /加载更早消息/)
+  assert.doesNotMatch(workspace, /案例处理链路|事实与证据|案例接管|接管案例|释放案例|恢复 AI|服务端最终授权|当前接口未提供可信结案事实/)
+
+  for (const label of ['待接手', '内部任务', '时限正常', '自动回复建议', '处理决定', '操作结果', '已核实信息']) {
+    assert.ok(workspacePresentation.includes(label), `workspace state label is missing: ${label}`)
+  }
+  assert.doesNotMatch(workspacePresentation, /人工接管|运营派发|SLA 正常|AI 建议|人工决定|动作结果|事实与依据|后台 Worker/)
 
   assert.match(runtime, />系统状态</)
   assert.match(runtime, /服务提供方/)
@@ -91,17 +108,6 @@ test('operator-facing names replace internal platform vocabulary', () => {
   assert.match(controlTower, /系统与配置问题/)
   assert.match(controlTower, /去处理/)
   assert.doesNotMatch(controlTower, /运行与治理风险|后端未返回受支持的处理入口|打开处理页面/)
-})
-
-test('workspace copy remains one explicitly bounded pending convergence item', () => {
-  const value = contract()
-  assert.equal(value.pending_surfaces.length, 1)
-  const pending = value.pending_surfaces[0]
-  assert.equal(pending.path, 'webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx')
-  assert.match(pending.reason, /PR #759/)
-  assert.equal(Object.keys(pending.required_replacements).length >= 10, true)
-  assert.equal(pending.required_deletions.length >= 6, true)
-  assert.equal(value.acceptance.some((item) => item.includes('integrated once after PR #759 convergence')), true)
 })
 
 test('technical identifiers are allowed only through named disclosures', () => {
