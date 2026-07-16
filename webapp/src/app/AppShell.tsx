@@ -114,7 +114,7 @@ export function AppShell({
             px: { xs: 1.5, md: 2.5 },
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flexShrink: 0 }} aria-label="Nexus OSR 客服与运营工作台">
+          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flexShrink: 0 }} aria-label="Nexus OSR">
             <Avatar
               variant="rounded"
               sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }}
@@ -122,10 +122,9 @@ export function AppShell({
             >
               N
             </Avatar>
-            <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
-              <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', lineHeight: 1.2 }}>Nexus OSR</Typography>
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>客服与运营工作台</Typography>
-            </Box>
+            <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', display: { xs: 'none', sm: 'block' }, lineHeight: 1.2 }}>
+              Nexus OSR
+            </Typography>
           </Stack>
 
           <Box sx={{ minWidth: 0, flex: 1 }}>
