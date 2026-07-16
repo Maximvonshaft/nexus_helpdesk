@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTROLLED_COMPOSE = REPO_ROOT / "deploy" / "docker-compose.controlled.yml"
+APP_INIT = REPO_ROOT / "backend" / "app" / "__init__.py"
 OBSERVABILITY = REPO_ROOT / "backend" / "app" / "services" / "observability.py"
 GUNICORN_CONFIG = REPO_ROOT / "backend" / "gunicorn.conf.py"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
@@ -27,9 +28,14 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
     assert "pushgateway" not in compose.lower()
 
 
-def test_observability_owns_multiprocess_collection_and_live_gauge_modes() -> None:
+def test_observability_owns_multiprocess_collection_and_container_safe_identity() -> None:
+    app_init = APP_INIT.read_text(encoding="utf-8")
     source = OBSERVABILITY.read_text(encoding="utf-8")
 
+    assert "socket.gethostname()" in app_init
+    assert "def prometheus_process_identifier" in app_init
+    assert "values.MultiProcessValue(process_identifier=prometheus_process_identifier)" in app_init
+    assert "multiprocess.mark_process_dead = mark_process_dead" in app_init
     assert '_PROMETHEUS_MULTIPROC_DIR = (os.getenv("PROMETHEUS_MULTIPROC_DIR") or "").strip()' in source
     assert "_PROM_REGISTRY = None if _PROMETHEUS_MULTIPROC_ENABLED" in source
     assert "registry = CollectorRegistry()" in source
@@ -50,16 +56,18 @@ def test_gunicorn_and_image_use_the_same_metrics_cleanup_authority() -> None:
     assert "-c /app/backend/gunicorn.conf.py" in dockerfile
 
 
-def test_prometheus_multiprocess_scrape_combines_independent_processes(tmp_path: Path) -> None:
+def test_prometheus_multiprocess_scrape_combines_independent_container_namespaces(tmp_path: Path) -> None:
     script = """
 from app.services.observability import record_worker_poll
 record_worker_poll(__import__('sys').argv[1])
 """
-    env = os.environ.copy()
-    env["PROMETHEUS_MULTIPROC_DIR"] = str(tmp_path)
-    env["PYTHONPATH"] = str(REPO_ROOT / "backend")
+    base_env = os.environ.copy()
+    base_env["PROMETHEUS_MULTIPROC_DIR"] = str(tmp_path)
+    base_env["PYTHONPATH"] = str(REPO_ROOT / "backend")
 
     for worker_id in ("worker-a", "worker-b"):
+        env = base_env.copy()
+        env["NEXUS_METRICS_PROCESS_NAMESPACE"] = worker_id
         subprocess.run(
             [sys.executable, "-c", script, worker_id],
             check=True,
@@ -69,6 +77,12 @@ record_worker_poll(__import__('sys').argv[1])
             text=True,
         )
 
+    mmap_names = {path.name for path in tmp_path.glob("*.db")}
+    assert any(name.startswith("counter_worker-a-") for name in mmap_names)
+    assert any(name.startswith("counter_worker-b-") for name in mmap_names)
+
+    scrape_env = base_env.copy()
+    scrape_env["NEXUS_METRICS_PROCESS_NAMESPACE"] = "scraper"
     scrape = subprocess.run(
         [
             sys.executable,
@@ -77,7 +91,7 @@ record_worker_poll(__import__('sys').argv[1])
         ],
         check=True,
         cwd=REPO_ROOT / "backend",
-        env=env,
+        env=scrape_env,
         capture_output=True,
         text=True,
     ).stdout
