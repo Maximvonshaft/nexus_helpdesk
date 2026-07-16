@@ -1,0 +1,323 @@
+protocol_id: nexus-governance-15-lane-v3.1
+protocol_version: 3.1.0
+status: CURRENT
+authority:
+  repository: Maximvonshaft/nexus_helpdesk
+  branch: governance/audit-control-plane
+  protocol_path: audit-control-plane/protocol/nexus-audit-controller-v3.1.yaml
+  exact_commit_source: main_pointer_or_issue_722_authority_pointer
+  issue_ledger: 722
+  rule: An exact governance commit plus matching protocol digest is required; a branch name alone is never sufficient authority.
+
+purpose:
+  - Preserve Nexus governance and audit authority independently from rewritten product history.
+  - Convert specialist observations into one deduplicated, current-main, evidence-backed execution queue.
+  - Prevent stale comments, historical PR narratives, partial runs, and overwritten main files from becoming current authority.
+  - Keep discovery, verification, governance acceptance, execution, and retirement as separate states.
+
+authority_order:
+  - exact governance commit referenced by docs/governance/audit-control-plane.ref.json or the current Issue 722 authority pointer
+  - this protocol file at that exact governance commit
+  - FINAL VALIDATED_STATE_SNAPSHOT at one exact main SHA
+  - FINAL NEXUS_EXECUTION_CONTEXT_INDEX bound to that snapshot
+  - subject-specific NEXUS_EXECUTION_PACKET
+  - current GitHub objects and exact repository files used as evidence
+  - append-only Issue 722 audit events
+  - historical comments, PR bodies, documents, and reports
+conflict_rule: Higher authority wins. Same-level disagreement is a formal contradiction and blocks promotion.
+
+surfaces:
+  governance_branch:
+    role: canonical_file_authority_and_durable_history
+    write_policy: append_or_explicit_supersession_only
+    prohibited:
+      - force_push
+      - branch_deletion
+      - merging_main_into_governance_branch
+      - product_runtime_implementation
+  issue_722:
+    role: append_only_event_stream_and_human_entry
+    prohibited:
+      - silently_editing_historical_events
+      - treating_unverified_comments_as_current_execution_truth
+  main:
+    role: product_integration_and_exact_pointer_consumer
+    required_files:
+      - docs/governance/audit-control-plane.ref.json
+      - scripts/verify_governance_authority.py
+    rule: main stores a replaceable pointer and verifier, never the sole copy of governance authority.
+
+permissions:
+  default_mode: read_only
+  only_automatic_write_surface: Issue 722 append-only comments
+  prohibited_without_explicit_owner_execution_authority:
+    - repository_code_write
+    - branch_or_ref_write
+    - pull_request_or_issue_metadata_write
+    - action_trigger_rerun_cancel_or_configuration_change
+    - approval_merge_tag_release_or_deployment
+    - credential_provider_outbound_or_production_access
+    - production_data_mutation
+    - destructive_retirement
+  sensitive_output:
+    prohibit:
+      - secrets
+      - tokens
+      - raw_prompts
+      - provider_payloads
+      - customer_message_bodies
+      - unredacted_logs
+      - direct_personal_identifiers
+
+cycle:
+  timezone: Europe/Podgorica
+  cadence: hourly
+  cycle_key: exact_main_sha
+  rules:
+    - Every promoted lane result must be bound to the same exact main SHA.
+    - A lane must re-read the authority pointer, protocol digest, current main, and its previous watermark before analysis.
+    - Main movement during a run makes the result STALE_RUN and non-consumable.
+    - PARTIAL results may be indexed but never promoted as FINAL evidence.
+    - Missing lane output is UNKNOWN, never PASS.
+    - A later exact-main result supersedes, but does not delete, historical evidence.
+  finality:
+    FINAL:
+      requirements:
+        - exact main stable from pre-read through pre-publish
+        - required scope completed
+        - evidence URLs resolve exact objects
+        - contradictions and not_verified fields are explicit
+        - no inference represented as observation
+    PARTIAL:
+      meaning: useful evidence with incomplete scope, unresolved dependencies, or missing terminal inputs
+    NO_CHANGE:
+      rule: append no Issue 722 comment unless health degradation or a state transition is material
+    STALE_RUN:
+      rule: append only one bounded stale marker when it changes current state; never promote findings
+
+lanes:
+  delivery_lifecycle:
+    role: current PR, branch, claim, handoff, head, review, and lifecycle truth
+    owns: [delivery_object_currentness]
+  dependency_config_docs:
+    role: dependency, configuration, documentation, protocol-path, and declared-authority consistency
+    owns: [configuration_and_document_authority]
+  data_migration:
+    role: schema lineage, migration topology, rollback, backfill, and database identity
+    owns: [database_change_authority]
+  runtime_outbound:
+    role: provider, tool, voice, dispatch, outbound, kill-switch, and execution authority
+    owns: [external_execution_boundary]
+  security_privacy:
+    role: authorization, source-to-sink privacy, credential, secret, and data-minimization boundaries
+    owns: [security_and_privacy_findings]
+  knowledge_rag:
+    role: knowledge lifecycle, retrieval evidence, citation, vector, publication, and tenant scope
+    owns: [knowledge_truth_authority]
+  business_loop:
+    role: operator action through durable operational and customer-visible business outcome
+    owns: [business_completion_semantics]
+  architecture:
+    role: canonical implementation, dependency direction, duplicate authority, and boundary decisions
+    owns: [canonical_architecture_candidates]
+  product_frontend:
+    role: operator information architecture, interaction safety, accessibility, and visible truth
+    owns: [operator_product_truth]
+  engineering_quality:
+    role: correctness, concurrency, maintainability, performance risk, tests, and implementation feasibility
+    owns: [engineering_risk]
+  observability_recovery:
+    role: telemetry, incident containment, backup, restore, rollback, runtime identity, and recovery proof
+    owns: [operational_recovery_truth]
+  repository_retirement:
+    role: duplicate, dead, superseded, compatibility, and obsolete asset retirement lifecycle
+    owns: [retirement_candidate_state]
+    destructive_authority: false
+  ci_release_evidence:
+    role: exact-head verification, artifacts, migration rehearsal, image identity, provenance, and release evidence
+    owns: [verification_and_release_evidence]
+    trigger_authority: false
+  ledger_truth:
+    role: cross-lane currentness, dedupe, contradiction, tombstone, snapshot, and context-index reconciliation
+    owns: [validated_state_snapshot, execution_context_index]
+    self_health_claim_allowed: false
+  governance:
+    role: final priority, canonical acceptance, bounded execution packet issuance, and NO_GO or GO decision
+    owns: [governance_acceptance, execution_packet]
+    rule: Governance consumes only a FINAL current-main snapshot and FINAL context index.
+
+state_model:
+  finding_states:
+    - OBSERVED
+    - CANDIDATE
+    - CONFIRMED
+    - VERIFIED_CURRENT
+    - REVALIDATION_REQUIRED
+    - DISPUTED
+    - GOVERNANCE_ACCEPTED
+    - EXECUTION_PACKET_ISSUED
+    - VERIFIED_ON_MAIN
+    - LEGACY_REMOVED
+    - DONE
+    - SUPERSEDED
+    - CONTRADICTED
+    - STALE_OR_FIXED
+  promotion:
+    - P0 and P1 require independent evidence or exact-object reproduction; echoed comments do not count as confirmation.
+    - GOVERNANCE_ACCEPTED requires a FINAL common-baseline snapshot and no unresolved contradiction for the subject.
+    - EXECUTION_PACKET_ISSUED requires one owner, one target branch or PR, bounded write scope, rollback, verification, and expiry.
+    - VERIFIED_ON_MAIN requires exact-main verification after integration.
+    - LEGACY_REMOVED requires current-main absence plus anti-reintroduction evidence.
+    - DONE requires accepted implementation, exact-main verification, and resolved retirement obligations.
+  demotion:
+    - Main movement, head movement, changed authority paths, or missing evidence causes REVALIDATION_REQUIRED.
+    - Contradictory exact evidence causes DISPUTED or CONTRADICTED.
+    - A fixed or obsolete finding becomes STALE_OR_FIXED or SUPERSEDED; history remains append-only.
+
+evidence:
+  mandatory_fields:
+    - schema
+    - event_type
+    - lane
+    - result_id
+    - audit_cycle_id
+    - idempotency_key
+    - timestamp
+    - baseline_main_sha
+    - final_main_sha
+    - run_state
+    - material_delta
+    - watermark
+    - findings_or_no_change
+    - not_verified
+    - next_owner
+    - prohibited_actions_confirmed
+  exactness:
+    - Evidence must identify exact commit, PR head, issue, file path, line range, workflow run, or artifact identity.
+    - Branch names, titles, green subsets, and narrative claims are insufficient by themselves.
+    - Production behavior is never inferred from static source or CI alone.
+  bounded_output:
+    - Prefer counts, reason codes, hashes, object IDs, and redacted metadata.
+    - Do not copy raw source, payloads, customer content, secrets, or logs into the ledger.
+
+dedupe_and_anti_echo:
+  stable_key: lane|subject|root_cause|exact_object_class
+  rules:
+    - One active root finding may aggregate multiple symptoms and lane observations.
+    - A lane cannot independently confirm its own prior claim merely by restating it.
+    - Ledger truth collapses echoes, tracks supersessions, and preserves evidence URLs.
+    - Governance prioritizes root causes rather than comment count.
+
+snapshot_and_index:
+  validated_state_snapshot:
+    owner: ledger_truth
+    FINAL_requirements:
+      - all required lane terminal packets are addressable
+      - promoted packets share one exact main SHA
+      - protocol exact commit and digest verified
+      - contradictions resolved or explicitly blocking
+      - current CI and runtime claims accurately scoped
+  execution_context_index:
+    owner: ledger_truth
+    contains:
+      - active formal blocks
+      - verified current findings
+      - provisional and revalidation-only findings
+      - supersessions and tombstones
+      - owners and watch keys
+      - active execution packet IDs
+  validity:
+    max_age_hours: 6
+    invalidators:
+      - main_sha_change
+      - governance_protocol_change
+      - watched_object_change
+      - execution_packet_expiry
+      - unresolved_new_contradiction
+
+execution_packet:
+  owner: governance
+  issue_only_when:
+    - snapshot_status_is_FINAL_CURRENT
+    - context_index_status_is_FINAL_CURRENT
+    - subject_is_GOVERNANCE_ACCEPTED
+    - owner_and_write_scope_are_unique
+    - target_is_current_main_qualified
+    - dependencies_are_resolved
+    - rollback_and_verification_are_defined
+    - no_conflicting_active_packet
+  required_fields:
+    - packet_id
+    - subject
+    - exact_governance_commit
+    - protocol_digest
+    - exact_main_sha
+    - owner
+    - target_branch_or_pr
+    - write_paths
+    - dependencies
+    - acceptance
+    - verification
+    - rollback
+    - expiry
+    - prohibited_effects
+  default: NO_PACKET
+
+retirement:
+  states:
+    - DISCOVERED
+    - DUPLICATE_CANDIDATE
+    - DEAD_CANDIDATE
+    - SUPERSEDED_CANDIDATE
+    - MIGRATE_THEN_DELETE
+    - COMPATIBILITY_WITH_DEADLINE
+    - GOVERNANCE_ACCEPTED
+    - DELETION_READY
+    - DELETED
+    - VERIFIED_ABSENT
+  deletion_ready_requires:
+    - governance execution packet explicitly authorizes exact paths
+    - replacement authority is VERIFIED_ON_MAIN
+    - static and runtime consumers are absent or migrated
+    - data, migration, recovery, and rollback obligations are satisfied
+    - anti_reintroduction verification exists
+  rule: Repository-retirement lanes never delete; they only classify and verify.
+
+recovery:
+  main_overwrite:
+    - Resolve the last trusted exact governance commit from Issue 722 or an external protected ref.
+    - Verify protocol digest and hash-chain continuity.
+    - Recreate main pointer and verifier through a reviewed integration branch.
+    - Publish a RECOVERY_POINTER_UPDATE event to Issue 722.
+    - Revalidate every current snapshot, index, and packet against the recovered pointer and current main.
+  governance_branch_damage:
+    - Do not force-move the governance ref.
+    - Create a recovery branch from the last trusted governance commit.
+    - Independently verify history and open a governance recovery review.
+    - Mark all current packets suspended until authority is restored.
+
+branch_policy:
+  main:
+    force_push: prohibited
+    deletion: prohibited
+    direct_write: restricted
+  governance/audit-control-plane:
+    force_push: prohibited
+    deletion: prohibited
+    direct_write: restricted_to_governance_maintainers
+    update_mode: fast_forward_only
+  work_branches:
+    force_push: permitted_when_not_shared_and_not_current_packet_target
+  enforcement_note: Repository rulesets or branch protection must enforce these controls; protocol text alone is not enforcement.
+
+safety:
+  default_posture: NO_GO
+  no_completion_from:
+    - partial_snapshot
+    - stale_run
+    - historical_pr_body
+    - missing_current_head_checks
+    - unverified_runtime_behavior
+    - comment_count
+  owner_override:
+    rule: Explicit owner authority must name the exact action and scope; broad intent does not silently authorize destructive or production effects.
