@@ -20,6 +20,7 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
 
     assert "PROMETHEUS_MULTIPROC_DIR: /var/run/nexus-prometheus" in compose
     assert 'PROMETHEUS_MULTIPROC_DIR: ""' in compose
+    assert "PROMETHEUS_MULTIPROC_DIR= python -c" in compose
     assert "prometheus-multiproc:/var/run/nexus-prometheus" in compose
     assert "find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete" in compose
     assert "--config /app/backend/gunicorn.conf.py" in compose
