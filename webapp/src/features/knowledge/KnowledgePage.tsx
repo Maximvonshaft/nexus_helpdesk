@@ -46,13 +46,13 @@ type KnowledgeDraft = {
   answer_mode: string
 }
 
-const knowledgeKindOptions: Array<{ value: KnowledgeKindFilter; label: string; description: string }> = [
-  { value: 'all', label: '全部分类', description: '查看所有知识' },
-  { value: 'business_fact', label: '客服问答', description: '客户常问问题和标准事实' },
-  { value: 'faq', label: '常见问题', description: '高频问题和服务说明' },
-  { value: 'policy', label: '规则政策', description: '必须遵守的服务规则' },
-  { value: 'sop', label: '处理流程', description: '客服和运营可参考的处理步骤' },
-  { value: 'document', label: '资料文档', description: '导入资料、长文档和待整理内容' },
+const knowledgeKindOptions: Array<{ value: KnowledgeKindFilter; label: string }> = [
+  { value: 'all', label: '全部分类' },
+  { value: 'business_fact', label: '客服问答' },
+  { value: 'faq', label: '常见问题' },
+  { value: 'policy', label: '规则政策' },
+  { value: 'sop', label: '处理流程' },
+  { value: 'document', label: '资料文档' },
 ]
 
 function serializeKnowledgeDraft(draft: KnowledgeDraft) {
@@ -144,10 +144,6 @@ function knowledgeKindLabel(kind: string | null | undefined) {
   if (kind === 'sop') return '处理流程'
   if (kind === 'document') return '资料文档'
   return sanitizeDisplayText(kind || '知识')
-}
-
-function knowledgeKindDescription(kind: string | null | undefined) {
-  return knowledgeKindOptions.find((item) => item.value === kind)?.description || '客服知识'
 }
 
 function errorCopy(error: unknown, fallback: string) {
@@ -305,7 +301,7 @@ export function KnowledgePage() {
     mutationFn: async (publish: boolean) => {
       const payload = knowledgePayloadFromDraft(draft)
       if (!payload.title) throw new Error('请填写知识标题')
-      if (!payload.fact_question && !payload.fact_answer && !payload.draft_body) throw new Error('请填写客户问题或答案事实')
+      if (!payload.fact_question && !payload.fact_answer && !payload.draft_body) throw new Error('请填写客户问题或标准答案')
       let item: KnowledgeItem
       if (selectedId && !isCreating) {
         item = await supportApi.updateKnowledgeItem(selectedId, payload)
@@ -327,7 +323,7 @@ export function KnowledgePage() {
       setDraft(committedDraft)
       setSavedDraft(committedDraft)
       setPublishReviewOpen(false)
-      setSavedMessage(publish ? '已提交发布。知识同步完成后，该版本才会用于后续处理。' : '草稿已保存。')
+      setSavedMessage(publish ? '已提交发布，等待同步。' : '草稿已保存。')
       await invalidateKnowledge()
     },
   })
@@ -344,7 +340,7 @@ export function KnowledgePage() {
       setDraft(committedDraft)
       setSavedDraft(committedDraft)
       setPublishReviewOpen(false)
-      setSavedMessage('已提交发布。知识同步完成后，该版本才会用于后续处理。')
+      setSavedMessage('已提交发布，等待同步。')
       await invalidateKnowledge()
     },
   })
@@ -378,21 +374,18 @@ export function KnowledgePage() {
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
-        <Box>
-          <Typography component="h1" variant="h1">知识与流程</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>维护经过审核的客户问答、规则政策和处理流程。知识不能覆盖实时事实、账号权限或业务结果。</Typography>
-        </Box>
+        <Typography component="h1" variant="h1">知识与流程</Typography>
         {items.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
 
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(270px, 320px) minmax(0, 1fr) minmax(280px, 340px)' } }} aria-label="知识维护工作区">
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(270px, 320px) minmax(0, 1fr) minmax(280px, 340px)' } }} aria-label="知识维护">
         <Paper component="aside" variant="outlined" aria-labelledby="knowledge-list-title" sx={{ minWidth: 0, p: 1.5 }}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
             <Typography id="knowledge-list-title" component="h2" variant="h3">知识列表</Typography>
             <Button variant="contained" size="small" startIcon={<AddRoundedIcon />} onClick={resetForNew}>新建</Button>
           </Stack>
           <Stack spacing={1.25} sx={{ mt: 2 }}>
-            <TextField label="搜索知识" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="标题、客户问法或答案关键字" autoComplete="off" />
+            <TextField label="搜索" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="标题、问题或答案" autoComplete="off" />
             <TextField select label="状态" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as KnowledgeStatusFilter)}>
               <MenuItem value="active">已上线</MenuItem><MenuItem value="draft">草稿</MenuItem><MenuItem value="archived">已归档</MenuItem><MenuItem value="all">全部</MenuItem>
             </TextField>
@@ -402,7 +395,7 @@ export function KnowledgePage() {
           </Stack>
           <Divider sx={{ mt: 2 }} />
           {items.isError ? (
-            <Box sx={{ mt: 2 }}><ErrorNotice title="知识列表不可用" error={items.error} fallback="请稍后重试" /></Box>
+            <Box sx={{ mt: 2 }}><ErrorNotice title="无法读取知识列表" error={items.error} fallback="请稍后重试" /></Box>
           ) : (
             <List disablePadding sx={{ mt: 1, maxHeight: { xl: 'calc(100dvh - 390px)' }, overflowY: 'auto' }}>
               {(items.data?.items ?? []).map((item) => {
@@ -427,30 +420,27 @@ export function KnowledgePage() {
                   </ListItemButton>
                 )
               })}
-              {!items.data?.items?.length ? <EmptyState title="没有找到知识" description="调整搜索条件，或新建一条知识。" /> : null}
+              {!items.data?.items?.length ? <EmptyState title="没有找到知识" description="请调整筛选或新建知识" /> : null}
             </List>
           )}
         </Paper>
 
         <Paper component="section" ref={editorRef} variant="outlined" aria-labelledby="knowledge-editor-title" sx={{ minWidth: 0, p: { xs: 2, md: 2.5 } }}>
           <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
-            <Box>
-              <Typography id="knowledge-editor-title" component="h2" variant="h3">{selectedId && !isCreating ? '编辑知识' : '新建知识'}</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>维护客户问题、事实答案和适用范围。</Typography>
-            </Box>
+            <Typography id="knowledge-editor-title" component="h2" variant="h3">{selectedId && !isCreating ? '编辑知识' : '新建知识'}</Typography>
             <Chip color={statusColor(statusPresentation.tone)} label={statusPresentation.label} />
           </Stack>
           <Divider sx={{ my: 2 }} />
           <Stack spacing={1.75}>
             {saveError ? <ErrorNotice title="保存失败" error={saveError} fallback="请稍后重试" /> : null}
             {savedMessage ? <Alert severity="success" variant="outlined" role="status" aria-live="polite">{savedMessage}</Alert> : null}
-            <TextField label="知识标题" required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="例如：末派失败怎么处理" autoComplete="off" />
+            <TextField label="知识标题" required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="例如：派送失败处理" autoComplete="off" />
             {isCreating || !selectedId ? (
-              <TextField label="内部编号" helperText="系统内部使用，保存后通常不需要再修改。" value={draft.item_key} onChange={(event) => setDraft((current) => ({ ...current, item_key: normalizeKnowledgeKey(event.target.value) }))} autoComplete="off" spellCheck={false} />
+              <TextField label="知识编号" helperText="系统编号" value={draft.item_key} onChange={(event) => setDraft((current) => ({ ...current, item_key: normalizeKnowledgeKey(event.target.value) }))} autoComplete="off" spellCheck={false} />
             ) : null}
-            <TextField label="客户会怎么问" required helperText="写客户可能发来的原话或问题。" value={draft.fact_question} onChange={(event) => setDraft((current) => ({ ...current, fact_question: event.target.value }))} multiline minRows={4} placeholder="例如：我的包裹显示末派失败怎么办？" autoComplete="off" />
-            <TextField label="答案事实与处理规则" required helperText="写经过核实的事实、规则和处理步骤，不写固定话术。" value={draft.fact_answer} onChange={(event) => setDraft((current) => ({ ...current, fact_answer: event.target.value }))} multiline minRows={8} placeholder="例如：先确认运单号和收件电话；若状态为末派失败，核实地址和联系方式；必要时转人工处理。" autoComplete="off" />
-            <TextField label="客户可能的其他说法" helperText="一行一个，帮助系统找到正确知识。" value={draft.fact_aliases} onChange={(event) => setDraft((current) => ({ ...current, fact_aliases: event.target.value }))} multiline minRows={4} placeholder={'包裹派送失败\n快递没有送到\n最后一公里配送异常'} autoComplete="off" />
+            <TextField label="客户问题" required helperText="填写客户原话。" value={draft.fact_question} onChange={(event) => setDraft((current) => ({ ...current, fact_question: event.target.value }))} multiline minRows={4} placeholder="例如：我的包裹显示派送失败怎么办？" autoComplete="off" />
+            <TextField label="标准答案与处理步骤" required helperText="填写核实后的答案和处理步骤。" value={draft.fact_answer} onChange={(event) => setDraft((current) => ({ ...current, fact_answer: event.target.value }))} multiline minRows={8} placeholder="例如：确认运单号和收件电话，核实地址与联系方式，必要时转人工处理。" autoComplete="off" />
+            <TextField label="其他问法" helperText="每行一个。" value={draft.fact_aliases} onChange={(event) => setDraft((current) => ({ ...current, fact_aliases: event.target.value }))} multiline minRows={4} placeholder={'包裹派送失败\n快递没有送到\n末端配送异常'} autoComplete="off" />
             <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
               <TextField select label="适用对象" value={draft.audience_scope} onChange={(event) => setDraft((current) => ({ ...current, audience_scope: event.target.value }))}>
                 <MenuItem value="customer">客户问答</MenuItem><MenuItem value="internal">内部参考</MenuItem>
@@ -458,50 +448,46 @@ export function KnowledgePage() {
               <TextField select label="渠道" value={draft.channel} onChange={(event) => setDraft((current) => ({ ...current, channel: event.target.value }))}>
                 <MenuItem value="all">全部渠道</MenuItem><MenuItem value="webchat">网页客服</MenuItem><MenuItem value="whatsapp">WhatsApp</MenuItem>
               </TextField>
-              <TextField label="语言" value={draft.language} onChange={(event) => setDraft((current) => ({ ...current, language: event.target.value }))} placeholder="空表示自动匹配" autoComplete="off" />
-              <TextField label="优先级" value={draft.priority} type="number" slotProps={{ htmlInput: { min: 0, max: 10000 } }} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))} />
+              <TextField label="语言" value={draft.language} onChange={(event) => setDraft((current) => ({ ...current, language: event.target.value }))} placeholder="自动匹配" autoComplete="off" />
+              <TextField label="优先级" helperText="数字越小越靠前。" value={draft.priority} type="number" slotProps={{ htmlInput: { min: 0, max: 10000 } }} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))} />
               <TextField select label="知识类型" value={draft.knowledge_kind} onChange={(event) => setDraft((current) => ({ ...current, knowledge_kind: event.target.value }))}>
                 <MenuItem value="business_fact">客服问答</MenuItem><MenuItem value="faq">常见问题</MenuItem><MenuItem value="policy">规则政策</MenuItem><MenuItem value="sop">处理流程</MenuItem><MenuItem value="document">资料文档</MenuItem>
               </TextField>
-              <TextField select label="回答方式" value={draft.answer_mode} onChange={(event) => setDraft((current) => ({ ...current, answer_mode: event.target.value }))}>
-                <MenuItem value="guided_answer">按事实组织回复</MenuItem><MenuItem value="direct_answer">答案事实优先</MenuItem>
+              <TextField select label="回复方式" value={draft.answer_mode} onChange={(event) => setDraft((current) => ({ ...current, answer_mode: event.target.value }))}>
+                <MenuItem value="guided_answer">按事实组织回复</MenuItem><MenuItem value="direct_answer">直接使用标准答案</MenuItem>
               </TextField>
             </Box>
-            <TextField label="内部备注" value={draft.summary} onChange={(event) => setDraft((current) => ({ ...current, summary: event.target.value }))} multiline minRows={3} placeholder="给维护人员看的备注，可不填。" autoComplete="off" />
-            <Alert severity="info" variant="outlined">
-              <AlertTitle>{knowledgeKindLabel(draft.knowledge_kind)}：{knowledgeKindDescription(draft.knowledge_kind)}</AlertTitle>
-              优先级数字越小越靠前。建议：规则政策 10–49，处理流程 50–99，普通客服问答 100，导入资料 200 以上。
-            </Alert>
+            <TextField label="内部备注" value={draft.summary} onChange={(event) => setDraft((current) => ({ ...current, summary: event.target.value }))} multiline minRows={3} placeholder="可选" autoComplete="off" />
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button variant="contained" disabled={busy || !isDirty} startIcon={saveMutation.isPending && !publishReviewOpen ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => saveMutation.mutate(false)}>
                 {saveMutation.isPending && !publishReviewOpen ? '保存中…' : '保存草稿'}
               </Button>
-              <Button variant="outlined" color="inherit" disabled={busy || !publicationReady} onClick={() => setPublishReviewOpen(true)}>审核并发布</Button>
+              <Button variant="outlined" color="inherit" disabled={busy || !publicationReady} onClick={() => setPublishReviewOpen(true)}>发布</Button>
             </Stack>
           </Stack>
         </Paper>
 
-        <Stack component="aside" spacing={2} aria-label="知识验证和同步状态" sx={{ minWidth: 0, alignSelf: 'start' }}>
+        <Stack component="aside" spacing={2} aria-label="搜索测试和发布状态" sx={{ minWidth: 0, alignSelf: 'start' }}>
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Stack spacing={1.5}>
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                <Typography component="h2" variant="h3">测试命中</Typography>
+                <Typography component="h2" variant="h3">搜索测试</Typography>
                 {retrievalMutation.isPending ? <CircularProgress size={18} aria-label="测试中" /> : null}
               </Stack>
-              <TextField label="用一句客户问题测试" value={retrievalQuery} onChange={(event) => setRetrievalQuery(event.target.value)} placeholder="例如：包裹末派失败怎么办？" autoComplete="off" />
-              <Button variant="outlined" color="inherit" disabled={!retrievalQuery.trim() || retrievalMutation.isPending} onClick={() => retrievalMutation.mutate()}>测试知识命中</Button>
+              <TextField label="客户问题" value={retrievalQuery} onChange={(event) => setRetrievalQuery(event.target.value)} placeholder="例如：包裹派送失败怎么办？" autoComplete="off" />
+              <Button variant="outlined" color="inherit" disabled={!retrievalQuery.trim() || retrievalMutation.isPending} onClick={() => retrievalMutation.mutate()}>测试搜索</Button>
               {retrievalMutation.error ? <ErrorNotice title="测试失败" error={retrievalMutation.error} fallback="请稍后重试" /> : null}
               {retrievalMutation.data ? (
                 <Stack spacing={1.25}>
                   <Box>
-                    <Typography variant="subtitle2">{retrievalHits.length ? `命中 ${retrievalHits.length} 条知识` : '没有命中知识'}</Typography>
-                    <Typography variant="caption" color="text.secondary">{retrievalMutation.data.grounding_would_apply ? '当前服务可以使用这些知识' : '当前条件下不会使用这些知识'}</Typography>
+                    <Typography variant="subtitle2">{retrievalHits.length ? `找到 ${retrievalHits.length} 条` : '未找到结果'}</Typography>
+                    <Typography variant="caption" color="text.secondary">{retrievalMutation.data.grounding_would_apply ? '可用于回复' : '当前不会用于回复'}</Typography>
                   </Box>
                   {retrievalHits.slice(0, 5).map((hit) => (
                     <Box component="article" key={`${hit.item_id}-${hit.chunk_index}`} sx={{ borderTop: 1, borderColor: 'divider', pt: 1.25 }}>
                       <Typography variant="subtitle2">{sanitizeDisplayText(hit.title)}</Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{sanitizeDisplayText(hit.direct_answer || hit.text).slice(0, 260)}</Typography>
-                      <Typography variant="caption" color="text.disabled">相关度 {typeof hit.score === 'number' ? hit.score.toFixed(3) : hit.score}</Typography>
+                      <Typography variant="caption" color="text.disabled">匹配度 {typeof hit.score === 'number' ? hit.score.toFixed(3) : hit.score}</Typography>
                     </Box>
                   ))}
                 </Stack>
@@ -511,10 +497,10 @@ export function KnowledgePage() {
 
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Typography component="h2" variant="h3">知识同步</Typography>
+              <Typography component="h2" variant="h3">发布状态</Typography>
               {studio.isFetching ? <CircularProgress size={18} aria-label="正在刷新" /> : null}
             </Stack>
-            {studio.isError ? <Box sx={{ mt: 1.5 }}><ErrorNotice title="同步状态不可用" error={studio.error} fallback="请稍后重试" /></Box> : (
+            {studio.isError ? <Box sx={{ mt: 1.5 }}><ErrorNotice title="无法读取发布状态" error={studio.error} fallback="请稍后重试" /></Box> : (
               <Box component="dl" sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', m: 0, mt: 1.5 }}>
                 {(studio.data?.kpis ?? []).slice(0, 4).map((item) => (
                   <Box key={item.key}>
@@ -531,7 +517,7 @@ export function KnowledgePage() {
 
       <Dialog open={discardDraftOpen} onClose={() => { setDiscardDraftOpen(false); pendingDraftActionRef.current = null }} aria-labelledby="knowledge-discard-title">
         <DialogTitle id="knowledge-discard-title">放弃未保存的修改？</DialogTitle>
-        <DialogContent><DialogContentText>当前知识草稿还没有保存。继续后，这些修改将不会被保留。</DialogContentText></DialogContent>
+        <DialogContent><DialogContentText>未保存的修改将丢失。</DialogContentText></DialogContent>
         <DialogActions>
           <Button color="inherit" onClick={() => { setDiscardDraftOpen(false); pendingDraftActionRef.current = null }}>继续编辑</Button>
           <Button color="error" variant="contained" onClick={confirmDraftDiscard}>放弃修改</Button>
@@ -539,14 +525,14 @@ export function KnowledgePage() {
       </Dialog>
 
       <Dialog open={publishReviewOpen} onClose={() => { if (!busy) setPublishReviewOpen(false) }} disableEscapeKeyDown={busy} aria-labelledby="knowledge-publish-title">
-        <DialogTitle id="knowledge-publish-title">审核并发布知识</DialogTitle>
+        <DialogTitle id="knowledge-publish-title">发布知识</DialogTitle>
         <DialogContent>
-          <DialogContentText>确认适用对象和答案事实后再发布。发布请求成功不代表知识同步已经完成。</DialogContentText>
+          <DialogContentText>请确认以下内容。</DialogContentText>
           <Box component="dl" sx={{ display: 'grid', gap: 1.25, m: 0, mt: 2 }}>
             {[
               ['知识标题', sanitizeDisplayText(draft.title || '未填写')],
               ['客户问题', sanitizeDisplayText(draft.fact_question || '未填写')],
-              ['答案事实', sanitizeDisplayText(draft.fact_answer || '未填写')],
+              ['标准答案', sanitizeDisplayText(draft.fact_answer || '未填写')],
               ['适用对象', draft.audience_scope === 'internal' ? '内部参考' : '客户问答'],
               ['渠道', draft.channel === 'all' ? '全部渠道' : sanitizeDisplayText(draft.channel)],
               ['语言', sanitizeDisplayText(draft.language || '自动匹配')],
@@ -554,7 +540,7 @@ export function KnowledgePage() {
               <Box key={label}><Typography component="dt" variant="caption" color="text.secondary">{label}</Typography><Typography component="dd" variant="body2" sx={{ m: 0, mt: 0.25, whiteSpace: 'pre-wrap' }}>{value}</Typography></Box>
             ))}
           </Box>
-          <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>发布后，知识同步完成才会影响后续客服处理；本确认不表示已有客户回复已经更新。</Alert>
+          <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>提交后等待发布状态更新。</Alert>
         </DialogContent>
         <DialogActions>
           <Button color="inherit" disabled={busy} onClick={() => setPublishReviewOpen(false)}>取消</Button>
