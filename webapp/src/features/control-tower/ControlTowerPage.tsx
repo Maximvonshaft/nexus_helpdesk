@@ -1,7 +1,5 @@
 import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded'
 import {
-  Alert,
-  AlertTitle,
   Box,
   Button,
   CircularProgress,
@@ -17,14 +15,15 @@ import {
   Typography,
 } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
+import {
+  OperatorEmptyState,
+  OperatorErrorNotice,
+  OperatorLoadingState,
+} from '@/app/OperatorPresentation'
 import { canonicalAppHref } from '@/app/canonicalRoutes'
 import { sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import type { BadgeTone, ControlTowerAction, ControlTowerGovernanceLane } from '@/lib/types'
-
-function errorCopy(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
 
 function safeTone(value: string | null | undefined): BadgeTone {
   return value === 'success' || value === 'warning' || value === 'danger' || value === 'default'
@@ -44,15 +43,6 @@ function StatusCount({ value, tone }: { value: number; tone: BadgeTone }) {
     <Stack direction="row" spacing={0.75} alignItems="center">
       <Box aria-hidden="true" sx={{ bgcolor: toneColor[tone], borderRadius: '50%', height: 8, width: 8 }} />
       <Typography variant="subtitle2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
-    </Stack>
-  )
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <Stack role="status" alignItems="center" justifyContent="center" spacing={0.75} sx={{ minHeight: 140, p: 3, textAlign: 'center' }}>
-      <Typography variant="subtitle2">{title}</Typography>
-      <Typography variant="body2" color="text.secondary">{description}</Typography>
     </Stack>
   )
 }
@@ -110,9 +100,9 @@ export function ControlTowerPage() {
       </Stack>
 
       {tower.isError ? (
-        <Alert severity="error" variant="outlined"><AlertTitle>无法读取运营监控</AlertTitle>{errorCopy(tower.error, '请稍后重试')}</Alert>
+        <OperatorErrorNotice title="无法读取运营监控" error={tower.error} fallback="请稍后重试" />
       ) : tower.isLoading ? (
-        <Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 240, justifyContent: 'center' }}><CircularProgress size={30} /><Typography variant="subtitle2">正在加载…</Typography></Stack>
+        <OperatorLoadingState label="正在加载…" minHeight={240} />
       ) : tower.data ? (
         <Stack spacing={2}>
           <Paper variant="outlined" aria-label="关键运营指标" sx={{ overflow: 'hidden' }}>
@@ -135,7 +125,7 @@ export function ControlTowerPage() {
               <Divider sx={{ mt: 2 }} />
               {tower.data.manager_actions.length
                 ? <Stack divider={<Divider flexItem />}>{tower.data.manager_actions.map((item) => <ActionRow key={item.key} item={item} />)}</Stack>
-                : <EmptyState title="暂无管理待办" description="无需处理" />}
+                : <OperatorEmptyState title="暂无管理待办" description="无需处理" />}
             </Paper>
 
             <Paper component="aside" variant="outlined" aria-labelledby="team-workload-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
@@ -153,13 +143,16 @@ export function ControlTowerPage() {
                           ['即将超时', team.sla_risk],
                           ['已超时', team.overdue],
                         ].map(([label, value]) => (
-                          <Box key={String(label)}><Typography component="dt" variant="caption" color="text.secondary">{label}</Typography><Typography component="dd" variant="subtitle2" sx={{ m: 0, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography></Box>
+                          <Box key={String(label)}>
+                            <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
+                            <Typography component="dd" variant="subtitle2" sx={{ m: 0, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
+                          </Box>
                         ))}
                       </Box>
                     </Box>
                   ))}
                 </Stack>
-              ) : <EmptyState title="暂无团队数据" description="暂无数据" />}
+              ) : <OperatorEmptyState title="暂无团队数据" description="暂无数据" />}
             </Paper>
           </Box>
 
