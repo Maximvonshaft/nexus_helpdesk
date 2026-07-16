@@ -88,17 +88,11 @@ function LoginPage() {
               N
             </Box>
             <Typography translate="no" variant="h2">Nexus OSR</Typography>
-            <Typography color="text.secondary">客服与运营工作台</Typography>
           </Stack>
 
           <Paper component="form" onSubmit={handleSubmit} variant="outlined" sx={{ borderRadius: 2, p: { xs: 2.5, sm: 4 } }}>
             <Stack spacing={2.5}>
-              <Box>
-                <Typography component="h1" variant="h2">登录运营工作台</Typography>
-                <Typography color="text.secondary" sx={{ mt: 1 }}>
-                  使用内部账号继续。系统会根据账号权限加载可访问的国家、渠道和工作内容。
-                </Typography>
-              </Box>
+              <Typography component="h1" variant="h2">登录</Typography>
 
               <TextField
                 label="账号"
@@ -147,12 +141,12 @@ function LoginPage() {
 
               {login.error ? (
                 <Alert ref={errorRef} severity="error" role="alert" tabIndex={-1}>
-                  无法登录。请检查账号和密码后重试。
+                  账号或密码错误。
                 </Alert>
               ) : null}
 
               <Typography variant="body2" color="text.secondary">
-                登录状态只保存在当前浏览器会话中。请勿在共享设备上保存密码。
+                请勿在共享设备保存密码。
               </Typography>
 
               <Button
@@ -161,14 +155,10 @@ function LoginPage() {
                 type="submit"
                 disabled={login.isPending || !username.trim() || !password}
               >
-                {login.isPending ? '正在验证账号…' : '登录运营工作台'}
+                {login.isPending ? '正在登录…' : '登录'}
               </Button>
             </Stack>
           </Paper>
-
-          <Typography variant="caption" color="text.secondary" textAlign="center">
-            无法登录或看不到应有任务时，请联系系统管理员检查账号与权限。
-          </Typography>
         </Stack>
       </Container>
     </Box>
