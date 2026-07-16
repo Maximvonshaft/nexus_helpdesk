@@ -1,6 +1,6 @@
 {
   "schema": "nexus.operator-language.v1",
-  "version": "operator_language.2026-07-16.2",
+  "version": "operator_language.2026-07-16.3",
   "work_item": 753,
   "owner_pr": 754,
   "status": "code_convergence_complete_verification_pending",
@@ -67,17 +67,27 @@
     "governance_risk": "系统与配置问题",
     "evidence_bundle": "审计数据"
   },
+  "semantic_presentation_authority": "webapp/src/app/OperatorPresentation.tsx",
   "completed_surfaces": [
     "webapp/src/app/AppShell.tsx",
+    "webapp/src/app/AppNavigation.tsx",
     "webapp/src/app/AuthenticatedAppPage.tsx",
+    "webapp/src/app/OperatorPresentation.tsx",
     "webapp/src/routes/login.tsx",
     "webapp/src/routes/root.tsx",
     "webapp/src/routes/workspace.tsx",
     "webapp/src/routes/webchat.tsx",
+    "webapp/src/routes/knowledge.tsx",
+    "webapp/src/routes/channels.tsx",
+    "webapp/src/routes/runtime.tsx",
+    "webapp/src/routes/control-tower.tsx",
     "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceQueue.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx",
     "webapp/src/lib/operatorWorkspacePresentation.ts",
     "webapp/src/features/knowledge/KnowledgePage.tsx",
-    "webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx",
     "webapp/src/features/channels/ChannelsPage.tsx",
     "webapp/src/features/runtime/RuntimePage.tsx",
     "webapp/src/features/runtime/RuntimeEvidenceAudit.tsx",
@@ -111,6 +121,7 @@
     "Every primary action uses an operator-understandable verb.",
     "No completed surface contains a forbidden primary literal.",
     "Technical details are disclosed only in approved advanced locations.",
-    "Workspace performance, MUI presentation and operator language exist in one canonical file and one API adapter."
+    "One bounded operator presentation authority owns empty, error, loading, fact-grid and tone projection.",
+    "Workspace performance, MUI presentation and operator language compose one canonical route, one query state and one API adapter."
   ]
 }
