@@ -13,9 +13,22 @@ const PATHS = {
   design: join(WEBAPP_ROOT, 'DESIGN.md'),
   contract: join(WEBAPP_ROOT, 'design', 'frontend-product-foundation.v1.json'),
   engineering: join(REPO_ROOT, 'docs', 'engineering', 'frontend-product-foundation.md'),
-  tokens: join(WEBAPP_ROOT, 'src', 'styles', 'tokens.css'),
-  components: join(WEBAPP_ROOT, 'src', 'components', 'ui'),
+  theme: join(WEBAPP_ROOT, 'src', 'theme', 'nexusTheme.ts'),
+  provider: join(WEBAPP_ROOT, 'src', 'theme', 'NexusThemeProvider.tsx'),
 }
+
+const RETIRED_PATHS = [
+  join(WEBAPP_ROOT, 'src', 'styles', 'tokens.css'),
+  join(WEBAPP_ROOT, 'src', 'styles', 'components.css'),
+  join(WEBAPP_ROOT, 'src', 'components', 'ui'),
+  join(WEBAPP_ROOT, 'src', 'styles', 'auth.css'),
+  join(WEBAPP_ROOT, 'src', 'app', 'app-shell.css'),
+  join(WEBAPP_ROOT, 'src', 'features', 'operator-workspace', 'operator-workspace.css'),
+  join(WEBAPP_ROOT, 'src', 'features', 'operator-workspace', 'operator-workspace-refinements.css'),
+  join(WEBAPP_ROOT, 'src', 'features', 'admin-routes', 'admin-routes.css'),
+  join(WEBAPP_ROOT, 'src', 'features', 'knowledge', 'knowledge.css'),
+  join(WEBAPP_ROOT, 'src', 'features', 'runtime', 'runtime-evidence-audit.css'),
+]
 
 function readRequired(path, label) {
   assert.equal(existsSync(path), true, `${label} authority is missing: ${path}`)
@@ -23,8 +36,7 @@ function readRequired(path, label) {
 }
 
 function parseContract() {
-  const raw = readRequired(PATHS.contract, 'machine-readable frontend foundation')
-  return JSON.parse(raw)
+  return JSON.parse(readRequired(PATHS.contract, 'machine-readable frontend foundation'))
 }
 
 function unique(values) {
@@ -39,9 +51,12 @@ function flattenStateVocabulary(contract) {
   return Object.values(contract.state_vocabulary).flat()
 }
 
-test('required product and design authorities exist', () => {
+test('required product, design and MUI authorities exist', () => {
   for (const [label, path] of Object.entries(PATHS)) {
     assert.equal(existsSync(path), true, `${label} path does not exist: ${path}`)
+  }
+  for (const path of RETIRED_PATHS) {
+    assert.equal(existsSync(path), false, `retired custom visual authority still exists: ${path}`)
   }
 })
 
@@ -83,15 +98,23 @@ test('route IA centers the active operator workspace and separates administratio
   assert.equal(routeByPath.get('/webchat')?.status, 'compatibility')
 })
 
-test('one semantic token and component authority is active and enforced', () => {
+test('MUI theme and component library are the sole generic visual authority', () => {
   const contract = parseContract()
-  assert.equal(contract.token_authority.semantic_tokens_path, 'webapp/src/styles/tokens.css')
-  assert.equal(contract.token_authority.component_primitives_path, 'webapp/src/components/ui')
-  assert.equal(contract.token_authority.enforcement_status, 'enforced')
-  assert.equal(contract.token_authority.feature_raw_hex_policy, 'prohibited')
-  assert.deepEqual(contract.token_authority.legacy_sources, [])
-  assert.equal(contract.token_authority.migration_strategy, 'in_place_under_single_authority')
-  assert.equal(contract.token_authority.big_bang_rewrite, false)
+  assert.equal(contract.token_authority.framework, 'Material UI')
+  assert.equal(contract.token_authority.component_package, '@mui/material@9.2.0')
+  assert.equal(contract.token_authority.icon_package, '@mui/icons-material@9.2.0')
+  assert.equal(contract.token_authority.styling_engine, 'Emotion')
+  assert.equal(contract.token_authority.theme_path, 'webapp/src/theme/nexusTheme.ts')
+  assert.equal(contract.token_authority.provider_path, 'webapp/src/theme/NexusThemeProvider.tsx')
+  assert.equal(contract.token_authority.baseline, 'CssBaseline')
+  assert.equal(contract.token_authority.generic_custom_component_policy, 'prohibited')
+  assert.equal(contract.token_authority.route_visual_css_policy, 'prohibited')
+  assert.deepEqual(contract.token_authority.allowed_global_css.sort(), [
+    'webapp/src/a11y.css',
+    'webapp/src/styles.css',
+  ])
+  assert.ok(contract.token_authority.retired_authorities.includes('webapp/src/components/ui'))
+  assert.ok(contract.token_authority.retired_authorities.includes('webapp/src/styles/tokens.css'))
 })
 
 test('state vocabulary does not collapse technical activity into business closure', () => {
@@ -167,29 +190,27 @@ test('DESIGN register defines a subject-grounded non-template direction', () => 
   }
 })
 
-test('engineering integration records the active single-authority implementation', () => {
+test('engineering integration records the active MUI replacement authority', () => {
   const guide = readRequired(PATHS.engineering, 'frontend engineering integration guide')
   const normalizedGuide = guide.toLowerCase()
   for (const commitment of [
     '#748',
     '#753',
-    'webapp/src/app/AppShell.tsx',
-    'webapp/src/app/navigation.ts',
-    'webapp/src/styles/tokens.css',
-    'webapp/src/components/ui',
+    '@mui/material',
+    'webapp/src/theme/nexusTheme.ts',
+    'webapp/src/theme/NexusThemeProvider.tsx',
     'webapp/src/domain/operationalPresentation.ts',
   ]) {
     assert.ok(normalizedGuide.includes(commitment.toLowerCase()), `engineering guide missing active authority: ${commitment}`)
   }
-  assert.ok(normalizedGuide.includes('modify in place'))
   assert.ok(normalizedGuide.includes('no parallel implementation'))
   assert.ok(normalizedGuide.includes('github actions are retired'))
 })
 
-test('the foundation is active while refinement remains bounded to the same authority', () => {
+test('code migration is complete while production acceptance remains pending', () => {
   const contract = parseContract()
-  assert.equal(contract.lifecycle.status, 'active_canonical_authority')
-  assert.equal(contract.lifecycle.runtime_activation, true)
-  assert.equal(contract.lifecycle.production_ui_migration_complete, true)
+  assert.equal(contract.lifecycle.status, 'mui_code_migration_complete_verification_pending')
+  assert.equal(contract.lifecycle.runtime_activation, false)
+  assert.equal(contract.lifecycle.production_ui_migration_complete, false)
   assert.deepEqual(contract.downstream_work_items, [525, 564, 573, 753])
 })
