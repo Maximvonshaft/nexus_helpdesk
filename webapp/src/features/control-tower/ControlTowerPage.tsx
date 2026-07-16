@@ -71,10 +71,10 @@ function ActionRow({ item }: { item: ControlTowerAction }) {
       </Box>
       {item.enabled && href ? (
         <Button component="a" href={href} variant="outlined" color="inherit" endIcon={<OpenInNewRoundedIcon />} sx={{ flexShrink: 0 }}>
-          打开处理页面
+          去处理
         </Button>
       ) : (
-        <Typography variant="caption" color="text.secondary">{item.enabled ? '后端未返回受支持的处理入口' : '当前账号无执行权限'}</Typography>
+        <Typography variant="caption" color="text.secondary">{item.enabled ? '暂时无法打开' : '无操作权限'}</Typography>
       )}
     </Stack>
   )
@@ -105,17 +105,14 @@ export function ControlTowerPage() {
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
-        <Box>
-          <Typography component="h1" variant="h1">运营监控</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>查看未分配任务、SLA 风险、渠道异常和需要修复的工作，并进入对应的唯一处理页面。</Typography>
-        </Box>
+        <Typography component="h1" variant="h1">运营监控</Typography>
         {tower.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
 
       {tower.isError ? (
         <Alert severity="error" variant="outlined"><AlertTitle>无法读取运营监控</AlertTitle>{errorCopy(tower.error, '请稍后重试')}</Alert>
       ) : tower.isLoading ? (
-        <Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 240, justifyContent: 'center' }}><CircularProgress size={30} /><Typography variant="subtitle2">正在汇总当前账号可见的工作和风险…</Typography></Stack>
+        <Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 240, justifyContent: 'center' }}><CircularProgress size={30} /><Typography variant="subtitle2">正在加载…</Typography></Stack>
       ) : tower.data ? (
         <Stack spacing={2}>
           <Paper variant="outlined" aria-label="关键运营指标" sx={{ overflow: 'hidden' }}>
@@ -124,7 +121,6 @@ export function ControlTowerPage() {
                 <Box key={item.key} sx={{ borderBottom: { xs: 1, md: 0 }, borderColor: 'divider', borderRight: { md: index === tower.data.kpis.length - 1 ? 0 : 1 }, minWidth: 0, p: 2 }}>
                   <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(item.label)}</Typography>
                   <Typography variant="h2" sx={{ mt: 0.5, fontVariantNumeric: 'tabular-nums' }}>{item.value}</Typography>
-                  <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(item.hint)}</Typography>
                 </Box>
               ))}
             </Box>
@@ -139,7 +135,7 @@ export function ControlTowerPage() {
               <Divider sx={{ mt: 2 }} />
               {tower.data.manager_actions.length
                 ? <Stack divider={<Divider flexItem />}>{tower.data.manager_actions.map((item) => <ActionRow key={item.key} item={item} />)}</Stack>
-                : <EmptyState title="当前没有管理待办" description="当前可见范围没有需要管理介入的工作。" />}
+                : <EmptyState title="暂无管理待办" description="无需处理" />}
             </Paper>
 
             <Paper component="aside" variant="outlined" aria-labelledby="team-workload-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
@@ -154,7 +150,7 @@ export function ControlTowerPage() {
                         {[
                           ['处理中', team.active_tickets],
                           ['未分配', team.unassigned],
-                          ['SLA 风险', team.sla_risk],
+                          ['即将超时', team.sla_risk],
                           ['已超时', team.overdue],
                         ].map(([label, value]) => (
                           <Box key={String(label)}><Typography component="dt" variant="caption" color="text.secondary">{label}</Typography><Typography component="dd" variant="subtitle2" sx={{ m: 0, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography></Box>
@@ -163,16 +159,16 @@ export function ControlTowerPage() {
                     </Box>
                   ))}
                 </Stack>
-              ) : <EmptyState title="暂无团队负载" description="当前账号没有可见的团队工作数据。" />}
+              ) : <EmptyState title="暂无团队数据" description="暂无数据" />}
             </Paper>
           </Box>
 
           <Paper component="section" variant="outlined" aria-labelledby="governance-lanes-title" sx={{ minWidth: 0, p: 2 }}>
-            <Typography id="governance-lanes-title" component="h2" variant="h3">运行与治理风险</Typography>
+            <Typography id="governance-lanes-title" component="h2" variant="h3">系统与配置问题</Typography>
             <Divider sx={{ my: 2 }} />
             <TableContainer>
-              <Table size="small" aria-label="运行与治理风险列表">
-                <TableHead><TableRow><TableCell>领域</TableCell><TableCell>待处理</TableCell><TableCell>下一步</TableCell><TableCell>入口</TableCell></TableRow></TableHead>
+              <Table size="small" aria-label="系统与配置问题列表">
+                <TableHead><TableRow><TableCell>问题类型</TableCell><TableCell>待处理</TableCell><TableCell>下一步</TableCell><TableCell>操作</TableCell></TableRow></TableHead>
                 <TableBody>{tower.data.governance_lanes.map((item) => <GovernanceRow key={item.key} item={item} />)}</TableBody>
               </Table>
             </TableContainer>
