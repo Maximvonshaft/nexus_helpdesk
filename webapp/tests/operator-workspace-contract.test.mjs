@@ -13,14 +13,13 @@ const router = readIfPresent('src/router.tsx')
 const indexRoute = readIfPresent('src/routes/index.tsx')
 const workspaceRoute = readIfPresent('src/routes/workspace.tsx')
 const workspacePage = readIfPresent('src/features/operator-workspace/OperatorWorkspacePage.tsx')
-const workspaceCss = readIfPresent('src/features/operator-workspace/operator-workspace.css')
 const workspaceApi = readIfPresent('src/lib/operatorWorkspaceApi.ts')
 const workspaceTypes = readIfPresent('src/lib/operatorWorkspaceTypes.ts')
 const workspacePresentation = readIfPresent('src/lib/operatorWorkspacePresentation.ts')
 const operationalPresentation = readIfPresent('src/domain/operationalPresentation.ts')
 const appShell = readIfPresent('src/app/AppShell.tsx')
 const navigation = readIfPresent('src/app/navigation.ts')
-
+const theme = readIfPresent('src/theme/nexusTheme.ts')
 
 test('workspace is the canonical authenticated operator route', () => {
   assert.equal(existsSync(resolve(root, 'src/routes/workspace.tsx')), true)
@@ -31,7 +30,6 @@ test('workspace is the canonical authenticated operator route', () => {
   assert.match(workspaceRoute, /path:\s*'\/workspace'/)
   assert.match(workspaceRoute, /getSupportToken/)
 })
-
 
 test('workspace consumes the canonical unified queue with explicit scope', () => {
   assert.equal(existsSync(resolve(root, 'src/lib/operatorWorkspaceApi.ts')), true)
@@ -49,29 +47,29 @@ test('workspace consumes the canonical unified queue with explicit scope', () =>
   assert.match(workspaceRoute, /authorizedScopes/)
 })
 
-
 test('primary navigation is capability-derived and separates system administration', () => {
   assert.match(navigation, /operator_queue\.read/)
   assert.match(navigation, /ai_config\.read/)
   assert.match(navigation, /channel_account\.manage/)
   assert.match(navigation, /runtime\.manage/)
-  assert.match(navigation, /工作台/)
-  assert.match(navigation, /知识/)
-  assert.match(navigation, /渠道/)
-  assert.match(navigation, /运行与审计/)
+  assert.match(navigation, /案例处理/)
+  assert.match(navigation, /知识与流程/)
+  assert.match(navigation, /渠道管理/)
+  assert.match(navigation, /系统运行/)
+  assert.match(navigation, /运营监控/)
 })
 
-
 test('case spine and closure blocker keep technical state separate from business closure', () => {
-  for (const authority of ['CaseHeader', 'EvidencePanel', 'ConversationPanel', 'ActionPanel']) {
+  for (const authority of ['CaseHeader', 'CaseSpine', 'EvidencePanel', 'ConversationPanel', 'ActionPanel']) {
     assert.match(workspacePage, new RegExp(authority))
   }
-  assert.match(workspacePage, /前端建议不替代服务端权限、政策和结果权威/)
+  assert.match(workspacePage, /只显示当前接口已经提供的事实/)
+  assert.match(workspacePage, /当前接口未提供可信结案事实/)
+  assert.match(workspacePage, /页面提示不替代服务端权限、政策和真实操作结果/)
   assert.match(operationalPresentation, /技术成功不等于运营完成、客户通知或安全结案/)
   assert.doesNotMatch(workspacePage, />已结束</)
   assert.doesNotMatch(workspacePage, />处理成功</)
 })
-
 
 test('evidence classes and action outcomes are explicit and fail closed', () => {
   assert.equal(existsSync(resolve(root, 'src/lib/operatorWorkspacePresentation.ts')), true)
@@ -86,15 +84,14 @@ test('evidence classes and action outcomes are explicit and fail closed', () => 
   assert.match(operationalPresentation, /repair_required/)
 })
 
-
 test('actions explain prerequisites and never use disabled buttons as the only explanation', () => {
-  assert.match(workspacePage, /不可执行原因/)
+  assert.match(workspacePage, /不可执行原因直接说明/)
   assert.match(workspacePage, /缺少运单/)
   assert.match(workspacePage, /缺少客户电话/)
   assert.match(workspacePage, /当前案例没有可用会话/)
   assert.match(workspacePage, /当前权限不允许/)
+  assert.match(workspacePage, /当前不可执行：/)
 })
-
 
 test('conversation messages expose delivery state rather than equating local display with delivery', () => {
   assert.match(workspacePage, /messageDeliveryPresentation/)
@@ -104,22 +101,18 @@ test('conversation messages expose delivery state rather than equating local dis
   assert.match(workspacePage, /送达状态/)
 })
 
-
-test('responsive structure keeps queue, case, communication and actions reachable', () => {
-  assert.equal(existsSync(resolve(root, 'src/features/operator-workspace/operator-workspace.css')), true)
+test('MUI responsive structure keeps queue, case, communication and actions reachable', () => {
+  assert.equal(existsSync(resolve(root, 'src/features/operator-workspace/operator-workspace.css')), false)
+  assert.equal(existsSync(resolve(root, 'src/features/operator-workspace/operator-workspace-refinements.css')), false)
   for (const view of ['queue', 'case', 'conversation', 'actions']) {
     assert.match(workspacePage, new RegExp(`'${view}'`))
   }
-  assert.match(workspacePage, /队列/)
-  assert.match(workspacePage, /案例/)
-  assert.match(workspacePage, /沟通/)
-  assert.match(workspacePage, /动作/)
-  assert.match(workspaceCss, /@media\s*\(max-width:\s*980px\)/)
-  assert.match(workspaceCss, /@media\s*\(max-width:\s*640px\)/)
-  assert.match(workspaceCss, /100dvh/)
-  assert.doesNotMatch(workspaceCss, /operator-(?:context|actions)[^{]*\{[^}]*display:\s*none/)
+  assert.match(workspacePage, /<Tabs/)
+  assert.match(workspacePage, /display:\s*\{ xs:/)
+  assert.match(workspacePage, /gridTemplateColumns:\s*\{ xs:/)
+  assert.match(workspacePage, /minHeight:\s*\{ lg:/)
+  assert.match(theme, /MuiTab:/)
 })
-
 
 test('workspace preserves scroll ownership, protects drafts, and transfers mobile focus', () => {
   assert.match(workspacePage, /useLayoutEffect/)
@@ -149,5 +142,5 @@ test('workspace keeps a dirty reply attached when polling removes the selected q
   assert.match(workspacePage, /!replyDraftDirty/)
   assert.match(workspacePage, /当前任务已离开队列，回复草稿仍保留/)
   assert.match(workspacePage, /selectionUnavailable/)
-  assert.match(workspacePage, /当前任务动作已暂停/)
+  assert.match(workspacePage, /操作已暂停/)
 })
