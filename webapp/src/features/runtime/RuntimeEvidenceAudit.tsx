@@ -26,19 +26,19 @@ type BoolFilter = 'all' | 'true' | 'false'
 type Tone = 'default' | 'warning' | 'success' | 'danger'
 
 const findingTypes = [
-  ['irrelevant_answer', '回答不相关'],
-  ['answered_live_tracking_without_tool_fact', '无工具事实却回答实时物流'],
-  ['used_kb_for_live_tracking', '用知识库回答实时物流'],
-  ['used_previous_ai_reply_as_fact', '用历史 AI 回复当事实'],
-  ['used_customer_claim_as_fact', '用客户说法当事实'],
-  ['tool_fact_ignored', '工具事实未被使用'],
+  ['irrelevant_answer', '回复不相关'],
+  ['answered_live_tracking_without_tool_fact', '没有查询结果却回复实时物流'],
+  ['used_kb_for_live_tracking', '使用知识回答实时物流'],
+  ['used_previous_ai_reply_as_fact', '把历史自动回复当成事实'],
+  ['used_customer_claim_as_fact', '把客户说法当成事实'],
+  ['tool_fact_ignored', '未使用查询结果'],
   ['should_handoff_but_did_not', '应转人工但未转'],
   ['should_clarify_but_did_not', '应追问但未追问'],
-  ['safety_should_block', 'Safety 应拦未拦'],
-  ['safety_false_block', 'Safety 误拦'],
-  ['knowledge_miss', '知识库未命中'],
-  ['tool_error', '工具错误'],
-  ['other', '其它'],
+  ['safety_should_block', '安全检查应拦截但未拦截'],
+  ['safety_false_block', '安全检查误拦截'],
+  ['knowledge_miss', '知识未匹配'],
+  ['tool_error', '查询或操作失败'],
+  ['other', '其他'],
 ] as const
 
 function filterBool(value: BoolFilter) {
@@ -155,13 +155,10 @@ export function RuntimeEvidenceAudit() {
   return (
     <Box component="section" aria-labelledby="runtime-audit-title" data-testid="runtime-evidence-audit">
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between">
-        <Box>
-          <Typography id="runtime-audit-title" component="h2" variant="h2">证据审计</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>检查回复证据链、工具调用、知识命中和安全结果，并把确认问题保存为回归案例。</Typography>
-        </Box>
+        <Typography id="runtime-audit-title" component="h2" variant="h2">证据审计</Typography>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Button color="inherit" variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => runsQuery.refetch()}>刷新</Button>
-          <Button color="inherit" variant="outlined" startIcon={<ContentCopyRoundedIcon />} disabled={!bundle} onClick={copyBundle}>复制脱敏证据包</Button>
+          <Button color="inherit" variant="outlined" startIcon={<ContentCopyRoundedIcon />} disabled={!bundle} onClick={copyBundle}>复制审计数据</Button>
         </Stack>
       </Stack>
 
@@ -170,29 +167,29 @@ export function RuntimeEvidenceAudit() {
           <TextField select label="时间范围" value={String(sinceHours)} onChange={(event) => setSinceHours(Number(event.target.value))}>
             <MenuItem value="6">最近 6 小时</MenuItem><MenuItem value="24">最近 24 小时</MenuItem><MenuItem value="72">最近 3 天</MenuItem><MenuItem value="168">最近 7 天</MenuItem>
           </TextField>
-          <TextField label="渠道" value={channel} onChange={(event) => setChannel(event.target.value)} placeholder="留空表示全部" />
-          <TextField select label="工具事实" value={trackingEvidence} onChange={(event) => setTrackingEvidence(event.target.value as BoolFilter)}>
+          <TextField label="渠道" value={channel} onChange={(event) => setChannel(event.target.value)} placeholder="全部" />
+          <TextField select label="查询结果" value={trackingEvidence} onChange={(event) => setTrackingEvidence(event.target.value as BoolFilter)}>
             <MenuItem value="all">全部</MenuItem><MenuItem value="true">有</MenuItem><MenuItem value="false">无</MenuItem>
           </TextField>
-          <TextField select label="实时物流回答" value={liveAllowed} onChange={(event) => setLiveAllowed(event.target.value as BoolFilter)}>
+          <TextField select label="实时物流回复" value={liveAllowed} onChange={(event) => setLiveAllowed(event.target.value as BoolFilter)}>
             <MenuItem value="all">全部</MenuItem><MenuItem value="true">允许</MenuItem><MenuItem value="false">禁止</MenuItem>
           </TextField>
-          <TextField select label="客户可见消息" value={visibleCreated} onChange={(event) => setVisibleCreated(event.target.value as BoolFilter)}>
+          <TextField select label="客户消息" value={visibleCreated} onChange={(event) => setVisibleCreated(event.target.value as BoolFilter)}>
             <MenuItem value="all">全部</MenuItem><MenuItem value="true">已创建</MenuItem><MenuItem value="false">未创建</MenuItem>
           </TextField>
         </Box>
       </Paper>
 
-      {runsQuery.isError ? <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>证据审计数据不可用</AlertTitle>{errorCopy(runsQuery.error)}</Alert> : null}
+      {runsQuery.isError ? <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>无法读取审计数据</AlertTitle>{errorCopy(runsQuery.error)}</Alert> : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 340px) minmax(0, 1fr)' }, mt: 2 }}>
-        <Paper component="aside" variant="outlined" aria-label="AI 运行记录" sx={{ alignSelf: 'start', minWidth: 0, p: 1.5, position: { lg: 'sticky' }, top: { lg: 84 } }}>
+        <Paper component="aside" variant="outlined" aria-label="处理记录" sx={{ alignSelf: 'start', minWidth: 0, p: 1.5, position: { lg: 'sticky' }, top: { lg: 84 } }}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-            <Typography component="h3" variant="h3">运行记录</Typography>
+            <Typography component="h3" variant="h3">处理记录</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{runs.length}</Typography>
           </Stack>
           <Divider sx={{ mt: 1.5 }} />
-          {!runs.length ? <EmptyState title="暂无审计记录" description="产生自动处理记录后会自动显示。" /> : (
+          {!runs.length ? <EmptyState title="暂无记录" description="暂无数据" /> : (
             <List disablePadding sx={{ maxHeight: { lg: 'calc(100dvh - 300px)' }, overflowY: 'auto' }}>
               {runs.map((run) => (
                 <ListItemButton
@@ -204,10 +201,10 @@ export function RuntimeEvidenceAudit() {
                 >
                   <Stack spacing={0.75}>
                     <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                      <Typography variant="subtitle2">Turn #{run.ai_turn_id}</Typography>
+                      <Typography variant="subtitle2">处理 #{run.ai_turn_id}</Typography>
                       <Chip color={statusColor(runTone(run))} label={sanitizeDisplayText(run.status)} />
                     </Stack>
-                    <Typography variant="caption" color="text.secondary">Ticket #{run.ticket_id} · {sanitizeDisplayText(run.channel || '未知渠道')}</Typography>
+                    <Typography variant="caption" color="text.secondary">工单 #{run.ticket_id} · {sanitizeDisplayText(run.channel || '未知渠道')}</Typography>
                     <Typography variant="caption" color="text.disabled">{run.created_at ? formatDateTime(run.created_at) : '暂无时间'}</Typography>
                   </Stack>
                 </ListItemButton>
@@ -219,32 +216,32 @@ export function RuntimeEvidenceAudit() {
         <Stack spacing={2} sx={{ minWidth: 0 }}>
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Typography component="h3" variant="h3">本轮结论</Typography>
+              <Typography component="h3" variant="h3">处理结果</Typography>
               {selectedRun ? <Chip color={statusColor(runTone(selectedRun))} label={sanitizeDisplayText(selectedRun.status)} /> : null}
             </Stack>
             <Divider sx={{ my: 2 }} />
             <FactGrid facts={[
-              ['意图', sanitizeDisplayText(selectedRun?.intent || bundle?.summary?.intent || '未知')],
-              ['工具事实', selectedRun?.tracking_fact_evidence_present ? '有' : '无'],
-              ['实时物流回答', selectedRun?.live_tracking_answer_allowed ? '允许' : '禁止'],
-              ['知识命中', selectedRun?.kb_hits_count ?? bundle?.evidence?.kb_hits_count ?? 0],
-              ['客户可见消息', selectedRun?.customer_visible_message_created ? '已创建' : '未创建'],
+              ['问题类型', sanitizeDisplayText(selectedRun?.intent || bundle?.summary?.intent || '未知')],
+              ['查询结果', selectedRun?.tracking_fact_evidence_present ? '有' : '无'],
+              ['实时物流回复', selectedRun?.live_tracking_answer_allowed ? '允许' : '禁止'],
+              ['知识匹配', selectedRun?.kb_hits_count ?? bundle?.evidence?.kb_hits_count ?? 0],
+              ['客户消息', selectedRun?.customer_visible_message_created ? '已创建' : '未创建'],
             ]} />
           </Paper>
 
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '1fr 1fr' } }}>
             <Paper component="section" variant="outlined" sx={{ p: 2 }}>
-              <Typography component="h3" variant="h3">工具调用</Typography>
+              <Typography component="h3" variant="h3">查询与操作记录</Typography>
               <Divider sx={{ my: 2 }} />
-              {!toolCalls.length ? <EmptyState title="暂无工具调用" description="本轮没有关联工具调用，或仍在处理中。" /> : (
+              {!toolCalls.length ? <EmptyState title="暂无查询或操作" description="暂无数据" /> : (
                 <Stack divider={<Divider flexItem />}>
                   {toolCalls.map((call: any) => (
                     <Box component="article" key={`${call.id}-${call.tool_name}`} sx={{ py: 1.25 }}>
                       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="subtitle2">{sanitizeDisplayText(call.tool_name || '未知工具')}</Typography>
+                        <Typography variant="subtitle2">{sanitizeDisplayText(call.tool_name || '未知操作')}</Typography>
                         <Chip color={call.status === 'success' ? 'success' : call.status === 'failed' ? 'error' : 'warning'} label={sanitizeDisplayText(call.status || 'unknown')} />
                       </Stack>
-                      <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(call.provider || 'provider')} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied ? '已脱敏' : '脱敏状态未知'}</Typography>
+                      <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(call.provider || '未知服务')} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied ? '已脱敏' : '脱敏状态未知'}</Typography>
                     </Box>
                   ))}
                 </Stack>
@@ -252,15 +249,15 @@ export function RuntimeEvidenceAudit() {
             </Paper>
 
             <Paper component="section" variant="outlined" sx={{ p: 2 }}>
-              <Typography component="h3" variant="h3">事件时间线</Typography>
+              <Typography component="h3" variant="h3">处理时间线</Typography>
               <Divider sx={{ my: 2 }} />
-              {!timeline.length ? <EmptyState title="暂无事件时间线" description="选择一条记录后显示事件回放。" /> : (
+              {!timeline.length ? <EmptyState title="暂无时间线" description="暂无数据" /> : (
                 <Stack divider={<Divider flexItem />}>
                   {timeline.map((item: any) => (
                     <Box component="article" key={`${item.event_id}-${item.event_type}`} sx={{ py: 1.25 }}>
                       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="subtitle2">{sanitizeDisplayText(item.event_type || item.phase || 'event')}</Typography>
-                        <Chip label={sanitizeDisplayText(item.status || item.phase || 'event')} />
+                        <Typography variant="subtitle2">{sanitizeDisplayText(item.event_type || item.phase || '事件')}</Typography>
+                        <Chip label={sanitizeDisplayText(item.status || item.phase || '事件')} />
                       </Stack>
                       <Typography variant="caption" color="text.disabled">{item.created_at ? formatDateTime(item.created_at) : ''}</Typography>
                     </Box>
@@ -272,8 +269,8 @@ export function RuntimeEvidenceAudit() {
 
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Typography component="h3" variant="h3">记录测试问题</Typography>
-              {lastFinding ? <Chip color="success" label={`Finding #${lastFinding.id}`} /> : null}
+              <Typography component="h3" variant="h3">记录问题</Typography>
+              {lastFinding ? <Chip color="success" label={`问题记录 #${lastFinding.id}`} /> : null}
             </Stack>
             <Divider sx={{ my: 2 }} />
             <Stack spacing={1.5}>
@@ -281,37 +278,37 @@ export function RuntimeEvidenceAudit() {
                 <TextField select label="问题类型" value={findingType} onChange={(event) => setFindingType(event.target.value)}>
                   {findingTypes.map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
                 </TextField>
-                <TextField select label="严重级别" value={severity} onChange={(event) => setSeverity(event.target.value)}>
+                <TextField select label="严重程度" value={severity} onChange={(event) => setSeverity(event.target.value)}>
                   <MenuItem value="low">低</MenuItem><MenuItem value="medium">中</MenuItem><MenuItem value="high">高</MenuItem><MenuItem value="critical">严重</MenuItem>
                 </TextField>
               </Box>
-              <TextField label="测试说明" value={testerNote} onChange={(event) => setTesterNote(event.target.value)} multiline minRows={3} />
+              <TextField label="问题说明" value={testerNote} onChange={(event) => setTesterNote(event.target.value)} multiline minRows={3} />
               <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
-                <TextField label="期望行为" value={expectedBehavior} onChange={(event) => setExpectedBehavior(event.target.value)} multiline minRows={2} />
-                <TextField label="实际行为" value={actualBehavior} onChange={(event) => setActualBehavior(event.target.value)} multiline minRows={2} />
+                <TextField label="期望结果" value={expectedBehavior} onChange={(event) => setExpectedBehavior(event.target.value)} multiline minRows={2} />
+                <TextField label="实际结果" value={actualBehavior} onChange={(event) => setActualBehavior(event.target.value)} multiline minRows={2} />
               </Box>
-              {findingMutation.isError ? <Alert severity="error" variant="outlined"><AlertTitle>保存测试问题失败</AlertTitle>{errorCopy(findingMutation.error)}</Alert> : null}
+              {findingMutation.isError ? <Alert severity="error" variant="outlined"><AlertTitle>保存失败</AlertTitle>{errorCopy(findingMutation.error)}</Alert> : null}
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 <Button variant="contained" disabled={!selectedRun || findingMutation.isPending} startIcon={findingMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => findingMutation.mutate()}>
-                  {findingMutation.isPending ? '保存中…' : '保存测试问题'}
+                  {findingMutation.isPending ? '保存中…' : '保存问题'}
                 </Button>
-                {lastFinding ? <Button variant="outlined" color="inherit" disabled={evalMutation.isPending} onClick={() => evalMutation.mutate()}>{evalMutation.isPending ? '生成中…' : '保存为回归案例'}</Button> : null}
+                {lastFinding ? <Button variant="outlined" color="inherit" disabled={evalMutation.isPending} onClick={() => evalMutation.mutate()}>{evalMutation.isPending ? '生成中…' : '加入回归测试'}</Button> : null}
               </Stack>
             </Stack>
           </Paper>
 
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Typography component="h3" variant="h3">脱敏证据包</Typography>
-              <Button color="inherit" onClick={() => setShowJson((value) => !value)}>{showJson ? '收起 JSON' : '查看 JSON'}</Button>
+              <Typography component="h3" variant="h3">审计数据</Typography>
+              <Button color="inherit" onClick={() => setShowJson((value) => !value)}>{showJson ? '收起原始数据' : '查看原始数据'}</Button>
             </Stack>
-            {bundleQuery.isError ? <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>证据包不可用</AlertTitle>{errorCopy(bundleQuery.error)}</Alert> : null}
+            {bundleQuery.isError ? <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>无法读取审计数据</AlertTitle>{errorCopy(bundleQuery.error)}</Alert> : null}
             <Collapse in={showJson} unmountOnExit>
               <Box component="pre" sx={{ bgcolor: 'text.primary', borderRadius: 1, color: 'background.paper', m: 0, mt: 2, maxHeight: 520, overflow: 'auto', p: 2, whiteSpace: 'pre-wrap', fontSize: 12 }}>
                 {JSON.stringify(bundle, null, 2)}
               </Box>
             </Collapse>
-            {!showJson ? <EmptyState title="证据包默认收起" description="仅在审计或故障排查时展开。" /> : null}
+            {!showJson ? <EmptyState title="原始数据已收起" description="按需查看" /> : null}
           </Paper>
         </Stack>
       </Box>
