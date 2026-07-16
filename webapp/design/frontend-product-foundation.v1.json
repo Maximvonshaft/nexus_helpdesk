@@ -1,6 +1,6 @@
 {
   "schema": "nexus.frontend-product-foundation.v1",
-  "version": "frontend_product_foundation.v1",
+  "version": "frontend_product_foundation.v2",
   "owner": "nexus_osr_product_design",
   "product_job": "Help an authorized logistics operator identify the case, distinguish authoritative evidence from claims and recommendations, take the next governed action, understand the actual operational and customer outcome, and determine whether the case is blocked, under observation, repair-required, reopenable, or safely closed.",
   "visual_thesis": "Dense calm logistics cockpit",
@@ -27,9 +27,11 @@
     "styling_engine": "Emotion",
     "theme_path": "webapp/src/theme/nexusTheme.ts",
     "provider_path": "webapp/src/theme/NexusThemeProvider.tsx",
+    "operator_presentation_path": "webapp/src/app/OperatorPresentation.tsx",
     "baseline": "CssBaseline",
-    "enforcement_status": "code_migration_complete_verification_pending",
+    "enforcement_status": "source_convergence_complete_verification_pending",
     "generic_custom_component_policy": "prohibited",
+    "bounded_semantic_composition_policy": "one_operator_presentation_authority",
     "route_visual_css_policy": "prohibited",
     "feature_raw_hex_policy": "theme_only",
     "allowed_global_css": ["webapp/src/styles.css", "webapp/src/a11y.css"],
@@ -43,8 +45,30 @@
       "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
       "webapp/src/features/admin-routes/admin-routes.css",
       "webapp/src/features/knowledge/knowledge.css",
+      "webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx",
       "webapp/src/features/runtime/runtime-evidence-audit.css"
     ]
+  },
+  "implementation_authorities": {
+    "knowledge": {
+      "route": "webapp/src/routes/knowledge.tsx",
+      "page": "webapp/src/features/knowledge/KnowledgePage.tsx",
+      "mode": "canManage",
+      "second_page": false
+    },
+    "workspace": {
+      "route": "webapp/src/routes/workspace.tsx",
+      "orchestrator": "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
+      "queue": "webapp/src/features/operator-workspace/OperatorWorkspaceQueue.tsx",
+      "case": "webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx",
+      "conversation": "webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx",
+      "presentation": "webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx",
+      "state": "webapp/src/features/operator-workspace/operatorWorkspaceState.ts",
+      "api": "webapp/src/lib/operatorWorkspaceApi.ts",
+      "second_store": false,
+      "second_renderer": false,
+      "second_api": false
+    }
   },
   "operator_language_authority": {
     "path": "webapp/design/operator-language.v1.json",
@@ -90,7 +114,7 @@
   },
   "downstream_work_items": [525, 564, 573, 753],
   "lifecycle": {
-    "status": "mui_and_operator_language_code_convergence_complete_verification_pending",
+    "status": "mui_operator_language_and_source_convergence_complete_verification_pending",
     "effective_from": "2026-07-12T00:00:00Z",
     "review_due": "2027-01-12T00:00:00Z",
     "runtime_activation": false,
