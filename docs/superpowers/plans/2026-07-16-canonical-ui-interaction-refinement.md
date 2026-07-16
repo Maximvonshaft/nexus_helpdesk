@@ -1,246 +1,312 @@
-# Canonical UI and Interaction Refinement Implementation Plan
+# Nexus MUI Visual Replacement Implementation Plan
 
 > Work Item: #753  
 > Exact starting main: `1fd011e8153833f77ca6d1d469071af5db4afb0c`  
-> Sole branch: `work/753-canonical-ui-interaction-refinement`
+> Sole branch: `work/753-canonical-ui-interaction-refinement`  
+> Sole PR: #754
 
 ## Goal
 
-Refine the existing canonical Nexus operator console into a modern, precise and trustworthy logistics case-resolution cockpit without adding a second implementation authority.
+Replace the visible shell of the existing canonical Nexus operator console with Material UI while preserving the functional machine and ending with exactly one production visual system.
 
-This plan changes the current UI in place. It does not create a V2 route, new application, second component library, second token system, broad UI framework, hidden old/new switch or decorative animation layer.
+The final state is not “MUI plus old CSS.” The final state is:
 
-## Governing method
+`MUI components + one Nexus MUI theme + Nexus domain composition`
 
-Every task uses:
+The replaced custom generic components, route CSS, token CSS and Radix Dialog dependency must be deleted before merge.
 
-`existence audit -> canonical owner -> modify in place -> migrate consumers -> delete replaced expression -> residue scan`
+## Selected authority
 
-External skill roles are pinned in #753. They provide technique only. `PRODUCT.md`, `DESIGN.md`, the machine foundation contract and current code remain authoritative.
+Machine decision: `webapp/design/mui-visual-authority.v1.json`.
 
-## Baseline findings
+Pinned stack:
 
-1. `webapp/` is already the single operator frontend after merged PR #748.
-2. No open PR or discovered branch currently owns the same UI-refinement scope.
-3. `webapp/scripts/assert-frontend-architecture.mjs` incorrectly requires a GitHub Actions workflow even though Actions are retired and `.github/workflows` must remain absent.
-4. `webapp/design/frontend-product-foundation.v1.json` still marks canonical routes as planned, design-system enforcement as incomplete and legacy style sources as active.
-5. `docs/engineering/frontend-product-foundation.md` still describes the pre-#748 migration state and can misdirect future implementers toward compatibility layers.
-6. `Badge` is overloaded for status, metadata, priority, source, count and refresh state.
-7. `EmptyState`, `ErrorSummary` and `TechnicalDetails` do not yet form a complete, consistently styled semantic state vocabulary.
-8. Workspace hierarchy remains card-heavy and lacks a truthful functional Case Spine.
-9. Operator-visible copy still includes generic or implementation-oriented terms in several paths.
-10. Supporting routes reuse the same panel/card/KPI grammar, reducing product-specific hierarchy.
+- `@mui/material@9.2.0`;
+- `@mui/icons-material@9.2.0`;
+- `@emotion/react@11.14.0`;
+- `@emotion/styled@11.14.1`;
+- `react-is@18.3.1`;
+- `package.json` override `react-is: 18.3.1`.
 
-## Task 1 — Freeze the active authority
+MUI owns generic controls, surfaces, typography, layout, dialogs, notices, loading, lists, tables and navigation presentation. Nexus owns only domain-specific composition such as Case Spine, evidence items and operational-result summaries.
+
+## Non-duplication method
+
+Every task follows:
+
+`identify current consumers -> replace with MUI -> preserve behavior -> delete replaced implementation -> scan residue`
+
+The old and new visual systems may coexist only inside the unmerged branch during active migration. Partial merge, runtime switches, V2 routes and indefinite compatibility are forbidden.
+
+## Preserved machine
+
+Do not change unless a separate accepted defect proves it necessary:
+
+- backend API contracts;
+- authorization and server-owned scope;
+- queue truth;
+- business state mapping;
+- drafts and deep links;
+- mutation safety;
+- confirmation requirements;
+- error and degraded behavior.
+
+## Task 1 — Lock the MUI authority
 
 **Files**
 
+- Create: `webapp/design/mui-visual-authority.v1.json`
+- Create: `webapp/tests/mui-visual-authority-contract.test.mjs`
+- Create: `docs/engineering/mui-visual-migration.md`
 - Modify: `webapp/scripts/assert-frontend-architecture.mjs`
-- Modify: `webapp/design/frontend-product-foundation.v1.json`
-- Modify: `webapp/tests/frontend-product-foundation-contract.test.mjs`
-- Modify: `docs/engineering/frontend-product-foundation.md`
-- Create: this plan
+- Modify: #753 and PR #754 descriptions
 
-**Changes**
+**Requirements**
 
-- Replace the stale workflow requirement with a fail-closed Actions-retirement check.
-- Expand duplicate primitive detection to the complete shared semantic vocabulary.
-- Reject obvious V2/new-UI paths and routes.
-- Reject broad parallel UI framework dependencies.
-- Mark current canonical routes, tokens, primitives and lifecycle as active.
-- Remove deleted legacy sources from the machine contract.
-- Record #753 as the active bounded refinement path.
+- MUI 9.2.0 is the only selected broad UI framework.
+- Emotion is the only styling engine.
+- React Is is pinned to React 18.3.1.
+- Tailwind, shadcn, Ant Design, Chakra, Mantine, Bootstrap and other broad frameworks remain forbidden.
+- MUI packages not explicitly approved remain forbidden as direct dependencies.
+
+**Commit**
+
+`docs(frontend): select MUI as replacement visual authority`
+
+## Task 2 — Install the exact package set
+
+**Files**
+
+- Modify: `webapp/package.json`
+- Regenerate: `webapp/package-lock.json`
+
+**Required package state**
+
+```json
+{
+  "dependencies": {
+    "@mui/material": "9.2.0",
+    "@mui/icons-material": "9.2.0",
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "react-is": "18.3.1"
+  },
+  "overrides": {
+    "react-is": "18.3.1"
+  }
+}
+```
+
+Do not remove Radix or old visual dependencies in this task. They are removed only after all current consumers migrate.
 
 **Verification**
 
 ```bash
 cd webapp
-node --check scripts/assert-frontend-architecture.mjs
-node --test tests/frontend-product-foundation-contract.test.mjs
+npm install --ignore-scripts
 npm run architecture
+npm run typecheck
 ```
 
 **Commit**
 
-`test(frontend): freeze canonical UI refinement authority`
+`build(frontend): install pinned MUI visual stack`
 
-## Task 2 — Produce the implementation inventory
+## Task 3 — Establish one MUI theme root
 
 **Files**
 
-- Create: `webapp/design/ui-refinement-inventory.v1.json`
-- Create: `webapp/tests/ui-refinement-inventory-contract.test.mjs`
+- Create: `webapp/src/theme/nexusTheme.ts`
+- Create: `webapp/src/theme/NexusThemeProvider.tsx`
+- Modify: `webapp/src/main.tsx`
+- Add focused theme contract tests
 
-**Inventory domains**
+**Theme responsibilities**
 
-- visible route and navigation labels;
-- buttons and action hierarchy;
-- badges, statuses, counts and refresh indicators;
-- cards, panels, borders, radii and shadows;
-- empty, loading, degraded, warning and error states;
-- fields and validation;
-- technical disclosures;
-- operator-visible implementation terminology;
-- feature CSS selectors and raw visual values.
+- palette;
+- typography;
+- spacing;
+- shape;
+- density;
+- breakpoints;
+- transitions;
+- z-index;
+- component defaults;
+- component overrides;
+- CSS variables;
+- high-contrast and reduced-motion compatibility.
 
-Every entry receives one disposition only:
+Use `ThemeProvider` and `CssBaseline` once at the application root. No nested route themes.
 
-- `KEEP` — current canonical expression remains;
-- `REPLACE` — named canonical replacement and consumer list;
-- `DELETE` — no retained product value.
-
-The inventory must not become a second design system. It is a bounded migration ledger and is deleted or archived as evidence after acceptance.
+The approved visual direction remains “Dense calm logistics cockpit”: restrained surfaces, limited color, compact operational density and no decorative gradients, glass or glow.
 
 **Commit**
 
-`test(frontend): inventory canonical UI expressions`
+`feat(frontend): establish single Nexus MUI theme`
 
-## Task 3 — Separate metadata, status and count semantics
-
-**Files**
-
-- Modify: `webapp/src/components/ui/Badge.tsx`
-- Create only if inventory proves missing responsibility: `webapp/src/components/ui/StatusIndicator.tsx`
-- Create only if inventory proves missing responsibility: `webapp/src/components/ui/Count.tsx`
-- Modify: `webapp/src/styles/components.css`
-- Modify consumers across current routes
-- Add focused component/contract tests
-
-**Rules**
-
-- Badge represents compact metadata only.
-- StatusIndicator represents operational state with text and non-color-only cue.
-- Count represents quantities without pill styling.
-- Refresh/loading uses a bounded progress expression, not a status badge.
-- Green is reserved for verified success.
-- All replaced Badge uses migrate in the same delivery path.
-
-**Commit**
-
-`refactor(frontend): separate status metadata and count semantics`
-
-## Task 4 — Complete shared feedback and disclosure states
+## Task 4 — Migrate Login and AppShell
 
 **Files**
 
-- Modify in place: `EmptyState.tsx`, `ErrorSummary.tsx`, `TechnicalDetails.tsx`, `PageHeader.tsx`
-- Modify: `webapp/src/styles/components.css`
-- Migrate route-private feedback styles and delete superseded selectors
-
-**Required variants**
-
-- loading/skeleton where structure is known;
-- empty with reason and next valid action;
-- degraded/unavailable preserving last safe information;
-- warning requiring attention;
-- error with specific recovery action;
-- technical detail behind progressive disclosure.
-
-**Commit**
-
-`refactor(frontend): complete canonical feedback states`
-
-## Task 5 — Refine navigation, naming and application shell
-
-**Files**
-
-- Modify: `webapp/src/app/navigation.ts`
-- Modify: `webapp/src/app/AppNavigation.tsx`
+- Modify: `webapp/src/routes/login.tsx`
 - Modify: `webapp/src/app/AppShell.tsx`
-- Modify: `webapp/src/app/app-shell.css`
-- Modify route headings and browser titles
+- Modify: `webapp/src/app/AppNavigation.tsx`
+- Modify: `webapp/src/app/navigation.ts`
+- Delete after migration: `webapp/src/styles/auth.css`
+- Delete after migration: `webapp/src/app/app-shell.css`
 
-**Target visible names**
+**MUI components**
 
-- `工作台` -> `案例处理`
-- `知识` -> `知识与流程`
-- `运行与审计` -> `系统运行`
-- `运营总览` -> `运营监控`
+- AppBar / Toolbar;
+- Box / Stack / Container;
+- Button / IconButton;
+- TextField;
+- Tabs or navigation buttons where semantically appropriate;
+- Typography;
+- Menu / Tooltip for compact actions.
 
-Use TanStack Router links rather than raw navigation anchors where route semantics require client navigation.
+Preserve authentication, navigation, scope, user identity, logout and router behavior.
+
+Use operator-facing names:
+
+- `工作台` -> `案例处理`;
+- `知识` -> `知识与流程`;
+- `运行与审计` -> `系统运行`;
+- `运营总览` -> `运营监控`.
 
 **Commit**
 
-`refactor(frontend): clarify canonical navigation language`
+`refactor(frontend): migrate login and shell to MUI`
 
-## Task 6 — Recompose Workspace without a second Workspace
+## Task 5 — Migrate the canonical Workspace
 
 **Files**
 
 - Modify in place: `webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx`
-- Modify in place: existing Workspace CSS files
-- Extract bounded internal components only inside the existing feature when decomposition improves maintenance; do not create another route or product owner
+- Modify domain presentation helpers only where needed to feed MUI props
+- Delete after migration: `operator-workspace.css`
+- Delete after migration: `operator-workspace-refinements.css`
 
-**Desktop structure**
+**Structure**
 
 ```text
 scoped queue | dominant continuous case surface | contextual next-action rail
 ```
 
-**Changes**
+**MUI composition**
 
-- Queue becomes a continuous task list rather than isolated card tiles.
-- Case header prioritizes identity, owner, urgency and blocker.
-- Technical source IDs move behind disclosure.
-- Case Spine renders only available durable stages and explicitly marks unavailable data.
-- Evidence, conversation and result sections become one continuous work surface with dividers and spacing.
-- Right rail presents the current task, disabled reason and one primary action.
-- Message styling distinguishes participants without nested-card excess.
-- Draft, deep-link, authorization, cancel-preview and mutation behavior remain unchanged.
+- List / ListItemButton for queue rows;
+- Box / Stack / Divider for continuous case structure;
+- Typography for hierarchy;
+- Chip only for true compact labels;
+- Alert for warning, degraded and failure feedback;
+- LinearProgress / CircularProgress / Skeleton for loading;
+- Dialog for confirmation;
+- Accordion or Collapse for technical disclosure;
+- TextField / Select / Button for actions;
+- Drawer or responsive Tabs for mobile structure.
+
+**Functional invariants**
+
+- queue selection;
+- deep links;
+- reply drafts;
+- stale selection protection;
+- authorization;
+- cancel preview binding;
+- mutation loading and duplicate-submit prevention;
+- error/degraded behavior.
+
+**Visual requirements**
+
+- Case identity, owner, urgency and blocker are immediately visible.
+- Case Spine uses only durable/server-provided truth.
+- Evidence, communication and results form one continuous work surface.
+- Technical IDs are behind disclosure.
+- Badge overload is eliminated through MUI Typography, Chip, Alert and numeric text.
 
 **Commit sequence**
 
-- `refactor(frontend): clarify workspace queue and case header`
-- `feat(frontend): render truthful case spine`
-- `refactor(frontend): unify workspace evidence communication and action hierarchy`
+- `refactor(frontend): migrate workspace queue and case header to MUI`
+- `feat(frontend): compose truthful MUI case spine`
+- `refactor(frontend): migrate workspace actions and communication to MUI`
 
-## Task 7 — Converge supporting routes
+No intermediate commit is mergeable independently.
 
-Apply the shared vocabulary in this order:
+## Task 6 — Migrate supporting routes
 
-1. `/knowledge`
-2. `/channels`
-3. `/runtime`
-4. `/control-tower`
-5. `/login` and boundary pages
+Migrate in this order:
 
-**Rules**
+1. `/knowledge`;
+2. `/channels`;
+3. `/runtime`;
+4. `/control-tower`;
+5. boundary and not-found pages.
 
-- No route-private control or status system.
-- Remove generic KPI-card layouts where action-oriented lists or tables are clearer.
-- Keep technical detail secondary.
-- Delete replaced selectors with each route migration.
+Use MUI directly for generic controls and layout. Keep only domain-specific composition in Nexus components.
+
+Delete after each route reaches parity:
+
+- `admin-routes.css`;
+- `knowledge.css`;
+- `runtime-evidence-audit.css`.
+
+Control Tower should use action-oriented lists or tables rather than decorative KPI card grids.
 
 **Commits**
 
-One coherent route-domain commit per route; no parallel redesign branches.
+One coherent migration commit per route domain on the same branch.
 
-## Task 8 — Motion and interaction polish
+## Task 7 — Remove the old generic component system
 
-Motion is added only where it communicates state:
+After all active consumers use MUI, delete:
 
-- selection change;
-- panel or disclosure opening;
-- loading/progress transition;
-- confirmation, conflict or repair feedback.
+- `webapp/src/components/ui/Button.tsx`;
+- `ButtonLink.tsx`;
+- `Badge.tsx`;
+- `Field.tsx`;
+- `EmptyState.tsx`;
+- `ErrorSummary.tsx`;
+- `TechnicalDetails.tsx`;
+- `ConfirmDialog.tsx`;
+- `PageHeader.tsx`.
 
-Use existing CSS transitions where sufficient. Do not add an animation dependency unless a concrete interaction cannot be implemented accessibly and smoothly with the current stack.
+Remove all imports and exports referencing them.
 
-Requirements:
+Delete:
 
-- 150–220 ms;
-- transform/opacity where possible;
-- no bounce, elastic or page-load choreography;
-- content visible without animation;
-- `prefers-reduced-motion` alternative.
+- `webapp/src/styles/components.css`;
+- `webapp/src/styles/tokens.css` after the theme fully owns tokens;
+- remaining route visual CSS;
+- `@radix-ui/react-dialog` from package.json and lockfile.
+
+Reduce `styles.css` and `a11y.css` to narrowly justified browser/accessibility rules, or delete them if MUI plus semantic HTML fully covers their responsibilities.
 
 **Commit**
 
-`refactor(frontend): polish stateful interaction motion`
+`refactor(frontend): retire replaced custom visual system`
 
-## Task 9 — Browser acceptance and residue deletion
+## Task 8 — Residue and authority enforcement
 
-**Verification**
+Strengthen architecture checks to fail if the completed migration contains:
+
+- imports from deleted generic UI files;
+- route CSS imports;
+- `--nd-*` visual token usage;
+- old `.nd-*` generic component classes;
+- Radix Dialog;
+- any broad UI framework other than MUI;
+- nested themes or second theme files;
+- raw feature palettes;
+- V2 routes or runtime switches.
+
+Change the MUI authority status from `authorized_not_installed` to `complete` only after these checks pass.
+
+**Commit**
+
+`test(frontend): enforce completed MUI-only visual authority`
+
+## Task 9 — Verification and browser acceptance
 
 ```bash
 cd webapp
@@ -257,28 +323,30 @@ python scripts/verify_repository.py --focused-backend --skip-browser
 python scripts/verify_repository.py
 ```
 
-Browser evidence covers:
+Browser evidence must cover:
 
 - 375, 768, 1024 and 1440 widths;
-- keyboard-only task completion;
-- focus and dialog restoration;
+- keyboard-only completion;
+- visible focus and dialog focus restoration;
 - reduced motion;
 - browser zoom and text enlargement;
-- long identifiers and long customer content;
-- loading, empty, unavailable, degraded, stale, conflict and repair states;
-- large queue and message/evidence lists;
+- long identifiers and customer content;
+- loading, empty, degraded, stale, conflict, repair and error states;
+- large queue and evidence/message lists;
 - deterministic screenshots of representative Workspace states.
 
-Final residue scan must prove:
+## Merge policy
 
-- no V2 route or source;
-- no unused selectors or unreachable modules;
-- no duplicate primitive or status owner;
-- no retired terminology in primary operator surfaces;
-- no broad UI framework dependency;
-- no restored GitHub Actions;
-- no hidden old/new switch.
+PR #754 remains Draft throughout migration.
 
-## PR policy
+Do not merge until one unchanged exact Head proves:
 
-Open one Draft PR from `work/753-canonical-ui-interaction-refinement` to `main` after Task 1 establishes a coherent review boundary. Keep it Draft through implementation. Do not merge until one unchanged exact Head has all local verification and independent review evidence.
+- all routes use MUI;
+- one MUI theme owns visual tokens;
+- old generic components are deleted;
+- old route CSS is deleted;
+- Radix is removed;
+- no second framework or switch exists;
+- functional behavior is preserved;
+- all local and browser verification passes;
+- independent review is current on that exact Head.
