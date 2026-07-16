@@ -63,7 +63,7 @@ function KnowledgeDetail({ item }: { item: KnowledgeItem }) {
     ['标题', sanitizeDisplayText(item.title)],
     ['类型', kindLabel(item.knowledge_kind)],
     ['客户问题', sanitizeDisplayText(item.fact_question || '未提供')],
-    ['答案事实', sanitizeDisplayText(item.fact_answer || item.published_body || item.draft_body || '未提供')],
+    ['标准答案', sanitizeDisplayText(item.fact_answer || item.published_body || item.draft_body || '未提供')],
     ['适用对象', item.audience_scope === 'internal' ? '内部参考' : '客户问答'],
     ['渠道', sanitizeDisplayText(item.channel || '全部渠道')],
     ['语言', sanitizeDisplayText(item.language || '自动匹配')],
@@ -73,10 +73,7 @@ function KnowledgeDetail({ item }: { item: KnowledgeItem }) {
   return (
     <Paper component="section" variant="outlined" aria-labelledby="knowledge-readonly-title" sx={{ minWidth: 0, p: { xs: 2, md: 2.5 } }}>
       <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
-        <Box>
-          <Typography id="knowledge-readonly-title" component="h2" variant="h3">知识详情</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>查看当前发布事实和适用范围。</Typography>
-        </Box>
+        <Typography id="knowledge-readonly-title" component="h2" variant="h3">知识详情</Typography>
         <Chip color={statusColor(status.tone)} label={status.label} />
       </Stack>
       <Divider sx={{ my: 2 }} />
@@ -88,9 +85,7 @@ function KnowledgeDetail({ item }: { item: KnowledgeItem }) {
           </Box>
         ))}
       </Box>
-      <Alert severity="info" variant="outlined" sx={{ mt: 2.5 }}>
-        当前账号只有读取权限。新建、保存、发布和归档需要知识维护权限。
-      </Alert>
+      <Alert severity="info" variant="outlined" sx={{ mt: 2.5 }}>只读权限</Alert>
     </Paper>
   )
 }
@@ -131,18 +126,15 @@ export function KnowledgeReadOnlyPage() {
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
-        <Box>
-          <Typography component="h1" variant="h1">知识与流程</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>查看经过审核的客户问答、规则政策和处理流程。当前页面为只读视图。</Typography>
-        </Box>
+        <Typography component="h1" variant="h1">知识与流程</Typography>
         {items.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : <Chip label="只读" />}
       </Stack>
 
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 320px)' } }} aria-label="知识只读工作区">
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 320px)' } }} aria-label="知识查看">
         <Paper component="aside" variant="outlined" aria-labelledby="knowledge-list-title" sx={{ minWidth: 0, p: 1.5 }}>
           <Typography id="knowledge-list-title" component="h2" variant="h3">知识列表</Typography>
           <Stack spacing={1.25} sx={{ mt: 2 }}>
-            <TextField label="搜索知识" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="标题、问题或答案关键字" />
+            <TextField label="搜索" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="标题、问题或答案" />
             <TextField select label="状态" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as KnowledgeStatusFilter)}>
               <MenuItem value="active">已上线</MenuItem><MenuItem value="draft">草稿</MenuItem><MenuItem value="archived">已归档</MenuItem><MenuItem value="all">全部</MenuItem>
             </TextField>
@@ -152,7 +144,7 @@ export function KnowledgeReadOnlyPage() {
           </Stack>
           <Divider sx={{ mt: 2 }} />
           {items.isError ? (
-            <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>知识列表不可用</AlertTitle>{errorCopy(items.error, '请稍后重试')}</Alert>
+            <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>无法读取知识列表</AlertTitle>{errorCopy(items.error, '请稍后重试')}</Alert>
           ) : (
             <List disablePadding sx={{ mt: 1, maxHeight: { lg: 'calc(100dvh - 390px)' }, overflowY: 'auto' }}>
               {(items.data?.items ?? []).map((item) => {
@@ -177,27 +169,27 @@ export function KnowledgeReadOnlyPage() {
                   </ListItemButton>
                 )
               })}
-              {!items.data?.items?.length ? <EmptyState title="没有找到知识" description="调整搜索条件后重试。" /> : null}
+              {!items.data?.items?.length ? <EmptyState title="没有找到知识" description="请调整筛选条件" /> : null}
             </List>
           )}
         </Paper>
 
-        {selectedItem ? <KnowledgeDetail item={selectedItem} /> : <Paper variant="outlined"><EmptyState title="选择一条知识" description="从列表选择知识查看完整事实。" /></Paper>}
+        {selectedItem ? <KnowledgeDetail item={selectedItem} /> : <Paper variant="outlined"><EmptyState title="选择一条知识" description="从列表中选择" /></Paper>}
 
-        <Paper component="aside" variant="outlined" aria-label="知识只读验证" sx={{ alignSelf: 'start', minWidth: 0, p: 2 }}>
+        <Paper component="aside" variant="outlined" aria-label="知识搜索测试" sx={{ alignSelf: 'start', minWidth: 0, p: 2 }}>
           <Stack spacing={1.5}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Typography component="h2" variant="h3">测试命中</Typography>
+              <Typography component="h2" variant="h3">搜索测试</Typography>
               {retrieval.isPending ? <CircularProgress size={18} aria-label="测试中" /> : null}
             </Stack>
-            <TextField label="用一句客户问题测试" value={retrievalQuery} onChange={(event) => setRetrievalQuery(event.target.value)} placeholder="例如：包裹末派失败怎么办？" />
+            <TextField label="客户问题" value={retrievalQuery} onChange={(event) => setRetrievalQuery(event.target.value)} placeholder="例如：包裹派送失败怎么办？" />
             <Button variant="outlined" color="inherit" disabled={!retrievalQuery.trim() || retrieval.isPending} onClick={() => retrieval.mutate()}>
-              测试知识命中
+              测试搜索
             </Button>
             {retrieval.error ? <Alert severity="error" variant="outlined"><AlertTitle>测试失败</AlertTitle>{errorCopy(retrieval.error, '请稍后重试')}</Alert> : null}
             {retrieval.data ? (
               <Stack spacing={1.25}>
-                <Typography variant="subtitle2">{retrieval.data.hits.length ? `命中 ${retrieval.data.hits.length} 条知识` : '没有命中知识'}</Typography>
+                <Typography variant="subtitle2">{retrieval.data.hits.length ? `找到 ${retrieval.data.hits.length} 条` : '未找到结果'}</Typography>
                 {retrieval.data.hits.slice(0, 5).map((hit) => (
                   <Box component="article" key={`${hit.item_id}-${hit.chunk_index}`} sx={{ borderTop: 1, borderColor: 'divider', pt: 1.25 }}>
                     <Typography variant="subtitle2">{sanitizeDisplayText(hit.title)}</Typography>
