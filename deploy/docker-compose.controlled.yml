@@ -16,6 +16,8 @@ x-controlled-app: &controlled_app
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set exact frontend SHA}
     EXPECTED_MIGRATION_HEAD: ${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}
     READINESS_REQUIRE_RELEASE_METADATA: "true"
+    METRICS_ENABLED: "true"
+    METRICS_TOKEN: ${METRICS_TOKEN:?set a dedicated metrics token}
     PROMETHEUS_MULTIPROC_DIR: /var/run/nexus-prometheus
   volumes: &controlled_volumes
     - ${NEXUS_RUNTIME_SECRETS_HOST_PATH:?set runtime secrets host path}:/run/secrets:ro
