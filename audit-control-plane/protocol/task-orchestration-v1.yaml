@@ -1,0 +1,174 @@
+schema: nexus.audit.task-orchestration.v1
+version: 1.0.0
+timezone: Europe/Podgorica
+cadence: hourly
+strategy: staggered_single_baseline_pipeline
+objective: Complete one high-frequency audit cycle per hour without allowing specialist lanes to overwrite, confirm, or govern one another.
+
+common_contract:
+  authority_read:
+    - Resolve the exact governance commit from the current main pointer; if unavailable, use the latest exact authority pointer in Issue 722.
+    - Fetch the protocol at that exact governance commit and verify its SHA-256.
+    - Resolve current main and the lane watermark before analysis.
+  run_rules:
+    - Operate read-only.
+    - Never trigger, rerun, cancel, enable, disable, or edit GitHub Actions.
+    - Never modify code, refs, branches, PRs, issue metadata, deployments, credentials, providers, outbound systems, or production data.
+    - Main movement before publication makes the result STALE_RUN.
+    - Bind every finding to exact objects and distinguish observation, inference, and not-verified scope.
+    - Append at most one bounded structured Issue 722 comment per run.
+    - Append nothing for NO_CHANGE or health-only success.
+    - PARTIAL results are evidence only and cannot authorize execution.
+  output:
+    issue: 722
+    event_limit_per_run: 1
+    no_change_write: false
+    max_comment_characters: 24000
+    sensitive_data: prohibited
+  dedupe:
+    key: lane|subject|root_cause|exact_object_class
+    historical_echo_is_confirmation: false
+  failure:
+    missing_authority: append_one_bounded_authority_failure_only_if_state_changed
+    rate_limit: PARTIAL_WITH_CONTINUATION_CURSOR
+    connector_truncation: PARTIAL_AND_EXPLICIT_NOT_VERIFIED
+
+pipeline:
+  - stage: delivery_truth
+    lanes: [delivery_lifecycle, dependency_config_docs]
+  - stage: domain_fact_audit
+    lanes: [data_migration, runtime_outbound, security_privacy, knowledge_rag, business_loop]
+  - stage: system_synthesis
+    lanes: [architecture, product_frontend, engineering_quality, observability_recovery, repository_retirement]
+  - stage: exact_head_evidence
+    lanes: [ci_release_evidence]
+  - stage: reconciliation
+    lanes: [ledger_truth]
+  - stage: decision
+    lanes: [governance]
+
+schedule:
+  delivery_lifecycle:
+    minute: 0
+    timing_mode: exact_schedule
+    consumes: [current_main, current_open_prs, current_issues, previous_lane_watermark]
+    produces: [delivery_object_currentness]
+    directive: Reconcile current PR heads, bases, Draft/Ready state, Claims, leases, Handoffs, reviews, checks, ownership, and Work Item links. Lifecycle activity without an exact head or current claim is evidence, not acceptance.
+  dependency_config_docs:
+    minute: 4
+    timing_mode: exact_schedule
+    consumes: [current_main, protocol_pointer, configuration, manifests, documentation, previous_lane_watermark]
+    produces: [configuration_and_document_authority]
+    directive: Detect missing declared authority files, conflicting configuration, stale documentation, dependency drift, obsolete paths, and protocol-pointer inconsistencies. Do not treat documentation claims as runtime facts.
+  data_migration:
+    minute: 8
+    timing_mode: exact_schedule
+    consumes: [current_main, migration_graph, database_contracts, recovery_authority, previous_lane_watermark]
+    produces: [database_change_authority]
+    directive: Verify exact migration topology, revision uniqueness, downgrade and restore boundaries, data ownership, backfill prerequisites, transaction safety, and database identity. Static source never proves production execution.
+  runtime_outbound:
+    minute: 12
+    timing_mode: exact_schedule
+    consumes: [current_main, runtime_routes, providers, tools, voice, dispatch, outbound, previous_lane_watermark]
+    produces: [external_execution_boundary]
+    directive: Trace all paths capable of Provider, Tool, Voice, Dispatch, notification, or outbound execution. Verify server-owned authority, deterministic canary, kill-switch precedence, fencing, idempotency, and fail-closed missing configuration.
+  security_privacy:
+    minute: 16
+    timing_mode: exact_schedule
+    consumes: [current_main, authorization, data_flows, storage, APIs, UI_projection, previous_lane_watermark]
+    produces: [security_and_privacy_findings]
+    directive: Perform source-to-sink review for authorization bypass, tenant or scope leakage, PII inference, overbroad projections, secrets, credential boundaries, unsafe logs, and data minimization. Require exact exploitability evidence for P0/P1 promotion.
+  knowledge_rag:
+    minute: 20
+    timing_mode: exact_schedule
+    consumes: [current_main, knowledge_lifecycle, retrieval, vectors, citations, publication, previous_lane_watermark]
+    produces: [knowledge_truth_authority]
+    directive: Verify one knowledge authority from ingestion through quarantine, acceptance, retrieval, citation, scope, publication, invalidation, and repair. Distinguish source evidence from derived vector matches and generated claims.
+  business_loop:
+    minute: 24
+    timing_mode: exact_schedule
+    consumes: [current_main, operator_actions, jobs, outcomes, customer_visibility, previous_lane_watermark]
+    produces: [business_completion_semantics]
+    directive: Trace request to verified fact, owner, permitted action, technical result, operational result, customer notification, closure, observation, and recovery. Never collapse queued, done, sent, delivered, operationally complete, and business complete.
+  architecture:
+    minute: 28
+    timing_mode: exact_schedule
+    consumes: [delivery_object_currentness, configuration_and_document_authority, domain_lane_results, current_main, previous_lane_watermark]
+    produces: [canonical_architecture_candidates]
+    directive: Identify duplicate or competing product, transport, UI, permission, policy, service, workflow, data, and release authorities. Select canonical target direction but do not issue governance acceptance.
+  product_frontend:
+    minute: 32
+    timing_mode: exact_schedule
+    consumes: [current_main, routes, operator_workflows, API_projection, domain_lane_results, previous_lane_watermark]
+    produces: [operator_product_truth]
+    directive: Audit one operator product, information architecture, visible truth, interaction safety, accessibility, responsive behavior, degraded states, and protected drafts. Browser behavior not executed is MEASURE_FIRST, not confirmed.
+  engineering_quality:
+    minute: 36
+    timing_mode: exact_schedule
+    consumes: [current_main, architecture_candidates, domain_lane_results, tests, previous_lane_watermark]
+    produces: [engineering_risk]
+    directive: Audit root-cause correctness, concurrency, idempotency, transactions, maintainability, performance, resource admission, test quality, and implementation feasibility. Prefer systemic fixes over local patches.
+  observability_recovery:
+    minute: 40
+    timing_mode: exact_schedule
+    consumes: [current_main, telemetry, incident_paths, backup, restore, rollback, runtime_identity, previous_lane_watermark]
+    produces: [operational_recovery_truth]
+    directive: Verify observable failure detection, containment, queue health, backup provenance, restored database identity, application binding, rollback, post-restore verification, and incident evidence. Health alone never proves recovery correctness.
+  repository_retirement:
+    minute: 44
+    timing_mode: exact_schedule
+    consumes: [current_main, canonical_candidates, delivery_truth, domain_lane_results, previous_lane_watermark]
+    produces: [retirement_candidate_state]
+    directive: Classify duplicate, dead, superseded, migrate-then-delete, compatibility-deadline, generated, vendor-managed, and unknown assets. Never delete. DELETION_READY requires a current governance execution packet and verified replacement on main.
+  ci_release_evidence:
+    minute: 48
+    timing_mode: exact_schedule
+    consumes: [current_main, current_pr_heads, verification_entrypoints, migration_graph, artifacts, previous_lane_watermark]
+    produces: [verification_and_release_evidence]
+    directive: Read current exact-head checks, repository-local verification contracts, migration rehearsal, artifacts, immutable image identity, provenance, recovery evidence, and release gates. Never trigger or rerun Actions. Missing evidence is NOT_VERIFIED.
+  ledger_truth:
+    minute: 54
+    timing_mode: exact_schedule
+    consumes: [all_current_lane_terminal_events, current_main, exact_protocol_commit, previous_snapshot, previous_context_index]
+    produces: [validated_state_snapshot, execution_context_index]
+    directive: Reconcile only current exact-main results; deduplicate echoes, resolve contradictions, apply supersessions and tombstones, and publish FINAL only when required terminal packets and protocol authority are complete. Do not assert self-health.
+  governance:
+    minute: 59
+    timing_mode: exact_schedule
+    consumes: [final_validated_state_snapshot, final_execution_context_index, current_main, current_delivery_truth]
+    produces: [governance_acceptance, execution_packet]
+    directive: Prioritize root causes and decide NO_GO, conditional direction, or GOVERNANCE_ACCEPTED. Issue a subject-specific execution packet only when every protocol gate passes. Otherwise publish no packet and identify the exact missing authority or evidence.
+
+ordering_rules:
+  - Specialist lanes may read prior-cycle FINAL state but may not wait indefinitely for same-cycle tasks.
+  - Ledger truth promotes only terminal results already visible at its read boundary.
+  - Governance consumes only the latest FINAL snapshot/index; a same-hour PARTIAL snapshot is not a decision input.
+  - Late results roll into the next cycle without rewriting previous events.
+  - No lane may broaden its authority because an upstream lane is missing.
+
+noise_control:
+  append_when:
+    - new_verified_finding
+    - material_state_transition
+    - contradiction
+    - supersession_or_tombstone
+    - authority_or_health_degradation
+    - FINAL_snapshot_or_context_index
+    - governance_decision_or_execution_packet
+  do_not_append_when:
+    - no_material_delta
+    - unchanged_open_finding
+    - successful_health_check_only
+    - repeated_historical_summary
+    - unverified_speculation_without_measure_first_value
+
+service_levels:
+  P0:
+    target_revalidation_cycles: 1
+    governance_visibility: immediate_next_governance_cycle
+  P1:
+    target_revalidation_cycles: 2
+  P2:
+    target_revalidation_cycles: 6
+  P3_INFO:
+    default: aggregate_without_new_issue_or_repeated_comment
