@@ -63,13 +63,33 @@
     }
   ],
   "token_authority": {
-    "semantic_tokens_path": "webapp/src/styles/tokens.css",
-    "component_primitives_path": "webapp/src/components/ui",
-    "enforcement_status": "enforced",
-    "feature_raw_hex_policy": "prohibited",
-    "legacy_sources": [],
-    "migration_strategy": "in_place_under_single_authority",
-    "big_bang_rewrite": false
+    "framework": "Material UI",
+    "component_package": "@mui/material@9.2.0",
+    "icon_package": "@mui/icons-material@9.2.0",
+    "styling_engine": "Emotion",
+    "theme_path": "webapp/src/theme/nexusTheme.ts",
+    "provider_path": "webapp/src/theme/NexusThemeProvider.tsx",
+    "baseline": "CssBaseline",
+    "enforcement_status": "code_migration_complete_verification_pending",
+    "generic_custom_component_policy": "prohibited",
+    "route_visual_css_policy": "prohibited",
+    "feature_raw_hex_policy": "theme_only",
+    "allowed_global_css": [
+      "webapp/src/styles.css",
+      "webapp/src/a11y.css"
+    ],
+    "retired_authorities": [
+      "webapp/src/styles/tokens.css",
+      "webapp/src/styles/components.css",
+      "webapp/src/components/ui",
+      "webapp/src/styles/auth.css",
+      "webapp/src/app/app-shell.css",
+      "webapp/src/features/operator-workspace/operator-workspace.css",
+      "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
+      "webapp/src/features/admin-routes/admin-routes.css",
+      "webapp/src/features/knowledge/knowledge.css",
+      "webapp/src/features/runtime/runtime-evidence-audit.css"
+    ]
   },
   "state_vocabulary": {
     "source": [
@@ -152,10 +172,10 @@
   },
   "downstream_work_items": [525, 564, 573, 753],
   "lifecycle": {
-    "status": "active_canonical_authority",
+    "status": "mui_code_migration_complete_verification_pending",
     "effective_from": "2026-07-12T00:00:00Z",
     "review_due": "2027-01-12T00:00:00Z",
-    "runtime_activation": true,
-    "production_ui_migration_complete": true
+    "runtime_activation": false,
+    "production_ui_migration_complete": false
   }
 }
