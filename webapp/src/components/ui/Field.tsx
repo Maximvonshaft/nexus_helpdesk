@@ -1,8 +1,18 @@
+import {
+  FormControl,
+  FormHelperText,
+  FormLabel,
+  NativeSelect as MuiNativeSelect,
+  OutlinedInput,
+  Stack,
+  Typography,
+} from '@mui/material'
 import { cloneElement, isValidElement, useId } from 'react'
-import type { InputHTMLAttributes, PropsWithChildren, ReactElement, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
-import { cn } from '@/lib/cn'
+import type { OutlinedInputProps } from '@mui/material/OutlinedInput'
+import type { NativeSelectProps } from '@mui/material/NativeSelect'
+import type { PropsWithChildren, ReactElement } from 'react'
 
-type FieldProps = PropsWithChildren<{
+export type FieldProps = PropsWithChildren<{
   label: string
   hint?: string
   description?: string
@@ -34,28 +44,34 @@ export function Field({ label, children, hint, description, example, error, requ
     : children
 
   return (
-    <div className="nd-field">
-      <label className="nd-field__label" htmlFor={controlId}>
-        {label}{required ? <span className="nd-field__required"> 必填</span> : null}
-      </label>
-      {description ? <span id={`${generatedId}-description`} className="nd-field__description">{description}</span> : null}
-      {enhancedChildren}
-      {hint ? <span id={`${generatedId}-hint`} className="nd-field__hint">{hint}</span> : null}
-      {example ? <span id={`${generatedId}-example`} className="nd-field__example">示例：{example}</span> : null}
-      {disabledReason ? <span id={`${generatedId}-disabled`} className="nd-field__hint">当前不可用：{disabledReason}</span> : null}
-      {error ? <span id={`${generatedId}-error`} className="nd-field__error" role="alert">{error}</span> : null}
-    </div>
+    <FormControl fullWidth error={Boolean(error)} required={required}>
+      <Stack spacing={0.75}>
+        <FormLabel htmlFor={controlId} sx={{ color: 'text.primary', fontSize: 13, fontWeight: 650 }}>
+          {label}
+        </FormLabel>
+        {description ? (
+          <Typography id={`${generatedId}-description`} variant="caption" color="text.secondary">
+            {description}
+          </Typography>
+        ) : null}
+        {enhancedChildren}
+        {hint ? <FormHelperText id={`${generatedId}-hint`}>{hint}</FormHelperText> : null}
+        {example ? <FormHelperText id={`${generatedId}-example`}>示例：{example}</FormHelperText> : null}
+        {disabledReason ? <FormHelperText id={`${generatedId}-disabled`}>当前不可用：{disabledReason}</FormHelperText> : null}
+        {error ? <FormHelperText id={`${generatedId}-error`} role="alert">{error}</FormHelperText> : null}
+      </Stack>
+    </FormControl>
   )
 }
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn('nd-control', props.className)} {...props} />
+export function Input(props: OutlinedInputProps) {
+  return <OutlinedInput fullWidth {...props} />
 }
 
-export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn('nd-control', props.className)} {...props} />
+export function Select(props: NativeSelectProps) {
+  return <MuiNativeSelect fullWidth input={<OutlinedInput />} {...props} />
 }
 
-export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn('nd-control', props.className)} {...props} />
+export function Textarea(props: OutlinedInputProps) {
+  return <OutlinedInput fullWidth multiline minRows={3} {...props} />
 }
