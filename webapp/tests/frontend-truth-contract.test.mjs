@@ -12,10 +12,7 @@ const workspacePresentation = read('src/lib/operatorWorkspacePresentation.ts')
 const operationalPresentation = read('src/domain/operationalPresentation.ts')
 const channels = read('src/features/channels/ChannelsPage.tsx')
 const runtime = read('src/features/runtime/RuntimePage.tsx')
-const appShellCss = read('src/app/app-shell.css')
-const adminCss = read('src/features/admin-routes/admin-routes.css')
-const knowledgeCss = read('src/features/knowledge/knowledge.css')
-
+const theme = read('src/theme/nexusTheme.ts')
 
 test('frontend operational health uses an explicit fail-closed mapping module', () => {
   assert.equal(existsSync(statusPath), true, 'src/lib/supportStatus.ts must exist')
@@ -29,7 +26,6 @@ test('frontend operational health uses an explicit fail-closed mapping module', 
   assert.doesNotMatch(channels, /function toneForHealth/)
 })
 
-
 test('source state and ownership never claim business success', () => {
   assert.match(workspacePresentation, /sourceStatusPresentation/)
   assert.match(workspacePresentation, /来源状态/)
@@ -39,19 +35,17 @@ test('source state and ownership never claim business success', () => {
   assert.doesNotMatch(workspace, /channel === 'whatsapp'\) return 'success'/)
 })
 
-
 test('controlled actions distinguish request acceptance from verified outcome', () => {
   assert.match(workspacePresentation, /outcomePresentation/)
   assert.match(operationalPresentation, /queued/)
   assert.match(operationalPresentation, /submitted/)
   assert.match(operationalPresentation, /operational_completed/)
   assert.match(operationalPresentation, /business_result_confirmed/)
-  assert.match(workspace, /TechnicalDetails/)
+  assert.match(workspace, /技术追踪标识/)
   assert.match(workspace, /预检不是取消完成/)
   assert.match(operationalPresentation, /请求已排队/)
   assert.doesNotMatch(workspace, /<small>Job #\{actionResult\.jobId\}<\/small>/)
 })
-
 
 test('runtime header cannot show normal while loading, unavailable, or not ok', () => {
   assert.match(supportStatus, /runtimePresentation/)
@@ -61,17 +55,17 @@ test('runtime header cannot show normal while loading, unavailable, or not ok', 
   assert.doesNotMatch(runtime, /warnings\?\.length \? '需要关注' : '正常'/)
 })
 
-
-test('canonical surfaces meet bounded accessibility truth requirements', () => {
-  for (const css of [appShellCss, adminCss, knowledgeCss]) assert.doesNotMatch(css, /#f06423/i)
-  assert.match(appShellCss, /min-height:\s*var\(--nd-control-height-md\)/)
-  assert.match(appShellCss, /:focus-visible/)
-  assert.match(adminCss, /<table|nd-admin-table/)
-  assert.match(knowledgeCss, /min-height:\s*72px/)
+test('canonical MUI surfaces meet bounded accessibility truth requirements', () => {
+  assert.match(theme, /MuiButton:/)
+  assert.match(theme, /minHeight:\s*44/)
+  assert.match(theme, /focus-visible/)
+  assert.match(theme, /prefers-reduced-motion/)
   assert.match(workspace, /aria-live="polite"/)
-  assert.match(channels, /<th scope="col">/)
+  assert.match(workspace, /aria-label="案例处理链路"/)
+  assert.match(channels, /<TableHead>/)
+  assert.match(channels, /aria-label="当前启用的渠道账号"/)
+  assert.doesNotMatch(theme, /#f06423/i)
 })
-
 
 test('workspace queue and selected conversation freshness remain visible and bounded', () => {
   assert.match(workspace, /refetchInterval:\s*15_?000/)
