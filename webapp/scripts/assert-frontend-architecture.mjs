@@ -12,10 +12,28 @@ const entrypoint = path.join(srcRoot, 'main.tsx')
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.css']
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
-const PRIMITIVE_EXPORT_RE = /export\s+(?:const|function|class)\s+(Button|Badge|Card|Field|ConfirmDialog)\b/g
+const PRIMITIVE_EXPORT_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
 const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/g
 const LEGACY_SELECTOR_RE = /(^|[,{\s])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
-const CANONICAL_WORKFLOW = 'canonical-verification.yml'
+const FORBIDDEN_PARALLEL_PATH_RE = /(?:^|\/)(?:new-ui|ui-v2|design-system-v2|components-v2|workspace-v2|new-workspace)(?:\/|$)|(?:^|\/)[^/]*(?:V2|Redesign)\.(?:ts|tsx|css)$/i
+const FORBIDDEN_ROUTE_RE = /["']\/(?:workspace-v2|new-workspace|ui-v2)(?:[/?#"']|$)/i
+const FORBIDDEN_UI_PACKAGES = new Set([
+  '@mui/material',
+  '@mui/system',
+  '@chakra-ui/react',
+  '@mantine/core',
+  '@mantine/hooks',
+  'antd',
+  'bootstrap',
+  'react-bootstrap',
+  'semantic-ui-react',
+  'primereact',
+  'tailwindcss',
+  'daisyui',
+  'flowbite',
+  'flowbite-react',
+  'shadcn',
+])
 
 const forbiddenPaths = [
   path.join(repositoryRoot, 'frontend'),
@@ -121,19 +139,23 @@ function duplicatePrimitiveAuthorities(files) {
     .map(([primitive, entries]) => `${primitive}: ${entries.join(', ')}`)
 }
 
-function assertCanonicalWorkflow(failures) {
+function assertActionsRetired(failures) {
   const workflowDir = path.join(repositoryRoot, '.github', 'workflows')
-  if (!fs.existsSync(workflowDir)) {
-    failures.push(`canonical workflow missing: .github/workflows/${CANONICAL_WORKFLOW}`)
-    return
+  if (!fs.existsSync(workflowDir)) return
+  const workflowFiles = walk(workflowDir).map(relative)
+  failures.push(`GitHub Actions are retired; .github/workflows must be absent: ${workflowFiles.join(', ') || 'empty directory exists'}`)
+}
+
+function assertNoParallelImplementation(files, failures) {
+  const forbiddenNames = files.map(relative).filter((file) => FORBIDDEN_PARALLEL_PATH_RE.test(file))
+  if (forbiddenNames.length) failures.push(`parallel UI implementation path is forbidden: ${forbiddenNames.join(', ')}`)
+
+  const forbiddenRoutes = []
+  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
+    const content = fs.readFileSync(file, 'utf8')
+    if (FORBIDDEN_ROUTE_RE.test(content)) forbiddenRoutes.push(relative(file))
   }
-  const workflowFiles = fs.readdirSync(workflowDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .sort()
-  if (workflowFiles.length !== 1 || workflowFiles[0] !== CANONICAL_WORKFLOW) {
-    failures.push(`workflow authority must be exactly ${CANONICAL_WORKFLOW}: ${workflowFiles.join(', ') || 'none'}`)
-  }
+  if (forbiddenRoutes.length) failures.push(`parallel UI route is forbidden: ${forbiddenRoutes.join(', ')}`)
 }
 
 function assertCanonicalNavigation(files, failures) {
@@ -196,13 +218,19 @@ function assertRuntimeDependencies(files, failures) {
   for (const dependency of Object.keys(manifest.dependencies ?? {})) {
     if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
   }
+
+  for (const dependency of [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})]) {
+    if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) {
+      failures.push(`parallel UI framework dependency is forbidden without replacement authority: ${dependency}`)
+    }
+  }
 }
 
 const failures = []
 for (const forbidden of forbiddenPaths) {
   if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
 }
-assertCanonicalWorkflow(failures)
+assertActionsRetired(failures)
 
 const files = sourceFiles()
 const reachable = reachableFiles()
@@ -212,6 +240,7 @@ if (unreachable.length) failures.push(`unreachable production files: ${unreachab
 const duplicatePrimitives = duplicatePrimitiveAuthorities(files)
 if (duplicatePrimitives.length) failures.push(`duplicate UI authorities: ${duplicatePrimitives.join(' | ')}`)
 
+assertNoParallelImplementation(files, failures)
 assertCanonicalNavigation(files, failures)
 assertTransportAuthority(files, failures)
 assertCssAuthority(files, failures)
@@ -227,5 +256,7 @@ console.log(JSON.stringify({
   production_files: files.length,
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
-  canonical_workflow: `.github/workflows/${CANONICAL_WORKFLOW}`,
+  github_actions: 'retired',
+  ui_authority: 'webapp/src/components/ui',
+  token_authority: 'webapp/src/styles/tokens.css',
 }, null, 2))
