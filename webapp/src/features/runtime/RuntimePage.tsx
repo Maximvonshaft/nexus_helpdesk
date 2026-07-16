@@ -4,7 +4,6 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
-  AlertTitle,
   Box,
   Button,
   Chip,
@@ -15,7 +14,14 @@ import {
   Typography,
 } from '@mui/material'
 import { lazy, Suspense, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import {
+  OperatorErrorNotice,
+  OperatorFactGrid,
+  OperatorLoadingState,
+  operatorToneColor,
+} from '@/app/OperatorPresentation'
 import { sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import { runtimePresentation } from '@/lib/supportStatus'
@@ -31,35 +37,14 @@ function compactLatency(value: number | null | undefined) {
   return `${Math.max(0, Math.round(value))}ms`
 }
 
-function errorCopy(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
-
-function statusColor(tone: string) {
-  if (tone === 'success') return 'success'
-  if (tone === 'warning') return 'warning'
-  if (tone === 'danger') return 'error'
-  return 'default'
-}
-
-function FactGrid({ facts }: { facts: Array<[string, React.ReactNode]> }) {
-  return (
-    <Box component="dl" sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, m: 0 }}>
-      {facts.map(([label, value]) => (
-        <Box key={label} sx={{ minWidth: 0 }}>
-          <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
-          <Typography component="dd" variant="body2" sx={{ m: 0, mt: 0.5, overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
-        </Box>
-      ))}
-    </Box>
-  )
-}
-
-function TechnicalDisclosure({ title, summary, children }: { title: string; summary: string; children: React.ReactNode }) {
+function TechnicalDisclosure({ title, summary, children }: { title: string; summary: string; children: ReactNode }) {
   return (
     <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
       <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-        <Box><Typography variant="subtitle2">{title}</Typography><Typography variant="caption" color="text.secondary">{summary}</Typography></Box>
+        <Box>
+          <Typography variant="subtitle2">{title}</Typography>
+          <Typography variant="caption" color="text.secondary">{summary}</Typography>
+        </Box>
       </AccordionSummary>
       <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>{children}</AccordionDetails>
     </Accordion>
@@ -94,7 +79,7 @@ export function RuntimePage() {
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
         <Typography component="h1" variant="h1">系统运行</Typography>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Chip color={statusColor(state.tone)} label={state.label} />
+          <Chip color={operatorToneColor(state.tone)} label={state.label} />
           <Button variant="outlined" color="inherit" onClick={() => setShowEvidenceAudit((current) => !current)}>
             {showEvidenceAudit ? '运行概览' : '证据审计'}
           </Button>
@@ -102,7 +87,7 @@ export function RuntimePage() {
       </Stack>
 
       {showEvidenceAudit ? (
-        <Suspense fallback={<Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 240, justifyContent: 'center' }}><CircularProgress size={30} /><Typography variant="subtitle2">正在加载…</Typography></Stack>}>
+        <Suspense fallback={<OperatorLoadingState label="正在加载证据审计…" minHeight={240} />}>
           <LazyRuntimeEvidenceAudit />
         </Suspense>
       ) : (
@@ -114,12 +99,12 @@ export function RuntimePage() {
             </Stack>
             <Divider sx={{ my: 2 }} />
             {runtime.isError ? (
-              <Alert severity="error" variant="outlined"><AlertTitle>无法读取系统状态</AlertTitle>{errorCopy(runtime.error, '请稍后重试')}</Alert>
+              <OperatorErrorNotice title="无法读取系统状态" error={runtime.error} fallback="请稍后重试" />
             ) : runtime.isLoading ? (
-              <Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 180, justifyContent: 'center' }}><CircularProgress size={28} /><Typography variant="subtitle2">正在检查…</Typography></Stack>
+              <OperatorLoadingState label="正在检查…" minHeight={180} />
             ) : (
               <Stack spacing={2}>
-                <FactGrid facts={[
+                <OperatorFactGrid facts={[
                   ['状态', state.label],
                   ['处理方式', runtime.data?.webchat_runtime_enabled ? '自动处理' : '人工处理'],
                   ['备用方式', runtime.data?.fallback_provider ? '已配置' : '未配置'],
@@ -131,7 +116,7 @@ export function RuntimePage() {
                   </Stack>
                 ) : <Alert severity="success" variant="outlined">无运行提醒</Alert>}
                 <TechnicalDisclosure title="系统信息" summary="状态代码、服务配置与诊断">
-                  <FactGrid facts={[
+                  <OperatorFactGrid facts={[
                     ['状态代码', <Box component="code">{sanitizeDisplayText(runtime.data?.status || 'unknown')}</Box>],
                     ['服务提供方', <Box component="code">{sanitizeDisplayText(runtime.data?.configured_provider || selectedProvider?.name || '未配置')}</Box>],
                     ['备用服务', <Box component="code">{sanitizeDisplayText(runtime.data?.fallback_provider || '无')}</Box>],
@@ -153,10 +138,10 @@ export function RuntimePage() {
             </Stack>
             <Divider sx={{ my: 2 }} />
             {metrics.isError ? (
-              <Alert severity="error" variant="outlined"><AlertTitle>无法读取统计数据</AlertTitle>{errorCopy(metrics.error, '请稍后重试')}</Alert>
+              <OperatorErrorNotice title="无法读取统计数据" error={metrics.error} fallback="请稍后重试" />
             ) : (
               <Stack spacing={2}>
-                <FactGrid facts={[
+                <OperatorFactGrid facts={[
                   ['会话总量', metrics.data?.total ?? 0],
                   ['等待人工', metrics.data?.needs_human ?? 0],
                   ['自动处理中', metrics.data?.ai_active ?? 0],
@@ -164,7 +149,7 @@ export function RuntimePage() {
                 ]} />
                 {latency ? (
                   <TechnicalDisclosure title="响应时间" summary="高级指标">
-                    <FactGrid facts={[
+                    <OperatorFactGrid facts={[
                       ['样本数', latency.sample_count],
                       ['端到端 p50 / p90', `${compactLatency(latency.total_turn.p50_ms)} / ${compactLatency(latency.total_turn.p90_ms)}`],
                       ['运行处理 p50 / p90', `${compactLatency(latency.runtime_total.p50_ms)} / ${compactLatency(latency.runtime_total.p90_ms)}`],
