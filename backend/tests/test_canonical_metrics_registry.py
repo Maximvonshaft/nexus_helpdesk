@@ -11,6 +11,7 @@ CONTROLLED_COMPOSE = REPO_ROOT / "deploy" / "docker-compose.controlled.yml"
 APP_INIT = REPO_ROOT / "backend" / "app" / "__init__.py"
 OBSERVABILITY = REPO_ROOT / "backend" / "app" / "services" / "observability.py"
 GUNICORN_CONFIG = REPO_ROOT / "backend" / "gunicorn.conf.py"
+WORKER_RUNNER = REPO_ROOT / "backend" / "scripts" / "run_worker.py"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 
@@ -45,13 +46,17 @@ def test_observability_owns_multiprocess_collection_and_container_safe_identity(
     assert "def mark_prometheus_process_dead" in source
 
 
-def test_gunicorn_and_image_use_the_same_metrics_cleanup_authority() -> None:
+def test_app_and_worker_lifecycles_clean_live_metric_files() -> None:
     gunicorn = GUNICORN_CONFIG.read_text(encoding="utf-8")
+    worker = WORKER_RUNNER.read_text(encoding="utf-8")
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
     assert "from app.services.observability import mark_prometheus_process_dead" in gunicorn
     assert "def child_exit" in gunicorn
     assert "mark_prometheus_process_dead(worker.pid)" in gunicorn
+    assert "signal.signal(signal.SIGTERM, request_shutdown)" in worker
+    assert "signal.signal(signal.SIGINT, request_shutdown)" in worker
+    assert "raise SystemExit(0)" in worker
     assert "/var/run/nexus-prometheus" in dockerfile
     assert "-c /app/backend/gunicorn.conf.py" in dockerfile
 
