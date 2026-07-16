@@ -12,6 +12,7 @@ const PATHS = {
   product: join(WEBAPP_ROOT, 'PRODUCT.md'),
   design: join(WEBAPP_ROOT, 'DESIGN.md'),
   contract: join(WEBAPP_ROOT, 'design', 'frontend-product-foundation.v1.json'),
+  language: join(WEBAPP_ROOT, 'design', 'operator-language.v1.json'),
   engineering: join(REPO_ROOT, 'docs', 'engineering', 'frontend-product-foundation.md'),
   theme: join(WEBAPP_ROOT, 'src', 'theme', 'nexusTheme.ts'),
   provider: join(WEBAPP_ROOT, 'src', 'theme', 'NexusThemeProvider.tsx'),
@@ -51,7 +52,7 @@ function flattenStateVocabulary(contract) {
   return Object.values(contract.state_vocabulary).flat()
 }
 
-test('required product, design and MUI authorities exist', () => {
+test('required product, design, MUI and language authorities exist', () => {
   for (const [label, path] of Object.entries(PATHS)) {
     assert.equal(existsSync(path), true, `${label} path does not exist: ${path}`)
   }
@@ -68,6 +69,7 @@ test('machine-readable foundation is versioned and bounded', () => {
   assert.deepEqual(Object.keys(contract).sort(), [
     'downstream_work_items',
     'lifecycle',
+    'operator_language_authority',
     'owner',
     'product_job',
     'quality_floor',
@@ -117,6 +119,23 @@ test('MUI theme and component library are the sole generic visual authority', ()
   assert.ok(contract.token_authority.retired_authorities.includes('webapp/src/styles/tokens.css'))
 })
 
+test('operator language is a single bounded authority', () => {
+  const contract = parseContract()
+  const language = JSON.parse(readRequired(PATHS.language, 'operator language authority'))
+  assert.equal(contract.operator_language_authority.path, 'webapp/design/operator-language.v1.json')
+  assert.equal(contract.operator_language_authority.status, language.status)
+  assert.deepEqual(contract.operator_language_authority.primary_surface_content, [
+    'task',
+    'state',
+    'action',
+    'blocking reason',
+    'recovery step',
+  ])
+  assert.equal(contract.operator_language_authority.technical_disclosure_only, true)
+  assert.ok(contract.operator_language_authority.primary_surface_forbidden.includes('product narration'))
+  assert.ok(contract.operator_language_authority.primary_surface_forbidden.includes('AI self-description'))
+})
+
 test('state vocabulary does not collapse technical activity into business closure', () => {
   const contract = parseContract()
   const states = flattenStateVocabulary(contract)
@@ -150,14 +169,18 @@ test('quality floor encodes accessibility, touch, responsive and reduced-motion 
   assert.equal(contract.quality_floor.large_list_required, true)
 })
 
-test('terminology blocks false closure and long-term-memory language', () => {
+test('terminology blocks false closure, long-term-memory and narrative platform language', () => {
   const contract = parseContract()
   assert.ok(contract.terminology.prohibited_operator_labels.includes('记忆证据'))
   assert.ok(contract.terminology.prohibited_operator_labels.includes('已结束'))
+  assert.ok(contract.terminology.prohibited_operator_labels.includes('服务端最终授权'))
+  assert.ok(contract.terminology.prohibited_operator_labels.includes('运营中心'))
   assert.ok(contract.terminology.false_success_sources.includes('http_200'))
   assert.ok(contract.terminology.false_success_sources.includes('job_done'))
   assert.ok(contract.terminology.false_success_sources.includes('message_sent'))
   assert.ok(contract.terminology.false_success_sources.includes('dispatch_dispatched'))
+  assert.ok(contract.terminology.preferred_evidence_labels.includes('已知信息'))
+  assert.ok(contract.terminology.preferred_evidence_labels.includes('处理决定'))
 })
 
 test('PRODUCT register is Nexus-specific and defines the canonical case journey', () => {
@@ -207,9 +230,9 @@ test('engineering integration records the active MUI replacement authority', () 
   assert.ok(normalizedGuide.includes('github actions are retired'))
 })
 
-test('code migration is complete while production acceptance remains pending', () => {
+test('visual migration is complete while language convergence and production acceptance remain pending', () => {
   const contract = parseContract()
-  assert.equal(contract.lifecycle.status, 'mui_code_migration_complete_verification_pending')
+  assert.equal(contract.lifecycle.status, 'mui_code_migration_complete_language_convergence_in_progress_verification_pending')
   assert.equal(contract.lifecycle.runtime_activation, false)
   assert.equal(contract.lifecycle.production_ui_migration_complete, false)
   assert.deepEqual(contract.downstream_work_items, [525, 564, 573, 753])
