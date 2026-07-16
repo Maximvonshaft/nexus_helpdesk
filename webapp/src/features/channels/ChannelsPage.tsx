@@ -4,7 +4,6 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
-  AlertTitle,
   Box,
   Button,
   Chip,
@@ -29,6 +28,12 @@ import {
 } from '@mui/material'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  OperatorEmptyState,
+  OperatorErrorNotice,
+  OperatorFactGrid,
+  operatorToneColor,
+} from '@/app/OperatorPresentation'
 import { operationalPresentation } from '@/domain/operationalPresentation'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
@@ -69,10 +74,6 @@ function maskPhone(value: string | null | undefined) {
   return digits.length > 4 ? `•••• ${digits.slice(-4)}` : '已配置'
 }
 
-function errorCopy(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
-
 function taskStatus(task: ChannelOnboardingTask) {
   if (task.status === 'completed') return { tone: 'success' as const, label: '已完成' }
   if (task.status === 'failed') return { tone: 'danger' as const, label: '需要修复' }
@@ -87,39 +88,6 @@ function canStart(task: ChannelOnboardingTask) {
 
 function canSettle(task: ChannelOnboardingTask) {
   return task.status === 'pending' || task.status === 'in_progress'
-}
-
-function statusColor(tone: string) {
-  if (tone === 'success') return 'success'
-  if (tone === 'warning') return 'warning'
-  if (tone === 'danger') return 'error'
-  return 'default'
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <Stack role="status" alignItems="center" justifyContent="center" spacing={0.75} sx={{ minHeight: 130, p: 3, textAlign: 'center' }}>
-      <Typography variant="subtitle2">{title}</Typography>
-      <Typography variant="body2" color="text.secondary">{description}</Typography>
-    </Stack>
-  )
-}
-
-function ErrorNotice({ title, error, fallback }: { title: string; error: unknown; fallback: string }) {
-  return <Alert severity="error" variant="outlined"><AlertTitle>{title}</AlertTitle>{errorCopy(error, fallback)}</Alert>
-}
-
-function FactGrid({ facts }: { facts: Array<[string, React.ReactNode]> }) {
-  return (
-    <Box component="dl" sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, m: 0 }}>
-      {facts.map(([label, value]) => (
-        <Box key={label} sx={{ minWidth: 0 }}>
-          <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
-          <Typography component="dd" variant="body2" sx={{ m: 0, mt: 0.5, overflowWrap: 'anywhere' }}>{value}</Typography>
-        </Box>
-      ))}
-    </Box>
-  )
 }
 
 export function ChannelsPage() {
@@ -228,7 +196,7 @@ export function ChannelsPage() {
         {accounts.isFetching || tasks.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
 
-      {actionError ? <Box sx={{ mb: 2 }}><ErrorNotice title="操作失败" error={actionError} fallback="请稍后重试" /></Box> : null}
+      {actionError ? <Box sx={{ mb: 2 }}><OperatorErrorNotice title="操作失败" error={actionError} fallback="请稍后重试" /></Box> : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 2fr) minmax(300px, 1fr)' } }}>
         <Paper component="section" variant="outlined" aria-labelledby="channel-accounts-title" sx={{ minWidth: 0, p: 2 }}>
@@ -238,7 +206,7 @@ export function ChannelsPage() {
           </Stack>
           <Divider sx={{ my: 2 }} />
           {accounts.isError ? (
-            <ErrorNotice title="无法读取渠道账号" error={accounts.error} fallback="请稍后重试" />
+            <OperatorErrorNotice title="无法读取渠道账号" error={accounts.error} fallback="请稍后重试" />
           ) : activeAccounts.length ? (
             <TableContainer>
               <Table size="small" aria-label="当前启用的渠道账号">
@@ -250,7 +218,7 @@ export function ChannelsPage() {
                       <TableRow key={item.id} hover>
                         <TableCell>{providerLabel(item.provider)}</TableCell>
                         <TableCell>{sanitizeDisplayText(item.display_name || `${providerLabel(item.provider)} 账号`)}</TableCell>
-                        <TableCell><Chip color={statusColor(health.tone)} label={health.label} /></TableCell>
+                        <TableCell><Chip color={operatorToneColor(health.tone)} label={health.label} /></TableCell>
                         <TableCell align="right">{item.priority}</TableCell>
                         <TableCell>{formatDateTime(item.updated_at)}</TableCell>
                       </TableRow>
@@ -259,30 +227,30 @@ export function ChannelsPage() {
                 </TableBody>
               </Table>
             </TableContainer>
-          ) : <EmptyState title="暂无已启用渠道" description="请先创建接入任务" />}
+          ) : <OperatorEmptyState title="暂无已启用渠道" description="请先创建接入任务" />}
         </Paper>
 
         <Paper component="aside" variant="outlined" aria-labelledby="whatsapp-health-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
             <Typography id="whatsapp-health-title" component="h2" variant="h3">WhatsApp 状态</Typography>
-            <Chip color={statusColor(whatsappHealth.tone)} label={whatsappHealth.label} />
+            <Chip color={operatorToneColor(whatsappHealth.tone)} label={whatsappHealth.label} />
           </Stack>
           <Divider sx={{ my: 2 }} />
-          {!whatsappAccount ? <EmptyState title="未启用 WhatsApp" description="暂无账号" /> : whatsappStatus.isError ? (
-            <ErrorNotice title="无法读取 WhatsApp 状态" error={whatsappStatus.error} fallback="请稍后重试" />
+          {!whatsappAccount ? <OperatorEmptyState title="未启用 WhatsApp" description="暂无账号" /> : whatsappStatus.isError ? (
+            <OperatorErrorNotice title="无法读取 WhatsApp 状态" error={whatsappStatus.error} fallback="请稍后重试" />
           ) : (
             <Stack spacing={1.5}>
-              <FactGrid facts={[
+              <OperatorFactGrid facts={[
                 ['状态', whatsappHealth.label],
                 ['绑定号码', maskPhone(whatsappStatus.data?.phone_number)],
                 ['登录状态', sanitizeDisplayText(whatsappStatus.data?.qr_status || '状态未知')],
                 ['最近连接', whatsappStatus.data?.last_connected_at ? formatDateTime(whatsappStatus.data.last_connected_at) : '暂无'],
               ]} />
-              {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined"><AlertTitle>最近异常</AlertTitle>{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
+              {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined">{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
               <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
                 <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}><Typography variant="subtitle2">系统信息</Typography></AccordionSummary>
                 <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>
-                  <FactGrid facts={[
+                  <OperatorFactGrid facts={[
                     ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
                     ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
                     ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
@@ -319,8 +287,8 @@ export function ChannelsPage() {
             <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{tasks.data?.total ?? 0} 项</Typography>
           </Stack>
           <Divider sx={{ my: 2 }} />
-          {tasks.isError ? <ErrorNotice title="无法读取接入任务" error={tasks.error} fallback="请稍后重试" /> : !(tasks.data?.tasks.length) ? (
-            <EmptyState title="暂无任务" description="可新建接入任务" />
+          {tasks.isError ? <OperatorErrorNotice title="无法读取接入任务" error={tasks.error} fallback="请稍后重试" /> : !(tasks.data?.tasks.length) ? (
+            <OperatorEmptyState title="暂无任务" description="可新建接入任务" />
           ) : (
             <Stack divider={<Divider flexItem />}>
               {tasks.data.tasks.map((task) => {
@@ -331,7 +299,7 @@ export function ChannelsPage() {
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                         <Typography variant="subtitle2">{providerLabel(task.provider)} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
-                        <Chip color={statusColor(status.tone)} label={status.label} />
+                        <Chip color={operatorToneColor(status.tone)} label={status.label} />
                       </Stack>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{task.last_error ? sanitizeDisplayText(task.last_error) : result.detail || '等待处理'}</Typography>
                       <Typography variant="caption" color="text.disabled">更新于 {formatDateTime(task.updated_at)}</Typography>
