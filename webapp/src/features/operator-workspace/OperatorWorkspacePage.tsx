@@ -27,10 +27,12 @@ import {
   Typography,
 } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supportApi } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
+import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type {
   UnifiedOperatorQueueItem,
   WorkspaceFilters,
@@ -52,7 +54,6 @@ import type {
   BadgeTone,
   SupportMemoryLedger,
   WebchatMessage,
-  WebchatThread,
 } from '@/lib/types'
 import type { SpeedafCancelPreviewResponse } from '@/lib/speedafTypes'
 import { useSession } from '@/hooks/useAuth'
@@ -64,7 +65,6 @@ type CancelPreviewBinding = {
   fingerprint: string
   result: SpeedafCancelPreviewResponse
 }
-
 type Presentation = { label: string; detail?: string; tone: BadgeTone }
 
 const defaultFilters: WorkspaceFilters = {
@@ -78,10 +78,10 @@ const defaultFilters: WorkspaceFilters = {
 }
 
 const mobileViews: Array<{ value: WorkspaceMobileView; label: string }> = [
-  { value: 'queue', label: '队列' },
-  { value: 'case', label: '案例' },
+  { value: 'queue', label: '待处理' },
+  { value: 'case', label: '任务详情' },
   { value: 'conversation', label: '客户沟通' },
-  { value: 'actions', label: '处理' },
+  { value: 'actions', label: '操作' },
 ]
 
 const toneColor: Record<BadgeTone, string> = {
@@ -90,6 +90,10 @@ const toneColor: Record<BadgeTone, string> = {
   success: 'success.main',
   danger: 'error.main',
 }
+
+const EVENT_IDLE_POLL_MS = 4_000
+const EVENT_RETRY_BASE_MS = 1_000
+const EVENT_RETRY_MAX_MS = 30_000
 
 function initialQueueId() {
   if (typeof window === 'undefined') return null
@@ -124,7 +128,7 @@ function numberValue(value: unknown) {
 function directionLabel(direction: string) {
   if (direction === 'visitor' || direction === 'customer') return '客户'
   if (direction === 'agent' || direction === 'human') return '客服'
-  if (direction === 'ai') return 'AI'
+  if (direction === 'ai') return '自动回复'
   return '系统'
 }
 
@@ -132,8 +136,34 @@ function isOutboundMessage(message: WebchatMessage) {
   return message.direction === 'agent' || message.direction === 'ai'
 }
 
-function supportMemoryFromThread(thread?: WebchatThread | null) {
+function supportMemoryFromThread(thread?: OperatorWorkspaceThread | null) {
   return thread?.support_memory ?? null
+}
+
+function mergeMessages(...groups: WebchatMessage[][]) {
+  const byId = new Map<string, WebchatMessage>()
+  groups.flat().forEach((message) => byId.set(String(message.id), message))
+  return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id))
+}
+
+function mergeLatestThread(current: OperatorWorkspaceThread | undefined, latest: OperatorWorkspaceThread) {
+  if (!current?.history_expanded) return { ...latest, history_expanded: false }
+  return {
+    ...latest,
+    messages: mergeMessages(current.messages, latest.messages),
+    message_page: current.message_page,
+    history_expanded: true,
+  }
+}
+
+function mergeOlderThread(current: OperatorWorkspaceThread | undefined, older: OperatorWorkspaceThread) {
+  if (!current) return { ...older, history_expanded: true }
+  return {
+    ...current,
+    messages: mergeMessages(older.messages, current.messages),
+    message_page: older.message_page,
+    history_expanded: true,
+  }
 }
 
 function cancelFingerprint(ticketId: number | null, waybill: string, caller: string, reasonCode: string) {
@@ -148,6 +178,13 @@ function cancelFingerprint(ticketId: number | null, waybill: string, caller: str
 function scrollBehavior(): ScrollBehavior {
   if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 'auto'
   return 'smooth'
+}
+
+function muiStatusColor(tone: BadgeTone): 'default' | 'success' | 'warning' | 'error' {
+  if (tone === 'success') return 'success'
+  if (tone === 'warning') return 'warning'
+  if (tone === 'danger') return 'error'
+  return 'default'
 }
 
 function StatusLine({ presentation, compact = false }: { presentation: Presentation; compact?: boolean }) {
@@ -171,24 +208,20 @@ function StatusLine({ presentation, compact = false }: { presentation: Presentat
   )
 }
 
-function SectionHeading({ title, description, action, id }: { title: string; description?: string; action?: React.ReactNode; id?: string }) {
+function SectionHeading({ title, action, id }: { title: string; action?: ReactNode; id?: string }) {
   return (
     <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
-      <Box sx={{ minWidth: 0 }}>
-        <Typography id={id} component="h2" variant="h3">{title}</Typography>
-        {description ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{description}</Typography> : null}
-      </Box>
+      <Typography id={id} component="h2" variant="h3">{title}</Typography>
       {action}
     </Stack>
   )
 }
 
-function LoadingState({ title, description }: { title: string; description?: string }) {
+function LoadingState({ title }: { title: string }) {
   return (
     <Stack role="status" alignItems="center" spacing={1.5} sx={{ justifyContent: 'center', minHeight: 150, p: 3 }}>
       <CircularProgress size={28} />
       <Typography variant="subtitle2">{title}</Typography>
-      {description ? <Typography variant="body2" color="text.secondary" textAlign="center">{description}</Typography> : null}
     </Stack>
   )
 }
@@ -202,7 +235,7 @@ function EmptyState({ title, description }: { title: string; description?: strin
   )
 }
 
-function ErrorNotice({ title, error, fallback, action }: { title: string; error: unknown; fallback: string; action?: React.ReactNode }) {
+function ErrorNotice({ title, error, fallback, action }: { title: string; error: unknown; fallback: string; action?: ReactNode }) {
   return (
     <Alert severity="error" variant="outlined" action={action}>
       <AlertTitle>{title}</AlertTitle>
@@ -214,34 +247,34 @@ function ErrorNotice({ title, error, fallback, action }: { title: string; error:
 function QueueFilters({ filters, onChange }: { filters: WorkspaceFilters; onChange: (filters: WorkspaceFilters) => void }) {
   return (
     <Box
-      aria-label="队列筛选"
+      aria-label="任务筛选"
       sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(5, minmax(0, 1fr))', lg: '1fr' } }}
     >
       <TextField select label="状态" value={filters.state} onChange={(event) => onChange({ ...filters, state: event.target.value as WorkspaceFilters['state'] })}>
         <MenuItem value="active">需要处理</MenuItem>
-        <MenuItem value="terminal">来源终态</MenuItem>
+        <MenuItem value="terminal">来源已结束</MenuItem>
         <MenuItem value="all">全部</MenuItem>
       </TextField>
-      <TextField select label="来源" value={filters.sourceType} onChange={(event) => onChange({ ...filters, sourceType: event.target.value as WorkspaceFilters['sourceType'] })}>
-        <MenuItem value="all">全部来源</MenuItem>
-        <MenuItem value="handoff">人工接管</MenuItem>
+      <TextField select label="任务类型" value={filters.sourceType} onChange={(event) => onChange({ ...filters, sourceType: event.target.value as WorkspaceFilters['sourceType'] })}>
+        <MenuItem value="all">全部类型</MenuItem>
+        <MenuItem value="handoff">待接手</MenuItem>
         <MenuItem value="ticket">客服工单</MenuItem>
-        <MenuItem value="dispatch">运营派发</MenuItem>
+        <MenuItem value="dispatch">内部任务</MenuItem>
       </TextField>
-      <TextField select label="责任人" value={filters.owner} onChange={(event) => onChange({ ...filters, owner: event.target.value as WorkspaceFilters['owner'] })}>
-        <MenuItem value="any">全部责任人</MenuItem>
+      <TextField select label="当前负责人" value={filters.owner} onChange={(event) => onChange({ ...filters, owner: event.target.value as WorkspaceFilters['owner'] })}>
+        <MenuItem value="any">全部负责人</MenuItem>
         <MenuItem value="mine">我的</MenuItem>
         <MenuItem value="unassigned">未分配</MenuItem>
         <MenuItem value="team">我的团队</MenuItem>
       </TextField>
-      <TextField select label="SLA" value={filters.sla} onChange={(event) => onChange({ ...filters, sla: event.target.value as WorkspaceFilters['sla'] })}>
-        <MenuItem value="any">全部 SLA</MenuItem>
+      <TextField select label="处理时限" value={filters.sla} onChange={(event) => onChange({ ...filters, sla: event.target.value as WorkspaceFilters['sla'] })}>
+        <MenuItem value="any">全部时限</MenuItem>
         <MenuItem value="breached">已超时</MenuItem>
         <MenuItem value="at_risk">即将超时</MenuItem>
         <MenuItem value="stale">长期未更新</MenuItem>
         <MenuItem value="paused">已暂停</MenuItem>
         <MenuItem value="healthy">正常</MenuItem>
-        <MenuItem value="unavailable">不可用</MenuItem>
+        <MenuItem value="unavailable">未知</MenuItem>
       </TextField>
       <TextField select label="排序" value={filters.sort} onChange={(event) => onChange({ ...filters, sort: event.target.value as WorkspaceFilters['sort'] })}>
         <MenuItem value="oldest">最早待办优先</MenuItem>
@@ -287,7 +320,7 @@ function QueueRow({ item, active, currentUserId, onSelect }: {
         <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
           <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
           {priority.tone === 'danger' || priority.tone === 'warning' ? (
-            <Chip color={priority.tone === 'danger' ? 'error' : 'warning'} label={priority.label} size="small" />
+            <Chip color={muiStatusColor(priority.tone)} label={priority.label} size="small" />
           ) : null}
         </Stack>
         <Typography variant="caption" color="text.secondary">
@@ -318,14 +351,10 @@ function QueueRail({ items, selectedQueueId, currentUserId, isLoading, isRefresh
 }) {
   return (
     <Box component="section" aria-label="待处理任务" aria-busy={isLoading} sx={{ minHeight: 0 }}>
-      <SectionHeading
-        title="待处理任务"
-        description="人工接管、客服工单和运营派发使用同一入口。"
-        action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null}
-      />
+      <SectionHeading title="待处理任务" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
       <Divider sx={{ mt: 2 }} />
-      {isLoading ? <LoadingState title="正在读取队列" description="正在读取当前授权范围内的任务。" /> : null}
-      {!isLoading && !items.length ? <EmptyState title="当前没有待处理任务" description="可以调整筛选条件或稍后刷新。" /> : null}
+      {isLoading ? <LoadingState title="正在读取任务…" /> : null}
+      {!isLoading && !items.length ? <EmptyState title="暂无待处理任务" description="请调整筛选或刷新" /> : null}
       <List disablePadding sx={{ maxHeight: { lg: 'calc(100dvh - 360px)' }, overflowY: 'auto' }}>
         {items.map((item) => (
           <QueueRow key={item.queue_id} item={item} active={item.queue_id === selectedQueueId} currentUserId={currentUserId} onSelect={() => onSelect(item)} />
@@ -360,12 +389,7 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
         {source.label} · {item.country_code} · {item.channel_key}
       </Typography>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'flex-start' }}>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography component="h1" variant="h1" sx={{ overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            当前来源与任务状态不会自动代表业务已经完成。
-          </Typography>
-        </Box>
+        <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
         <Stack spacing={0.75} sx={{ minWidth: { sm: 220 } }}>
           <StatusLine presentation={status} />
           <StatusLine presentation={owner} />
@@ -376,11 +400,11 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
       </Stack>
       <Accordion disableGutters elevation={0} sx={{ mt: 1.5, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
         <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 36, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
-          <Typography variant="caption" color="text.secondary">技术标识</Typography>
+          <Typography variant="caption" color="text.secondary">系统信息</Typography>
         </AccordionSummary>
         <AccordionDetails sx={{ px: 0, pt: 0 }}>
           <Typography component="code" variant="caption" sx={{ overflowWrap: 'anywhere' }}>
-            来源 {item.source_type}:{item.source_id}{item.ticket_id ? ` · Ticket #${item.ticket_id}` : ''}
+            任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ''}
           </Typography>
         </AccordionDetails>
       </Accordion>
@@ -399,20 +423,19 @@ function CaseSpine({ item, memory }: { item: UnifiedOperatorQueueItem; memory: S
   const nextAction = memory?.required_action || memory?.next_actions?.[0]?.label || ''
 
   const stages = [
-    { label: '工作范围', value: `${item.country_code} · ${item.channel_key}`, available: true },
-    { label: '事实证据', value: timeline.length ? `${timeline.length} 条结构化记录` : '未提供', available: timeline.length > 0 },
-    { label: '人工决定', value: decision ? sanitizeDisplayText(decision.label || decision.kind) : '未提供', available: Boolean(decision) },
+    { label: '范围', value: `${item.country_code} · ${item.channel_key}`, available: true },
+    { label: '已知信息', value: timeline.length ? `${timeline.length} 条` : '未提供', available: timeline.length > 0 },
+    { label: '处理决定', value: decision ? sanitizeDisplayText(decision.label || decision.kind) : '未提供', available: Boolean(decision) },
     { label: '下一步', value: nextAction ? sanitizeDisplayText(nextAction) : '未提供', available: Boolean(nextAction) },
-    { label: '运营结果', value: result ? sanitizeDisplayText(result.label || result.kind) : '未提供', available: Boolean(result) },
+    { label: '操作结果', value: result ? sanitizeDisplayText(result.label || result.kind) : '未提供', available: Boolean(result) },
     { label: '客户通知', value: notification ? sanitizeDisplayText(notification.label || notification.kind) : '未提供', available: Boolean(notification) },
-    { label: '结案 / 观察', value: '当前接口未提供可信结案事实', available: false },
+    { label: '结案状态', value: '暂无可信结案信息', available: false },
   ]
 
   return (
-    <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label="案例处理链路">
+    <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label="处理进度">
       <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}>
-        <Typography variant="subtitle2">案例处理链路</Typography>
-        <Typography variant="caption" color="text.secondary">只显示当前接口已经提供的事实，缺失阶段不会被推断。</Typography>
+        <Typography variant="subtitle2">处理进度</Typography>
       </Box>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(7, minmax(0, 1fr))' } }}>
         {stages.map((stage, index) => (
@@ -442,9 +465,9 @@ function EvidencePanel({ memory, sx }: { memory: SupportMemoryLedger | null; sx?
   const timeline = memory?.evidence_timeline ?? []
   return (
     <Box component="section" aria-labelledby="operator-evidence-title" sx={sx}>
-      <SectionHeading id="operator-evidence-title" title="事实与证据" description="客户主张、知识、AI 建议、人工决定和运营结果明确分开。" />
+      <SectionHeading id="operator-evidence-title" title="已知信息" />
       <Divider sx={{ my: 2 }} />
-      {!timeline.length ? <EmptyState title="暂无结构化证据" description="可以继续查看来源摘要和会话，但不要把缺失证据当成事实。" /> : null}
+      {!timeline.length ? <EmptyState title="暂无结构化信息" description="可查看任务摘要和客户沟通" /> : null}
       <Stack divider={<Divider flexItem />}>
         {timeline.map((entry, index) => {
           const presentation = evidencePresentation(entry)
@@ -455,11 +478,10 @@ function EvidencePanel({ memory, sx }: { memory: SupportMemoryLedger | null; sx?
                 {entry.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(entry.created_at)}</Typography> : null}
               </Stack>
               <Typography variant="subtitle2" sx={{ mt: 1 }}>{sanitizeDisplayText(entry.label || entry.kind)}</Typography>
-              {presentation.detail ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{presentation.detail}</Typography> : null}
               {entry.summary && Object.keys(entry.summary).length ? (
                 <Accordion disableGutters variant="outlined" sx={{ mt: 1.25, '&:before': { display: 'none' } }}>
                   <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-                    <Typography variant="subtitle2">证据摘要</Typography>
+                    <Typography variant="subtitle2">信息摘要</Typography>
                   </AccordionSummary>
                   <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>
                     <Box component="pre" sx={{ m: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
@@ -476,14 +498,31 @@ function EvidencePanel({ memory, sx }: { memory: SupportMemoryLedger | null; sx?
   )
 }
 
-function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capabilities, onRefresh, onReplyDirtyChange, selectionUnavailable, sx }: {
+function ConversationPanel({
+  item,
+  thread,
+  isLoading,
+  isRefreshing,
+  error,
+  historyError,
+  isLoadingOlderMessages,
+  capabilities,
+  onRefresh,
+  onLoadOlderMessages,
+  onReplyDirtyChange,
+  selectionUnavailable,
+  sx,
+}: {
   item: UnifiedOperatorQueueItem
-  thread: WebchatThread | null
+  thread: OperatorWorkspaceThread | null
   isLoading: boolean
   isRefreshing: boolean
   error: unknown
+  historyError: unknown
+  isLoadingOlderMessages: boolean
   capabilities: Set<string>
   onRefresh: () => Promise<void>
+  onLoadOlderMessages: () => Promise<void>
   onReplyDirtyChange: (dirty: boolean) => void
   selectionUnavailable: boolean
   sx?: SxProps<Theme>
@@ -492,19 +531,28 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
   const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
-  const previousMessageCountRef = useRef(thread?.messages.length ?? 0)
+  const previousLatestMessageIdRef = useRef<string | number | undefined>(thread?.messages.at(-1)?.id)
   const canReply = Boolean(item.ticket_id && thread && !selectionUnavailable && hasCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'))
 
   useEffect(() => {
     setReply('')
+    setIsNearMessageBottom(true)
     setNewMessageCount(0)
-    previousMessageCountRef.current = 0
+    previousLatestMessageIdRef.current = undefined
   }, [item.queue_id])
 
   useLayoutEffect(() => {
-    const currentCount = thread?.messages.length ?? 0
-    const added = Math.max(0, currentCount - previousMessageCountRef.current)
-    previousMessageCountRef.current = currentCount
+    const messages = thread?.messages ?? []
+    const currentLatestMessageId = messages.at(-1)?.id
+    const previousLatestMessageId = previousLatestMessageIdRef.current
+    const latestChanged = currentLatestMessageId !== previousLatestMessageId
+    const previousLatestNumeric = Number(previousLatestMessageId)
+    const added = latestChanged
+      ? Number.isFinite(previousLatestNumeric)
+        ? messages.filter((message) => Number(message.id) > previousLatestNumeric).length
+        : messages.length
+      : 0
+    previousLatestMessageIdRef.current = currentLatestMessageId
     if (!added) return
     const list = messagesRef.current
     if (list && isNearMessageBottom) {
@@ -513,7 +561,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
     } else {
       setNewMessageCount((count) => count + added)
     }
-  }, [isNearMessageBottom, thread?.messages.length])
+  }, [isNearMessageBottom, thread?.messages])
 
   useEffect(() => onReplyDirtyChange(Boolean(reply.trim())), [onReplyDirtyChange, reply])
   useEffect(() => () => onReplyDirtyChange(false), [onReplyDirtyChange])
@@ -527,6 +575,17 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
     },
   })
 
+  const loadOlderMessagesPreservingPosition = async () => {
+    const list = messagesRef.current
+    const previousHeight = list?.scrollHeight ?? 0
+    const previousTop = list?.scrollTop ?? 0
+    await onLoadOlderMessages()
+    window.requestAnimationFrame(() => {
+      if (!list || !previousHeight) return
+      list.scrollTop = previousTop + Math.max(0, list.scrollHeight - previousHeight)
+    })
+  }
+
   const scrollToLatest = () => {
     messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: scrollBehavior() })
     setNewMessageCount(0)
@@ -534,15 +593,11 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
 
   return (
     <Box id="workspace-conversation" component="section" aria-labelledby="operator-conversation-title" tabIndex={-1} sx={sx}>
-      <SectionHeading
-        id="operator-conversation-title"
-        title="客户沟通"
-        description="回复始终经过服务端权限、事实和安全检查。"
-        action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null}
-      />
+      <SectionHeading id="operator-conversation-title" title="客户沟通" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
       <Divider sx={{ my: 2 }} />
-      {isLoading ? <LoadingState title="正在读取会话" description="正在载入客户消息。" /> : null}
-      {error ? <ErrorNotice title="会话暂不可用" error={error} fallback="仍可基于案例摘要继续分诊" /> : null}
+      {isLoading ? <LoadingState title="正在读取消息…" /> : null}
+      {error ? <ErrorNotice title="无法读取客户沟通" error={error} fallback="仍可查看任务摘要" /> : null}
+      {historyError ? <ErrorNotice title="更早消息加载失败" error={historyError} fallback="可稍后重试" /> : null}
       {thread ? (
         <Stack spacing={1.5}>
           <Stack
@@ -557,6 +612,18 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
               if (nearBottom) setNewMessageCount(0)
             }}
           >
+            {thread.message_page?.has_more ? (
+              <Button
+                color="inherit"
+                variant="outlined"
+                disabled={isLoadingOlderMessages}
+                startIcon={isLoadingOlderMessages ? <CircularProgress color="inherit" size={16} /> : undefined}
+                onClick={() => void loadOlderMessagesPreservingPosition()}
+                sx={{ alignSelf: 'center' }}
+              >
+                {isLoadingOlderMessages ? '加载中…' : '加载更早消息'}
+              </Button>
+            ) : null}
             {thread.messages.map((message) => {
               const delivery = messageDeliveryPresentation(message.delivery_status)
               const outbound = isOutboundMessage(message)
@@ -583,13 +650,12 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
                   {outbound ? (
                     <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} aria-label="送达状态">
                       <StatusLine presentation={delivery} compact />
-                      {delivery.detail ? <Typography variant="caption" color="text.secondary">{delivery.detail}</Typography> : null}
                     </Stack>
                   ) : null}
                 </Box>
               )
             })}
-            {!thread.messages.length ? <EmptyState title="暂无消息" description="该会话尚无可显示内容。" /> : null}
+            {!thread.messages.length ? <EmptyState title="暂无消息" /> : null}
           </Stack>
           {newMessageCount ? <Button color="inherit" variant="outlined" onClick={scrollToLatest}>{newMessageCount} 条新消息，查看最新</Button> : null}
           {replyMutation.isError ? <ErrorNotice title="发送失败" error={replyMutation.error} fallback="请稍后重试" /> : null}
@@ -597,12 +663,12 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
             <Stack spacing={1.25}>
               <TextField
                 label="回复客户"
-                helperText={canReply ? '技术发送成功不自动等于客户收到或案例结案。' : '当前权限、会话或队列状态不允许回复。'}
+                helperText={canReply ? '发送状态以送达结果为准。' : '当前不可回复。'}
                 value={reply}
                 onChange={(event) => setReply(event.target.value)}
                 multiline
                 minRows={4}
-                placeholder="输入清晰、可验证的客户回复…"
+                placeholder="输入回复"
                 autoComplete="off"
                 disabled={!canReply}
               />
@@ -618,7 +684,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
             </Stack>
           </Box>
         </Stack>
-      ) : !isLoading ? <EmptyState title="当前案例没有可用会话" description="可以继续查看案例证据，回复和人工接管暂不可用。" /> : null}
+      ) : !isLoading ? <EmptyState title="暂无客户沟通" description="回复和接手处理暂不可用" /> : null}
     </Box>
   )
 }
@@ -632,14 +698,14 @@ function actionDisabledReason({ action, item, capabilities, waybill, caller, des
   description: string
   whatsappPhone: string
 }) {
-  if (action === 'none') return '请先选择一个与当前任务有关的动作'
-  if (!item.ticket_id) return '当前案例没有可执行动作的 Ticket'
+  if (action === 'none') return '请先选择操作'
+  if (!item.ticket_id) return '当前任务没有可操作的工单'
   if (action === 'waybill_lookup') return caller.trim() ? '' : '缺少客户电话'
   if (!waybill.trim()) return '缺少运单'
   if (!caller.trim()) return '缺少客户电话'
-  if (action === 'work_order' && !hasCapability(capabilities, 'tool:speedaf.work_order.create:write')) return '当前权限不允许创建催派工单'
-  if (action === 'address_update' && !hasCapability(capabilities, 'tool:speedaf.order.update_address:write')) return '当前权限不允许更新联系号码'
-  if (action === 'cancel' && !hasCapability(capabilities, 'tool:speedaf.order.cancel:write')) return '当前权限不允许请求取消'
+  if (action === 'work_order' && !hasCapability(capabilities, 'tool:speedaf.work_order.create:write')) return '无权创建催派工单'
+  if (action === 'address_update' && !hasCapability(capabilities, 'tool:speedaf.order.update_address:write')) return '无权更新联系号码'
+  if (action === 'cancel' && !hasCapability(capabilities, 'tool:speedaf.order.cancel:write')) return '无权申请取消'
   if (action === 'work_order' && !description.trim()) return '缺少催派说明'
   if (action === 'address_update' && !whatsappPhone.trim()) return '缺少确认后的联系号码'
   return ''
@@ -647,7 +713,7 @@ function actionDisabledReason({ action, item, capabilities, waybill, caller, des
 
 function ActionPanel({ item, thread, capabilities, onRefresh }: {
   item: UnifiedOperatorQueueItem
-  thread: WebchatThread | null
+  thread: OperatorWorkspaceThread | null
   capabilities: Set<string>
   onRefresh: () => Promise<void>
 }) {
@@ -682,14 +748,14 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
       if (kind === 'release' && handoff?.id) return supportApi.webchatReleaseHandoff(handoff.id, 'Released from Operator Workspace')
       if (kind === 'resume' && handoff?.id) return supportApi.webchatResumeAi(handoff.id, 'Resume AI from Operator Workspace')
       if (kind === 'decline' && handoff?.id) return operatorWorkspaceApi.declineHandoff(handoff.id, 'operator_capacity', 'Declined from Operator Workspace')
-      throw new Error('当前接管动作不可执行')
+      throw new Error('当前接手操作不可执行')
     },
     onSuccess: onRefresh,
   })
 
   const actionMutation = useMutation({
     mutationFn: async (): Promise<ActionResultEnvelope> => {
-      if (!item.ticket_id) throw new Error('当前案例没有可执行动作的 Ticket')
+      if (!item.ticket_id) throw new Error('当前任务没有可操作的工单')
       if (action === 'waybill_lookup') {
         const result = await supportApi.querySpeedafWaybills(item.ticket_id, { callerID: caller.trim(), countryCode: countryCode.trim().toUpperCase() })
         return { kind: action, result: result as unknown as Record<string, unknown> }
@@ -702,14 +768,14 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
         const result = await supportApi.submitSpeedafAddressUpdate(item.ticket_id, { waybillCode: waybill.trim().toUpperCase(), callerID: caller.trim(), whatsAppPhone: whatsappPhone.trim() })
         return { kind: action, result: result as unknown as Record<string, unknown> }
       }
-      throw new Error('请先选择可执行动作')
+      throw new Error('请选择操作')
     },
     onSuccess: onRefresh,
   })
 
   const cancelPreviewMutation = useMutation({
     mutationFn: async () => {
-      if (!item.ticket_id) throw new Error('当前案例没有可执行动作的 Ticket')
+      if (!item.ticket_id) throw new Error('当前任务没有可操作的工单')
       const fingerprint = currentCancelFingerprint
       const result = await supportApi.previewSpeedafCancel(item.ticket_id, { waybillCode: waybill.trim().toUpperCase(), callerID: caller.trim(), reasonCode })
       return { fingerprint, result }
@@ -719,9 +785,9 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
 
   const cancelConfirmMutation = useMutation({
     mutationFn: async (): Promise<ActionResultEnvelope> => {
-      if (!item.ticket_id) throw new Error('当前案例没有可执行动作的 Ticket')
-      if (!cancelPreview || cancelPreview.fingerprint !== currentCancelFingerprint) throw new Error('取消预检已失效，请基于当前运单、电话和原因重新预检')
-      if (!cancelPreview.result.cancelAllowed || !cancelPreview.result.confirmToken) throw new Error('当前预检不允许提交取消请求')
+      if (!item.ticket_id) throw new Error('当前任务没有可操作的工单')
+      if (!cancelPreview || cancelPreview.fingerprint !== currentCancelFingerprint) throw new Error('检查结果已失效，请重新检查')
+      if (!cancelPreview.result.cancelAllowed || !cancelPreview.result.confirmToken) throw new Error('当前不可申请取消')
       const result = await supportApi.confirmSpeedafCancel(item.ticket_id, {
         waybillCode: waybill.trim().toUpperCase(),
         callerID: caller.trim(),
@@ -745,12 +811,12 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
 
   return (
     <Box id="workspace-actions" component="section" aria-labelledby="operator-actions-title" tabIndex={-1}>
-      <SectionHeading id="operator-actions-title" title="下一步" description="不可执行原因直接说明，所有操作仍由服务端最终授权。" />
+      <SectionHeading id="operator-actions-title" title="下一步" />
       <Divider sx={{ my: 2 }} />
       <Stack spacing={2.5}>
         {(handoff?.can_accept || handoff?.can_force_takeover || handoff?.can_decline || handoff?.can_release || handoff?.can_resume_ai) ? (
           <Box>
-            <Typography component="h3" variant="subtitle1">案例接管</Typography>
+            <Typography component="h3" variant="subtitle1">接手任务</Typography>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
               {handoff?.can_accept || handoff?.can_force_takeover ? (
                 <Button
@@ -758,13 +824,13 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
                   disabled={!handoffAllowed || handoffMutation.isPending}
                   startIcon={handoffMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
                   onClick={() => handoffMutation.mutate(handoff?.can_accept ? 'accept' : 'force')}
-                >接管案例</Button>
+                >接手处理</Button>
               ) : null}
-              {handoff?.can_decline ? <Button color="inherit" variant="outlined" onClick={() => handoffMutation.mutate('decline')}>暂不接管</Button> : null}
-              {handoff?.can_release ? <Button color="inherit" onClick={() => handoffMutation.mutate('release')}>释放案例</Button> : null}
-              {handoff?.can_resume_ai ? <Button color="inherit" onClick={() => handoffMutation.mutate('resume')}>恢复 AI</Button> : null}
+              {handoff?.can_decline ? <Button color="inherit" variant="outlined" onClick={() => handoffMutation.mutate('decline')}>暂不处理</Button> : null}
+              {handoff?.can_release ? <Button color="inherit" onClick={() => handoffMutation.mutate('release')}>转回待处理</Button> : null}
+              {handoff?.can_resume_ai ? <Button color="inherit" onClick={() => handoffMutation.mutate('resume')}>恢复自动回复</Button> : null}
             </Stack>
-            {handoff?.reason_text ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>接管原因：{sanitizeDisplayText(handoff.reason_text)}</Typography> : null}
+            {handoff?.reason_text ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>接手原因：{sanitizeDisplayText(handoff.reason_text)}</Typography> : null}
           </Box>
         ) : null}
 
@@ -783,10 +849,10 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
               }}
             >
               <MenuItem value="none">请选择操作</MenuItem>
-              <MenuItem value="waybill_lookup">电话查单（只读）</MenuItem>
+              <MenuItem value="waybill_lookup">按电话查询运单</MenuItem>
               <MenuItem value="work_order">创建催派工单</MenuItem>
-              <MenuItem value="address_update">提交联系号码更新</MenuItem>
-              <MenuItem value="cancel">取消预检与确认</MenuItem>
+              <MenuItem value="address_update">更新联系号码</MenuItem>
+              <MenuItem value="cancel">申请取消订单</MenuItem>
             </TextField>
             {action !== 'none' ? (
               <>
@@ -808,8 +874,8 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
                 ) : null}
               </>
             ) : null}
-            {disabledReason ? <Alert severity="info" variant="outlined">当前不可执行：{disabledReason}</Alert> : null}
-            {actionError ? <ErrorNotice title="操作未完成" error={actionError} fallback="请稍后重试" /> : null}
+            {disabledReason ? <Alert severity="info" variant="outlined">{disabledReason}</Alert> : null}
+            {actionError ? <ErrorNotice title="操作失败" error={actionError} fallback="请稍后重试" /> : null}
             {candidates.length ? (
               <Paper variant="outlined" sx={{ p: 1.5 }}>
                 <Typography variant="subtitle2">候选运单</Typography>
@@ -825,10 +891,10 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
             ) : null}
             {cancelPreview ? (
               <Alert severity={cancelPreview.result.cancelAllowed ? 'info' : 'warning'} variant="outlined" role="status">
-                <AlertTitle>{cancelPreview.result.cancelAllowed ? '预检允许提交取消请求' : '当前状态不允许取消'}</AlertTitle>
+                <AlertTitle>{cancelPreview.result.cancelAllowed ? '可以申请取消' : '当前不可取消'}</AlertTitle>
                 {sanitizeDisplayText(cancelPreview.result.currentStatusLabel || cancelPreview.result.reasonLabel || '未返回原因')}
                 <Typography variant="caption" display="block" sx={{ mt: 0.75 }}>
-                  预检不是取消完成；预检绑定当前案例、运单、电话和原因，任一输入变化后必须重新预检。
+                  修改运单、电话或原因后需重新检查。
                 </Typography>
               </Alert>
             ) : null}
@@ -842,8 +908,8 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
                 {resultPresentation.detail}
                 {numberValue(resultRecord.jobId) ? (
                   <Accordion disableGutters elevation={0} sx={{ mt: 1, bgcolor: 'transparent', '&:before': { display: 'none' } }}>
-                    <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ px: 0 }}><Typography variant="caption">技术追踪标识</Typography></AccordionSummary>
-                    <AccordionDetails sx={{ px: 0 }}><Typography component="code" variant="caption">Job #{numberValue(resultRecord.jobId)}</Typography></AccordionDetails>
+                    <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ px: 0 }}><Typography variant="caption">处理编号</Typography></AccordionSummary>
+                    <AccordionDetails sx={{ px: 0 }}><Typography component="code" variant="caption">#{numberValue(resultRecord.jobId)}</Typography></AccordionDetails>
                   </Accordion>
                 ) : null}
               </Alert>
@@ -857,14 +923,14 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
                     disabled={Boolean(disabledReason) || busy}
                     startIcon={cancelPreviewMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
                     onClick={() => cancelPreviewMutation.mutate()}
-                  >先做取消预检</Button>
+                  >检查是否可取消</Button>
                   <Button
                     color="error"
                     variant="contained"
                     disabled={!cancelPreview?.result.cancelAllowed || !cancelPreview.result.confirmToken || cancelPreview.fingerprint !== currentCancelFingerprint || busy}
                     startIcon={cancelConfirmMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
                     onClick={() => cancelConfirmMutation.mutate()}
-                  >确认提交取消请求</Button>
+                  >确认申请取消</Button>
                 </>
               ) : action !== 'none' ? (
                 <Button
@@ -874,7 +940,7 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
                   startIcon={actionMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
                   onClick={() => actionMutation.mutate()}
                 >
-                  {action === 'waybill_lookup' ? '查询运单' : action === 'work_order' ? '创建催派工单' : '提交联系号码更新'}
+                  {action === 'waybill_lookup' ? '查询运单' : action === 'work_order' ? '创建催派工单' : '更新联系号码'}
                 </Button>
               ) : null}
             </Stack>
@@ -893,7 +959,7 @@ function SourceSummary({ data, item }: { data: Record<string, unknown>; item: Un
   ]
   return (
     <Box component="section" sx={{ py: 2.5 }}>
-      <SectionHeading title="来源摘要" />
+      <SectionHeading title="任务摘要" />
       <Box component="dl" sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, m: 0, mt: 2 }}>
         {facts.map(([label, value]) => (
           <Box key={label}>
@@ -916,6 +982,8 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const [mobileView, setMobileView] = useState<WorkspaceMobileView>('queue')
   const [replyDraftDirty, setReplyDraftDirty] = useState(false)
   const [replyDiscardOpen, setReplyDiscardOpen] = useState(false)
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
+  const [historyError, setHistoryError] = useState<unknown>(null)
   const pendingReplyActionRef = useRef<(() => void) | null>(null)
   const [retainedSelectedItem, setRetainedSelectedItem] = useState<UnifiedOperatorQueueItem | null>(null)
 
@@ -1002,12 +1070,16 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     }
   }, [queue, requestedQueueId, requestedQueueItem])
 
+  const threadPath = selectedItem?.source_links.conversation || ''
+  const threadQueryKey = useMemo(
+    () => ['operatorWorkspaceThread', selectedItem?.queue_id ?? null, threadPath] as const,
+    [selectedItem?.queue_id, threadPath],
+  )
   const thread = useQuery({
-    queryKey: ['operatorWorkspaceThread', selectedItem?.queue_id, selectedItem?.source_links.conversation],
-    queryFn: () => operatorWorkspaceApi.conversationThread(selectedItem?.source_links.conversation || ''),
-    enabled: Boolean(selectedItem?.source_links.conversation),
+    queryKey: threadQueryKey,
+    queryFn: () => operatorWorkspaceApi.conversationThread(threadPath),
+    enabled: Boolean(threadPath),
     retry: false,
-    refetchInterval: selectedItem?.source_links.conversation ? 5_000 : false,
   })
   const sourceRecord = useQuery({
     queryKey: ['operatorWorkspaceSourceRecord', selectedItem?.queue_id, selectedItem?.source_links.ticket],
@@ -1015,13 +1087,79 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     enabled: Boolean(selectedItem?.source_links.ticket && !selectedItem?.source_links.conversation),
     retry: false,
   })
-  const refreshSelected = async () => {
+
+  useEffect(() => {
+    setHistoryError(null)
+    setIsLoadingOlderMessages(false)
+  }, [threadPath])
+
+  const refreshThreadSnapshot = useCallback(async () => {
+    if (!threadPath) return
+    const latest = await operatorWorkspaceApi.conversationThread(threadPath)
+    queryClient.setQueryData<OperatorWorkspaceThread>(threadQueryKey, (current) => mergeLatestThread(current, latest))
+  }, [queryClient, threadPath, threadQueryKey])
+
+  const loadOlderMessages = useCallback(async () => {
+    const beforeMessageId = thread.data?.message_page?.before_id
+    if (!threadPath || !beforeMessageId || isLoadingOlderMessages) return
+    setHistoryError(null)
+    setIsLoadingOlderMessages(true)
+    try {
+      const older = await operatorWorkspaceApi.conversationThread(threadPath, { beforeMessageId })
+      queryClient.setQueryData<OperatorWorkspaceThread>(threadQueryKey, (current) => mergeOlderThread(current, older))
+    } catch (error) {
+      setHistoryError(error)
+    } finally {
+      setIsLoadingOlderMessages(false)
+    }
+  }, [isLoadingOlderMessages, queryClient, thread.data?.message_page?.before_id, threadPath, threadQueryKey])
+
+  useEffect(() => {
+    const ticketId = selectedItem?.ticket_id
+    if (!ticketId || !threadPath || !thread.isSuccess) return undefined
+
+    const controller = new AbortController()
+    let stopped = false
+    let afterId = Math.max(0, Number(thread.data?.last_event_id ?? 0))
+    let failureCount = 0
+    const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+
+    const run = async () => {
+      while (!stopped) {
+        try {
+          const page = await operatorWorkspaceApi.conversationEvents(ticketId, afterId, { signal: controller.signal })
+          failureCount = 0
+          afterId = Math.max(afterId, Number(page.last_event_id || 0))
+          if (page.events.length) {
+            await refreshThreadSnapshot()
+            await queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] })
+          }
+          if (page.has_more) continue
+          await wait(EVENT_IDLE_POLL_MS)
+        } catch {
+          if (stopped || controller.signal.aborted) return
+          failureCount += 1
+          const retryDelay = Math.min(EVENT_RETRY_MAX_MS, EVENT_RETRY_BASE_MS * (2 ** Math.min(failureCount - 1, 5)))
+          await wait(retryDelay)
+        }
+      }
+    }
+
+    void run()
+    return () => {
+      stopped = true
+      controller.abort()
+    }
+  }, [queryClient, refreshThreadSnapshot, selectedItem?.ticket_id, thread.data?.last_event_id, thread.isSuccess, threadPath])
+
+  const refreshSelected = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] }),
-      queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceThread', selectedItem?.queue_id] }),
+      threadPath ? refreshThreadSnapshot() : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceSourceRecord', selectedItem?.queue_id] }),
     ])
-  }
+  }, [queryClient, refreshThreadSnapshot, selectedItem?.queue_id, threadPath])
+
   const runWithReplyDraftGuard = (action: () => void) => {
     if (!replyDraftDirty) return action()
     pendingReplyActionRef.current = action
@@ -1045,8 +1183,8 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
         {mobileViews.map((view) => <Tab key={view.value} value={view.value} label={view.label} />)}
       </Tabs>
 
-      {session.isError ? <ErrorNotice title="无法读取当前用户" error={session.error} fallback="请重新登录" /> : null}
-      {session.data && !canReadQueue ? <Alert severity="warning" variant="outlined">当前账号无权访问任务队列，请联系管理员核对权限。</Alert> : null}
+      {session.isError ? <ErrorNotice title="无法读取账号" error={session.error} fallback="请重新登录" /> : null}
+      {session.data && !canReadQueue ? <Alert severity="warning" variant="outlined">无权访问任务队列，请联系管理员。</Alert> : null}
 
       {session.data && canReadQueue ? (
         <Box
@@ -1068,9 +1206,9 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
               <QueueFilters filters={filters} onChange={(next) => runWithReplyDraftGuard(() => { setFilters(next); setSelectedQueueId(null) })} />
               {queue.isError ? (
                 <ErrorNotice
-                  title="任务队列不可用"
+                  title="无法读取任务"
                   error={queue.error}
-                  fallback="请检查当前授权范围"
+                  fallback="请重新加载"
                   action={<Button color="inherit" size="small" startIcon={<RefreshRoundedIcon />} onClick={() => queue.refetch()}>重新加载</Button>}
                 />
               ) : null}
@@ -1091,7 +1229,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
           <Paper
             id="workspace-case"
             component="section"
-            aria-label="当前案例"
+            aria-label="当前任务"
             tabIndex={-1}
             variant="outlined"
             sx={{ display: { xs: caseContentVisible || conversationVisible ? 'block' : 'none', lg: 'block' }, minWidth: 0, p: { xs: 2, md: 2.5 } }}
@@ -1103,8 +1241,8 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
                   <CaseSpine item={selectedItem} memory={memory} />
                   {preserveMissingSelection ? (
                     <Alert severity="warning" variant="outlined" sx={{ mb: 2.5 }}>
-                      <AlertTitle>当前任务已离开队列，回复草稿仍保留</AlertTitle>
-                      发送和物流操作已暂停；切换任务前需要确认是否放弃草稿。
+                      <AlertTitle>任务已离开待处理列表</AlertTitle>
+                      回复草稿已保留，操作已暂停。
                     </Alert>
                   ) : null}
                   {sourceRecord.data && !thread.data ? <SourceSummary data={sourceRecord.data} item={selectedItem} /> : null}
@@ -1116,19 +1254,22 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
                   isLoading={thread.isLoading}
                   isRefreshing={thread.isFetching && !thread.isLoading}
                   error={thread.error}
+                  historyError={historyError}
+                  isLoadingOlderMessages={isLoadingOlderMessages}
                   capabilities={capabilities}
                   onRefresh={refreshSelected}
+                  onLoadOlderMessages={loadOlderMessages}
                   onReplyDirtyChange={setReplyDraftDirty}
                   selectionUnavailable={preserveMissingSelection}
                   sx={{ display: { xs: conversationVisible ? 'block' : 'none', lg: 'block' }, mt: { lg: 3 }, pt: { lg: 3 }, borderTop: { lg: 1 }, borderColor: { lg: 'divider' } }}
                 />
               </>
-            ) : <EmptyState title="选择一个任务开始处理" description="从待处理任务中选择人工接管、客服工单或运营派发任务。" />}
+            ) : <EmptyState title="选择一个任务" description="从待处理任务中选择" />}
           </Paper>
 
           <Paper
             component="aside"
-            aria-label="案例操作与结果"
+            aria-label="任务操作与结果"
             variant="outlined"
             sx={{ display: { xs: mobileView === 'actions' ? 'block' : 'none', lg: 'block' }, minWidth: 0, p: 2, alignSelf: 'start', position: { lg: 'sticky' }, top: { lg: 84 } }}
           >
@@ -1137,15 +1278,12 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
                 <Box>
                   <Typography component="h2" variant="h3">当前任务</Typography>
                   <Typography variant="subtitle1" sx={{ mt: 1 }}>
-                    {sanitizeDisplayText(memory?.required_action || memory?.next_actions?.[0]?.label || '核实当前事实并决定下一步')}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.75 }}>
-                    页面提示不替代服务端权限、政策和真实操作结果。
+                    {sanitizeDisplayText(memory?.required_action || memory?.next_actions?.[0]?.label || '核实信息并选择下一步')}
                   </Typography>
                 </Box>
-                {preserveMissingSelection ? <Alert severity="warning">该任务已不在授权队列中，操作已暂停。</Alert> : <ActionPanel item={selectedItem} thread={thread.data ?? null} capabilities={capabilities} onRefresh={refreshSelected} />}
+                {preserveMissingSelection ? <Alert severity="warning">任务已离开待处理列表，操作已暂停。</Alert> : <ActionPanel item={selectedItem} thread={thread.data ?? null} capabilities={capabilities} onRefresh={refreshSelected} />}
               </Stack>
-            ) : <EmptyState title="暂无操作" description="选择案例后显示允许操作和结果。" />}
+            ) : <EmptyState title="暂无操作" description="请先选择任务" />}
           </Paper>
         </Box>
       ) : null}
@@ -1158,7 +1296,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
       >
         <DialogTitle id="reply-discard-title">放弃未发送的回复？</DialogTitle>
         <DialogContent>
-          <DialogContentText id="reply-discard-description">切换案例或筛选后，这段回复不会被保留。</DialogContentText>
+          <DialogContentText id="reply-discard-description">切换任务后，未发送回复将丢失。</DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button color="inherit" onClick={() => { setReplyDiscardOpen(false); pendingReplyActionRef.current = null }}>继续编辑</Button>
