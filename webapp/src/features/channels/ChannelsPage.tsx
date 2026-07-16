@@ -191,7 +191,7 @@ export function ChannelsPage() {
 
   const settleTask = useMutation({
     mutationFn: async () => {
-      if (!selectedTask || !pendingAction) throw new Error('没有待执行的渠道任务动作')
+      if (!selectedTask || !pendingAction) throw new Error('未选择操作')
       if (pendingAction === 'complete') {
         return supportApi.completeChannelOnboardingTask(selectedTask.id, {
           external_channel_account_id: selectedTask.external_channel_account_id || null,
@@ -199,7 +199,7 @@ export function ChannelsPage() {
         })
       }
       if (pendingAction === 'fail') {
-        if (!failureReason.trim()) throw new Error('请填写具体失败原因')
+        if (!failureReason.trim()) throw new Error('请填写失败原因')
         return supportApi.failChannelOnboardingTask(selectedTask.id, failureReason.trim())
       }
       return supportApi.cancelChannelOnboardingTask(selectedTask.id)
@@ -224,14 +224,11 @@ export function ChannelsPage() {
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
-        <Box>
-          <Typography component="h1" variant="h1">渠道管理</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>查看渠道运行状态，并在同一后台创建、推进、完成或修复渠道接入任务。</Typography>
-        </Box>
+        <Typography component="h1" variant="h1">渠道管理</Typography>
         {accounts.isFetching || tasks.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
 
-      {actionError ? <Box sx={{ mb: 2 }}><ErrorNotice title="渠道操作未完成" error={actionError} fallback="请稍后重试" /></Box> : null}
+      {actionError ? <Box sx={{ mb: 2 }}><ErrorNotice title="操作失败" error={actionError} fallback="请稍后重试" /></Box> : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 2fr) minmax(300px, 1fr)' } }}>
         <Paper component="section" variant="outlined" aria-labelledby="channel-accounts-title" sx={{ minWidth: 0, p: 2 }}>
@@ -245,7 +242,7 @@ export function ChannelsPage() {
           ) : activeAccounts.length ? (
             <TableContainer>
               <Table size="small" aria-label="当前启用的渠道账号">
-                <TableHead><TableRow><TableCell>渠道</TableCell><TableCell>显示名称</TableCell><TableCell>运行状态</TableCell><TableCell align="right">优先级</TableCell><TableCell>最近更新</TableCell></TableRow></TableHead>
+                <TableHead><TableRow><TableCell>渠道</TableCell><TableCell>账号名称</TableCell><TableCell>状态</TableCell><TableCell align="right">优先级</TableCell><TableCell>最近更新</TableCell></TableRow></TableHead>
                 <TableBody>
                   {activeAccounts.map((item) => {
                     const health = healthPresentation(item.health_status)
@@ -262,34 +259,34 @@ export function ChannelsPage() {
                 </TableBody>
               </Table>
             </TableContainer>
-          ) : <EmptyState title="暂无已启用渠道" description="创建接入任务并完成后，再启用实际渠道账号。" />}
+          ) : <EmptyState title="暂无已启用渠道" description="请先创建接入任务" />}
         </Paper>
 
         <Paper component="aside" variant="outlined" aria-labelledby="whatsapp-health-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-            <Typography id="whatsapp-health-title" component="h2" variant="h3">WhatsApp 连接</Typography>
+            <Typography id="whatsapp-health-title" component="h2" variant="h3">WhatsApp 状态</Typography>
             <Chip color={statusColor(whatsappHealth.tone)} label={whatsappHealth.label} />
           </Stack>
           <Divider sx={{ my: 2 }} />
-          {!whatsappAccount ? <EmptyState title="未启用 WhatsApp" description="当前没有启用的 WhatsApp 渠道账号。" /> : whatsappStatus.isError ? (
+          {!whatsappAccount ? <EmptyState title="未启用 WhatsApp" description="暂无账号" /> : whatsappStatus.isError ? (
             <ErrorNotice title="无法读取 WhatsApp 状态" error={whatsappStatus.error} fallback="请稍后重试" />
           ) : (
             <Stack spacing={1.5}>
               <FactGrid facts={[
-                ['连接状态', whatsappHealth.label],
+                ['状态', whatsappHealth.label],
                 ['绑定号码', maskPhone(whatsappStatus.data?.phone_number)],
-                ['登录确认', sanitizeDisplayText(whatsappStatus.data?.qr_status || '状态未知')],
-                ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
+                ['登录状态', sanitizeDisplayText(whatsappStatus.data?.qr_status || '状态未知')],
+                ['最近连接', whatsappStatus.data?.last_connected_at ? formatDateTime(whatsappStatus.data.last_connected_at) : '暂无'],
               ]} />
-              {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined"><AlertTitle>最近一次连接异常</AlertTitle>{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
+              {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined"><AlertTitle>最近异常</AlertTitle>{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
               <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
-                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}><Typography variant="subtitle2">渠道技术详情</Typography></AccordionSummary>
+                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}><Typography variant="subtitle2">系统信息</Typography></AccordionSummary>
                 <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>
                   <FactGrid facts={[
-                    ['Provider', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
-                    ['账号标识', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
-                    ['连接记录', whatsappStatus.data?.last_connected_at ? formatDateTime(whatsappStatus.data.last_connected_at) : '暂无'],
-                    ['错误代码', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
+                    ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
+                    ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
+                    ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
+                    ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
                   ]} />
                 </AccordionDetails>
               </Accordion>
@@ -300,30 +297,30 @@ export function ChannelsPage() {
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(300px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2 }}>
         <Paper component="section" variant="outlined" aria-labelledby="channel-onboarding-create-title" sx={{ p: 2 }}>
-          <Typography id="channel-onboarding-create-title" component="h2" variant="h3">新建渠道接入任务</Typography>
+          <Typography id="channel-onboarding-create-title" component="h2" variant="h3">新建接入任务</Typography>
           <Stack spacing={1.5} sx={{ mt: 2 }}>
             <TextField select label="渠道" required value={draft.provider} onChange={(event) => setDraft((current) => ({ ...current, provider: event.target.value }))}>
               <MenuItem value="whatsapp">WhatsApp</MenuItem><MenuItem value="email">邮件</MenuItem><MenuItem value="webchat">网页客服</MenuItem><MenuItem value="voice">语音</MenuItem>
             </TextField>
-            <TextField label="目标槽位" helperText="例如 ch-primary、email-ch 或 voice-ch" value={draft.targetSlot} onChange={(event) => setDraft((current) => ({ ...current, targetSlot: event.target.value }))} />
-            <TextField label="显示名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
-            <TextField label="期望绑定" value={draft.accountBinding} onChange={(event) => setDraft((current) => ({ ...current, accountBinding: event.target.value }))} />
-            <TextField label="外部账号 ID" value={draft.externalAccountId} onChange={(event) => setDraft((current) => ({ ...current, externalAccountId: event.target.value }))} />
+            <TextField label="接入位置" helperText="内部接入位置，如 ch-primary" value={draft.targetSlot} onChange={(event) => setDraft((current) => ({ ...current, targetSlot: event.target.value }))} />
+            <TextField label="账号名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
+            <TextField label="绑定账号或号码" value={draft.accountBinding} onChange={(event) => setDraft((current) => ({ ...current, accountBinding: event.target.value }))} />
+            <TextField label="外部账号编号" value={draft.externalAccountId} onChange={(event) => setDraft((current) => ({ ...current, externalAccountId: event.target.value }))} />
             <Button variant="contained" disabled={!createReady || createTask.isPending} startIcon={createTask.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => createTask.mutate()}>
               {createTask.isPending ? '创建中…' : '创建接入任务'}
             </Button>
-            <Typography variant="caption" color="text.secondary">创建任务不等于账号已经接通。任务必须开始、验证并完成后，才形成可审计的接入结果。</Typography>
+            <Typography variant="caption" color="text.secondary">验证通过后才能确认完成。</Typography>
           </Stack>
         </Paper>
 
         <Paper component="section" variant="outlined" aria-labelledby="channel-onboarding-list-title" sx={{ minWidth: 0, p: 2 }}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-            <Typography id="channel-onboarding-list-title" component="h2" variant="h3">接入与修复任务</Typography>
+            <Typography id="channel-onboarding-list-title" component="h2" variant="h3">接入任务</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{tasks.data?.total ?? 0} 项</Typography>
           </Stack>
           <Divider sx={{ my: 2 }} />
-          {tasks.isError ? <ErrorNotice title="无法读取渠道任务" error={tasks.error} fallback="请稍后重试" /> : !(tasks.data?.tasks.length) ? (
-            <EmptyState title="暂无渠道任务" description="创建第一条渠道接入或修复任务。" />
+          {tasks.isError ? <ErrorNotice title="无法读取接入任务" error={tasks.error} fallback="请稍后重试" /> : !(tasks.data?.tasks.length) ? (
+            <EmptyState title="暂无任务" description="可新建接入任务" />
           ) : (
             <Stack divider={<Divider flexItem />}>
               {tasks.data.tasks.map((task) => {
@@ -336,14 +333,14 @@ export function ChannelsPage() {
                         <Typography variant="subtitle2">{providerLabel(task.provider)} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
                         <Chip color={statusColor(status.tone)} label={status.label} />
                       </Stack>
-                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{task.last_error ? sanitizeDisplayText(task.last_error) : result.detail || '等待下一步处理。'}</Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{task.last_error ? sanitizeDisplayText(task.last_error) : result.detail || '等待处理'}</Typography>
                       <Typography variant="caption" color="text.disabled">更新于 {formatDateTime(task.updated_at)}</Typography>
                     </Box>
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ flexShrink: 0 }}>
                       {canStart(task) ? <Button size="small" variant="outlined" color="inherit" disabled={startTask.isPending} onClick={() => startTask.mutate(task.id)}>开始处理</Button> : null}
                       {canSettle(task) ? (
                         <>
-                          <Button size="small" variant="contained" onClick={() => { setSelectedTask(task); setPendingAction('complete') }}>标记完成</Button>
+                          <Button size="small" variant="contained" onClick={() => { setSelectedTask(task); setPendingAction('complete') }}>确认完成</Button>
                           <Button size="small" variant="outlined" color="error" onClick={() => { setSelectedTask(task); setPendingAction('fail') }}>记录失败</Button>
                           <Button size="small" color="inherit" onClick={() => { setSelectedTask(task); setPendingAction('cancel') }}>取消任务</Button>
                         </>
@@ -358,10 +355,10 @@ export function ChannelsPage() {
       </Box>
 
       <Dialog open={Boolean(selectedTask && pendingAction)} onClose={closeTaskDialog} disableEscapeKeyDown={settleTask.isPending} aria-labelledby="channel-task-dialog-title">
-        <DialogTitle id="channel-task-dialog-title">{pendingAction === 'complete' ? '确认渠道任务完成？' : pendingAction === 'fail' ? '记录渠道任务失败？' : '取消渠道任务？'}</DialogTitle>
+        <DialogTitle id="channel-task-dialog-title">{pendingAction === 'complete' ? '确认任务完成？' : pendingAction === 'fail' ? '记录任务失败？' : '取消任务？'}</DialogTitle>
         <DialogContent>
-          <DialogContentText>{pendingAction === 'complete' ? '仅在外部账号和绑定已经实际验证后确认。' : pendingAction === 'fail' ? '失败原因将成为后续修复和审计依据。' : '取消不会删除历史记录，但该任务将不再继续执行。'}</DialogContentText>
-          {pendingAction === 'fail' ? <TextField label="失败原因" required value={failureReason} onChange={(event) => setFailureReason(event.target.value)} multiline minRows={4} placeholder="说明连接、凭证、供应商或配置中的具体失败原因" sx={{ mt: 2 }} /> : null}
+          <DialogContentText>{pendingAction === 'complete' ? '确认已完成账号和绑定验证。' : pendingAction === 'fail' ? '请填写失败原因。' : '任务将停止，历史记录会保留。'}</DialogContentText>
+          {pendingAction === 'fail' ? <TextField label="失败原因" required value={failureReason} onChange={(event) => setFailureReason(event.target.value)} multiline minRows={4} placeholder="填写具体失败原因" sx={{ mt: 2 }} /> : null}
         </DialogContent>
         <DialogActions>
           <Button color="inherit" disabled={settleTask.isPending} onClick={closeTaskDialog}>返回</Button>
