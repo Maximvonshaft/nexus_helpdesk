@@ -1,10 +1,11 @@
 export type AppRouteKey = 'workspace' | 'knowledge' | 'channels' | 'runtime' | 'control-tower'
+export type AppCanonicalPath = '/workspace' | '/knowledge' | '/channels' | '/runtime' | '/control-tower'
 
 export interface AppNavigationItem {
   key: AppRouteKey
   label: string
-  canonicalRoute: string
-  currentHref: string
+  canonicalRoute: AppCanonicalPath
+  currentHref: AppCanonicalPath
   capabilityAny: string[]
   status: 'canonical' | 'transitional' | 'planned'
 }
@@ -12,7 +13,7 @@ export interface AppNavigationItem {
 export const APP_NAVIGATION: AppNavigationItem[] = [
   {
     key: 'workspace',
-    label: '工作台',
+    label: '案例处理',
     canonicalRoute: '/workspace',
     currentHref: '/workspace',
     capabilityAny: ['operator_queue.read', 'ticket.read'],
@@ -20,7 +21,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'knowledge',
-    label: '知识',
+    label: '知识与流程',
     canonicalRoute: '/knowledge',
     currentHref: '/knowledge',
     capabilityAny: ['ai_config.read', 'ai_config.manage'],
@@ -28,7 +29,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'channels',
-    label: '渠道',
+    label: '渠道管理',
     canonicalRoute: '/channels',
     currentHref: '/channels',
     capabilityAny: ['channel_account.manage'],
@@ -36,7 +37,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'runtime',
-    label: '运行与审计',
+    label: '系统运行',
     canonicalRoute: '/runtime',
     currentHref: '/runtime',
     capabilityAny: ['runtime.manage', 'audit.read'],
@@ -44,7 +45,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'control-tower',
-    label: '运营总览',
+    label: '运营监控',
     canonicalRoute: '/control-tower',
     currentHref: '/control-tower',
     capabilityAny: [
