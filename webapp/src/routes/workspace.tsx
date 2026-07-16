@@ -17,12 +17,7 @@ function WorkspaceLoading() {
     <Box sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '52vh', p: 3 }} aria-busy="true">
       <Stack role="status" alignItems="center" spacing={2} aria-live="polite">
         <CircularProgress size={34} />
-        <Box textAlign="center">
-          <Typography variant="subtitle1">正在加载案例处理工作台…</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            正在载入任务队列、案例状态和允许执行的操作。
-          </Typography>
-        </Box>
+        <Typography variant="subtitle1">正在加载…</Typography>
       </Stack>
     </Box>
   )
@@ -69,8 +64,8 @@ function AuthorizedWorkspaceRoutePage() {
           sx={{ maxWidth: 560, width: '100%' }}
           action={<Button color="inherit" onClick={handleLogout}>返回登录</Button>}
         >
-          <Typography variant="subtitle1">无法读取当前账号</Typography>
-          <Typography variant="body2">登录状态可能已失效，请重新登录。</Typography>
+          <Typography variant="subtitle1">无法读取账号</Typography>
+          <Typography variant="body2">请重新登录。</Typography>
         </Alert>
       </Box>
     )
@@ -92,10 +87,8 @@ function AuthorizedWorkspaceRoutePage() {
             variant="outlined"
             action={<Button color="inherit" onClick={() => scopes.refetch()}>重新加载</Button>}
           >
-            <Typography variant="subtitle1">无法读取授权工作范围</Typography>
-            <Typography variant="body2">
-              服务器未能返回当前账号的授权范围。系统不会自动扩大或手工猜测可访问范围。
-            </Typography>
+            <Typography variant="subtitle1">无法读取工作范围</Typography>
+            <Typography variant="body2">请重新加载。</Typography>
           </Alert>
         </Box>
       </AppShell>
@@ -113,10 +106,10 @@ function AuthorizedWorkspaceRoutePage() {
         <Box sx={{ p: { xs: 2, md: 4 } }}>
           <Alert severity="warning" variant="outlined" aria-labelledby="workspace-no-scope-title">
             <Typography id="workspace-no-scope-title" component="h1" variant="h3">
-              当前账号没有可用工作范围
+              未分配工作范围
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              请联系管理员分配授权范围。系统不会自动扩大或允许手工输入工作范围。
+              请联系管理员。
             </Typography>
           </Alert>
         </Box>
@@ -131,7 +124,7 @@ function AuthorizedWorkspaceRoutePage() {
       userLabel={session.data?.display_name || session.data?.username || '操作员'}
       scopes={authorizedScopes}
       selectedScope={selectedScope}
-      onScopeChange={(scope) => setRequestedScopeKey(authorizedScopeKey(scope))}
+      onScopeChange={(scope) => setRequestedScopeKey(authorizedScopeKey(scope))
       onLogout={handleLogout}
     >
       <Suspense fallback={<WorkspaceLoading />}>
