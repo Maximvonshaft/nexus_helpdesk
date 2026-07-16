@@ -61,6 +61,10 @@ const mobileViews: Array<{ value: WorkspaceMobileView; label: string }> = [
   { value: 'actions', label: '动作' },
 ]
 
+const EVENT_IDLE_POLL_MS = 4_000
+const EVENT_RETRY_BASE_MS = 1_000
+const EVENT_RETRY_MAX_MS = 30_000
+
 function initialQueueId() {
   if (typeof window === 'undefined') return null
   return new URLSearchParams(window.location.search).get('queue')
@@ -113,21 +117,22 @@ function mergeMessages(...groups: WebchatMessage[][]) {
 }
 
 function mergeLatestThread(current: OperatorWorkspaceThread | undefined, latest: OperatorWorkspaceThread) {
-  if (!current) return latest
-  const historyWasExpanded = current.messages.length > latest.messages.length
+  if (!current?.history_expanded) return { ...latest, history_expanded: false }
   return {
     ...latest,
     messages: mergeMessages(current.messages, latest.messages),
-    message_page: historyWasExpanded ? current.message_page : latest.message_page,
+    message_page: current.message_page,
+    history_expanded: true,
   }
 }
 
 function mergeOlderThread(current: OperatorWorkspaceThread | undefined, older: OperatorWorkspaceThread) {
-  if (!current) return older
+  if (!current) return { ...older, history_expanded: true }
   return {
     ...current,
     messages: mergeMessages(older.messages, current.messages),
     message_page: older.message_page,
+    history_expanded: true,
   }
 }
 
@@ -314,23 +319,27 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, histo
   const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
-  const previousMessageCountRef = useRef(thread?.messages.length ?? 0)
   const previousLatestMessageIdRef = useRef<string | number | undefined>(thread?.messages.at(-1)?.id)
   const canReply = Boolean(item.ticket_id && thread && !selectionUnavailable && hasCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'))
 
   useEffect(() => {
     setReply('')
+    setIsNearMessageBottom(true)
     setNewMessageCount(0)
-    previousMessageCountRef.current = 0
     previousLatestMessageIdRef.current = undefined
   }, [item.queue_id])
 
   useLayoutEffect(() => {
-    const currentCount = thread?.messages.length ?? 0
-    const currentLatestMessageId = thread?.messages.at(-1)?.id
-    const latestChanged = currentLatestMessageId !== previousLatestMessageIdRef.current
-    const added = latestChanged ? Math.max(0, currentCount - previousMessageCountRef.current) : 0
-    previousMessageCountRef.current = currentCount
+    const messages = thread?.messages ?? []
+    const currentLatestMessageId = messages.at(-1)?.id
+    const previousLatestMessageId = previousLatestMessageIdRef.current
+    const latestChanged = currentLatestMessageId !== previousLatestMessageId
+    const previousLatestNumeric = Number(previousLatestMessageId)
+    const added = latestChanged
+      ? Number.isFinite(previousLatestNumeric)
+        ? messages.filter((message) => Number(message.id) > previousLatestNumeric).length
+        : messages.length
+      : 0
     previousLatestMessageIdRef.current = currentLatestMessageId
     if (!added) return
     const list = messagesRef.current
@@ -354,6 +363,17 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, histo
     },
   })
 
+  const loadOlderMessagesPreservingPosition = async () => {
+    const list = messagesRef.current
+    const previousHeight = list?.scrollHeight ?? 0
+    const previousTop = list?.scrollTop ?? 0
+    await onLoadOlderMessages()
+    window.requestAnimationFrame(() => {
+      if (!list || !previousHeight) return
+      list.scrollTop = previousTop + Math.max(0, list.scrollHeight - previousHeight)
+    })
+  }
+
   return (
     <section id="workspace-conversation" className="operator-conversation-panel" aria-labelledby="operator-conversation-title" tabIndex={-1}>
       <div className="operator-section-head compact"><div><h2 id="operator-conversation-title">客户沟通</h2><p>回复始终经过服务端权限、事实和安全检查。</p></div>{isRefreshing ? <Badge>刷新中</Badge> : null}</div>
@@ -373,7 +393,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, histo
               if (nearBottom) setNewMessageCount(0)
             }}
           >
-            {thread.message_page?.has_more ? <Button size="sm" variant="secondary" loading={isLoadingOlderMessages} onClick={() => void onLoadOlderMessages()}>加载更早消息</Button> : null}
+            {thread.message_page?.has_more ? <Button size="sm" variant="secondary" loading={isLoadingOlderMessages} onClick={() => void loadOlderMessagesPreservingPosition()}>加载更早消息</Button> : null}
             {thread.messages.map((message) => {
               const delivery = messageDeliveryPresentation(message.delivery_status)
               return (
@@ -711,21 +731,26 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     const controller = new AbortController()
     let stopped = false
     let afterId = Math.max(0, Number(thread.data?.last_event_id ?? 0))
-    const waitAfterFailure = () => new Promise((resolve) => window.setTimeout(resolve, 1000))
+    let failureCount = 0
+    const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 
     const run = async () => {
       while (!stopped) {
         try {
           const page = await operatorWorkspaceApi.conversationEvents(ticketId, afterId, { signal: controller.signal })
+          failureCount = 0
           afterId = Math.max(afterId, Number(page.last_event_id || 0))
           if (page.events.length) {
             await refreshThreadSnapshot()
             await queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] })
           }
           if (page.has_more) continue
+          await wait(EVENT_IDLE_POLL_MS)
         } catch (error) {
           if (stopped || controller.signal.aborted) return
-          await waitAfterFailure()
+          failureCount += 1
+          const retryDelay = Math.min(EVENT_RETRY_MAX_MS, EVENT_RETRY_BASE_MS * (2 ** Math.min(failureCount - 1, 5)))
+          await wait(retryDelay)
         }
       }
     }
