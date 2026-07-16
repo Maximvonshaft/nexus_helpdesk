@@ -473,12 +473,25 @@ def resume_webchat_ai(request_id: int, payload: WebchatHandoffTransitionRequest 
 
 
 @router.get("/admin/tickets/{ticket_id}/thread")
-def get_webchat_thread(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
-    result = admin_get_thread(db, ticket_id, current_user)
-    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == result.get("conversation_id")).first()
-    if conversation:
-        result.update(ai_snapshot(conversation))
-    result["support_memory"] = build_support_memory_ledger(db, ticket_id=ticket_id, current_user=current_user)
+def get_webchat_thread(
+    ticket_id: int,
+    before_message_id: int | None = Query(default=None, ge=1),
+    message_limit: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
+    result = admin_get_thread(
+        db,
+        ticket_id,
+        current_user,
+        before_message_id=before_message_id,
+        message_limit=message_limit,
+    )
+    if before_message_id is None:
+        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == result.get("conversation_id")).first()
+        if conversation:
+            result.update(ai_snapshot(conversation))
+        result["support_memory"] = build_support_memory_ledger(db, ticket_id=ticket_id, current_user=current_user)
     return result
 
 
