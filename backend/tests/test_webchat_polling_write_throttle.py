@@ -28,6 +28,12 @@ class FakeColumn:
     def __gt__(self, other):
         return self
 
+    def is_(self, other):
+        return self
+
+    def notin_(self, other):
+        return self
+
     def asc(self):
         return self
 
@@ -35,6 +41,7 @@ class FakeColumn:
 class FakeMessageModel:
     id = FakeColumn()
     conversation_id = FakeColumn()
+    message_type = FakeColumn()
 
 
 class FakeMessage:
