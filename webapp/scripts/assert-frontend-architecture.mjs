@@ -10,6 +10,10 @@ const repositoryRoot = path.resolve(webappRoot, '..')
 const srcRoot = path.join(webappRoot, 'src')
 const entrypoint = path.join(srcRoot, 'main.tsx')
 const muiAuthorityPath = path.join(webappRoot, 'design', 'mui-visual-authority.v1.json')
+const packagePath = path.join(webappRoot, 'package.json')
+const lockPath = path.join(webappRoot, 'package-lock.json')
+const themePath = path.join(srcRoot, 'theme', 'nexusTheme.ts')
+const themeProviderPath = path.join(srcRoot, 'theme', 'NexusThemeProvider.tsx')
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.css']
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
@@ -18,6 +22,7 @@ const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|
 const LEGACY_SELECTOR_RE = /(^|[,\s{])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
 const FORBIDDEN_PARALLEL_PATH_RE = /(?:^|\/)(?:new-ui|ui-v2|design-system-v2|components-v2|workspace-v2|new-workspace)(?:\/|$)|(?:^|\/)[^/]*(?:V2|Redesign)\.(?:ts|tsx|css)$/i
 const FORBIDDEN_ROUTE_RE = /["']\/(?:workspace-v2|new-workspace|ui-v2)(?:[/?#"']|$)/i
+
 const FORBIDDEN_UI_PACKAGES = new Set([
   '@chakra-ui/react',
   '@mantine/core',
@@ -33,14 +38,10 @@ const FORBIDDEN_UI_PACKAGES = new Set([
   'flowbite-react',
   'shadcn',
 ])
-const APPROVED_MUI_DIRECT_PACKAGES = new Set([
-  '@mui/material',
-  '@mui/icons-material',
-])
-const APPROVED_EMOTION_DIRECT_PACKAGES = new Set([
-  '@emotion/react',
-  '@emotion/styled',
-])
+
+const APPROVED_MUI_DIRECT_PACKAGES = new Set(['@mui/material', '@mui/icons-material'])
+const APPROVED_EMOTION_DIRECT_PACKAGES = new Set(['@emotion/react', '@emotion/styled'])
+const REQUIRED_VISUAL_SUPPORT_PACKAGES = new Set(['@emotion/react', '@emotion/styled', 'react-is'])
 
 const forbiddenPaths = [
   path.join(repositoryRoot, 'frontend'),
@@ -105,8 +106,7 @@ function externalImports(files) {
     for (const match of content.matchAll(IMPORT_RE)) {
       const specifier = match[1] ?? match[2]
       if (!specifier || specifier.startsWith('.') || specifier.startsWith('@/')) continue
-      const packageName = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
-      imports.add(packageName)
+      imports.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
     }
   }
   return imports
@@ -227,6 +227,31 @@ function assertCssAuthority(files, failures) {
   }
 }
 
+function assertSingleThemeAuthority(files, failures) {
+  if (!fs.existsSync(themePath)) failures.push('single MUI theme is missing: webapp/src/theme/nexusTheme.ts')
+  if (!fs.existsSync(themeProviderPath)) failures.push('single MUI provider is missing: webapp/src/theme/NexusThemeProvider.tsx')
+
+  const themeCreators = []
+  const themeProviders = []
+  const cssBaselines = []
+  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
+    const content = fs.readFileSync(file, 'utf8')
+    if (/\bcreateTheme\s*\(/.test(content)) themeCreators.push(relative(file))
+    if (/<ThemeProvider\b/.test(content)) themeProviders.push(relative(file))
+    if (/<CssBaseline\b/.test(content)) cssBaselines.push(relative(file))
+  }
+
+  if (themeCreators.length !== 1 || themeCreators[0] !== 'webapp/src/theme/nexusTheme.ts') {
+    failures.push(`MUI theme authority must be exactly webapp/src/theme/nexusTheme.ts: ${themeCreators.join(', ') || 'none'}`)
+  }
+  if (themeProviders.length !== 1 || themeProviders[0] !== 'webapp/src/theme/NexusThemeProvider.tsx') {
+    failures.push(`MUI ThemeProvider authority must be exactly webapp/src/theme/NexusThemeProvider.tsx: ${themeProviders.join(', ') || 'none'}`)
+  }
+  if (cssBaselines.length !== 1 || cssBaselines[0] !== 'webapp/src/theme/NexusThemeProvider.tsx') {
+    failures.push(`MUI CssBaseline authority must be exactly webapp/src/theme/NexusThemeProvider.tsx: ${cssBaselines.join(', ') || 'none'}`)
+  }
+}
+
 function assertSelectedVisualStack(manifest, authority, failures) {
   const allDependencies = {
     ...(manifest.dependencies ?? {}),
@@ -245,27 +270,41 @@ function assertSelectedVisualStack(manifest, authority, failures) {
     }
   }
 
-  const muiInstalled = Object.hasOwn(manifest.dependencies ?? {}, '@mui/material')
-  const status = authority?.decision?.status
-  if (!muiInstalled) {
-    if (status !== 'authorized_not_installed') failures.push(`MUI authority status ${status} requires @mui/material to be installed`)
-    return
-  }
-
-  const expected = authority.runtime_packages
+  const expected = authority?.runtime_packages ?? {}
   for (const [dependency, version] of Object.entries(expected)) {
     if ((manifest.dependencies ?? {})[dependency] !== version) {
       failures.push(`selected visual dependency must be pinned exactly: ${dependency}@${version}`)
     }
   }
-  if ((manifest.overrides ?? {})['react-is'] !== authority.react_compatibility.react_is_override) {
-    failures.push(`React 18 requires package.json overrides.react-is=${authority.react_compatibility.react_is_override}`)
+  if ((manifest.overrides ?? {})['react-is'] !== authority?.react_compatibility?.react_is_override) {
+    failures.push(`React 18 requires package.json overrides.react-is=${authority?.react_compatibility?.react_is_override}`)
+  }
+}
+
+function assertLockfileMatchesManifest(manifest, failures) {
+  if (!fs.existsSync(lockPath)) {
+    failures.push('package-lock.json is missing')
+    return
+  }
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+  const root = lock.packages?.[''] ?? {}
+  for (const section of ['dependencies', 'devDependencies']) {
+    const manifestSection = manifest[section] ?? {}
+    const lockSection = root[section] ?? {}
+    for (const [dependency, version] of Object.entries(manifestSection)) {
+      if (lockSection[dependency] !== version) failures.push(`package-lock root is stale: ${section}.${dependency} must be ${version}`)
+    }
+    for (const dependency of Object.keys(lockSection)) {
+      if (!Object.hasOwn(manifestSection, dependency)) failures.push(`package-lock root retains removed dependency: ${section}.${dependency}`)
+    }
   }
 }
 
 function assertRuntimeDependencies(files, authority, failures) {
-  const manifest = JSON.parse(fs.readFileSync(path.join(webappRoot, 'package.json'), 'utf8'))
+  const manifest = JSON.parse(fs.readFileSync(packagePath, 'utf8'))
   const consumed = externalImports(files)
+  for (const dependency of REQUIRED_VISUAL_SUPPORT_PACKAGES) consumed.add(dependency)
+
   const configFiles = walk(webappRoot).filter((file) => /(?:vite\.config|playwright\.config|eslint\.config|\.mjs$)/.test(file))
   for (const file of configFiles) {
     const content = fs.readFileSync(file, 'utf8')
@@ -275,10 +314,13 @@ function assertRuntimeDependencies(files, authority, failures) {
       consumed.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
     }
   }
+
   for (const dependency of Object.keys(manifest.dependencies ?? {})) {
     if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
   }
+
   assertSelectedVisualStack(manifest, authority, failures)
+  assertLockfileMatchesManifest(manifest, failures)
 }
 
 const failures = []
@@ -300,6 +342,7 @@ assertNoParallelImplementation(files, failures)
 assertCanonicalNavigation(files, failures)
 assertTransportAuthority(files, failures)
 assertCssAuthority(files, failures)
+assertSingleThemeAuthority(files, failures)
 assertRuntimeDependencies(files, muiAuthority, failures)
 
 if (failures.length) {
@@ -313,7 +356,7 @@ console.log(JSON.stringify({
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
   github_actions: 'retired',
-  current_ui_authority: 'webapp/src/components/ui during unmerged migration',
+  current_ui_authority: 'unmerged MUI migration branch',
   target_ui_authority: '@mui/material@9.2.0',
   target_theme_authority: 'webapp/src/theme/nexusTheme.ts',
   migration_status: muiAuthority?.decision?.status,
