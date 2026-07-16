@@ -1,0 +1,82 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const root = resolve(process.cwd())
+const read = (path) => readFileSync(resolve(root, path), 'utf8')
+const statusPath = resolve(root, 'src/lib/supportStatus.ts')
+const supportStatus = existsSync(statusPath) ? read('src/lib/supportStatus.ts') : ''
+const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
+const workspaceApi = read('src/lib/operatorWorkspaceApi.ts')
+const workspacePresentation = read('src/lib/operatorWorkspacePresentation.ts')
+const operationalPresentation = read('src/domain/operationalPresentation.ts')
+const channels = read('src/features/channels/ChannelsPage.tsx')
+const runtime = read('src/features/runtime/RuntimePage.tsx')
+const theme = read('src/theme/nexusTheme.ts')
+
+test('frontend operational health uses an explicit fail-closed mapping module', () => {
+  assert.equal(existsSync(statusPath), true, 'src/lib/supportStatus.ts must exist')
+  assert.match(supportStatus, /export function healthPresentation/)
+  for (const state of ['disconnected', 'offline', 'reconnecting', 'unknown']) assert.match(supportStatus, new RegExp(state))
+  assert.doesNotMatch(supportStatus, /\.includes\(/)
+  assert.match(channels, /healthPresentation/)
+  assert.doesNotMatch(channels, /function toneForHealth/)
+})
+
+test('source state and ownership never claim business success', () => {
+  assert.match(workspacePresentation, /sourceStatusPresentation/)
+  assert.match(workspacePresentation, /ownerPresentation/)
+  assert.match(workspacePresentation, /来源已解决/)
+  assert.match(workspacePresentation, /来源已关闭/)
+  assert.doesNotMatch(workspacePresentation, /业务已完成|安全结案/)
+  assert.doesNotMatch(workspace, /handoff_status === 'accepted'\) return 'success'/)
+  assert.doesNotMatch(workspace, /channel === 'whatsapp'\) return 'success'/)
+})
+
+test('controlled actions distinguish request acceptance from verified outcome', () => {
+  assert.match(workspacePresentation, /outcomePresentation/)
+  assert.match(operationalPresentation, /queued/)
+  assert.match(operationalPresentation, /submitted/)
+  assert.match(operationalPresentation, /operational_completed/)
+  assert.match(operationalPresentation, /business_result_confirmed/)
+  assert.match(workspace, /处理编号/)
+  assert.match(workspace, /可以申请取消|当前不可取消/)
+  assert.match(workspace, /修改运单、电话或原因后需重新检查/)
+  assert.match(operationalPresentation, /请求已排队/)
+  assert.doesNotMatch(workspace, /Job #|技术追踪标识|预检不是取消完成/)
+})
+
+test('runtime header cannot show normal while loading, unavailable, or not ok', () => {
+  assert.match(supportStatus, /runtimePresentation/)
+  assert.match(runtime, /runtimePresentation\(/)
+  assert.match(runtime, /runtime\.isLoading/)
+  assert.match(runtime, /runtime\.isError/)
+  assert.doesNotMatch(runtime, /warnings\?\.length \? '需要关注' : '正常'/)
+})
+
+test('canonical MUI surfaces meet bounded accessibility truth requirements', () => {
+  assert.match(theme, /MuiButton:/)
+  assert.match(theme, /minHeight:\s*44/)
+  assert.match(theme, /focus-visible/)
+  assert.match(theme, /prefers-reduced-motion/)
+  assert.match(workspace, /aria-live="polite"/)
+  assert.match(workspace, /aria-label="处理进度"/)
+  assert.match(channels, /<TableHead>/)
+  assert.match(channels, /aria-label="当前启用的渠道账号"/)
+  assert.doesNotMatch(theme, /#f06423/i)
+})
+
+test('workspace queue and conversation freshness remain visible and bounded', () => {
+  assert.match(workspace, /refetchInterval:\s*15_?000/)
+  assert.doesNotMatch(workspace, /refetchInterval:\s*selectedItem\?\.source_links\.conversation\s*\?\s*5_?000/)
+  assert.match(workspace, /conversationEvents\(/)
+  assert.match(workspace, /mergeLatestThread/)
+  assert.match(workspace, /mergeOlderThread/)
+  assert.match(workspace, /loadOlderMessages/)
+  assert.match(workspace, /加载更早消息/)
+  assert.match(workspace, /加载更多任务/)
+  assert.match(workspaceApi, /before_message_id/)
+  assert.match(workspaceApi, /\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/events/)
+  assert.doesNotMatch(workspaceApi, /thread-v2|thread-page/)
+})
