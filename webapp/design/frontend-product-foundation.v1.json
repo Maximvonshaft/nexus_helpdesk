@@ -12,55 +12,13 @@
     "implementation_authority": 525
   },
   "route_domains": [
-    {
-      "domain": "authentication",
-      "route": "/login",
-      "canonical": true,
-      "status": "current",
-      "job": "Establish operator identity"
-    },
-    {
-      "domain": "operator_work",
-      "route": "/workspace",
-      "canonical": true,
-      "status": "current",
-      "job": "Open the scoped queue and complete the governed case journey"
-    },
-    {
-      "domain": "knowledge_and_sop",
-      "route": "/knowledge",
-      "canonical": true,
-      "status": "current",
-      "job": "Govern customer Knowledge and internal operating guidance"
-    },
-    {
-      "domain": "channels",
-      "route": "/channels",
-      "canonical": true,
-      "status": "current",
-      "job": "Manage channel and account configuration and health"
-    },
-    {
-      "domain": "runtime_and_audit",
-      "route": "/runtime",
-      "canonical": true,
-      "status": "current",
-      "job": "Inspect technical readiness, debug, evaluation and bounded audit evidence"
-    },
-    {
-      "domain": "management",
-      "route": "/control-tower",
-      "canonical": true,
-      "status": "current",
-      "job": "Review scoped workload, risk, outcomes and management drill-down"
-    },
-    {
-      "domain": "operator_work_compatibility",
-      "route": "/webchat",
-      "canonical": false,
-      "status": "compatibility",
-      "job": "Redirect legacy operator links to the canonical Workspace without mounting another console"
-    }
+    {"domain":"authentication","route":"/login","canonical":true,"status":"current","job":"Establish operator identity"},
+    {"domain":"operator_work","route":"/workspace","canonical":true,"status":"current","job":"Open the scoped queue and complete the governed case journey"},
+    {"domain":"knowledge_and_sop","route":"/knowledge","canonical":true,"status":"current","job":"Govern customer Knowledge and internal operating guidance"},
+    {"domain":"channels","route":"/channels","canonical":true,"status":"current","job":"Manage channel and account configuration and health"},
+    {"domain":"runtime_and_audit","route":"/runtime","canonical":true,"status":"current","job":"Inspect technical readiness, debug, evaluation and bounded audit evidence"},
+    {"domain":"management","route":"/control-tower","canonical":true,"status":"current","job":"Review scoped workload, risk, outcomes and management drill-down"},
+    {"domain":"operator_work_compatibility","route":"/webchat","canonical":false,"status":"compatibility","job":"Redirect legacy operator links to the canonical Workspace without mounting another console"}
   ],
   "token_authority": {
     "framework": "Material UI",
@@ -74,10 +32,7 @@
     "generic_custom_component_policy": "prohibited",
     "route_visual_css_policy": "prohibited",
     "feature_raw_hex_policy": "theme_only",
-    "allowed_global_css": [
-      "webapp/src/styles.css",
-      "webapp/src/a11y.css"
-    ],
+    "allowed_global_css": ["webapp/src/styles.css", "webapp/src/a11y.css"],
     "retired_authorities": [
       "webapp/src/styles/tokens.css",
       "webapp/src/styles/components.css",
@@ -93,14 +48,8 @@
   },
   "operator_language_authority": {
     "path": "webapp/design/operator-language.v1.json",
-    "status": "implemented_except_workspace_pending_performance_convergence",
-    "primary_surface_content": [
-      "task",
-      "state",
-      "action",
-      "blocking reason",
-      "recovery step"
-    ],
+    "status": "code_convergence_complete_verification_pending",
+    "primary_surface_content": ["task", "state", "action", "blocking reason", "recovery step"],
     "primary_surface_forbidden": [
       "product narration",
       "architecture explanation",
@@ -111,75 +60,20 @@
     "technical_disclosure_only": true
   },
   "state_vocabulary": {
-    "source": [
-      "source_open",
-      "source_resolved",
-      "source_closed",
-      "source_cancelled"
-    ],
-    "ownership": [
-      "ownership_unassigned",
-      "ownership_assigned",
-      "ownership_handoff_requested",
-      "ownership_handoff_accepted",
-      "ownership_waiting_customer",
-      "ownership_waiting_operations"
-    ],
-    "evidence": [
-      "evidence_authoritative",
-      "evidence_stale",
-      "evidence_unavailable",
-      "evidence_contradictory",
-      "evidence_customer_claim",
-      "evidence_approved_knowledge",
-      "evidence_ai_recommendation"
-    ],
-    "action_and_outcome": [
-      "action_requested",
-      "action_accepted",
-      "action_technical_completed",
-      "action_operational_completed",
-      "customer_notified",
-      "business_result_confirmed",
-      "repair_required"
-    ],
-    "closure": [
-      "closure_blocked",
-      "closure_observation",
-      "closure_eligible",
-      "closure_safely_closed",
-      "closure_reopened"
-    ]
+    "source": ["source_open", "source_resolved", "source_closed", "source_cancelled"],
+    "ownership": ["ownership_unassigned", "ownership_assigned", "ownership_handoff_requested", "ownership_handoff_accepted", "ownership_waiting_customer", "ownership_waiting_operations"],
+    "evidence": ["evidence_authoritative", "evidence_stale", "evidence_unavailable", "evidence_contradictory", "evidence_customer_claim", "evidence_approved_knowledge", "evidence_ai_recommendation"],
+    "action_and_outcome": ["action_requested", "action_accepted", "action_technical_completed", "action_operational_completed", "customer_notified", "business_result_confirmed", "repair_required"],
+    "closure": ["closure_blocked", "closure_observation", "closure_eligible", "closure_safely_closed", "closure_reopened"]
   },
   "terminology": {
-    "prohibited_operator_labels": [
-      "记忆证据",
-      "已结束",
-      "服务端最终授权",
-      "后端未返回受支持的处理入口",
-      "运营中心"
-    ],
+    "prohibited_operator_labels": ["记忆证据", "已结束", "服务端最终授权", "后端未返回受支持的处理入口", "运营中心"],
     "prohibited_label_conditions": {
       "已结束": "Prohibited when derived only from Ticket resolved or closed status",
       "成功": "Prohibited when derived only from request acceptance, queueing, transport or local technical completion"
     },
-    "false_success_sources": [
-      "http_200",
-      "job_queued",
-      "job_done",
-      "message_sent",
-      "dispatch_dispatched",
-      "ticket_closed"
-    ],
-    "preferred_evidence_labels": [
-      "已知信息",
-      "客户说法",
-      "知识与政策",
-      "自动回复建议",
-      "处理决定",
-      "操作结果",
-      "客户通知"
-    ]
+    "false_success_sources": ["http_200", "job_queued", "job_done", "message_sent", "dispatch_dispatched", "ticket_closed"],
+    "preferred_evidence_labels": ["已知信息", "客户说法", "知识与政策", "自动回复建议", "处理决定", "操作结果", "客户通知"]
   },
   "quality_floor": {
     "wcag_level": "AA",
@@ -196,7 +90,7 @@
   },
   "downstream_work_items": [525, 564, 573, 753],
   "lifecycle": {
-    "status": "mui_code_migration_complete_language_convergence_in_progress_verification_pending",
+    "status": "mui_and_operator_language_code_convergence_complete_verification_pending",
     "effective_from": "2026-07-12T00:00:00Z",
     "review_due": "2027-01-12T00:00:00Z",
     "runtime_activation": false,
