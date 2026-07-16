@@ -5,6 +5,18 @@ const SCOPE_KEY = 'nexus-operator-workspace-scope'
 
 type Scenario = 'handoff' | 'dispatch'
 
+type EventPage = {
+  events: Array<{
+    id: number
+    event_type: string
+    payload_json: Record<string, unknown>
+    created_at: string
+  }>
+  last_event_id: number
+  has_more: boolean
+  wait_ms: number
+}
+
 function user() {
   return {
     id: 9,
@@ -103,9 +115,11 @@ function threadResponse(messages?: ReturnType<typeof defaultThreadMessages>) {
     required_action: '核实运单后回复客户',
     visitor: { name: 'Customer', email: null, phone: '+41790000000', ref: 'customer-1' },
     messages: messages ?? defaultThreadMessages(),
+    message_page: { before_id: null, has_more: false, limit: 100 },
     actions: [],
     ai_turns: [],
     events: [],
+    last_event_id: 0,
     handoff: {
       id: 21,
       ticket_id: 11,
@@ -146,7 +160,20 @@ function threadResponse(messages?: ReturnType<typeof defaultThreadMessages>) {
   }
 }
 
-async function mockWorkspace(page: Page, scenario: Scenario, overrides?: { queue?: () => ReturnType<typeof queueResponse>; thread?: () => ReturnType<typeof threadResponse> }) {
+function emptyEventPage(afterId = 0): EventPage {
+  return {
+    events: [],
+    last_event_id: afterId,
+    has_more: false,
+    wait_ms: 0,
+  }
+}
+
+async function mockWorkspace(page: Page, scenario: Scenario, overrides?: {
+  queue?: () => ReturnType<typeof queueResponse>
+  thread?: () => ReturnType<typeof threadResponse>
+  events?: (afterId: number) => EventPage
+}) {
   const channelKey = scenario === 'dispatch' ? 'whatsapp' : 'webchat'
   await page.addInitScript(([tokenKey, scopeKey, channel]) => {
     sessionStorage.setItem(tokenKey, 'operator-token')
@@ -179,6 +206,11 @@ async function mockWorkspace(page: Page, scenario: Scenario, overrides?: { queue
       return json(overrides?.queue?.() ?? queueResponse(scenario))
     }
     if (url.pathname === '/api/webchat/admin/tickets/11/thread') return json(overrides?.thread?.() ?? threadResponse())
+    if (/^\/api\/webchat\/admin\/tickets\/\d+\/events$/.test(url.pathname)) {
+      expect(url.searchParams.get('wait_ms')).toBe('0')
+      const afterId = Number(url.searchParams.get('after_id') || 0)
+      return json(overrides?.events?.(afterId) ?? emptyEventPage(afterId))
+    }
     if (url.pathname === '/api/tickets/42') {
       return json({ id: 42, ticket_no: 'T-42', title: 'WhatsApp dispatch repair', status: 'in_progress', priority: 'urgent' })
     }
@@ -252,7 +284,27 @@ test('workspace preserves historical scroll position and exposes a bounded new-m
     delivery_status: 'sent',
     created_at: `2026-07-12T20:${String(index).padStart(2, '0')}:00Z`,
   }))
-  await mockWorkspace(page, 'handoff', { thread: () => threadResponse(messages) })
+  let eventDelivered = false
+  await mockWorkspace(page, 'handoff', {
+    thread: () => threadResponse(messages),
+    events: (afterId) => {
+      if (!eventDelivered && messages.some((message) => message.id === 100)) {
+        eventDelivered = true
+        return {
+          events: [{
+            id: 1,
+            event_type: 'message.created',
+            payload_json: { message_id: 100, direction: 'visitor' },
+            created_at: '2026-07-12T21:00:00Z',
+          }],
+          last_event_id: 1,
+          has_more: false,
+          wait_ms: 0,
+        }
+      }
+      return emptyEventPage(afterId)
+    },
+  })
   await page.goto('/workspace')
 
   const timeline = page.locator('.operator-messages')
@@ -273,7 +325,7 @@ test('workspace preserves historical scroll position and exposes a bounded new-m
     created_at: '2026-07-12T21:00:00Z',
   })
 
-  await expect(page.getByLabel('客户沟通').getByText('A new message while the operator reads history')).toBeVisible({ timeout: 7000 })
+  await expect(page.getByLabel('客户沟通').getByText('A new message while the operator reads history')).toBeVisible({ timeout: 10_000 })
   expect(await timeline.evaluate((node) => node.scrollTop)).toBeLessThan(20)
   const newMessages = page.getByRole('button', { name: '1 条新消息，查看最新' })
   await expect(newMessages).toBeVisible()
