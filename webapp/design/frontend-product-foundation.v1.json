@@ -91,6 +91,25 @@
       "webapp/src/features/runtime/runtime-evidence-audit.css"
     ]
   },
+  "operator_language_authority": {
+    "path": "webapp/design/operator-language.v1.json",
+    "status": "implemented_except_workspace_pending_performance_convergence",
+    "primary_surface_content": [
+      "task",
+      "state",
+      "action",
+      "blocking reason",
+      "recovery step"
+    ],
+    "primary_surface_forbidden": [
+      "product narration",
+      "architecture explanation",
+      "frontend or backend responsibility explanation",
+      "permission philosophy",
+      "AI self-description"
+    ],
+    "technical_disclosure_only": true
+  },
   "state_vocabulary": {
     "source": [
       "source_open",
@@ -135,7 +154,10 @@
   "terminology": {
     "prohibited_operator_labels": [
       "记忆证据",
-      "已结束"
+      "已结束",
+      "服务端最终授权",
+      "后端未返回受支持的处理入口",
+      "运营中心"
     ],
     "prohibited_label_conditions": {
       "已结束": "Prohibited when derived only from Ticket resolved or closed status",
@@ -150,11 +172,13 @@
       "ticket_closed"
     ],
     "preferred_evidence_labels": [
-      "案例证据",
-      "事实与依据",
-      "客户主张",
+      "已知信息",
+      "客户说法",
       "知识与政策",
-      "AI 建议"
+      "自动回复建议",
+      "处理决定",
+      "操作结果",
+      "客户通知"
     ]
   },
   "quality_floor": {
@@ -172,7 +196,7 @@
   },
   "downstream_work_items": [525, 564, 573, 753],
   "lifecycle": {
-    "status": "mui_code_migration_complete_verification_pending",
+    "status": "mui_code_migration_complete_language_convergence_in_progress_verification_pending",
     "effective_from": "2026-07-12T00:00:00Z",
     "review_due": "2027-01-12T00:00:00Z",
     "runtime_activation": false,
