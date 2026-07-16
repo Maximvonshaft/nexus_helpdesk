@@ -1,9 +1,3 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
 html,
 body,
 #root {
@@ -12,31 +6,11 @@ body,
 }
 
 html {
-  background: var(--nd-color-canvas);
-  color: var(--nd-color-text);
-  font-family: var(--nd-font-sans);
+  scrollbar-gutter: stable;
 }
 
 body {
-  background: var(--nd-color-canvas);
-  color: var(--nd-color-text);
-  line-height: var(--nd-line-height-body);
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
-
-button {
-  color: inherit;
+  overflow-wrap: anywhere;
 }
 
 img,
@@ -45,22 +19,13 @@ svg {
 }
 
 code,
+pre,
+kbd,
+samp {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
 pre {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-}
-
-::selection {
-  background: var(--nd-color-focus-bg);
-  color: var(--nd-color-text);
-}
-
-.nd-field__required {
-  color: var(--nd-color-danger);
-}
-
-.service-entry-state {
-  display: grid;
-  min-height: 100dvh;
-  place-items: center;
-  padding: var(--nd-space-6);
+  overflow: auto;
 }
