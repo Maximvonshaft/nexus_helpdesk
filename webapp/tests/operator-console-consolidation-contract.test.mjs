@@ -106,13 +106,15 @@ test('one canonical transport owns fetch and domain adapters only delegate', () 
   assert.ok(transport.required_shared_behavior.includes('external_abort_propagation'))
 })
 
-test('login presentation is operational, MUI-based and not promotional', () => {
+test('login presentation is operational, concise, MUI-based and not promotional', () => {
   const login = read(join(WEBAPP_ROOT, 'src', 'routes', 'login.tsx'))
-  assert.match(login, /客服与运营工作台/)
-  assert.match(login, /系统会根据账号权限加载可访问的国家、渠道和工作内容/)
+  assert.match(login, /Nexus OSR/)
+  assert.match(login, />登录</)
+  assert.match(login, /账号或密码错误。/)
+  assert.match(login, /请勿在共享设备保存密码。/)
   assert.match(login, /from '@mui\/material'/)
   assert.match(login, /<Paper component="form"/)
-  assert.doesNotMatch(login, /从可信事实到可验证结案/)
+  assert.doesNotMatch(login, /客服与运营工作台|系统会根据账号权限|从可信事实到可验证结案/)
   assert.doesNotMatch(login, /auth-sequence|auth\.css/)
 })
 
