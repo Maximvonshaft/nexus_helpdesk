@@ -1,0 +1,120 @@
+{
+  "schema": "nexus.mui-visual-authority.v1",
+  "version": "mui_visual_authority.v1",
+  "work_item": 753,
+  "decision": {
+    "status": "authorized_not_installed",
+    "selected_framework": "Material UI",
+    "selected_package": "@mui/material",
+    "selected_version": "9.2.0",
+    "license": "MIT",
+    "decision_date": "2026-07-16",
+    "owner_authorized": true
+  },
+  "runtime_packages": {
+    "@mui/material": "9.2.0",
+    "@mui/icons-material": "9.2.0",
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "react-is": "18.3.1"
+  },
+  "react_compatibility": {
+    "react": "18.3.1",
+    "react_dom": "18.3.1",
+    "react_is_override_required": true,
+    "react_is_override": "18.3.1"
+  },
+  "target_authority": {
+    "component_library": "@mui/material",
+    "icon_library": "@mui/icons-material",
+    "styling_engine": "Emotion",
+    "theme_provider": "ThemeProvider",
+    "baseline": "CssBaseline",
+    "theme_path": "webapp/src/theme/nexusTheme.ts",
+    "application_provider_path": "webapp/src/theme/NexusThemeProvider.tsx",
+    "component_usage": "direct MUI imports for generic controls; Nexus components only for domain-specific composition",
+    "route_css_policy": "delete after migration; use MUI components, theme, sx and responsive props",
+    "global_css_policy": "retain only narrowly justified non-component browser/accessibility rules"
+  },
+  "replacement_scope": {
+    "generic_components_to_replace_and_delete": [
+      "webapp/src/components/ui/Button.tsx",
+      "webapp/src/components/ui/ButtonLink.tsx",
+      "webapp/src/components/ui/Badge.tsx",
+      "webapp/src/components/ui/Field.tsx",
+      "webapp/src/components/ui/EmptyState.tsx",
+      "webapp/src/components/ui/ErrorSummary.tsx",
+      "webapp/src/components/ui/TechnicalDetails.tsx",
+      "webapp/src/components/ui/ConfirmDialog.tsx",
+      "webapp/src/components/ui/PageHeader.tsx"
+    ],
+    "css_to_migrate_and_delete": [
+      "webapp/src/styles/tokens.css",
+      "webapp/src/styles/components.css",
+      "webapp/src/styles/auth.css",
+      "webapp/src/app/app-shell.css",
+      "webapp/src/features/operator-workspace/operator-workspace.css",
+      "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
+      "webapp/src/features/admin-routes/admin-routes.css",
+      "webapp/src/features/knowledge/knowledge.css",
+      "webapp/src/features/runtime/runtime-evidence-audit.css"
+    ],
+    "css_to_reduce_or_delete_after_audit": [
+      "webapp/src/styles.css",
+      "webapp/src/a11y.css"
+    ],
+    "interaction_dependency_to_remove": [
+      "@radix-ui/react-dialog"
+    ]
+  },
+  "preserve": [
+    "backend APIs",
+    "authorization",
+    "server-owned scope",
+    "queue truth",
+    "business state contracts",
+    "draft protection",
+    "confirmation requirements",
+    "mutation safety",
+    "deep links",
+    "error and degraded behavior"
+  ],
+  "migration_policy": {
+    "branch": "work/753-canonical-ui-interaction-refinement",
+    "single_pr": 754,
+    "partial_merge_forbidden": true,
+    "old_new_runtime_switch_forbidden": true,
+    "v2_routes_forbidden": true,
+    "parallel_framework_forbidden": true,
+    "route_migration_order": [
+      "theme foundation",
+      "login and application shell",
+      "workspace",
+      "knowledge",
+      "channels",
+      "runtime",
+      "control tower",
+      "residue deletion"
+    ],
+    "merge_condition": "all active routes use MUI; replaced generic components and route CSS are deleted; local exact-head verification and browser evidence pass"
+  },
+  "forbidden_frameworks": [
+    "Tailwind CSS",
+    "shadcn/ui",
+    "Ant Design",
+    "Chakra UI",
+    "Mantine",
+    "Bootstrap",
+    "PrimeReact",
+    "Semantic UI"
+  ],
+  "acceptance": {
+    "mui_is_only_generic_visual_component_authority": true,
+    "no_custom_generic_button_field_dialog_badge_system": true,
+    "no_route_private_palette": true,
+    "no_legacy_css_after_merge": true,
+    "wcag_aa": true,
+    "minimum_target_css_px": 44,
+    "representative_viewports": [375, 768, 1024, 1440]
+  }
+}
