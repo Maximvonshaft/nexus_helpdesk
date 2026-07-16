@@ -1,9 +1,9 @@
 {
   "schema": "nexus.operator-language.v1",
-  "version": "operator_language.2026-07-16.1",
+  "version": "operator_language.2026-07-16.2",
   "work_item": 753,
   "owner_pr": 754,
-  "status": "implemented_except_workspace_pending_performance_convergence",
+  "status": "code_convergence_complete_verification_pending",
   "goal": "A trained operator can identify the current task, current state, available action and recovery step without reading product narration or implementation explanations.",
   "primary_surface_rules": {
     "allowed": [
@@ -73,6 +73,9 @@
     "webapp/src/routes/login.tsx",
     "webapp/src/routes/root.tsx",
     "webapp/src/routes/workspace.tsx",
+    "webapp/src/routes/webchat.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
+    "webapp/src/lib/operatorWorkspacePresentation.ts",
     "webapp/src/features/knowledge/KnowledgePage.tsx",
     "webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx",
     "webapp/src/features/channels/ChannelsPage.tsx",
@@ -80,37 +83,7 @@
     "webapp/src/features/runtime/RuntimeEvidenceAudit.tsx",
     "webapp/src/features/control-tower/ControlTowerPage.tsx"
   ],
-  "pending_surfaces": [
-    {
-      "path": "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
-      "reason": "Draft PR #759 is changing the same canonical file for bounded history and event freshness. Copy convergence must be applied once to the final combined file rather than creating parallel edits.",
-      "required_replacements": {
-        "队列": "待处理",
-        "案例": "任务详情",
-        "来源": "任务类型",
-        "来源终态": "来源已结束",
-        "责任人": "当前负责人",
-        "SLA": "处理时限",
-        "人工接管": "待接手",
-        "运营派发": "内部任务",
-        "案例处理链路": "处理进度",
-        "事实与证据": "已知信息",
-        "案例接管": "接手任务",
-        "接管案例": "接手处理",
-        "释放案例": "转回待处理",
-        "恢复 AI": "恢复自动回复",
-        "技术追踪标识": "处理编号"
-      },
-      "required_deletions": [
-        "当前来源与任务状态不会自动代表业务已经完成。",
-        "只显示当前接口已经提供的事实，缺失阶段不会被推断。",
-        "客户主张、知识、AI 建议、人工决定和运营结果明确分开。",
-        "回复始终经过服务端权限、事实和安全检查。",
-        "不可执行原因直接说明，所有操作仍由服务端最终授权。",
-        "页面提示不替代服务端权限、政策和真实操作结果。"
-      ]
-    }
-  ],
+  "pending_surfaces": [],
   "forbidden_primary_literals": [
     "服务端最终授权",
     "后端未返回受支持的处理入口",
@@ -121,7 +94,16 @@
     "创建任务不等于账号已经接通",
     "可审计的接入结果",
     "运行与治理风险",
-    "运营中心"
+    "运营中心",
+    "案例处理链路",
+    "事实与证据",
+    "案例接管",
+    "接管案例",
+    "释放案例",
+    "恢复 AI",
+    "技术追踪标识",
+    "来源终态",
+    "全部 SLA"
   ],
   "acceptance": [
     "Every primary page has a concise noun title.",
@@ -129,6 +111,6 @@
     "Every primary action uses an operator-understandable verb.",
     "No completed surface contains a forbidden primary literal.",
     "Technical details are disclosed only in approved advanced locations.",
-    "The pending Workspace language is integrated once after PR #759 convergence and then this contract status changes to complete."
+    "Workspace performance, MUI presentation and operator language exist in one canonical file and one API adapter."
   ]
 }
