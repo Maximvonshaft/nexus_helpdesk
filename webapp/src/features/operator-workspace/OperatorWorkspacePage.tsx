@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supportApi } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
+import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type {
   UnifiedOperatorQueueItem,
   WorkspaceFilters,
@@ -101,8 +102,33 @@ function isOutboundMessage(message: WebchatMessage) {
   return message.direction === 'agent' || message.direction === 'ai'
 }
 
-function supportMemoryFromThread(thread?: WebchatThread | null) {
+function supportMemoryFromThread(thread?: OperatorWorkspaceThread | null) {
   return thread?.support_memory ?? null
+}
+
+function mergeMessages(...groups: WebchatMessage[][]) {
+  const byId = new Map<string, WebchatMessage>()
+  groups.flat().forEach((message) => byId.set(String(message.id), message))
+  return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id))
+}
+
+function mergeLatestThread(current: OperatorWorkspaceThread | undefined, latest: OperatorWorkspaceThread) {
+  if (!current) return latest
+  const historyWasExpanded = current.messages.length > latest.messages.length
+  return {
+    ...latest,
+    messages: mergeMessages(current.messages, latest.messages),
+    message_page: historyWasExpanded ? current.message_page : latest.message_page,
+  }
+}
+
+function mergeOlderThread(current: OperatorWorkspaceThread | undefined, older: OperatorWorkspaceThread) {
+  if (!current) return older
+  return {
+    ...current,
+    messages: mergeMessages(older.messages, current.messages),
+    message_page: older.message_page,
+  }
 }
 
 function cancelFingerprint(ticketId: number | null, waybill: string, caller: string, reasonCode: string) {
@@ -270,14 +296,17 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
   )
 }
 
-function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capabilities, onRefresh, onReplyDirtyChange, selectionUnavailable }: {
+function ConversationPanel({ item, thread, isLoading, isRefreshing, error, historyError, isLoadingOlderMessages, capabilities, onRefresh, onLoadOlderMessages, onReplyDirtyChange, selectionUnavailable }: {
   item: UnifiedOperatorQueueItem
-  thread: WebchatThread | null
+  thread: OperatorWorkspaceThread | null
   isLoading: boolean
   isRefreshing: boolean
   error: unknown
+  historyError: unknown
+  isLoadingOlderMessages: boolean
   capabilities: Set<string>
   onRefresh: () => Promise<void>
+  onLoadOlderMessages: () => Promise<void>
   onReplyDirtyChange: (dirty: boolean) => void
   selectionUnavailable: boolean
 }) {
@@ -286,18 +315,23 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const previousMessageCountRef = useRef(thread?.messages.length ?? 0)
+  const previousLatestMessageIdRef = useRef<string | number | undefined>(thread?.messages.at(-1)?.id)
   const canReply = Boolean(item.ticket_id && thread && !selectionUnavailable && hasCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'))
 
   useEffect(() => {
     setReply('')
     setNewMessageCount(0)
     previousMessageCountRef.current = 0
+    previousLatestMessageIdRef.current = undefined
   }, [item.queue_id])
 
   useLayoutEffect(() => {
     const currentCount = thread?.messages.length ?? 0
-    const added = Math.max(0, currentCount - previousMessageCountRef.current)
+    const currentLatestMessageId = thread?.messages.at(-1)?.id
+    const latestChanged = currentLatestMessageId !== previousLatestMessageIdRef.current
+    const added = latestChanged ? Math.max(0, currentCount - previousMessageCountRef.current) : 0
     previousMessageCountRef.current = currentCount
+    previousLatestMessageIdRef.current = currentLatestMessageId
     if (!added) return
     const list = messagesRef.current
     if (list && isNearMessageBottom) {
@@ -306,7 +340,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
     } else {
       setNewMessageCount((count) => count + added)
     }
-  }, [isNearMessageBottom, thread?.messages.length])
+  }, [isNearMessageBottom, thread?.messages])
 
   useEffect(() => onReplyDirtyChange(Boolean(reply.trim())), [onReplyDirtyChange, reply])
   useEffect(() => () => onReplyDirtyChange(false), [onReplyDirtyChange])
@@ -325,6 +359,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
       <div className="operator-section-head compact"><div><h2 id="operator-conversation-title">客户沟通</h2><p>回复始终经过服务端权限、事实和安全检查。</p></div>{isRefreshing ? <Badge>刷新中</Badge> : null}</div>
       {isLoading ? <EmptyState title="正在读取会话" description="正在载入客户消息。" /> : null}
       {error ? <ErrorSummary title="会话暂不可用" errors={[errorCopy(error, '仍可基于案例摘要继续分诊')]} /> : null}
+      {historyError ? <ErrorSummary title="更早消息读取失败" errors={[errorCopy(historyError, '当前已加载消息不受影响，可以稍后重试')]} /> : null}
       {thread ? (
         <>
           <div
@@ -338,6 +373,7 @@ function ConversationPanel({ item, thread, isLoading, isRefreshing, error, capab
               if (nearBottom) setNewMessageCount(0)
             }}
           >
+            {thread.message_page?.has_more ? <Button size="sm" variant="secondary" loading={isLoadingOlderMessages} onClick={() => void onLoadOlderMessages()}>加载更早消息</Button> : null}
             {thread.messages.map((message) => {
               const delivery = messageDeliveryPresentation(message.delivery_status)
               return (
@@ -536,6 +572,8 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const [mobileView, setMobileView] = useState<WorkspaceMobileView>('queue')
   const [replyDraftDirty, setReplyDraftDirty] = useState(false)
   const [replyDiscardOpen, setReplyDiscardOpen] = useState(false)
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
+  const [historyError, setHistoryError] = useState<unknown>(null)
   const pendingReplyActionRef = useRef<(() => void) | null>(null)
   const [retainedSelectedItem, setRetainedSelectedItem] = useState<UnifiedOperatorQueueItem | null>(null)
 
@@ -622,12 +660,16 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     }
   }, [queue, requestedQueueId, requestedQueueItem])
 
+  const threadPath = selectedItem?.source_links.conversation || ''
+  const threadQueryKey = useMemo(
+    () => ['operatorWorkspaceThread', selectedItem?.queue_id ?? null, threadPath] as const,
+    [selectedItem?.queue_id, threadPath],
+  )
   const thread = useQuery({
-    queryKey: ['operatorWorkspaceThread', selectedItem?.queue_id, selectedItem?.source_links.conversation],
-    queryFn: () => operatorWorkspaceApi.conversationThread(selectedItem?.source_links.conversation || ''),
-    enabled: Boolean(selectedItem?.source_links.conversation),
+    queryKey: threadQueryKey,
+    queryFn: () => operatorWorkspaceApi.conversationThread(threadPath),
+    enabled: Boolean(threadPath),
     retry: false,
-    refetchInterval: selectedItem?.source_links.conversation ? 5_000 : false,
   })
   const sourceRecord = useQuery({
     queryKey: ['operatorWorkspaceSourceRecord', selectedItem?.queue_id, selectedItem?.source_links.ticket],
@@ -635,13 +677,74 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     enabled: Boolean(selectedItem?.source_links.ticket && !selectedItem?.source_links.conversation),
     retry: false,
   })
-  const refreshSelected = async () => {
+
+  useEffect(() => {
+    setHistoryError(null)
+    setIsLoadingOlderMessages(false)
+  }, [threadPath])
+
+  const refreshThreadSnapshot = useCallback(async () => {
+    if (!threadPath) return
+    const latest = await operatorWorkspaceApi.conversationThread(threadPath)
+    queryClient.setQueryData<OperatorWorkspaceThread>(threadQueryKey, (current) => mergeLatestThread(current, latest))
+  }, [queryClient, threadPath, threadQueryKey])
+
+  const loadOlderMessages = useCallback(async () => {
+    const beforeMessageId = thread.data?.message_page?.before_id
+    if (!threadPath || !beforeMessageId || isLoadingOlderMessages) return
+    setHistoryError(null)
+    setIsLoadingOlderMessages(true)
+    try {
+      const older = await operatorWorkspaceApi.conversationThread(threadPath, { beforeMessageId })
+      queryClient.setQueryData<OperatorWorkspaceThread>(threadQueryKey, (current) => mergeOlderThread(current, older))
+    } catch (error) {
+      setHistoryError(error)
+    } finally {
+      setIsLoadingOlderMessages(false)
+    }
+  }, [isLoadingOlderMessages, queryClient, thread.data?.message_page?.before_id, threadPath, threadQueryKey])
+
+  useEffect(() => {
+    const ticketId = selectedItem?.ticket_id
+    if (!ticketId || !threadPath || !thread.isSuccess) return undefined
+
+    const controller = new AbortController()
+    let stopped = false
+    let afterId = Math.max(0, Number(thread.data?.last_event_id ?? 0))
+    const waitAfterFailure = () => new Promise((resolve) => window.setTimeout(resolve, 1000))
+
+    const run = async () => {
+      while (!stopped) {
+        try {
+          const page = await operatorWorkspaceApi.conversationEvents(ticketId, afterId, { signal: controller.signal })
+          afterId = Math.max(afterId, Number(page.last_event_id || 0))
+          if (page.events.length) {
+            await refreshThreadSnapshot()
+            await queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] })
+          }
+          if (page.has_more) continue
+        } catch (error) {
+          if (stopped || controller.signal.aborted) return
+          await waitAfterFailure()
+        }
+      }
+    }
+
+    void run()
+    return () => {
+      stopped = true
+      controller.abort()
+    }
+  }, [queryClient, refreshThreadSnapshot, selectedItem?.ticket_id, thread.data?.last_event_id, thread.isSuccess, threadPath])
+
+  const refreshSelected = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] }),
-      queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceThread', selectedItem?.queue_id] }),
+      threadPath ? refreshThreadSnapshot() : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceSourceRecord', selectedItem?.queue_id] }),
     ])
-  }
+  }, [queryClient, refreshThreadSnapshot, selectedItem?.queue_id, threadPath])
+
   const runWithReplyDraftGuard = (action: () => void) => {
     if (!replyDraftDirty) return action()
     pendingReplyActionRef.current = action
@@ -665,7 +768,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
             <QueueRail items={queueItems} selectedQueueId={selectedItem?.queue_id ?? null} currentUserId={session.data.id} isLoading={queue.isLoading} isRefreshing={queue.isFetching && !queue.isLoading} hasNextPage={Boolean(queue.hasNextPage)} isFetchingNextPage={queue.isFetchingNextPage} onSelect={selectItem} onLoadMore={() => queue.fetchNextPage()} />
           </aside>
           <section id="workspace-case" className="operator-case-pane" aria-label="当前案例" tabIndex={-1}>
-            {selectedItem ? <><CaseHeader item={selectedItem} currentUserId={session.data.id} />{preserveMissingSelection ? <div className="operator-selection-stale" role="status"><strong>当前任务已离开队列，回复草稿仍保留</strong><p>发送和受控动作已暂停；切换任务前需要确认是否放弃草稿。</p></div> : null}{sourceRecord.data && !thread.data ? <section className="operator-source-summary"><h2>来源记录摘要</h2><dl><div><dt>标题</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.title) || '未提供')}</dd></div><div><dt>状态</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.status) || selectedItem.source_status)}</dd></div><div><dt>优先级</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.priority) || selectedItem.priority)}</dd></div></dl></section> : null}<EvidencePanel memory={memory} /><ConversationPanel item={selectedItem} thread={thread.data ?? null} isLoading={thread.isLoading} isRefreshing={thread.isFetching && !thread.isLoading} error={thread.error} capabilities={capabilities} onRefresh={refreshSelected} onReplyDirtyChange={setReplyDraftDirty} selectionUnavailable={preserveMissingSelection} /></> : <EmptyState title="选择一个任务开始处理" description="从统一队列选择人工接管、客服工单或运营派发任务。" />}
+            {selectedItem ? <><CaseHeader item={selectedItem} currentUserId={session.data.id} />{preserveMissingSelection ? <div className="operator-selection-stale" role="status"><strong>当前任务已离开队列，回复草稿仍保留</strong><p>发送和受控动作已暂停；切换任务前需要确认是否放弃草稿。</p></div> : null}{sourceRecord.data && !thread.data ? <section className="operator-source-summary"><h2>来源记录摘要</h2><dl><div><dt>标题</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.title) || '未提供')}</dd></div><div><dt>状态</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.status) || selectedItem.source_status)}</dd></div><div><dt>优先级</dt><dd>{sanitizeDisplayText(textValue(sourceRecord.data.priority) || selectedItem.priority)}</dd></div></dl></section> : null}<EvidencePanel memory={memory} /><ConversationPanel item={selectedItem} thread={thread.data ?? null} isLoading={thread.isLoading} isRefreshing={thread.isFetching && !thread.isLoading} error={thread.error} historyError={historyError} isLoadingOlderMessages={isLoadingOlderMessages} capabilities={capabilities} onRefresh={refreshSelected} onLoadOlderMessages={loadOlderMessages} onReplyDirtyChange={setReplyDraftDirty} selectionUnavailable={preserveMissingSelection} /></> : <EmptyState title="选择一个任务开始处理" description="从统一队列选择人工接管、客服工单或运营派发任务。" />}
           </section>
           <aside className="operator-context-pane" aria-label="案例动作与结果">
             {selectedItem ? <><section className="operator-current-task"><h2>当前任务</h2><strong>{sanitizeDisplayText(memory?.required_action || memory?.next_actions?.[0]?.label || '核实当前事实并决定下一步')}</strong><small>前端建议不替代服务端权限、政策和结果权威。</small></section>{preserveMissingSelection ? <EmptyState title="当前任务动作已暂停" description="该任务已不在授权队列中。" /> : <ActionPanel item={selectedItem} thread={thread.data ?? null} capabilities={capabilities} onRefresh={refreshSelected} />}</> : <EmptyState title="暂无动作" description="选择案例后显示允许动作和结果。" />}
