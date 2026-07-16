@@ -1,252 +1,203 @@
-# Nexus Canonical UI Visual Inventory
+# Nexus MUI Visual Migration — Retirement Evidence
 
 ## Purpose
 
-This document records the visual layer that exists on `main@1fd011e8153833f77ca6d1d469071af5db4afb0c` before UI refinement work begins.
+This document records the final disposition of the visual layer that existed on `main@1fd011e8153833f77ca6d1d469071af5db4afb0c` before Work Item #753.
 
-The business machine remains in place. This inventory governs the replacement of its visible shell:
+The business machine was preserved. The former custom visual system was replaced by Material UI and physically removed from the sole implementation branch.
 
-- layout;
-- typography;
-- color usage;
-- spacing;
-- borders, radii and elevation;
-- buttons, fields, statuses and notices;
-- route-level visual structure;
-- operator-visible terminology;
-- interaction feedback and responsive presentation.
+Machine-readable evidence:
 
-The machine-readable authority is `webapp/design/ui-visual-inventory.v1.json`.
+- `webapp/design/ui-visual-inventory.v1.json`
+- `webapp/design/mui-visual-authority.v1.json`
+- `webapp/design/frontend-product-foundation.v1.json`
 
-## Plain-language conclusion
+## Final decision
 
-The existing frontend does not need a second application. Its functional wiring is valuable, but much of its visual implementation can be removed or rewritten.
+Material UI is the sole generic visual component authority:
 
-The correct treatment is:
+- `@mui/material@9.2.0`
+- `@mui/icons-material@9.2.0`
+- `@emotion/react@11.14.0`
+- `@emotion/styled@11.14.1`
+- `react-is@18.3.1`
 
-1. keep business logic, API binding, authorization, drafts, confirmations and state truth;
-2. keep one token authority and one shared component directory;
-3. rewrite the visible CSS in place;
-4. introduce only the missing semantic visual responsibilities;
-5. migrate all consumers;
-6. delete the old selectors, patch layers and visual expressions.
+The sole theme and provider are:
 
-## Current style surface
+- `webapp/src/theme/nexusTheme.ts`
+- `webapp/src/theme/NexusThemeProvider.tsx`
 
-There are 11 active source stylesheets.
+`ThemeProvider` and `CssBaseline` are mounted once at the application root.
 
-### Keep as authority
+## Preserved functional responsibilities
 
-- `webapp/src/styles/tokens.css` — the only semantic design-token authority;
-- `webapp/src/a11y.css` — cross-route focus and reduced-motion behavior, with obsolete selectors removed as needed.
+The migration did not intentionally change:
 
-These files are not protected from improvement. Their ownership is protected. Token values and focus presentation can be professionally refined without introducing another namespace.
+- backend APIs;
+- authorization and server-owned work scope;
+- queue truth and business state contracts;
+- drafts and deep links;
+- confirmation requirements;
+- mutation safety;
+- loading, error and degraded behavior.
 
-### Rewrite in place
+## Retired visual authorities
 
-- `webapp/src/styles.css`;
-- `webapp/src/styles/components.css`;
-- `webapp/src/styles/auth.css`;
-- `webapp/src/app/app-shell.css`;
-- `webapp/src/features/operator-workspace/operator-workspace.css`;
-- `webapp/src/features/admin-routes/admin-routes.css`;
-- `webapp/src/features/knowledge/knowledge.css`;
-- `webapp/src/features/runtime/runtime-evidence-audit.css`.
+The following custom token, component and route-style authorities are physically absent from the MUI branch:
 
-The file paths may remain because they are existing ownership boundaries. Their current visual content is not the target design.
+### Custom token and shared component styling
 
-### Fold and delete
+- `webapp/src/styles/tokens.css`
+- `webapp/src/styles/components.css`
+- `webapp/src/components/ui/`
 
-- `webapp/src/features/operator-workspace/operator-workspace-refinements.css`.
+### Route visual styles
 
-This is a patch layer over the primary Workspace stylesheet. Every still-valid rule must move into the canonical stylesheet or a shared primitive. The file and import must then be deleted.
+- `webapp/src/styles/auth.css`
+- `webapp/src/app/app-shell.css`
+- `webapp/src/features/operator-workspace/operator-workspace.css`
+- `webapp/src/features/operator-workspace/operator-workspace-refinements.css`
+- `webapp/src/features/admin-routes/admin-routes.css`
+- `webapp/src/features/knowledge/knowledge.css`
+- `webapp/src/features/runtime/runtime-evidence-audit.css`
 
-## Root visual problems
+### Custom generic components
 
-### 1. One pill is doing too many jobs
+- Button and ButtonLink;
+- Badge;
+- Field, Input, Select and Textarea wrappers;
+- EmptyState and ErrorSummary;
+- TechnicalDetails;
+- ConfirmDialog;
+- PageHeader.
 
-`Badge` currently presents:
+The Radix Dialog dependency was removed after dialog consumers migrated to MUI.
 
-- source;
-- priority;
-- owner;
-- SLA;
-- refresh;
-- counts;
-- task totals;
-- runtime state;
-- action outcome.
+## Bounded remaining CSS
 
-These are not the same kind of information. The result is a screen full of bubbles with no stable hierarchy.
+Only two source stylesheets remain:
 
-Root correction:
+- `webapp/src/styles.css` — document and browser foundations only;
+- `webapp/src/a11y.css` — the `.sr-only` screen-reader utility only.
 
-- Badge for compact metadata;
-- StatusIndicator for operational state;
-- Count for totals;
-- Notice for warning, degraded, success and failure feedback.
+MUI component overrides, colors, spacing, typography, shape, elevation, focus and reduced motion belong in `nexusTheme.ts`, not in route CSS.
 
-### 2. Cards and borders are the default structure
+## Root findings and resolutions
 
-Workspace, Knowledge, Channels, Runtime, Control Tower and Runtime Audit repeatedly use:
+### VIS-001 — Badge overload
 
-`white surface + border + radius + another bordered object inside`.
+Previously one pill expressed source, priority, owner, SLA, refresh, counts and outcomes.
 
-The result is fragmented and visually generic.
+Resolution:
 
-Root correction:
+- MUI Chip is used only for compact status or metadata;
+- counts use Typography and tabular numerals;
+- operational states include text and a non-color cue.
 
-- continuous work surfaces;
-- sections and dividers;
-- list rows;
-- toolbars;
-- progressive disclosure;
-- true elevation only for dialogs and floating surfaces.
+### VIS-002 — Nested card grammar
 
-### 3. Shared empty/error/detail states are incomplete
+Previously all domains defaulted to bordered rounded containers inside other bordered containers.
 
-`EmptyState` and `ErrorSummary` output shared class names but the active shared stylesheets do not define complete visual treatments for them. `TechnicalDetails` depends partly on route-private styling.
+Resolution:
 
-Root correction:
+- Workspace uses continuous queue, case and action regions;
+- Knowledge uses list, editor and verification regions;
+- Channels and Control Tower use tables, task rows and sections;
+- Runtime uses facts, alerts and progressive disclosure.
 
-Complete these shared primitives before route-level redesign so every page receives one consistent loading, empty, degraded, warning and failure language.
+### VIS-003 — Incomplete feedback states
 
-### 4. Workspace JSX and CSS have drifted apart
+Previously empty, error and technical detail states were incomplete or route-private.
 
-Current JSX renders active names including:
+Resolution:
 
-- `operator-evidence-panel`;
-- `operator-evidence-list`;
-- `operator-conversation-panel`.
+- MUI Alert, CircularProgress, Accordion and Dialog provide shared behavior;
+- empty states are route-bounded compositions of MUI primitives;
+- the custom generic feedback component layer was deleted.
 
-The main stylesheet still targets older names including:
+### VIS-004 — Workspace selector drift
 
-- `operator-evidence`;
-- `operator-conversation`.
+Previously current JSX and old Workspace selectors no longer matched.
 
-It also retains styling for `operator-app-header` and `operator-scope`, although AppShell now owns those responsibilities.
+Resolution:
 
-This is a direct reason the interface looks unfinished: some current structures do not receive the intended styling, while deleted structures still occupy CSS.
+- Workspace rendering was rebuilt with MUI;
+- both Workspace stylesheets were deleted;
+- the architecture gate forbids their return.
 
-Root correction:
+### VIS-005 — Missing Case Spine
 
-Rebuild the Workspace stylesheet against the current JSX contract and delete every dead selector.
+Previously the case journey was represented indirectly through headings, panels and badges.
 
-### 5. The product signature is missing visually
+Resolution:
 
-The approved design authority defines the Case Spine:
+The Workspace now renders:
 
 `Scope -> Evidence -> Decision -> Action -> Operational result -> Customer notification -> Closure / observation`
 
-The current page uses headings, panels, badges and explanatory text instead of this dominant functional structure.
+Only available durable facts are shown. Missing closure facts are explicitly marked unavailable rather than inferred.
 
-Root correction:
+### VIS-006 — Distributed visual vocabulary
 
-Render the Case Spine only from durable or server-provided facts. When facts are missing, display an explicit incomplete/unavailable state rather than inferring progress.
-
-### 6. Visual state projection is distributed
-
-Labels and tones are produced through:
+Domain mapping helpers remain responsible for business labels and tones:
 
 - `domain/operationalPresentation.ts`;
 - `lib/supportStatus.ts`;
 - `lib/operatorWorkspacePresentation.ts`.
 
-This is acceptable only when these remain domain mapping helpers. They must all render through the same shared visual components rather than inventing route-specific shapes.
+Their generic rendering now uses MUI and the single Nexus theme.
 
-## Shared component disposition
+### VIS-007 — Inconsistent operator terminology
 
-The current shared component directory remains the only authority:
+Navigation now uses:
 
-`webapp/src/components/ui/`
+- 案例处理;
+- 知识与流程;
+- 渠道管理;
+- 系统运行;
+- 运营监控.
 
-Existing components are not duplicated. Their functionality is retained and their visual implementation is rewritten:
+Technical identifiers are secondary or progressively disclosed.
 
-- Button;
-- ButtonLink;
-- Badge;
-- Field/Input/Select/Textarea;
-- EmptyState;
-- ErrorSummary;
-- TechnicalDetails;
-- ConfirmDialog;
-- PageHeader.
+### VIS-008 — Independent runtime-audit styling
 
-Four semantic responsibilities are currently missing and may be added to the same directory only after their replacement scope is explicit:
+The minified runtime-audit stylesheet was replaced by MUI lists, facts, forms, alerts and disclosure, then deleted.
 
-- StatusIndicator;
-- Count;
-- Notice;
-- LoadingState.
+## Route migration results
 
-These are not a second component system. They split responsibilities that are currently incorrectly forced into Badge or route-private CSS.
+| Route | MUI migration | Preserved behavior |
+|---|---|---|
+| `/login` | Complete in code | Authentication and error focus |
+| `/workspace` | Complete in code | Queue, deep links, drafts, actions, authorization, confirmations and refresh |
+| `/knowledge` | Complete in code | Search, selection, draft guard, edit, publish and retrieval test |
+| `/channels` | Complete in code | Account health and onboarding-task lifecycle |
+| `/runtime` | Complete in code | Runtime reads, metrics and evidence audit |
+| `/control-tower` | Complete in code | Management evidence and canonical drill-down |
+| `/webchat` | No product UI | Compatibility redirect only |
 
-## Route treatment
+## Permanent anti-reintroduction rules
 
-### `/login`
+`webapp/scripts/assert-frontend-architecture.mjs` rejects:
 
-Preserve authentication behavior and error focus. Replace the generic two-panel framed card presentation with a direct operator login surface.
+- the retired custom component directory;
+- the retired custom token and route CSS files;
+- any source CSS except `styles.css` and `a11y.css`;
+- another UI framework;
+- another `createTheme`, ThemeProvider or CssBaseline owner;
+- V2 routes or old/new switches;
+- restored GitHub Actions;
+- stale package-lock root dependencies or missing exact MUI package nodes.
 
-### `/workspace`
+## Remaining acceptance
 
-Preserve queue reads, selection, deep links, drafts, refresh, permissions, confirmations and mutations. Replace the visual structure with:
+The code migration and deletion work are complete on the Draft branch, but production acceptance is not complete.
 
-- compact continuous queue;
-- dominant case surface;
-- visible owner, urgency and blocker;
-- truthful Case Spine;
-- one next action;
-- calmer evidence and conversation flow;
-- technical detail behind disclosure.
+Required before PR #754 can leave Draft:
 
-### `/knowledge`
+1. regenerate `package-lock.json` from the exact `package.json` manifest;
+2. run architecture, lint, typecheck, contract tests and production build on one unchanged Head;
+3. run browser evidence at 375, 768, 1024 and 1440 widths;
+4. verify keyboard, focus, reduced motion, zoom, long content, degraded states and large lists;
+5. obtain independent exact-head review.
 
-Preserve search, edit, draft guard, publish and retrieval testing. Keep the useful list/editor/verification model while removing repeated panel chrome.
-
-### `/channels`
-
-Preserve account health and onboarding/repair task behavior. Replace form-card grids with channel health and work-queue structures.
-
-### `/runtime`
-
-Preserve runtime evidence and audit behavior. Establish a clear ready/degraded/failed hierarchy and keep technical content progressively disclosed.
-
-### `/control-tower`
-
-Preserve management evidence and canonical drill-down. Replace generic KPI cards with actionable risk and workload lists.
-
-## External framework boundary
-
-No external visual framework is selected by this inventory.
-
-The decision comes after the current visual surface is accepted because the replacement requirement must be known first.
-
-An external project may be used in one of two ways:
-
-1. **donor** — absorb specific interaction or visual patterns into the existing Nexus component authority;
-2. **full replacement authority** — migrate all consumers and delete the replaced visual system in the same delivery path.
-
-It may not be layered beside the current system indefinitely.
-
-## Implementation order
-
-1. Accept and machine-check this inventory.
-2. Complete shared Empty, Error, Loading, Notice, Status and Count presentation.
-3. Rewrite shared buttons, fields, dialog and header appearance.
-4. Rewrite AppShell and login visuals.
-5. Rewrite Workspace visual structure and delete the refinement patch layer.
-6. Apply the same vocabulary to supporting routes.
-7. Delete old selectors, compatibility classes and unused styles.
-8. Run local architecture, lint, typecheck, tests, build and browser evidence on one unchanged Head.
-
-## Completion condition
-
-The work is complete only when:
-
-- the functional machine still behaves the same;
-- one visual system remains;
-- old visual selectors and patch layers are physically removed;
-- no old/new switch exists;
-- no parallel framework remains;
-- every active page uses the same shared visual language;
-- browser evidence proves the normal and failure states at the required viewports.
+No unexecuted check is represented as passing.
