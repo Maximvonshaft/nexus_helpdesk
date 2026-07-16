@@ -47,8 +47,8 @@ export function AuthenticatedAppPage({
             sx={{ maxWidth: 560, width: '100%' }}
             action={<Button color="inherit" onClick={handleLogout}>返回登录</Button>}
           >
-            <Typography variant="subtitle1">无法读取当前账号</Typography>
-            <Typography variant="body2">登录状态可能已失效，请重新登录。</Typography>
+            <Typography variant="subtitle1">无法读取账号</Typography>
+            <Typography variant="body2">请重新登录。</Typography>
           </Alert>
         </FullPageBoundary>
       )
@@ -57,7 +57,7 @@ export function AuthenticatedAppPage({
       <FullPageBoundary busy>
         <Stack role="status" alignItems="center" spacing={2} aria-live="polite">
           <CircularProgress size={32} />
-          <Typography variant="subtitle1">正在验证账号和权限…</Typography>
+          <Typography variant="subtitle1">正在登录…</Typography>
         </Stack>
       </FullPageBoundary>
     )
@@ -76,10 +76,10 @@ export function AuthenticatedAppPage({
         <Box sx={{ p: { xs: 2, md: 4 } }}>
           <Alert severity="warning" variant="outlined" aria-labelledby={`${activeRoute}-forbidden-title`}>
             <Typography id={`${activeRoute}-forbidden-title`} component="h1" variant="h3">
-              当前账号无权访问此页面
+              无权访问此页面
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              页面权限由账号角色和服务端授权决定。请联系管理员核对访问范围。
+              请联系管理员开通权限。
             </Typography>
           </Alert>
         </Box>
