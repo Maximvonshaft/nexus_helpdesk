@@ -1,0 +1,23 @@
+{
+  "schema": "nexus.governance.current-authority.v1",
+  "status": "BOOTSTRAP_CURRENT",
+  "repository": "Maximvonshaft/nexus_helpdesk",
+  "branch": "governance/audit-control-plane",
+  "exact_commit_source": [
+    "docs/governance/audit-control-plane.ref.json on main",
+    "current authority pointer in Issue 722"
+  ],
+  "protocol_id": "nexus-governance-15-lane-v3.1",
+  "protocol_version": "3.1.0",
+  "protocol_path": "audit-control-plane/protocol/nexus-audit-controller-v3.1.yaml",
+  "protocol_digest_sha256": "4aec539d6b490e2db3b21a068b02514d12706e6c8379e1e1ddc0036678ac9d9a",
+  "orchestration_path": "audit-control-plane/protocol/task-orchestration-v1.yaml",
+  "issue_ledger": 722,
+  "main_pointer_status": "PENDING_INTEGRATION",
+  "validated_state_snapshot_status": "NOT_INITIALIZED_ON_V3_1",
+  "execution_context_index_status": "NOT_INITIALIZED_ON_V3_1",
+  "active_execution_packet_ids": [],
+  "production_release_authorization": "NOT_GRANTED",
+  "destructive_retirement_authorization": "NOT_GRANTED",
+  "note": "The exact governance commit must be supplied externally because a commit cannot safely contain a self-referential immutable commit identity."
+}
