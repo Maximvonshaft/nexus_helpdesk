@@ -5,109 +5,79 @@ import { resolve } from 'node:path'
 
 const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
+const exists = (path) => existsSync(resolve(root, path))
 
 const main = read('src/main.tsx')
-const button = read('src/components/ui/Button.tsx')
-const badge = read('src/components/ui/Badge.tsx')
-const field = read('src/components/ui/Field.tsx')
-const pageHeader = read('src/components/ui/PageHeader.tsx')
-const confirmDialog = read('src/components/ui/ConfirmDialog.tsx')
+const theme = read('src/theme/nexusTheme.ts')
+const provider = read('src/theme/NexusThemeProvider.tsx')
 const login = read('src/routes/login.tsx')
-const tokens = read('src/styles/tokens.css')
-const components = read('src/styles/components.css')
+const shell = read('src/app/AppShell.tsx')
+const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
+const styles = read('src/styles.css')
 const a11y = read('src/a11y.css')
-const authPath = resolve(root, 'src/styles/auth.css')
-const auth = existsSync(authPath) ? read('src/styles/auth.css') : ''
 
-
-test('semantic CSS authorities load after bounded legacy compatibility', () => {
-  const tokenIndex = main.indexOf("@/styles/tokens.css")
-  const legacyIndex = main.indexOf("@/styles.css")
-  const componentIndex = main.indexOf("@/styles/components.css")
-  const authIndex = main.indexOf("@/styles/auth.css")
-
-  assert.ok(tokenIndex >= 0)
-  assert.ok(legacyIndex > tokenIndex)
-  assert.ok(componentIndex > legacyIndex)
-  assert.ok(authIndex > componentIndex)
+test('one MUI theme and provider own the visual foundation', () => {
+  assert.match(main, /NexusThemeProvider/)
+  assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
+  assert.match(provider, /<CssBaseline \/>/)
+  assert.match(theme, /createTheme\(/)
+  assert.match(theme, /cssVariables:\s*true/)
+  assert.match(theme, /MuiButton:/)
+  assert.match(theme, /MuiTextField:/)
+  assert.match(theme, /MuiDialog:/)
+  assert.match(theme, /minimum|44|44,/)
+  assert.match(theme, /prefers-reduced-motion/)
 })
 
-
-test('shared Button and Badge expose semantic authority with bounded compatibility', () => {
-  assert.match(button, /nd-button/)
-  assert.match(button, /loadingLabel/)
-  assert.match(button, /aria-busy/)
-  assert.match(button, /size/)
-  assert.match(button, /loading \? true/)
-  assert.match(badge, /nd-badge/)
-  assert.match(badge, /nd-badge--/)
+test('retired custom visual authorities are physically absent', () => {
+  for (const path of [
+    'src/components/ui',
+    'src/styles/tokens.css',
+    'src/styles/components.css',
+    'src/styles/auth.css',
+    'src/app/app-shell.css',
+    'src/features/operator-workspace/operator-workspace.css',
+    'src/features/operator-workspace/operator-workspace-refinements.css',
+    'src/features/admin-routes/admin-routes.css',
+    'src/features/knowledge/knowledge.css',
+    'src/features/runtime/runtime-evidence-audit.css',
+  ]) {
+    assert.equal(exists(path), false, `retired custom visual path returned: ${path}`)
+  }
+  assert.doesNotMatch(main, /tokens\.css|components\.css|auth\.css/)
 })
 
-
-test('Field uses explicit label association and semantic controls', () => {
-  assert.match(field, /<label[^>]*htmlFor=/)
-  assert.match(field, /nd-field/)
-  assert.match(field, /nd-control/)
-  assert.doesNotMatch(field, /<label className="field">/)
-  assert.match(field, /aria-describedby/)
-  assert.match(field, /role="alert"/)
-})
-
-
-test('PageHeader and ConfirmDialog consume shared semantic primitives', () => {
-  assert.match(pageHeader, /headingLevel/)
-  assert.match(pageHeader, /const Heading/)
-  assert.match(confirmDialog, /@radix-ui\/react-dialog/)
-  assert.match(confirmDialog, /Dialog\.Title/)
-  assert.match(confirmDialog, /Dialog\.Description/)
-  assert.match(confirmDialog, /Dialog\.Close asChild/)
-  assert.match(confirmDialog, /loading=\{busy\}/)
-  assert.doesNotMatch(confirmDialog, /处理中\.\.\./)
-})
-
-
-test('Login is one semantic keyboard-complete authentication flow', () => {
-  assert.match(login, /<main className="auth-shell">/)
-  assert.match(login, /<form[^>]*onSubmit=/)
+test('Login is one MUI keyboard-complete authentication flow', () => {
+  assert.match(login, /from '@mui\/material'/)
+  assert.match(login, /component="form"/)
   assert.match(login, /type="submit"/)
   assert.match(login, /aria-pressed=\{showPassword\}/)
-  assert.match(login, /role="alert"/)
+  assert.match(login, /severity="error"/)
   assert.match(login, /无法登录。请检查账号和密码后重试。/)
   assert.match(login, /useState\(''\)/)
   assert.doesNotMatch(login, /useState\('admin'\)/)
   assert.doesNotMatch(login, /navigate\(\{ to: '\/webchat'/)
-  assert.equal((login.match(/navigate\(\{ to: '\/'/g) ?? []).length, 2)
 })
 
-
-test('semantic tokens and component CSS encode interaction states without raw feature colors', () => {
-  assert.match(tokens, /--nd-control-height-md:\s*44px/)
-  assert.match(tokens, /--nd-focus-ring:/)
-  assert.match(tokens, /--nd-motion-fast:/)
-  assert.match(tokens, /--nd-z-dialog:/)
-  assert.match(components, /min-height:\s*var\(--nd-control-height-md\)/)
-  assert.match(components, /\.nd-button:focus-visible/)
-  assert.match(components, /\.nd-button\[aria-busy="true"\]/)
-  assert.doesNotMatch(components, /#[0-9a-f]{3,8}\b/i)
-  assert.doesNotMatch(components, /rgba?\(/i)
+test('application shell and workspace use direct MUI primitives', () => {
+  assert.match(shell, /AppBar/)
+  assert.match(shell, /Toolbar/)
+  assert.match(shell, /Select/)
+  assert.match(workspace, /ListItemButton/)
+  assert.match(workspace, /<Tabs/)
+  assert.match(workspace, /<Dialog/)
+  assert.match(workspace, /案例处理链路/)
+  assert.doesNotMatch(shell + workspace, /nd-button|nd-field|nd-badge|operator-workspace\.css/)
 })
 
-
-test('Login presentation is semantic, restrained, responsive, and reduced-motion safe', () => {
-  assert.equal(existsSync(authPath), true, 'src/styles/auth.css must exist')
-  assert.match(auth, /var\(--nd-/)
-  assert.match(auth, /@media \(max-width:/)
-  assert.match(auth, /100dvh/)
-  assert.doesNotMatch(auth, /gradient/i)
-  assert.doesNotMatch(auth, /rgba?\(/i)
-  assert.doesNotMatch(auth, /#[0-9a-f]{3,8}\b/i)
-  assert.doesNotMatch(auth, /border-radius:\s*(?:1[3-9]|[2-9]\d)px/)
-  assert.match(a11y, /prefers-reduced-motion/)
-  assert.match(a11y, /\.nd-button/)
-  assert.match(a11y, /\.auth-/)
+test('global CSS is bounded to browser and screen-reader foundations', () => {
+  assert.doesNotMatch(styles, /--nd-/)
+  assert.doesNotMatch(styles, /\.Mui[A-Za-z]/)
+  assert.doesNotMatch(styles, /button\s*\{|input\s*\{|textarea\s*\{|select\s*\{/)
+  assert.match(a11y, /^\.sr-only\s*\{/)
+  assert.doesNotMatch(a11y, /--nd-|\.nd-|\.auth-|\.operator-/)
 })
-
 
 test('dedicated Login browser evidence exists', () => {
-  assert.equal(existsSync(resolve(root, 'e2e/login-semantic.spec.ts')), true)
+  assert.equal(exists('e2e/login-semantic.spec.ts'), true)
 })
