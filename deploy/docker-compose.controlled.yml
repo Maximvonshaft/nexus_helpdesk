@@ -31,7 +31,7 @@ x-worker-healthcheck: &worker_healthcheck
   test:
     - CMD-SHELL
     - >-
-      python -c "from pathlib import Path;
+      PROMETHEUS_MULTIPROC_DIR= python -c "from pathlib import Path;
       cmd=Path('/proc/1/cmdline').read_text(errors='replace');
       assert 'scripts/run_worker.py' in cmd, cmd;
       from sqlalchemy import text;
