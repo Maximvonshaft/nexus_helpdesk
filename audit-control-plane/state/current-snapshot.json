@@ -1,0 +1,13 @@
+{
+  "schema": "nexus.governance.state-pointer.v1",
+  "state_product": "VALIDATED_STATE_SNAPSHOT",
+  "status": "NOT_INITIALIZED_ON_V3_1",
+  "snapshot_id": null,
+  "main_sha": null,
+  "governance_commit": null,
+  "protocol_digest_sha256": "4aec539d6b490e2db3b21a068b02514d12706e6c8379e1e1ddc0036678ac9d9a",
+  "previous_historical_snapshot": "vss-20260716T085748+0200-1fd011e8",
+  "previous_historical_disposition": "HISTORICAL_PARTIAL_NOT_EXECUTION_AUTHORITY",
+  "required_next_action": "ledger_truth must publish a new common-baseline v3.1 snapshot after the main pointer is integrated and all required terminal lane results are addressable",
+  "execution_authority": false
+}
