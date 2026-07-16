@@ -1,0 +1,314 @@
+{
+  "schema": "nexus.ui-visual-inventory.v1",
+  "version": "ui_visual_inventory.v1",
+  "work_item": 753,
+  "baseline": {
+    "branch": "main",
+    "commit": "1fd011e8153833f77ca6d1d469071af5db4afb0c"
+  },
+  "scope": {
+    "allowed": [
+      "visual hierarchy",
+      "layout",
+      "typography",
+      "color usage",
+      "spacing",
+      "shape",
+      "elevation",
+      "component appearance",
+      "operator-visible naming",
+      "interaction feedback",
+      "responsive presentation",
+      "accessibility presentation"
+    ],
+    "preserve": [
+      "backend APIs",
+      "authorization",
+      "server-owned scope",
+      "queue truth",
+      "business state contracts",
+      "mutation safety",
+      "draft protection",
+      "confirmation requirements",
+      "deep links",
+      "error and degraded behavior"
+    ]
+  },
+  "dispositions": [
+    "KEEP_AUTHORITY",
+    "REWRITE_IN_PLACE",
+    "FOLD_AND_DELETE",
+    "MIGRATE_AND_DELETE",
+    "DELETE_UNUSED"
+  ],
+  "style_files": [
+    {
+      "path": "webapp/src/styles/tokens.css",
+      "disposition": "KEEP_AUTHORITY",
+      "reason": "Only semantic token authority. Values may be professionally retuned, but the namespace and ownership remain unique.",
+      "target": "One restrained semantic palette, spacing, radius, motion, focus and elevation system."
+    },
+    {
+      "path": "webapp/src/styles.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Canonical global reset and document layer; current content is minimal and not the main visual problem.",
+      "target": "Global reset, document defaults, text rendering, safe overflow and no component styling."
+    },
+    {
+      "path": "webapp/src/a11y.css",
+      "disposition": "KEEP_AUTHORITY",
+      "reason": "Owns cross-route focus and reduced-motion behavior. Preserve semantics and remove only obsolete selectors.",
+      "target": "Visible focus, reduced motion, screen-reader utilities and no route-private visual decoration."
+    },
+    {
+      "path": "webapp/src/styles/components.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Only shared component visual layer, but it is incomplete and contains unused Card styling.",
+      "target": "Complete shared Button, Field, Status, Badge, Count, Notice, Empty, Error, Loading, Disclosure, Header and Dialog vocabulary."
+    },
+    {
+      "path": "webapp/src/styles/auth.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Login uses the correct functional flow but the current framed two-panel card presentation is visually generic.",
+      "target": "Direct, calm login surface using shared primitives and minimal explanatory chrome."
+    },
+    {
+      "path": "webapp/src/app/app-shell.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Canonical AppShell must remain, but current navigation and session presentation are visually flat and still contain compatibility hiding for deleted Workspace header/scope expressions.",
+      "target": "One compact application frame, clear active navigation, restrained account/scope area and no compatibility selector residue."
+    },
+    {
+      "path": "webapp/src/features/operator-workspace/operator-workspace.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Primary visual debt concentration: card-heavy layout, pill-heavy status, dead selectors, selector-to-JSX mismatches and missing styles for active Evidence/Conversation class names.",
+      "target": "Continuous dominant case surface, compact queue, contextual action rail, truthful Case Spine, reduced borders and clear blocker/next-action hierarchy."
+    },
+    {
+      "path": "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
+      "disposition": "FOLD_AND_DELETE",
+      "reason": "Patch layer exists only to override the main Workspace stylesheet and would preserve a second visual correction authority.",
+      "target": "Move every still-valid rule into operator-workspace.css or shared primitives, then delete this file and import."
+    },
+    {
+      "path": "webapp/src/features/admin-routes/admin-routes.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Channels, Runtime and Control Tower share it, but the current grammar is repeated bordered panels, fact cards and KPI cards.",
+      "target": "Shared administration layout primitives based on task lists, tables, sections and progressive disclosure rather than generic card grids."
+    },
+    {
+      "path": "webapp/src/features/knowledge/knowledge.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "The three-column information architecture is useful, but every region is presented as another bordered rounded panel.",
+      "target": "Library/editor/verification workspace with continuous surfaces, stronger selection, quieter metadata and a collapsible verification rail."
+    },
+    {
+      "path": "webapp/src/features/runtime/runtime-evidence-audit.css",
+      "disposition": "REWRITE_IN_PLACE",
+      "reason": "Minified feature CSS with another filter card, run-card list, fact-card grid and JSON block vocabulary.",
+      "target": "Readable source CSS using shared controls, continuous audit list/detail structure and bounded technical data presentation."
+    }
+  ],
+  "shared_components": [
+    {
+      "path": "webapp/src/components/ui/Button.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["loading protection", "button semantics", "variant API", "icon slots"],
+      "replace": ["generic raised hover motion", "current visual hierarchy"],
+      "target": "Precise action hierarchy with calm hover/pressed feedback and consistent loading treatment."
+    },
+    {
+      "path": "webapp/src/components/ui/ButtonLink.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["shared Button appearance"],
+      "replace": ["raw anchor navigation where router-aware navigation is required"],
+      "target": "Same visual vocabulary as Button with correct link behavior."
+    },
+    {
+      "path": "webapp/src/components/ui/Badge.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["compact metadata role"],
+      "replace": ["using one pill for status, source, priority, owner, count and refresh"],
+      "target": "Badge is metadata only; operational state and counts receive separate shared expressions."
+    },
+    {
+      "path": "webapp/src/components/ui/Field.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["label wiring", "descriptions", "errors", "required state", "disabled reason"],
+      "replace": ["current generic control appearance"],
+      "target": "Consistent field density, focus, validation and help hierarchy."
+    },
+    {
+      "path": "webapp/src/components/ui/EmptyState.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["title", "description", "reason", "action semantics"],
+      "replace": ["unstyled output"],
+      "target": "Shared directional empty state that explains the next valid action."
+    },
+    {
+      "path": "webapp/src/components/ui/ErrorSummary.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["alert semantics", "error list", "action slot"],
+      "replace": ["unstyled output", "assertive live region for every error regardless of context"],
+      "target": "Shared bounded error notice with clear recovery action."
+    },
+    {
+      "path": "webapp/src/components/ui/TechnicalDetails.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["native details semantics", "progressive disclosure"],
+      "replace": ["route-private styling dependency"],
+      "target": "One shared technical disclosure presentation across Workspace, Channels and Runtime."
+    },
+    {
+      "path": "webapp/src/components/ui/ConfirmDialog.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["Radix focus behavior", "busy protection", "destructive variant", "single confirmation authority"],
+      "replace": ["visual styling only"],
+      "target": "Compact, high-confidence confirmation surface using the same action hierarchy."
+    },
+    {
+      "path": "webapp/src/components/ui/PageHeader.tsx",
+      "disposition": "REWRITE_IN_PLACE",
+      "keep": ["heading semantics", "description", "action slot"],
+      "replace": ["legacy page-* compatibility classes", "eyebrow as a default page pattern"],
+      "target": "One consistent task header with optional context, not marketing-page decoration."
+    }
+  ],
+  "missing_shared_responsibilities": [
+    {
+      "name": "StatusIndicator",
+      "reason": "Operational state is currently forced through Badge pills.",
+      "rule": "Must become the only shared operational-state visual expression and migrate relevant Badge consumers."
+    },
+    {
+      "name": "Count",
+      "reason": "Counts and totals are currently rendered as status pills.",
+      "rule": "Pure numeric presentation using tabular figures; no semantic color unless the count itself represents risk."
+    },
+    {
+      "name": "Notice",
+      "reason": "Warning, information, degraded and success receipts are implemented through unrelated feature classes.",
+      "rule": "One shared semantic notice component; feature-private alert boxes migrate and are deleted."
+    },
+    {
+      "name": "LoadingState",
+      "reason": "Loading currently reuses EmptyState or plain text and does not consistently preserve page structure.",
+      "rule": "Use structural skeletons where shape is known and bounded status text where it is not."
+    }
+  ],
+  "systemic_findings": [
+    {
+      "id": "VIS-001",
+      "severity": "P1",
+      "finding": "Badge pill overload",
+      "evidence": "Badge is used for priority, source, owner, SLA, refresh, account counts, task totals, runtime state and action outcomes.",
+      "root_fix": "Separate metadata Badge, StatusIndicator and Count responsibilities."
+    },
+    {
+      "id": "VIS-002",
+      "severity": "P1",
+      "finding": "Card and border grammar is the default structure",
+      "evidence": "Workspace, Knowledge, Control Tower, Channels, Runtime and Runtime Audit repeatedly use surface + border + radius containers and nested fact/KPI cards.",
+      "root_fix": "Replace nested cards with continuous surfaces, sections, rows, dividers and task-based grouping."
+    },
+    {
+      "id": "VIS-003",
+      "severity": "P1",
+      "finding": "Active shared states lack a complete visual implementation",
+      "evidence": "EmptyState and ErrorSummary output shared classes without corresponding shared CSS definitions; TechnicalDetails has only partial route-specific styling.",
+      "root_fix": "Complete shared state and disclosure styling before route redesign."
+    },
+    {
+      "id": "VIS-004",
+      "severity": "P1",
+      "finding": "Workspace selector contract drift",
+      "evidence": "JSX renders operator-evidence-panel, operator-evidence-list and operator-conversation-panel while the main stylesheet styles older operator-evidence and operator-conversation selectors. CSS also retains operator-app-header and operator-scope although the canonical AppShell owns them.",
+      "root_fix": "Rebuild the Workspace stylesheet against current JSX, then delete dead selectors and the refinement patch layer."
+    },
+    {
+      "id": "VIS-005",
+      "severity": "P1",
+      "finding": "Case journey lacks a dominant visual structure",
+      "evidence": "The approved Case Spine is not visibly implemented; hierarchy is carried by headings, explanatory copy, panels and pills instead.",
+      "root_fix": "Introduce a truthful Case Spine only from durable/server-provided facts and make blocker plus next action dominant."
+    },
+    {
+      "id": "VIS-006",
+      "severity": "P2",
+      "finding": "Presentation vocabulary is distributed",
+      "evidence": "operationalPresentation.ts, supportStatus.ts and operatorWorkspacePresentation.ts all project labels and tones for different routes.",
+      "root_fix": "Preserve domain-specific mapping functions but standardize their visual output contract through shared StatusIndicator/Badge/Notice primitives."
+    },
+    {
+      "id": "VIS-007",
+      "severity": "P2",
+      "finding": "Operator-visible names are inconsistent in specificity",
+      "evidence": "Labels range from generic Workbench/Knowledge/Overview wording to internal Tenant, Ticket, Job and server-authority explanations.",
+      "root_fix": "Create one visible terminology map and move implementation identifiers behind technical disclosure."
+    },
+    {
+      "id": "VIS-008",
+      "severity": "P2",
+      "finding": "Runtime audit CSS is minified and visually independent",
+      "evidence": "runtime-evidence-audit.css is a single minified line and recreates filters, cards, facts and list-selection styling.",
+      "root_fix": "Rewrite as readable CSS consuming shared layout and component vocabulary."
+    }
+  ],
+  "route_dispositions": [
+    {
+      "route": "/login",
+      "disposition": "REWRITE_IN_PLACE",
+      "preserve": "Authentication behavior and error focus",
+      "visual_target": "Direct operator login without generic marketing/card storytelling."
+    },
+    {
+      "route": "/workspace",
+      "disposition": "REWRITE_IN_PLACE",
+      "preserve": "Queue, selection, deep links, drafts, actions, authorization, confirmations and refresh behavior",
+      "visual_target": "Dense calm logistics cockpit with dominant case surface, compact queue, Case Spine, blocker and one next action."
+    },
+    {
+      "route": "/knowledge",
+      "disposition": "REWRITE_IN_PLACE",
+      "preserve": "Search, selection, draft guard, edit, publish and retrieval test",
+      "visual_target": "Knowledge library/editor with a quieter verification rail and less panel chrome."
+    },
+    {
+      "route": "/channels",
+      "disposition": "REWRITE_IN_PLACE",
+      "preserve": "Account health, onboarding task lifecycle and confirmation behavior",
+      "visual_target": "Channel operations surface with health and work queues, not form-card grids."
+    },
+    {
+      "route": "/runtime",
+      "disposition": "REWRITE_IN_PLACE",
+      "preserve": "Runtime reads and evidence audit behavior",
+      "visual_target": "Technical operations surface with clear ready/degraded/failed hierarchy and progressive detail."
+    },
+    {
+      "route": "/control-tower",
+      "disposition": "REWRITE_IN_PLACE",
+      "preserve": "Management evidence and canonical drill-down",
+      "visual_target": "Actionable risk and workload list; remove generic KPI-card dashboard grammar."
+    },
+    {
+      "route": "/webchat",
+      "disposition": "KEEP_AUTHORITY",
+      "preserve": "Compatibility redirect only",
+      "visual_target": "No independent operator UI."
+    }
+  ],
+  "external_framework_decision": {
+    "status": "DEFERRED_UNTIL_INVENTORY_ACCEPTED",
+    "principle": "An external framework may be selected only as a full replacement authority with same-path migration and deletion, or used as a design/code donor. It may not coexist as a second visual system.",
+    "current_preference": "Keep React and Radix behavior; evaluate external visual recipes after the inventory, before implementation."
+  },
+  "acceptance": [
+    "Every active source CSS file is listed in this inventory.",
+    "Every style file has exactly one disposition.",
+    "Every new shared primitive replaces an identified missing responsibility.",
+    "FOLD_AND_DELETE and MIGRATE_AND_DELETE items are physically removed before acceptance.",
+    "No visual rewrite changes backend, authorization or business truth.",
+    "No old/new UI switch or parallel framework remains."
+  ]
+}
