@@ -47,13 +47,15 @@ test('retired custom visual authorities are physically absent', () => {
   assert.doesNotMatch(main, /tokens\.css|components\.css|auth\.css/)
 })
 
-test('Login is one MUI keyboard-complete authentication flow', () => {
+test('Login is one concise MUI keyboard-complete authentication flow', () => {
   assert.match(login, /from '@mui\/material'/)
   assert.match(login, /component="form"/)
   assert.match(login, /type="submit"/)
   assert.match(login, /aria-pressed=\{showPassword\}/)
   assert.match(login, /severity="error"/)
-  assert.match(login, /无法登录。请检查账号和密码后重试。/)
+  assert.match(login, /账号或密码错误。/)
+  assert.match(login, /请勿在共享设备保存密码。/)
+  assert.doesNotMatch(login, /客服与运营工作台|系统会根据账号权限|无法登录。请检查账号和密码后重试。/)
   assert.match(login, /useState\(''\)/)
   assert.doesNotMatch(login, /useState\('admin'\)/)
   assert.doesNotMatch(login, /navigate\(\{ to: '\/webchat'/)
