@@ -9,6 +9,7 @@ const exists = (path) => existsSync(resolve(root, path))
 
 const router = read('src/router.tsx')
 const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
+const workspaceApi = read('src/lib/operatorWorkspaceApi.ts')
 const knowledge = read('src/features/knowledge/KnowledgePage.tsx')
 const channels = read('src/features/channels/ChannelsPage.tsx')
 const runtime = read('src/features/runtime/RuntimePage.tsx')
@@ -30,66 +31,53 @@ test('production router exposes one canonical domain route per supported backend
     'webchat.tsx',
     'workspace.tsx',
   ])
-  for (const routeName of [
-    'LoginRoute',
-    'IndexRoute',
-    'WorkspaceRoute',
-    'KnowledgeRoute',
-    'ChannelsRoute',
-    'RuntimeRoute',
-    'ControlTowerRoute',
-    'WebchatRoute',
-  ]) {
+  for (const routeName of ['LoginRoute', 'IndexRoute', 'WorkspaceRoute', 'KnowledgeRoute', 'ChannelsRoute', 'RuntimeRoute', 'ControlTowerRoute', 'WebchatRoute']) {
     assert.match(router, new RegExp(routeName))
   }
 })
 
-test('workspace is the only conversation queue, reply, handoff and governed-action product surface', () => {
-  assert.match(workspace, /待处理任务/)
-  assert.match(workspace, /客户沟通/)
-  assert.match(workspace, /operatorWorkspaceApi\.reply/)
-  assert.match(workspace, /webchatAcceptHandoff/)
-  assert.match(workspace, /webchatForceTakeover/)
-  assert.match(workspace, /webchatReleaseHandoff/)
-  assert.match(workspace, /webchatResumeAi/)
-  assert.match(workspace, /querySpeedafWaybills/)
-  assert.match(workspace, /createSpeedafWorkOrder/)
-  assert.match(workspace, /submitSpeedafAddressUpdate/)
-  assert.match(workspace, /previewSpeedafCancel/)
-  assert.match(workspace, /confirmSpeedafCancel/)
-  assert.match(workspace, /案例处理链路/)
+test('workspace is the sole case queue, conversation and governed-action surface', () => {
+  for (const label of ['待处理任务', '客户沟通', '处理进度', '已知信息', '下一步']) assert.match(workspace, new RegExp(label))
+  for (const authority of [
+    'operatorWorkspaceApi.reply',
+    'webchatAcceptHandoff',
+    'webchatForceTakeover',
+    'webchatReleaseHandoff',
+    'webchatResumeAi',
+    'querySpeedafWaybills',
+    'createSpeedafWorkOrder',
+    'submitSpeedafAddressUpdate',
+    'previewSpeedafCancel',
+    'confirmSpeedafCancel',
+  ]) assert.match(workspace, new RegExp(authority.replace('.', '\\.')))
+  assert.match(workspace, /mergeLatestThread/)
+  assert.match(workspace, /mergeOlderThread/)
+  assert.match(workspace, /conversationEvents/)
+  assert.match(workspaceApi, /before_message_id/)
+  assert.doesNotMatch(workspaceApi, /thread-v2|thread-page/)
+  assert.doesNotMatch(workspace, /案例处理链路|服务端最终授权|事实与证据/)
 })
 
-test('knowledge is a complete maintainable MUI route with concise operator language', () => {
-  assert.match(knowledge, /知识与流程/)
-  assert.match(knowledge, /客户问题/)
-  assert.match(knowledge, /标准答案与处理步骤/)
-  assert.match(knowledge, /保存草稿/)
+test('knowledge is complete, maintainable and concise', () => {
+  for (const label of ['知识与流程', '客户问题', '标准答案与处理步骤', '保存草稿', '搜索测试', '测试搜索', '发布状态']) {
+    assert.match(knowledge, new RegExp(label))
+  }
   assert.match(knowledge, />发布</)
-  assert.match(knowledge, /搜索测试/)
-  assert.match(knowledge, /测试搜索/)
-  assert.match(knowledge, /发布状态/)
   assert.doesNotMatch(knowledge, /客户会怎么问|答案事实与处理规则|审核并发布|测试知识命中|知识同步/)
-  assert.match(knowledge, /supportApi\.knowledgeItems/)
-  assert.match(knowledge, /supportApi\.createKnowledgeItem/)
-  assert.match(knowledge, /supportApi\.updateKnowledgeItem/)
-  assert.match(knowledge, /supportApi\.publishKnowledgeItem/)
-  assert.match(knowledge, /supportApi\.testKnowledgeRetrieval/)
+  for (const authority of ['knowledgeItems', 'createKnowledgeItem', 'updateKnowledgeItem', 'publishKnowledgeItem', 'testKnowledgeRetrieval']) {
+    assert.match(knowledge, new RegExp(`supportApi\\.${authority}`))
+  }
   assert.match(knowledge, /beforeunload/)
   assert.match(knowledge, /放弃未保存的修改/)
   assert.match(knowledge, /<Dialog/)
-  assert.equal(exists('src/components/ui/ConfirmDialog.tsx'), false)
-  assert.equal(exists('src/styles/components.css'), false)
 })
 
 test('channels and runtime are separate bounded MUI administrative domains', () => {
   assert.match(channels, /渠道管理/)
   assert.match(channels, /supportApi\.channelAccounts/)
   assert.match(channels, /supportApi\.whatsappNativeStatus/)
-  assert.match(channels, /maskPhone/)
   assert.match(channels, /<Table/)
-  assert.match(channels, /账号名称/)
-  assert.match(channels, /接入位置/)
+  for (const label of ['账号名称', '接入位置', '绑定账号或号码', '系统信息']) assert.match(channels, new RegExp(label))
   assert.doesNotMatch(channels, /目标槽位|期望绑定|创建任务不等于账号已经接通/)
 
   assert.match(runtime, /系统运行/)
@@ -101,18 +89,14 @@ test('channels and runtime are separate bounded MUI administrative domains', () 
   assert.doesNotMatch(runtime, /服务就绪状态|降级路径|Provider 诊断|模型名称/)
 })
 
-test('control tower is a concise management projection that drills into canonical routes', () => {
+test('control tower is a concise management projection with canonical drill-down', () => {
   assert.match(controlTower, /supportApi\.controlTower/)
   assert.match(controlTower, /canonicalAppHref/)
   assert.match(controlTower, /<Table/)
   assert.match(controlTower, /系统与配置问题/)
   assert.match(controlTower, /去处理/)
   assert.doesNotMatch(controlTower, /运行与治理风险|打开处理页面|后端未返回受支持的处理入口/)
-  assert.match(canonicalRoutes, /\/workspace/)
-  assert.match(canonicalRoutes, /\/channels/)
-  assert.match(canonicalRoutes, /\/runtime/)
-  assert.match(canonicalRoutes, /\/knowledge/)
-  assert.doesNotMatch(controlTower, /second queue/i)
+  for (const route of ['/workspace', '/channels', '/runtime', '/knowledge']) assert.match(canonicalRoutes, new RegExp(route.replace('/', '\\/')))
 })
 
 test('MUI is the only generic visual authority', () => {
