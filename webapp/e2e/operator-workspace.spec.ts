@@ -171,7 +171,7 @@ function emptyEventPage(afterId = 0): EventPage {
 
 async function mockWorkspace(page: Page, scenario: Scenario, overrides?: {
   queue?: () => ReturnType<typeof queueResponse>
-  thread?: (url: URL) => ReturnType<typeof threadResponse>
+  thread?: (url: URL) => Record<string, any>
   events?: (afterId: number) => EventPage
 }) {
   const channelKey = scenario === 'dispatch' ? 'whatsapp' : 'webchat'
