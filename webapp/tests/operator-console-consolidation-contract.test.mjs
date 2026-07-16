@@ -20,25 +20,24 @@ function contract() {
   return JSON.parse(read(CONTRACT_PATH))
 }
 
-function byId(items) {
-  return new Map(items.map((item) => [item.id, item]))
-}
-
 function byRoute(items) {
   return new Map(items.map((item) => [item.route, item]))
 }
 
-test('consolidation authority is owned, versioned, and tied to the integration branch', () => {
+test('consolidation authority is owned, versioned, and extended by the sole MUI replacement path', () => {
   const value = contract()
   assert.equal(value.schema, 'nexus.operator-console-consolidation.v1')
   assert.equal(value.owner_issue, 747)
   assert.equal(value.parent_issue, 744)
   assert.equal(value.baseline_main_sha, '7ffdbf5941853b4c70d0ec0c2ef0a02cfaa60498')
   assert.equal(value.integration_branch, 'work/744-canonical-operator-console-consolidation')
-  assert.equal(value.status, 'code_converged_local_verification_required')
+  assert.equal(value.status, 'code_converged_mui_migration_verification_required')
   assert.equal(existsSync(PLAN_PATH), true, 'the executable consolidation plan must exist')
-  assert.equal(value.delivery_authority.forbidden.includes('second_github_actions_workflow'), true)
-  assert.equal(value.verification.github_actions, 'one_canonical_verification_workflow')
+  assert.equal(value.delivery_authority.visual_replacement_issue, 753)
+  assert.equal(value.delivery_authority.visual_replacement_pr, 754)
+  assert.equal(value.delivery_authority.actions_state, 'retired')
+  assert.ok(value.delivery_authority.forbidden.includes('github_actions_restoration'))
+  assert.equal(value.verification.github_actions, 'retired_and_absent')
 })
 
 test('there is exactly one canonical operator product spine and route', () => {
@@ -78,6 +77,8 @@ test('all current and retired operator surfaces have explicit tracked-tree dispo
   }
   assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'features', 'support-console')), false)
   assert.equal(existsSync(join(REPO_ROOT, 'frontend')), false)
+  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'components', 'ui')), false)
+  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'styles', 'tokens.css')), false)
 })
 
 test('one canonical transport owns fetch and domain adapters only delegate', () => {
@@ -105,23 +106,39 @@ test('one canonical transport owns fetch and domain adapters only delegate', () 
   assert.ok(transport.required_shared_behavior.includes('external_abort_propagation'))
 })
 
-test('login presentation is operational rather than promotional or AI-styled', () => {
+test('login presentation is operational, MUI-based and not promotional', () => {
   const login = read(join(WEBAPP_ROOT, 'src', 'routes', 'login.tsx'))
-  const authCss = read(join(WEBAPP_ROOT, 'src', 'styles', 'auth.css'))
   assert.match(login, /客服与运营工作台/)
-  assert.match(login, /可见国家、渠道和操作权限由当前账号决定/)
+  assert.match(login, /系统会根据账号权限加载可访问的国家、渠道和工作内容/)
+  assert.match(login, /from '@mui\/material'/)
+  assert.match(login, /<Paper component="form"/)
   assert.doesNotMatch(login, /从可信事实到可验证结案/)
-  assert.doesNotMatch(login, /auth-sequence/)
-  assert.doesNotMatch(authCss, /auth-sequence/)
+  assert.doesNotMatch(login, /auth-sequence|auth\.css/)
 })
 
-test('destructive retirement remains fail closed until parity and verification exist', () => {
+test('MUI is the single visual implementation authority', () => {
+  const value = contract()
+  const theme = read(join(REPO_ROOT, value.canonical_authorities.mui_theme))
+  const provider = read(join(REPO_ROOT, value.canonical_authorities.mui_provider))
+  const decision = JSON.parse(read(join(REPO_ROOT, value.canonical_authorities.ui_framework)))
+
+  assert.equal(decision.decision.selected_package, '@mui/material')
+  assert.equal(decision.decision.selected_version, '9.2.0')
+  assert.match(theme, /createTheme\(/)
+  assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
+  assert.match(provider, /<CssBaseline \/>/)
+  assert.ok(value.completed_convergence.includes('single_mui_visual_authority'))
+  assert.ok(value.completed_convergence.includes('custom_generic_ui_retired'))
+  assert.ok(value.completed_convergence.includes('custom_token_and_route_css_retired'))
+})
+
+test('destructive retirement remains fail closed until exact-head verification exists', () => {
   const value = contract()
   const verifier = read(join(REPO_ROOT, value.canonical_authorities.local_verification))
   for (const path of value.retired_surfaces) {
     assert.equal(existsSync(join(REPO_ROOT, path)), false, `retired surface returned: ${path}`)
-    assert.match(verifier, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
+  assert.match(verifier, /webapp/)
   assert.ok(value.forbidden_end_state.includes('second_operator_product_spine'))
   assert.ok(value.forbidden_end_state.includes('second_production_frontend'))
   assert.ok(value.forbidden_end_state.includes('technical_status_as_business_closure'))
