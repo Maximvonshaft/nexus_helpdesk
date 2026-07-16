@@ -16,12 +16,14 @@ x-controlled-app: &controlled_app
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set exact frontend SHA}
     EXPECTED_MIGRATION_HEAD: ${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}
     READINESS_REQUIRE_RELEASE_METADATA: "true"
+    PROMETHEUS_MULTIPROC_DIR: /var/run/nexus-prometheus
   volumes: &controlled_volumes
     - ${NEXUS_RUNTIME_SECRETS_HOST_PATH:?set runtime secrets host path}:/run/secrets:ro
     - ${AI_RUNTIME_TOKEN_HOST_PATH:?set AI runtime token host path}:/run/nexus/ai_runtime_token:ro
     - ${LIVE_VOICE_TOKEN_HOST_PATH:?set live voice token host path}:/run/nexus/live_voice_token:ro
     - ${NEXUS_UPLOADS_HOST_PATH:?set uploads host path}:/app/backend/uploads:rw
     - ${NEXUS_UPLOAD_BACKUP_HOST_PATH:?set upload backup host path}:/var/backups/nexusdesk/uploads:ro
+    - prometheus-multiproc:/var/run/nexus-prometheus
   networks:
     - controlled
 
@@ -29,7 +31,7 @@ x-worker-healthcheck: &worker_healthcheck
   test:
     - CMD-SHELL
     - >-
-      python -c "from pathlib import Path;
+      PROMETHEUS_MULTIPROC_DIR= python -c "from pathlib import Path;
       cmd=Path('/proc/1/cmdline').read_text(errors='replace');
       assert 'scripts/run_worker.py' in cmd, cmd;
       from sqlalchemy import text;
@@ -47,10 +49,16 @@ services:
   migrate-controlled:
     <<: *controlled_app
     restart: "no"
+    environment:
+      <<: *controlled_environment
+      # One-off migrations must not pollute long-running application and worker
+      # counters. They only own release-start registry cleanup.
+      PROMETHEUS_MULTIPROC_DIR: ""
     command:
       - /bin/sh
       - -ec
       - >-
+        find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete &&
         cd /app/backend &&
         alembic upgrade head &&
         alembic current
@@ -65,6 +73,7 @@ services:
       - -ec
       - >-
         exec gunicorn app.main:app
+        --config /app/backend/gunicorn.conf.py
         -k uvicorn.workers.UvicornWorker
         --workers "$${WEB_CONCURRENCY:-2}"
         --timeout "$${WEB_TIMEOUT:-30}"
@@ -125,3 +134,6 @@ services:
 networks:
   controlled:
     driver: bridge
+
+volumes:
+  prometheus-multiproc:
