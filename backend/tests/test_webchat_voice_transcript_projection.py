@@ -18,7 +18,7 @@ from app.db import Base  # noqa: E402
 from app.enums import ConversationState, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
 from app.models import Team, Ticket  # noqa: E402
 from app.services.webchat_performance import list_public_messages_throttled  # noqa: E402
-from app.services.webchat_realtime_event_service import event_envelope  # noqa: E402
+from app.services.webchat_realtime_event_service import event_envelope, list_conversation_event_envelopes  # noqa: E402
 from app.webchat_models import WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
 
 
@@ -129,6 +129,31 @@ def test_realtime_projection_hides_voice_transcripts_from_visitor_but_keeps_admi
     assert admin_projection is not None
     assert admin_projection["message"]["id"] == voice_message.id
     assert admin_projection["message"]["message_type"] == "voice_transcript"
+
+
+def test_realtime_replay_advances_past_hidden_voice_events_without_republishing_them(db_session) -> None:
+    conversation = _conversation(db_session)
+    voice_message = _message(
+        db_session,
+        conversation,
+        direction="visitor",
+        body="spoken customer text",
+        message_type="voice_transcript",
+    )
+    voice_event = _message_event(db_session, conversation, voice_message)
+    text_message = _message(db_session, conversation, direction="agent", body="typed reply", message_type="text")
+    text_event = _message_event(db_session, conversation, text_message)
+
+    replay = list_conversation_event_envelopes(
+        db_session,
+        conversation_id=conversation.id,
+        after_id=0,
+        audience="visitor",
+    )
+
+    assert [item["message"]["id"] for item in replay.events] == [text_message.id]
+    assert replay.scanned_last_event_id == text_event.id
+    assert replay.scanned_last_event_id > voice_event.id
 
 
 def test_realtime_projection_keeps_normal_text_messages_visible_to_visitor(db_session) -> None:
