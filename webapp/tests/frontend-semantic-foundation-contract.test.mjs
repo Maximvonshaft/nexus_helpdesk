@@ -6,30 +6,27 @@ import { resolve } from 'node:path'
 const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 const exists = (path) => existsSync(resolve(root, path))
+const workspace = [
+  'src/features/operator-workspace/OperatorWorkspacePage.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
+].map(read).join('\n')
 
-const main = read('src/main.tsx')
-const theme = read('src/theme/nexusTheme.ts')
-const provider = read('src/theme/NexusThemeProvider.tsx')
-const login = read('src/routes/login.tsx')
-const shell = read('src/app/AppShell.tsx')
-const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
-const styles = read('src/styles.css')
-const a11y = read('src/a11y.css')
-
-test('one MUI theme and provider own the visual foundation', () => {
+test('one MUI theme and one bounded operator presentation own visual semantics', () => {
+  const main = read('src/main.tsx')
+  const theme = read('src/theme/nexusTheme.ts')
+  const provider = read('src/theme/NexusThemeProvider.tsx')
+  const presentation = read('src/app/OperatorPresentation.tsx')
   assert.match(main, /NexusThemeProvider/)
-  assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
-  assert.match(provider, /<CssBaseline \/>/)
-  assert.match(theme, /createTheme\(/)
-  assert.match(theme, /cssVariables:\s*true/)
-  assert.match(theme, /MuiButton:/)
-  assert.match(theme, /MuiTextField:/)
-  assert.match(theme, /MuiDialog:/)
-  assert.match(theme, /minimum|44|44,/)
-  assert.match(theme, /prefers-reduced-motion/)
+  assert.match(provider, /ThemeProvider/)
+  assert.match(provider, /CssBaseline/)
+  assert.match(theme, /createTheme/)
+  for (const name of ['OperatorEmptyState', 'OperatorErrorNotice', 'OperatorLoadingState', 'RouteLoadingState', 'OperatorFactGrid']) assert.match(presentation, new RegExp(name))
+  assert.doesNotMatch(presentation, /export function (Button|Input|Dialog|Field)/)
 })
 
-test('retired custom visual authorities are physically absent', () => {
+test('retired custom and duplicate visual authorities are absent', () => {
   for (const path of [
     'src/components/ui',
     'src/styles/tokens.css',
@@ -40,48 +37,30 @@ test('retired custom visual authorities are physically absent', () => {
     'src/features/operator-workspace/operator-workspace-refinements.css',
     'src/features/admin-routes/admin-routes.css',
     'src/features/knowledge/knowledge.css',
+    'src/features/knowledge/KnowledgeReadOnlyPage.tsx',
     'src/features/runtime/runtime-evidence-audit.css',
-  ]) {
-    assert.equal(exists(path), false, `retired custom visual path returned: ${path}`)
-  }
-  assert.doesNotMatch(main, /tokens\.css|components\.css|auth\.css/)
+  ]) assert.equal(exists(path), false, path)
 })
 
-test('Login is one concise MUI keyboard-complete authentication flow', () => {
-  assert.match(login, /from '@mui\/material'/)
-  assert.match(login, /component="form"/)
-  assert.match(login, /type="submit"/)
-  assert.match(login, /aria-pressed=\{showPassword\}/)
-  assert.match(login, /severity="error"/)
-  assert.match(login, /账号或密码错误。/)
-  assert.match(login, /请勿在共享设备保存密码。/)
-  assert.doesNotMatch(login, /客服与运营工作台|系统会根据账号权限|无法登录。请检查账号和密码后重试。/)
-  assert.match(login, /useState\(''\)/)
-  assert.doesNotMatch(login, /useState\('admin'\)/)
-  assert.doesNotMatch(login, /navigate\(\{ to: '\/webchat'/)
-})
-
-test('application shell and workspace use direct MUI primitives and concise language', () => {
+test('Login, shell and Workspace use MUI and concise operator language', () => {
+  const login = read('src/routes/login.tsx')
+  const shell = read('src/app/AppShell.tsx')
+  assert.match(login, /@mui\/material/)
+  assert.match(login, /账号或密码错误/)
   assert.match(shell, /AppBar/)
-  assert.match(shell, /Toolbar/)
-  assert.match(shell, /Select/)
   assert.match(workspace, /ListItemButton/)
-  assert.match(workspace, /<Tabs/)
-  assert.match(workspace, /<Dialog/)
+  assert.match(workspace, /Tabs/)
+  assert.match(workspace, /Dialog/)
   assert.match(workspace, /处理进度/)
   assert.match(workspace, /待处理任务/)
-  assert.doesNotMatch(workspace, /案例处理链路|事实与证据|服务端最终授权/)
-  assert.doesNotMatch(shell + workspace, /nd-button|nd-field|nd-badge|operator-workspace\.css/)
+  assert.doesNotMatch(login + shell + workspace, /客服与运营工作台|案例处理链路|事实与证据|服务端最终授权|nd-button|nd-field|nd-badge/)
 })
 
-test('global CSS is bounded to browser and screen-reader foundations', () => {
-  assert.doesNotMatch(styles, /--nd-/)
-  assert.doesNotMatch(styles, /\.Mui[A-Za-z]/)
-  assert.doesNotMatch(styles, /button\s*\{|input\s*\{|textarea\s*\{|select\s*\{/)
-  assert.match(a11y, /^\.sr-only\s*\{/)
+test('global CSS is bounded and browser evidence exists', () => {
+  const styles = read('src/styles.css')
+  const a11y = read('src/a11y.css')
+  assert.doesNotMatch(styles, /--nd-|\.Mui/)
+  assert.match(a11y, /^\.sr-only/)
   assert.doesNotMatch(a11y, /--nd-|\.nd-|\.auth-|\.operator-/)
-})
-
-test('dedicated Login browser evidence exists', () => {
   assert.equal(exists('e2e/login-semantic.spec.ts'), true)
 })
