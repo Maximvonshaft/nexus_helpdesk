@@ -61,14 +61,16 @@ test('Login is one concise MUI keyboard-complete authentication flow', () => {
   assert.doesNotMatch(login, /navigate\(\{ to: '\/webchat'/)
 })
 
-test('application shell and workspace use direct MUI primitives', () => {
+test('application shell and workspace use direct MUI primitives and concise language', () => {
   assert.match(shell, /AppBar/)
   assert.match(shell, /Toolbar/)
   assert.match(shell, /Select/)
   assert.match(workspace, /ListItemButton/)
   assert.match(workspace, /<Tabs/)
   assert.match(workspace, /<Dialog/)
-  assert.match(workspace, /案例处理链路/)
+  assert.match(workspace, /处理进度/)
+  assert.match(workspace, /待处理任务/)
+  assert.doesNotMatch(workspace, /案例处理链路|事实与证据|服务端最终授权/)
   assert.doesNotMatch(shell + workspace, /nd-button|nd-field|nd-badge|operator-workspace\.css/)
 })
 
