@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/execution-packet.schema.json",
+  "title": "Nexus Execution Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "packet_id",
+    "status",
+    "issued_at",
+    "expires_at",
+    "subject",
+    "governance_commit",
+    "protocol_digest_sha256",
+    "snapshot_id",
+    "context_index_id",
+    "main_sha",
+    "owner",
+    "target",
+    "write_paths",
+    "dependencies",
+    "acceptance",
+    "verification",
+    "rollback",
+    "prohibited_effects"
+  ],
+  "properties": {
+    "schema": {"const": "nexus.execution-packet.v1"},
+    "packet_id": {"type": "string", "minLength": 8},
+    "status": {"enum": ["ACTIVE", "SUSPENDED", "EXPIRED", "COMPLETED", "REVOKED"]},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "subject": {"type": "string", "minLength": 3},
+    "governance_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "protocol_digest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "snapshot_id": {"type": "string"},
+    "context_index_id": {"type": "string"},
+    "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "owner": {
+      "type": "object",
+      "required": ["work_item", "executor_class"],
+      "properties": {
+        "work_item": {"type": ["integer", "string"]},
+        "executor_class": {"type": "string"},
+        "github_login": {"type": ["string", "null"]}
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["repository", "branch_or_pr"],
+      "properties": {
+        "repository": {"type": "string"},
+        "branch_or_pr": {"type": "string"},
+        "starting_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "write_paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
+    "contracts": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "dependencies": {"type": "array", "items": {"type": "object"}},
+    "acceptance": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "verification": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "rollback": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "prohibited_effects": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "external_effects_authorized": {"const": false},
+    "production_data_mutation_authorized": {"const": false},
+    "destructive_retirement_authorized": {"type": "boolean", "default": false},
+    "evidence_urls": {"type": "array", "items": {"type": "string"}}
+  }
+}
