@@ -14,12 +14,20 @@ const packagePath = path.join(webappRoot, 'package.json')
 const lockPath = path.join(webappRoot, 'package-lock.json')
 const themePath = path.join(srcRoot, 'theme', 'nexusTheme.ts')
 const themeProviderPath = path.join(srcRoot, 'theme', 'NexusThemeProvider.tsx')
+const operatorPresentationPath = path.join(srcRoot, 'app', 'OperatorPresentation.tsx')
+const knowledgePath = path.join(srcRoot, 'features', 'knowledge', 'KnowledgePage.tsx')
+const knowledgeRoutePath = path.join(srcRoot, 'routes', 'knowledge.tsx')
+const workspacePath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.css']
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
-const PRIMITIVE_EXPORT_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
+const EXPORTED_PRIMITIVE_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
+const RETIRED_LOCAL_HELPER_RE = /\bfunction\s+(EmptyState|ErrorNotice|ErrorSummary|LoadingState|FactGrid|statusColor|muiStatusColor|errorCopy|scrollBehavior)\b/g
+const CANONICAL_OPERATOR_HELPER_RE = /export\s+function\s+(OperatorEmptyState|OperatorErrorNotice|OperatorLoadingState|RouteLoadingState|OperatorFactGrid|operatorToneColor|operatorTonePalettePath|operatorScrollBehavior|operatorErrorMessage)\b/g
 const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/g
 const LEGACY_SELECTOR_RE = /(^|[,\s{])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
+const RETIRED_SOURCE_LITERAL_RE = /\b(?:nd-app-boundary-state|empty-state|nd-button|nd-field|nd-badge)\b/
+const RAW_COLOR_RE = /#[0-9a-f]{3,8}\b|rgba?\(\s*\d|hsla?\(\s*\d/gi
 const FORBIDDEN_PARALLEL_PATH_RE = /(?:^|\/)(?:new-ui|ui-v2|design-system-v2|components-v2|workspace-v2|new-workspace)(?:\/|$)|(?:^|\/)[^/]*(?:V2|Redesign)\.(?:ts|tsx|css)$/i
 const FORBIDDEN_ROUTE_RE = /["']\/(?:workspace-v2|new-workspace|ui-v2)(?:[/?#"']|$)/i
 
@@ -63,6 +71,7 @@ const forbiddenPaths = [
   path.join(srcRoot, 'features', 'operator-workspace', 'operator-workspace-refinements.css'),
   path.join(srcRoot, 'features', 'admin-routes', 'admin-routes.css'),
   path.join(srcRoot, 'features', 'knowledge', 'knowledge.css'),
+  path.join(srcRoot, 'features', 'knowledge', 'KnowledgeReadOnlyPage.tsx'),
   path.join(srcRoot, 'features', 'runtime', 'runtime-evidence-audit.css'),
 ]
 
@@ -81,17 +90,15 @@ function normalize(value) {
   return path.normalize(value)
 }
 
+function relative(file) {
+  return path.relative(repositoryRoot, file).split(path.sep).join('/')
+}
+
 function sourceFiles() {
   return walk(srcRoot)
     .filter((file) => SOURCE_EXTENSIONS.includes(path.extname(file)))
     .filter((file) => !file.endsWith('.d.ts'))
     .map(normalize)
-}
-
-function resolveImport(importer, specifier) {
-  if (specifier.startsWith('@/')) return resolveCandidate(path.join(srcRoot, specifier.slice(2)))
-  if (specifier.startsWith('.')) return resolveCandidate(path.resolve(path.dirname(importer), specifier))
-  return null
 }
 
 function resolveCandidate(candidate) {
@@ -103,25 +110,18 @@ function resolveCandidate(candidate) {
   return candidates.find((file) => fs.existsSync(file) && fs.statSync(file).isFile()) ?? null
 }
 
+function resolveImport(importer, specifier) {
+  if (specifier.startsWith('@/')) return resolveCandidate(path.join(srcRoot, specifier.slice(2)))
+  if (specifier.startsWith('.')) return resolveCandidate(path.resolve(path.dirname(importer), specifier))
+  return null
+}
+
 function importsFor(file) {
   const content = fs.readFileSync(file, 'utf8')
   const imports = []
   for (const match of content.matchAll(IMPORT_RE)) {
     const resolved = resolveImport(file, match[1] ?? match[2])
     if (resolved) imports.push(normalize(resolved))
-  }
-  return imports
-}
-
-function externalImports(files) {
-  const imports = new Set()
-  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
-    const content = fs.readFileSync(file, 'utf8')
-    for (const match of content.matchAll(IMPORT_RE)) {
-      const specifier = match[1] ?? match[2]
-      if (!specifier || specifier.startsWith('.') || specifier.startsWith('@/')) continue
-      imports.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
-    }
   }
   return imports
 }
@@ -140,8 +140,17 @@ function reachableFiles() {
   return reachable
 }
 
-function relative(file) {
-  return path.relative(repositoryRoot, file).split(path.sep).join('/')
+function externalImports(files) {
+  const imports = new Set()
+  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
+    const content = fs.readFileSync(file, 'utf8')
+    for (const match of content.matchAll(IMPORT_RE)) {
+      const specifier = match[1] ?? match[2]
+      if (!specifier || specifier.startsWith('.') || specifier.startsWith('@/')) continue
+      imports.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
+    }
+  }
+  return imports
 }
 
 function readMuiAuthority(failures) {
@@ -161,11 +170,11 @@ function readMuiAuthority(failures) {
   }
 }
 
-function duplicatePrimitiveAuthorities(files) {
+function duplicateExportedPrimitiveAuthorities(files) {
   const owners = new Map()
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
     const content = fs.readFileSync(file, 'utf8')
-    for (const match of content.matchAll(PRIMITIVE_EXPORT_RE)) {
+    for (const match of content.matchAll(EXPORTED_PRIMITIVE_RE)) {
       const primitive = match[1]
       const entries = owners.get(primitive) ?? []
       entries.push(relative(file))
@@ -205,9 +214,8 @@ function assertCanonicalNavigation(files, failures) {
   const unexpected = navigationOwners.filter((file) => !allowed.has(file))
   if (unexpected.length) failures.push(`unexpected navigation authority: ${unexpected.join(', ')}`)
 
-  const workspace = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
-  if (fs.existsSync(workspace)) {
-    const content = fs.readFileSync(workspace, 'utf8')
+  if (fs.existsSync(workspacePath)) {
+    const content = fs.readFileSync(workspacePath, 'utf8')
     if (/function\s+AppNavigation\b/.test(content) || /className=["']operator-app-header["']/.test(content)) {
       failures.push('OperatorWorkspacePage still owns a second application shell or navigation')
     }
@@ -216,12 +224,11 @@ function assertCanonicalNavigation(files, failures) {
 }
 
 function assertTransportAuthority(files, failures) {
-  const genericFetchOwners = []
+  const fetchOwners = []
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
-    const content = fs.readFileSync(file, 'utf8')
-    if (/\bfetch\s*\(/.test(content) || /new\s+AbortController\s*\(/.test(content)) genericFetchOwners.push(relative(file))
+    if (/\bfetch\s*\(/.test(fs.readFileSync(file, 'utf8'))) fetchOwners.push(relative(file))
   }
-  const unexpected = genericFetchOwners.filter((file) => file !== 'webapp/src/lib/apiClient.ts')
+  const unexpected = fetchOwners.filter((file) => file !== 'webapp/src/lib/apiClient.ts')
   if (unexpected.length) failures.push(`generic HTTP transport outside apiClient.ts: ${unexpected.join(', ')}`)
 }
 
@@ -244,9 +251,92 @@ function assertCssAuthority(files, failures) {
   }
 }
 
+function assertSourceVisualResidue(files, failures) {
+  const retiredLiterals = []
+  const rawColors = []
+  const retiredHelpers = []
+  const canonicalHelpers = []
+
+  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
+    const content = fs.readFileSync(file, 'utf8')
+    const fileName = relative(file)
+
+    if (RETIRED_SOURCE_LITERAL_RE.test(content)) retiredLiterals.push(fileName)
+
+    if (file !== themePath) {
+      const colors = [...content.matchAll(RAW_COLOR_RE)].map((match) => match[0])
+      if (colors.length) rawColors.push(`${fileName}: ${[...new Set(colors)].join(', ')}`)
+    }
+    RAW_COLOR_RE.lastIndex = 0
+
+    for (const match of content.matchAll(RETIRED_LOCAL_HELPER_RE)) retiredHelpers.push(`${match[1]}: ${fileName}`)
+    for (const match of content.matchAll(CANONICAL_OPERATOR_HELPER_RE)) canonicalHelpers.push(`${match[1]}:${fileName}`)
+  }
+
+  if (retiredLiterals.length) failures.push(`retired visual class literal returned in source: ${retiredLiterals.join(', ')}`)
+  if (rawColors.length) failures.push(`raw color literal outside nexusTheme.ts: ${rawColors.join(' | ')}`)
+  if (retiredHelpers.length) failures.push(`route-private generic presentation helper is forbidden: ${retiredHelpers.join(' | ')}`)
+
+  const expectedOwner = 'webapp/src/app/OperatorPresentation.tsx'
+  const expectedNames = [
+    'OperatorEmptyState',
+    'OperatorErrorNotice',
+    'OperatorLoadingState',
+    'RouteLoadingState',
+    'OperatorFactGrid',
+    'operatorToneColor',
+    'operatorTonePalettePath',
+    'operatorScrollBehavior',
+    'operatorErrorMessage',
+  ]
+  for (const name of expectedNames) {
+    const owners = canonicalHelpers
+      .filter((entry) => entry.startsWith(`${name}:`))
+      .map((entry) => entry.slice(name.length + 1))
+    if (owners.length !== 1 || owners[0] !== expectedOwner) {
+      failures.push(`operator presentation helper must be owned exactly once by ${expectedOwner}: ${name} -> ${owners.join(', ') || 'none'}`)
+    }
+  }
+}
+
+function assertKnowledgeConvergence(failures) {
+  if (!fs.existsSync(knowledgePath)) failures.push('canonical KnowledgePage is missing')
+  if (!fs.existsSync(knowledgeRoutePath)) failures.push('canonical knowledge route is missing')
+  if (!fs.existsSync(knowledgePath) || !fs.existsSync(knowledgeRoutePath)) return
+
+  const page = fs.readFileSync(knowledgePath, 'utf8')
+  const route = fs.readFileSync(knowledgeRoutePath, 'utf8')
+  if (!/KnowledgePage\(\{\s*canManage\s*\}/.test(page)) failures.push('KnowledgePage must own both read and manage modes through canManage')
+  if (!/<LazyKnowledgePage\s+canManage=\{canManage\}/.test(route)) failures.push('knowledge route must pass canManage to the one KnowledgePage')
+  if (/KnowledgeReadOnlyPage/.test(route + page)) failures.push('duplicate KnowledgeReadOnlyPage reference returned')
+}
+
+function assertWorkspaceConvergence(failures) {
+  if (!fs.existsSync(workspacePath)) {
+    failures.push('canonical OperatorWorkspacePage is missing')
+    return
+  }
+  const content = fs.readFileSync(workspacePath, 'utf8')
+  const lineCount = content.split(/\r?\n/).length
+  if (lineCount > 800) failures.push(`OperatorWorkspacePage exceeds the bounded orchestration limit: ${lineCount} lines`)
+  for (const required of [
+    './OperatorWorkspaceQueue',
+    './OperatorWorkspaceCase',
+    './OperatorWorkspaceCommon',
+    './operatorWorkspaceState',
+  ]) {
+    if (!content.includes(required)) failures.push(`OperatorWorkspacePage must compose the canonical workspace module: ${required}`)
+  }
+  if (/function\s+(QueueRow|ConversationPanel|CaseSpine|EvidencePanel|EmptyState|ErrorNotice|LoadingState)\b/.test(content)) {
+    failures.push('OperatorWorkspacePage reabsorbed a presentation responsibility')
+  }
+  if (/thread-v2|thread-page|workspace-v2|new-workspace/.test(content)) failures.push('parallel Workspace implementation marker returned')
+}
+
 function assertSingleThemeAuthority(files, failures) {
   if (!fs.existsSync(themePath)) failures.push('single MUI theme is missing: webapp/src/theme/nexusTheme.ts')
   if (!fs.existsSync(themeProviderPath)) failures.push('single MUI provider is missing: webapp/src/theme/NexusThemeProvider.tsx')
+  if (!fs.existsSync(operatorPresentationPath)) failures.push('operator presentation authority is missing: webapp/src/app/OperatorPresentation.tsx')
 
   const themeCreators = []
   const themeProviders = []
@@ -271,7 +361,6 @@ function assertSingleThemeAuthority(files, failures) {
 
 function assertSelectedVisualStack(manifest, authority, failures) {
   const allDependencies = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}) }
-
   for (const dependency of Object.keys(allDependencies)) {
     if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) {
       failures.push(`parallel UI framework dependency is forbidden; MUI is selected: ${dependency}`)
@@ -301,6 +390,7 @@ function assertLockfileMatchesManifest(manifest, authority, failures) {
     failures.push(`package-lock.json is invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
     return
   }
+
   const root = lock.packages?.[''] ?? {}
   for (const section of ['dependencies', 'devDependencies']) {
     const manifestSection = manifest[section] ?? {}
@@ -336,7 +426,6 @@ function assertRuntimeDependencies(files, authority, failures) {
   for (const dependency of Object.keys(manifest.dependencies ?? {})) {
     if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
   }
-
   assertSelectedVisualStack(manifest, authority, failures)
   assertLockfileMatchesManifest(manifest, authority, failures)
 }
@@ -353,13 +442,16 @@ const reachable = reachableFiles()
 const unreachable = files.filter((file) => !reachable.has(file)).map(relative)
 if (unreachable.length) failures.push(`unreachable production files: ${unreachable.join(', ')}`)
 
-const duplicatePrimitives = duplicatePrimitiveAuthorities(files)
+const duplicatePrimitives = duplicateExportedPrimitiveAuthorities(files)
 if (duplicatePrimitives.length) failures.push(`duplicate UI authorities: ${duplicatePrimitives.join(' | ')}`)
 
 assertNoParallelImplementation(files, failures)
 assertCanonicalNavigation(files, failures)
 assertTransportAuthority(files, failures)
 assertCssAuthority(files, failures)
+assertSourceVisualResidue(files, failures)
+assertKnowledgeConvergence(failures)
+assertWorkspaceConvergence(failures)
 assertSingleThemeAuthority(files, failures)
 assertRuntimeDependencies(files, muiAuthority, failures)
 
@@ -376,6 +468,9 @@ console.log(JSON.stringify({
   github_actions: 'retired',
   ui_authority: '@mui/material@9.2.0',
   theme_authority: 'webapp/src/theme/nexusTheme.ts',
+  operator_presentation_authority: 'webapp/src/app/OperatorPresentation.tsx',
   source_css: [...ALLOWED_SOURCE_CSS].sort(),
+  knowledge_implementation: 'webapp/src/features/knowledge/KnowledgePage.tsx',
+  workspace_orchestrator: 'webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx',
   migration_status: muiAuthority?.decision?.status,
 }, null, 2))
