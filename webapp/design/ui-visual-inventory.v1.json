@@ -1,36 +1,26 @@
 {
   "schema": "nexus.ui-visual-inventory.v1",
-  "version": "ui_visual_inventory.v2",
+  "version": "ui_visual_inventory.v3",
   "work_item": 753,
   "baseline": {
     "branch": "main",
     "commit": "1fd011e8153833f77ca6d1d469071af5db4afb0c",
     "active_source_stylesheets": 11,
-    "custom_generic_components": 9
+    "custom_generic_components": 9,
+    "duplicate_knowledge_pages": 2
   },
   "decision": {
     "framework": "Material UI",
     "package": "@mui/material",
     "version": "9.2.0",
-    "status": "code_migration_complete_verification_pending"
+    "status": "source_convergence_complete_verification_pending"
   },
   "active_visual_authorities": [
-    {
-      "path": "webapp/src/theme/nexusTheme.ts",
-      "role": "sole theme, token, component-default, focus, motion, shape and elevation authority"
-    },
-    {
-      "path": "webapp/src/theme/NexusThemeProvider.tsx",
-      "role": "sole ThemeProvider and CssBaseline owner"
-    },
-    {
-      "path": "webapp/src/styles.css",
-      "role": "browser foundations only"
-    },
-    {
-      "path": "webapp/src/a11y.css",
-      "role": "sr-only utility only"
-    }
+    {"path":"webapp/src/theme/nexusTheme.ts","role":"sole theme, token, component-default, focus, motion, shape and elevation authority"},
+    {"path":"webapp/src/theme/NexusThemeProvider.tsx","role":"sole ThemeProvider and CssBaseline owner"},
+    {"path":"webapp/src/app/OperatorPresentation.tsx","role":"sole bounded operator empty, error, loading, fact-grid, tone and reduced-motion scroll authority"},
+    {"path":"webapp/src/styles.css","role":"browser foundations only"},
+    {"path":"webapp/src/a11y.css","role":"sr-only utility only"}
   ],
   "retired_visual_paths": [
     "webapp/src/styles/tokens.css",
@@ -41,6 +31,7 @@
     "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
     "webapp/src/features/admin-routes/admin-routes.css",
     "webapp/src/features/knowledge/knowledge.css",
+    "webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx",
     "webapp/src/features/runtime/runtime-evidence-audit.css",
     "webapp/src/components/ui/Button.tsx",
     "webapp/src/components/ui/ButtonLink.tsx",
@@ -53,51 +44,44 @@
     "webapp/src/components/ui/PageHeader.tsx"
   ],
   "resolved_findings": [
-    {
-      "id": "VIS-001",
-      "finding": "Badge pill overload",
-      "resolution": "Routes now use MUI Chip only for compact state or metadata; counts use Typography and operational status includes text plus non-color cues."
-    },
-    {
-      "id": "VIS-002",
-      "finding": "Card and border grammar was the default structure",
-      "resolution": "Workspace, Knowledge, Channels, Runtime and Control Tower were recomposed with MUI lists, tables, sections, dividers and continuous surfaces."
-    },
-    {
-      "id": "VIS-003",
-      "finding": "Shared empty, error and disclosure states were incomplete",
-      "resolution": "All active routes use MUI Alert, CircularProgress, Accordion, Dialog and route-bounded empty states. The custom generic component layer was deleted."
-    },
-    {
-      "id": "VIS-004",
-      "finding": "Workspace JSX and CSS selectors had drifted",
-      "resolution": "Workspace rendering was rebuilt with MUI and both Workspace stylesheets were deleted."
-    },
-    {
-      "id": "VIS-005",
-      "finding": "Case journey lacked a dominant visual structure",
-      "resolution": "The MUI Workspace renders a truthful Case Spine from available durable facts and explicitly marks missing closure facts."
-    },
-    {
-      "id": "VIS-006",
-      "finding": "Presentation vocabulary was visually distributed",
-      "resolution": "Domain mapping functions remain, while all generic rendering consumes MUI and the single Nexus theme."
-    },
-    {
-      "id": "VIS-007",
-      "finding": "Operator-visible names were inconsistent",
-      "resolution": "Navigation now uses 案例处理、知识与流程、渠道管理、系统运行、运营监控; technical IDs are progressively disclosed."
-    },
-    {
-      "id": "VIS-008",
-      "finding": "Runtime audit had an independent minified CSS system",
-      "resolution": "Runtime evidence audit was migrated to MUI and its stylesheet was deleted."
-    }
+    {"id":"VIS-001","finding":"Badge pill overload","resolution":"Routes use MUI Chip only for compact state or metadata; counts use Typography and operational status includes text plus non-color cues."},
+    {"id":"VIS-002","finding":"Card and border grammar was the default structure","resolution":"Workspace, Knowledge, Channels, Runtime and Control Tower use MUI lists, tables, sections, dividers and continuous surfaces."},
+    {"id":"VIS-003","finding":"Shared empty, error, loading and fact states were copied or incomplete","resolution":"One bounded OperatorPresentation module owns those semantic compositions without wrapping Button, Input or Dialog."},
+    {"id":"VIS-004","finding":"Workspace JSX and CSS selectors had drifted","resolution":"Workspace uses MUI and both Workspace stylesheets are deleted."},
+    {"id":"VIS-005","finding":"Case journey lacked a dominant visual structure","resolution":"The MUI Workspace renders a truthful Case Spine and explicitly marks missing closure facts."},
+    {"id":"VIS-006","finding":"Presentation vocabulary was visually distributed","resolution":"Domain mappings remain while generic state rendering uses one OperatorPresentation authority and one MUI theme."},
+    {"id":"VIS-007","finding":"Operator-visible names were inconsistent","resolution":"Navigation and route copy use one operator-language contract; technical IDs are progressively disclosed."},
+    {"id":"VIS-008","finding":"Runtime audit had an independent minified CSS system","resolution":"Runtime audit uses MUI and the shared semantic presentation authority; its stylesheet is deleted."},
+    {"id":"VIS-009","finding":"Knowledge read and manage modes were separate page implementations","resolution":"One KnowledgePage owns list, filters, details, search testing and capability-gated editing through canManage."},
+    {"id":"VIS-010","finding":"Workspace orchestration contained queue, evidence, conversation and state helpers in one giant file","resolution":"One Workspace route now composes bounded queue, case, conversation, common presentation and state-transition modules without another store, API or renderer."},
+    {"id":"VIS-011","finding":"Route loading fallbacks retained deleted CSS classes","resolution":"Knowledge, Channels, Runtime and Control Tower use one MUI RouteLoadingState."},
+    {"id":"VIS-012","finding":"Feature TSX contained theme-bypassing color literals","resolution":"Source colors are theme semantic values; the architecture gate rejects raw color literals outside nexusTheme.ts."}
   ],
+  "implementation_graph": {
+    "knowledge": {
+      "route": "webapp/src/routes/knowledge.tsx",
+      "page": "webapp/src/features/knowledge/KnowledgePage.tsx",
+      "mode": "canManage",
+      "second_page": false
+    },
+    "workspace": {
+      "route": "webapp/src/routes/workspace.tsx",
+      "orchestrator": "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
+      "queue": "webapp/src/features/operator-workspace/OperatorWorkspaceQueue.tsx",
+      "case": "webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx",
+      "conversation": "webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx",
+      "common": "webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx",
+      "state": "webapp/src/features/operator-workspace/operatorWorkspaceState.ts",
+      "api": "webapp/src/lib/operatorWorkspaceApi.ts",
+      "second_store": false,
+      "second_renderer": false,
+      "second_api": false
+    }
+  },
   "route_results": [
     {"route":"/login","mui_migrated":true,"functional_behavior_preserved":"authentication and error focus"},
-    {"route":"/workspace","mui_migrated":true,"functional_behavior_preserved":"queue, deep links, drafts, actions, authorization, confirmations and refresh"},
-    {"route":"/knowledge","mui_migrated":true,"functional_behavior_preserved":"search, selection, draft guard, edit, publish and retrieval test"},
+    {"route":"/workspace","mui_migrated":true,"functional_behavior_preserved":"queue, deep links, drafts, actions, authorization, confirmations, bounded history and event refresh"},
+    {"route":"/knowledge","mui_migrated":true,"functional_behavior_preserved":"one capability-aware search, selection, detail, edit, publish and retrieval-test implementation"},
     {"route":"/channels","mui_migrated":true,"functional_behavior_preserved":"account health and onboarding task lifecycle"},
     {"route":"/runtime","mui_migrated":true,"functional_behavior_preserved":"runtime reads, metrics and evidence audit"},
     {"route":"/control-tower","mui_migrated":true,"functional_behavior_preserved":"management evidence and canonical drill-down"},
@@ -115,6 +99,11 @@
     "second_route_spine": false,
     "second_theme": false,
     "second_component_library": false,
+    "second_operator_presentation_authority": false,
+    "second_knowledge_page": false,
+    "second_workspace_store": false,
+    "second_workspace_renderer": false,
+    "second_workspace_api": false,
     "old_new_switch": false,
     "legacy_visual_css": false,
     "custom_generic_component_authority": false
