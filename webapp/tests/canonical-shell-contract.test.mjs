@@ -36,7 +36,7 @@ test('one MUI application shell owns product identity, navigation, session and s
   const provider = read('src/theme/NexusThemeProvider.tsx')
 
   assert.match(shell, /Nexus OSR/)
-  assert.match(shell, /客服与运营工作台/)
+  assert.doesNotMatch(shell, /客服与运营工作台/)
   assert.match(shell, /工作范围/)
   assert.match(shell, /跳到主要内容/)
   assert.match(shell, /scope\.country_code/)
@@ -59,11 +59,13 @@ test('one MUI application shell owns product identity, navigation, session and s
   assert.doesNotMatch(shell, />\s*\{scope\.tenant_hash\}\s*</)
 })
 
-test('normal operators fail closed when no authorized scope exists', () => {
+test('normal operators fail closed with concise recovery copy when no scope exists', () => {
   const route = read('src/routes/workspace.tsx')
-  assert.match(route, /当前账号没有可用工作范围/)
-  assert.match(route, /系统不会自动扩大或允许手工输入工作范围/)
-  assert.match(route, /系统不会自动扩大或手工猜测可访问范围/)
+  assert.match(route, /未分配工作范围/)
+  assert.match(route, /请联系管理员。/)
+  assert.match(route, /无法读取工作范围/)
+  assert.match(route, /请重新加载。/)
+  assert.doesNotMatch(route, /系统不会自动扩大|手工猜测|服务端授权/)
   assert.doesNotMatch(route, /requires_explicit_admin_scope|LegacyWorkspaceFallback/)
 })
 
