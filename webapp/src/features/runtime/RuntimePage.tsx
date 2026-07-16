@@ -92,57 +92,54 @@ export function RuntimePage() {
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
-        <Box>
-          <Typography component="h1" variant="h1">系统运行</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>查看客服自动化服务是否可用、是否处于降级状态，以及最近 24 小时的工作负载。技术实现信息默认收起。</Typography>
-        </Box>
+        <Typography component="h1" variant="h1">系统运行</Typography>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <Chip color={statusColor(state.tone)} label={state.label} />
           <Button variant="outlined" color="inherit" onClick={() => setShowEvidenceAudit((current) => !current)}>
-            {showEvidenceAudit ? '返回运行概览' : '打开证据审计'}
+            {showEvidenceAudit ? '运行概览' : '证据审计'}
           </Button>
         </Stack>
       </Stack>
 
       {showEvidenceAudit ? (
-        <Suspense fallback={<Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 240, justifyContent: 'center' }}><CircularProgress size={30} /><Typography variant="subtitle2">正在加载证据审计…</Typography></Stack>}>
+        <Suspense fallback={<Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 240, justifyContent: 'center' }}><CircularProgress size={30} /><Typography variant="subtitle2">正在加载…</Typography></Stack>}>
           <LazyRuntimeEvidenceAudit />
         </Suspense>
       ) : (
         <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.4fr) minmax(300px, 0.8fr)' } }}>
           <Paper component="section" variant="outlined" aria-labelledby="service-readiness-title" sx={{ minWidth: 0, p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Typography id="service-readiness-title" component="h2" variant="h3">服务就绪状态</Typography>
+              <Typography id="service-readiness-title" component="h2" variant="h3">系统状态</Typography>
               {runtime.isFetching ? <CircularProgress size={18} aria-label="正在检查" /> : null}
             </Stack>
             <Divider sx={{ my: 2 }} />
             {runtime.isError ? (
-              <Alert severity="error" variant="outlined"><AlertTitle>无法读取运行状态</AlertTitle>{errorCopy(runtime.error, '请稍后重试')}</Alert>
+              <Alert severity="error" variant="outlined"><AlertTitle>无法读取系统状态</AlertTitle>{errorCopy(runtime.error, '请稍后重试')}</Alert>
             ) : runtime.isLoading ? (
-              <Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 180, justifyContent: 'center' }}><CircularProgress size={28} /><Typography variant="subtitle2">正在检查服务…</Typography></Stack>
+              <Stack role="status" alignItems="center" spacing={1.5} sx={{ minHeight: 180, justifyContent: 'center' }}><CircularProgress size={28} /><Typography variant="subtitle2">正在检查…</Typography></Stack>
             ) : (
               <Stack spacing={2}>
                 <FactGrid facts={[
-                  ['当前状态', state.label],
-                  ['服务模式', runtime.data?.webchat_runtime_enabled ? '自动处理已启用' : '仅人工处理或未启用'],
-                  ['降级路径', runtime.data?.fallback_provider ? '已配置备用路径' : '无备用路径'],
-                  ['配置检查', selectedProvider?.configured ? '已配置' : '需要检查'],
+                  ['状态', state.label],
+                  ['处理方式', runtime.data?.webchat_runtime_enabled ? '自动处理' : '人工处理'],
+                  ['备用方式', runtime.data?.fallback_provider ? '已配置' : '未配置'],
+                  ['配置状态', selectedProvider?.configured ? '已配置' : '需要检查'],
                 ]} />
                 {runtime.data?.warnings?.length ? (
                   <Stack spacing={1} aria-label="运行提醒">
                     {runtime.data.warnings.map((item) => <Alert key={String(item)} severity="warning" variant="outlined">{sanitizeDisplayText(String(item))}</Alert>)}
                   </Stack>
-                ) : <Alert severity="success" variant="outlined">当前没有运行提醒。</Alert>}
-                <TechnicalDisclosure title="技术运行详情" summary="仅供运行与审计人员查看">
+                ) : <Alert severity="success" variant="outlined">无运行提醒</Alert>}
+                <TechnicalDisclosure title="系统信息" summary="状态代码、服务配置与诊断">
                   <FactGrid facts={[
                     ['状态代码', <Box component="code">{sanitizeDisplayText(runtime.data?.status || 'unknown')}</Box>],
-                    ['当前 Provider', <Box component="code">{sanitizeDisplayText(runtime.data?.configured_provider || selectedProvider?.name || '未配置')}</Box>],
-                    ['备用 Provider', <Box component="code">{sanitizeDisplayText(runtime.data?.fallback_provider || '无')}</Box>],
+                    ['服务提供方', <Box component="code">{sanitizeDisplayText(runtime.data?.configured_provider || selectedProvider?.name || '未配置')}</Box>],
+                    ['备用服务', <Box component="code">{sanitizeDisplayText(runtime.data?.fallback_provider || '无')}</Box>],
                     ['运行环境', <Box component="code">{sanitizeDisplayText(runtime.data?.app_env || 'unknown')}</Box>],
                   ]} />
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>Provider 诊断</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>服务诊断</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(selectedProvider?.diagnostics || {}, null, 2)}</Box>
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>安全边界</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>安全配置</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(runtime.data?.boundary || {}, null, 2)}</Box>
                 </TechnicalDisclosure>
               </Stack>
@@ -156,7 +153,7 @@ export function RuntimePage() {
             </Stack>
             <Divider sx={{ my: 2 }} />
             {metrics.isError ? (
-              <Alert severity="error" variant="outlined"><AlertTitle>无法读取工作负载</AlertTitle>{errorCopy(metrics.error, '请稍后重试')}</Alert>
+              <Alert severity="error" variant="outlined"><AlertTitle>无法读取统计数据</AlertTitle>{errorCopy(metrics.error, '请稍后重试')}</Alert>
             ) : (
               <Stack spacing={2}>
                 <FactGrid facts={[
@@ -166,7 +163,7 @@ export function RuntimePage() {
                   ['WhatsApp', metrics.data?.by_channel?.whatsapp ?? 0],
                 ]} />
                 {latency ? (
-                  <TechnicalDisclosure title="延迟指标" summary="默认收起">
+                  <TechnicalDisclosure title="响应时间" summary="高级指标">
                     <FactGrid facts={[
                       ['样本数', latency.sample_count],
                       ['端到端 p50 / p90', `${compactLatency(latency.total_turn.p50_ms)} / ${compactLatency(latency.total_turn.p90_ms)}`],
