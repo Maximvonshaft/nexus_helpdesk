@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/execution-context-index.schema.json",
+  "title": "Nexus Execution Context Index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "index_id",
+    "status",
+    "generated_at",
+    "snapshot_id",
+    "governance_commit",
+    "protocol_digest_sha256",
+    "main_sha",
+    "subjects",
+    "active_execution_packet_ids",
+    "valid_until"
+  ],
+  "properties": {
+    "schema": {"const": "nexus.execution-context-index.v1"},
+    "index_id": {"type": "string", "minLength": 8},
+    "status": {"enum": ["FINAL_CURRENT", "PARTIAL_CURRENT", "STALE", "INVALIDATED"]},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "snapshot_id": {"type": "string", "minLength": 8},
+    "governance_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "protocol_digest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["subject_key", "current_status", "owner", "watch_keys", "evidence_urls"],
+        "properties": {
+          "subject_key": {"type": "string", "minLength": 3},
+          "current_status": {
+            "enum": [
+              "OBSERVED",
+              "CANDIDATE",
+              "CONFIRMED",
+              "VERIFIED_CURRENT",
+              "REVALIDATION_REQUIRED",
+              "DISPUTED",
+              "GOVERNANCE_ACCEPTED",
+              "EXECUTION_PACKET_ISSUED",
+              "VERIFIED_ON_MAIN",
+              "LEGACY_REMOVED",
+              "DONE",
+              "SUPERSEDED",
+              "CONTRADICTED",
+              "STALE_OR_FIXED"
+            ]
+          },
+          "severity": {"enum": ["P0", "P1", "P2", "P3", "INFO", "NONE"]},
+          "owner": {"oneOf": [{"type": "string"}, {"type": "array"}, {"type": "object"}]},
+          "watch_keys": {"type": "array", "items": {"type": "string"}},
+          "evidence_urls": {"type": "array", "items": {"type": "string"}},
+          "execution_packet_id": {"type": ["string", "null"]},
+          "expires_at": {"type": ["string", "null"], "format": "date-time"}
+        }
+      }
+    },
+    "active_execution_packet_ids": {"type": "array", "items": {"type": "string"}},
+    "contradictions": {"type": "array", "items": {"type": "object"}},
+    "continuation_cursor": {"type": ["string", "null"]},
+    "valid_until": {"type": "string", "format": "date-time"}
+  }
+}
