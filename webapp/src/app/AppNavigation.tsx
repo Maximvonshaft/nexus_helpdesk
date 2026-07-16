@@ -59,7 +59,7 @@ export function AppNavigation({
                 whiteSpace: 'nowrap',
                 transition: (theme) => theme.transitions.create(['background-color', 'color'], { duration: theme.transitions.duration.shorter }),
                 '&:hover': { bgcolor: active ? 'action.selected' : 'action.hover', color: active ? 'primary.main' : 'text.primary' },
-                '&:focus-visible': { outline: '3px solid rgba(23, 92, 211, 0.24)', outlineOffset: 2 },
+                '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
               }}
             >
               <Icon sx={{ fontSize: 18 }} aria-hidden="true" />
