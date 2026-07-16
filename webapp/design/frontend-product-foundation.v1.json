@@ -23,55 +23,52 @@
       "domain": "operator_work",
       "route": "/workspace",
       "canonical": true,
-      "status": "planned",
+      "status": "current",
       "job": "Open the scoped queue and complete the governed case journey"
     },
     {
       "domain": "knowledge_and_sop",
       "route": "/knowledge",
       "canonical": true,
-      "status": "planned",
+      "status": "current",
       "job": "Govern customer Knowledge and internal operating guidance"
     },
     {
       "domain": "channels",
       "route": "/channels",
       "canonical": true,
-      "status": "planned",
+      "status": "current",
       "job": "Manage channel and account configuration and health"
     },
     {
       "domain": "runtime_and_audit",
       "route": "/runtime",
       "canonical": true,
-      "status": "planned",
+      "status": "current",
       "job": "Inspect technical readiness, debug, evaluation and bounded audit evidence"
     },
     {
       "domain": "management",
       "route": "/control-tower",
       "canonical": true,
-      "status": "planned",
+      "status": "current",
       "job": "Review scoped workload, risk, outcomes and management drill-down"
     },
     {
       "domain": "operator_work_compatibility",
       "route": "/webchat",
       "canonical": false,
-      "status": "transitional",
-      "job": "Preserve the current Support Console during canonical Workspace migration"
+      "status": "compatibility",
+      "job": "Redirect legacy operator links to the canonical Workspace without mounting another console"
     }
   ],
   "token_authority": {
     "semantic_tokens_path": "webapp/src/styles/tokens.css",
     "component_primitives_path": "webapp/src/components/ui",
-    "enforcement_status": "target_not_yet_enforced",
-    "feature_raw_hex_policy": "prohibited_after_migration",
-    "legacy_sources": [
-      "webapp/src/styles.css",
-      "webapp/src/features/support-console/support-console.css"
-    ],
-    "migration_strategy": "staged_by_route_domain",
+    "enforcement_status": "enforced",
+    "feature_raw_hex_policy": "prohibited",
+    "legacy_sources": [],
+    "migration_strategy": "in_place_under_single_authority",
     "big_bang_rewrite": false
   },
   "state_vocabulary": {
@@ -153,12 +150,12 @@
     "no_color_only_meaning": true,
     "representative_viewports": [375, 768, 1024, 1440]
   },
-  "downstream_work_items": [525, 564, 573],
+  "downstream_work_items": [525, 564, 573, 753],
   "lifecycle": {
-    "status": "approved_contract",
+    "status": "active_canonical_authority",
     "effective_from": "2026-07-12T00:00:00Z",
     "review_due": "2027-01-12T00:00:00Z",
-    "runtime_activation": false,
-    "production_ui_migration_complete": false
+    "runtime_activation": true,
+    "production_ui_migration_complete": true
   }
 }
