@@ -1,6 +1,13 @@
-import * as Dialog from '@radix-ui/react-dialog'
+import {
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+} from '@mui/material'
 import type { ReactNode } from 'react'
-import { Button } from './Button'
 
 export type ConfirmDialogProps = {
   open: boolean
@@ -27,35 +34,38 @@ export function ConfirmDialog({
   onOpenChange,
   onConfirm,
 }: ConfirmDialogProps) {
+  const close = () => {
+    if (!busy) onOpenChange(false)
+  }
+
   return (
-    <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!busy) onOpenChange(nextOpen) }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="nd-dialog__overlay" />
-        <Dialog.Content
-          className="nd-dialog__content"
-          onEscapeKeyDown={(event) => { if (busy) event.preventDefault() }}
-          onPointerDownOutside={(event) => { if (busy) event.preventDefault() }}
+    <Dialog
+      open={open}
+      onClose={close}
+      disableEscapeKeyDown={busy}
+      aria-labelledby="nd-confirm-dialog-title"
+      aria-describedby="nd-confirm-dialog-description"
+    >
+      <DialogTitle id="nd-confirm-dialog-title">{title}</DialogTitle>
+      <DialogContent>
+        <DialogContentText id="nd-confirm-dialog-description">{description}</DialogContentText>
+        {children}
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" variant="text" disabled={busy} onClick={close}>
+          {cancelLabel}
+        </Button>
+        <Button
+          color={destructive ? 'error' : 'primary'}
+          variant="contained"
+          disabled={busy}
+          startIcon={busy ? <CircularProgress color="inherit" size={16} /> : undefined}
+          aria-busy={busy || undefined}
+          onClick={onConfirm}
         >
-          <div className="nd-dialog__header">
-            <Dialog.Title className="nd-dialog__title">{title}</Dialog.Title>
-            <Dialog.Description className="nd-dialog__description">{description}</Dialog.Description>
-          </div>
-          {children ? <div className="nd-dialog__body">{children}</div> : null}
-          <div className="nd-dialog__actions">
-            <Dialog.Close asChild>
-              <Button variant="ghost" disabled={busy}>{cancelLabel}</Button>
-            </Dialog.Close>
-            <Button
-              variant={destructive ? 'danger' : 'primary'}
-              loading={busy}
-              loadingLabel="处理中…"
-              onClick={onConfirm}
-            >
-              {confirmLabel}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          {busy ? '处理中…' : confirmLabel}
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }
