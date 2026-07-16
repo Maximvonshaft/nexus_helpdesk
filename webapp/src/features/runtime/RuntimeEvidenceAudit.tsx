@@ -2,7 +2,6 @@ import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import {
   Alert,
-  AlertTitle,
   Box,
   Button,
   Chip,
@@ -19,8 +18,14 @@ import {
 } from '@mui/material'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import {
+  OperatorEmptyState,
+  OperatorErrorNotice,
+  OperatorFactGrid,
+  operatorToneColor,
+} from '@/app/OperatorPresentation'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
-import { aiDebugApi, type AiDebugBundle, type AiDebugRun } from './aiDebugApi'
+import { aiDebugApi, type AiDebugBundle, type AiDebugFinding, type AiDebugRun } from './aiDebugApi'
 
 type BoolFilter = 'all' | 'true' | 'false'
 type Tone = 'default' | 'warning' | 'success' | 'danger'
@@ -56,37 +61,20 @@ function runTone(run?: AiDebugRun | null): Tone {
   return 'default'
 }
 
-function statusColor(tone: Tone) {
-  if (tone === 'success') return 'success'
-  if (tone === 'warning') return 'warning'
-  if (tone === 'danger') return 'error'
-  return 'default'
+function safeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
-function errorCopy(error: unknown) {
-  return error instanceof Error && error.message ? error.message : '请稍后重试'
+function safeRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(safeRecord) : []
 }
 
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <Stack role="status" alignItems="center" justifyContent="center" spacing={0.75} sx={{ minHeight: 130, p: 3, textAlign: 'center' }}>
-      <Typography variant="subtitle2">{title}</Typography>
-      <Typography variant="body2" color="text.secondary">{description}</Typography>
-    </Stack>
-  )
+function textValue(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value : fallback
 }
 
-function FactGrid({ facts }: { facts: Array<[string, React.ReactNode]> }) {
-  return (
-    <Box component="dl" sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(5, minmax(0, 1fr))' }, m: 0 }}>
-      {facts.map(([label, value]) => (
-        <Box key={label} sx={{ minWidth: 0 }}>
-          <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
-          <Typography component="dd" variant="body2" sx={{ m: 0, mt: 0.5, overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
-        </Box>
-      ))}
-    </Box>
-  )
+function numberValue(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
 export function RuntimeEvidenceAudit() {
@@ -101,7 +89,7 @@ export function RuntimeEvidenceAudit() {
   const [testerNote, setTesterNote] = useState('')
   const [expectedBehavior, setExpectedBehavior] = useState('')
   const [actualBehavior, setActualBehavior] = useState('')
-  const [lastFinding, setLastFinding] = useState<Record<string, any> | null>(null)
+  const [lastFinding, setLastFinding] = useState<AiDebugFinding | null>(null)
   const [showJson, setShowJson] = useState(false)
 
   const runsQuery = useQuery({
@@ -130,8 +118,10 @@ export function RuntimeEvidenceAudit() {
     retry: false,
   })
   const bundle: AiDebugBundle | null = bundleQuery.data ?? null
-  const timeline = Array.isArray(bundle?.timeline) ? bundle.timeline : []
-  const toolCalls = Array.isArray(bundle?.tool_calls) ? bundle.tool_calls : []
+  const summary = safeRecord(bundle?.summary)
+  const evidence = safeRecord(bundle?.evidence)
+  const timeline = safeRecordArray(bundle?.timeline)
+  const toolCalls = safeRecordArray(bundle?.tool_calls)
 
   const findingMutation = useMutation({
     mutationFn: () => aiDebugApi.createFinding(selectedRun?.ai_turn_id ?? 0, {
@@ -144,7 +134,7 @@ export function RuntimeEvidenceAudit() {
     onSuccess: setLastFinding,
   })
   const evalMutation = useMutation({
-    mutationFn: () => aiDebugApi.createEvalCase(Number(lastFinding?.id)),
+    mutationFn: () => aiDebugApi.createEvalCase(numberValue(lastFinding?.id)),
   })
 
   const copyBundle = async () => {
@@ -180,7 +170,7 @@ export function RuntimeEvidenceAudit() {
         </Box>
       </Paper>
 
-      {runsQuery.isError ? <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>无法读取审计数据</AlertTitle>{errorCopy(runsQuery.error)}</Alert> : null}
+      {runsQuery.isError ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取审计数据" error={runsQuery.error} fallback="请稍后重试" /></Box> : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 340px) minmax(0, 1fr)' }, mt: 2 }}>
         <Paper component="aside" variant="outlined" aria-label="处理记录" sx={{ alignSelf: 'start', minWidth: 0, p: 1.5, position: { lg: 'sticky' }, top: { lg: 84 } }}>
@@ -189,7 +179,7 @@ export function RuntimeEvidenceAudit() {
             <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{runs.length}</Typography>
           </Stack>
           <Divider sx={{ mt: 1.5 }} />
-          {!runs.length ? <EmptyState title="暂无记录" description="暂无数据" /> : (
+          {!runs.length ? <OperatorEmptyState title="暂无记录" description="暂无数据" /> : (
             <List disablePadding sx={{ maxHeight: { lg: 'calc(100dvh - 300px)' }, overflowY: 'auto' }}>
               {runs.map((run) => (
                 <ListItemButton
@@ -202,7 +192,7 @@ export function RuntimeEvidenceAudit() {
                   <Stack spacing={0.75}>
                     <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                       <Typography variant="subtitle2">处理 #{run.ai_turn_id}</Typography>
-                      <Chip color={statusColor(runTone(run))} label={sanitizeDisplayText(run.status)} />
+                      <Chip color={operatorToneColor(runTone(run))} label={sanitizeDisplayText(run.status)} />
                     </Stack>
                     <Typography variant="caption" color="text.secondary">工单 #{run.ticket_id} · {sanitizeDisplayText(run.channel || '未知渠道')}</Typography>
                     <Typography variant="caption" color="text.disabled">{run.created_at ? formatDateTime(run.created_at) : '暂无时间'}</Typography>
@@ -217,14 +207,14 @@ export function RuntimeEvidenceAudit() {
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
               <Typography component="h3" variant="h3">处理结果</Typography>
-              {selectedRun ? <Chip color={statusColor(runTone(selectedRun))} label={sanitizeDisplayText(selectedRun.status)} /> : null}
+              {selectedRun ? <Chip color={operatorToneColor(runTone(selectedRun))} label={sanitizeDisplayText(selectedRun.status)} /> : null}
             </Stack>
             <Divider sx={{ my: 2 }} />
-            <FactGrid facts={[
-              ['问题类型', sanitizeDisplayText(selectedRun?.intent || bundle?.summary?.intent || '未知')],
+            <OperatorFactGrid columns={5} facts={[
+              ['问题类型', sanitizeDisplayText(selectedRun?.intent || textValue(summary.intent, '未知'))],
               ['查询结果', selectedRun?.tracking_fact_evidence_present ? '有' : '无'],
               ['实时物流回复', selectedRun?.live_tracking_answer_allowed ? '允许' : '禁止'],
-              ['知识匹配', selectedRun?.kb_hits_count ?? bundle?.evidence?.kb_hits_count ?? 0],
+              ['知识匹配', selectedRun?.kb_hits_count ?? numberValue(evidence.kb_hits_count)],
               ['客户消息', selectedRun?.customer_visible_message_created ? '已创建' : '未创建'],
             ]} />
           </Paper>
@@ -233,17 +223,23 @@ export function RuntimeEvidenceAudit() {
             <Paper component="section" variant="outlined" sx={{ p: 2 }}>
               <Typography component="h3" variant="h3">查询与操作记录</Typography>
               <Divider sx={{ my: 2 }} />
-              {!toolCalls.length ? <EmptyState title="暂无查询或操作" description="暂无数据" /> : (
+              {!toolCalls.length ? <OperatorEmptyState title="暂无查询或操作" description="暂无数据" /> : (
                 <Stack divider={<Divider flexItem />}>
-                  {toolCalls.map((call: any) => (
-                    <Box component="article" key={`${call.id}-${call.tool_name}`} sx={{ py: 1.25 }}>
-                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="subtitle2">{sanitizeDisplayText(call.tool_name || '未知操作')}</Typography>
-                        <Chip color={call.status === 'success' ? 'success' : call.status === 'failed' ? 'error' : 'warning'} label={sanitizeDisplayText(call.status || 'unknown')} />
-                      </Stack>
-                      <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(call.provider || '未知服务')} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied ? '已脱敏' : '脱敏状态未知'}</Typography>
-                    </Box>
-                  ))}
+                  {toolCalls.map((call, index) => {
+                    const status = textValue(call.status, 'unknown')
+                    const color = status === 'success' ? 'success' : status === 'failed' ? 'error' : 'warning'
+                    return (
+                      <Box component="article" key={`${textValue(call.id, String(index))}-${textValue(call.tool_name)}`} sx={{ py: 1.25 }}>
+                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                          <Typography variant="subtitle2">{sanitizeDisplayText(textValue(call.tool_name, '未知操作'))}</Typography>
+                          <Chip color={color} label={sanitizeDisplayText(status)} />
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary">
+                          {sanitizeDisplayText(textValue(call.provider, '未知服务'))} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied === true ? '已脱敏' : '脱敏状态未知'}
+                        </Typography>
+                      </Box>
+                    )
+                  })}
                 </Stack>
               )}
             </Paper>
@@ -251,15 +247,15 @@ export function RuntimeEvidenceAudit() {
             <Paper component="section" variant="outlined" sx={{ p: 2 }}>
               <Typography component="h3" variant="h3">处理时间线</Typography>
               <Divider sx={{ my: 2 }} />
-              {!timeline.length ? <EmptyState title="暂无时间线" description="暂无数据" /> : (
+              {!timeline.length ? <OperatorEmptyState title="暂无时间线" description="暂无数据" /> : (
                 <Stack divider={<Divider flexItem />}>
-                  {timeline.map((item: any) => (
-                    <Box component="article" key={`${item.event_id}-${item.event_type}`} sx={{ py: 1.25 }}>
+                  {timeline.map((item, index) => (
+                    <Box component="article" key={`${textValue(item.event_id, String(index))}-${textValue(item.event_type)}`} sx={{ py: 1.25 }}>
                       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="subtitle2">{sanitizeDisplayText(item.event_type || item.phase || '事件')}</Typography>
-                        <Chip label={sanitizeDisplayText(item.status || item.phase || '事件')} />
+                        <Typography variant="subtitle2">{sanitizeDisplayText(textValue(item.event_type, textValue(item.phase, '事件')))}</Typography>
+                        <Chip label={sanitizeDisplayText(textValue(item.status, textValue(item.phase, '事件')))} />
                       </Stack>
-                      <Typography variant="caption" color="text.disabled">{item.created_at ? formatDateTime(item.created_at) : ''}</Typography>
+                      <Typography variant="caption" color="text.disabled">{textValue(item.created_at) ? formatDateTime(textValue(item.created_at)) : ''}</Typography>
                     </Box>
                   ))}
                 </Stack>
@@ -270,7 +266,7 @@ export function RuntimeEvidenceAudit() {
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
               <Typography component="h3" variant="h3">记录问题</Typography>
-              {lastFinding ? <Chip color="success" label={`问题记录 #${lastFinding.id}`} /> : null}
+              {lastFinding?.id ? <Chip color="success" label={`问题记录 #${lastFinding.id}`} /> : null}
             </Stack>
             <Divider sx={{ my: 2 }} />
             <Stack spacing={1.5}>
@@ -287,12 +283,12 @@ export function RuntimeEvidenceAudit() {
                 <TextField label="期望结果" value={expectedBehavior} onChange={(event) => setExpectedBehavior(event.target.value)} multiline minRows={2} />
                 <TextField label="实际结果" value={actualBehavior} onChange={(event) => setActualBehavior(event.target.value)} multiline minRows={2} />
               </Box>
-              {findingMutation.isError ? <Alert severity="error" variant="outlined"><AlertTitle>保存失败</AlertTitle>{errorCopy(findingMutation.error)}</Alert> : null}
+              {findingMutation.isError ? <OperatorErrorNotice title="保存失败" error={findingMutation.error} fallback="请稍后重试" /> : null}
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 <Button variant="contained" disabled={!selectedRun || findingMutation.isPending} startIcon={findingMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => findingMutation.mutate()}>
                   {findingMutation.isPending ? '保存中…' : '保存问题'}
                 </Button>
-                {lastFinding ? <Button variant="outlined" color="inherit" disabled={evalMutation.isPending} onClick={() => evalMutation.mutate()}>{evalMutation.isPending ? '生成中…' : '加入回归测试'}</Button> : null}
+                {lastFinding?.id ? <Button variant="outlined" color="inherit" disabled={evalMutation.isPending} onClick={() => evalMutation.mutate()}>{evalMutation.isPending ? '生成中…' : '加入回归测试'}</Button> : null}
               </Stack>
             </Stack>
           </Paper>
@@ -302,13 +298,13 @@ export function RuntimeEvidenceAudit() {
               <Typography component="h3" variant="h3">审计数据</Typography>
               <Button color="inherit" onClick={() => setShowJson((value) => !value)}>{showJson ? '收起原始数据' : '查看原始数据'}</Button>
             </Stack>
-            {bundleQuery.isError ? <Alert severity="error" variant="outlined" sx={{ mt: 2 }}><AlertTitle>无法读取审计数据</AlertTitle>{errorCopy(bundleQuery.error)}</Alert> : null}
+            {bundleQuery.isError ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取审计数据" error={bundleQuery.error} fallback="请稍后重试" /></Box> : null}
             <Collapse in={showJson} unmountOnExit>
               <Box component="pre" sx={{ bgcolor: 'text.primary', borderRadius: 1, color: 'background.paper', m: 0, mt: 2, maxHeight: 520, overflow: 'auto', p: 2, whiteSpace: 'pre-wrap', fontSize: 12 }}>
                 {JSON.stringify(bundle, null, 2)}
               </Box>
             </Collapse>
-            {!showJson ? <EmptyState title="原始数据已收起" description="按需查看" /> : null}
+            {!showJson ? <OperatorEmptyState title="原始数据已收起" description="按需查看" /> : null}
           </Paper>
         </Stack>
       </Box>
