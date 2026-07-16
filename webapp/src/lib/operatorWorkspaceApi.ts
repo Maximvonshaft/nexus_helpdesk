@@ -1,5 +1,5 @@
 import { apiRequest, ApiError } from '@/lib/apiClient'
-import type { WebchatReadStateResult, WebchatReplyResult, WebchatThread } from '@/lib/types'
+import type { WebchatEventSummary, WebchatReadStateResult, WebchatReplyResult, WebchatThread } from '@/lib/types'
 import type {
   AuthorizedWorkspaceScopesResponse,
   UnifiedOperatorQueueResponse,
@@ -17,16 +17,11 @@ export type OperatorWorkspaceThread = WebchatThread & {
     has_more: boolean
     limit: number
   }
-}
-
-export type OperatorWorkspaceEventEnvelope = {
-  event_id: number
-  type: string
-  data?: Record<string, unknown> | null
+  history_expanded?: boolean
 }
 
 export type OperatorWorkspaceEventPage = {
-  events: OperatorWorkspaceEventEnvelope[]
+  events: WebchatEventSummary[]
   last_event_id: number
   has_more: boolean
   wait_ms: number
@@ -107,7 +102,7 @@ export const operatorWorkspaceApi = {
     ticketId: number,
     afterId: number,
     init?: RequestInit,
-  ) => apiRequest<OperatorWorkspaceEventPage>(`/api/webchat/admin/tickets/${ticketId}/events?after_id=${Math.max(0, afterId)}&limit=100&wait_ms=10000`, {
+  ) => apiRequest<OperatorWorkspaceEventPage>(`/api/webchat/admin/tickets/${ticketId}/events?after_id=${Math.max(0, afterId)}&limit=100&wait_ms=0`, {
     ...init,
     requireApiPath: true,
     requestIdPrefix: 'workspace-events',
