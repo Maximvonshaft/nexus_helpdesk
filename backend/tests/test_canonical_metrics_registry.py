@@ -8,6 +8,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTROLLED_COMPOSE = REPO_ROOT / "deploy" / "docker-compose.controlled.yml"
+CONTROLLED_ENV_EXAMPLE = REPO_ROOT / "deploy" / ".env.controlled.example"
+CONTROLLED_RUNBOOK = REPO_ROOT / "docs" / "releases" / "controlled-candidate-convergence-runbook.md"
 APP_INIT = REPO_ROOT / "backend" / "app" / "__init__.py"
 OBSERVABILITY = REPO_ROOT / "backend" / "app" / "services" / "observability.py"
 GUNICORN_CONFIG = REPO_ROOT / "backend" / "gunicorn.conf.py"
@@ -17,6 +19,8 @@ DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
     compose = CONTROLLED_COMPOSE.read_text(encoding="utf-8")
+    env_example = CONTROLLED_ENV_EXAMPLE.read_text(encoding="utf-8")
+    runbook = CONTROLLED_RUNBOOK.read_text(encoding="utf-8")
 
     assert "PROMETHEUS_MULTIPROC_DIR: /var/run/nexus-prometheus" in compose
     assert 'PROMETHEUS_MULTIPROC_DIR: ""' in compose
@@ -26,6 +30,14 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
     assert "--config /app/backend/gunicorn.conf.py" in compose
     assert compose.count("prometheus-multiproc:/var/run/nexus-prometheus") == 1
     assert compose.count("PROMETHEUS_MULTIPROC_DIR:") == 2
+    assert 'METRICS_ENABLED: "true"' in compose
+    assert "METRICS_TOKEN: ${METRICS_TOKEN:?set a dedicated metrics token}" in compose
+    assert compose.count("METRICS_ENABLED:") == 1
+    assert compose.count("METRICS_TOKEN:") == 1
+    assert "METRICS_TOKEN=<dedicated-server-metrics-token-at-least-32-characters>" in env_example
+    assert "METRICS_ENABLED=" not in env_example
+    assert "unauthenticated `/metrics` returns 401" in runbook
+    assert "worker-handoff-snapshot-controlled" in runbook
     assert "worker-metrics" not in compose
     assert "pushgateway" not in compose.lower()
 
