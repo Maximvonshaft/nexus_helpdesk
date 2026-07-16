@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
+import math
 import re
 import sys
 import urllib.error
@@ -24,7 +26,11 @@ EXPECTED_REPOSITORY = "Maximvonshaft/nexus_helpdesk"
 EXPECTED_BRANCH = "governance/audit-control-plane"
 EXPECTED_PROTOCOL_ID = "nexus-governance-15-lane-v3.1"
 EXPECTED_PROTOCOL_VERSION = "3.1.0"
-DEFAULT_POINTER = Path("docs/governance/audit-control-plane.ref.json")
+EXPECTED_PROTOCOL_PATH = "audit-control-plane/protocol/nexus-audit-controller-v3.1.yaml"
+EXPECTED_ORCHESTRATION_PATH = "audit-control-plane/protocol/task-orchestration-v1.yaml"
+EXPECTED_MANIFEST_PATH = "audit-control-plane/protocol/protocol-manifest.yaml"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_POINTER = REPOSITORY_ROOT / "docs/governance/audit-control-plane.ref.json"
 MAX_POINTER_BYTES = 64 * 1024
 MAX_PROTOCOL_BYTES = 1024 * 1024
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
@@ -47,6 +53,8 @@ class AuthorityPointer:
     protocol_id: str
     protocol_version: str
     protocol_path: str
+    orchestration_path: str
+    manifest_path: str
     protocol_digest_sha256: str
     issue_ledger: int
 
@@ -93,6 +101,8 @@ def load_pointer(path: Path) -> AuthorityPointer:
         protocol_id=_require_string(raw, "protocol_id"),
         protocol_version=_require_string(raw, "protocol_version"),
         protocol_path=_require_string(raw, "protocol_path"),
+        orchestration_path=_require_string(raw, "orchestration_path"),
+        manifest_path=_require_string(raw, "manifest_path"),
         protocol_digest_sha256=_require_string(raw, "protocol_digest_sha256"),
         issue_ledger=issue_ledger,
     )
@@ -114,16 +124,28 @@ def validate_pointer(pointer: AuthorityPointer) -> None:
     if not HEX64.fullmatch(pointer.protocol_digest_sha256):
         raise VerificationError("protocol_digest_invalid", "protocol digest must be 64 lowercase hex characters")
 
-    path = PurePosixPath(pointer.protocol_path)
-    if path.is_absolute() or ".." in path.parts:
-        raise VerificationError("protocol_path_invalid", "protocol path escapes governance root")
-    if not pointer.protocol_path.startswith("audit-control-plane/protocol/"):
-        raise VerificationError("protocol_path_invalid", "protocol path is outside the protocol root")
-    if path.suffix not in {".yaml", ".yml"}:
-        raise VerificationError("protocol_path_invalid", "protocol must be YAML")
+    expected_paths = {
+        "protocol_path": (pointer.protocol_path, EXPECTED_PROTOCOL_PATH),
+        "orchestration_path": (pointer.orchestration_path, EXPECTED_ORCHESTRATION_PATH),
+        "manifest_path": (pointer.manifest_path, EXPECTED_MANIFEST_PATH),
+    }
+    for field, (raw_path, expected_path) in expected_paths.items():
+        path = PurePosixPath(raw_path)
+        if path.is_absolute() or ".." in path.parts:
+            raise VerificationError(f"{field}_invalid", f"{field} escapes governance root")
+        if not raw_path.startswith("audit-control-plane/protocol/") or path.suffix not in {".yaml", ".yml"}:
+            raise VerificationError(f"{field}_invalid", f"{field} is outside the YAML protocol root")
+        if raw_path != expected_path:
+            raise VerificationError(f"{field}_mismatch", f"unexpected {field}")
+
+
+def _validate_timeout(timeout: float) -> None:
+    if not math.isfinite(timeout) or timeout <= 0 or timeout > 60:
+        raise VerificationError("timeout_invalid", "timeout must be finite and within (0, 60] seconds")
 
 
 def fetch_protocol(pointer: AuthorityPointer, timeout: float) -> bytes:
+    _validate_timeout(timeout)
     encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in PurePosixPath(pointer.protocol_path).parts)
     url = f"https://raw.githubusercontent.com/{pointer.repository}/{pointer.commit}/{encoded_path}"
     request = urllib.request.Request(
@@ -134,7 +156,7 @@ def fetch_protocol(pointer: AuthorityPointer, timeout: float) -> bytes:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read(MAX_PROTOCOL_BYTES + 1)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
         raise VerificationError("protocol_fetch_failed", "cannot fetch exact governance protocol") from exc
     if len(data) > MAX_PROTOCOL_BYTES:
         raise VerificationError("protocol_too_large", "protocol exceeds bounded size")
@@ -189,12 +211,15 @@ def verify_protocol(pointer: AuthorityPointer, data: bytes) -> dict[str, Any]:
         "protocol_id": pointer.protocol_id,
         "protocol_version": pointer.protocol_version,
         "protocol_path": pointer.protocol_path,
+        "orchestration_path": pointer.orchestration_path,
+        "manifest_path": pointer.manifest_path,
         "protocol_digest_sha256": digest,
         "issue_ledger": pointer.issue_ledger,
     }
 
 
 def verify(pointer_path: Path, offline_protocol: Path | None, timeout: float) -> dict[str, Any]:
+    _validate_timeout(timeout)
     pointer = load_pointer(pointer_path)
     if offline_protocol is None:
         protocol_data = fetch_protocol(pointer, timeout)

@@ -44,6 +44,8 @@ class GovernanceAuthorityVerifierTests(unittest.TestCase):
             "protocol_id": "nexus-governance-15-lane-v3.1",
             "protocol_version": "3.1.0",
             "protocol_path": "audit-control-plane/protocol/nexus-audit-controller-v3.1.yaml",
+            "orchestration_path": "audit-control-plane/protocol/task-orchestration-v1.yaml",
+            "manifest_path": "audit-control-plane/protocol/protocol-manifest.yaml",
             "protocol_digest_sha256": hashlib.sha256(VALID_PROTOCOL).hexdigest(),
             "issue_ledger": 722,
         }
@@ -100,6 +102,57 @@ class GovernanceAuthorityVerifierTests(unittest.TestCase):
             with self.assertRaises(MODULE.VerificationError) as caught:
                 MODULE.verify(pointer, protocol, timeout=0.1)
         self.assertEqual(caught.exception.code, "protocol_identity_mismatch")
+
+    def test_missing_orchestration_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            pointer, protocol = self._write_fixture(Path(raw))
+            pointer_data = json.loads(pointer.read_text(encoding="utf-8"))
+            del pointer_data["orchestration_path"]
+            pointer.write_text(json.dumps(pointer_data), encoding="utf-8")
+            with self.assertRaises(MODULE.VerificationError) as caught:
+                MODULE.verify(pointer, protocol, timeout=0.1)
+        self.assertEqual(caught.exception.code, "pointer_field_invalid")
+
+    def test_wrong_orchestration_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            pointer, protocol = self._write_fixture(
+                Path(raw), orchestration_path="audit-control-plane/protocol/alternate.yaml"
+            )
+            with self.assertRaises(MODULE.VerificationError) as caught:
+                MODULE.verify(pointer, protocol, timeout=0.1)
+        self.assertEqual(caught.exception.code, "orchestration_path_mismatch")
+
+    def test_wrong_manifest_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            pointer, protocol = self._write_fixture(
+                Path(raw), manifest_path="audit-control-plane/protocol/alternate.yaml"
+            )
+            with self.assertRaises(MODULE.VerificationError) as caught:
+                MODULE.verify(pointer, protocol, timeout=0.1)
+        self.assertEqual(caught.exception.code, "manifest_path_mismatch")
+
+    def test_invalid_timeouts_fail_closed_without_traceback(self) -> None:
+        for timeout in (0.0, -1.0, float("nan"), float("inf"), 60.1):
+            with self.subTest(timeout=timeout), tempfile.TemporaryDirectory() as raw:
+                pointer, protocol = self._write_fixture(Path(raw))
+                with self.assertRaises(MODULE.VerificationError) as caught:
+                    MODULE.verify(pointer, protocol, timeout=timeout)
+                self.assertEqual(caught.exception.code, "timeout_invalid")
+
+    def test_required_contract_marker_missing_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            pointer, protocol = self._write_fixture(directory)
+            bad_protocol = VALID_PROTOCOL.replace(
+                b"  only_automatic_write_surface: Issue 722 append-only comments\n", b""
+            )
+            protocol.write_bytes(bad_protocol)
+            pointer_data = json.loads(pointer.read_text(encoding="utf-8"))
+            pointer_data["protocol_digest_sha256"] = hashlib.sha256(bad_protocol).hexdigest()
+            pointer.write_text(json.dumps(pointer_data), encoding="utf-8")
+            with self.assertRaises(MODULE.VerificationError) as caught:
+                MODULE.verify(pointer, protocol, timeout=0.1)
+        self.assertEqual(caught.exception.code, "protocol_contract_missing")
 
 
 if __name__ == "__main__":
