@@ -14,6 +14,7 @@ from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
 from .permissions import ensure_ticket_visible
 from .webchat_handoff_service import serialize_handoff_request
+from .webchat_public_payload import public_webchat_message_visible
 
 Audience = Literal["admin", "visitor"]
 
@@ -183,6 +184,8 @@ def event_envelope(
             .first()
         )
         if message is not None:
+            if audience == "visitor" and not public_webchat_message_visible(message.message_type):
+                return None
             envelope["message"] = _message_read(message, audience=audience)
     handoff_request_id = payload.get("handoff_request_id") or getattr(conversation, "current_handoff_request_id", None)
     if audience == "admin" and current_user is not None and handoff_request_id:

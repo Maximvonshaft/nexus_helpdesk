@@ -6,7 +6,7 @@ from datetime import timezone
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState
@@ -15,7 +15,7 @@ from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .permissions import CAP_TICKET_READ, resolve_capabilities
 from .scope_permissions import has_global_case_visibility
-from .webchat_public_payload import public_webchat_metadata
+from .webchat_public_payload import PUBLIC_WEBCHAT_HIDDEN_MESSAGE_TYPES, public_webchat_metadata
 from .webchat_inbox_read_state import webchat_read_state_payloads
 
 DEFAULT_POLL_LIMIT = 50
@@ -104,7 +104,13 @@ def list_public_messages_throttled(
     limit: int = DEFAULT_POLL_LIMIT,
 ) -> dict[str, Any]:
     safe_limit = max(1, min(limit or DEFAULT_POLL_LIMIT, MAX_POLL_LIMIT))
-    query = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id)
+    query = db.query(WebchatMessage).filter(
+        WebchatMessage.conversation_id == conversation.id,
+        or_(
+            WebchatMessage.message_type.is_(None),
+            WebchatMessage.message_type.notin_(tuple(PUBLIC_WEBCHAT_HIDDEN_MESSAGE_TYPES)),
+        ),
+    )
     if after_id is not None:
         query = query.filter(WebchatMessage.id > max(0, after_id))
     rows = query.order_by(WebchatMessage.id.asc()).limit(safe_limit + 1).all()
