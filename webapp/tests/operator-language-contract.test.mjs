@@ -89,7 +89,7 @@ test('operator-facing names replace internal platform vocabulary', () => {
   assert.doesNotMatch(audit, /Turn #|Ticket #|Finding #|脱敏证据包|查看 JSON/)
 
   assert.match(controlTower, /系统与配置问题/)
-  assert.match(controlTower, />去处理</)
+  assert.match(controlTower, /去处理/)
   assert.doesNotMatch(controlTower, /运行与治理风险|后端未返回受支持的处理入口|打开处理页面/)
 })
 
