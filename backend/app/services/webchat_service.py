@@ -40,6 +40,9 @@ MAX_FIELD_CHARS = 300
 MAX_URL_CHARS = 700
 DEFAULT_POLL_LIMIT = 50
 MAX_POLL_LIMIT = 100
+ADMIN_THREAD_MESSAGE_DEFAULT_LIMIT = 100
+ADMIN_THREAD_MESSAGE_MAX_LIMIT = 200
+ADMIN_THREAD_ACTION_LIMIT = 50
 WEBCHAT_VISITOR_TOKEN_TTL_DAYS = 7
 STALE_PUBLIC_HANDOFF_RESUME_AFTER = timedelta(minutes=30)
 SENSITIVE_EVENT_KEYS = ("token", "secret", "password", "authorization", "cookie", "credential", "api_key", "session_key")
@@ -724,52 +727,45 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     return {"ok": True, "action_id": action.id, "status": action.status, "message": _message_read(action_message), "handoff_triggered": handoff_triggered}
 
 
-def admin_list_conversations(db: Session, current_user: User, *, limit: int = 50) -> list[dict[str, Any]]:
-    rows = (
-        db.query(WebchatConversation)
-        .order_by(WebchatConversation.updated_at.desc())
-        .limit(max(1, min(limit, 100)))
-        .all()
-    )
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        ticket = db.query(Ticket).filter(Ticket.id == row.ticket_id).first()
-        if not ticket:
-            continue
-        try:
-            ensure_ticket_visible(current_user, ticket, db)
-        except HTTPException:
-            continue
-        last_message = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == row.id).order_by(WebchatMessage.id.desc()).first()
-        items.append({
-            "conversation_id": row.public_id,
-            "ticket_id": row.ticket_id,
-            "ticket_no": ticket.ticket_no,
-            "title": ticket.title,
-            "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
-            "visitor_name": row.visitor_name,
-            "visitor_email": row.visitor_email,
-            "visitor_phone": row.visitor_phone,
-            "origin": row.origin,
-            "page_url": row.page_url,
-            "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-            "last_message_type": last_message.message_type if last_message else None,
-            "last_action_status": last_message.action_status if last_message else None,
-            "needs_human": ticket.conversation_state == ConversationState.human_review_required or bool(ticket.required_action),
-            **webchat_read_state_payload(db, conversation_id=row.id, user_id=current_user.id),
-        })
-    return items
+def _safe_admin_thread_message_limit(limit: int | None) -> int:
+    try:
+        value = int(limit or ADMIN_THREAD_MESSAGE_DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        value = ADMIN_THREAD_MESSAGE_DEFAULT_LIMIT
+    return max(1, min(value, ADMIN_THREAD_MESSAGE_MAX_LIMIT))
 
 
-def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[str, Any]:
+def admin_get_thread(
+    db: Session,
+    ticket_id: int,
+    current_user: User,
+    *,
+    before_message_id: int | None = None,
+    message_limit: int = ADMIN_THREAD_MESSAGE_DEFAULT_LIMIT,
+) -> dict[str, Any]:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     conversation = db.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
-    rows = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id).order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc()).all()
-    actions = db.query(WebchatCardAction).filter(WebchatCardAction.conversation_id == conversation.id).order_by(WebchatCardAction.created_at.asc(), WebchatCardAction.id.asc()).all()
+
+    safe_limit = _safe_admin_thread_message_limit(message_limit)
+    message_query = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id)
+    if before_message_id is not None:
+        message_query = message_query.filter(WebchatMessage.id < max(1, int(before_message_id)))
+    fetched_messages = message_query.order_by(WebchatMessage.id.desc()).limit(safe_limit + 1).all()
+    has_more_messages = len(fetched_messages) > safe_limit
+    message_rows = list(reversed(fetched_messages[:safe_limit]))
+    next_before_message_id = message_rows[0].id if has_more_messages and message_rows else None
+
+    action_rows = (
+        db.query(WebchatCardAction)
+        .filter(WebchatCardAction.conversation_id == conversation.id)
+        .order_by(WebchatCardAction.id.desc())
+        .limit(ADMIN_THREAD_ACTION_LIMIT)
+        .all()
+    )
+    action_rows.reverse()
     ai_turn_rows = (
         db.query(WebchatAITurn)
         .filter(WebchatAITurn.conversation_id == conversation.id)
@@ -801,7 +797,12 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
             "phone": conversation.visitor_phone,
             "ref": conversation.visitor_ref,
         },
-        "messages": [_message_read(row) for row in rows],
+        "messages": [_message_read(row) for row in message_rows],
+        "message_page": {
+            "before_id": next_before_message_id,
+            "has_more": has_more_messages,
+            "limit": safe_limit,
+        },
         "actions": [{
             "id": action.id,
             "message_id": action.message_id,
@@ -811,7 +812,7 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
             "submitted_by": action.submitted_by,
             "origin": action.origin,
             "created_at": action.created_at.isoformat() if action.created_at else None,
-        } for action in actions],
+        } for action in action_rows],
         "ai_turns": [_ai_turn_read(row) for row in reversed(ai_turn_rows)],
         "events": [_event_read(row) for row in reversed(event_rows)],
         **webchat_read_state_payload(db, conversation_id=conversation.id, user_id=current_user.id),
