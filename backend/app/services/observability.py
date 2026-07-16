@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import os
 import re
 from time import perf_counter
 
@@ -51,48 +53,75 @@ class _SafeTextFormatter(logging.Formatter):
             return "ERROR logging log_formatter_failure"
 
 
-_PROM_REGISTRY = CollectorRegistry() if CollectorRegistry else None
-if _PROM_REGISTRY and multiprocess:
-    try:
-        multiprocess.MultiProcessCollector(_PROM_REGISTRY)
-    except ValueError:
-        pass
+_PROMETHEUS_MULTIPROC_DIR = (os.getenv("PROMETHEUS_MULTIPROC_DIR") or "").strip()
+_PROMETHEUS_MULTIPROC_ENABLED = bool(
+    _PROMETHEUS_MULTIPROC_DIR
+    and CollectorRegistry is not None
+    and multiprocess is not None
+)
+# In multiprocess mode, metric wrappers must not be registered in the scrape
+# registry. They write per-process files and a fresh MultiProcessCollector reads
+# those files for every scrape. In single-process mode, keep the existing private
+# registry so tests and local deployments do not pollute the default registry.
+_PROM_REGISTRY = None if _PROMETHEUS_MULTIPROC_ENABLED else (CollectorRegistry() if CollectorRegistry else None)
 
-_HTTP_COUNTER = Counter('nexusdesk_http_requests_total', 'Total HTTP requests processed', ['method', 'path', 'status_code'], registry=_PROM_REGISTRY) if Counter else None
-_HTTP_DURATION = Histogram('nexusdesk_http_request_duration_ms', 'HTTP request duration in milliseconds', ['method', 'path'], registry=_PROM_REGISTRY, buckets=(5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)) if Histogram else None
-_WORKER_RUNS = Counter('nexusdesk_worker_runs_total', 'Number of worker polling cycles', ['worker_id'], registry=_PROM_REGISTRY) if Counter else None
-_JOB_COUNTER = Counter('nexusdesk_worker_processed_total', 'Processed queued jobs/messages', ['worker_id', 'kind', 'result'], registry=_PROM_REGISTRY) if Counter else None
-_QUEUE_DEPTH = Gauge('nexusdesk_queue_depth', 'Observed queue depth or per-cycle queue count', ['name', 'kind'], registry=_PROM_REGISTRY) if Gauge else None
-_QUEUE_SNAPSHOTS_COMPAT = Counter('nexusdesk_queue_snapshots_total', 'Backward-compatible queue snapshot observations', ['name', 'kind'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_AI_TURNS = Counter('nexusdesk_webchat_ai_turn_total', 'WebChat AI turn status transitions', ['status'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_AI_TURN_DURATION = Histogram('nexusdesk_webchat_ai_turn_duration_ms', 'WebChat AI turn duration in milliseconds', ['status'], registry=_PROM_REGISTRY, buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000)) if Histogram else None
-_WEBCHAT_AI_STALE_SUPPRESSED = Counter('nexusdesk_webchat_ai_stale_suppressed_total', 'Stale WebChat AI replies suppressed before public delivery', ['reason'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_AI_TIMEOUTS = Counter('nexusdesk_webchat_ai_timeout_total', 'WebChat AI turn watchdog timeouts', ['reason'], registry=_PROM_REGISTRY) if Counter else None
-_EXTERNAL_CHANNEL_BRIDGE_DURATION = Histogram('nexusdesk_external_channel_bridge_elapsed_ms', 'ExternalChannel bridge call duration in milliseconds', ['operation', 'status'], registry=_PROM_REGISTRY, buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
-_TOOL_CALLS = Counter('nexusdesk_tool_call_total', 'Tool governance audit call count', ['tool_name', 'tool_type', 'status'], registry=_PROM_REGISTRY) if Counter else None
-_TOOL_CALL_DURATION = Histogram('nexusdesk_tool_call_elapsed_ms', 'Tool governance audit call duration in milliseconds', ['tool_name', 'tool_type', 'status'], registry=_PROM_REGISTRY, buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
-_BACKGROUND_JOB_WAIT = Histogram('nexusdesk_background_job_wait_ms', 'Background job wait time before processing in milliseconds', ['job_type'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
-_DB_QUERY_DURATION = Histogram('nexusdesk_db_query_duration_ms', 'Database query duration in milliseconds', ['category'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)) if Histogram else None
-_DB_SLOW_QUERY_TOTAL = Counter('nexusdesk_db_slow_query_total', 'Database queries exceeding DB_SLOW_QUERY_MS', ['category'], registry=_PROM_REGISTRY) if Counter else None
-_BACKGROUND_JOB_DURATION = Histogram('nexusdesk_worker_job_duration_ms', 'Background job processing duration in milliseconds', ['job_type', 'result'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
-_BACKGROUND_JOB_RETRIES = Counter('nexusdesk_worker_job_retries_total', 'Background job retry count', ['job_type', 'result'], registry=_PROM_REGISTRY) if Counter else None
-_BACKGROUND_JOB_OLDEST_PENDING = Gauge('nexusdesk_worker_oldest_pending_job_age_ms', 'Oldest pending job age in milliseconds by job type', ['job_type'], registry=_PROM_REGISTRY) if Gauge else None
-_OUTBOUND_QUEUED_TO_SENT = Histogram('nexusdesk_outbound_queued_to_sent_ms', 'Outbound queued_at to sent_at latency in milliseconds', ['channel', 'provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
-_OUTBOUND_PROVIDER_DISPATCH = Histogram('nexusdesk_outbound_provider_dispatch_ms', 'Outbound provider dispatch duration in milliseconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
-_OUTBOUND_PROVIDER_RESULT = Counter('nexusdesk_outbound_provider_result_total', 'Outbound provider dispatch result count', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
-_FRONTEND_API_LATENCY = Histogram('nexusdesk_frontend_api_latency_ms', 'Frontend-observed API latency in milliseconds', ['method', 'path', 'status'], registry=_PROM_REGISTRY, buckets=(25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000)) if Histogram else None
-_WEB_VITALS = Histogram('nexusdesk_web_vitals_value', 'Frontend Web Vitals values reported without PII', ['name', 'rating'], registry=_PROM_REGISTRY, buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)) if Histogram else None
-_VOICE_SESSION_EVENTS = Counter('nexusdesk_voice_session_events_total', 'Voice session lifecycle events without credentials', ['provider', 'status', 'event_type'], registry=_PROM_REGISTRY) if Counter else None
-_VOICE_PROVIDER_ERRORS = Counter('nexusdesk_voice_provider_errors_total', 'Voice provider operation errors', ['provider', 'operation'], registry=_PROM_REGISTRY) if Counter else None
-_VOICE_CALL_DURATION = Histogram('nexusdesk_voice_call_duration_seconds', 'Completed voice call duration in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600)) if Histogram else None
-_VOICE_RINGING_DURATION = Histogram('nexusdesk_voice_ringing_duration_seconds', 'Voice ringing duration before accept or terminal state in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900)) if Histogram else None
-_WEBCHAT_WS_CONNECTED = Counter('nexusdesk_webchat_websocket_connected_total', 'WebChat WebSocket accepted connections', ['client_type'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_WS_DISCONNECTED = Counter('nexusdesk_webchat_websocket_disconnected_total', 'WebChat WebSocket closed connections', ['client_type'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_WS_AUTH_FAILED = Counter('nexusdesk_webchat_websocket_auth_failed_total', 'WebChat WebSocket rejected handshakes and subscriptions', ['client_type', 'reason'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_WS_EVENT_SENT = Counter('nexusdesk_webchat_websocket_event_sent_total', 'WebChat WebSocket events sent to clients', ['client_type', 'event_type'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_WS_EVENT_REPLAY = Counter('nexusdesk_webchat_websocket_event_replay_total', 'WebChat WebSocket replay batches delivered', ['client_type', 'subscription'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_WS_FALLBACK_POLLING = Counter('nexusdesk_webchat_websocket_fallback_polling_total', 'WebChat public widget fallback polling activations', ['client_type', 'reason'], registry=_PROM_REGISTRY) if Counter else None
-_WEBCHAT_WS_ACTIVE_CONNECTIONS = Gauge('nexusdesk_webchat_websocket_active_connections', 'Current in-process WebChat WebSocket connections', ['client_type'], registry=_PROM_REGISTRY) if Gauge else None
+
+def _registry():
+    return _PROM_REGISTRY
+
+
+def _counter(name: str, description: str, labels: list[str]):
+    return Counter(name, description, labels, registry=_registry()) if Counter else None
+
+
+def _histogram(name: str, description: str, labels: list[str], buckets: tuple[float, ...]):
+    return Histogram(name, description, labels, registry=_registry(), buckets=buckets) if Histogram else None
+
+
+def _gauge(name: str, description: str, labels: list[str], *, multiprocess_mode: str = "all"):
+    if not Gauge:
+        return None
+    kwargs = {"registry": _registry()}
+    if _PROMETHEUS_MULTIPROC_ENABLED:
+        kwargs["multiprocess_mode"] = multiprocess_mode
+    return Gauge(name, description, labels, **kwargs)
+
+
+_HTTP_COUNTER = _counter('nexusdesk_http_requests_total', 'Total HTTP requests processed', ['method', 'path', 'status_code'])
+_HTTP_DURATION = _histogram('nexusdesk_http_request_duration_ms', 'HTTP request duration in milliseconds', ['method', 'path'], (5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000))
+_WORKER_RUNS = _counter('nexusdesk_worker_runs_total', 'Number of worker polling cycles', ['worker_id'])
+_JOB_COUNTER = _counter('nexusdesk_worker_processed_total', 'Processed queued jobs/messages', ['worker_id', 'kind', 'result'])
+_QUEUE_DEPTH = _gauge('nexusdesk_queue_depth', 'Observed queue depth or per-cycle queue count', ['name', 'kind'], multiprocess_mode='livesum')
+_QUEUE_SNAPSHOTS_COMPAT = _counter('nexusdesk_queue_snapshots_total', 'Backward-compatible queue snapshot observations', ['name', 'kind'])
+_WEBCHAT_AI_TURNS = _counter('nexusdesk_webchat_ai_turn_total', 'WebChat AI turn status transitions', ['status'])
+_WEBCHAT_AI_TURN_DURATION = _histogram('nexusdesk_webchat_ai_turn_duration_ms', 'WebChat AI turn duration in milliseconds', ['status'], (50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000))
+_WEBCHAT_AI_STALE_SUPPRESSED = _counter('nexusdesk_webchat_ai_stale_suppressed_total', 'Stale WebChat AI replies suppressed before public delivery', ['reason'])
+_WEBCHAT_AI_TIMEOUTS = _counter('nexusdesk_webchat_ai_timeout_total', 'WebChat AI turn watchdog timeouts', ['reason'])
+_EXTERNAL_CHANNEL_BRIDGE_DURATION = _histogram('nexusdesk_external_channel_bridge_elapsed_ms', 'ExternalChannel bridge call duration in milliseconds', ['operation', 'status'], (50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000))
+_TOOL_CALLS = _counter('nexusdesk_tool_call_total', 'Tool governance audit call count', ['tool_name', 'tool_type', 'status'])
+_TOOL_CALL_DURATION = _histogram('nexusdesk_tool_call_elapsed_ms', 'Tool governance audit call duration in milliseconds', ['tool_name', 'tool_type', 'status'], (10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000))
+_BACKGROUND_JOB_WAIT = _histogram('nexusdesk_background_job_wait_ms', 'Background job wait time before processing in milliseconds', ['job_type'], (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000))
+_DB_QUERY_DURATION = _histogram('nexusdesk_db_query_duration_ms', 'Database query duration in milliseconds', ['category'], (1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000))
+_DB_SLOW_QUERY_TOTAL = _counter('nexusdesk_db_slow_query_total', 'Database queries exceeding DB_SLOW_QUERY_MS', ['category'])
+_BACKGROUND_JOB_DURATION = _histogram('nexusdesk_worker_job_duration_ms', 'Background job processing duration in milliseconds', ['job_type', 'result'], (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000))
+_BACKGROUND_JOB_RETRIES = _counter('nexusdesk_worker_job_retries_total', 'Background job retry count', ['job_type', 'result'])
+_BACKGROUND_JOB_OLDEST_PENDING = _gauge('nexusdesk_worker_oldest_pending_job_age_ms', 'Oldest pending job age in milliseconds by job type', ['job_type'], multiprocess_mode='livemax')
+_OUTBOUND_QUEUED_TO_SENT = _histogram('nexusdesk_outbound_queued_to_sent_ms', 'Outbound queued_at to sent_at latency in milliseconds', ['channel', 'provider', 'status'], (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000))
+_OUTBOUND_PROVIDER_DISPATCH = _histogram('nexusdesk_outbound_provider_dispatch_ms', 'Outbound provider dispatch duration in milliseconds', ['provider', 'status'], (10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000))
+_OUTBOUND_PROVIDER_RESULT = _counter('nexusdesk_outbound_provider_result_total', 'Outbound provider dispatch result count', ['provider', 'status'])
+_FRONTEND_API_LATENCY = _histogram('nexusdesk_frontend_api_latency_ms', 'Frontend-observed API latency in milliseconds', ['method', 'path', 'status'], (25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000))
+_WEB_VITALS = _histogram('nexusdesk_web_vitals_value', 'Frontend Web Vitals values reported without PII', ['name', 'rating'], (0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10))
+_VOICE_SESSION_EVENTS = _counter('nexusdesk_voice_session_events_total', 'Voice session lifecycle events without credentials', ['provider', 'status', 'event_type'])
+_VOICE_PROVIDER_ERRORS = _counter('nexusdesk_voice_provider_errors_total', 'Voice provider operation errors', ['provider', 'operation'])
+_VOICE_CALL_DURATION = _histogram('nexusdesk_voice_call_duration_seconds', 'Completed voice call duration in seconds', ['provider', 'status'], (1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600))
+_VOICE_RINGING_DURATION = _histogram('nexusdesk_voice_ringing_duration_seconds', 'Voice ringing duration before accept or terminal state in seconds', ['provider', 'status'], (1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900))
+_WEBCHAT_WS_CONNECTED = _counter('nexusdesk_webchat_websocket_connected_total', 'WebChat WebSocket accepted connections', ['client_type'])
+_WEBCHAT_WS_DISCONNECTED = _counter('nexusdesk_webchat_websocket_disconnected_total', 'WebChat WebSocket closed connections', ['client_type'])
+_WEBCHAT_WS_AUTH_FAILED = _counter('nexusdesk_webchat_websocket_auth_failed_total', 'WebChat WebSocket rejected handshakes and subscriptions', ['client_type', 'reason'])
+_WEBCHAT_WS_EVENT_SENT = _counter('nexusdesk_webchat_websocket_event_sent_total', 'WebChat WebSocket events sent to clients', ['client_type', 'event_type'])
+_WEBCHAT_WS_EVENT_REPLAY = _counter('nexusdesk_webchat_websocket_event_replay_total', 'WebChat WebSocket replay batches delivered', ['client_type', 'subscription'])
+_WEBCHAT_WS_FALLBACK_POLLING = _counter('nexusdesk_webchat_websocket_fallback_polling_total', 'WebChat public widget fallback polling activations', ['client_type', 'reason'])
+_WEBCHAT_WS_ACTIVE_CONNECTIONS = _gauge('nexusdesk_webchat_websocket_active_connections', 'Current in-process WebChat WebSocket connections', ['client_type'], multiprocess_mode='livesum')
 
 _ID_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
 _UUID_SEGMENT_RE = re.compile(r"/[0-9a-fA-F]{8,}(?=/|$)")
@@ -158,9 +187,29 @@ def record_worker_result(worker_id: str, kind: str, result: str, count: int = 1)
 
 
 def render_prometheus_metrics() -> str:
-    if generate_latest and _PROM_REGISTRY:
+    if not generate_latest:
+        return "# metrics disabled\n"
+    if _PROMETHEUS_MULTIPROC_ENABLED:
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        return generate_latest(registry).decode('utf-8')
+    if _PROM_REGISTRY:
         return generate_latest(_PROM_REGISTRY).decode('utf-8')
     return "# metrics disabled\n"
+
+
+def mark_prometheus_process_dead(pid: int | None = None) -> None:
+    if not _PROMETHEUS_MULTIPROC_ENABLED:
+        return
+    try:
+        multiprocess.mark_process_dead(int(pid or os.getpid()))
+    except Exception:
+        # Metrics cleanup is best-effort and must never interrupt process exit.
+        pass
+
+
+if _PROMETHEUS_MULTIPROC_ENABLED:
+    atexit.register(mark_prometheus_process_dead)
 
 
 def timed_request():
