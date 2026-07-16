@@ -18,41 +18,40 @@ function contract() {
   return JSON.parse(readFileSync(CONTRACT_PATH, 'utf8'))
 }
 
+function workspaceSource() {
+  return [
+    'webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx',
+    'webapp/src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
+    'webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx',
+    'webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
+    'webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx',
+    'webapp/src/features/operator-workspace/operatorWorkspaceState.ts',
+  ].map(readRepositoryPath).join('\n')
+}
+
 test('operator language authority is versioned and bound to the sole UI delivery', () => {
   const value = contract()
   assert.equal(value.schema, 'nexus.operator-language.v1')
+  assert.equal(value.version, 'operator_language.2026-07-16.3')
   assert.equal(value.work_item, 753)
   assert.equal(value.owner_pr, 754)
   assert.equal(value.status, 'code_convergence_complete_verification_pending')
+  assert.equal(value.semantic_presentation_authority, 'webapp/src/app/OperatorPresentation.tsx')
   assert.match(value.goal, /current task, current state, available action and recovery step/)
   assert.deepEqual(value.pending_surfaces, [])
 })
 
 test('primary surfaces are limited to task, state, action and recovery language', () => {
   const value = contract()
-  for (const responsibility of [
-    'page or section name',
-    'current state',
-    'task fact',
-    'field label',
-    'action label',
-    'blocking reason',
-    'recovery instruction',
-  ]) {
+  for (const responsibility of ['page or section name', 'current state', 'task fact', 'field label', 'action label', 'blocking reason', 'recovery instruction']) {
     assert.ok(value.primary_surface_rules.allowed.includes(responsibility), `missing allowed language role: ${responsibility}`)
   }
-  for (const forbidden of [
-    'product narration',
-    'architecture explanation',
-    'frontend or backend responsibility explanation',
-    'permission philosophy',
-    'AI self-description',
-  ]) {
+  for (const forbidden of ['product narration', 'architecture explanation', 'frontend or backend responsibility explanation', 'permission philosophy', 'AI self-description']) {
     assert.ok(value.primary_surface_rules.forbidden.includes(forbidden), `missing forbidden language class: ${forbidden}`)
   }
 })
 
-test('completed surfaces contain none of the retired narrative literals', () => {
+test('completed surfaces exist and contain none of the retired narrative literals', () => {
   const value = contract()
   for (const path of value.completed_surfaces) {
     assert.equal(existsSync(join(REPO_ROOT, path)), true, `completed language surface is missing: ${path}`)
@@ -61,10 +60,11 @@ test('completed surfaces contain none of the retired narrative literals', () => 
       assert.equal(source.includes(literal), false, `retired narrative literal returned in ${path}: ${literal}`)
     }
   }
+  assert.equal(existsSync(join(REPO_ROOT, 'webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx')), false)
 })
 
 test('operator-facing names replace internal platform vocabulary', () => {
-  const workspace = readRepositoryPath('webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx')
+  const workspace = workspaceSource()
   const workspacePresentation = readRepositoryPath('webapp/src/lib/operatorWorkspacePresentation.ts')
   const runtime = readRepositoryPath('webapp/src/features/runtime/RuntimePage.tsx')
   const channels = readRepositoryPath('webapp/src/features/channels/ChannelsPage.tsx')
@@ -75,8 +75,8 @@ test('operator-facing names replace internal platform vocabulary', () => {
   for (const label of ['待处理任务', '任务类型', '当前负责人', '处理时限', '任务详情', '处理进度', '已知信息', '接手任务', '接手处理', '转回待处理', '恢复自动回复', '处理编号']) {
     assert.ok(workspace.includes(label), `workspace operator label is missing: ${label}`)
   }
-  assert.match(workspace, /mergeLatestThread/)
-  assert.match(workspace, /mergeOlderThread/)
+  assert.match(workspace, /mergeLatestWorkspaceThread/)
+  assert.match(workspace, /mergeOlderWorkspaceThread/)
   assert.match(workspace, /conversationEvents/)
   assert.match(workspace, /加载更早消息/)
   assert.doesNotMatch(workspace, /案例处理链路|事实与证据|案例接管|接管案例|释放案例|恢复 AI|服务端最终授权|当前接口未提供可信结案事实/)
@@ -112,19 +112,8 @@ test('operator-facing names replace internal platform vocabulary', () => {
 
 test('technical identifiers are allowed only through named disclosures', () => {
   const value = contract()
-  assert.deepEqual(value.technical_disclosure.allowed_locations, [
-    '系统信息',
-    '审计数据',
-    '原始数据',
-    '处理编号',
-    '管理员-only pages',
-  ])
-  for (const rule of [
-    'Provider is shown as 服务提供方.',
-    'Ticket is shown as 工单.',
-    'Job is shown as 处理编号.',
-    'Finding is shown as 问题记录.',
-  ]) {
+  assert.deepEqual(value.technical_disclosure.allowed_locations, ['系统信息', '审计数据', '原始数据', '处理编号', '管理员-only pages'])
+  for (const rule of ['Provider is shown as 服务提供方.', 'Ticket is shown as 工单.', 'Job is shown as 处理编号.', 'Finding is shown as 问题记录.']) {
     assert.ok(value.technical_disclosure.rules.includes(rule), `missing technical language rule: ${rule}`)
   }
 })
