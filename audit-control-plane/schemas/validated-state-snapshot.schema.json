@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/validated-state-snapshot.schema.json",
+  "title": "Nexus Validated State Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "snapshot_id",
+    "status",
+    "generated_at",
+    "governance_commit",
+    "protocol_digest_sha256",
+    "main_sha",
+    "lane_coverage",
+    "active_formal_blocks",
+    "verified_current_findings",
+    "provisional_or_revalidation_only",
+    "contradictions",
+    "not_verified",
+    "valid_until"
+  ],
+  "properties": {
+    "schema": {"const": "nexus.validated-state-snapshot.v1"},
+    "snapshot_id": {"type": "string", "minLength": 8},
+    "status": {"enum": ["FINAL_CURRENT", "PARTIAL_CURRENT", "STALE", "INVALIDATED"]},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "governance_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "protocol_digest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "previous_snapshot_id": {"type": ["string", "null"]},
+    "lane_coverage": {
+      "type": "object",
+      "minProperties": 15,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["result_id", "run_state", "main_sha"],
+        "properties": {
+          "result_id": {"type": "string"},
+          "run_state": {"enum": ["FINAL", "PARTIAL", "NO_CHANGE", "STALE_RUN", "MISSING"]},
+          "main_sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+          "evidence_url": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "active_formal_blocks": {"type": "array", "items": {"$ref": "#/$defs/reference"}},
+    "verified_current_findings": {"type": "array", "items": {"$ref": "#/$defs/reference"}},
+    "provisional_or_revalidation_only": {"type": "array", "items": {"$ref": "#/$defs/reference"}},
+    "supersessions": {"type": "array", "items": {"type": "object"}},
+    "tombstones": {"type": "array", "items": {"type": "object"}},
+    "contradictions": {"type": "array", "items": {"type": "object"}},
+    "not_verified": {"type": "array", "items": {"type": "string"}},
+    "execution_packet_ids": {"type": "array", "items": {"type": "string"}},
+    "production_release_authorization": {"enum": ["NOT_GRANTED", "BOUNDED_PACKET_ONLY", "GRANTED"]},
+    "valid_until": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "FINAL_CURRENT"}}},
+      "then": {
+        "properties": {
+          "lane_coverage": {
+            "additionalProperties": {
+              "properties": {"run_state": {"enum": ["FINAL", "NO_CHANGE"]}}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "reference": {
+      "type": "object",
+      "required": ["finding_id", "dedupe_key", "severity", "currentness", "owner", "evidence_urls"],
+      "properties": {
+        "finding_id": {"type": "string"},
+        "dedupe_key": {"type": "string"},
+        "severity": {"enum": ["P0", "P1", "P2", "P3", "INFO"]},
+        "currentness": {"enum": ["VERIFIED_CURRENT", "REVALIDATION_REQUIRED", "DISPUTED", "NOT_VERIFIED"]},
+        "owner": {"type": ["string", "array", "object"]},
+        "evidence_urls": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
