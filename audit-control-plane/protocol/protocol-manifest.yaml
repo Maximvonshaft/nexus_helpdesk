@@ -1,0 +1,42 @@
+schema: nexus.governance.protocol-manifest.v1
+manifest_version: 1.0.0
+status: CURRENT
+created_at: 2026-07-16T00:00:00+02:00
+authority:
+  repository: Maximvonshaft/nexus_helpdesk
+  branch: governance/audit-control-plane
+  exact_commit: supplied_by_main_pointer_or_issue_722_authority_pointer
+  issue_ledger: 722
+protocol:
+  id: nexus-governance-15-lane-v3.1
+  version: 3.1.0
+  path: audit-control-plane/protocol/nexus-audit-controller-v3.1.yaml
+  sha256: 4aec539d6b490e2db3b21a068b02514d12706e6c8379e1e1ddc0036678ac9d9a
+orchestration:
+  id: nexus.audit.task-orchestration.v1
+  version: 1.0.0
+  path: audit-control-plane/protocol/task-orchestration-v1.yaml
+schemas:
+  audit_event: audit-control-plane/schemas/audit-event.schema.json
+  validated_state_snapshot: audit-control-plane/schemas/validated-state-snapshot.schema.json
+  execution_context_index: audit-control-plane/schemas/execution-context-index.schema.json
+  execution_packet: audit-control-plane/schemas/execution-packet.schema.json
+  retirement_event: audit-control-plane/schemas/retirement-event.schema.json
+state:
+  current_authority: audit-control-plane/state/current-authority.json
+  current_snapshot: audit-control-plane/state/current-snapshot.json
+  current_context_index: audit-control-plane/state/current-context-index.json
+history:
+  hash_chain: audit-control-plane/manifests/hash-chain.jsonl
+  tombstones_root: audit-control-plane/tombstones
+  snapshots_root: audit-control-plane/snapshots
+  execution_packets_root: audit-control-plane/execution-packets
+supersedes:
+  - protocol_id: nexus-governance-15-lane-v3.0
+    reason: The v3.0 body bootstrap declared a canonical main path that could be removed by rewritten main history. v3.1 moves durable authority to an independent exact-commit governance branch.
+validation:
+  - exact governance commit must resolve
+  - protocol file SHA-256 must match this manifest
+  - main pointer or Issue 722 authority pointer must name the same exact commit and digest
+  - branch name without an exact commit is invalid
+  - PARTIAL snapshots and indexes cannot authorize execution
