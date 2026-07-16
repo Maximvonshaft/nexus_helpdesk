@@ -18,6 +18,13 @@ export function operatorToneColor(tone: OperatorTone | string | null | undefined
   return 'default'
 }
 
+export function operatorTonePalettePath(tone: OperatorTone | string | null | undefined) {
+  if (tone === 'success') return 'success.main'
+  if (tone === 'warning') return 'warning.main'
+  if (tone === 'danger') return 'error.main'
+  return 'text.secondary'
+}
+
 export function operatorErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
 }
