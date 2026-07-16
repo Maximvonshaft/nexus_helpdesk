@@ -6,26 +6,30 @@ import { resolve } from 'node:path'
 const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
-const button = read('src/components/ui/Button.tsx')
 const main = read('src/main.tsx')
+const theme = read('src/theme/nexusTheme.ts')
+const provider = read('src/theme/NexusThemeProvider.tsx')
 const a11yCss = read('src/a11y.css')
 
-test('Button defaults to type button while preserving explicit caller type', () => {
-  assert.match(button, /type\s*=\s*'button'/)
-  assert.match(button, /<button[\s\S]*type=\{type\}/)
-  assert.doesNotMatch(button, /props as any/)
+test('MUI buttons and icon buttons meet the shared target and focus contract', () => {
+  assert.match(theme, /MuiButton:/)
+  assert.match(theme, /MuiIconButton:/)
+  assert.match(theme, /minHeight:\s*44/)
+  assert.match(theme, /minWidth:\s*44/)
+  assert.match(theme, /&:focus-visible/)
+  assert.match(theme, /outlineOffset:\s*2/)
 })
 
-test('global accessibility stylesheet is loaded without runtime patchers', () => {
+test('global accessibility foundation loads without runtime patchers', () => {
   assert.match(main, /import '@\/a11y\.css'/)
-  assert.doesNotMatch(main, /a11yRuntime/)
-  assert.doesNotMatch(main, /initA11yRuntimeRepair/)
+  assert.match(main, /NexusThemeProvider/)
+  assert.match(provider, /<CssBaseline \/>/)
+  assert.doesNotMatch(main, /a11yRuntime|initA11yRuntimeRepair/)
 })
 
-test('global accessibility stylesheet provides focus and reduced-motion hardening', () => {
-  assert.match(a11yCss, /\.sr-only/)
-  assert.match(a11yCss, /button:focus-visible/)
-  assert.match(a11yCss, /a\[href\]:focus-visible/)
-  assert.match(a11yCss, /@media \(prefers-reduced-motion: reduce\)/)
-  assert.match(a11yCss, /transform: none !important/)
+test('reduced motion is owned once by the MUI theme and CSS remains bounded', () => {
+  assert.match(theme, /prefers-reduced-motion/)
+  assert.match(theme, /transitionDuration:\s*'0\.01ms !important'/)
+  assert.match(a11yCss, /^\.sr-only\s*\{/)
+  assert.doesNotMatch(a11yCss, /focus-visible|prefers-reduced-motion|--nd-|\.nd-|\.auth-|\.operator-/)
 })
