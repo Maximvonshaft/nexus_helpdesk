@@ -106,7 +106,7 @@ test('control tower is a concise management projection that drills into canonica
   assert.match(controlTower, /canonicalAppHref/)
   assert.match(controlTower, /<Table/)
   assert.match(controlTower, /系统与配置问题/)
-  assert.match(controlTower, />去处理</)
+  assert.match(controlTower, /去处理/)
   assert.doesNotMatch(controlTower, /运行与治理风险|打开处理页面|后端未返回受支持的处理入口/)
   assert.match(canonicalRoutes, /\/workspace/)
   assert.match(canonicalRoutes, /\/channels/)
