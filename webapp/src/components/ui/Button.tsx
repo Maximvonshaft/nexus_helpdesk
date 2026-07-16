@@ -1,11 +1,12 @@
+import { Button as MuiButton, CircularProgress } from '@mui/material'
 import { forwardRef } from 'react'
-import type { ButtonHTMLAttributes, PropsWithChildren, ReactNode } from 'react'
-import { cn } from '@/lib/cn'
+import type { ButtonProps as MuiButtonProps } from '@mui/material/Button'
+import type { ReactNode } from 'react'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
-export type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>> & {
+export type ButtonProps = Omit<MuiButtonProps, 'variant' | 'size' | 'startIcon' | 'endIcon'> & {
   variant?: ButtonVariant
   size?: ButtonSize
   loading?: boolean
@@ -14,9 +15,21 @@ export type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonEleme
   trailingIcon?: ReactNode
 }
 
+const variantProps: Record<ButtonVariant, Pick<MuiButtonProps, 'variant' | 'color'>> = {
+  primary: { variant: 'contained', color: 'primary' },
+  secondary: { variant: 'outlined', color: 'inherit' },
+  ghost: { variant: 'text', color: 'inherit' },
+  danger: { variant: 'contained', color: 'error' },
+}
+
+const sizeMap: Record<ButtonSize, MuiButtonProps['size']> = {
+  sm: 'small',
+  md: 'medium',
+  lg: 'large',
+}
+
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   children,
-  className,
   variant = 'secondary',
   size = 'md',
   type = 'button',
@@ -27,25 +40,19 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   disabled,
   ...rest
 }, ref) {
-  const label = loading ? loadingLabel : children
-
   return (
-    <button
+    <MuiButton
       ref={ref}
       type={type}
-      className={cn(
-        'nd-button',
-        `nd-button--${size}`,
-        `nd-button--${variant}`,
-        className,
-      )}
-      aria-busy={loading ? true : undefined}
+      {...variantProps[variant]}
+      size={sizeMap[size]}
+      aria-busy={loading || undefined}
       disabled={disabled || loading}
+      startIcon={loading ? <CircularProgress color="inherit" size={16} /> : leadingIcon}
+      endIcon={!loading ? trailingIcon : undefined}
       {...rest}
     >
-      {!loading && leadingIcon ? <span className="nd-button__icon" aria-hidden="true">{leadingIcon}</span> : null}
-      <span className="nd-button__label">{label}</span>
-      {!loading && trailingIcon ? <span className="nd-button__icon" aria-hidden="true">{trailingIcon}</span> : null}
-    </button>
+      {loading ? loadingLabel : children}
+    </MuiButton>
   )
 })
