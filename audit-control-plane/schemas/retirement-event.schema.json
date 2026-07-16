@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/retirement-event.schema.json",
+  "title": "Nexus Repository Retirement Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "event_id",
+    "timestamp",
+    "main_sha",
+    "subject_paths",
+    "classification",
+    "state",
+    "replacement_authority",
+    "consumer_evidence",
+    "rollback",
+    "governance_packet_id",
+    "destructive_action_performed"
+  ],
+  "properties": {
+    "schema": {"const": "nexus.repository-retirement-event.v1"},
+    "event_id": {"type": "string", "minLength": 8},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "subject_paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
+    "classification": {
+      "enum": [
+        "CANONICAL",
+        "DUPLICATE_DELETE",
+        "DEAD_DELETE",
+        "SUPERSEDED_DELETE",
+        "LEGACY_ACTIVE_MIGRATE_THEN_DELETE",
+        "COMPATIBILITY_WITH_DEADLINE",
+        "GENERATED_OR_VENDOR_MANAGED",
+        "UNKNOWN_BLOCK_DELETE"
+      ]
+    },
+    "state": {
+      "enum": [
+        "DISCOVERED",
+        "DUPLICATE_CANDIDATE",
+        "DEAD_CANDIDATE",
+        "SUPERSEDED_CANDIDATE",
+        "MIGRATE_THEN_DELETE",
+        "COMPATIBILITY_WITH_DEADLINE",
+        "GOVERNANCE_ACCEPTED",
+        "DELETION_READY",
+        "DELETED",
+        "VERIFIED_ABSENT"
+      ]
+    },
+    "replacement_authority": {
+      "type": "object",
+      "required": ["subject", "status", "evidence_urls"],
+      "properties": {
+        "subject": {"type": ["string", "null"]},
+        "status": {"enum": ["NONE", "CANDIDATE", "VERIFIED_ON_MAIN", "NOT_APPLICABLE"]},
+        "evidence_urls": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "consumer_evidence": {
+      "type": "object",
+      "required": ["static", "runtime", "build_deploy", "data_migration"],
+      "properties": {
+        "static": {"enum": ["ABSENT", "MIGRATED", "PRESENT", "NOT_VERIFIED"]},
+        "runtime": {"enum": ["ABSENT", "MIGRATED", "PRESENT", "NOT_VERIFIED"]},
+        "build_deploy": {"enum": ["ABSENT", "MIGRATED", "PRESENT", "NOT_VERIFIED"]},
+        "data_migration": {"enum": ["SATISFIED", "NOT_APPLICABLE", "BLOCKED", "NOT_VERIFIED"]}
+      }
+    },
+    "rollback": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "governance_packet_id": {"type": ["string", "null"]},
+    "destructive_action_performed": {"type": "boolean"},
+    "anti_reintroduction_evidence": {"type": "array", "items": {"type": "string"}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"enum": ["DELETION_READY", "DELETED", "VERIFIED_ABSENT"]}}},
+      "then": {
+        "properties": {
+          "governance_packet_id": {"type": "string", "minLength": 8},
+          "replacement_authority": {"properties": {"status": {"enum": ["VERIFIED_ON_MAIN", "NOT_APPLICABLE"]}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"state": {"const": "DELETED"}}},
+      "then": {"properties": {"destructive_action_performed": {"const": true}}}
+    }
+  ]
+}
