@@ -67,7 +67,7 @@ test('machine-readable foundation is versioned and bounded', () => {
   ].sort())
 })
 
-test('route IA centers the operator workspace and separates administration domains', () => {
+test('route IA centers the active operator workspace and separates administration domains', () => {
   const contract = parseContract()
   const routes = contract.route_domains.map((item) => item.route)
   assert.equal(unique(routes), true, 'route domains must be unique')
@@ -75,22 +75,23 @@ test('route IA centers the operator workspace and separates administration domai
   const routeByPath = routeMap(contract)
   for (const route of ['/login', '/workspace', '/knowledge', '/channels', '/runtime', '/control-tower']) {
     assert.ok(routeByPath.has(route), `missing canonical route domain: ${route}`)
+    assert.equal(routeByPath.get(route).canonical, true)
+    assert.equal(routeByPath.get(route).status, 'current')
   }
   assert.equal(routeByPath.get('/workspace').domain, 'operator_work')
-  assert.equal(routeByPath.get('/workspace').canonical, true)
   assert.equal(routeByPath.get('/webchat')?.canonical, false)
-  assert.equal(routeByPath.get('/webchat')?.status, 'transitional')
+  assert.equal(routeByPath.get('/webchat')?.status, 'compatibility')
 })
 
-test('one semantic token and component authority is declared', () => {
+test('one semantic token and component authority is active and enforced', () => {
   const contract = parseContract()
   assert.equal(contract.token_authority.semantic_tokens_path, 'webapp/src/styles/tokens.css')
   assert.equal(contract.token_authority.component_primitives_path, 'webapp/src/components/ui')
-  assert.equal(contract.token_authority.feature_raw_hex_policy, 'prohibited_after_migration')
-  assert.deepEqual(contract.token_authority.legacy_sources.sort(), [
-    'webapp/src/features/support-console/support-console.css',
-    'webapp/src/styles.css',
-  ].sort())
+  assert.equal(contract.token_authority.enforcement_status, 'enforced')
+  assert.equal(contract.token_authority.feature_raw_hex_policy, 'prohibited')
+  assert.deepEqual(contract.token_authority.legacy_sources, [])
+  assert.equal(contract.token_authority.migration_strategy, 'in_place_under_single_authority')
+  assert.equal(contract.token_authority.big_bang_rewrite, false)
 })
 
 test('state vocabulary does not collapse technical activity into business closure', () => {
@@ -166,20 +167,29 @@ test('DESIGN register defines a subject-grounded non-template direction', () => 
   }
 })
 
-test('engineering integration assigns implementation to existing authorities', () => {
+test('engineering integration records the active single-authority implementation', () => {
   const guide = readRequired(PATHS.engineering, 'frontend engineering integration guide')
   const normalizedGuide = guide.toLowerCase()
-  for (const workItem of ['#525', '#564', '#573', '#587', '#526']) {
-    assert.ok(guide.includes(workItem), `engineering guide must reference ${workItem}`)
+  for (const commitment of [
+    '#748',
+    '#753',
+    'webapp/src/app/AppShell.tsx',
+    'webapp/src/app/navigation.ts',
+    'webapp/src/styles/tokens.css',
+    'webapp/src/components/ui',
+    'webapp/src/domain/operationalPresentation.ts',
+  ]) {
+    assert.ok(normalizedGuide.includes(commitment.toLowerCase()), `engineering guide missing active authority: ${commitment}`)
   }
-  assert.ok(normalizedGuide.includes('no big-bang rewrite'))
-  assert.ok(normalizedGuide.includes('architecture gate'))
+  assert.ok(normalizedGuide.includes('modify in place'))
+  assert.ok(normalizedGuide.includes('no parallel implementation'))
+  assert.ok(normalizedGuide.includes('github actions are retired'))
 })
 
-test('the foundation remains additive and does not claim current route implementation', () => {
+test('the foundation is active while refinement remains bounded to the same authority', () => {
   const contract = parseContract()
-  assert.equal(contract.lifecycle.status, 'approved_contract')
-  assert.equal(contract.lifecycle.runtime_activation, false)
-  assert.equal(contract.lifecycle.production_ui_migration_complete, false)
-  assert.deepEqual(contract.downstream_work_items, [525, 564, 573])
+  assert.equal(contract.lifecycle.status, 'active_canonical_authority')
+  assert.equal(contract.lifecycle.runtime_activation, true)
+  assert.equal(contract.lifecycle.production_ui_migration_complete, true)
+  assert.deepEqual(contract.downstream_work_items, [525, 564, 573, 753])
 })
