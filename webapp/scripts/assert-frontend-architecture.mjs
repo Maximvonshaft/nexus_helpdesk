@@ -9,17 +9,16 @@ const webappRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const repositoryRoot = path.resolve(webappRoot, '..')
 const srcRoot = path.join(webappRoot, 'src')
 const entrypoint = path.join(srcRoot, 'main.tsx')
+const muiAuthorityPath = path.join(webappRoot, 'design', 'mui-visual-authority.v1.json')
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.css']
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
 const PRIMITIVE_EXPORT_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
 const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/g
-const LEGACY_SELECTOR_RE = /(^|[,{\s])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
+const LEGACY_SELECTOR_RE = /(^|[,\s{])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
 const FORBIDDEN_PARALLEL_PATH_RE = /(?:^|\/)(?:new-ui|ui-v2|design-system-v2|components-v2|workspace-v2|new-workspace)(?:\/|$)|(?:^|\/)[^/]*(?:V2|Redesign)\.(?:ts|tsx|css)$/i
 const FORBIDDEN_ROUTE_RE = /["']\/(?:workspace-v2|new-workspace|ui-v2)(?:[/?#"']|$)/i
 const FORBIDDEN_UI_PACKAGES = new Set([
-  '@mui/material',
-  '@mui/system',
   '@chakra-ui/react',
   '@mantine/core',
   '@mantine/hooks',
@@ -33,6 +32,14 @@ const FORBIDDEN_UI_PACKAGES = new Set([
   'flowbite',
   'flowbite-react',
   'shadcn',
+])
+const APPROVED_MUI_DIRECT_PACKAGES = new Set([
+  '@mui/material',
+  '@mui/icons-material',
+])
+const APPROVED_EMOTION_DIRECT_PACKAGES = new Set([
+  '@emotion/react',
+  '@emotion/styled',
 ])
 
 const forbiddenPaths = [
@@ -123,6 +130,23 @@ function relative(file) {
   return path.relative(repositoryRoot, file).split(path.sep).join('/')
 }
 
+function readMuiAuthority(failures) {
+  if (!fs.existsSync(muiAuthorityPath)) {
+    failures.push('MUI visual authority contract is missing: webapp/design/mui-visual-authority.v1.json')
+    return null
+  }
+  try {
+    const authority = JSON.parse(fs.readFileSync(muiAuthorityPath, 'utf8'))
+    if (authority.schema !== 'nexus.mui-visual-authority.v1') failures.push(`unexpected MUI authority schema: ${authority.schema}`)
+    if (authority.decision?.selected_package !== '@mui/material') failures.push('MUI authority must select @mui/material')
+    if (authority.decision?.selected_version !== '9.2.0') failures.push(`MUI version must be exactly 9.2.0: ${authority.decision?.selected_version}`)
+    return authority
+  } catch (error) {
+    failures.push(`MUI visual authority contract is invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    return null
+  }
+}
+
 function duplicatePrimitiveAuthorities(files) {
   const owners = new Map()
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
@@ -203,7 +227,43 @@ function assertCssAuthority(files, failures) {
   }
 }
 
-function assertRuntimeDependencies(files, failures) {
+function assertSelectedVisualStack(manifest, authority, failures) {
+  const allDependencies = {
+    ...(manifest.dependencies ?? {}),
+    ...(manifest.devDependencies ?? {}),
+  }
+
+  for (const dependency of Object.keys(allDependencies)) {
+    if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) {
+      failures.push(`parallel UI framework dependency is forbidden; MUI is selected: ${dependency}`)
+    }
+    if (dependency.startsWith('@mui/') && !APPROVED_MUI_DIRECT_PACKAGES.has(dependency)) {
+      failures.push(`unapproved direct MUI package: ${dependency}`)
+    }
+    if (dependency.startsWith('@emotion/') && !APPROVED_EMOTION_DIRECT_PACKAGES.has(dependency)) {
+      failures.push(`unapproved direct Emotion package: ${dependency}`)
+    }
+  }
+
+  const muiInstalled = Object.hasOwn(manifest.dependencies ?? {}, '@mui/material')
+  const status = authority?.decision?.status
+  if (!muiInstalled) {
+    if (status !== 'authorized_not_installed') failures.push(`MUI authority status ${status} requires @mui/material to be installed`)
+    return
+  }
+
+  const expected = authority.runtime_packages
+  for (const [dependency, version] of Object.entries(expected)) {
+    if ((manifest.dependencies ?? {})[dependency] !== version) {
+      failures.push(`selected visual dependency must be pinned exactly: ${dependency}@${version}`)
+    }
+  }
+  if ((manifest.overrides ?? {})['react-is'] !== authority.react_compatibility.react_is_override) {
+    failures.push(`React 18 requires package.json overrides.react-is=${authority.react_compatibility.react_is_override}`)
+  }
+}
+
+function assertRuntimeDependencies(files, authority, failures) {
   const manifest = JSON.parse(fs.readFileSync(path.join(webappRoot, 'package.json'), 'utf8'))
   const consumed = externalImports(files)
   const configFiles = walk(webappRoot).filter((file) => /(?:vite\.config|playwright\.config|eslint\.config|\.mjs$)/.test(file))
@@ -218,12 +278,7 @@ function assertRuntimeDependencies(files, failures) {
   for (const dependency of Object.keys(manifest.dependencies ?? {})) {
     if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
   }
-
-  for (const dependency of [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})]) {
-    if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) {
-      failures.push(`parallel UI framework dependency is forbidden without replacement authority: ${dependency}`)
-    }
-  }
+  assertSelectedVisualStack(manifest, authority, failures)
 }
 
 const failures = []
@@ -231,6 +286,7 @@ for (const forbidden of forbiddenPaths) {
   if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
 }
 assertActionsRetired(failures)
+const muiAuthority = readMuiAuthority(failures)
 
 const files = sourceFiles()
 const reachable = reachableFiles()
@@ -244,7 +300,7 @@ assertNoParallelImplementation(files, failures)
 assertCanonicalNavigation(files, failures)
 assertTransportAuthority(files, failures)
 assertCssAuthority(files, failures)
-assertRuntimeDependencies(files, failures)
+assertRuntimeDependencies(files, muiAuthority, failures)
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2))
@@ -257,6 +313,8 @@ console.log(JSON.stringify({
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
   github_actions: 'retired',
-  ui_authority: 'webapp/src/components/ui',
-  token_authority: 'webapp/src/styles/tokens.css',
+  current_ui_authority: 'webapp/src/components/ui during unmerged migration',
+  target_ui_authority: '@mui/material@9.2.0',
+  target_theme_authority: 'webapp/src/theme/nexusTheme.ts',
+  migration_status: muiAuthority?.decision?.status,
 }, null, 2))
