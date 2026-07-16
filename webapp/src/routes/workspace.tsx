@@ -124,7 +124,7 @@ function AuthorizedWorkspaceRoutePage() {
       userLabel={session.data?.display_name || session.data?.username || '操作员'}
       scopes={authorizedScopes}
       selectedScope={selectedScope}
-      onScopeChange={(scope) => setRequestedScopeKey(authorizedScopeKey(scope))
+      onScopeChange={(scope) => setRequestedScopeKey(authorizedScopeKey(scope))}
       onLogout={handleLogout}
     >
       <Suspense fallback={<WorkspaceLoading />}>
