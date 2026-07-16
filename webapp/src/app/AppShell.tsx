@@ -105,7 +105,7 @@ export function AppShell({
         position="sticky"
         color="inherit"
         elevation={0}
-        sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(12px)' }}
+        sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}
       >
         <Toolbar
           sx={{
