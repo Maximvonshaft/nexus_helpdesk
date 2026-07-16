@@ -30,15 +30,21 @@ test('retired frontend and visual authorities are physically absent', () => {
   assert.equal(fs.existsSync(path.join(repositoryRoot, 'frontend')), false)
 })
 
-test('workspace has one shell and input-bound cancel preview', () => {
+test('workspace has one shell, one bounded thread state and input-bound cancel preview', () => {
   const source = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
-  assert.doesNotMatch(source, /function\s+AppNavigation\b/)
-  assert.doesNotMatch(source, /operator-app-header/)
-  assert.doesNotMatch(source, /\/webchat\?tab=/)
+  const api = read('src/lib/operatorWorkspaceApi.ts')
+  assert.doesNotMatch(source, /function\s+AppNavigation\b|operator-app-header|\/webchat\?tab=/)
   assert.match(source, /type CancelPreviewBinding/)
   assert.match(source, /ticketId[\s\S]*waybill[\s\S]*caller[\s\S]*reasonCode/)
   assert.match(source, /cancelPreview\.fingerprint !== currentCancelFingerprint/)
-  assert.match(source, /案例处理链路/)
+  assert.match(source, /处理进度/)
+  assert.match(source, /mergeLatestThread/)
+  assert.match(source, /mergeOlderThread/)
+  assert.match(source, /conversationEvents/)
+  assert.match(source, /加载更早消息/)
+  assert.match(api, /before_message_id/)
+  assert.doesNotMatch(api, /thread-v2|thread-page/)
+  assert.doesNotMatch(source, /案例处理链路|服务端最终授权|事实与证据/)
 })
 
 test('MUI and operational status modules are the only visual and state authorities', () => {
@@ -57,6 +63,8 @@ test('MUI and operational status modules are the only visual and state authoriti
   assert.match(status, /customer_notified/)
   assert.match(supportStatus, /operationalPresentation\(status, message\)/)
   assert.match(workspaceStatus, /return operationalPresentation\(statusValue, messageValue\)/)
+  assert.match(workspaceStatus, /自动回复建议/)
+  assert.doesNotMatch(workspaceStatus, /AI 建议|人工决定|动作结果|事实与依据/)
 })
 
 test('runtime and knowledge permissions have separate read and write projections', () => {
@@ -71,9 +79,7 @@ test('runtime and knowledge permissions have separate read and write projections
 test('control tower accepts only canonical hrefs in the browser', () => {
   const source = read('src/features/control-tower/ControlTowerPage.tsx')
   assert.match(source, /canonicalAppHref/)
-  assert.doesNotMatch(source, /\/accounts/)
-  assert.doesNotMatch(source, /\/outbound-email/)
-  assert.doesNotMatch(source, /\/ai-control/)
+  assert.doesNotMatch(source, /\/accounts|\/outbound-email|\/ai-control/)
 })
 
 test('dependency graph selects MUI and excludes retired or parallel visual packages', () => {
@@ -98,7 +104,5 @@ test('dependency graph selects MUI and excludes retired or parallel visual packa
     'bootstrap',
     'clsx',
     'livekit-client',
-  ]) {
-    assert.equal(manifest.dependencies?.[dependency], undefined, dependency)
-  }
+  ]) assert.equal(manifest.dependencies?.[dependency], undefined, dependency)
 })
