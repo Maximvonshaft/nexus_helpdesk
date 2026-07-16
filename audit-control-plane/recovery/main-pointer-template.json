@@ -1,0 +1,16 @@
+{
+  "schema": "nexus.governance.authority-ref.v1",
+  "status": "CURRENT",
+  "repository": "Maximvonshaft/nexus_helpdesk",
+  "branch": "governance/audit-control-plane",
+  "commit": "REPLACE_WITH_EXACT_GOVERNANCE_COMMIT_SHA",
+  "protocol_id": "nexus-governance-15-lane-v3.1",
+  "protocol_version": "3.1.0",
+  "protocol_path": "audit-control-plane/protocol/nexus-audit-controller-v3.1.yaml",
+  "protocol_digest_sha256": "4aec539d6b490e2db3b21a068b02514d12706e6c8379e1e1ddc0036678ac9d9a",
+  "orchestration_path": "audit-control-plane/protocol/task-orchestration-v1.yaml",
+  "issue_ledger": 722,
+  "generated_at": "REPLACE_WITH_TIMESTAMP",
+  "source_main_sha": "REPLACE_WITH_EXACT_MAIN_SHA",
+  "rule": "The exact commit and matching digest are mandatory. A branch name alone is never authority."
+}
