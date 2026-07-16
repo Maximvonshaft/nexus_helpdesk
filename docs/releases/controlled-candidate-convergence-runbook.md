@@ -75,6 +75,7 @@ Required Swiss values:
 ALLOWED_ORIGINS=https://mcs.speedaf.com
 WEBCHAT_ALLOWED_ORIGINS=https://mcs.speedaf.com
 DATABASE_URL=<preserved secret URL to 10.2.64.2:5432/nexusdesk>
+METRICS_TOKEN=<new dedicated server-only token with at least 32 characters>
 NEXUS_RUNTIME_SECRETS_HOST_PATH=/run/secrets
 NEXUS_UPLOADS_HOST_PATH=/opt/nexus_helpdesk/data/uploads
 NEXUS_UPLOAD_BACKUP_HOST_PATH=/var/backups/nexusdesk/uploads
@@ -83,6 +84,8 @@ PRIVATE_AI_RUNTIME_BASE_URL=http://100.91.119.72:8060
 PRIVATE_AI_RUNTIME_RAG_BASE_URL=http://100.91.119.72:8060
 CONTROLLED_APP_PORT=18095
 ```
+
+The controlled Compose authority forces metrics on and refuses to render without `METRICS_TOKEN`; do not reuse the application signing secret or any Provider credential for this token.
 
 The first cutover keeps AI and every external action disabled. AI gateway coordinates are retained only for a later separately accepted enablement.
 
@@ -111,7 +114,7 @@ docker compose \
   config --quiet
 ```
 
-Any mutable image, missing host path, empty or over-permissive token file, placeholder secret, wrong database port, stale source/build/migration identity, enabled Provider/outbound flag, or Compose build directive is a hard stop.
+Any mutable image, missing host path, empty or over-permissive token file, missing metrics token, placeholder secret, wrong database port, stale source/build/migration identity, enabled Provider/outbound flag, or Compose build directive is a hard stop.
 
 ### 4. Stop old writers and back up again if traffic changed
 
@@ -133,6 +136,8 @@ Expected readiness:
 - build time and app version equal the image-bound manifest fields;
 - migration equals the controlled manifest;
 - `/healthz` and `/readyz` return 200;
+- unauthenticated `/metrics` returns 401;
+- authenticated `/metrics` returns 200 from the existing App endpoint and includes all four controlled worker IDs after their first poll;
 - app and workers are healthy;
 - external-effect controls remain disabled.
 
@@ -148,6 +153,9 @@ Required checks:
 - valid operator login;
 - public WebChat initialization and message persistence;
 - operator can read the same conversation;
+- a long conversation returns a bounded latest page and can load older messages without duplicate rows;
+- unauthenticated metrics access is rejected;
+- an authenticated loopback scrape contains `nexusdesk_http_requests_total` plus `worker-outbound-controlled`, `worker-background-controlled`, `worker-webchat-ai-controlled`, and `worker-handoff-snapshot-controlled`;
 - Provider output count remains zero;
 - outbound/WhatsApp/SpeedAF/Dispatch execution remains zero;
 - uploads remain readable;

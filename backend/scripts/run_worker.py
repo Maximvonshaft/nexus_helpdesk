@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 import time
 from pathlib import Path
@@ -163,6 +164,17 @@ def _sleep_seconds_for_queue(queue: str, processed: int) -> float:
     return float(settings.worker_poll_seconds)
 
 
+def _install_shutdown_handlers() -> None:
+    def request_shutdown(signum, _frame) -> None:  # noqa: ANN001
+        log_event(20, "worker_shutdown_requested", signal=signal.Signals(signum).name)
+        # SystemExit runs Python atexit handlers, which remove this worker's
+        # namespaced live-Gauge files from the shared canonical registry.
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run isolated NexusDesk background worker queues")
     parser.add_argument("--worker-id", default="worker-main")
@@ -188,4 +200,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _install_shutdown_handlers()
     raise SystemExit(main())

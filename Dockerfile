@@ -76,12 +76,16 @@ COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
 # Round B webchat widget static export. Keep embeddable public files outside SPA
-# fallback while retaining the non-root runtime boundary.
-RUN mkdir -p /app/frontend_dist/static/webchat /app/backend/uploads \
+# fallback while retaining the non-root runtime boundary. The metrics directory
+# is a runtime mount point shared only by processes in one controlled release.
+RUN mkdir -p \
+        /app/frontend_dist/static/webchat \
+        /app/backend/uploads \
+        /var/run/nexus-prometheus \
     && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/ \
     && addgroup -S appgroup \
     && adduser -S -D -H -s /sbin/nologin -G appgroup appuser \
-    && chown -R appuser:appgroup /app
+    && chown -R appuser:appgroup /app /var/run/nexus-prometheus
 
 WORKDIR /app/backend
 
@@ -92,4 +96,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 USER appuser
 
-CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-2} -b 0.0.0.0:8080 --timeout ${WEB_TIMEOUT:-60}"]
+CMD ["sh", "-c", "gunicorn app.main:app -c /app/backend/gunicorn.conf.py -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-2} -b 0.0.0.0:8080 --timeout ${WEB_TIMEOUT:-60}"]
