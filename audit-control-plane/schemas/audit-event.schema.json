@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/audit-event.schema.json",
+  "title": "Nexus Audit Event",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "event_type",
+    "lane",
+    "result_id",
+    "audit_cycle_id",
+    "idempotency_key",
+    "timestamp",
+    "baseline_main_sha",
+    "final_main_sha",
+    "run_state",
+    "material_delta",
+    "watermark",
+    "not_verified",
+    "next_owner",
+    "prohibited_actions_confirmed"
+  ],
+  "properties": {
+    "schema": {"type": "string", "minLength": 1},
+    "event_type": {"type": "string", "minLength": 1},
+    "lane": {
+      "enum": [
+        "delivery_lifecycle",
+        "dependency_config_docs",
+        "data_migration",
+        "runtime_outbound",
+        "security_privacy",
+        "knowledge_rag",
+        "business_loop",
+        "architecture",
+        "product_frontend",
+        "engineering_quality",
+        "observability_recovery",
+        "repository_retirement",
+        "ci_release_evidence",
+        "ledger_truth",
+        "governance"
+      ]
+    },
+    "result_id": {"type": "string", "minLength": 8},
+    "audit_cycle_id": {"type": "string", "minLength": 8},
+    "idempotency_key": {"type": "string", "minLength": 8},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "observed_timestamp": {"type": "string", "format": "date-time"},
+    "baseline_main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "final_main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "run_state": {"enum": ["FINAL", "PARTIAL", "NO_CHANGE", "STALE_RUN", "FAILED_BOUNDED"]},
+    "material_delta": {"type": "boolean"},
+    "watermark": {"type": "object"},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "no_change": {"type": "boolean"},
+    "not_verified": {"type": "array", "items": {"type": "string"}},
+    "next_owner": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
+    "prohibited_actions_confirmed": {"oneOf": [{"type": "boolean"}, {"type": "array", "items": {"type": "string"}}]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"material_delta": {"const": true}}},
+      "then": {"anyOf": [{"required": ["findings"]}, {"required": ["state_transitions"]}, {"required": ["snapshot"]}, {"required": ["decision"]}]}
+    },
+    {
+      "if": {"properties": {"run_state": {"const": "NO_CHANGE"}}},
+      "then": {"properties": {"material_delta": {"const": false}, "no_change": {"const": true}}}
+    }
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["finding_id", "dedupe_key", "classification", "severity", "currentness", "subject_keys", "watch_keys", "evidence_urls"],
+      "properties": {
+        "finding_id": {"type": "string", "minLength": 3},
+        "assertion_id": {"type": "string"},
+        "dedupe_key": {"type": "string", "minLength": 5},
+        "classification": {"enum": ["OBSERVED", "CANDIDATE", "CONFIRMED", "DISPUTED", "NOT_VERIFIED", "EXISTING_ITEM_COVERED", "FALSE_POSITIVE_REJECTED"]},
+        "severity": {"enum": ["P0", "P1", "P2", "P3", "INFO"]},
+        "currentness": {"enum": ["VERIFIED_CURRENT", "REVALIDATION_REQUIRED", "HISTORICAL", "STALE_OR_FIXED", "NOT_VERIFIED"]},
+        "subject_keys": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "watch_keys": {"type": "array", "items": {"type": "string"}},
+        "evidence_urls": {"type": "array", "items": {"type": "string"}},
+        "not_verified": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
