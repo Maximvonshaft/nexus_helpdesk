@@ -1,11 +1,22 @@
+import VisibilityOffRoundedIcon from '@mui/icons-material/VisibilityOffRounded'
+import VisibilityRoundedIcon from '@mui/icons-material/VisibilityRounded'
+import {
+  Alert,
+  Box,
+  Button,
+  Container,
+  IconButton,
+  InputAdornment,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createRoute, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
 import { useLogin, useSession } from '@/hooks/useAuth'
-import { Button } from '@/components/ui/Button'
-import { Field, Input } from '@/components/ui/Field'
-import { PageHeader } from '@/components/ui/PageHeader'
 
 function LoginPage() {
   const navigate = useNavigate()
@@ -46,44 +57,51 @@ function LoginPage() {
   }
 
   return (
-    <main className="auth-shell">
-      <div className="auth-frame">
-        <section className="auth-context" aria-labelledby="auth-context-title">
-          <div className="auth-context__brand">
-            <p className="auth-context__product" translate="no">Nexus OSR</p>
-            <h2 id="auth-context-title">客服与运营工作台</h2>
-            <p className="auth-context__description">
-              用于处理客户会话、客服工单和运营任务。
-            </p>
-          </div>
+    <Box
+      component="main"
+      sx={{
+        alignItems: 'center',
+        bgcolor: 'background.default',
+        display: 'flex',
+        minHeight: '100dvh',
+        py: { xs: 4, md: 8 },
+      }}
+    >
+      <Container maxWidth="sm">
+        <Stack spacing={3}>
+          <Stack spacing={1} alignItems="center" textAlign="center">
+            <Box
+              aria-hidden="true"
+              sx={{
+                alignItems: 'center',
+                bgcolor: 'primary.main',
+                borderRadius: 2,
+                color: 'primary.contrastText',
+                display: 'flex',
+                fontSize: 20,
+                fontWeight: 800,
+                height: 52,
+                justifyContent: 'center',
+                width: 52,
+              }}
+            >
+              N
+            </Box>
+            <Typography translate="no" variant="h2">Nexus OSR</Typography>
+            <Typography color="text.secondary">客服与运营工作台</Typography>
+          </Stack>
 
-          <dl className="auth-context__facts">
-            <div>
-              <dt>登录后</dt>
-              <dd>进入统一任务队列，查看案例信息并完成允许的处理动作。</dd>
-            </div>
-            <div>
-              <dt>访问范围</dt>
-              <dd>可见国家、渠道和操作权限由当前账号决定。</dd>
-            </div>
-          </dl>
+          <Paper component="form" onSubmit={handleSubmit} variant="outlined" sx={{ borderRadius: 2, p: { xs: 2.5, sm: 4 } }}>
+            <Stack spacing={2.5}>
+              <Box>
+                <Typography component="h1" variant="h2">登录运营工作台</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>
+                  使用内部账号继续。系统会根据账号权限加载可访问的国家、渠道和工作内容。
+                </Typography>
+              </Box>
 
-          <p className="auth-context__boundary">
-            无法登录或看不到应有任务时，请联系系统管理员检查账号和权限。
-          </p>
-        </section>
-
-        <form className="auth-card" onSubmit={handleSubmit}>
-          <PageHeader
-            eyebrow="账号登录"
-            title="进入运营工作台"
-            description="使用内部账号继续。系统会按你的权限加载可访问的工作内容。"
-            headingLevel={1}
-          />
-
-          <div className="auth-form">
-            <Field label="账号" required>
-              <Input
+              <TextField
+                label="账号"
                 name="username"
                 value={username}
                 onChange={(event) => {
@@ -93,59 +111,67 @@ function LoginPage() {
                 autoComplete="username"
                 spellCheck={false}
                 required
+                autoFocus
               />
-            </Field>
 
-            <div className="auth-password-row">
-              <Field label="密码" required>
-                <Input
-                  id="login-password"
-                  name="password"
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value)
-                    clearLoginError()
-                  }}
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  required
-                />
-              </Field>
+              <TextField
+                id="login-password"
+                label="密码"
+                name="password"
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value)
+                  clearLoginError()
+                }}
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                slotProps={{
+                  input: {
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                          aria-controls="login-password"
+                          aria-pressed={showPassword}
+                          edge="end"
+                          onClick={() => setShowPassword((current) => !current)}
+                        >
+                          {showPassword ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  },
+                }}
+              />
+
+              {login.error ? (
+                <Alert ref={errorRef} severity="error" role="alert" tabIndex={-1}>
+                  无法登录。请检查账号和密码后重试。
+                </Alert>
+              ) : null}
+
+              <Typography variant="body2" color="text.secondary">
+                登录状态只保存在当前浏览器会话中。请勿在共享设备上保存密码。
+              </Typography>
+
               <Button
-                variant="ghost"
-                size="md"
-                aria-controls="login-password"
-                aria-pressed={showPassword}
-                onClick={() => setShowPassword((current) => !current)}
+                variant="contained"
+                size="large"
+                type="submit"
+                disabled={login.isPending || !username.trim() || !password}
               >
-                {showPassword ? '隐藏密码' : '显示密码'}
+                {login.isPending ? '正在验证账号…' : '登录运营工作台'}
               </Button>
-            </div>
+            </Stack>
+          </Paper>
 
-            {login.error ? (
-              <div ref={errorRef} className="auth-error" role="alert" tabIndex={-1}>
-                无法登录。请检查账号和密码后重试。
-              </div>
-            ) : null}
-
-            <div className="auth-helper">
-              登录状态只保存在当前浏览器会话中。请勿在共享设备上保存密码。
-            </div>
-
-            <Button
-              className="auth-submit"
-              variant="primary"
-              size="lg"
-              type="submit"
-              loading={login.isPending}
-              loadingLabel="正在验证账号…"
-            >
-              登录运营工作台
-            </Button>
-          </div>
-        </form>
-      </div>
-    </main>
+          <Typography variant="caption" color="text.secondary" textAlign="center">
+            无法登录或看不到应有任务时，请联系系统管理员检查账号与权限。
+          </Typography>
+        </Stack>
+      </Container>
+    </Box>
   )
 }
 
