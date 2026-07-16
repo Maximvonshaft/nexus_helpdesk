@@ -1,5 +1,5 @@
 import { apiRequest, ApiError } from '@/lib/apiClient'
-import type { WebchatReadStateResult, WebchatReplyResult, WebchatThread } from '@/lib/types'
+import type { WebchatEventSummary, WebchatReadStateResult, WebchatReplyResult, WebchatThread } from '@/lib/types'
 import type {
   AuthorizedWorkspaceScopesResponse,
   UnifiedOperatorQueueResponse,
@@ -10,6 +10,22 @@ import type {
 
 const UNIFIED_OPERATOR_QUEUE_PATH = '/api/admin/operator-queue/unified'
 const CURRENT_OPERATOR_SCOPES_PATH = '/api/admin/operator-queue/my-scopes'
+
+export type OperatorWorkspaceThread = WebchatThread & {
+  message_page?: {
+    before_id?: number | null
+    has_more: boolean
+    limit: number
+  }
+  history_expanded?: boolean
+}
+
+export type OperatorWorkspaceEventPage = {
+  events: WebchatEventSummary[]
+  last_event_id: number
+  has_more: boolean
+  wait_ms: number
+}
 
 function requireApiPath(path: string) {
   const normalized = String(path || '').trim()
@@ -23,6 +39,16 @@ function applyFilter(search: URLSearchParams, key: string, value: string, emptyV
   if (!emptyValues.includes(value)) search.set(key, value)
 }
 
+function withQuery(path: string, params: Record<string, string | number | null | undefined>) {
+  const normalized = requireApiPath(path)
+  const [pathname, existingQuery = ''] = normalized.split('?', 2)
+  const search = new URLSearchParams(existingQuery)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') search.set(key, String(value))
+  })
+  const suffix = search.toString()
+  return suffix ? `${pathname}?${suffix}` : pathname
+}
 
 export const operatorWorkspaceApi = {
   currentScopes: (init?: RequestInit) => apiRequest<AuthorizedWorkspaceScopesResponse>(CURRENT_OPERATOR_SCOPES_PATH, {
@@ -59,10 +85,27 @@ export const operatorWorkspaceApi = {
     })
   },
 
-  conversationThread: (path: string, init?: RequestInit) => apiRequest<WebchatThread>(requireApiPath(path), {
+  conversationThread: (
+    path: string,
+    params?: { beforeMessageId?: number | null; messageLimit?: number },
+    init?: RequestInit,
+  ) => apiRequest<OperatorWorkspaceThread>(withQuery(path, {
+    before_message_id: params?.beforeMessageId,
+    message_limit: params?.messageLimit ?? 100,
+  }), {
     ...init,
     requireApiPath: true,
     requestIdPrefix: 'workspace',
+  }),
+
+  conversationEvents: (
+    ticketId: number,
+    afterId: number,
+    init?: RequestInit,
+  ) => apiRequest<OperatorWorkspaceEventPage>(`/api/webchat/admin/tickets/${ticketId}/events?after_id=${Math.max(0, afterId)}&limit=100&wait_ms=0`, {
+    ...init,
+    requireApiPath: true,
+    requestIdPrefix: 'workspace-events',
   }),
 
   sourceRecord: (path: string, init?: RequestInit) => apiRequest<WorkspaceSourceRecord>(requireApiPath(path), {
