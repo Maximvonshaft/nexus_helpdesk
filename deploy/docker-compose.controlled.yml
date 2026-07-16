@@ -49,11 +49,16 @@ services:
   migrate-controlled:
     <<: *controlled_app
     restart: "no"
+    environment:
+      <<: *controlled_environment
+      # One-off migrations must not pollute long-running application and worker
+      # counters. They only own release-start registry cleanup.
+      PROMETHEUS_MULTIPROC_DIR: ""
     command:
       - /bin/sh
       - -ec
       - >-
-        find "$${PROMETHEUS_MULTIPROC_DIR}" -maxdepth 1 -type f -name '*.db' -delete &&
+        find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete &&
         cd /app/backend &&
         alembic upgrade head &&
         alembic current
