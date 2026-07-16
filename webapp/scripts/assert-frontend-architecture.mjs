@@ -42,6 +42,10 @@ const FORBIDDEN_UI_PACKAGES = new Set([
 const APPROVED_MUI_DIRECT_PACKAGES = new Set(['@mui/material', '@mui/icons-material'])
 const APPROVED_EMOTION_DIRECT_PACKAGES = new Set(['@emotion/react', '@emotion/styled'])
 const REQUIRED_VISUAL_SUPPORT_PACKAGES = new Set(['@emotion/react', '@emotion/styled', 'react-is'])
+const ALLOWED_SOURCE_CSS = new Set([
+  'webapp/src/styles.css',
+  'webapp/src/a11y.css',
+])
 
 const forbiddenPaths = [
   path.join(repositoryRoot, 'frontend'),
@@ -50,6 +54,16 @@ const forbiddenPaths = [
   path.join(srcRoot, 'shared', 'api'),
   path.join(srcRoot, 'lib', 'api.ts'),
   path.join(srcRoot, 'lib', 'webchatRealtime.ts'),
+  path.join(srcRoot, 'components', 'ui'),
+  path.join(srcRoot, 'styles', 'tokens.css'),
+  path.join(srcRoot, 'styles', 'components.css'),
+  path.join(srcRoot, 'styles', 'auth.css'),
+  path.join(srcRoot, 'app', 'app-shell.css'),
+  path.join(srcRoot, 'features', 'operator-workspace', 'operator-workspace.css'),
+  path.join(srcRoot, 'features', 'operator-workspace', 'operator-workspace-refinements.css'),
+  path.join(srcRoot, 'features', 'admin-routes', 'admin-routes.css'),
+  path.join(srcRoot, 'features', 'knowledge', 'knowledge.css'),
+  path.join(srcRoot, 'features', 'runtime', 'runtime-evidence-audit.css'),
 ]
 
 function walk(directory) {
@@ -205,25 +219,28 @@ function assertTransportAuthority(files, failures) {
   const genericFetchOwners = []
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
     const content = fs.readFileSync(file, 'utf8')
-    if (/\bfetch\s*\(/.test(content) || /new\s+AbortController\s*\(/.test(content)) {
-      genericFetchOwners.push(relative(file))
-    }
+    if (/\bfetch\s*\(/.test(content) || /new\s+AbortController\s*\(/.test(content)) genericFetchOwners.push(relative(file))
   }
   const unexpected = genericFetchOwners.filter((file) => file !== 'webapp/src/lib/apiClient.ts')
   if (unexpected.length) failures.push(`generic HTTP transport outside apiClient.ts: ${unexpected.join(', ')}`)
 }
 
 function assertCssAuthority(files, failures) {
+  const cssFiles = files.filter((candidate) => candidate.endsWith('.css')).map(relative).sort()
+  const unexpectedCss = cssFiles.filter((file) => !ALLOWED_SOURCE_CSS.has(file))
+  if (unexpectedCss.length) failures.push(`route or component CSS is forbidden under MUI authority: ${unexpectedCss.join(', ')}`)
+  const missingCss = [...ALLOWED_SOURCE_CSS].filter((file) => !cssFiles.includes(file))
+  if (missingCss.length) failures.push(`bounded global CSS is missing: ${missingCss.join(', ')}`)
+
   for (const file of files.filter((candidate) => candidate.endsWith('.css'))) {
     const content = fs.readFileSync(file, 'utf8')
     const fileName = relative(file)
-    if (fileName !== 'webapp/src/styles/tokens.css' && LEGACY_PALETTE_RE.test(content)) {
-      failures.push(`second palette authority: ${fileName}`)
-    }
+    if (LEGACY_PALETTE_RE.test(content)) failures.push(`retired CSS variable authority returned: ${fileName}`)
     LEGACY_PALETTE_RE.lastIndex = 0
-    if (LEGACY_SELECTOR_RE.test(content)) failures.push(`legacy primitive selector outside nd-* authority: ${fileName}`)
+    if (LEGACY_SELECTOR_RE.test(content)) failures.push(`legacy primitive selector returned outside MUI: ${fileName}`)
     LEGACY_SELECTOR_RE.lastIndex = 0
     if (/transition\s*:\s*all\b/i.test(content)) failures.push(`transition: all is forbidden: ${fileName}`)
+    if (/\.Mui[A-Za-z0-9_-]+/.test(content)) failures.push(`MUI component overrides must live in nexusTheme.ts, not CSS: ${fileName}`)
   }
 }
 
@@ -253,40 +270,37 @@ function assertSingleThemeAuthority(files, failures) {
 }
 
 function assertSelectedVisualStack(manifest, authority, failures) {
-  const allDependencies = {
-    ...(manifest.dependencies ?? {}),
-    ...(manifest.devDependencies ?? {}),
-  }
+  const allDependencies = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}) }
 
   for (const dependency of Object.keys(allDependencies)) {
     if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) {
       failures.push(`parallel UI framework dependency is forbidden; MUI is selected: ${dependency}`)
     }
-    if (dependency.startsWith('@mui/') && !APPROVED_MUI_DIRECT_PACKAGES.has(dependency)) {
-      failures.push(`unapproved direct MUI package: ${dependency}`)
-    }
-    if (dependency.startsWith('@emotion/') && !APPROVED_EMOTION_DIRECT_PACKAGES.has(dependency)) {
-      failures.push(`unapproved direct Emotion package: ${dependency}`)
-    }
+    if (dependency.startsWith('@mui/') && !APPROVED_MUI_DIRECT_PACKAGES.has(dependency)) failures.push(`unapproved direct MUI package: ${dependency}`)
+    if (dependency.startsWith('@emotion/') && !APPROVED_EMOTION_DIRECT_PACKAGES.has(dependency)) failures.push(`unapproved direct Emotion package: ${dependency}`)
   }
 
   const expected = authority?.runtime_packages ?? {}
   for (const [dependency, version] of Object.entries(expected)) {
-    if ((manifest.dependencies ?? {})[dependency] !== version) {
-      failures.push(`selected visual dependency must be pinned exactly: ${dependency}@${version}`)
-    }
+    if ((manifest.dependencies ?? {})[dependency] !== version) failures.push(`selected visual dependency must be pinned exactly: ${dependency}@${version}`)
   }
   if ((manifest.overrides ?? {})['react-is'] !== authority?.react_compatibility?.react_is_override) {
     failures.push(`React 18 requires package.json overrides.react-is=${authority?.react_compatibility?.react_is_override}`)
   }
 }
 
-function assertLockfileMatchesManifest(manifest, failures) {
+function assertLockfileMatchesManifest(manifest, authority, failures) {
   if (!fs.existsSync(lockPath)) {
     failures.push('package-lock.json is missing')
     return
   }
-  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+  let lock
+  try {
+    lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+  } catch (error) {
+    failures.push(`package-lock.json is invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    return
+  }
   const root = lock.packages?.[''] ?? {}
   for (const section of ['dependencies', 'devDependencies']) {
     const manifestSection = manifest[section] ?? {}
@@ -297,6 +311,10 @@ function assertLockfileMatchesManifest(manifest, failures) {
     for (const dependency of Object.keys(lockSection)) {
       if (!Object.hasOwn(manifestSection, dependency)) failures.push(`package-lock root retains removed dependency: ${section}.${dependency}`)
     }
+  }
+  for (const [dependency, version] of Object.entries(authority?.runtime_packages ?? {})) {
+    const locked = lock.packages?.[`node_modules/${dependency}`]?.version
+    if (locked !== version) failures.push(`package-lock dependency is missing or stale: ${dependency}@${version}; found ${locked ?? 'none'}`)
   }
 }
 
@@ -320,7 +338,7 @@ function assertRuntimeDependencies(files, authority, failures) {
   }
 
   assertSelectedVisualStack(manifest, authority, failures)
-  assertLockfileMatchesManifest(manifest, failures)
+  assertLockfileMatchesManifest(manifest, authority, failures)
 }
 
 const failures = []
@@ -356,8 +374,8 @@ console.log(JSON.stringify({
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
   github_actions: 'retired',
-  current_ui_authority: 'unmerged MUI migration branch',
-  target_ui_authority: '@mui/material@9.2.0',
-  target_theme_authority: 'webapp/src/theme/nexusTheme.ts',
+  ui_authority: '@mui/material@9.2.0',
+  theme_authority: 'webapp/src/theme/nexusTheme.ts',
+  source_css: [...ALLOWED_SOURCE_CSS].sort(),
   migration_status: muiAuthority?.decision?.status,
 }, null, 2))
