@@ -1,191 +1,213 @@
-# Frontend Product Foundation — Engineering Integration
+# Frontend Product Foundation — Active Engineering Authority
 
 ## Authority
 
-- Work Item: #613
-- Frontend audit: #611
+The Nexus operator frontend completed its source and implementation convergence through merged PR #748. The current refinement Work Item is #753.
+
+The active product and design authorities are:
+
 - Product register: `webapp/PRODUCT.md`
 - Design register: `webapp/DESIGN.md`
 - Machine contract: `webapp/design/frontend-product-foundation.v1.json`
-- Product/business semantics: #583, #585, #587, #526
-- Canonical Workspace: #525
-- Scale/accessibility: #564
-- Legacy frontend retirement: #573
+- Application source: `webapp/`
+- Application shell: `webapp/src/app/AppShell.tsx`
+- Navigation registry: `webapp/src/app/navigation.ts`
+- Semantic tokens: `webapp/src/styles/tokens.css`
+- Shared UI primitives: `webapp/src/components/ui/`
+- Operational status language: `webapp/src/domain/operationalPresentation.ts`
+- HTTP transport: `webapp/src/lib/apiClient.ts`
+- Canonical operator route: `/workspace`
 
-## Current-state inventory
+Historical migration plans, donor PRs and deleted paths are evidence only. They are not implementation authority and must not be revived.
 
-The current frontend has useful foundations but no single accepted UI authority.
+## Current state
 
-### Semantic foundation
+Nexus now has one authenticated operator product:
 
-- `webapp/src/styles/tokens.css`
-- `webapp/src/styles/components.css`
-- `webapp/src/components/ui/`
+- `webapp/` is the only operator frontend source;
+- `/workspace` is the only case-work product spine;
+- `/knowledge`, `/channels`, `/runtime` and `/control-tower` are supporting route domains inside the same AppShell;
+- `/webchat` is compatibility-only and cannot mount another operator console;
+- `components/ui` is the only shared component authority;
+- `tokens.css` is the only palette, spacing, radius, motion and elevation authority;
+- `operationalPresentation.ts` is the only cross-route operational outcome vocabulary;
+- GitHub Actions are retired and `.github/workflows` must remain absent;
+- repository acceptance is local through `python scripts/verify_repository.py` and the `webapp` verification commands.
 
-These are the intended future token and component authorities.
+The remaining work is refinement inside the active authority, not migration to a new frontend.
 
-### Active legacy/global vocabulary
+## Non-duplication invariant
 
-- `webapp/src/styles.css`
+Every frontend change follows this sequence:
 
-It defines another root token set, generic app-shell/card/button/table/dialog patterns, gradients, large radii and route-specific WebCall styles.
+`existence audit -> canonical owner -> modify in place -> migrate consumers -> delete replaced expression -> residue scan`
 
-### Feature-private vocabulary
+No parallel implementation is permitted.
 
-- `webapp/src/features/support-console/support-console.css`
+Do not add:
 
-It defines another palette, radius, segmented-control, message, metric, table and responsive system.
+- a V2 or redesigned copy of a current route;
+- another AppShell or navigation graph;
+- another component or token directory;
+- feature-private Button, Field, Input, Select, Badge, Status, Dialog, Empty or Error systems;
+- a second status vocabulary;
+- a broad UI framework beside the current React/Radix/token architecture;
+- a decorative animation library without a separately justified interaction requirement;
+- a compatibility layer without named consumers and a same-delivery deletion condition.
 
-### Authority mismatch
-
-Shared `Button.tsx` renders `.button`, while `components.css` defines `nd-button`. Similar mixed authority exists across Badge, Field and feature-specific controls. This is a staged migration problem, not permission to introduce another component library.
-
-## Integration principle
-
-Use **no big-bang rewrite**.
-
-The accepted sequence is:
-
-1. Keep the product/design contract additive and inactive.
-2. Inventory existing classes/tokens/components and map them to semantic roles.
-3. Make shared primitives consume the accepted token authority.
-4. Implement the new canonical #525 Workspace using only shared primitives and semantic tokens.
-5. Prove #564 accessibility, touch, responsive, slow-network, degraded and large-list behavior.
-6. Migrate Knowledge, channel, Runtime and management route domains.
-7. Remove redundant global/feature authorities and the legacy `frontend/` through #573 after parity evidence.
+A new primitive is valid only when it owns a missing semantic responsibility. It must live in `webapp/src/components/ui/`, migrate all relevant consumers and remove the superseded expression in the same delivery path.
 
 ## Route ownership
 
-| Route domain | Implementation owner | Notes |
+| Route | Product job | UI responsibility |
 |---|---|---|
-| `/login` | #613 implementation follow-up / #564 quality | Preserve auth behavior; use semantic form and shared primitives |
-| `/workspace` | #525 | Canonical queue-driven operator product spine |
-| `/knowledge` | Knowledge/M11 owners, consuming the foundation | Separate configuration from active case work |
-| `/channels` | Channel/admin owners, consuming #547/#571 | Capability-scoped administration |
-| `/runtime` | M7/M12 owners | Technical evidence behind distinct authority |
-| `/control-tower` | #527/#528 | Management analytics and outcome drill-down |
-| `/webchat` | #525/#573 transition | Compatibility only; not canonical long term |
+| `/login` | Establish operator identity | One direct accessible login flow |
+| `/workspace` | Resolve governed logistics cases | Queue, evidence, ownership, action, result, communication and lifecycle |
+| `/knowledge` | Maintain approved knowledge and operating guidance | Search, edit, review, publish and retrieval verification |
+| `/channels` | Manage channel accounts and onboarding/repair work | Health, configuration tasks and bounded technical detail |
+| `/runtime` | Inspect technical readiness and audit evidence | Runtime state and progressive technical disclosure |
+| `/control-tower` | Review workload, risk and management actions | Actionable management evidence with canonical drill-down |
+| `/webchat` | Compatibility | Redirect to `/workspace`; no product UI |
+
+Navigation labels are operator language, not implementation terminology. Route registration remains centralized in `webapp/src/app/navigation.ts` and `webapp/src/router.tsx`.
 
 ## Product-state ownership
 
-### #587 — Action outcome
+The frontend renders state; it does not invent business truth.
 
-The frontend may render the shared vocabulary but must not infer it locally. #587 owns reconciliation of:
+### Evidence
+
+Keep visibly distinct:
+
+- authoritative evidence;
+- customer claim;
+- approved knowledge or policy;
+- AI recommendation or history;
+- human decision;
+- system event;
+- action receipt;
+- customer-notification receipt;
+- closure and observation state.
+
+### Action and outcome
+
+The UI must preserve the difference between:
 
 - requested;
 - accepted;
+- queued or processing;
 - technical completion;
 - operational completion;
 - customer notification;
 - business result confirmation;
 - repair required.
 
-Queued, `done`, `sent`, `dispatched` and HTTP 200 are source states only.
+HTTP 200, Job `done`, message `sent`, Dispatch `dispatched` or Ticket `closed` cannot be presented as safe business completion.
 
-### #526 — Lifecycle
+### Case Spine
 
-#526 owns:
+The Case Spine is the product's functional signature:
 
-- closure requirements;
-- observation;
-- safe closure;
-- conflict and stale revision;
-- repair reconciliation;
-- reopen.
+`Scope -> Evidence -> Decision -> Action -> Operational result -> Customer notification -> Closure / observation`
 
-The UI must not use Ticket `resolved/closed` as a substitute.
+It may render only durable or server-provided facts. Missing contracts must produce an explicit unavailable or incomplete state; they must never be guessed from strings, colors or local component state.
 
-### #525 — Workspace
+## Shared visual vocabulary
 
-#525 consumes the Product, Design and state-language contracts to deliver:
+Shared primitives own semantic responsibilities, not just appearance.
 
-- canonical queue entry;
-- Case Spine;
-- evidence hierarchy;
-- scenario/closure target;
-- ownership;
-- server-calculated allowed actions;
-- durable outcome and customer-notification display.
+Required responsibilities include:
 
-### #564 — Product quality
+- action buttons with default, hover, focus, active, disabled and loading states;
+- metadata badges separate from operational status indicators;
+- counts separate from status pills;
+- labelled fields, validation and disabled reasons;
+- empty, loading, degraded, warning and error states;
+- technical disclosure;
+- page and section headers;
+- toolbars, tabs and list rows where the task requires them;
+- dialogs with focus restoration and bounded destructive confirmation.
 
-#564 owns implementation proof for:
+Feature CSS may arrange these primitives. It may not create another palette, control, status, radius, shadow or motion vocabulary.
 
-- 44×44 interaction targets;
-- WCAG AA contrast;
-- keyboard/focus/screen-reader journey;
-- reduced motion;
-- responsive structural behavior;
-- stable cursor pagination;
-- slow/unavailable/degraded/conflict/repair states;
-- large-list and browser performance;
-- visual-regression evidence.
+## Visual direction
 
-### #573 — Single frontend authority
+The approved thesis remains **Dense calm logistics cockpit**.
 
-#573 removes obsolete routes, assets, documentation and fallback behavior only after canonical route parity. It also verifies that Control Tower links resolve to supported modern routes.
+- The middle case surface is dominant; queue and context support it.
+- Use restrained neutral surfaces and one clear selection/action accent.
+- Use operational colors only for meaningful state.
+- Green is reserved for verified success.
+- Prefer dividers, alignment and spacing over nested cards.
+- Shadows indicate real elevation only.
+- Pills are reserved for compact statuses and true segmented selection.
+- Technical identifiers remain behind progressive disclosure or in `/runtime`.
+- Motion communicates state in 150–220 ms and respects reduced motion.
+- Do not use generic gradients, gradient text, glassmorphism, decorative glow, excessive rounding, endless card grids or page-load choreography.
 
-## Design-system migration map
+## Current refinement sequence — #753
 
-### Phase 1 — Authority and inventory
+1. Freeze the current authority in machine contracts and architecture checks.
+2. Inventory visible labels, badges, counts, states, cards, panels and feature-private CSS.
+3. Complete shared primitives in place.
+4. Refine `/workspace` without changing its route or business contracts.
+5. Converge supporting routes on the same vocabulary.
+6. Remove replaced selectors, components, terminology and dependencies.
+7. Verify one unchanged exact Head through local tests and browser evidence.
 
-- Product/design contract accepted.
-- Enumerate hard-coded feature colors, radii, shadows and duplicated components.
-- Record semantic mapping and exceptions.
+External skills are instruction sources only. For #753 the governed roles are:
 
-### Phase 2 — Primitive convergence
+- process: `obra/superpowers` at `d884ae04edebef577e82ff7c4e143debd0bbec99`;
+- primary domain: `anthropics/skills` frontend-design at `9d2f1ae187231d8199c64b5b762e1bdf2244733d`, adapted to Nexus authorities;
+- accessibility and interaction: `vercel-labs/agent-skills` web-design-guidelines at `f8a72b9603728bb92a217a879b7e62e43ad76c81`;
+- verification: `anthropics/skills` webapp-testing at `9d2f1ae187231d8199c64b5b762e1bdf2244733d`.
 
-- `Button`, `Badge`, `Field`, `Input`, `Select`, `Textarea`, tabs/segments, alerts and empty/loading states consume `--nd-*` tokens.
-- Complete applicable component states.
-- Do not rename every class in one PR; use compatibility classes or composed class names where needed.
+No external skill may create product scope, architecture authority, runtime dependencies or a second task system.
 
-### Phase 3 — Workspace implementation
+## Architecture gates
 
-- Build #525 with the accepted shared primitives.
-- Do not copy Support Console private CSS into the new route.
-- Introduce no raw feature palette.
+`webapp/scripts/assert-frontend-architecture.mjs` must fail when any of the following appears:
 
-### Phase 4 — Supporting surfaces
+1. a retired frontend or Support Console path;
+2. an unreachable production source file;
+3. duplicate shared primitive exports;
+4. a parallel UI/V2 path or route;
+5. another navigation owner;
+6. a generic HTTP transport outside `apiClient.ts`;
+7. another palette or legacy primitive selector;
+8. `transition: all`;
+9. an unused runtime dependency;
+10. a broad parallel UI framework dependency;
+11. a restored `.github/workflows` directory.
 
-- Separate Knowledge, channels, Runtime and management routes.
-- Apply capability-driven navigation.
-- Move internal implementation details out of the primary operator hierarchy.
+The machine contract and its tests must describe the active implementation, not the pre-convergence migration state.
 
-### Phase 5 — Retirement
+## Verification process
 
-- Remove redundant styles only when reference searches and browser evidence show no live consumer.
-- Delete legacy frontend behavior through #573.
+Every implementation slice requires:
 
-## Architecture gate
+1. review against `PRODUCT.md`, `DESIGN.md`, this guide and #753;
+2. focused behavior or architecture tests before or with the change;
+3. `npm run architecture`;
+4. `npm run lint`;
+5. `npm run typecheck`;
+6. `npm test`;
+7. `npm run build`;
+8. browser review at 375, 768, 1024 and 1440;
+9. keyboard, focus, reduced-motion and text-enlargement review;
+10. loading, empty, degraded, conflict, repair and large-list review;
+11. a final unreachable-file, unused-selector, dependency and duplicate-authority scan.
 
-Machine-enforceable checks should eventually verify:
+Repository-wide final verification remains:
 
-1. `webapp/PRODUCT.md`, `webapp/DESIGN.md` and the machine contract exist and parse.
-2. The route-domain registry has unique canonical paths.
-3. `tokens.css` and `components/ui` remain the declared authorities.
-4. New canonical Workspace feature styles do not introduce raw hex values except explicitly reviewed visualization/data cases.
-5. Feature code does not label Ticket closed, Job done, message sent or Dispatch dispatched as safe closure.
-6. Primary operator components do not expose prohibited terminology such as `记忆证据`.
-7. New buttons/segments meet target-size contracts.
-8. Current route links in management responses have a registered frontend destination or explicit transitional mapping.
+```bash
+python scripts/verify_repository.py --static-only
+python scripts/verify_repository.py --focused-backend --skip-browser
+python scripts/verify_repository.py
+```
 
-The first #613 gate validates the authority files. Stronger implementation gates belong with #525/#564/#573 when production code changes begin.
-
-## Review process
-
-Every frontend implementation slice follows:
-
-1. Design/specification review against PRODUCT and DESIGN.
-2. Test-first behavior or architecture contract where practical.
-3. Exact-head typecheck, lint, unit/contract tests and build.
-4. Browser review at representative viewports.
-5. Keyboard and focus journey.
-6. Contrast and touch-target review.
-7. Slow-network, loading, empty, degraded, conflict and repair scenarios.
-8. Code-quality/design-system review.
-
-A build passing without these checks is not frontend acceptance.
+A successful build alone is not frontend acceptance. The PR stays Draft until one unchanged exact Head has current local verification and independent review.
 
 ## Rollback
 
-The #613 foundation is additive. Reverting it removes documentation, the machine contract and the dedicated contract gate. It does not require database downgrade, route rollback, Provider cleanup, queue replay, customer communication or production-data repair.
+UI-only slices roll back through normal Git reversion. They must not require database downgrade, Provider cleanup, queue replay, customer communication or production-data repair. Source deletion occurs only after all consumers migrate and the previous coherent commit remains independently restorable.
