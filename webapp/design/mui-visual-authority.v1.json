@@ -3,7 +3,7 @@
   "version": "mui_visual_authority.v1",
   "work_item": 753,
   "decision": {
-    "status": "authorized_not_installed",
+    "status": "migration_in_progress",
     "selected_framework": "Material UI",
     "selected_package": "@mui/material",
     "selected_version": "9.2.0",
@@ -35,6 +35,17 @@
     "component_usage": "direct MUI imports for generic controls; Nexus components only for domain-specific composition",
     "route_css_policy": "delete after migration; use MUI components, theme, sx and responsive props",
     "global_css_policy": "retain only narrowly justified non-component browser/accessibility rules"
+  },
+  "implementation_state": {
+    "package_manifest_updated": true,
+    "package_lock_regenerated": false,
+    "single_theme_created": true,
+    "root_provider_mounted": true,
+    "login_migrated": true,
+    "application_shell_migrated": true,
+    "workspace_migrated": false,
+    "supporting_routes_migrated": false,
+    "legacy_visual_residue_deleted": false
   },
   "replacement_scope": {
     "generic_components_to_replace_and_delete": [
