@@ -1,5 +1,5 @@
+import { Button as MuiButton } from '@mui/material'
 import type { AnchorHTMLAttributes, PropsWithChildren, ReactNode } from 'react'
-import { cn } from '@/lib/cn'
 import type { ButtonSize, ButtonVariant } from './Button'
 
 export type ButtonLinkProps = PropsWithChildren<AnchorHTMLAttributes<HTMLAnchorElement>> & {
@@ -9,9 +9,21 @@ export type ButtonLinkProps = PropsWithChildren<AnchorHTMLAttributes<HTMLAnchorE
   trailingIcon?: ReactNode
 }
 
+const variantProps = {
+  primary: { variant: 'contained', color: 'primary' },
+  secondary: { variant: 'outlined', color: 'inherit' },
+  ghost: { variant: 'text', color: 'inherit' },
+  danger: { variant: 'contained', color: 'error' },
+} as const
+
+const sizeMap = {
+  sm: 'small',
+  md: 'medium',
+  lg: 'large',
+} as const
+
 export function ButtonLink({
   children,
-  className,
   variant = 'secondary',
   size = 'md',
   leadingIcon,
@@ -19,13 +31,15 @@ export function ButtonLink({
   ...props
 }: ButtonLinkProps) {
   return (
-    <a
-      className={cn('nd-button', `nd-button--${size}`, `nd-button--${variant}`, className)}
+    <MuiButton
+      component="a"
+      {...variantProps[variant]}
+      size={sizeMap[size]}
+      startIcon={leadingIcon}
+      endIcon={trailingIcon}
       {...props}
     >
-      {leadingIcon ? <span className="nd-button__icon" aria-hidden="true">{leadingIcon}</span> : null}
-      <span className="nd-button__label">{children}</span>
-      {trailingIcon ? <span className="nd-button__icon" aria-hidden="true">{trailingIcon}</span> : null}
-    </a>
+      {children}
+    </MuiButton>
   )
 }
