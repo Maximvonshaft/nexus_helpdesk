@@ -3,7 +3,7 @@
   "version": "mui_visual_authority.v1",
   "work_item": 753,
   "decision": {
-    "status": "migration_in_progress",
+    "status": "code_migration_complete_verification_pending",
     "selected_framework": "Material UI",
     "selected_package": "@mui/material",
     "selected_version": "9.2.0",
@@ -33,8 +33,8 @@
     "theme_path": "webapp/src/theme/nexusTheme.ts",
     "application_provider_path": "webapp/src/theme/NexusThemeProvider.tsx",
     "component_usage": "direct MUI imports for generic controls; Nexus components only for domain-specific composition",
-    "route_css_policy": "delete after migration; use MUI components, theme, sx and responsive props",
-    "global_css_policy": "retain only narrowly justified non-component browser/accessibility rules"
+    "route_css_policy": "prohibited; use MUI components, theme, sx and responsive props",
+    "global_css_policy": "styles.css contains browser foundations only; a11y.css contains only the sr-only utility"
   },
   "implementation_state": {
     "package_manifest_updated": true,
@@ -43,12 +43,23 @@
     "root_provider_mounted": true,
     "login_migrated": true,
     "application_shell_migrated": true,
-    "workspace_migrated": false,
-    "supporting_routes_migrated": false,
-    "legacy_visual_residue_deleted": false
+    "workspace_migrated": true,
+    "knowledge_migrated": true,
+    "channels_migrated": true,
+    "runtime_migrated": true,
+    "runtime_evidence_audit_migrated": true,
+    "control_tower_migrated": true,
+    "boundary_pages_migrated": true,
+    "custom_generic_components_deleted": true,
+    "radix_dialog_removed": true,
+    "custom_token_system_deleted": true,
+    "route_visual_css_deleted": true,
+    "legacy_visual_residue_deleted": true,
+    "local_verification_completed": false,
+    "browser_acceptance_completed": false
   },
-  "replacement_scope": {
-    "generic_components_to_replace_and_delete": [
+  "retirement_evidence": {
+    "deleted_generic_components": [
       "webapp/src/components/ui/Button.tsx",
       "webapp/src/components/ui/ButtonLink.tsx",
       "webapp/src/components/ui/Badge.tsx",
@@ -59,7 +70,7 @@
       "webapp/src/components/ui/ConfirmDialog.tsx",
       "webapp/src/components/ui/PageHeader.tsx"
     ],
-    "css_to_migrate_and_delete": [
+    "deleted_visual_css": [
       "webapp/src/styles/tokens.css",
       "webapp/src/styles/components.css",
       "webapp/src/styles/auth.css",
@@ -70,11 +81,11 @@
       "webapp/src/features/knowledge/knowledge.css",
       "webapp/src/features/runtime/runtime-evidence-audit.css"
     ],
-    "css_to_reduce_or_delete_after_audit": [
+    "retained_bounded_css": [
       "webapp/src/styles.css",
       "webapp/src/a11y.css"
     ],
-    "interaction_dependency_to_remove": [
+    "removed_dependencies": [
       "@radix-ui/react-dialog"
     ]
   },
@@ -97,17 +108,7 @@
     "old_new_runtime_switch_forbidden": true,
     "v2_routes_forbidden": true,
     "parallel_framework_forbidden": true,
-    "route_migration_order": [
-      "theme foundation",
-      "login and application shell",
-      "workspace",
-      "knowledge",
-      "channels",
-      "runtime",
-      "control tower",
-      "residue deletion"
-    ],
-    "merge_condition": "all active routes use MUI; replaced generic components and route CSS are deleted; local exact-head verification and browser evidence pass"
+    "merge_condition": "package-lock.json is regenerated from the exact package manifest; one unchanged Head passes architecture, lint, typecheck, tests, build, browser acceptance and independent review"
   },
   "forbidden_frameworks": [
     "Tailwind CSS",
