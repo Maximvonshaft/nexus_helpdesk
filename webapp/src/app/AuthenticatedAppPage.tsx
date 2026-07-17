@@ -1,22 +1,14 @@
-import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import {
+  OperatorLoadingState,
+  OperatorPageBoundary,
+} from '@/app/OperatorPresentation'
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { AppShell } from './AppShell'
 import type { AppRouteKey } from './navigation'
-
-function FullPageBoundary({ children, busy = false }: { children: ReactNode; busy?: boolean }) {
-  return (
-    <Box
-      component="main"
-      aria-busy={busy || undefined}
-      sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}
-    >
-      {children}
-    </Box>
-  )
-}
 
 export function AuthenticatedAppPage({
   activeRoute,
@@ -40,7 +32,7 @@ export function AuthenticatedAppPage({
   if (session.isLoading || !session.data) {
     if (session.isError) {
       return (
-        <FullPageBoundary>
+        <OperatorPageBoundary>
           <Alert
             severity="error"
             variant="outlined"
@@ -50,19 +42,14 @@ export function AuthenticatedAppPage({
             <Typography variant="subtitle1">无法读取账号</Typography>
             <Typography variant="body2">请重新登录。</Typography>
           </Alert>
-        </FullPageBoundary>
+        </OperatorPageBoundary>
       )
     }
     return (
-      <FullPageBoundary busy>
-        <Stack role="status" spacing={2} aria-live="polite" sx={{
-          alignItems: "center"
-        }}>
-          <CircularProgress size={32} />
-          <Typography variant="subtitle1">正在登录…</Typography>
-        </Stack>
-      </FullPageBoundary>
-    );
+      <OperatorPageBoundary busy>
+        <OperatorLoadingState label="正在登录…" minHeight={0} />
+      </OperatorPageBoundary>
+    )
   }
 
   const allowed = requiredAny.some((capability) => capabilities.has(capability))
@@ -75,7 +62,7 @@ export function AuthenticatedAppPage({
       onLogout={handleLogout}
     >
       {allowed ? children : (
-        <Box sx={{ p: { xs: 2, md: 4 } }}>
+        <Box component="main" sx={{ p: { xs: 2, md: 4 } }}>
           <Alert severity="warning" variant="outlined" aria-labelledby={`${activeRoute}-forbidden-title`}>
             <Typography id={`${activeRoute}-forbidden-title`} component="h1" variant="h3">
               无权访问此页面
