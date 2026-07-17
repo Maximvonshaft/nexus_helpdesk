@@ -1,4 +1,4 @@
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -6,12 +6,14 @@ from ..auth_service import decode_access_token
 from ..db import get_db
 from ..models import User
 from ..services.permissions import CAP_USER_MANAGE, resolve_capabilities
+from ..services.support_sensitive_access import enforce_sensitive_support_request
 from ..settings import get_settings
 
 bearer = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     x_user_id: int | None = Header(default=None, alias="X-User-Id"),
     db: Session = Depends(get_db),
@@ -28,6 +30,8 @@ def get_current_user(
 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    enforce_sensitive_support_request(request, db=db, current_user=user)
     return user
 
 
