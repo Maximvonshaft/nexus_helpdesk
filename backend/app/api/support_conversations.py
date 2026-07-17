@@ -14,11 +14,13 @@ from ..db import get_db
 from ..enums import ConversationState, SourceChannel, TicketStatus
 from ..models import Ticket
 from ..services.permissions import (
+    CAP_OUTBOUND_SEND,
     CAP_TICKET_READ,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
     CAP_WEBCHAT_HANDOFF_RELEASE,
     CAP_WEBCHAT_HANDOFF_RESUME_AI,
+    ensure_can_send_outbound,
     ensure_capability,
     resolve_capabilities,
 )
@@ -415,6 +417,7 @@ def _conversation_out(
         ),
         "can_reply": bool(
             ticket.id
+            and CAP_OUTBOUND_SEND in capabilities
             and not _ai_blocks_manual_reply(conversation)
             and (
                 handoff_status == "none"
@@ -595,6 +598,7 @@ def reply_support_conversation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
+    ensure_can_send_outbound(current_user, db)
     with managed_session(db):
         conversation, ticket = _load_conversation(
             db,
