@@ -1,8 +1,4 @@
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -32,12 +28,13 @@ import {
   OperatorEmptyState,
   OperatorErrorNotice,
   OperatorFactGrid,
+  OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
 import { operationalPresentation } from '@/domain/operationalPresentation'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
-import { healthPresentation } from '@/lib/supportStatus'
+import { channelPresentation, healthPresentation } from '@/lib/supportStatus'
 import type { ChannelOnboardingTask } from '@/lib/channelControlTypes'
 import type { ChannelAccount } from '@/lib/types'
 
@@ -57,14 +54,6 @@ const emptyDraft: OnboardingDraft = {
   displayName: '',
   accountBinding: '',
   externalAccountId: '',
-}
-
-function providerLabel(value: string) {
-  if (value === 'webchat') return '网页客服'
-  if (value === 'whatsapp') return 'WhatsApp'
-  if (value === 'email') return '邮件'
-  if (value === 'voice') return '语音'
-  return sanitizeDisplayText(value)
 }
 
 function maskPhone(value: string | null | undefined) {
@@ -214,10 +203,11 @@ export function ChannelsPage() {
                 <TableBody>
                   {activeAccounts.map((item) => {
                     const health = healthPresentation(item.health_status)
+                    const channel = channelPresentation(item.provider)
                     return (
                       <TableRow key={item.id} hover>
-                        <TableCell>{providerLabel(item.provider)}</TableCell>
-                        <TableCell>{sanitizeDisplayText(item.display_name || `${providerLabel(item.provider)} 账号`)}</TableCell>
+                        <TableCell>{channel.label}</TableCell>
+                        <TableCell>{sanitizeDisplayText(item.display_name || `${channel.label} 账号`)}</TableCell>
                         <TableCell><Chip color={operatorToneColor(health.tone)} label={health.label} /></TableCell>
                         <TableCell align="right">{item.priority}</TableCell>
                         <TableCell>{formatDateTime(item.updated_at)}</TableCell>
@@ -247,17 +237,14 @@ export function ChannelsPage() {
                 ['最近连接', whatsappStatus.data?.last_connected_at ? formatDateTime(whatsappStatus.data.last_connected_at) : '暂无'],
               ]} />
               {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined">{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
-              <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
-                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}><Typography variant="subtitle2">系统信息</Typography></AccordionSummary>
-                <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>
-                  <OperatorFactGrid facts={[
-                    ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
-                    ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
-                    ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
-                    ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
-                  ]} />
-                </AccordionDetails>
-              </Accordion>
+              <OperatorTechnicalDisclosure title="系统信息">
+                <OperatorFactGrid facts={[
+                  ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
+                  ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
+                  ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
+                  ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
+                ]} />
+              </OperatorTechnicalDisclosure>
             </Stack>
           )}
         </Paper>
@@ -294,11 +281,12 @@ export function ChannelsPage() {
               {tasks.data.tasks.map((task) => {
                 const status = taskStatus(task)
                 const result = operationalPresentation(task.status, task.last_error)
+                const channel = channelPresentation(task.provider)
                 return (
                   <Stack component="article" key={task.id} direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" sx={{ py: 1.5 }}>
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                        <Typography variant="subtitle2">{providerLabel(task.provider)} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
+                        <Typography variant="subtitle2">{channel.label} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
                         <Chip color={operatorToneColor(status.tone)} label={status.label} />
                       </Stack>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{task.last_error ? sanitizeDisplayText(task.last_error) : result.detail || '等待处理'}</Typography>
