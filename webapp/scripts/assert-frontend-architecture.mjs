@@ -172,11 +172,24 @@ function assertPresentationConvergence(files, failures) {
 
   const forbiddenDefinitions = /\b(?:function|const|type|interface)\s+(WorkspacePresentation|WorkspaceStatusLine|WorkspaceSectionHeading|WorkspaceLoading|FullPageBoundary|TechnicalDisclosure|StatusCount|safeTone|toneColor|providerLabel|channelLabel|safeRecord|safeRecordArray|safeWorkspaceRecord|workspaceText|workspaceNumber|textValue|numberValue)\b/g
   const directDisclosure = /\b(?:Accordion|AccordionSummary|AccordionDetails)\b/
+  const directFactGrid = /component=["']dl["']/
+  const circularStatusMarker = /borderRadius\s*:\s*["']50%["']/
+  const fullPageLayout = /minHeight\s*:\s*["']100dvh["']/
+  const allowedStatusMarkerOwner = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspaceCase.tsx')
+  const allowedFullPageOwners = new Set([
+    presentationPath,
+    path.join(srcRoot, 'app', 'AppShell.tsx'),
+    path.join(srcRoot, 'routes', 'login.tsx'),
+    themePath,
+  ])
   const violations = []
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
     const content = fs.readFileSync(file, 'utf8')
     const fileName = relative(file)
     if (file !== presentationPath && directDisclosure.test(content)) violations.push(`${fileName}: direct Accordion disclosure`)
+    if (file !== presentationPath && directFactGrid.test(content)) violations.push(`${fileName}: direct fact-grid definition list`)
+    if (file !== presentationPath && file !== allowedStatusMarkerOwner && circularStatusMarker.test(content)) violations.push(`${fileName}: generic circular status marker`)
+    if (!allowedFullPageOwners.has(file) && fullPageLayout.test(content)) violations.push(`${fileName}: route-private full-page layout`)
     for (const match of content.matchAll(forbiddenDefinitions)) violations.push(`${fileName}: ${match[1]}`)
     if (/className\s*:\s*['"]is-ai['"]/.test(content)) violations.push(`${fileName}: stale is-ai presentation class`)
   }
