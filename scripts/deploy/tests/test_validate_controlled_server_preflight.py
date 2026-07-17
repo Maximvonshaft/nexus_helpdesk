@@ -145,6 +145,15 @@ class ControlledServerPreflightTests(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.PreflightError, "unsafe_control:PROVIDER_RUNTIME_CANARY_PERCENT"):
                 self._validate(env_path, compose_path, manifest_path)
 
+    def test_rejects_provider_traffic_mode_outside_control(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, compose_path, manifest_path = self._write_fixture(root)
+            text = env_path.read_text().replace("PROVIDER_RUNTIME_TRAFFIC_MODE=control", "PROVIDER_RUNTIME_TRAFFIC_MODE=canary")
+            env_path.write_text(text)
+            with self.assertRaisesRegex(MODULE.PreflightError, "unsafe_control:PROVIDER_RUNTIME_TRAFFIC_MODE"):
+                self._validate(env_path, compose_path, manifest_path)
+
     def test_rejects_compose_build_directive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
