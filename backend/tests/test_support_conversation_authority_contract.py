@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import inspect
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from fastapi import HTTPException
+
+from app.api import support_conversations as support
+from app.enums import ConversationState, SourceChannel, TicketStatus
+from app.services.permissions import (
+    CAP_WEBCHAT_HANDOFF_ACCEPT,
+    CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+    CAP_WEBCHAT_HANDOFF_RELEASE,
+    CAP_WEBCHAT_HANDOFF_RESUME_AI,
+)
+
+
+def _conversation(**overrides):
+    values = {
+        "public_id": "wc-authority",
+        "channel_key": "default",
+        "origin": "webchat-demo",
+        "visitor_name": "Sensitive Customer",
+        "visitor_ref": None,
+        "visitor_phone": "+41000001",
+        "visitor_email": "private@example.test",
+        "updated_at": None,
+        "last_seen_at": None,
+        "handoff_status": "requested",
+        "current_handoff_request_id": 9,
+        "active_agent_id": None,
+        "active_ai_status": None,
+        "active_ai_turn_id": None,
+        "active_ai_for_message_id": None,
+        "ai_suspended": False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _ticket(**overrides):
+    values = {
+        "id": 42,
+        "ticket_no": "SUP-42",
+        "title": "Support case",
+        "source_channel": SourceChannel.web_chat,
+        "status": TicketStatus.in_progress,
+        "conversation_state": ConversationState.human_review_required,
+        "required_action": "review",
+        "tracking_number": "CH020000001234",
+        "last_customer_message": "Where is my parcel?",
+        "updated_at": None,
+        "priority": "medium",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_channel_scope_is_applied_before_limit_without_python_post_filter():
+    source = inspect.getsource(support.list_support_conversations)
+
+    assert source.index("query = query.filter(_channel_predicate(channel))") < source.index(".limit(limit)")
+    assert 'item["channel"] != channel' not in source
+    assert "limit * 3" not in source
+
+
+def test_session_key_channel_alias_fails_closed(monkeypatch):
+    db = Mock()
+    query = db.query.return_value.join.return_value.filter.return_value
+    scoped = Mock()
+    scoped.first.return_value = (_conversation(), _ticket())
+    monkeypatch.setattr(support, "apply_support_ticket_scope", lambda query, user, session: scoped)
+
+    with pytest.raises(HTTPException) as exc:
+        support._load_conversation(
+            db,
+            "whatsapp:wc-authority",
+            current_user=SimpleNamespace(id=7),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "support_conversation_not_found"
+    query.first.assert_not_called()
+
+
+def test_action_flags_are_capability_derived():
+    conversation = _conversation()
+    ticket = _ticket()
+    current_user = SimpleNamespace(id=7)
+
+    without_capabilities = support._conversation_out(
+        conversation=conversation,
+        ticket=ticket,
+        last_message=None,
+        current_user=current_user,
+        capabilities=set(),
+    )
+    assert without_capabilities["can_accept"] is False
+    assert without_capabilities["can_force_takeover"] is False
+    assert without_capabilities["can_release"] is False
+    assert without_capabilities["can_resume_ai"] is False
+
+    with_capabilities = support._conversation_out(
+        conversation=conversation,
+        ticket=ticket,
+        last_message=None,
+        current_user=current_user,
+        capabilities={
+            CAP_WEBCHAT_HANDOFF_ACCEPT,
+            CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+            CAP_WEBCHAT_HANDOFF_RELEASE,
+            CAP_WEBCHAT_HANDOFF_RESUME_AI,
+        },
+    )
+    assert with_capabilities["can_accept"] is True
+    assert with_capabilities["can_force_takeover"] is True
+    assert with_capabilities["can_resume_ai"] is True
+    assert with_capabilities["can_release"] is False
