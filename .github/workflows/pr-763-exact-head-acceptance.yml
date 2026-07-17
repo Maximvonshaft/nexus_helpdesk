@@ -6,7 +6,7 @@ on:
       - ci/763-exact-head-7bb8e6d
   pull_request:
     branches:
-      - main
+      - fix/722-authority-convergence
     types:
       - opened
       - synchronize
