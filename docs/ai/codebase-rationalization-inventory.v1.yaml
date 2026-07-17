@@ -1,25 +1,38 @@
 schema: nexus.osr.codebase-rationalization-inventory.v1
-work_item: 744
-baseline_main_sha: 7ffdbf5941853b4c70d0ec0c2ef0a02cfaa60498
-status: exact_head_verified_ready_to_merge
+work_item: 754
+baseline_main_sha: 5f2922e9beba95faedf70023d426012bbde0b4ec
+status: residue_followup_implementation_complete_verification_pending
 authority:
   canonical_issue: 747
   canonical_pr: 748
   canonical_branch: work/744-canonical-operator-console-consolidation
-  current_ui_work_item: 753
-  current_ui_pr: 754
+  ui_work_item: 753
+  ui_pr: 754
+  ui_pr_state: merged
+  residue_followup_branch: work/754-remove-ui-duplication-residue
   rule: >
     This is the sole repository rationalization ledger. It records physical
-    retirement and delegates product, transport, authorization and visual
-    authority to their canonical implementations; it does not define a second
-    product, design system or GitHub Actions execution chain.
+    retirement and delegates product, transport, authorization, presentation
+    and visual authority to their canonical implementations; it does not define
+    a second product, design system, presentation layer or GitHub Actions chain.
 verification:
   entrypoint: python scripts/verify_repository.py
   static_entrypoint: python scripts/verify_repository.py --static-only
   frontend_entrypoint: cd webapp && npm run verify
   browser_entrypoint: cd webapp && npm run e2e
   github_actions: retired_and_absent
-  exact_head_status: verified
+  exact_head_status: unchanged_head_local_verification_pending
+  completed_evidence:
+    - branch_is_ahead_of_main_and_zero_behind
+    - changed_typescript_and_test_sources_parse_without_syntax_diagnostics
+    - semantic_and_structural_residue_gates_committed
+  prohibited_claims_until_local_verification:
+    - architecture_passed
+    - lint_passed
+    - typecheck_passed
+    - tests_passed
+    - build_passed
+    - browser_acceptance_passed
 canonical_authorities:
   operator_product: webapp
   application_shell: webapp/src/app/AppShell.tsx
@@ -31,6 +44,10 @@ canonical_authorities:
   theme_provider: webapp/src/theme/NexusThemeProvider.tsx
   operator_presentation: webapp/src/app/OperatorPresentation.tsx
   operational_status: webapp/src/domain/operationalPresentation.ts
+  workspace_presentation_semantics: webapp/src/lib/operatorWorkspacePresentation.ts
+  safe_value_boundary: webapp/src/lib/format.ts
+  workspace_state: webapp/src/features/operator-workspace/operatorWorkspaceState.ts
+  workspace_actions: webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx
   backend_policy: backend/app/services/permissions.py
   visibility_scope: backend/app/services/scope_permissions.py
   canonical_hrefs: backend/app/services/canonical_route_projection.py
@@ -71,6 +88,28 @@ deletion_slices:
       - webapp/src/theme/nexusTheme.ts
       - webapp/src/theme/NexusThemeProvider.tsx
       - webapp/src/app/OperatorPresentation.tsx
+  - id: duplicate_presentation_residue
+    disposition: DUPLICATE_DELETE
+    state: deleted_on_residue_followup_branch
+    paths:
+      - webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx
+    retired_responsibilities:
+      - duplicate WorkspacePresentation type
+      - route-private WorkspaceStatusLine and WorkspaceSectionHeading
+      - route-private WorkspaceLoading and FullPageBoundary
+      - route-private TechnicalDisclosure and direct Accordion disclosure
+      - route-private StatusCount and toneColor mapping
+      - duplicate providerLabel and channelLabel mapping
+      - duplicate safeRecord, safeRecordArray, safeWorkspaceRecord, textValue and numberValue helpers
+      - stale className is-ai presentation residue
+      - AppShell-owned nested main landmark
+    replacements:
+      - webapp/src/app/OperatorPresentation.tsx
+      - webapp/src/lib/operatorWorkspacePresentation.ts
+      - webapp/src/lib/supportStatus.ts
+      - webapp/src/lib/format.ts
+      - webapp/src/features/operator-workspace/operatorWorkspaceState.ts
+      - webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx
   - id: unreachable_frontend_modules
     disposition: DEAD_DELETE
     state: deleted_on_canonical_branch
@@ -118,7 +157,10 @@ anti_reintroduction:
   - scripts/verify_repository.py
   - webapp/scripts/assert-frontend-architecture.mjs
   - webapp/tests/canonical-convergence-regression.test.mjs
+  - webapp/tests/frontend-convergence-residue-contract.test.mjs
+  - webapp/tests/frontend-semantic-foundation-contract.test.mjs
   - webapp/tests/mui-visual-authority-contract.test.mjs
+  - webapp/tests/operator-workspace-contract.test.mjs
   - webapp/tests/ui-visual-inventory-contract.test.mjs
 protected_assets:
   - id: historical_alembic_revisions
