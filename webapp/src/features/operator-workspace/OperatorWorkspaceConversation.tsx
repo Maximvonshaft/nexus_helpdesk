@@ -6,20 +6,20 @@ import {
   OperatorEmptyState,
   OperatorErrorNotice,
   OperatorLoadingState,
+  OperatorSectionHeading,
+  OperatorStatusLine,
   operatorScrollBehavior,
 } from '@/app/OperatorPresentation'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
 import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type { UnifiedOperatorQueueItem } from '@/lib/operatorWorkspaceTypes'
-import { messageDeliveryPresentation } from '@/lib/operatorWorkspacePresentation'
-import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import {
-  hasWorkspaceCapability,
   isOutboundWorkspaceMessage,
+  messageDeliveryPresentation,
   workspaceDirectionLabel,
-  WorkspaceSectionHeading,
-  WorkspaceStatusLine,
-} from './OperatorWorkspaceCommon'
+} from '@/lib/operatorWorkspacePresentation'
+import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
+import { hasWorkspaceCapability } from './operatorWorkspaceState'
 
 export function OperatorWorkspaceConversation({
   item,
@@ -115,7 +115,7 @@ export function OperatorWorkspaceConversation({
 
   return (
     <Box id="workspace-conversation" component="section" aria-labelledby="operator-conversation-title" tabIndex={-1} sx={sx}>
-      <WorkspaceSectionHeading id="operator-conversation-title" title="客户沟通" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
+      <OperatorSectionHeading id="operator-conversation-title" title="客户沟通" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
       <Divider sx={{ my: 2 }} />
       {isLoading ? <OperatorLoadingState label="正在读取消息…" /> : null}
       {error ? <OperatorErrorNotice title="无法读取客户沟通" error={error} fallback="仍可查看任务摘要" /> : null}
@@ -162,25 +162,14 @@ export function OperatorWorkspaceConversation({
                     py: 1.25,
                   }}
                 >
-                  <Stack direction="row" spacing={2} sx={{
-                    justifyContent: "space-between"
-                  }}>
+                  <Stack direction="row" spacing={2} justifyContent="space-between">
                     <Typography variant="subtitle2">{sanitizeDisplayText(message.author_label || workspaceDirectionLabel(message.direction))}</Typography>
-                    {message.created_at ? <Typography component="time" variant="caption" sx={{
-                      color: "text.disabled"
-                    }}>{formatDateTime(message.created_at)}</Typography> : null}
+                    {message.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(message.created_at)}</Typography> : null}
                   </Stack>
                   <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{sanitizeDisplayText(message.body_text || message.body)}</Typography>
-                  {outbound ? <Stack
-                    direction="row"
-                    spacing={1}
-                    aria-label="送达状态"
-                    sx={{
-                      alignItems: "center",
-                      mt: 1
-                    }}><WorkspaceStatusLine presentation={delivery} compact /></Stack> : null}
+                  {outbound ? <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} aria-label="送达状态"><OperatorStatusLine presentation={delivery} compact /></Stack> : null}
                 </Box>
-              );
+              )
             })}
             {!thread.messages.length ? <OperatorEmptyState title="暂无消息" /> : null}
           </Stack>
@@ -195,5 +184,5 @@ export function OperatorWorkspaceConversation({
         </Stack>
       ) : !isLoading ? <OperatorEmptyState title="暂无客户沟通" description="回复和接手处理暂不可用" /> : null}
     </Box>
-  );
+  )
 }
