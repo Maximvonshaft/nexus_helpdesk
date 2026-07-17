@@ -58,7 +58,7 @@ def test_canonical_detail_requires_customer_profile_capability(monkeypatch):
     assert exc.value.detail == "support_sensitive_read_requires_customer_profile_capability"
 
 
-def test_legacy_thread_requires_same_sensitive_policy(monkeypatch):
+def test_webchat_thread_requires_same_sensitive_policy(monkeypatch):
     db = Mock()
     db.info = {}
     monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: {"ticket.read"})
@@ -73,7 +73,7 @@ def test_legacy_thread_requires_same_sensitive_policy(monkeypatch):
     assert exc.value.status_code == 403
 
 
-def test_authorized_sensitive_read_persists_bounded_audit_once(monkeypatch):
+def test_capability_precheck_persists_bounded_audit_once(monkeypatch):
     caller_db = Mock()
     caller_db.info = {}
     audit_db = Mock()
@@ -100,15 +100,26 @@ def test_authorized_sensitive_read_persists_bounded_audit_once(monkeypatch):
 
     log.assert_called_once()
     _, kwargs = log.call_args
+    assert kwargs["action"] == "support_sensitive_read_capability_precheck"
     assert kwargs["actor_id"] == 7
     assert kwargs["target_id"] == 42
-    assert kwargs["new_value"]["pii_payload_logged"] is False
+    assert kwargs["new_value"] == {
+        "surface": "webchat_thread",
+        "method": "GET",
+        "capability": "customer_profile.read",
+        "authorization_stage": "capability_precheck",
+        "object_scope_enforced_by_endpoint": True,
+        "access_outcome": "pending_object_scope",
+        "target_reference_hash": None,
+        "pii_payload_logged": False,
+    }
+    assert "authorized" not in kwargs["action"]
     assert "phone" not in str(kwargs)
     audit_db.commit.assert_called_once()
     audit_db.close.assert_called_once()
 
 
-def test_canonical_detail_audit_uses_hashed_reference(monkeypatch):
+def test_canonical_detail_precheck_uses_hashed_reference(monkeypatch):
     caller_db = Mock()
     caller_db.info = {}
     audit_db = Mock()
