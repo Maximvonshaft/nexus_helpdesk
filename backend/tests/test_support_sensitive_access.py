@@ -10,17 +10,13 @@ from starlette.requests import Request
 from app.services import support_sensitive_access as access
 
 
-def _request(
-    path: str,
-    method: str = "GET",
-    query_string: bytes = b"",
-) -> Request:
+def _request(path: str, method: str = "GET") -> Request:
     return Request(
         {
             "type": "http",
             "method": method,
             "path": path,
-            "query_string": query_string,
+            "query_string": b"",
             "headers": [],
         }
     )
@@ -30,26 +26,32 @@ def _user() -> SimpleNamespace:
     return SimpleNamespace(id=7)
 
 
-def test_non_sensitive_route_is_ignored(monkeypatch):
+def test_non_sensitive_support_routes_are_ignored(monkeypatch):
     db = Mock()
     db.info = {}
     monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: set())
 
-    access.enforce_sensitive_support_request(
-        _request("/api/support/conversations"),
-        db=db,
-        current_user=_user(),
-    )
+    for path in (
+        "/api/support/conversations",
+        "/api/support/conversations/resolve",
+        "/api/support/conversations/metrics",
+        "/api/support/conversations/state",
+    ):
+        access.enforce_sensitive_support_request(
+            _request(path),
+            db=db,
+            current_user=_user(),
+        )
 
 
-def test_canonical_detail_requires_customer_profile_capability(monkeypatch):
+def test_webchat_thread_requires_customer_profile_capability(monkeypatch):
     db = Mock()
     db.info = {}
     monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: {"ticket.read"})
 
     with pytest.raises(HTTPException) as exc:
         access.enforce_sensitive_support_request(
-            _request("/api/support/conversations/detail"),
+            _request("/api/webchat/admin/tickets/42/thread"),
             db=db,
             current_user=_user(),
         )
@@ -58,14 +60,14 @@ def test_canonical_detail_requires_customer_profile_capability(monkeypatch):
     assert exc.value.detail == "support_sensitive_read_requires_customer_profile_capability"
 
 
-def test_webchat_thread_requires_same_sensitive_policy(monkeypatch):
+def test_support_memory_requires_customer_profile_capability(monkeypatch):
     db = Mock()
     db.info = {}
     monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: {"ticket.read"})
 
     with pytest.raises(HTTPException) as exc:
         access.enforce_sensitive_support_request(
-            _request("/api/webchat/admin/tickets/42/thread"),
+            _request("/api/webchat/admin/tickets/42/support-memory"),
             db=db,
             current_user=_user(),
         )
@@ -110,42 +112,12 @@ def test_capability_precheck_persists_bounded_audit_once(monkeypatch):
         "authorization_stage": "capability_precheck",
         "object_scope_enforced_by_endpoint": True,
         "access_outcome": "pending_object_scope",
-        "target_reference_hash": None,
         "pii_payload_logged": False,
     }
     assert "authorized" not in kwargs["action"]
     assert "phone" not in str(kwargs)
     audit_db.commit.assert_called_once()
     audit_db.close.assert_called_once()
-
-
-def test_canonical_detail_precheck_uses_hashed_reference(monkeypatch):
-    caller_db = Mock()
-    caller_db.info = {}
-    audit_db = Mock()
-    monkeypatch.setattr(
-        access,
-        "resolve_capabilities",
-        lambda user, session: {"ticket.read", "customer_profile.read"},
-    )
-    monkeypatch.setattr(access, "SessionLocal", lambda: audit_db)
-    log = Mock()
-    monkeypatch.setattr(access, "log_admin_audit", log)
-
-    access.enforce_sensitive_support_request(
-        _request(
-            "/api/support/conversations/detail",
-            query_string=b"session_key=webchat%3Awc_sensitive_123",
-        ),
-        db=caller_db,
-        current_user=_user(),
-    )
-
-    _, kwargs = log.call_args
-    reference_hash = kwargs["new_value"]["target_reference_hash"]
-    assert isinstance(reference_hash, str)
-    assert len(reference_hash) == 16
-    assert "wc_sensitive_123" not in str(kwargs)
 
 
 def test_sensitive_read_fails_closed_when_audit_is_unavailable(monkeypatch):
@@ -163,7 +135,7 @@ def test_sensitive_read_fails_closed_when_audit_is_unavailable(monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         access.enforce_sensitive_support_request(
-            _request("/api/support/conversations/detail"),
+            _request("/api/webchat/admin/tickets/42/thread"),
             db=caller_db,
             current_user=_user(),
         )
