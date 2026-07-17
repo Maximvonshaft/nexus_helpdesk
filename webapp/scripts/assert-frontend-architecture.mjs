@@ -25,6 +25,9 @@ const RAW_COLOR_RE = /#[0-9a-f]{3,8}\b|rgba?\(\s*\d|hsla?\(\s*\d/gi
 const FORBIDDEN_PARALLEL_PATH_RE = /(?:^|\/)(?:new-ui|ui-v2|design-system-v2|components-v2|workspace-v2|new-workspace)(?:\/|$)|(?:^|\/)[^/]*(?:V2|Redesign)\.(?:ts|tsx|css)$/i
 const FORBIDDEN_ROUTE_RE = /["']\/(?:workspace-v2|new-workspace|ui-v2)(?:[/?#"']|$)/i
 const GENERIC_EXPORT_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
+const RETIRED_LOCAL_HELPER_RE = /\bfunction\s+(EmptyState|ErrorNotice|ErrorSummary|LoadingState|FactGrid|statusColor|muiStatusColor|errorCopy|scrollBehavior)\b/g
+const RETIRED_SOURCE_LITERAL_RE = /\b(?:nd-app-boundary-state|empty-state|nd-button|nd-field|nd-badge)\b/
+const LEGACY_SELECTOR_RE = /(^|[,\s{])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
 
 const ALLOWED_SOURCE_CSS = new Set(['webapp/src/styles.css', 'webapp/src/a11y.css'])
 const APPROVED_MUI_DIRECT_PACKAGES = new Set(['@mui/material', '@mui/icons-material'])
@@ -152,6 +155,17 @@ function assertSingleVisualAuthority(files, failures) {
   if (baselines.length !== 1 || baselines[0] !== relative(themeProviderPath)) failures.push(`MUI CssBaseline authority must be exactly ${relative(themeProviderPath)}: ${baselines.join(', ') || 'none'}`)
 }
 
+function assertCanonicalNavigation(files, failures) {
+  const owners = files
+    .filter((file) => /\.(?:ts|tsx)$/.test(file))
+    .filter((file) => fs.readFileSync(file, 'utf8').includes('APP_NAVIGATION'))
+    .map(relative)
+  const allowed = new Set(['webapp/src/app/navigation.ts', 'webapp/src/app/AppNavigation.tsx'])
+  const unexpected = owners.filter((file) => !allowed.has(file))
+  if (unexpected.length) failures.push(`unexpected navigation authority: ${unexpected.join(', ')}`)
+  for (const expected of allowed) if (!owners.includes(expected)) failures.push(`canonical navigation owner is missing: ${expected}`)
+}
+
 function assertPresentationConvergence(files, failures) {
   if (!fs.existsSync(presentationPath)) {
     failures.push(`operator presentation authority is missing: ${relative(presentationPath)}`)
@@ -187,6 +201,9 @@ function assertPresentationConvergence(files, failures) {
     const content = fs.readFileSync(file, 'utf8')
     const fileName = relative(file)
     if (file !== presentationPath && directDisclosure.test(content)) violations.push(`${fileName}: direct Accordion disclosure`)
+    if (RETIRED_SOURCE_LITERAL_RE.test(content)) violations.push(`${fileName}: retired visual class literal`)
+    for (const match of content.matchAll(RETIRED_LOCAL_HELPER_RE)) violations.push(`${fileName}: ${match[1]}`)
+    RETIRED_LOCAL_HELPER_RE.lastIndex = 0
     if (file !== presentationPath && directFactGrid.test(content)) violations.push(`${fileName}: direct fact-grid definition list`)
     if (file !== presentationPath && file !== allowedStatusMarkerOwner && circularStatusMarker.test(content)) violations.push(`${fileName}: generic circular status marker`)
     if (!allowedFullPageOwners.has(file) && fullPageLayout.test(content)) violations.push(`${fileName}: route-private full-page layout`)
@@ -229,6 +246,7 @@ function assertWorkspaceConvergence(failures) {
     failures.push('OperatorWorkspacePage reabsorbed a view or presentation responsibility')
   }
   if (/thread-v2|thread-page|workspace-v2|new-workspace/.test(content)) failures.push('parallel Workspace implementation marker returned')
+  if (/function\s+AppNavigation\b|operator-app-header|\/webchat\?tab=/.test(content)) failures.push('OperatorWorkspacePage reintroduced shell, navigation or compatibility-tab ownership')
 }
 
 function assertKnowledgeConvergence(failures) {
@@ -318,11 +336,14 @@ for (const file of ALLOWED_SOURCE_CSS) if (!cssFiles.includes(file)) failures.pu
 for (const file of files.filter((candidate) => candidate.endsWith('.css'))) {
   const content = fs.readFileSync(file, 'utf8')
   if (/--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/.test(content)) failures.push(`retired CSS variable authority returned: ${relative(file)}`)
+  if (LEGACY_SELECTOR_RE.test(content)) failures.push(`legacy primitive selector returned outside MUI: ${relative(file)}`)
+  LEGACY_SELECTOR_RE.lastIndex = 0
   if (/transition\s*:\s*all\b/i.test(content)) failures.push(`transition: all is forbidden: ${relative(file)}`)
   if (/\.Mui[A-Za-z0-9_-]+/.test(content)) failures.push(`MUI component overrides must live in nexusTheme.ts: ${relative(file)}`)
 }
 
 assertSingleVisualAuthority(files, failures)
+assertCanonicalNavigation(files, failures)
 assertPresentationConvergence(files, failures)
 assertWorkspaceConvergence(failures)
 assertKnowledgeConvergence(failures)
