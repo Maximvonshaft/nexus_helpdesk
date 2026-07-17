@@ -21,9 +21,8 @@ from ..services.support_conversation_privacy import (
     safe_support_tracking_reference,
 )
 from ..services.support_conversation_scope import apply_support_ticket_scope
-from ..services.support_memory_ledger import build_support_memory_ledger
 from ..services.webchat_ai_turn_service import AI_TURN_TYPING_STATUSES, ai_snapshot
-from ..services.webchat_service import admin_get_thread, admin_reply
+from ..services.webchat_service import admin_reply
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatHandoffRequest, WebchatMessage
@@ -44,11 +43,6 @@ def _iso(value: Any) -> str | None:
 
 def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
-
-
-def _clip(value: Any, limit: int) -> str | None:
-    text = " ".join(str(value or "").strip().split())
-    return text[:limit] if text else None
 
 
 def _channel(conversation: WebchatConversation, ticket: Ticket) -> str:
@@ -77,18 +71,6 @@ def _author(direction: str | None) -> str:
     return "system"
 
 
-def _message_out(row: WebchatMessage) -> dict[str, Any]:
-    return {
-        "id": str(row.id),
-        "author": _author(row.direction),
-        "body": row.body_text or row.body or "",
-        "timestamp": _iso(row.created_at),
-        "message_type": row.message_type,
-        "delivery_status": row.delivery_status,
-        "author_label": row.author_label,
-    }
-
-
 def _load_conversation(
     db: Session,
     session_key: str,
@@ -106,8 +88,7 @@ def _load_conversation(
     )
     row = apply_support_ticket_scope(query, current_user, db).first()
     if row is None:
-        # The same response is used for missing and unauthorized cases so object
-        # existence is not disclosed across support scopes.
+        # Missing and unauthorized records intentionally share one response.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="support_conversation_not_found")
     return row
 
@@ -121,13 +102,6 @@ def _latest_message_subquery(db: Session):
         .group_by(WebchatMessage.conversation_id)
         .subquery()
     )
-
-
-def _active_handoff(db: Session, conversation: WebchatConversation) -> WebchatHandoffRequest | None:
-    request_id = getattr(conversation, "current_handoff_request_id", None)
-    if not request_id:
-        return None
-    return db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.id == request_id).first()
 
 
 def _ai_pending(conversation: WebchatConversation) -> bool:
@@ -240,24 +214,15 @@ def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, A
 
 
 def _conversation_out(
-    db: Session,
     *,
     conversation: WebchatConversation,
     ticket: Ticket,
-    last_message: WebchatMessage | None = None,
-    include_memory: bool = False,
-    include_sensitive: bool = False,
+    last_message: WebchatMessage | None,
     current_user,
 ) -> dict[str, Any]:
     channel = _channel(conversation, ticket)
-    state = _enum_value(ticket.conversation_state)
-    ticket_status = _enum_value(ticket.status)
-    handoff = _active_handoff(db, conversation)
-    needs_human = (
-        ticket.conversation_state == ConversationState.human_review_required
-        or bool(ticket.required_action)
-        or getattr(conversation, "handoff_status", None) in {"requested", "accepted"}
-    )
+    handoff_status = getattr(conversation, "handoff_status", None) or "none"
+    active_agent_id = getattr(conversation, "active_agent_id", None)
     raw_display_name = (
         conversation.visitor_name
         or (ticket.customer.name if ticket.customer else None)
@@ -275,7 +240,6 @@ def _conversation_out(
         if last_message
         else ticket.last_customer_message
     )
-    tracking_reference = safe_support_tracking_reference(ticket.tracking_number)
     item: dict[str, Any] = {
         "session_key": _session_key(conversation, ticket),
         "conversation_id": conversation.public_id,
@@ -284,54 +248,43 @@ def _conversation_out(
         "ticket_id": ticket.id,
         "ticket_no": ticket.ticket_no,
         "title": ticket.title,
-        "status": ticket_status,
-        "conversation_state": state,
-        "display_name": (
-            raw_display_name
-            if include_sensitive
-            else mask_support_display_name(raw_display_name, fallback=ticket.ticket_no)
-        ),
-        "customer_contact": (
-            raw_contact if include_sensitive else mask_support_contact(raw_contact)
-        ),
+        "status": _enum_value(ticket.status),
+        "conversation_state": _enum_value(ticket.conversation_state),
+        "display_name": mask_support_display_name(raw_display_name, fallback=ticket.ticket_no),
+        "customer_contact": mask_support_contact(raw_contact),
         "updated_at": _iso(conversation.updated_at or ticket.updated_at),
         "last_seen_at": _iso(conversation.last_seen_at),
-        "latest_message": (
-            _clip(raw_latest_message, 220)
-            if include_sensitive
-            else safe_support_message_preview(raw_latest_message, limit=160)
-        ),
+        "latest_message": safe_support_message_preview(raw_latest_message, limit=160),
         "latest_author": _author(last_message.direction if last_message else None) if last_message else None,
-        "needs_human": bool(needs_human),
+        "needs_human": bool(
+            ticket.conversation_state == ConversationState.human_review_required
+            or ticket.required_action
+            or handoff_status in {"requested", "accepted"}
+        ),
         "required_action": ticket.required_action,
-        "handoff_status": getattr(conversation, "handoff_status", None) or "none",
+        "handoff_status": handoff_status,
         "handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
-        "active_agent_id": getattr(conversation, "active_agent_id", None),
+        "active_agent_id": active_agent_id,
         "ai_status": getattr(conversation, "active_ai_status", None),
         "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
         "tracking_number_present": bool(ticket.tracking_number),
-        "tracking_number": ticket.tracking_number if include_sensitive else None,
-        "tracking_reference": tracking_reference,
-        "pii_minimized": not include_sensitive,
+        "tracking_number": None,
+        "tracking_reference": safe_support_tracking_reference(ticket.tracking_number),
+        "pii_minimized": True,
         "can_force_takeover": bool(ticket.id),
-        "can_accept": bool(handoff and handoff.status == "requested"),
-        "can_release": bool(handoff and handoff.status == "accepted" and handoff.assigned_agent_id == current_user.id),
-        "can_resume_ai": bool(handoff and handoff.status in {"requested", "accepted"}),
+        "can_accept": handoff_status == "requested",
+        "can_release": handoff_status == "accepted" and active_agent_id == current_user.id,
+        "can_resume_ai": handoff_status in {"requested", "accepted"},
         "can_reply": bool(
             ticket.id
             and not _ai_blocks_manual_reply(conversation)
             and (
-                getattr(conversation, "handoff_status", None) in {None, "none"}
-                or (
-                    getattr(conversation, "handoff_status", None) == "accepted"
-                    and getattr(conversation, "active_agent_id", None) == current_user.id
-                )
+                handoff_status == "none"
+                or (handoff_status == "accepted" and active_agent_id == current_user.id)
             )
         ),
     }
     item.update(ai_snapshot(conversation))
-    if include_memory:
-        item["support_memory"] = build_support_memory_ledger(db, ticket_id=ticket.id, current_user=current_user)
     return item
 
 
@@ -383,10 +336,9 @@ def list_support_conversations(
         )
 
     rows = query.order_by(WebchatConversation.updated_at.desc(), WebchatConversation.id.desc()).limit(limit * 3).all()
-    items = []
+    items: list[dict[str, Any]] = []
     for conversation, ticket, last_message in rows:
         item = _conversation_out(
-            db,
             conversation=conversation,
             ticket=ticket,
             last_message=last_message,
@@ -400,45 +352,34 @@ def list_support_conversations(
     return {"items": items, "source": "nexus_support_conversations", "view": view}
 
 
-@router.get("/detail")
-def get_support_conversation_detail(
+@router.get("/resolve")
+def resolve_support_conversation(
     session_key: str = Query(..., min_length=1, max_length=200),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
+    """Resolve a scoped session deep-link without loading sensitive detail data."""
+
     ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
     conversation, ticket = _load_conversation(db, session_key, current_user=current_user)
-    messages = (
-        db.query(WebchatMessage)
-        .filter(WebchatMessage.conversation_id == conversation.id)
-        .order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc())
-        .limit(300)
-        .all()
-    )
-    base = _conversation_out(
-        db,
-        conversation=conversation,
-        ticket=ticket,
-        last_message=messages[-1] if messages else None,
-        include_memory=True,
-        include_sensitive=True,
-        current_user=current_user,
-    )
-    thread = admin_get_thread(db, ticket.id, current_user)
+    channel = _channel(conversation, ticket)
     return {
-        "conversation": base,
+        "conversation": {
+            "session_key": _session_key(conversation, ticket),
+            "conversation_id": conversation.public_id,
+            "ticket_id": ticket.id,
+            "handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
+            "channel": channel,
+            "source": conversation.origin or channel,
+            "pii_minimized": True,
+        },
         "ticket": {
             "id": ticket.id,
             "ticket_no": ticket.ticket_no,
             "status": _enum_value(ticket.status),
             "priority": _enum_value(ticket.priority),
-            "required_action": ticket.required_action,
-            "tracking_number_present": bool(ticket.tracking_number),
         },
-        "messages": [_message_out(row) for row in messages],
-        "handoff": thread.get("handoff"),
-        "support_memory": thread.get("support_memory") or base.get("support_memory"),
-        "source": "nexus_support_conversations",
+        "source": "nexus_support_conversation_resolver",
     }
 
 
