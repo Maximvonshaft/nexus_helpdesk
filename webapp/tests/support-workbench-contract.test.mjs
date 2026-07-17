@@ -14,6 +14,17 @@ const workspace = [
   'src/features/operator-workspace/operatorWorkspaceState.ts',
 ].map(read).join('\n')
 
+const typeOwners = [
+  'core',
+  'operations',
+  'channels',
+  'channelControl',
+  'runtime',
+  'knowledge',
+  'webchat',
+]
+
+
 test('router exposes only the owned canonical route files', () => {
   const actual = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
   assert.deepEqual(actual, ['channels.tsx', 'control-tower.tsx', 'index.tsx', 'knowledge.tsx', 'login.tsx', 'root.tsx', 'runtime.tsx', 'webchat.tsx', 'workspace.tsx'])
@@ -40,6 +51,33 @@ test('knowledge is one capability-aware implementation', () => {
   assert.match(route, /LazyKnowledgePage canManage/)
   assert.equal(exists('src/features/knowledge/KnowledgeReadOnlyPage.tsx'), false)
   for (const text of ['知识与流程', '标准答案与处理步骤', '搜索测试', '发布状态']) assert.match(page, new RegExp(text))
+})
+
+test('type exports have one declaration and one domain owner', () => {
+  const barrel = read('src/lib/types.ts')
+  const declarations = new Map()
+
+  for (const owner of typeOwners) {
+    const path = `src/lib/types/${owner}.ts`
+    const source = read(path)
+    assert.match(barrel, new RegExp(`export \\* from './types/${owner}'`))
+    for (const match of source.matchAll(/export\s+(?:interface|type)\s+([A-Za-z_$][\w$]*)/g)) {
+      const name = match[1]
+      assert.equal(declarations.has(name), false, `${name} is declared by both ${declarations.get(name)} and ${owner}`)
+      declarations.set(name, owner)
+    }
+    assert.doesNotMatch(source, /export\s*\{[^}]*\bas\b/, `${owner} contains a compatibility alias`)
+  }
+
+  const operations = read('src/lib/types/operations.ts')
+  const knowledge = read('src/lib/types/knowledge.ts')
+  const channelControl = read('src/lib/types/channelControl.ts')
+  assert.doesNotMatch(operations, /KnowledgeStudio|PersonaBuilder|ChannelOnboardingTask|ExternalChannelUnresolvedEvent/)
+  assert.match(knowledge, /KnowledgeStudio/)
+  assert.match(knowledge, /PersonaBuilder/)
+  assert.doesNotMatch(knowledge, /ChannelOnboardingTask|ExternalChannelUnresolvedEvent/)
+  assert.match(channelControl, /ChannelOnboardingTask/)
+  assert.match(channelControl, /ExternalChannelUnresolvedEvent/)
 })
 
 test('MUI and one bounded presentation module are the only generic visual authorities', () => {
