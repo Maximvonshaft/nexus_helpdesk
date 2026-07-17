@@ -62,6 +62,14 @@ test('workspace keeps truthful progress, action safety and operator language', (
   }
   assert.match(actions, /cancelPreviewFingerprint/)
   assert.match(actions, /cancelPreview\.fingerprint !== currentCancelFingerprint/)
+  for (const capability of [
+    'webchat.handoff.accept',
+    'webchat.handoff.decline',
+    'webchat.handoff.force_takeover',
+    'webchat.handoff.release',
+    'webchat.handoff.resume_ai',
+  ]) assert.match(actions, new RegExp(capability.replaceAll('.', '\\.')))
+  assert.doesNotMatch(actions, /const\s+handoffAllowed/)
   assert.doesNotMatch(source, /案例处理链路|事实与证据|案例接管|接管案例|释放案例|恢复 AI|服务端最终授权/)
 })
 
