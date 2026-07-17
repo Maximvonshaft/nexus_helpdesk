@@ -17,7 +17,10 @@ def _load_module(name: str, path: Path):
 
 def _read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, raw in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -32,18 +35,37 @@ def _read_env(path: Path) -> dict[str, str]:
 
 
 class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
-    def test_each_deployment_profile_has_one_explicit_traffic_mode(self) -> None:
-        expected = {
-            "deploy/.env.prod.example": "canary",
-            "deploy/.env.candidate.example": "control",
-            "deploy/.env.controlled.example": "control",
-            "deploy/.env.rc-test.example": "control",
-        }
-        for relative, mode in expected.items():
+    def test_each_deployment_profile_is_explicit_and_fail_closed(self) -> None:
+        profiles = (
+            "deploy/.env.prod.example",
+            "deploy/.env.candidate.example",
+            "deploy/.env.controlled.example",
+            "deploy/.env.rc-test.example",
+        )
+        for relative in profiles:
             values = _read_env(ROOT / relative)
-            self.assertEqual(values.get("PROVIDER_RUNTIME_TRAFFIC_MODE"), mode, relative)
-            self.assertIn(values.get("PROVIDER_RUNTIME_CANARY_PERCENT"), {"0", "1", "5", "25", "100"})
-            self.assertIn(values.get("PROVIDER_RUNTIME_KILL_SWITCH"), {"true", "false"})
+            self.assertEqual(
+                values.get("PROVIDER_RUNTIME_TRAFFIC_MODE"),
+                "control",
+                relative,
+            )
+            self.assertEqual(
+                values.get("PROVIDER_RUNTIME_CANARY_PERCENT"),
+                "0",
+                relative,
+            )
+            if "PROVIDER_RUNTIME_ENABLED" in values:
+                self.assertEqual(
+                    values["PROVIDER_RUNTIME_ENABLED"],
+                    "false",
+                    relative,
+                )
+            if relative.endswith(("prod.example", "controlled.example", "rc-test.example")):
+                self.assertEqual(
+                    values.get("PROVIDER_RUNTIME_KILL_SWITCH"),
+                    "true",
+                    relative,
+                )
 
     def test_compose_profiles_consume_their_single_env_authority(self) -> None:
         expected = {
@@ -55,9 +77,15 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
         for relative, env_name in expected.items():
             source = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn(f"- {env_name}", source, relative)
-            self.assertNotIn("PROVIDER_RUNTIME_TRAFFIC_MODE:", source, relative)
+            self.assertNotIn(
+                "PROVIDER_RUNTIME_TRAFFIC_MODE:",
+                source,
+                relative,
+            )
 
-    def test_rc_generator_and_controlled_preflight_share_fail_closed_mode(self) -> None:
+    def test_rc_generator_and_controlled_preflight_share_fail_closed_mode(
+        self,
+    ) -> None:
         generator = _load_module(
             "provider_runtime_rc_env",
             ROOT / "scripts/release/generate_rc_test_env.py",
@@ -72,12 +100,24 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
             origin="http://127.0.0.1:18083",
             expected_migration_head="contract_head",
         )
-        self.assertEqual(values["PROVIDER_RUNTIME_TRAFFIC_MODE"], "control")
+        self.assertEqual(
+            values["PROVIDER_RUNTIME_TRAFFIC_MODE"],
+            "control",
+        )
         self.assertEqual(values["PROVIDER_RUNTIME_CANARY_PERCENT"], "0")
         self.assertEqual(values["PROVIDER_RUNTIME_KILL_SWITCH"], "true")
-        self.assertEqual(preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_TRAFFIC_MODE"], "control")
-        self.assertEqual(preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_CANARY_PERCENT"], "0")
-        self.assertEqual(preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_KILL_SWITCH"], "true")
+        self.assertEqual(
+            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_TRAFFIC_MODE"],
+            "control",
+        )
+        self.assertEqual(
+            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_CANARY_PERCENT"],
+            "0",
+        )
+        self.assertEqual(
+            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_KILL_SWITCH"],
+            "true",
+        )
 
 
 if __name__ == "__main__":
