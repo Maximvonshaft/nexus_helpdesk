@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 
@@ -21,8 +20,7 @@ _TICKET_PATH = re.compile(
 @dataclass(frozen=True)
 class SensitiveSupportSurface:
     name: str
-    target_id: int | None = None
-    target_reference_hash: str | None = None
+    target_id: int
 
 
 def classify_sensitive_support_request(request: Request) -> SensitiveSupportSurface | None:
@@ -30,25 +28,13 @@ def classify_sensitive_support_request(request: Request) -> SensitiveSupportSurf
         return None
 
     path = request.url.path.rstrip("/") or "/"
-    if path == "/api/support/conversations/detail":
-        session_key = str(request.query_params.get("session_key") or "").strip()
-        reference_hash = (
-            hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:16]
-            if session_key
-            else None
-        )
-        return SensitiveSupportSurface(
-            "support_conversation_detail",
-            target_reference_hash=reference_hash,
-        )
-
     match = _TICKET_PATH.fullmatch(path)
-    if match:
-        return SensitiveSupportSurface(
-            f"webchat_{match.group('surface').replace('-', '_')}",
-            int(match.group("ticket_id")),
-        )
-    return None
+    if not match:
+        return None
+    return SensitiveSupportSurface(
+        f"webchat_{match.group('surface').replace('-', '_')}",
+        int(match.group("ticket_id")),
+    )
 
 
 def enforce_sensitive_support_request(
@@ -60,8 +46,8 @@ def enforce_sensitive_support_request(
     """Require sensitive-read capability and persist a bounded precheck event.
 
     Object existence, tenant authority and ticket visibility remain fail-closed in
-    the endpoint's canonical query/service boundary. This precheck deliberately
-    does not claim that object-level authorization or data disclosure succeeded.
+    the canonical Thread/Memory service boundary. This precheck deliberately does
+    not claim that object-level authorization or data disclosure succeeded.
     """
 
     surface = classify_sensitive_support_request(request)
@@ -74,12 +60,7 @@ def enforce_sensitive_support_request(
             detail="support_sensitive_read_requires_customer_profile_capability",
         )
 
-    audit_key = (
-        int(current_user.id),
-        surface.name,
-        surface.target_id,
-        surface.target_reference_hash,
-    )
+    audit_key = (int(current_user.id), surface.name, surface.target_id)
     prechecked = db.info.setdefault(_AUDIT_SESSION_KEY, set())
     if audit_key in prechecked:
         return
@@ -99,7 +80,6 @@ def enforce_sensitive_support_request(
                 "authorization_stage": "capability_precheck",
                 "object_scope_enforced_by_endpoint": True,
                 "access_outcome": "pending_object_scope",
-                "target_reference_hash": surface.target_reference_hash,
                 "pii_payload_logged": False,
             },
         )
