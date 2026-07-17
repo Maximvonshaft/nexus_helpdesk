@@ -1,4 +1,8 @@
+import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   AlertTitle,
   Box,
@@ -6,23 +10,41 @@ import {
   Stack,
   Typography,
 } from '@mui/material'
-import type { AlertColor } from '@mui/material'
+import type { AlertColor, AlertProps } from '@mui/material'
 import type { ReactNode } from 'react'
+import type { OperationalPresentation } from '@/domain/operationalPresentation'
+import type { BadgeTone } from '@/lib/types'
 
-export type OperatorTone = 'default' | 'success' | 'warning' | 'danger'
+export type OperatorTone = BadgeTone
+
+export function normalizeOperatorTone(tone: unknown): OperatorTone {
+  return tone === 'success' || tone === 'warning' || tone === 'danger' || tone === 'default'
+    ? tone
+    : 'default'
+}
 
 export function operatorToneColor(tone: OperatorTone | string | null | undefined): Exclude<AlertColor, 'info'> | 'default' {
-  if (tone === 'success') return 'success'
-  if (tone === 'warning') return 'warning'
-  if (tone === 'danger') return 'error'
+  const normalized = normalizeOperatorTone(tone)
+  if (normalized === 'success') return 'success'
+  if (normalized === 'warning') return 'warning'
+  if (normalized === 'danger') return 'error'
   return 'default'
 }
 
 export function operatorTonePalettePath(tone: OperatorTone | string | null | undefined) {
-  if (tone === 'success') return 'success.main'
-  if (tone === 'warning') return 'warning.main'
-  if (tone === 'danger') return 'error.main'
+  const normalized = normalizeOperatorTone(tone)
+  if (normalized === 'success') return 'success.main'
+  if (normalized === 'warning') return 'warning.main'
+  if (normalized === 'danger') return 'error.main'
   return 'text.secondary'
+}
+
+export function operatorAlertSeverity(tone: OperatorTone | string | null | undefined): AlertProps['severity'] {
+  const normalized = normalizeOperatorTone(tone)
+  if (normalized === 'success') return 'success'
+  if (normalized === 'warning') return 'warning'
+  if (normalized === 'danger') return 'error'
+  return 'info'
 }
 
 export function operatorErrorMessage(error: unknown, fallback: string) {
@@ -32,6 +54,24 @@ export function operatorErrorMessage(error: unknown, fallback: string) {
 export function operatorScrollBehavior(): ScrollBehavior {
   if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 'auto'
   return 'smooth'
+}
+
+export function OperatorPageBoundary({
+  children,
+  busy = false,
+}: {
+  children: ReactNode
+  busy?: boolean
+}) {
+  return (
+    <Box
+      component="main"
+      aria-busy={busy || undefined}
+      sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}
+    >
+      {children}
+    </Box>
+  )
 }
 
 export function OperatorLoadingState({ label, minHeight = 150 }: { label: string; minHeight?: number | string }) {
@@ -120,5 +160,93 @@ export function OperatorFactGrid({
         </Box>
       ))}
     </Box>
+  )
+}
+
+export function OperatorSectionHeading({
+  title,
+  action,
+  id,
+}: {
+  title: string
+  action?: ReactNode
+  id?: string
+}) {
+  return (
+    <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
+      <Typography id={id} component="h2" variant="h3">{title}</Typography>
+      {action}
+    </Stack>
+  )
+}
+
+export function OperatorStatusLine({
+  presentation,
+  compact = false,
+}: {
+  presentation: OperationalPresentation
+  compact?: boolean
+}) {
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
+      <Box
+        aria-hidden="true"
+        sx={{
+          bgcolor: operatorTonePalettePath(presentation.tone),
+          borderRadius: '50%',
+          flex: '0 0 auto',
+          height: 8,
+          mt: '6px',
+          width: 8,
+        }}
+      />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography variant={compact ? 'caption' : 'body2'} color="text.primary" sx={{ fontWeight: 650 }}>
+          {presentation.label}
+        </Typography>
+        {!compact && presentation.detail ? (
+          <Typography variant="caption" color="text.secondary" display="block">{presentation.detail}</Typography>
+        ) : null}
+      </Box>
+    </Stack>
+  )
+}
+
+export function OperatorTechnicalDisclosure({
+  title,
+  summary,
+  children,
+  compact = false,
+}: {
+  title: string
+  summary?: string
+  children: ReactNode
+  compact?: boolean
+}) {
+  return (
+    <Accordion
+      disableGutters
+      elevation={compact ? 0 : undefined}
+      variant={compact ? undefined : 'outlined'}
+      sx={{
+        '&:before': { display: 'none' },
+        ...(compact ? { bgcolor: 'transparent' } : {}),
+      }}
+    >
+      <AccordionSummary
+        expandIcon={<ExpandMoreRoundedIcon />}
+        sx={compact ? { minHeight: 36, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } } : undefined}
+      >
+        <Box>
+          <Typography variant={compact ? 'caption' : 'subtitle2'} color={compact ? 'text.secondary' : 'text.primary'}>
+            {title}
+          </Typography>
+          {summary ? <Typography variant="caption" color="text.secondary">{summary}</Typography> : null}
+        </Box>
+      </AccordionSummary>
+      <AccordionDetails sx={compact ? { px: 0, pt: 0 } : { borderTop: 1, borderColor: 'divider' }}>
+        {children}
+      </AccordionDetails>
+    </Accordion>
   )
 }
