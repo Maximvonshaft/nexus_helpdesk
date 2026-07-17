@@ -4,7 +4,12 @@ import {
   Paper, Stack, Tab, Tabs, TextField, Typography,
 } from '@mui/material'
 import {
-  OperatorEmptyState, OperatorErrorNotice, OperatorLoadingState, operatorToneColor,
+  OperatorEmptyState,
+  OperatorErrorNotice,
+  OperatorLoadingState,
+  OperatorSectionHeading,
+  OperatorStatusLine,
+  operatorToneColor,
 } from '@/app/OperatorPresentation'
 import type { UnifiedOperatorQueueItem, WorkspaceFilters, WorkspaceMobileView } from '@/lib/operatorWorkspaceTypes'
 import {
@@ -12,7 +17,6 @@ import {
   slaPresentation, sourceStatusPresentation,
 } from '@/lib/operatorWorkspacePresentation'
 import { formatDateTime } from '@/lib/format'
-import { WorkspaceSectionHeading, WorkspaceStatusLine } from './OperatorWorkspaceCommon'
 
 export const workspaceMobileViews: Array<{ value: WorkspaceMobileView; label: string }> = [
   { value: 'queue', label: '待处理' },
@@ -69,7 +73,7 @@ function QueueRow({ item, active, currentUserId, onSelect }: { item: UnifiedOper
           {priority.tone === 'danger' || priority.tone === 'warning' ? <Chip color={operatorToneColor(priority.tone)} label={priority.label} size="small" /> : null}
         </Stack>
         <Typography variant="caption" color="text.secondary">{source.label} · {item.country_code} · {item.channel_key}{item.reopened ? ' · 已重新打开' : ''}</Typography>
-        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap><WorkspaceStatusLine presentation={owner} compact /><WorkspaceStatusLine presentation={sla} compact /></Stack>
+        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap><OperatorStatusLine presentation={owner} compact /><OperatorStatusLine presentation={sla} compact /></Stack>
         {item.source_type === 'dispatch' ? <Typography variant="caption" color="text.secondary">{retry.label}</Typography> : null}
         <Typography variant="caption" color="text.secondary">{sourceStatus.label}</Typography>
         <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(item.updated_at)}</Typography>
@@ -111,7 +115,7 @@ export function WorkspaceQueuePane({
         <QueueFilters filters={filters} onChange={onFiltersChange} />
         {error ? <OperatorErrorNotice title="无法读取任务" error={error} fallback="请重新加载" action={<Button color="inherit" size="small" startIcon={<RefreshRoundedIcon />} onClick={onRetry}>重新加载</Button>} /> : null}
         <Box component="section" aria-label="待处理任务" aria-busy={isLoading} sx={{ minHeight: 0 }}>
-          <WorkspaceSectionHeading title="待处理任务" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
+          <OperatorSectionHeading title="待处理任务" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
           <Divider sx={{ mt: 2 }} />
           {isLoading ? <OperatorLoadingState label="正在读取任务…" /> : null}
           {!isLoading && !items.length ? <OperatorEmptyState title="暂无待处理任务" description="请调整筛选或刷新" /> : null}
