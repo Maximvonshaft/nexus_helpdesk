@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -21,6 +22,7 @@ _TICKET_PATH = re.compile(
 class SensitiveSupportSurface:
     name: str
     target_id: int | None = None
+    target_reference_hash: str | None = None
 
 
 def classify_sensitive_support_request(request: Request) -> SensitiveSupportSurface | None:
@@ -29,7 +31,16 @@ def classify_sensitive_support_request(request: Request) -> SensitiveSupportSurf
 
     path = request.url.path.rstrip("/") or "/"
     if path == "/api/support/conversations/detail":
-        return SensitiveSupportSurface("support_conversation_detail")
+        session_key = str(request.query_params.get("session_key") or "").strip()
+        reference_hash = (
+            hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:16]
+            if session_key
+            else None
+        )
+        return SensitiveSupportSurface(
+            "support_conversation_detail",
+            target_reference_hash=reference_hash,
+        )
 
     match = _TICKET_PATH.fullmatch(path)
     if match:
@@ -56,7 +67,12 @@ def enforce_sensitive_support_request(
             detail="support_sensitive_read_requires_customer_profile_capability",
         )
 
-    audit_key = (int(current_user.id), surface.name, surface.target_id)
+    audit_key = (
+        int(current_user.id),
+        surface.name,
+        surface.target_id,
+        surface.target_reference_hash,
+    )
     audited = db.info.setdefault(_AUDIT_SESSION_KEY, set())
     if audit_key in audited:
         return
@@ -73,6 +89,7 @@ def enforce_sensitive_support_request(
                 "surface": surface.name,
                 "method": "GET",
                 "capability": CAP_CUSTOMER_PROFILE_READ,
+                "target_reference_hash": surface.target_reference_hash,
                 "pii_payload_logged": False,
             },
         )
