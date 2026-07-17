@@ -32,6 +32,8 @@ _CONFIGURATION_ERROR_CODES = frozenset(
         "provider_runtime_kill_switch_invalid",
         "provider_runtime_primary_provider_invalid",
         "provider_runtime_fallback_provider_invalid",
+        "provider_runtime_output_contract_invalid",
+        "provider_runtime_timeout_ms_invalid",
     }
 )
 
@@ -187,14 +189,14 @@ class ProviderRuntimeRouter:
             # Absence of a persisted routing rule is a control path, never an
             # implicit authorization to send all traffic to a Provider.
             primary_provider = "private_ai_runtime"
-            fallbacks: list[str] = []
+            fallbacks: Any = []
             output_contract = WEBCHAT_RUNTIME_OUTPUT_CONTRACT
             timeout_ms = 10000
             kill_switch: Any = False
             canary_percent: Any = 0
         else:
             primary_provider = str(rule["primary_provider"] or "").strip()
-            fallbacks = _coerce_fallbacks(rule["fallback_providers"])
+            fallbacks = rule["fallback_providers"]
             output_contract = str(rule["output_contract"] or "").strip()
             timeout_ms = rule["timeout_ms"]
             kill_switch = rule["kill_switch"]
@@ -460,12 +462,14 @@ def _shadow_result(
 
 def _apply_env_overrides(
     primary_provider: str,
-    fallbacks: list[str],
+    fallbacks: Any,
     output_contract: str,
     timeout_ms: Any,
     kill_switch: Any,
     canary_percent: Any,
 ) -> tuple[str, list[str], str, int, bool, int]:
+    fallbacks = _coerce_fallbacks(fallbacks)
+
     env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
     if env_primary:
         primary_provider = env_primary
