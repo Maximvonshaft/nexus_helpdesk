@@ -62,6 +62,9 @@ REQUIRED_CANONICAL_PATHS = (
     "backend/app/services/support_sensitive_access.py",
     "backend/app/services/provider_runtime/router.py",
     "backend/app/services/provider_runtime/traffic_selection.py",
+    "backend/app/services/background_job_transaction_boundary.py",
+    "backend/app/services/outbound_dispatch_transaction_boundary.py",
+    "backend/app/services/queue_health.py",
     "backend/app/services/canonical_route_projection.py",
     "backend/app/services/canonical_ticket_service.py",
     "backend/app/services/canonical_control_tower_service.py",
@@ -70,6 +73,8 @@ REQUIRED_CANONICAL_PATHS = (
     "backend/app/services/canonical_webchat_handoff_service.py",
     "backend/app/api/canonical_osr_admin.py",
     "backend/app/api/canonical_integration.py",
+    "scripts/qualification/database_capacity.py",
+    "scripts/qualification/supply_chain.py",
     "deploy/docker-compose.controlled.yml",
 )
 
@@ -94,7 +99,10 @@ IDENTITY_FILES = (
     "webapp/package.json",
     "webapp/package-lock.json",
     "Dockerfile",
+    "deploy/docker-compose.server.yml",
     "deploy/docker-compose.controlled.yml",
+    "scripts/qualification/database_capacity.py",
+    "scripts/qualification/supply_chain.py",
 )
 
 
@@ -279,6 +287,69 @@ def static_failures() -> list[str]:
 
     _require_markers(
         failures,
+        "backend/app/services/background_job_transaction_boundary.py",
+        (
+            "_claim_token",
+            "_refresh_job_lease",
+            "_owns_job_lease",
+            "background_job_stale_completion_rejected",
+        ),
+    )
+    _require_markers(
+        failures,
+        "backend/app/services/outbound_dispatch_transaction_boundary.py",
+        (
+            "_claim_token",
+            "_refresh_message_lease",
+            "_owns_message_lease",
+            "reclaim_stale_processing_messages",
+            "outbound_stale_completion_rejected",
+        ),
+    )
+    _require_markers(
+        failures,
+        "backend/app/services/queue_health.py",
+        (
+            "nexus.queue-business-health.v1",
+            "background_jobs_stale_processing",
+            "outbound_stale_processing",
+            "contains_payloads",
+        ),
+    )
+    _require_markers(
+        failures,
+        "backend/app/api/admin_queue.py",
+        (
+            "@router.get('/queues/health')",
+            "ensure_can_read_runtime(current_user, db)",
+            "collect_queue_health(db)",
+        ),
+    )
+
+    _require_markers(
+        failures,
+        "scripts/qualification/database_capacity.py",
+        (
+            "nexus.database-capacity-snapshot.v1",
+            "pg_stat_statements_available",
+            "query_text_included",
+            "within_budget",
+        ),
+    )
+    _require_markers(
+        failures,
+        "scripts/qualification/supply_chain.py",
+        (
+            "nexus.supply-chain-qualification.v1",
+            "dockerfile_base_not_pinned",
+            "release_evidence_missing:sbom",
+            "release_evidence_missing:provenance",
+            "release_evidence_missing:signature_bundle",
+        ),
+    )
+
+    _require_markers(
+        failures,
         "deploy/docker-compose.controlled.yml",
         (
             "read_only: true",
@@ -292,6 +363,31 @@ def static_failures() -> list[str]:
             "DB_POOL_SIZE_HANDOFF",
         ),
     )
+
+    dockerfile_path = ROOT / "Dockerfile"
+    if dockerfile_path.is_file():
+        dockerfile_content = dockerfile_path.read_text(encoding="utf-8")
+        from_lines = [
+            line.strip()
+            for line in dockerfile_content.splitlines()
+            if line.strip().upper().startswith("FROM ")
+        ]
+        if any("@sha256:" not in line.split()[1] for line in from_lines):
+            failures.append("Dockerfile contains an unpinned base image")
+        if re.search(r"\bapk\s+upgrade\b", dockerfile_content):
+            failures.append("Dockerfile reintroduced mutable apk upgrade")
+
+    requirements_path = ROOT / "backend/requirements.txt"
+    if requirements_path.is_file():
+        for number, line in enumerate(
+            requirements_path.read_text(encoding="utf-8").splitlines(),
+            1,
+        ):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("--"):
+                continue
+            if "==" not in stripped or any(marker in stripped for marker in (">=", "<=", "~=", "!=")):
+                failures.append(f"Python requirement is not exact at line {number}")
 
     return failures
 
@@ -356,10 +452,12 @@ def main() -> int:
         _write_evidence(args.evidence_out, payload)
         return 1
 
+    run([sys.executable, "scripts/qualification/supply_chain.py"])
+
     if not args.static_only:
         run(["npm", "ci", "--ignore-scripts"], cwd=ROOT / "webapp")
         run(["npm", "run", "verify"], cwd=ROOT / "webapp")
-        run([sys.executable, "-m", "compileall", "backend/app", "backend/scripts"])
+        run([sys.executable, "-m", "compileall", "backend/app", "backend/scripts", "scripts/qualification"])
 
         if args.focused_backend:
             backend_tests = [
@@ -388,6 +486,11 @@ def main() -> int:
                 "backend/tests/test_provider_runtime_dispatcher_authority.py",
                 "backend/tests/test_provider_runtime_bounded_audit_boundary.py",
                 "backend/tests/test_webchat_polling_write_throttle.py",
+                "backend/tests/test_background_job_transaction_boundary.py",
+                "backend/tests/test_outbound_dispatch_transaction_boundary.py",
+                "backend/tests/test_database_connection_budget.py",
+                "backend/tests/test_supply_chain_qualification.py",
+                "backend/tests/test_queue_business_health.py",
             ]
         else:
             backend_tests = ["backend/tests"]
