@@ -1,8 +1,4 @@
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -14,12 +10,12 @@ import {
   Typography,
 } from '@mui/material'
 import { lazy, Suspense, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   OperatorErrorNotice,
   OperatorFactGrid,
   OperatorLoadingState,
+  OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
 import { sanitizeDisplayText } from '@/lib/format'
@@ -35,20 +31,6 @@ function compactLatency(value: number | null | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '暂无'
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s`
   return `${Math.max(0, Math.round(value))}ms`
-}
-
-function TechnicalDisclosure({ title, summary, children }: { title: string; summary: string; children: ReactNode }) {
-  return (
-    <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
-      <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-        <Box>
-          <Typography variant="subtitle2">{title}</Typography>
-          <Typography variant="caption" color="text.secondary">{summary}</Typography>
-        </Box>
-      </AccordionSummary>
-      <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>{children}</AccordionDetails>
-    </Accordion>
-  )
 }
 
 export function RuntimePage() {
@@ -115,7 +97,7 @@ export function RuntimePage() {
                     {runtime.data.warnings.map((item) => <Alert key={String(item)} severity="warning" variant="outlined">{sanitizeDisplayText(String(item))}</Alert>)}
                   </Stack>
                 ) : <Alert severity="success" variant="outlined">无运行提醒</Alert>}
-                <TechnicalDisclosure title="系统信息" summary="状态代码、服务配置与诊断">
+                <OperatorTechnicalDisclosure title="系统信息" summary="状态代码、服务配置与诊断">
                   <OperatorFactGrid facts={[
                     ['状态代码', <Box component="code">{sanitizeDisplayText(runtime.data?.status || 'unknown')}</Box>],
                     ['服务提供方', <Box component="code">{sanitizeDisplayText(runtime.data?.configured_provider || selectedProvider?.name || '未配置')}</Box>],
@@ -126,7 +108,7 @@ export function RuntimePage() {
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(selectedProvider?.diagnostics || {}, null, 2)}</Box>
                   <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>安全配置</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(runtime.data?.boundary || {}, null, 2)}</Box>
-                </TechnicalDisclosure>
+                </OperatorTechnicalDisclosure>
               </Stack>
             )}
           </Paper>
@@ -148,7 +130,7 @@ export function RuntimePage() {
                   ['WhatsApp', metrics.data?.by_channel?.whatsapp ?? 0],
                 ]} />
                 {latency ? (
-                  <TechnicalDisclosure title="响应时间" summary="高级指标">
+                  <OperatorTechnicalDisclosure title="响应时间" summary="高级指标">
                     <OperatorFactGrid facts={[
                       ['样本数', latency.sample_count],
                       ['端到端 p50 / p90', `${compactLatency(latency.total_turn.p50_ms)} / ${compactLatency(latency.total_turn.p90_ms)}`],
@@ -157,7 +139,7 @@ export function RuntimePage() {
                       ['冷加载', latency.cold_load_count],
                       ['慢输入处理', latency.slow_prompt_eval_count],
                     ]} />
-                  </TechnicalDisclosure>
+                  </OperatorTechnicalDisclosure>
                 ) : null}
               </Stack>
             )}
