@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import sys
 from contextlib import contextmanager
@@ -279,3 +280,12 @@ def test_legacy_transport_is_a_masked_canonical_projection(api_context):
     assert item["pii_minimized"] is True
     assert item["visitor_email"] is None
     assert "@invalid.test" not in response.text
+
+
+def test_legacy_projection_cannot_reintroduce_independent_query_authority():
+    from app.services.webchat_performance import admin_list_conversations_optimized
+
+    source = inspect.getsource(admin_list_conversations_optimized)
+    assert "list_support_conversations" in source
+    assert "db.query" not in source
+    assert '"visitor_email": None' in source
