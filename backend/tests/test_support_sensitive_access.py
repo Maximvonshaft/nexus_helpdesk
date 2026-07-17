@@ -37,7 +37,6 @@ def test_authorized_read_persists_bounded_post_scope_evidence(monkeypatch):
     access.audit_sensitive_support_read(
         current_user=_user(),
         ticket_id=42,
-        surface="webchat_thread",
         includes_support_memory=True,
     )
 
@@ -64,22 +63,14 @@ def test_authorized_read_persists_bounded_post_scope_evidence(monkeypatch):
     audit_db.close.assert_called_once()
 
 
-def test_invalid_surface_or_target_never_creates_audit_session(monkeypatch):
+def test_invalid_target_never_creates_audit_session(monkeypatch):
     session_factory = Mock()
     monkeypatch.setattr(access, "SessionLocal", session_factory)
 
-    with pytest.raises(ValueError, match="unsupported_sensitive_support_surface"):
-        access.audit_sensitive_support_read(
-            current_user=_user(),
-            ticket_id=42,
-            surface="retired_surface",  # type: ignore[arg-type]
-            includes_support_memory=False,
-        )
     with pytest.raises(ValueError, match="invalid_sensitive_support_target"):
         access.audit_sensitive_support_read(
             current_user=_user(),
             ticket_id=0,
-            surface="webchat_thread",
             includes_support_memory=False,
         )
 
@@ -96,7 +87,6 @@ def test_sensitive_read_fails_closed_when_audit_is_unavailable(monkeypatch):
         access.audit_sensitive_support_read(
             current_user=_user(),
             ticket_id=42,
-            surface="webchat_thread",
             includes_support_memory=False,
         )
 
