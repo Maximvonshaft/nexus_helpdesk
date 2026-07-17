@@ -9,7 +9,6 @@ import type {
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
   ProviderRuntimeStatus,
-  SupportConversationDetail,
   SupportConversationMetrics,
   SupportConversationPage,
   SupportConversationReplyPayload,
@@ -35,6 +34,25 @@ import type {
   SpeedafWorkOrderPayload,
 } from '@/lib/speedafTypes'
 import { apiRequest, normalizeApiBaseUrl } from '@/lib/apiClient'
+
+export interface SupportConversationResolution {
+  conversation: {
+    session_key: string
+    conversation_id: string
+    ticket_id: number
+    handoff_request_id?: number | null
+    channel: string
+    source?: string | null
+    pii_minimized: true
+  }
+  ticket: {
+    id: number
+    ticket_no: string
+    status: string
+    priority: string
+  }
+  source: 'nexus_support_conversation_resolver'
+}
 
 export {
   ApiError,
@@ -62,9 +80,9 @@ export const supportApi = {
     if (params?.q?.trim()) search.set('q', params.q.trim())
     return apiRequest<SupportConversationPage>(`/api/support/conversations?${search.toString()}`, init)
   },
-  supportConversationDetail: (sessionKey: string, init?: RequestInit) => {
+  resolveSupportConversation: (sessionKey: string, init?: RequestInit) => {
     const search = new URLSearchParams({ session_key: sessionKey })
-    return apiRequest<SupportConversationDetail>(`/api/support/conversations/detail?${search.toString()}`, init)
+    return apiRequest<SupportConversationResolution>(`/api/support/conversations/resolve?${search.toString()}`, init)
   },
   supportConversationMetrics: (sinceHours = 24, init?: RequestInit) => apiRequest<SupportConversationMetrics>(`/api/support/conversations/metrics?since_hours=${sinceHours}`, init),
   supportConversationState: (init?: RequestInit) => apiRequest<SupportConversationState>('/api/support/conversations/state', init),
