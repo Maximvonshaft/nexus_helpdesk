@@ -71,7 +71,11 @@ def make_user(db, username: str = "support-admin") -> User:
 
 
 def make_support_conversation(db, *, channel: SourceChannel, public_id: str, body: str, offset: int = 0) -> tuple[Ticket, WebchatConversation]:
-    customer = Customer(name=f"{channel.value} customer", phone=f"+4100000{offset}")
+    customer = Customer(
+        name=f"{channel.value} customer",
+        email=f"private-{offset}@invalid.test",
+        phone=f"+4100000{offset}",
+    )
     db.add(customer)
     db.flush()
     now = utc_now() - timedelta(minutes=offset)
@@ -100,6 +104,7 @@ def make_support_conversation(db, *, channel: SourceChannel, public_id: str, bod
         channel_key="whatsapp" if channel == SourceChannel.whatsapp else "default",
         ticket_id=ticket.id,
         visitor_name=customer.name,
+        visitor_email=customer.email,
         visitor_phone=customer.phone,
         origin="whatsapp-native" if channel == SourceChannel.whatsapp else "webchat-demo",
         status="open",
@@ -140,11 +145,14 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     by_key = {item["session_key"]: item for item in payload["items"]}
     webchat_item = by_key[f"webchat:{webchat.public_id}"]
     assert webchat_item["latest_message"] == "hello from webchat"
-    assert webchat_item["tracking_number"] is None
+    assert "tracking_number" not in webchat_item
     assert webchat_item["tracking_reference"] == "parcel ending 129131"
     assert webchat_item["pii_minimized"] is True
     assert webchat_item["customer_contact"] == "phone ending 01"
     assert webchat_item["display_name"].endswith("•••")
+    assert "private-1@invalid.test" not in listing.text
+    assert "+41000001" not in listing.text
+    assert "CH020000129131" not in listing.text
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["channel"] == "whatsapp"
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["ai_status"] == "queued"
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["ai_pending"] is False
@@ -168,6 +176,39 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     assert metrics.json()["by_channel"]["whatsapp"] == 1
     assert metrics.json()["ai_active"] == 0
     assert metrics.json()["runtime_latency"]["sample_count"] == 0
+
+
+def test_list_search_does_not_use_raw_customer_or_tracking_fields(api_context):
+    db, client, state = api_context
+    state["user"] = make_user(db, "search-admin")
+    ticket, _ = make_support_conversation(
+        db,
+        channel=SourceChannel.web_chat,
+        public_id="wc_search_private",
+        body="private search fixture",
+        offset=7,
+    )
+    db.commit()
+
+    for raw_value in (
+        "+41000007",
+        "private-7@invalid.test",
+        "web_chat customer",
+        "CH020000129137",
+    ):
+        response = client.get(
+            "/api/support/conversations",
+            params={"view": "all", "channel": "all", "q": raw_value},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+
+    by_ticket = client.get(
+        "/api/support/conversations",
+        params={"view": "all", "channel": "all", "q": ticket.ticket_no},
+    )
+    assert by_ticket.status_code == 200
+    assert [item["ticket_id"] for item in by_ticket.json()["items"]] == [ticket.id]
 
 
 def test_support_conversation_ai_active_requires_live_turn(api_context):
