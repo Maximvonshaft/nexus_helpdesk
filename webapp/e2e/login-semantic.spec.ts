@@ -54,10 +54,13 @@ test('Login is a concise semantic form with visible labels and password reveal',
   await expect(page.getByText('客服与运营工作台')).toHaveCount(0)
   await expect(page.getByText(/系统会根据账号权限/)).toHaveCount(0)
   await expect(page.locator('form')).toHaveCount(1)
-  await expect(page.getByLabel('账号 必填')).toBeVisible()
+  const username = page.getByRole('textbox', { name: '账号', exact: true })
+  await expect(username).toBeVisible()
+  await expect(username).toHaveAttribute('required', '')
 
-  const password = page.getByLabel('密码 必填')
+  const password = page.getByRole('textbox', { name: '密码', exact: true })
   const reveal = page.getByRole('button', { name: '显示密码' })
+  await expect(password).toHaveAttribute('required', '')
   await expect(password).toHaveAttribute('type', 'password')
   await expect(reveal).toHaveAttribute('aria-pressed', 'false')
   await reveal.click()
@@ -69,9 +72,9 @@ test('Enter submits through one root destination and reaches the protected works
   await mockAuth(page)
   await page.goto('/login')
 
-  await page.getByLabel('账号 必填').fill('operator')
-  await page.getByLabel('密码 必填').fill('correct-password')
-  await page.getByLabel('密码 必填').press('Enter')
+  await page.getByRole('textbox', { name: '账号', exact: true }).fill('operator')
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill('correct-password')
+  await page.getByRole('textbox', { name: '密码', exact: true }).press('Enter')
 
   await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/)
   await expect.poll(() => page.evaluate((key) => sessionStorage.getItem(key), TOKEN_KEY)).toBe('operator-token')
@@ -81,8 +84,8 @@ test('Login failure is bounded, announced, and focused without exposing backend 
   await mockAuth(page, { rejectLogin: true })
   await page.goto('/login')
 
-  await page.getByLabel('账号 必填').fill('operator')
-  await page.getByLabel('密码 必填').fill('wrong-password')
+  await page.getByRole('textbox', { name: '账号', exact: true }).fill('operator')
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill('wrong-password')
   await page.getByRole('button', { name: '登录' }).click()
 
   const alert = page.getByRole('alert')
@@ -98,8 +101,8 @@ test('375px Login has no horizontal overflow and primary controls meet target si
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
-  const username = await page.getByLabel('账号 必填').boundingBox()
-  const password = await page.getByLabel('密码 必填').boundingBox()
+  const username = await page.getByRole('textbox', { name: '账号', exact: true }).locator('xpath=..').boundingBox()
+  const password = await page.getByRole('textbox', { name: '密码', exact: true }).locator('xpath=..').boundingBox()
   const reveal = await page.getByRole('button', { name: '显示密码' }).boundingBox()
   const submit = await page.getByRole('button', { name: '登录' }).boundingBox()
 

@@ -83,10 +83,10 @@ test('normal operators enter the canonical shell through a server-authorized sco
   await page.goto('/workspace')
 
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
-  await expect(page.getByLabel('Nexus OSR 客服与运营工作台')).toBeVisible()
+  await expect(page.getByLabel('Nexus OSR')).toBeVisible()
   await expect(page.getByLabel('当前工作范围')).toHaveText('CH · 网页客服')
-  await expect(page.locator('.operator-app-header')).toBeHidden()
-  await expect(page.locator('.operator-scope')).toBeHidden()
+  await expect(page.locator('.operator-app-header')).toHaveCount(0)
+  await expect(page.locator('.operator-scope')).toHaveCount(0)
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
   await expect.poll(() => queueRequestSeen).toBe(true)
   await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
@@ -128,14 +128,15 @@ test('switching among multiple authorized scopes remounts the workspace with the
   })
 
   await page.goto('/workspace')
-  const selector = page.getByLabel('工作范围')
+  const selector = page.getByRole('combobox', { name: '工作范围' })
   await expect(selector).toBeVisible()
-  await expect(selector).toHaveValue('0')
+  await expect(selector).toHaveText('CH · 网页客服')
   await expect.poll(() => seen.includes('tenant-ch:CH:webchat')).toBe(true)
 
-  await selector.selectOption('1')
+  await selector.click()
+  await page.getByRole('option', { name: 'ME · WhatsApp' }).click()
 
-  await expect(selector).toHaveValue('1')
+  await expect(selector).toHaveText('ME · WhatsApp')
   await expect.poll(() => seen.includes('tenant-me:ME:whatsapp')).toBe(true)
   await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
   expect(seen).not.toContain('forged-stale-tenant:ZZ:unknown')
@@ -154,8 +155,8 @@ test('an unscoped normal operator receives a clear fail-closed state instead of 
 
   await page.goto('/workspace')
 
-  await expect(page.getByRole('heading', { name: '当前账号没有可用工作范围' })).toBeVisible()
-  await expect(page.getByText(/系统不会自动猜测、扩大或允许手工输入 Tenant、国家和渠道/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: '未分配工作范围' })).toBeVisible()
+  await expect(page.getByText('请联系管理员。')).toBeVisible()
   await expect(page.locator('.operator-scope')).toHaveCount(0)
   await expect(page.getByTestId('operator-workspace')).toHaveCount(0)
 })

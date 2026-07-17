@@ -12,12 +12,31 @@ const widget = fs.readFileSync(
 
 let server: http.Server
 let baseURL = ''
+const testPort = Number(process.env.LIVE_VOICE_TEST_PORT || 0)
 
 test.beforeAll(async () => {
   server = http.createServer((request, response) => {
-    if (request.url === '/webchat/widget.js') {
+    const requestUrl = new URL(request.url || '/', 'http://127.0.0.1')
+    const json = (body: unknown) => {
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+      response.end(JSON.stringify(body))
+    }
+
+    if (requestUrl.pathname === '/webchat/widget.js') {
       response.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' })
       response.end(widget)
+      return
+    }
+    if (request.method === 'POST' && requestUrl.pathname === '/api/webchat/init') {
+      json({ conversation_id: 'voice-conversation', visitor_token: 'voice-token' })
+      return
+    }
+    if (request.method === 'GET' && requestUrl.pathname === '/api/webchat/conversations/voice-conversation/messages') {
+      json({ messages: [], ai_status: null, ai_pending: false })
+      return
+    }
+    if (request.method === 'POST' && requestUrl.pathname === '/api/webchat/conversations/voice-conversation/live-voice/session') {
+      json({ voice_session_id: 'voice-session', connection_ticket: 'voice-ticket' })
       return
     }
 
@@ -26,11 +45,12 @@ test.beforeAll(async () => {
       <script src="/webchat/widget.js"
         data-live-voice-mode="edge-card"
         data-live-voice-ws-path="/webchat/live/ws"
+        data-websocket="false"
         data-auto-open="false"></script>
     </body></html>`)
   })
 
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => server.listen(testPort, '127.0.0.1', resolve))
   const address = server.address()
   if (!address || typeof address === 'string') {
     throw new Error('browser smoke server did not bind')

@@ -114,7 +114,7 @@ export function AppShell({
             px: { xs: 1.5, md: 2.5 },
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flexShrink: 0 }} aria-label="Nexus OSR">
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexShrink: 0 }} aria-label="Nexus OSR">
             <Avatar
               variant="rounded"
               sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }}
@@ -131,7 +131,7 @@ export function AppShell({
             <AppNavigation capabilities={capabilities} activeRoute={activeRoute} />
           </Box>
 
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexShrink: 0 }}>
             {selectedScope && scopes.length === 1 ? (
               <Chip label={scopeLabel(selectedScope)} aria-label="当前工作范围" sx={{ display: { xs: 'none', md: 'inline-flex' } }} />
             ) : null}
@@ -165,7 +165,7 @@ export function AppShell({
             <Typography variant="body2" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' }, maxWidth: 140 }} noWrap>
               {userLabel}
             </Typography>
-            <Button color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
+            <Button aria-label="退出" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
               <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>退出</Box>
             </Button>
           </Stack>
