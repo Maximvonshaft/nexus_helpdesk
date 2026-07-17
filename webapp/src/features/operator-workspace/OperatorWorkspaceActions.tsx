@@ -190,13 +190,11 @@ export function OperatorWorkspaceActions({
   const resultPresentation = envelope ? outcomePresentation(resultRecord.status, resultRecord.message) : null
   const candidates = Array.isArray(resultRecord.candidates) ? resultRecord.candidates.map(recordValue) : []
   const handoff = thread?.handoff
-  const handoffAllowed = hasWorkspaceCapability(
-    capabilities,
-    'webchat.handoff.accept',
-    'webchat.handoff.force_takeover',
-    'webchat.handoff.release',
-    'webchat.handoff.resume_ai',
-  )
+  const canAcceptHandoff = hasWorkspaceCapability(capabilities, 'webchat.handoff.accept')
+  const canDeclineHandoff = hasWorkspaceCapability(capabilities, 'webchat.handoff.decline')
+  const canForceTakeover = hasWorkspaceCapability(capabilities, 'webchat.handoff.force_takeover')
+  const canReleaseHandoff = hasWorkspaceCapability(capabilities, 'webchat.handoff.release')
+  const canResumeAi = hasWorkspaceCapability(capabilities, 'webchat.handoff.resume_ai')
   const jobId = finiteNumber(resultRecord.jobId)
 
   return (
@@ -211,16 +209,16 @@ export function OperatorWorkspaceActions({
               {handoff?.can_accept || handoff?.can_force_takeover ? (
                 <Button
                   variant="contained"
-                  disabled={!handoffAllowed || handoffMutation.isPending}
+                  disabled={!(handoff?.can_accept ? canAcceptHandoff : canForceTakeover) || handoffMutation.isPending}
                   startIcon={handoffMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
                   onClick={() => handoffMutation.mutate(handoff?.can_accept ? 'accept' : 'force')}
                 >
                   接手处理
                 </Button>
               ) : null}
-              {handoff?.can_decline ? <Button color="inherit" variant="outlined" onClick={() => handoffMutation.mutate('decline')}>暂不处理</Button> : null}
-              {handoff?.can_release ? <Button color="inherit" onClick={() => handoffMutation.mutate('release')}>转回待处理</Button> : null}
-              {handoff?.can_resume_ai ? <Button color="inherit" onClick={() => handoffMutation.mutate('resume')}>恢复自动回复</Button> : null}
+              {handoff?.can_decline ? <Button color="inherit" variant="outlined" disabled={!canDeclineHandoff || handoffMutation.isPending} onClick={() => handoffMutation.mutate('decline')}>暂不处理</Button> : null}
+              {handoff?.can_release ? <Button color="inherit" disabled={!canReleaseHandoff || handoffMutation.isPending} onClick={() => handoffMutation.mutate('release')}>转回待处理</Button> : null}
+              {handoff?.can_resume_ai ? <Button color="inherit" disabled={!canResumeAi || handoffMutation.isPending} onClick={() => handoffMutation.mutate('resume')}>恢复自动回复</Button> : null}
             </Stack>
             {handoff?.reason_text ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>接手原因：{sanitizeDisplayText(handoff.reason_text)}</Typography> : null}
           </Box>
