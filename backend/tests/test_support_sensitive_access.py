@@ -10,8 +10,20 @@ from starlette.requests import Request
 from app.services import support_sensitive_access as access
 
 
-def _request(path: str, method: str = "GET") -> Request:
-    return Request({"type": "http", "method": method, "path": path, "headers": []})
+def _request(
+    path: str,
+    method: str = "GET",
+    query_string: bytes = b"",
+) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "query_string": query_string,
+            "headers": [],
+        }
+    )
 
 
 def _user() -> SimpleNamespace:
@@ -94,6 +106,35 @@ def test_authorized_sensitive_read_persists_bounded_audit_once(monkeypatch):
     assert "phone" not in str(kwargs)
     audit_db.commit.assert_called_once()
     audit_db.close.assert_called_once()
+
+
+def test_canonical_detail_audit_uses_hashed_reference(monkeypatch):
+    caller_db = Mock()
+    caller_db.info = {}
+    audit_db = Mock()
+    monkeypatch.setattr(
+        access,
+        "resolve_capabilities",
+        lambda user, session: {"ticket.read", "customer_profile.read"},
+    )
+    monkeypatch.setattr(access, "SessionLocal", lambda: audit_db)
+    log = Mock()
+    monkeypatch.setattr(access, "log_admin_audit", log)
+
+    access.enforce_sensitive_support_request(
+        _request(
+            "/api/support/conversations/detail",
+            query_string=b"session_key=webchat%3Awc_sensitive_123",
+        ),
+        db=caller_db,
+        current_user=_user(),
+    )
+
+    _, kwargs = log.call_args
+    reference_hash = kwargs["new_value"]["target_reference_hash"]
+    assert isinstance(reference_hash, str)
+    assert len(reference_hash) == 16
+    assert "wc_sensitive_123" not in str(kwargs)
 
 
 def test_sensitive_read_fails_closed_when_audit_is_unavailable(monkeypatch):
