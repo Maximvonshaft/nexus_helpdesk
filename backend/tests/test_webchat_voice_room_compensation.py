@@ -70,9 +70,16 @@ def _create_webchat_conversation(client: TestClient) -> tuple[str, str]:
     )
     assert init.status_code == 200, init.text
     payload = init.json()
-    thread_candidates = client.get("/api/webchat/admin/conversations", headers=_admin_headers())
-    assert thread_candidates.status_code == 200, thread_candidates.text
-    assert any(item["conversation_id"] == payload["conversation_id"] for item in thread_candidates.json())
+    canonical_list = client.get(
+        "/api/support/conversations",
+        params={"view": "all", "channel": "all", "limit": 100},
+        headers=_admin_headers(),
+    )
+    assert canonical_list.status_code == 200, canonical_list.text
+    assert any(
+        item["session_key"].endswith(f":{payload['conversation_id']}")
+        for item in canonical_list.json()["items"]
+    )
     return payload["conversation_id"], payload["visitor_token"]
 
 
