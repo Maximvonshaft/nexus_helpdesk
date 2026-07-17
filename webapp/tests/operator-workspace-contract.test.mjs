@@ -10,20 +10,24 @@ const paths = {
   queue: 'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
   case: 'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
   conversation: 'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
-  common: 'src/features/operator-workspace/OperatorWorkspaceCommon.tsx',
+  actions: 'src/features/operator-workspace/OperatorWorkspaceActions.tsx',
   state: 'src/features/operator-workspace/operatorWorkspaceState.ts',
   api: 'src/lib/operatorWorkspaceApi.ts',
 }
 for (const path of Object.values(paths)) assert.equal(existsSync(resolve(root, path)), true, path)
+assert.equal(existsSync(resolve(root, 'src/features/operator-workspace/OperatorWorkspaceCommon.tsx')), false)
 const source = Object.values(paths).map(read).join('\n')
 const page = read(paths.page)
+const actions = read(paths.actions)
 const api = read(paths.api)
 
 test('workspace is one route, one module graph and one API adapter', () => {
   const route = read('src/routes/workspace.tsx')
   assert.match(route, /path:\s*'\/workspace'/)
   assert.match(route, /operator-workspace\/lazy/)
-  for (const module of ['./OperatorWorkspaceQueue', './OperatorWorkspaceCase', './OperatorWorkspaceCommon', './operatorWorkspaceState']) assert.match(page, new RegExp(module.replace('/', '\\/')))
+  for (const module of ['./OperatorWorkspaceQueue', './OperatorWorkspaceCase', './OperatorWorkspaceActions', './operatorWorkspaceState']) {
+    assert.match(page, new RegExp(module.replace('/', '\\/')))
+  }
   assert.doesNotMatch(source, /workspace-v2|new-workspace|thread-v2|thread-page/)
 })
 
@@ -45,11 +49,7 @@ test('workspace preserves drafts, deep links and mobile reachability', () => {
   assert.match(page, /beforeunload/)
   assert.match(page, /retainedSelectedItem/)
   assert.match(page, /preserveMissingSelection/)
-  const state = read(paths.state)
-  assert.match(page, /initialWorkspaceSessionKey/)
-  assert.match(page, /initialWorkspaceQueueId/)
-  assert.match(state, /URLSearchParams\(window\.location\.search\)\.get\('session'\)/)
-  assert.match(state, /URLSearchParams\(window\.location\.search\)\.get\('queue'\)/)
+  assert.match(page, /operatorWorkspaceSessionDeepLink/)
   assert.match(page, /focus\(\{ preventScroll: true \}\)/)
   for (const label of ['待处理', '任务详情', '客户沟通', '操作']) assert.match(source, new RegExp(label))
   assert.match(read(paths.queue), /<Tabs/)
@@ -57,14 +57,28 @@ test('workspace preserves drafts, deep links and mobile reachability', () => {
 })
 
 test('workspace keeps truthful progress, action safety and operator language', () => {
-  for (const label of ['处理进度', '暂无可信结案信息', '已知信息', '接手处理', '转回待处理', '恢复自动回复', '检查是否可取消', '确认申请取消']) assert.match(source, new RegExp(label))
-  assert.match(page, /cancelPreviewFingerprint/)
-  assert.match(page, /cancelPreview\.fingerprint !== currentCancelFingerprint/)
+  for (const label of ['处理进度', '暂无可信结案信息', '已知信息', '接手处理', '转回待处理', '恢复自动回复', '检查是否可取消', '确认申请取消']) {
+    assert.match(source, new RegExp(label))
+  }
+  assert.match(actions, /cancelPreviewFingerprint/)
+  assert.match(actions, /cancelPreview\.fingerprint !== currentCancelFingerprint/)
+  for (const capability of [
+    'webchat.handoff.accept',
+    'webchat.handoff.decline',
+    'webchat.handoff.force_takeover',
+    'webchat.handoff.release',
+    'webchat.handoff.resume_ai',
+  ]) assert.match(actions, new RegExp(capability.replaceAll('.', '\\.')))
+  assert.match(actions, /const\s+takeoverKind/)
+  assert.match(actions, /handoff\?\.can_accept && canAcceptHandoff/)
+  assert.match(actions, /handoff\?\.can_force_takeover && canForceTakeover/)
+  assert.doesNotMatch(actions, /const\s+handoffAllowed/)
   assert.doesNotMatch(source, /案例处理链路|事实与证据|案例接管|接管案例|释放案例|恢复 AI|服务端最终授权/)
 })
 
 test('workspace orchestration is bounded and does not reabsorb view responsibilities', () => {
-  assert.ok(page.split(/\r?\n/).length <= 800)
-  assert.doesNotMatch(page, /function\s+(QueueRow|ConversationPanel|CaseSpine|EvidencePanel|EmptyState|ErrorNotice|LoadingState)\b/)
+  assert.ok(page.split(/\r?\n/).length <= 450)
+  assert.doesNotMatch(page, /function\s+(QueueRow|ConversationPanel|CaseSpine|EvidencePanel|ActionPanel|EmptyState|ErrorNotice|LoadingState)\b/)
+  assert.doesNotMatch(page, /Accordion|TextField|useMutation/)
   assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b|rgba?\(\s*\d/i)
 })
