@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from .audit_service import log_admin_audit
 from .permissions import CAP_CUSTOMER_PROFILE_READ, ensure_capability
-
-
-SensitiveSupportSurface = Literal["webchat_thread"]
-_ALLOWED_SURFACES: frozenset[str] = frozenset({"webchat_thread"})
 
 
 def ensure_sensitive_support_capability(db: Session, current_user) -> None:
@@ -29,13 +23,10 @@ def audit_sensitive_support_read(
     *,
     current_user,
     ticket_id: int,
-    surface: SensitiveSupportSurface,
     includes_support_memory: bool,
 ) -> None:
-    """Persist bounded evidence only after object-scope authorization succeeds."""
+    """Persist bounded evidence after canonical object-scope authorization."""
 
-    if surface not in _ALLOWED_SURFACES:
-        raise ValueError("unsupported_sensitive_support_surface")
     target_id = int(ticket_id)
     if target_id <= 0:
         raise ValueError("invalid_sensitive_support_target")
@@ -49,7 +40,7 @@ def audit_sensitive_support_read(
             target_type="support_conversation",
             target_id=target_id,
             new_value={
-                "surface": surface,
+                "surface": "webchat_thread",
                 "method": "GET",
                 "capability": CAP_CUSTOMER_PROFILE_READ,
                 "authorization_stage": "object_scope_completed",
