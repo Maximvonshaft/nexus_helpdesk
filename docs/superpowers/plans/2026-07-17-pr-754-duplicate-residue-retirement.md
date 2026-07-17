@@ -3,6 +3,7 @@
 ## Authority
 
 - Source PR: #754, merged into `main` at `5f2922e9beba95faedf70023d426012bbde0b4ec`.
+- Residue follow-up PR: #762.
 - Sole repair branch: `work/754-remove-ui-duplication-residue`.
 - Scope: frontend implementation and anti-reintroduction governance only.
 - GitHub Actions remain retired and must not be restored.
@@ -91,7 +92,7 @@ python scripts/verify_repository.py --focused-backend --skip-browser
 python scripts/verify_repository.py
 ```
 
-The repair PR must remain Draft until these commands run against one unchanged exact Head and an independent review confirms no duplicate implementation residue remains.
+PR #762 must remain Draft until these commands run against one unchanged exact Head and an independent review confirms no duplicate implementation residue remains.
 
 ## Safety
 
