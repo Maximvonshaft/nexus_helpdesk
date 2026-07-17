@@ -267,9 +267,9 @@ def test_legacy_admin_list_is_a_query_free_retirement_tombstone(api_context):
 
 
 def test_legacy_admin_list_contains_no_compatibility_projection():
-    from app.services.webchat_performance import admin_list_conversations_optimized
+    from app.api.webchat_admin import list_webchat_conversations
 
-    source = inspect.getsource(admin_list_conversations_optimized)
+    source = inspect.getsource(list_webchat_conversations)
     assert "HTTP_410_GONE" in source
     assert "list_support_conversations" not in source
     assert "db.query" not in source
