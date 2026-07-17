@@ -84,6 +84,18 @@ def test_zero_percent_canary_never_executes_candidate():
     assert selection.execute_candidate is False
 
 
+def test_zero_percent_shadow_never_executes_candidate():
+    selection = select_provider_traffic(
+        _request(),
+        canary_percent=0,
+        kill_switch=False,
+        configured_mode_value="shadow",
+    )
+    assert selection.path == ProviderTrafficPath.CONTROL
+    assert selection.execute_candidate is False
+    assert selection.authoritative is False
+
+
 def test_full_canary_is_authoritative():
     selection = select_provider_traffic(
         _request(),
@@ -96,10 +108,10 @@ def test_full_canary_is_authoritative():
     assert selection.authoritative is True
 
 
-def test_shadow_executes_without_authority():
+def test_full_shadow_executes_without_authority():
     selection = select_provider_traffic(
         _request(),
-        canary_percent=25,
+        canary_percent=100,
         kill_switch=False,
         configured_mode_value="shadow",
     )
