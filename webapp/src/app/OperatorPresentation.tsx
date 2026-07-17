@@ -84,7 +84,11 @@ export function OperatorLoadingState({ label, minHeight = 150 }: { label: string
 }
 
 export function RouteLoadingState({ label }: { label: string }) {
-  return <OperatorLoadingState label={label} minHeight="52vh" />
+  return (
+    <Box component="main">
+      <OperatorLoadingState label={label} minHeight="52vh" />
+    </Box>
+  )
 }
 
 export function OperatorEmptyState({
