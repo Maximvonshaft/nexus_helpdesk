@@ -303,7 +303,6 @@ export interface SupportConversation {
   ai_status_elapsed_ms?: number | null
   ai_suspended?: boolean
   tracking_number_present?: boolean
-  tracking_number?: string | null
   tracking_reference?: string | null
   pii_minimized?: boolean
   can_force_takeover?: boolean
