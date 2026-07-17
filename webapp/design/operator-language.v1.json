@@ -91,7 +91,8 @@
     "webapp/src/features/channels/ChannelsPage.tsx",
     "webapp/src/features/runtime/RuntimePage.tsx",
     "webapp/src/features/runtime/RuntimeEvidenceAudit.tsx",
-    "webapp/src/features/control-tower/ControlTowerPage.tsx"
+    "webapp/src/features/control-tower/ControlTowerPage.tsx",
+    "webapp/src/lib/format.ts"
   ],
   "pending_surfaces": [],
   "forbidden_primary_literals": [
