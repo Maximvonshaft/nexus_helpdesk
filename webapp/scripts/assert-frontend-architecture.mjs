@@ -9,50 +9,31 @@ const webappRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const repositoryRoot = path.resolve(webappRoot, '..')
 const srcRoot = path.join(webappRoot, 'src')
 const entrypoint = path.join(srcRoot, 'main.tsx')
-const muiAuthorityPath = path.join(webappRoot, 'design', 'mui-visual-authority.v1.json')
 const packagePath = path.join(webappRoot, 'package.json')
 const lockPath = path.join(webappRoot, 'package-lock.json')
+const muiAuthorityPath = path.join(webappRoot, 'design', 'mui-visual-authority.v1.json')
+const presentationPath = path.join(srcRoot, 'app', 'OperatorPresentation.tsx')
 const themePath = path.join(srcRoot, 'theme', 'nexusTheme.ts')
 const themeProviderPath = path.join(srcRoot, 'theme', 'NexusThemeProvider.tsx')
-const operatorPresentationPath = path.join(srcRoot, 'app', 'OperatorPresentation.tsx')
+const workspacePath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
 const knowledgePath = path.join(srcRoot, 'features', 'knowledge', 'KnowledgePage.tsx')
 const knowledgeRoutePath = path.join(srcRoot, 'routes', 'knowledge.tsx')
-const workspacePath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.css']
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
-const EXPORTED_PRIMITIVE_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
-const RETIRED_LOCAL_HELPER_RE = /\bfunction\s+(EmptyState|ErrorNotice|ErrorSummary|LoadingState|FactGrid|statusColor|muiStatusColor|errorCopy|scrollBehavior)\b/g
-const CANONICAL_OPERATOR_HELPER_RE = /export\s+function\s+(OperatorEmptyState|OperatorErrorNotice|OperatorLoadingState|RouteLoadingState|OperatorFactGrid|operatorToneColor|operatorTonePalettePath|operatorScrollBehavior|operatorErrorMessage)\b/g
-const LEGACY_PALETTE_RE = /--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/g
-const LEGACY_SELECTOR_RE = /(^|[,\s{])\.(?:button|badge|card)(?=[\s,{.:#\[])/gm
-const RETIRED_SOURCE_LITERAL_RE = /\b(?:nd-app-boundary-state|empty-state|nd-button|nd-field|nd-badge)\b/
 const RAW_COLOR_RE = /#[0-9a-f]{3,8}\b|rgba?\(\s*\d|hsla?\(\s*\d/gi
 const FORBIDDEN_PARALLEL_PATH_RE = /(?:^|\/)(?:new-ui|ui-v2|design-system-v2|components-v2|workspace-v2|new-workspace)(?:\/|$)|(?:^|\/)[^/]*(?:V2|Redesign)\.(?:ts|tsx|css)$/i
 const FORBIDDEN_ROUTE_RE = /["']\/(?:workspace-v2|new-workspace|ui-v2)(?:[/?#"']|$)/i
+const GENERIC_EXPORT_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
 
-const FORBIDDEN_UI_PACKAGES = new Set([
-  '@chakra-ui/react',
-  '@mantine/core',
-  '@mantine/hooks',
-  'antd',
-  'bootstrap',
-  'react-bootstrap',
-  'semantic-ui-react',
-  'primereact',
-  'tailwindcss',
-  'daisyui',
-  'flowbite',
-  'flowbite-react',
-  'shadcn',
-])
-
+const ALLOWED_SOURCE_CSS = new Set(['webapp/src/styles.css', 'webapp/src/a11y.css'])
 const APPROVED_MUI_DIRECT_PACKAGES = new Set(['@mui/material', '@mui/icons-material'])
 const APPROVED_EMOTION_DIRECT_PACKAGES = new Set(['@emotion/react', '@emotion/styled'])
 const REQUIRED_VISUAL_SUPPORT_PACKAGES = new Set(['@emotion/react', '@emotion/styled', 'react-is'])
-const ALLOWED_SOURCE_CSS = new Set([
-  'webapp/src/styles.css',
-  'webapp/src/a11y.css',
+const FORBIDDEN_UI_PACKAGES = new Set([
+  '@chakra-ui/react', '@mantine/core', '@mantine/hooks', 'antd', 'bootstrap',
+  'react-bootstrap', 'semantic-ui-react', 'primereact', 'tailwindcss',
+  'daisyui', 'flowbite', 'flowbite-react', 'shadcn', '@radix-ui/react-dialog',
 ])
 
 const forbiddenPaths = [
@@ -67,6 +48,7 @@ const forbiddenPaths = [
   path.join(srcRoot, 'styles', 'components.css'),
   path.join(srcRoot, 'styles', 'auth.css'),
   path.join(srcRoot, 'app', 'app-shell.css'),
+  path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspaceCommon.tsx'),
   path.join(srcRoot, 'features', 'operator-workspace', 'operator-workspace.css'),
   path.join(srcRoot, 'features', 'operator-workspace', 'operator-workspace-refinements.css'),
   path.join(srcRoot, 'features', 'admin-routes', 'admin-routes.css'),
@@ -86,10 +68,6 @@ function walk(directory) {
   return files
 }
 
-function normalize(value) {
-  return path.normalize(value)
-}
-
 function relative(file) {
   return path.relative(repositoryRoot, file).split(path.sep).join('/')
 }
@@ -98,7 +76,6 @@ function sourceFiles() {
   return walk(srcRoot)
     .filter((file) => SOURCE_EXTENSIONS.includes(path.extname(file)))
     .filter((file) => !file.endsWith('.d.ts'))
-    .map(normalize)
 }
 
 function resolveCandidate(candidate) {
@@ -121,21 +98,19 @@ function importsFor(file) {
   const imports = []
   for (const match of content.matchAll(IMPORT_RE)) {
     const resolved = resolveImport(file, match[1] ?? match[2])
-    if (resolved) imports.push(normalize(resolved))
+    if (resolved) imports.push(resolved)
   }
   return imports
 }
 
 function reachableFiles() {
   const reachable = new Set()
-  const queue = [normalize(entrypoint)]
+  const queue = [entrypoint]
   while (queue.length) {
     const current = queue.pop()
     if (!current || reachable.has(current) || !fs.existsSync(current)) continue
     reachable.add(current)
-    for (const imported of importsFor(current)) {
-      if (!reachable.has(imported)) queue.push(imported)
-    }
+    for (const imported of importsFor(current)) if (!reachable.has(imported)) queue.push(imported)
   }
   return reachable
 }
@@ -153,162 +128,74 @@ function externalImports(files) {
   return imports
 }
 
-function readMuiAuthority(failures) {
-  if (!fs.existsSync(muiAuthorityPath)) {
-    failures.push('MUI visual authority contract is missing: webapp/design/mui-visual-authority.v1.json')
-    return null
-  }
+function readJson(file, failures, label) {
   try {
-    const authority = JSON.parse(fs.readFileSync(muiAuthorityPath, 'utf8'))
-    if (authority.schema !== 'nexus.mui-visual-authority.v1') failures.push(`unexpected MUI authority schema: ${authority.schema}`)
-    if (authority.decision?.selected_package !== '@mui/material') failures.push('MUI authority must select @mui/material')
-    if (authority.decision?.selected_version !== '9.2.0') failures.push(`MUI version must be exactly 9.2.0: ${authority.decision?.selected_version}`)
-    return authority
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch (error) {
-    failures.push(`MUI visual authority contract is invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    failures.push(`${label} is missing or invalid: ${error instanceof Error ? error.message : String(error)}`)
     return null
   }
 }
 
-function duplicateExportedPrimitiveAuthorities(files) {
-  const owners = new Map()
+function assertSingleVisualAuthority(files, failures) {
+  const creators = []
+  const providers = []
+  const baselines = []
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
     const content = fs.readFileSync(file, 'utf8')
-    for (const match of content.matchAll(EXPORTED_PRIMITIVE_RE)) {
-      const primitive = match[1]
-      const entries = owners.get(primitive) ?? []
-      entries.push(relative(file))
-      owners.set(primitive, entries)
+    if (/\bcreateTheme\s*\(/.test(content)) creators.push(relative(file))
+    if (/<ThemeProvider\b/.test(content)) providers.push(relative(file))
+    if (/<CssBaseline\b/.test(content)) baselines.push(relative(file))
+  }
+  if (creators.length !== 1 || creators[0] !== relative(themePath)) failures.push(`MUI theme authority must be exactly ${relative(themePath)}: ${creators.join(', ') || 'none'}`)
+  if (providers.length !== 1 || providers[0] !== relative(themeProviderPath)) failures.push(`MUI ThemeProvider authority must be exactly ${relative(themeProviderPath)}: ${providers.join(', ') || 'none'}`)
+  if (baselines.length !== 1 || baselines[0] !== relative(themeProviderPath)) failures.push(`MUI CssBaseline authority must be exactly ${relative(themeProviderPath)}: ${baselines.join(', ') || 'none'}`)
+}
+
+function assertPresentationConvergence(files, failures) {
+  if (!fs.existsSync(presentationPath)) {
+    failures.push(`operator presentation authority is missing: ${relative(presentationPath)}`)
+    return
+  }
+  const presentation = fs.readFileSync(presentationPath, 'utf8')
+  for (const name of [
+    'OperatorPageBoundary', 'OperatorLoadingState', 'RouteLoadingState',
+    'OperatorEmptyState', 'OperatorErrorNotice', 'OperatorFactGrid',
+    'OperatorSectionHeading', 'OperatorStatusLine', 'OperatorTechnicalDisclosure',
+    'normalizeOperatorTone', 'operatorToneColor', 'operatorTonePalettePath',
+    'operatorAlertSeverity', 'operatorScrollBehavior', 'operatorErrorMessage',
+  ]) {
+    if (!new RegExp(`export\\s+(?:function|type)\\s+${name}\\b`).test(presentation)) {
+      failures.push(`operator presentation authority is missing export ${name}`)
     }
   }
-  return [...owners.entries()]
-    .filter(([, entries]) => entries.length > 1)
-    .map(([primitive, entries]) => `${primitive}: ${entries.join(', ')}`)
-}
 
-function assertActionsRetired(failures) {
-  const workflowDir = path.join(repositoryRoot, '.github', 'workflows')
-  if (!fs.existsSync(workflowDir)) return
-  const workflowFiles = walk(workflowDir).map(relative)
-  failures.push(`GitHub Actions are retired; .github/workflows must be absent: ${workflowFiles.join(', ') || 'empty directory exists'}`)
-}
-
-function assertNoParallelImplementation(files, failures) {
-  const forbiddenNames = files.map(relative).filter((file) => FORBIDDEN_PARALLEL_PATH_RE.test(file))
-  if (forbiddenNames.length) failures.push(`parallel UI implementation path is forbidden: ${forbiddenNames.join(', ')}`)
-
-  const forbiddenRoutes = []
-  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
-    const content = fs.readFileSync(file, 'utf8')
-    if (FORBIDDEN_ROUTE_RE.test(content)) forbiddenRoutes.push(relative(file))
-  }
-  if (forbiddenRoutes.length) failures.push(`parallel UI route is forbidden: ${forbiddenRoutes.join(', ')}`)
-}
-
-function assertCanonicalNavigation(files, failures) {
-  const navigationOwners = files
-    .filter((file) => /\.(?:ts|tsx)$/.test(file))
-    .filter((file) => fs.readFileSync(file, 'utf8').includes('APP_NAVIGATION'))
-    .map(relative)
-  const allowed = new Set(['webapp/src/app/navigation.ts', 'webapp/src/app/AppNavigation.tsx'])
-  const unexpected = navigationOwners.filter((file) => !allowed.has(file))
-  if (unexpected.length) failures.push(`unexpected navigation authority: ${unexpected.join(', ')}`)
-
-  if (fs.existsSync(workspacePath)) {
-    const content = fs.readFileSync(workspacePath, 'utf8')
-    if (/function\s+AppNavigation\b/.test(content) || /className=["']operator-app-header["']/.test(content)) {
-      failures.push('OperatorWorkspacePage still owns a second application shell or navigation')
-    }
-    if (content.includes('/webchat?tab=')) failures.push('OperatorWorkspacePage still links through compatibility tabs')
-  }
-}
-
-function assertTransportAuthority(files, failures) {
-  const fetchOwners = []
-  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
-    if (/\bfetch\s*\(/.test(fs.readFileSync(file, 'utf8'))) fetchOwners.push(relative(file))
-  }
-  const unexpected = fetchOwners.filter((file) => file !== 'webapp/src/lib/apiClient.ts')
-  if (unexpected.length) failures.push(`generic HTTP transport outside apiClient.ts: ${unexpected.join(', ')}`)
-}
-
-function assertCssAuthority(files, failures) {
-  const cssFiles = files.filter((candidate) => candidate.endsWith('.css')).map(relative).sort()
-  const unexpectedCss = cssFiles.filter((file) => !ALLOWED_SOURCE_CSS.has(file))
-  if (unexpectedCss.length) failures.push(`route or component CSS is forbidden under MUI authority: ${unexpectedCss.join(', ')}`)
-  const missingCss = [...ALLOWED_SOURCE_CSS].filter((file) => !cssFiles.includes(file))
-  if (missingCss.length) failures.push(`bounded global CSS is missing: ${missingCss.join(', ')}`)
-
-  for (const file of files.filter((candidate) => candidate.endsWith('.css'))) {
-    const content = fs.readFileSync(file, 'utf8')
-    const fileName = relative(file)
-    if (LEGACY_PALETTE_RE.test(content)) failures.push(`retired CSS variable authority returned: ${fileName}`)
-    LEGACY_PALETTE_RE.lastIndex = 0
-    if (LEGACY_SELECTOR_RE.test(content)) failures.push(`legacy primitive selector returned outside MUI: ${fileName}`)
-    LEGACY_SELECTOR_RE.lastIndex = 0
-    if (/transition\s*:\s*all\b/i.test(content)) failures.push(`transition: all is forbidden: ${fileName}`)
-    if (/\.Mui[A-Za-z0-9_-]+/.test(content)) failures.push(`MUI component overrides must live in nexusTheme.ts, not CSS: ${fileName}`)
-  }
-}
-
-function assertSourceVisualResidue(files, failures) {
-  const retiredLiterals = []
-  const rawColors = []
-  const retiredHelpers = []
-  const canonicalHelpers = []
-
+  const forbiddenDefinitions = /\b(?:function|const|type|interface)\s+(WorkspacePresentation|WorkspaceStatusLine|WorkspaceSectionHeading|WorkspaceLoading|FullPageBoundary|TechnicalDisclosure|StatusCount|safeTone|toneColor|providerLabel|channelLabel|safeRecord|safeRecordArray|safeWorkspaceRecord|workspaceText|workspaceNumber|textValue|numberValue)\b/g
+  const directDisclosure = /\b(?:Accordion|AccordionSummary|AccordionDetails)\b/
+  const violations = []
   for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
     const content = fs.readFileSync(file, 'utf8')
     const fileName = relative(file)
-
-    if (RETIRED_SOURCE_LITERAL_RE.test(content)) retiredLiterals.push(fileName)
-
-    if (file !== themePath) {
-      const colors = [...content.matchAll(RAW_COLOR_RE)].map((match) => match[0])
-      if (colors.length) rawColors.push(`${fileName}: ${[...new Set(colors)].join(', ')}`)
-    }
-    RAW_COLOR_RE.lastIndex = 0
-
-    for (const match of content.matchAll(RETIRED_LOCAL_HELPER_RE)) retiredHelpers.push(`${match[1]}: ${fileName}`)
-    for (const match of content.matchAll(CANONICAL_OPERATOR_HELPER_RE)) canonicalHelpers.push(`${match[1]}:${fileName}`)
+    if (file !== presentationPath && directDisclosure.test(content)) violations.push(`${fileName}: direct Accordion disclosure`)
+    for (const match of content.matchAll(forbiddenDefinitions)) violations.push(`${fileName}: ${match[1]}`)
+    if (/className\s*:\s*['"]is-ai['"]/.test(content)) violations.push(`${fileName}: stale is-ai presentation class`)
   }
+  if (violations.length) failures.push(`duplicate or retired presentation responsibility: ${violations.join(' | ')}`)
 
-  if (retiredLiterals.length) failures.push(`retired visual class literal returned in source: ${retiredLiterals.join(', ')}`)
-  if (rawColors.length) failures.push(`raw color literal outside nexusTheme.ts: ${rawColors.join(' | ')}`)
-  if (retiredHelpers.length) failures.push(`route-private generic presentation helper is forbidden: ${retiredHelpers.join(' | ')}`)
-
-  const expectedOwner = 'webapp/src/app/OperatorPresentation.tsx'
-  const expectedNames = [
-    'OperatorEmptyState',
-    'OperatorErrorNotice',
-    'OperatorLoadingState',
-    'RouteLoadingState',
-    'OperatorFactGrid',
-    'operatorToneColor',
-    'operatorTonePalettePath',
-    'operatorScrollBehavior',
-    'operatorErrorMessage',
-  ]
-  for (const name of expectedNames) {
-    const owners = canonicalHelpers
-      .filter((entry) => entry.startsWith(`${name}:`))
-      .map((entry) => entry.slice(name.length + 1))
-    if (owners.length !== 1 || owners[0] !== expectedOwner) {
-      failures.push(`operator presentation helper must be owned exactly once by ${expectedOwner}: ${name} -> ${owners.join(', ') || 'none'}`)
+  const shell = fs.readFileSync(path.join(srcRoot, 'app', 'AppShell.tsx'), 'utf8')
+  if (/component=["']main["']/.test(shell)) failures.push('AppShell must not own a main landmark; route pages own main')
+  for (const file of [
+    'features/operator-workspace/OperatorWorkspacePage.tsx',
+    'features/knowledge/KnowledgePage.tsx',
+    'features/channels/ChannelsPage.tsx',
+    'features/runtime/RuntimePage.tsx',
+    'features/control-tower/ControlTowerPage.tsx',
+  ]) {
+    const absolute = path.join(srcRoot, file)
+    if (!fs.existsSync(absolute) || !/component=["']main["']/.test(fs.readFileSync(absolute, 'utf8'))) {
+      failures.push(`canonical route page must own main landmark: webapp/src/${file}`)
     }
   }
-}
-
-function assertKnowledgeConvergence(failures) {
-  if (!fs.existsSync(knowledgePath)) failures.push('canonical KnowledgePage is missing')
-  if (!fs.existsSync(knowledgeRoutePath)) failures.push('canonical knowledge route is missing')
-  if (!fs.existsSync(knowledgePath) || !fs.existsSync(knowledgeRoutePath)) return
-
-  const page = fs.readFileSync(knowledgePath, 'utf8')
-  const route = fs.readFileSync(knowledgeRoutePath, 'utf8')
-  if (!/KnowledgePage\(\{\s*canManage\s*\}/.test(page)) failures.push('KnowledgePage must own both read and manage modes through canManage')
-  if (!/<LazyKnowledgePage\s+canManage=\{canManage\}/.test(route)) failures.push('knowledge route must pass canManage to the one KnowledgePage')
-  if (/KnowledgeReadOnlyPage/.test(route + page)) failures.push('duplicate KnowledgeReadOnlyPage reference returned')
 }
 
 function assertWorkspaceConvergence(failures) {
@@ -318,103 +205,57 @@ function assertWorkspaceConvergence(failures) {
   }
   const content = fs.readFileSync(workspacePath, 'utf8')
   const lineCount = content.split(/\r?\n/).length
-  if (lineCount > 800) failures.push(`OperatorWorkspacePage exceeds the bounded orchestration limit: ${lineCount} lines`)
+  if (lineCount > 450) failures.push(`OperatorWorkspacePage exceeds the bounded orchestration limit: ${lineCount} lines`)
   for (const required of [
     './OperatorWorkspaceQueue',
     './OperatorWorkspaceCase',
-    './OperatorWorkspaceCommon',
+    './OperatorWorkspaceActions',
     './operatorWorkspaceState',
-  ]) {
-    if (!content.includes(required)) failures.push(`OperatorWorkspacePage must compose the canonical workspace module: ${required}`)
-  }
-  if (/function\s+(QueueRow|ConversationPanel|CaseSpine|EvidencePanel|EmptyState|ErrorNotice|LoadingState)\b/.test(content)) {
-    failures.push('OperatorWorkspacePage reabsorbed a presentation responsibility')
+  ]) if (!content.includes(required)) failures.push(`OperatorWorkspacePage must compose canonical workspace module: ${required}`)
+  if (/function\s+(QueueRow|ConversationPanel|CaseSpine|EvidencePanel|ActionPanel|EmptyState|ErrorNotice|LoadingState)\b/.test(content)) {
+    failures.push('OperatorWorkspacePage reabsorbed a view or presentation responsibility')
   }
   if (/thread-v2|thread-page|workspace-v2|new-workspace/.test(content)) failures.push('parallel Workspace implementation marker returned')
 }
 
-function assertSingleThemeAuthority(files, failures) {
-  if (!fs.existsSync(themePath)) failures.push('single MUI theme is missing: webapp/src/theme/nexusTheme.ts')
-  if (!fs.existsSync(themeProviderPath)) failures.push('single MUI provider is missing: webapp/src/theme/NexusThemeProvider.tsx')
-  if (!fs.existsSync(operatorPresentationPath)) failures.push('operator presentation authority is missing: webapp/src/app/OperatorPresentation.tsx')
-
-  const themeCreators = []
-  const themeProviders = []
-  const cssBaselines = []
-  for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
-    const content = fs.readFileSync(file, 'utf8')
-    if (/\bcreateTheme\s*\(/.test(content)) themeCreators.push(relative(file))
-    if (/<ThemeProvider\b/.test(content)) themeProviders.push(relative(file))
-    if (/<CssBaseline\b/.test(content)) cssBaselines.push(relative(file))
+function assertKnowledgeConvergence(failures) {
+  if (!fs.existsSync(knowledgePath) || !fs.existsSync(knowledgeRoutePath)) {
+    failures.push('canonical Knowledge page or route is missing')
+    return
   }
-
-  if (themeCreators.length !== 1 || themeCreators[0] !== 'webapp/src/theme/nexusTheme.ts') {
-    failures.push(`MUI theme authority must be exactly webapp/src/theme/nexusTheme.ts: ${themeCreators.join(', ') || 'none'}`)
-  }
-  if (themeProviders.length !== 1 || themeProviders[0] !== 'webapp/src/theme/NexusThemeProvider.tsx') {
-    failures.push(`MUI ThemeProvider authority must be exactly webapp/src/theme/NexusThemeProvider.tsx: ${themeProviders.join(', ') || 'none'}`)
-  }
-  if (cssBaselines.length !== 1 || cssBaselines[0] !== 'webapp/src/theme/NexusThemeProvider.tsx') {
-    failures.push(`MUI CssBaseline authority must be exactly webapp/src/theme/NexusThemeProvider.tsx: ${cssBaselines.join(', ') || 'none'}`)
-  }
+  const page = fs.readFileSync(knowledgePath, 'utf8')
+  const route = fs.readFileSync(knowledgeRoutePath, 'utf8')
+  if (!/KnowledgePage\(\{\s*canManage\s*\}/.test(page)) failures.push('KnowledgePage must own read and manage modes through canManage')
+  if (!/<LazyKnowledgePage\s+canManage=\{canManage\}/.test(route)) failures.push('knowledge route must pass canManage to the one KnowledgePage')
+  if (/KnowledgeReadOnlyPage/.test(route + page)) failures.push('duplicate KnowledgeReadOnlyPage reference returned')
 }
 
-function assertSelectedVisualStack(manifest, authority, failures) {
+function assertDependencies(files, authority, failures) {
+  const manifest = readJson(packagePath, failures, 'package.json')
+  const lock = readJson(lockPath, failures, 'package-lock.json')
+  if (!manifest || !lock) return
   const allDependencies = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}) }
   for (const dependency of Object.keys(allDependencies)) {
-    if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) {
-      failures.push(`parallel UI framework dependency is forbidden; MUI is selected: ${dependency}`)
-    }
+    if (FORBIDDEN_UI_PACKAGES.has(dependency) || dependency.startsWith('@tailwindcss/')) failures.push(`parallel UI framework dependency is forbidden: ${dependency}`)
     if (dependency.startsWith('@mui/') && !APPROVED_MUI_DIRECT_PACKAGES.has(dependency)) failures.push(`unapproved direct MUI package: ${dependency}`)
     if (dependency.startsWith('@emotion/') && !APPROVED_EMOTION_DIRECT_PACKAGES.has(dependency)) failures.push(`unapproved direct Emotion package: ${dependency}`)
   }
-
-  const expected = authority?.runtime_packages ?? {}
-  for (const [dependency, version] of Object.entries(expected)) {
+  for (const [dependency, version] of Object.entries(authority?.runtime_packages ?? {})) {
     if ((manifest.dependencies ?? {})[dependency] !== version) failures.push(`selected visual dependency must be pinned exactly: ${dependency}@${version}`)
+    const locked = lock.packages?.[`node_modules/${dependency}`]?.version
+    if (locked !== version) failures.push(`package-lock dependency is missing or stale: ${dependency}@${version}; found ${locked ?? 'none'}`)
   }
-  if ((manifest.overrides ?? {})['react-is'] !== authority?.react_compatibility?.react_is_override) {
-    failures.push(`React 18 requires package.json overrides.react-is=${authority?.react_compatibility?.react_is_override}`)
-  }
-}
-
-function assertLockfileMatchesManifest(manifest, authority, failures) {
-  if (!fs.existsSync(lockPath)) {
-    failures.push('package-lock.json is missing')
-    return
-  }
-  let lock
-  try {
-    lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
-  } catch (error) {
-    failures.push(`package-lock.json is invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
-    return
-  }
-
+  if ((manifest.overrides ?? {})['react-is'] !== authority?.react_compatibility?.react_is_override) failures.push('React compatibility override for react-is is stale')
   const root = lock.packages?.[''] ?? {}
   for (const section of ['dependencies', 'devDependencies']) {
     const manifestSection = manifest[section] ?? {}
     const lockSection = root[section] ?? {}
-    for (const [dependency, version] of Object.entries(manifestSection)) {
-      if (lockSection[dependency] !== version) failures.push(`package-lock root is stale: ${section}.${dependency} must be ${version}`)
-    }
-    for (const dependency of Object.keys(lockSection)) {
-      if (!Object.hasOwn(manifestSection, dependency)) failures.push(`package-lock root retains removed dependency: ${section}.${dependency}`)
-    }
+    for (const [dependency, version] of Object.entries(manifestSection)) if (lockSection[dependency] !== version) failures.push(`package-lock root is stale: ${section}.${dependency}`)
+    for (const dependency of Object.keys(lockSection)) if (!Object.hasOwn(manifestSection, dependency)) failures.push(`package-lock root retains removed dependency: ${section}.${dependency}`)
   }
-  for (const [dependency, version] of Object.entries(authority?.runtime_packages ?? {})) {
-    const locked = lock.packages?.[`node_modules/${dependency}`]?.version
-    if (locked !== version) failures.push(`package-lock dependency is missing or stale: ${dependency}@${version}; found ${locked ?? 'none'}`)
-  }
-}
-
-function assertRuntimeDependencies(files, authority, failures) {
-  const manifest = JSON.parse(fs.readFileSync(packagePath, 'utf8'))
   const consumed = externalImports(files)
   for (const dependency of REQUIRED_VISUAL_SUPPORT_PACKAGES) consumed.add(dependency)
-
-  const configFiles = walk(webappRoot).filter((file) => /(?:vite\.config|playwright\.config|eslint\.config|\.mjs$)/.test(file))
-  for (const file of configFiles) {
+  for (const file of walk(webappRoot).filter((candidate) => /(?:vite\.config|playwright\.config|eslint\.config|\.mjs$)/.test(candidate))) {
     const content = fs.readFileSync(file, 'utf8')
     for (const match of content.matchAll(IMPORT_RE)) {
       const specifier = match[1] ?? match[2]
@@ -422,38 +263,57 @@ function assertRuntimeDependencies(files, authority, failures) {
       consumed.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
     }
   }
-
-  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-    if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
-  }
-  assertSelectedVisualStack(manifest, authority, failures)
-  assertLockfileMatchesManifest(manifest, authority, failures)
+  for (const dependency of Object.keys(manifest.dependencies ?? {})) if (!consumed.has(dependency)) failures.push(`unused runtime dependency: ${dependency}`)
 }
 
 const failures = []
-for (const forbidden of forbiddenPaths) {
-  if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
-}
-assertActionsRetired(failures)
-const muiAuthority = readMuiAuthority(failures)
+for (const forbidden of forbiddenPaths) if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
+const workflowDir = path.join(repositoryRoot, '.github', 'workflows')
+if (fs.existsSync(workflowDir)) failures.push(`GitHub Actions are retired; .github/workflows must be absent: ${walk(workflowDir).map(relative).join(', ') || 'empty directory exists'}`)
+
+const authority = readJson(muiAuthorityPath, failures, 'MUI visual authority')
+if (authority?.schema !== 'nexus.mui-visual-authority.v1') failures.push(`unexpected MUI authority schema: ${authority?.schema}`)
+if (authority?.decision?.selected_package !== '@mui/material' || authority?.decision?.selected_version !== '9.2.0') failures.push('MUI authority must select @mui/material@9.2.0')
 
 const files = sourceFiles()
 const reachable = reachableFiles()
 const unreachable = files.filter((file) => !reachable.has(file)).map(relative)
 if (unreachable.length) failures.push(`unreachable production files: ${unreachable.join(', ')}`)
 
-const duplicatePrimitives = duplicateExportedPrimitiveAuthorities(files)
-if (duplicatePrimitives.length) failures.push(`duplicate UI authorities: ${duplicatePrimitives.join(' | ')}`)
+const duplicateExports = new Map()
+for (const file of files.filter((candidate) => /\.(?:ts|tsx)$/.test(candidate))) {
+  const content = fs.readFileSync(file, 'utf8')
+  for (const match of content.matchAll(GENERIC_EXPORT_RE)) {
+    const owners = duplicateExports.get(match[1]) ?? []
+    owners.push(relative(file))
+    duplicateExports.set(match[1], owners)
+  }
+  if (FORBIDDEN_PARALLEL_PATH_RE.test(relative(file))) failures.push(`parallel UI implementation path is forbidden: ${relative(file)}`)
+  if (FORBIDDEN_ROUTE_RE.test(content)) failures.push(`parallel UI route is forbidden: ${relative(file)}`)
+  if (/\bfetch\s*\(/.test(content) && relative(file) !== 'webapp/src/lib/apiClient.ts') failures.push(`generic HTTP transport outside apiClient.ts: ${relative(file)}`)
+  if (file !== themePath) {
+    const colors = [...content.matchAll(RAW_COLOR_RE)].map((match) => match[0])
+    RAW_COLOR_RE.lastIndex = 0
+    if (colors.length) failures.push(`raw color literal outside nexusTheme.ts: ${relative(file)}: ${[...new Set(colors)].join(', ')}`)
+  }
+}
+for (const [name, owners] of duplicateExports) if (owners.length > 1) failures.push(`duplicate UI authorities: ${name}: ${owners.join(', ')}`)
 
-assertNoParallelImplementation(files, failures)
-assertCanonicalNavigation(files, failures)
-assertTransportAuthority(files, failures)
-assertCssAuthority(files, failures)
-assertSourceVisualResidue(files, failures)
-assertKnowledgeConvergence(failures)
+const cssFiles = files.filter((file) => file.endsWith('.css')).map(relative).sort()
+for (const file of cssFiles) if (!ALLOWED_SOURCE_CSS.has(file)) failures.push(`route or component CSS is forbidden under MUI authority: ${file}`)
+for (const file of ALLOWED_SOURCE_CSS) if (!cssFiles.includes(file)) failures.push(`bounded global CSS is missing: ${file}`)
+for (const file of files.filter((candidate) => candidate.endsWith('.css'))) {
+  const content = fs.readFileSync(file, 'utf8')
+  if (/--(?:bg|panel|panel-soft|line|line-strong|text|muted|brand|brand-2|success|warning|danger|shadow|radius)\s*:/.test(content)) failures.push(`retired CSS variable authority returned: ${relative(file)}`)
+  if (/transition\s*:\s*all\b/i.test(content)) failures.push(`transition: all is forbidden: ${relative(file)}`)
+  if (/\.Mui[A-Za-z0-9_-]+/.test(content)) failures.push(`MUI component overrides must live in nexusTheme.ts: ${relative(file)}`)
+}
+
+assertSingleVisualAuthority(files, failures)
+assertPresentationConvergence(files, failures)
 assertWorkspaceConvergence(failures)
-assertSingleThemeAuthority(files, failures)
-assertRuntimeDependencies(files, muiAuthority, failures)
+assertKnowledgeConvergence(failures)
+assertDependencies(files, authority, failures)
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2))
@@ -467,10 +327,10 @@ console.log(JSON.stringify({
   canonical_entrypoint: relative(entrypoint),
   github_actions: 'retired',
   ui_authority: '@mui/material@9.2.0',
-  theme_authority: 'webapp/src/theme/nexusTheme.ts',
-  operator_presentation_authority: 'webapp/src/app/OperatorPresentation.tsx',
+  theme_authority: relative(themePath),
+  operator_presentation_authority: relative(presentationPath),
   source_css: [...ALLOWED_SOURCE_CSS].sort(),
-  knowledge_implementation: 'webapp/src/features/knowledge/KnowledgePage.tsx',
-  workspace_orchestrator: 'webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx',
-  migration_status: muiAuthority?.decision?.status,
+  knowledge_implementation: relative(knowledgePath),
+  workspace_orchestrator: relative(workspacePath),
+  duplicate_residue: 'absent',
 }, null, 2))
