@@ -45,6 +45,11 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
         for relative in profiles:
             values = _read_env(ROOT / relative)
             self.assertEqual(
+                values.get("PROVIDER_RUNTIME_ENABLED"),
+                "false",
+                relative,
+            )
+            self.assertEqual(
                 values.get("PROVIDER_RUNTIME_TRAFFIC_MODE"),
                 "control",
                 relative,
@@ -54,18 +59,11 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
                 "0",
                 relative,
             )
-            if "PROVIDER_RUNTIME_ENABLED" in values:
-                self.assertEqual(
-                    values["PROVIDER_RUNTIME_ENABLED"],
-                    "false",
-                    relative,
-                )
-            if relative.endswith(("prod.example", "controlled.example", "rc-test.example")):
-                self.assertEqual(
-                    values.get("PROVIDER_RUNTIME_KILL_SWITCH"),
-                    "true",
-                    relative,
-                )
+            self.assertEqual(
+                values.get("PROVIDER_RUNTIME_KILL_SWITCH"),
+                "true",
+                relative,
+            )
 
     def test_compose_profiles_consume_their_single_env_authority(self) -> None:
         expected = {
@@ -100,12 +98,17 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
             origin="http://127.0.0.1:18083",
             expected_migration_head="contract_head",
         )
+        self.assertEqual(values["PROVIDER_RUNTIME_ENABLED"], "false")
         self.assertEqual(
             values["PROVIDER_RUNTIME_TRAFFIC_MODE"],
             "control",
         )
         self.assertEqual(values["PROVIDER_RUNTIME_CANARY_PERCENT"], "0")
         self.assertEqual(values["PROVIDER_RUNTIME_KILL_SWITCH"], "true")
+        self.assertEqual(
+            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_ENABLED"],
+            "false",
+        )
         self.assertEqual(
             preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_TRAFFIC_MODE"],
             "control",
