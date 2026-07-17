@@ -14,6 +14,7 @@ from ..services.permissions import (
     ensure_can_monitor_webchat_ai,
     ensure_can_release_webchat_handoff,
     ensure_can_resume_webchat_ai,
+    ensure_can_send_outbound,
 )
 from ..services.support_memory_ledger import build_support_memory_ledger
 from ..services.support_sensitive_access import (
@@ -251,6 +252,7 @@ def reply_webchat(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
+    ensure_can_send_outbound(current_user, db)
     with managed_session(db):
         return admin_reply(
             db,
