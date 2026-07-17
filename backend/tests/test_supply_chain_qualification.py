@@ -31,3 +31,13 @@ def test_release_mode_requires_sbom_provenance_and_signature():
         "release_evidence_missing:provenance",
         "release_evidence_missing:signature_bundle",
     }.issubset(set(result["findings"]))
+
+def test_dockerfile_comments_do_not_create_mutable_instruction_findings(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM example.invalid/runtime@sha256:" + "a" * 64 + "\n"
+        "# Security updates must not use apk upgrade during the build.\n"
+        "RUN apk add --no-cache ca-certificates\n",
+        encoding="utf-8",
+    )
+    assert module._dockerfile_findings(dockerfile) == []

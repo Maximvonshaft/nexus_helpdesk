@@ -29,6 +29,7 @@ from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, EventType, JobStatus, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import AdminAuditLog, BackgroundJob, Customer, OutboundEmailAccount, Team, Ticket, TicketAttachment, TicketEvent, TicketInboundEmailMessage, TicketOutboundMessage, User  # noqa: E402
+from app.services import support_sensitive_access  # noqa: E402
 from app.services.webchat_handoff_service import request_webchat_handoff  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
@@ -45,6 +46,7 @@ def db_session(tmp_path, monkeypatch):
     db_file = tmp_path / "channel_workbench_contracts.db"
     engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
     TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    monkeypatch.setattr(support_sensitive_access, "SessionLocal", TestingSession)
     Base.metadata.create_all(engine)
     session = TestingSession()
     try:
@@ -712,7 +714,7 @@ def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_con
             payload_json=json.dumps({"participant_token": "secret-token", "nested": {"api_key": "secret-key"}, "safe": "visible"}, ensure_ascii=False),
         )
     )
-    db_session.flush()
+    db_session.commit()
 
     summary = client.get(f"/api/tickets/{ticket.id}/summary", headers=headers)
     assert summary.status_code == 200, summary.text

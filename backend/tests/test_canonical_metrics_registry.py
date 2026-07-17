@@ -33,7 +33,10 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
     assert 'METRICS_ENABLED: "true"' in compose
     assert "METRICS_TOKEN: ${METRICS_TOKEN:?set a dedicated metrics token}" in compose
     assert compose.count("METRICS_ENABLED:") == 1
-    assert compose.count("METRICS_TOKEN:") == 1
+    assert sum(
+        line.lstrip().startswith("METRICS_TOKEN:")
+        for line in compose.splitlines()
+    ) == 1
     assert "METRICS_TOKEN=<dedicated-server-metrics-token-at-least-32-characters>" in env_example
     assert "METRICS_ENABLED=" not in env_example
     assert "unauthenticated `/metrics` returns 401" in runbook

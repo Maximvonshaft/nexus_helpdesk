@@ -26,15 +26,18 @@ def _sha256(path: Path) -> str:
 def _dockerfile_findings(path: Path) -> list[str]:
     findings: list[str] = []
     content = path.read_text(encoding="utf-8")
-    for line in content.splitlines():
+    effective_content = "\n".join(
+        line for line in content.splitlines() if not line.lstrip().startswith("#")
+    )
+    for line in effective_content.splitlines():
         stripped = line.strip()
         if stripped.upper().startswith("FROM "):
             image = stripped.split()[1]
             if not DIGEST_RE.search(image):
                 findings.append(f"dockerfile_base_not_pinned:{image}")
-    if re.search(r"\bapk\s+upgrade\b", content):
+    if re.search(r"\bapk\s+upgrade\b", effective_content):
         findings.append("dockerfile_mutable_apk_upgrade")
-    if re.search(r"python\s+-m\s+pip\s+install\s+--upgrade\s+[^\\\n]*[><~=]", content):
+    if re.search(r"python\s+-m\s+pip\s+install\s+--upgrade\s+[^\\\n]*[><~=]", effective_content):
         findings.append("dockerfile_mutable_build_tool_range")
     return findings
 

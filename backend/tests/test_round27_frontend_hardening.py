@@ -38,8 +38,9 @@ def test_frontend_routes_expose_canonical_product_domains_and_transitional_webch
     ):
         assert route_name in router
     assert 'AccountsRoute' not in router
-    assert '当前入口不存在' in root
-    assert "to={getSupportToken() ? '/workspace' : '/login'}" in root
+    assert '页面不存在' in root
+    assert "const destination = authenticated ? '/workspace' : '/login'" in root
+    assert '<Link to={destination}' in root
     assert "path: '/workspace'" in workspace
     assert 'beforeLoad' in workspace
     assert 'getSupportToken()' in workspace
@@ -56,7 +57,8 @@ def test_frontend_routes_expose_canonical_product_domains_and_transitional_webch
     assert 'getSupportToken()' in webchat
     assert 'WebchatCompatibilityRedirect' in webchat
     assert 'support-console' not in webchat
-    assert '客服与运营工作台' in shell
+    assert 'Nexus OSR' in shell
+    assert 'AppNavigation' in shell
 
 
 def test_frontend_governance_is_concentrated_in_shell_transport_and_login_boundary():
@@ -77,18 +79,19 @@ def test_frontend_governance_is_concentrated_in_shell_transport_and_login_bounda
     assert '/api/admin/channel-accounts' in support_api
     assert 'AppNavigation' in shell
     assert '渠道管理' in channels
-    assert '运行与审计' in runtime
+    assert '系统运行' in runtime
+    assert '证据审计' in runtime
     assert not (PROJECT / 'webapp' / 'src' / 'features' / 'support-console').exists()
 
 
 def test_webchat_governance_hardening_invariants():
-    api = (ROOT / 'app' / 'api' / 'webchat.py').read_text()
+    public_api = (ROOT / 'app' / 'api' / 'webchat_public.py').read_text()
     service = (ROOT / 'app' / 'services' / 'webchat_service.py').read_text()
     settings = (ROOT / 'app' / 'settings.py').read_text()
     widget = (ROOT / 'app' / 'static' / 'webchat' / 'widget.js').read_text()
     main = (ROOT / 'app' / 'main.py').read_text()
 
-    assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT' in api
+    assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT' in public_api
     assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production' in settings
     assert '_RATE_BUCKETS' not in service
     assert '_enforce_rate_limit' not in service

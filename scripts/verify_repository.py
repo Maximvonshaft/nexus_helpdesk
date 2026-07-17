@@ -52,6 +52,7 @@ REQUIRED_CANONICAL_PATHS = (
     "webapp/src/theme/NexusThemeProvider.tsx",
     "webapp/src/features/knowledge/KnowledgePage.tsx",
     "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx",
     "webapp/src/features/operator-workspace/OperatorWorkspaceQueue.tsx",
     "webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx",
     "webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx",
@@ -209,6 +210,12 @@ def static_failures() -> list[str]:
         for marker in FORBIDDEN_WORKSPACE_MARKERS:
             if marker in content:
                 failures.append(f"workspace owns retired shell/navigation marker: {marker}")
+
+    workspace_actions = ROOT / "webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx"
+    if not workspace_actions.is_file():
+        failures.append("canonical authority missing: webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx")
+    else:
+        actions_content = workspace_actions.read_text(encoding="utf-8")
         required_cancel_markers = (
             "type CancelPreviewBinding",
             "cancelPreviewFingerprint(",
@@ -216,7 +223,7 @@ def static_failures() -> list[str]:
             "invalidateCancelPreview()",
         )
         for marker in required_cancel_markers:
-            if marker not in content:
+            if marker not in actions_content:
                 failures.append(f"cancel preview binding contract missing: {marker}")
 
     permissions = ROOT / "backend/app/services/permissions.py"
@@ -342,9 +349,10 @@ def static_failures() -> list[str]:
         (
             "nexus.supply-chain-qualification.v1",
             "dockerfile_base_not_pinned",
-            "release_evidence_missing:sbom",
-            "release_evidence_missing:provenance",
-            "release_evidence_missing:signature_bundle",
+            "\"sbom\": ROOT / \"artifacts\" / \"supply-chain\" / \"sbom.spdx.json\"",
+            "\"provenance\": ROOT / \"artifacts\" / \"supply-chain\" / \"provenance.json\"",
+            "\"signature_bundle\": ROOT / \"artifacts\" / \"supply-chain\" / \"cosign.bundle.json\"",
+            "findings.append(f\"release_evidence_missing:{name}\")",
         ),
     )
 
@@ -367,14 +375,19 @@ def static_failures() -> list[str]:
     dockerfile_path = ROOT / "Dockerfile"
     if dockerfile_path.is_file():
         dockerfile_content = dockerfile_path.read_text(encoding="utf-8")
+        effective_dockerfile_content = "\n".join(
+            line
+            for line in dockerfile_content.splitlines()
+            if not line.lstrip().startswith("#")
+        )
         from_lines = [
             line.strip()
-            for line in dockerfile_content.splitlines()
+            for line in effective_dockerfile_content.splitlines()
             if line.strip().upper().startswith("FROM ")
         ]
         if any("@sha256:" not in line.split()[1] for line in from_lines):
             failures.append("Dockerfile contains an unpinned base image")
-        if re.search(r"\bapk\s+upgrade\b", dockerfile_content):
+        if re.search(r"\bapk\s+upgrade\b", effective_dockerfile_content):
             failures.append("Dockerfile reintroduced mutable apk upgrade")
 
     requirements_path = ROOT / "backend/requirements.txt"

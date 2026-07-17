@@ -62,8 +62,8 @@ def test_server_derived_scope_projection_remains_fail_closed() -> None:
 
     assert "currentScopes" in api_source
     assert "if (!selectedScope || !selectedKey)" in route_source
-    assert "当前账号没有可用工作范围" in route_source
-    assert "系统不会自动猜测、扩大或允许手工输入 Tenant、国家和渠道" in route_source
+    assert "未分配工作范围" in route_source
+    assert "请联系管理员。" in route_source
     for forbidden in (
         "VITE_NEXUS_TENANT_KEY",
         "VITE_NEXUS_COUNTRY_CODE",

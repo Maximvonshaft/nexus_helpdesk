@@ -147,8 +147,9 @@ def test_webapp_has_canonical_runtime_and_knowledge_domains_with_legacy_redirect
     assert "path: '/webchat'" in webchat_route
     assert 'WebchatCompatibilityRedirect' in webchat_route
     assert 'support-console' not in webchat_route
-    assert '运行与审计' in runtime
-    assert '知识与处理规则' in knowledge
+    assert '系统运行' in runtime
+    assert '证据审计' in runtime
+    assert '知识与流程' in knowledge
     assert 'supportApi.providerRuntimeStatus' in runtime
     assert '/api/admin/provider-runtime/status' in support_api
     assert '/api/knowledge-items' in support_api

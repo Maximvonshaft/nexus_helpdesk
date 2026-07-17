@@ -27,7 +27,7 @@ def test_outbound_semantics_uses_canonical_module_only():
 
 
 def test_webchat_rate_limit_uses_conversation_tenant():
-    content = read("backend/app/api/webchat.py")
+    content = read("backend/app/api/webchat_public.py")
     assert "tenant_key=conversation.tenant_key" in content
     assert 'tenant_key="default", conversation_id=conversation_id' not in content
 

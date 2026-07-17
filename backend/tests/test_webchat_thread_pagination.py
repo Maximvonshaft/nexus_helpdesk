@@ -25,15 +25,17 @@ from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Customer, Ticket, User  # noqa: E402
+from app.services import support_sensitive_access  # noqa: E402
 from app.services.webchat_service import admin_get_thread  # noqa: E402
 from app.webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage  # noqa: E402
 
 
 @pytest.fixture()
-def thread_context(tmp_path):
+def thread_context(tmp_path, monkeypatch):
     db_file = tmp_path / "webchat_thread_pagination.db"
     engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    monkeypatch.setattr(support_sensitive_access, "SessionLocal", Session)
     Base.metadata.create_all(engine)
     session = Session()
 
@@ -210,10 +212,13 @@ def test_existing_thread_route_pages_history_without_parallel_endpoint(thread_co
 
 
 def test_retired_n_plus_one_list_implementation_is_removed() -> None:
-    source = (ROOT / "app" / "services" / "webchat_service.py").read_text(encoding="utf-8")
-    api_source = (ROOT / "app" / "api" / "webchat.py").read_text(encoding="utf-8")
+    service_source = (ROOT / "app" / "services" / "webchat_service.py").read_text(encoding="utf-8")
+    composition_source = (ROOT / "app" / "api" / "webchat.py").read_text(encoding="utf-8")
+    admin_source = (ROOT / "app" / "api" / "webchat_admin.py").read_text(encoding="utf-8")
 
-    assert "def admin_list_conversations(" not in source
-    assert "admin_list_conversations_optimized" in api_source
-    assert "@router.get(\"/admin/tickets/{ticket_id}/thread\")" in api_source
-    assert "thread-v2" not in api_source
+    assert "def admin_list_conversations(" not in service_source
+    assert "admin_list_conversations_optimized" not in composition_source
+    assert "@router.get(\"/admin/conversations\")" in admin_source
+    assert "legacy_webchat_conversation_list_retired" in admin_source
+    assert "@router.get(\"/admin/tickets/{ticket_id}/thread\")" in admin_source
+    assert "thread-v2" not in admin_source

@@ -7,6 +7,8 @@ VOICE_API = ROOT / "backend" / "app" / "api" / "webchat_voice.py"
 RATE_LIMIT = ROOT / "backend" / "app" / "services" / "webchat_rate_limit.py"
 WEBCHAT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat.tsx"
 WORKSPACE = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "OperatorWorkspacePage.tsx"
+WORKSPACE_CONVERSATION = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "OperatorWorkspaceConversation.tsx"
+WORKSPACE_CASE = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "OperatorWorkspaceCase.tsx"
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 WIDGET_JS = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
 
@@ -32,11 +34,13 @@ def test_backend_p0_routes_and_metrics_are_present():
 def test_canonical_workspace_provides_text_fallback_while_widget_owns_live_voice():
     webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
     workspace = WORKSPACE.read_text(encoding="utf-8")
+    conversation = WORKSPACE_CONVERSATION.read_text(encoding="utf-8")
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
     assert "WebchatCompatibilityRedirect" in webchat_route
-    assert "operatorWorkspaceApi.reply" in workspace
-    assert "当前案例没有可用会话" in workspace
+    assert "operatorWorkspaceApi.reply" in conversation
+    assert "暂无客户沟通" in conversation
+    assert "回复和接手处理暂不可用" in conversation
     assert "nd-webchat-voice" in widget
     assert "/webchat/live/ws" in widget
     assert "startLiveVoice" in widget
@@ -46,19 +50,20 @@ def test_canonical_workspace_provides_text_fallback_while_widget_owns_live_voice
 
 
 def test_voice_call_evidence_flows_through_canonical_case_evidence_without_secrets():
-    workspace = WORKSPACE.read_text(encoding="utf-8")
+    case_source = WORKSPACE_CASE.read_text(encoding="utf-8")
     widget = WIDGET_JS.read_text(encoding="utf-8")
 
-    assert "EvidencePanel" in workspace
-    assert "evidence_timeline" in workspace
-    assert "evidencePresentation" in workspace
-    assert "TechnicalDetails" in workspace
-    assert "JSON.stringify(item.summary" in workspace
+    assert "EvidencePanel" in case_source
+    assert "evidence_timeline" in case_source
+    assert "evidencePresentation" in case_source
+    assert "OperatorTechnicalDisclosure" in case_source
+    assert "系统信息" in case_source
+    assert "JSON.stringify(entry.summary, null, 2)" in case_source
     assert "voiceStatus" in widget
     assert "addVoiceTranscript" in widget
     assert "nd-webchat-voice-transcript" in widget
 
-    evidence_block = workspace.split("function EvidencePanel", 1)[-1]
+    evidence_block = case_source.split("function EvidencePanel", 1)[-1]
     forbidden = ["participant_token", "visitor_token", "LIVEKIT_API_SECRET", "api_secret"]
     assert not any(marker in evidence_block for marker in forbidden)
 

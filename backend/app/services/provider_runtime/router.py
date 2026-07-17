@@ -635,7 +635,7 @@ def _bounded_provider_summary(
             safe[key] = value.strip()
     for key in _SAFE_PROVIDER_SCALAR_KEYS:
         value = raw.get(key)
-        if value is None or isinstance(value, (bool, int)):
+        if isinstance(value, (bool, int)):
             safe[key] = value
         elif isinstance(value, float) and math.isfinite(value):
             safe[key] = value
