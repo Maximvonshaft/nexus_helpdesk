@@ -78,4 +78,13 @@ async def test_non_authoritative_traffic_cannot_create_reply_or_action_authority
     assert result.recommended_agent_action is None
     assert result.tool_intents == []
     assert result.error_code == error_code
+    assert result.raw_payload_safe_summary == {
+        "traffic": {
+            "path": path,
+            "authoritative": False,
+            "execute_candidate": path == "shadow_only",
+        },
+        "provider_runtime": True,
+        "provider_bypassed": False,
+    }
     route.assert_awaited_once()
