@@ -280,18 +280,18 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   }, [requestedSessionKey, selectedQueueId])
 
   const canReadQueue = hasWorkspaceCapability(capabilities, 'operator_queue.read')
-  const requestedConversation = useQuery({
-    queryKey: ['operatorWorkspaceSessionDeepLink', scope, requestedSessionKey],
-    queryFn: () => supportApi.supportConversationDetail(requestedSessionKey || ''),
+  const requestedResolution = useQuery({
+    queryKey: ['operatorWorkspaceSessionResolve', scope, requestedSessionKey],
+    queryFn: () => supportApi.resolveSupportConversation(requestedSessionKey || ''),
     enabled: Boolean(session.data && canReadQueue && requestedSessionKey),
     retry: false,
   })
   const requestedQueueId = useMemo(() => {
-    const conversation = requestedConversation.data?.conversation
+    const conversation = requestedResolution.data?.conversation
     if (conversation?.handoff_request_id) return `handoff:${conversation.handoff_request_id}`
     if (conversation?.ticket_id) return `ticket:${conversation.ticket_id}`
     return null
-  }, [requestedConversation.data?.conversation])
+  }, [requestedResolution.data?.conversation])
   const queue = useInfiniteQuery({
     queryKey: ['operatorWorkspaceQueue', scope, filters],
     queryFn: ({ pageParam }) => operatorWorkspaceApi.unifiedQueue(scope, filters, pageParam as string | null),
@@ -304,7 +304,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const queueItems = useMemo(() => queue.data?.pages.flatMap((page) => page.items) ?? [], [queue.data?.pages])
   const selectedQueueItem = useMemo(() => queueItems.find((item) => item.queue_id === selectedQueueId) ?? null, [queueItems, selectedQueueId])
   const requestedQueueItem = useMemo(() => queueItems.find((item) => item.queue_id === requestedQueueId) ?? null, [queueItems, requestedQueueId])
-  const resolvingSessionDeepLink = Boolean(requestedSessionKey && !requestedConversation.isError && (requestedConversation.isLoading || (requestedQueueId && !requestedQueueItem && (queue.isLoading || queue.hasNextPage || queue.isFetchingNextPage))))
+  const resolvingSessionDeepLink = Boolean(requestedSessionKey && !requestedResolution.isError && (requestedResolution.isLoading || (requestedQueueId && !requestedQueueItem && (queue.isLoading || queue.hasNextPage || queue.isFetchingNextPage))))
   const selectedQueueItemMissing = Boolean(selectedQueueId && !selectedQueueItem && retainedSelectedItem?.queue_id === selectedQueueId)
   const preserveMissingSelection = replyDraftDirty && selectedQueueItemMissing
   const selectedItem = selectedQueueItem ?? (preserveMissingSelection ? retainedSelectedItem : null) ?? requestedQueueItem ?? (resolvingSessionDeepLink ? null : queueItems[0] ?? null)
