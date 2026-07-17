@@ -195,6 +195,11 @@ export function OperatorWorkspaceActions({
   const canForceTakeover = hasWorkspaceCapability(capabilities, 'webchat.handoff.force_takeover')
   const canReleaseHandoff = hasWorkspaceCapability(capabilities, 'webchat.handoff.release')
   const canResumeAi = hasWorkspaceCapability(capabilities, 'webchat.handoff.resume_ai')
+  const takeoverKind = handoff?.can_accept && canAcceptHandoff
+    ? 'accept'
+    : handoff?.can_force_takeover && canForceTakeover
+      ? 'force'
+      : null
   const jobId = finiteNumber(resultRecord.jobId)
 
   return (
@@ -209,9 +214,9 @@ export function OperatorWorkspaceActions({
               {handoff?.can_accept || handoff?.can_force_takeover ? (
                 <Button
                   variant="contained"
-                  disabled={!(handoff?.can_accept ? canAcceptHandoff : canForceTakeover) || handoffMutation.isPending}
+                  disabled={!takeoverKind || handoffMutation.isPending}
                   startIcon={handoffMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
-                  onClick={() => handoffMutation.mutate(handoff?.can_accept ? 'accept' : 'force')}
+                  onClick={() => { if (takeoverKind) handoffMutation.mutate(takeoverKind) }}
                 >
                   接手处理
                 </Button>
