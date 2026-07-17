@@ -1,11 +1,12 @@
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, AlertTitle, Box, Divider,
-  Paper, Stack, Typography,
+  Alert, AlertTitle, Box, Divider, Paper, Stack, Typography,
 } from '@mui/material'
 import {
   OperatorEmptyState,
   OperatorFactGrid,
+  OperatorSectionHeading,
+  OperatorStatusLine,
+  OperatorTechnicalDisclosure,
 } from '@/app/OperatorPresentation'
 import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type { UnifiedOperatorQueueItem, WorkspaceMobileView } from '@/lib/operatorWorkspaceTypes'
@@ -18,9 +19,8 @@ import {
   sourceStatusPresentation,
 } from '@/lib/operatorWorkspacePresentation'
 import type { SupportMemoryLedger } from '@/lib/types'
-import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
+import { formatDateTime, sanitizeDisplayText, stringValue } from '@/lib/format'
 import { OperatorWorkspaceConversation } from './OperatorWorkspaceConversation'
-import { WorkspaceSectionHeading, WorkspaceStatusLine, workspaceText } from './OperatorWorkspaceCommon'
 
 function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; currentUserId?: number }) {
   const source = queueSourcePresentation(item.source_type)
@@ -34,21 +34,20 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'flex-start' }}>
         <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
         <Stack spacing={0.75} sx={{ minWidth: { sm: 220 } }}>
-          <WorkspaceStatusLine presentation={status} />
-          <WorkspaceStatusLine presentation={owner} />
-          <WorkspaceStatusLine presentation={sla} />
-          {item.source_type === 'dispatch' ? <WorkspaceStatusLine presentation={retry} /> : null}
-          {item.reopened ? <WorkspaceStatusLine presentation={{ label: '已重新打开', tone: 'warning' }} /> : null}
+          <OperatorStatusLine presentation={status} />
+          <OperatorStatusLine presentation={owner} />
+          <OperatorStatusLine presentation={sla} />
+          {item.source_type === 'dispatch' ? <OperatorStatusLine presentation={retry} /> : null}
+          {item.reopened ? <OperatorStatusLine presentation={{ label: '已重新打开', tone: 'warning' }} /> : null}
         </Stack>
       </Stack>
-      <Accordion disableGutters elevation={0} sx={{ mt: 1.5, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
-        <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 36, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
-          <Typography variant="caption" color="text.secondary">系统信息</Typography>
-        </AccordionSummary>
-        <AccordionDetails sx={{ px: 0, pt: 0 }}>
-          <Typography component="code" variant="caption" sx={{ overflowWrap: 'anywhere' }}>任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ''}</Typography>
-        </AccordionDetails>
-      </Accordion>
+      <Box sx={{ mt: 1.5 }}>
+        <OperatorTechnicalDisclosure title="系统信息" compact>
+          <Typography component="code" variant="caption" sx={{ overflowWrap: 'anywhere' }}>
+            任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ''}
+          </Typography>
+        </OperatorTechnicalDisclosure>
+      </Box>
     </Box>
   )
 }
@@ -88,7 +87,7 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
   const timeline = memory?.evidence_timeline ?? []
   return (
     <Box component="section" aria-labelledby="operator-evidence-title">
-      <WorkspaceSectionHeading id="operator-evidence-title" title="已知信息" />
+      <OperatorSectionHeading id="operator-evidence-title" title="已知信息" />
       <Divider sx={{ my: 2 }} />
       {!timeline.length ? <OperatorEmptyState title="暂无结构化信息" description="可查看任务摘要和客户沟通" /> : null}
       <Stack divider={<Divider flexItem />}>
@@ -97,15 +96,16 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
           return (
             <Box component="article" key={`${entry.kind}-${entry.source_id || index}`} sx={{ py: 1.75 }}>
               <Stack direction="row" spacing={2} justifyContent="space-between" alignItems="flex-start">
-                <WorkspaceStatusLine presentation={presentation} />
+                <OperatorStatusLine presentation={presentation} />
                 {entry.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(entry.created_at)}</Typography> : null}
               </Stack>
               <Typography variant="subtitle2" sx={{ mt: 1 }}>{sanitizeDisplayText(entry.label || entry.kind)}</Typography>
               {entry.summary && Object.keys(entry.summary).length ? (
-                <Accordion disableGutters variant="outlined" sx={{ mt: 1.25, '&:before': { display: 'none' } }}>
-                  <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}><Typography variant="subtitle2">信息摘要</Typography></AccordionSummary>
-                  <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}><Box component="pre" sx={{ m: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(entry.summary, null, 2)}</Box></AccordionDetails>
-                </Accordion>
+                <Box sx={{ mt: 1.25 }}>
+                  <OperatorTechnicalDisclosure title="信息摘要">
+                    <Box component="pre" sx={{ m: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(entry.summary, null, 2)}</Box>
+                  </OperatorTechnicalDisclosure>
+                </Box>
               ) : null}
             </Box>
           )
@@ -118,12 +118,12 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
 function SourceSummary({ data, item }: { data: Record<string, unknown>; item: UnifiedOperatorQueueItem }) {
   return (
     <Box component="section" sx={{ py: 2.5 }}>
-      <WorkspaceSectionHeading title="任务摘要" />
+      <OperatorSectionHeading title="任务摘要" />
       <Box sx={{ mt: 2 }}>
         <OperatorFactGrid columns={3} facts={[
-          ['标题', sanitizeDisplayText(workspaceText(data.title) || '未提供')],
-          ['状态', sanitizeDisplayText(workspaceText(data.status) || item.source_status)],
-          ['优先级', sanitizeDisplayText(workspaceText(data.priority) || item.priority)],
+          ['标题', sanitizeDisplayText(stringValue(data.title) || '未提供')],
+          ['状态', sanitizeDisplayText(stringValue(data.status) || item.source_status)],
+          ['优先级', sanitizeDisplayText(stringValue(data.priority) || item.priority)],
         ]} />
       </Box>
     </Box>
