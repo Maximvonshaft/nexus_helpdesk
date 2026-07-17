@@ -18,46 +18,38 @@ import { useQuery } from '@tanstack/react-query'
 import {
   OperatorEmptyState,
   OperatorErrorNotice,
+  OperatorFactGrid,
   OperatorLoadingState,
+  OperatorStatusLine,
+  normalizeOperatorTone,
 } from '@/app/OperatorPresentation'
 import { canonicalAppHref } from '@/app/canonicalRoutes'
 import { sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
-import type { BadgeTone, ControlTowerAction, ControlTowerGovernanceLane } from '@/lib/types'
-
-function safeTone(value: string | null | undefined): BadgeTone {
-  return value === 'success' || value === 'warning' || value === 'danger' || value === 'default'
-    ? value
-    : 'default'
-}
-
-const toneColor: Record<BadgeTone, string> = {
-  default: 'text.secondary',
-  warning: 'warning.main',
-  success: 'success.main',
-  danger: 'error.main',
-}
-
-function StatusCount({ value, tone }: { value: number; tone: BadgeTone }) {
-  return (
-    <Stack direction="row" spacing={0.75} alignItems="center">
-      <Box aria-hidden="true" sx={{ bgcolor: toneColor[tone], borderRadius: '50%', height: 8, width: 8 }} />
-      <Typography variant="subtitle2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
-    </Stack>
-  )
-}
+import type { ControlTowerAction, ControlTowerGovernanceLane } from '@/lib/types'
 
 function ActionRow({ item }: { item: ControlTowerAction }) {
   const href = canonicalAppHref(item.href)
-  const tone = safeTone(item.tone)
   return (
-    <Stack component="article" direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" sx={{ py: 1.5 }}>
+    <Stack
+      component="article"
+      direction={{ xs: 'column', sm: 'row' }}
+      spacing={2}
+      alignItems={{ xs: 'stretch', sm: 'center' }}
+      justifyContent="space-between"
+      sx={{ py: 1.5 }}
+    >
       <Box sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="subtitle2">{sanitizeDisplayText(item.label)}</Typography>
-          <StatusCount value={item.count} tone={tone} />
+          <OperatorStatusLine
+            compact
+            presentation={{ label: String(item.count), tone: normalizeOperatorTone(item.tone) }}
+          />
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{sanitizeDisplayText(item.next)}</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          {sanitizeDisplayText(item.next)}
+        </Typography>
       </Box>
       {item.enabled && href ? (
         <Button component="a" href={href} variant="outlined" color="inherit" endIcon={<OpenInNewRoundedIcon />} sx={{ flexShrink: 0 }}>
@@ -75,10 +67,19 @@ function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
   return (
     <TableRow hover>
       <TableCell>{sanitizeDisplayText(item.area)}</TableCell>
-      <TableCell><StatusCount value={item.value} tone={safeTone(item.risk)} /></TableCell>
+      <TableCell>
+        <OperatorStatusLine
+          compact
+          presentation={{ label: String(item.value), tone: normalizeOperatorTone(item.risk) }}
+        />
+      </TableCell>
       <TableCell>{sanitizeDisplayText(item.next)}</TableCell>
       <TableCell>
-        {item.enabled && href ? <Button component="a" href={href} size="small" color="inherit">查看</Button> : <Typography variant="caption" color="text.secondary">不可用</Typography>}
+        {item.enabled && href ? (
+          <Button component="a" href={href} size="small" color="inherit">查看</Button>
+        ) : (
+          <Typography variant="caption" color="text.secondary">不可用</Typography>
+        )}
       </TableCell>
     </TableRow>
   )
@@ -136,18 +137,16 @@ export function ControlTowerPage() {
                   {tower.data.team_workload.map((team) => (
                     <Box component="article" key={`${team.team_id || 'none'}-${team.team_name}`} sx={{ py: 1.5 }}>
                       <Typography variant="subtitle2">{sanitizeDisplayText(team.team_name)}</Typography>
-                      <Box component="dl" sx={{ display: 'grid', gap: 1, gridTemplateColumns: 'repeat(4, 1fr)', m: 0, mt: 1 }}>
-                        {[
-                          ['处理中', team.active_tickets],
-                          ['未分配', team.unassigned],
-                          ['即将超时', team.sla_risk],
-                          ['已超时', team.overdue],
-                        ].map(([label, value]) => (
-                          <Box key={String(label)}>
-                            <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
-                            <Typography component="dd" variant="subtitle2" sx={{ m: 0, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
-                          </Box>
-                        ))}
+                      <Box sx={{ mt: 1 }}>
+                        <OperatorFactGrid
+                          columns={4}
+                          facts={[
+                            ['处理中', team.active_tickets],
+                            ['未分配', team.unassigned],
+                            ['即将超时', team.sla_risk],
+                            ['已超时', team.overdue],
+                          ]}
+                        />
                       </Box>
                     </Box>
                   ))}
