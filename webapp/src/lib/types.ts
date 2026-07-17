@@ -1,6 +1,7 @@
 export * from './types/core'
 export * from './types/operations'
 export * from './types/channels'
+export * from './types/channelControl'
 export * from './types/runtime'
 export * from './types/knowledge'
 export * from './types/webchat'
