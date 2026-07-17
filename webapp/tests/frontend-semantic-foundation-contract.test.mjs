@@ -11,6 +11,7 @@ const workspace = [
   'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
   'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
   'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceActions.tsx',
 ].map(read).join('\n')
 
 test('one MUI theme and one bounded operator presentation own visual semantics', () => {
@@ -22,7 +23,17 @@ test('one MUI theme and one bounded operator presentation own visual semantics',
   assert.match(provider, /ThemeProvider/)
   assert.match(provider, /CssBaseline/)
   assert.match(theme, /createTheme/)
-  for (const name of ['OperatorEmptyState', 'OperatorErrorNotice', 'OperatorLoadingState', 'RouteLoadingState', 'OperatorFactGrid']) assert.match(presentation, new RegExp(name))
+  for (const name of [
+    'OperatorPageBoundary',
+    'OperatorEmptyState',
+    'OperatorErrorNotice',
+    'OperatorLoadingState',
+    'RouteLoadingState',
+    'OperatorFactGrid',
+    'OperatorSectionHeading',
+    'OperatorStatusLine',
+    'OperatorTechnicalDisclosure',
+  ]) assert.match(presentation, new RegExp(name))
   assert.doesNotMatch(presentation, /export function (Button|Input|Dialog|Field)/)
 })
 
@@ -33,6 +44,7 @@ test('retired custom and duplicate visual authorities are absent', () => {
     'src/styles/components.css',
     'src/styles/auth.css',
     'src/app/app-shell.css',
+    'src/features/operator-workspace/OperatorWorkspaceCommon.tsx',
     'src/features/operator-workspace/operator-workspace.css',
     'src/features/operator-workspace/operator-workspace-refinements.css',
     'src/features/admin-routes/admin-routes.css',
@@ -48,12 +60,23 @@ test('Login, shell and Workspace use MUI and concise operator language', () => {
   assert.match(login, /@mui\/material/)
   assert.match(login, /账号或密码错误/)
   assert.match(shell, /AppBar/)
+  assert.doesNotMatch(shell, /component=["']main["']/)
   assert.match(workspace, /ListItemButton/)
   assert.match(workspace, /Tabs/)
   assert.match(workspace, /Dialog/)
   assert.match(workspace, /处理进度/)
   assert.match(workspace, /待处理任务/)
   assert.doesNotMatch(login + shell + workspace, /客服与运营工作台|案例处理链路|事实与证据|服务端最终授权|nd-button|nd-field|nd-badge/)
+})
+
+test('canonical route pages own their single main landmark', () => {
+  for (const path of [
+    'src/features/operator-workspace/OperatorWorkspacePage.tsx',
+    'src/features/knowledge/KnowledgePage.tsx',
+    'src/features/channels/ChannelsPage.tsx',
+    'src/features/runtime/RuntimePage.tsx',
+    'src/features/control-tower/ControlTowerPage.tsx',
+  ]) assert.match(read(path), /component=["']main["']/, path)
 })
 
 test('global CSS is bounded and browser evidence exists', () => {
