@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from ..db import database_pool_snapshot
+from ..settings import get_settings
+from .queue_health import collect_queue_health
+from .release_metadata import runtime_identity_status
+from .storage_readiness import check_storage_readiness
+
+settings = get_settings()
+
+_PROFILE_VALUES = {"controlled", "provider_canary", "full"}
+_HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
+_DIGEST_IMAGE_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name}_invalid")
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise RuntimeError(f"{name}_invalid") from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name}_out_of_range")
+    return value
+
+
+def _env_token(name: str, default: str = "") -> str:
+    value = os.getenv(name, default).strip().lower()
+    if len(value) > 80 or not re.fullmatch(r"[a-z0-9_.-]*", value):
+        raise RuntimeError(f"{name}_invalid")
+    return value
+
+
+def _migration_snapshot(db: Session) -> dict[str, Any]:
+    expected = settings.expected_migration_head
+    try:
+        rows = db.execute(text("SELECT version_num FROM alembic_version ORDER BY version_num")).all()
+    except Exception:
+        return {
+            "status": "not_ready",
+            "expected": expected,
+            "observed": None,
+            "reason_codes": ["migration_head_unavailable"],
+        }
+    observed_heads = [str(row[0]).strip() for row in rows if row and row[0]]
+    reason_codes: list[str] = []
+    if len(observed_heads) != 1:
+        reason_codes.append("migration_head_count_invalid")
+    observed = observed_heads[0] if len(observed_heads) == 1 else None
+    if expected and observed != expected:
+        reason_codes.append("migration_head_mismatch")
+    return {
+        "status": "ready" if not reason_codes else "not_ready",
+        "expected": expected,
+        "observed": observed,
+        "reason_codes": reason_codes,
+    }
+
+
+def _configuration_snapshot(profile: str) -> dict[str, Any]:
+    provider_enabled = _env_bool("PROVIDER_RUNTIME_ENABLED", False)
+    provider_mode = _env_token("PROVIDER_RUNTIME_TRAFFIC_MODE", "control") or "control"
+    provider_kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", True)
+    provider_canary_percent = _env_int("PROVIDER_RUNTIME_CANARY_PERCENT", 0, minimum=0, maximum=100)
+    outbound_enabled = _env_bool("ENABLE_OUTBOUND_DISPATCH", False)
+    outbound_provider = _env_token("OUTBOUND_PROVIDER", "disabled") or "disabled"
+    webchat_ai_enabled = _env_bool("WEBCHAT_AI_ENABLED", False)
+    voice_enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
+    operations_mode = _env_token("OPERATIONS_DISPATCH_MODE", "disabled") or "disabled"
+
+    reason_codes: list[str] = []
+    if profile == "controlled":
+        if provider_enabled:
+            reason_codes.append("controlled_provider_enabled")
+        if provider_mode != "control":
+            reason_codes.append("controlled_provider_mode_not_control")
+        if not provider_kill_switch:
+            reason_codes.append("controlled_provider_kill_switch_inactive")
+        if provider_canary_percent != 0:
+            reason_codes.append("controlled_provider_canary_nonzero")
+        if webchat_ai_enabled:
+            reason_codes.append("controlled_webchat_ai_enabled")
+        if voice_enabled:
+            reason_codes.append("controlled_voice_enabled")
+        if outbound_enabled or outbound_provider != "disabled":
+            reason_codes.append("controlled_outbound_enabled")
+        if operations_mode != "disabled":
+            reason_codes.append("controlled_operations_enabled")
+    elif profile == "provider_canary":
+        if not provider_enabled:
+            reason_codes.append("canary_provider_disabled")
+        if provider_mode != "canary":
+            reason_codes.append("canary_provider_mode_invalid")
+        if provider_kill_switch:
+            reason_codes.append("canary_provider_kill_switch_active")
+        if not 1 <= provider_canary_percent <= 25:
+            reason_codes.append("canary_percent_outside_approved_range")
+        if outbound_enabled or outbound_provider != "disabled":
+            reason_codes.append("canary_outbound_must_remain_disabled")
+        if voice_enabled:
+            reason_codes.append("canary_voice_must_remain_disabled")
+        if operations_mode != "disabled":
+            reason_codes.append("canary_operations_must_remain_disabled")
+    elif profile == "full":
+        if not provider_enabled:
+            reason_codes.append("full_provider_disabled")
+        if provider_mode != "full":
+            reason_codes.append("full_provider_mode_invalid")
+        if provider_kill_switch:
+            reason_codes.append("full_provider_kill_switch_active")
+        if provider_canary_percent != 100:
+            reason_codes.append("full_provider_percent_not_100")
+
+    return {
+        "status": "ready" if not reason_codes else "not_ready",
+        "reason_codes": reason_codes,
+        "provider": {
+            "enabled": provider_enabled,
+            "mode": provider_mode,
+            "kill_switch": provider_kill_switch,
+            "canary_percent": provider_canary_percent,
+        },
+        "outbound": {
+            "enabled": outbound_enabled,
+            "provider": outbound_provider,
+        },
+        "webchat_ai_enabled": webchat_ai_enabled,
+        "voice_enabled": voice_enabled,
+        "operations_mode": operations_mode,
+        "contains_secrets": False,
+    }
+
+
+def _identity_snapshot() -> dict[str, Any]:
+    identity = runtime_identity_status(default_app_version=settings.app_version)
+    source_sha = str(identity.get("git_sha") or os.getenv("GIT_SHA", "")).strip().lower()
+    frontend_sha = str(identity.get("frontend_build_sha") or os.getenv("FRONTEND_BUILD_SHA", "")).strip().lower()
+    image = str(identity.get("image_tag") or os.getenv("IMAGE_TAG", "")).strip().lower()
+    reason_codes: list[str] = []
+    if not _HEX40_RE.fullmatch(source_sha):
+        reason_codes.append("source_sha_invalid")
+    if not _HEX40_RE.fullmatch(frontend_sha):
+        reason_codes.append("frontend_sha_invalid")
+    if source_sha and frontend_sha and source_sha != frontend_sha:
+        reason_codes.append("frontend_source_sha_mismatch")
+    if not _DIGEST_IMAGE_RE.fullmatch(image):
+        reason_codes.append("image_digest_invalid")
+    if not identity.get("release_metadata_complete"):
+        reason_codes.append("release_metadata_incomplete")
+    return {
+        "status": "ready" if not reason_codes else "not_ready",
+        "reason_codes": reason_codes,
+        "source_sha": source_sha or None,
+        "frontend_sha": frontend_sha or None,
+        "image": image or None,
+        "app_version": identity.get("app_version"),
+        "build_time": identity.get("build_time"),
+    }
+
+
+def evaluate_release_readiness(db: Session, *, profile: str = "controlled") -> dict[str, Any]:
+    normalized_profile = profile.strip().lower()
+    if normalized_profile not in _PROFILE_VALUES:
+        raise ValueError("release_profile_invalid")
+
+    identity = _identity_snapshot()
+    migration = _migration_snapshot(db)
+    configuration = _configuration_snapshot(normalized_profile)
+    queue = collect_queue_health(db)
+    storage = check_storage_readiness().as_dict()
+    database_pool = database_pool_snapshot()
+
+    reason_codes: list[str] = []
+    for prefix, collector in (
+        ("identity", identity),
+        ("migration", migration),
+        ("configuration", configuration),
+        ("queue", queue),
+        ("storage", storage),
+    ):
+        if collector.get("status") not in {"ready", "ok"}:
+            collector_reasons = collector.get("reason_codes")
+            if isinstance(collector_reasons, list) and collector_reasons:
+                reason_codes.extend(f"{prefix}:{str(code)[:120]}" for code in collector_reasons)
+            else:
+                reason_codes.append(f"{prefix}:not_ready")
+
+    return {
+        "schema": "nexus.release-readiness.v1",
+        "profile": normalized_profile,
+        "status": "ready" if not reason_codes else "not_ready",
+        "reason_codes": sorted(set(reason_codes)),
+        "collectors": {
+            "identity": identity,
+            "migration": migration,
+            "configuration": configuration,
+            "queue": queue,
+            "storage": storage,
+            "database_pool": database_pool,
+        },
+        "production_authorized": False,
+        "provider_enablement_authorized": False,
+        "outbound_enablement_authorized": False,
+    }
