@@ -11,8 +11,9 @@ from .schemas import ProviderRequest
 
 TRAFFIC_SELECTION_SCHEMA = "nexus.provider_runtime.traffic_selection.v1"
 TRAFFIC_MODE_ENV = "PROVIDER_RUNTIME_TRAFFIC_MODE"
+RUNTIME_ENABLED_ENV = "PROVIDER_RUNTIME_ENABLED"
 ALLOWED_CANARY_PERCENTS = frozenset({0, 1, 5, 25, 100})
-_VALID_MODES = frozenset({"control", "canary", "shadow"})
+_VALID_MODES = frozenset({"control", "shadow", "canary", "full"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _BUCKET_CONTRACT = "sha256(tenant_id,tenant_key,channel_key,session_id,scenario)%100"
@@ -48,6 +49,27 @@ class ProviderTrafficSelection:
             "reason": self.reason,
             "bucket_contract": _BUCKET_CONTRACT,
         }
+
+
+def configured_runtime_enabled(value: Any | None = None) -> bool:
+    raw = os.getenv(RUNTIME_ENABLED_ENV) if value is None else value
+    if raw is None:
+        # Production must opt in explicitly. Development and test remain usable,
+        # while the traffic mode still defaults to the non-executing control path.
+        return (os.getenv("APP_ENV", "development").strip().lower() or "development") not in {
+            "prod",
+            "production",
+        }
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, int) and raw in {0, 1}:
+        return bool(raw)
+    normalized = str(raw).strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    raise ValueError("provider_runtime_enabled_invalid")
 
 
 def configured_traffic_mode(value: str | None = None) -> str:
@@ -114,24 +136,36 @@ def stable_canary_bucket(request: ProviderRequest) -> int:
     return int.from_bytes(digest[:8], "big", signed=False) % 100
 
 
+def _best_effort_lower_configuration(
+    canary_percent: Any,
+    configured_mode_value: str | None,
+) -> tuple[int, str]:
+    try:
+        percent = validate_canary_percent(canary_percent)
+    except ValueError:
+        percent = 0
+    try:
+        mode = configured_traffic_mode(configured_mode_value)
+    except ValueError:
+        mode = "invalid"
+    return percent, mode
+
+
 def select_provider_traffic(
     request: ProviderRequest,
     *,
     canary_percent: Any,
     kill_switch: Any,
     configured_mode_value: str | None = None,
+    runtime_enabled_value: Any | None = None,
 ) -> ProviderTrafficSelection:
     normalized_kill_switch = validate_kill_switch(kill_switch)
 
     if normalized_kill_switch:
-        try:
-            percent = validate_canary_percent(canary_percent)
-        except ValueError:
-            percent = 0
-        try:
-            mode = configured_traffic_mode(configured_mode_value)
-        except ValueError:
-            mode = "invalid"
+        percent, mode = _best_effort_lower_configuration(
+            canary_percent,
+            configured_mode_value,
+        )
         return ProviderTrafficSelection(
             configured_mode=mode,
             path=ProviderTrafficPath.KILL_SWITCH,
@@ -140,6 +174,21 @@ def select_provider_traffic(
             execute_candidate=False,
             authoritative=False,
             reason="kill_switch_active",
+        )
+
+    if not configured_runtime_enabled(runtime_enabled_value):
+        percent, mode = _best_effort_lower_configuration(
+            canary_percent,
+            configured_mode_value,
+        )
+        return ProviderTrafficSelection(
+            configured_mode=mode,
+            path=ProviderTrafficPath.CONTROL,
+            canary_percent=percent,
+            bucket=None,
+            execute_candidate=False,
+            authoritative=False,
+            reason="provider_runtime_disabled",
         )
 
     percent = validate_canary_percent(canary_percent)
@@ -155,6 +204,19 @@ def select_provider_traffic(
             execute_candidate=False,
             authoritative=False,
             reason="control_mode_configured",
+        )
+
+    if mode == "full":
+        if percent != 100:
+            raise ValueError("provider_runtime_full_percent_invalid")
+        return ProviderTrafficSelection(
+            configured_mode=mode,
+            path=ProviderTrafficPath.CANARY_AUTHORITATIVE,
+            canary_percent=percent,
+            bucket=bucket,
+            execute_candidate=True,
+            authoritative=True,
+            reason="full_mode_configured",
         )
 
     if percent == 0 or bucket >= percent:
