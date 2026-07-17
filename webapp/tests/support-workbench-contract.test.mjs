@@ -21,10 +21,14 @@ test('router exposes only the owned canonical route files', () => {
 
 test('workspace is the sole queue, conversation and governed-action surface', () => {
   const api = read('src/lib/operatorWorkspaceApi.ts')
+  const supportApi = read('src/lib/supportApi.ts')
   for (const text of ['待处理任务', '客户沟通', '处理进度', '已知信息', '下一步', '接手处理', '确认申请取消']) assert.match(workspace, new RegExp(text))
   for (const name of ['operatorWorkspaceApi.reply', 'webchatAcceptHandoff', 'querySpeedafWaybills', 'createSpeedafWorkOrder', 'previewSpeedafCancel', 'confirmSpeedafCancel']) assert.match(workspace, new RegExp(name.replace('.', '\\.')))
   assert.match(workspace, /mergeLatestWorkspaceThread/)
   assert.match(workspace, /conversationEvents/)
+  assert.match(workspace, /resolveSupportConversation/)
+  assert.match(supportApi, /\/api\/support\/conversations\/resolve/)
+  assert.doesNotMatch(supportApi + workspace, /supportConversationDetail|\/api\/support\/conversations\/detail/)
   assert.match(api, /before_message_id/)
   assert.doesNotMatch(workspace + api, /workspace-v2|thread-v2|thread-page/)
 })
