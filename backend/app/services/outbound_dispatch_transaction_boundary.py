@@ -98,6 +98,8 @@ def reclaim_stale_processing_messages(db: Any, *, limit: int | None = None) -> i
         return 0
 
     for message in rows:
+        previous_worker = getattr(message, "locked_by", None)
+        previous_locked_at = getattr(message, "locked_at", None)
         message_dispatch._mark_retry(
             message,
             "Previous outbound worker lease expired before a terminal result",
@@ -118,7 +120,8 @@ def reclaim_stale_processing_messages(db: Any, *, limit: int | None = None) -> i
                 "message_id": message.id,
                 "failure_code": message.failure_code,
                 "retry_count": message.retry_count,
-                "previous_worker": getattr(message, "locked_by", None),
+                "previous_worker": previous_worker,
+                "previous_locked_at": previous_locked_at,
             },
         )
     db.commit()
