@@ -74,9 +74,19 @@ export function knowledgeStatusPresentation(value: string | null | undefined): O
 
 export function channelPresentation(channel: string | null | undefined): OperationalPresentation {
   const normalized = normalizeOperationalStatus(channel)
-  if (normalized === 'whatsapp') return { tone: 'default', label: 'WhatsApp' }
-  if (normalized === 'webchat') return { tone: 'default', label: 'WebChat' }
-  return { tone: 'default', label: String(channel ?? '').trim() || '未知渠道' }
+  const labels: Record<string, string> = {
+    webchat: '网页客服',
+    web_chat: '网页客服',
+    whatsapp: 'WhatsApp',
+    email: '邮件',
+    voice: '语音',
+    sms: '短信',
+    telegram: 'Telegram',
+  }
+  return {
+    tone: 'default',
+    label: labels[normalized] || String(channel ?? '').trim() || '未知渠道',
+  }
 }
 
 export function sourceConversationPresentation(
