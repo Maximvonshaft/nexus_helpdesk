@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.api.webchat import _hash_token, _validate_public_conversation_token  # noqa: E402
+from app.api.webchat_public import _hash_token, _validate_public_conversation_token  # noqa: E402
 from app.services.webchat_performance import list_public_messages_throttled  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 
