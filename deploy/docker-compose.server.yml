@@ -24,6 +24,8 @@ x-app-image: &app_image
     WEBCHAT_WS_MAX_CONNECTIONS_PER_USER: ${WEBCHAT_WS_MAX_CONNECTIONS_PER_USER:-10}
     REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
     DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
+    DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-10}
+    DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
     GIT_SHA: ${GIT_SHA:-unknown}
     BUILD_TIME: ${BUILD_TIME:-unknown}
     IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
@@ -81,6 +83,9 @@ services:
       - .env.prod
     environment:
       <<: *app_env
+      NEXUS_PROCESS_ROLE: web
+      DB_POOL_SIZE: ${DB_POOL_SIZE_WEB:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEB:-5}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       WEB_TIMEOUT: ${WEB_TIMEOUT:-30}
     volumes: *app_volumes
@@ -114,6 +119,11 @@ services:
 
   worker-outbound:
     <<: *app_image
+    environment:
+      <<: *app_env
+      NEXUS_PROCESS_ROLE: worker-outbound
+      DB_POOL_SIZE: ${DB_POOL_SIZE_OUTBOUND:-2}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_OUTBOUND:-2}
     command: python scripts/run_worker.py --worker-id worker-outbound --queue outbound
     healthcheck: *worker_healthcheck
     depends_on:
@@ -122,6 +132,11 @@ services:
 
   worker-background:
     <<: *app_image
+    environment:
+      <<: *app_env
+      NEXUS_PROCESS_ROLE: worker-background
+      DB_POOL_SIZE: ${DB_POOL_SIZE_BACKGROUND:-3}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_BACKGROUND:-2}
     command: python scripts/run_worker.py --worker-id worker-background --queue background
     healthcheck: *worker_healthcheck
     depends_on:
@@ -130,6 +145,11 @@ services:
 
   worker-handoff-snapshot:
     <<: *app_image
+    environment:
+      <<: *app_env
+      NEXUS_PROCESS_ROLE: worker-handoff-snapshot
+      DB_POOL_SIZE: ${DB_POOL_SIZE_HANDOFF:-2}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_HANDOFF:-1}
     command: python scripts/run_worker.py --worker-id worker-handoff-snapshot --queue handoff-snapshot
     healthcheck: *worker_healthcheck
     depends_on:
@@ -138,6 +158,11 @@ services:
 
   worker-webchat-ai:
     <<: *app_image
+    environment:
+      <<: *app_env
+      NEXUS_PROCESS_ROLE: worker-webchat-ai
+      DB_POOL_SIZE: ${DB_POOL_SIZE_WEBCHAT_AI:-2}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEBCHAT_AI:-1}
     command: python scripts/run_worker.py --worker-id worker-webchat-ai --queue webchat-ai
     healthcheck: *worker_healthcheck
     depends_on:
@@ -146,6 +171,11 @@ services:
 
   runtime-warmer:
     <<: *app_image
+    environment:
+      <<: *app_env
+      NEXUS_PROCESS_ROLE: runtime-warmer
+      DB_POOL_SIZE: ${DB_POOL_SIZE_RUNTIME_WARMER:-1}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_RUNTIME_WARMER:-0}
     command:
       - /bin/sh
       - -c
@@ -170,6 +200,11 @@ services:
     <<: *app_image
     profiles:
       - legacy-worker
+    environment:
+      <<: *app_env
+      NEXUS_PROCESS_ROLE: legacy-worker
+      DB_POOL_SIZE: ${DB_POOL_SIZE_LEGACY_WORKER:-3}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_LEGACY_WORKER:-2}
     command: python scripts/run_worker.py --worker-id worker-main --queue all
     healthcheck: *worker_healthcheck
     depends_on:
