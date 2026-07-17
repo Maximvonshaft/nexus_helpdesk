@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - ci/763-exact-head-7bb8e6d
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: read
@@ -43,22 +50,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout acceptance commit
+      - name: Checkout acceptance head
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Prove business tree matches PR head
         shell: bash
         run: |
           set -euo pipefail
           expected="7bb8e6d7d51b3fc7c8f27ae18e4159725c35bd84"
-          actual_parent="$(git rev-parse HEAD^)"
-          test "$actual_parent" = "$expected"
-          changed="$(git diff --name-only HEAD^ HEAD)"
+          test "$(git merge-base "$expected" HEAD)" = "$expected"
+          changed="$(git diff --name-only "$expected" HEAD)"
           test "$changed" = ".github/workflows/pr-763-exact-head-acceptance.yml"
-          echo "validated_pr_head=$actual_parent"
-          echo "acceptance_commit=$(git rev-parse HEAD)"
+          echo "validated_pr_head=$expected"
+          echo "acceptance_head=$(git rev-parse HEAD)"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -80,10 +87,11 @@ jobs:
     env:
       DATABASE_URL: sqlite+pysqlite:///./pr-763-acceptance.db
     steps:
-      - name: Checkout acceptance commit
+      - name: Checkout acceptance head
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -150,10 +158,11 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus_ci
     steps:
-      - name: Checkout acceptance commit
+      - name: Checkout acceptance head
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -182,10 +191,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout acceptance commit
+      - name: Checkout acceptance head
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Validate deployment contract
         run: bash scripts/ci/validate_deploy_contract.sh
