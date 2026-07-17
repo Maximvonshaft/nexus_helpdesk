@@ -24,6 +24,8 @@ const allowedFullPageOwners = new Set([
   path.join(src, 'routes', 'login.tsx'),
   path.join(src, 'theme', 'nexusTheme.ts'),
 ])
+const retiredLocalHelper = /\bfunction\s+(EmptyState|ErrorNotice|ErrorSummary|LoadingState|FactGrid|statusColor|muiStatusColor|errorCopy|scrollBehavior)\b/g
+const retiredClassLiteral = /\b(?:nd-app-boundary-state|empty-state|nd-button|nd-field|nd-badge)\b/
 const forbiddenDefinitions = /\b(?:function|const|type|interface)\s+(WorkspacePresentation|WorkspaceStatusLine|WorkspaceSectionHeading|WorkspaceLoading|FullPageBoundary|TechnicalDisclosure|StatusCount|safeTone|toneColor|providerLabel|channelLabel|safeRecord|safeRecordArray|safeWorkspaceRecord|workspaceText|workspaceNumber|textValue|numberValue)\b/g
 
 test('renaming cannot recreate retired generic presentation responsibilities', () => {
@@ -34,6 +36,9 @@ test('renaming cannot recreate retired generic presentation responsibilities', (
     if (file !== presentationPath && /\b(?:Accordion|AccordionSummary|AccordionDetails)\b/.test(source)) {
       violations.push(`${relative}: direct Accordion disclosure`)
     }
+    if (retiredClassLiteral.test(source)) violations.push(`${relative}: retired visual class literal`)
+    for (const match of source.matchAll(retiredLocalHelper)) violations.push(`${relative}: ${match[1]}`)
+    retiredLocalHelper.lastIndex = 0
     if (file !== presentationPath && /component=["']dl["']/.test(source)) violations.push(`${relative}: direct fact grid`)
     if (file !== presentationPath && file !== casePath && /borderRadius\s*:\s*["']50%["']/.test(source)) violations.push(`${relative}: generic status marker`)
     if (!allowedFullPageOwners.has(file) && /minHeight\s*:\s*["']100dvh["']/.test(source)) violations.push(`${relative}: route-private full-page layout`)
@@ -41,6 +46,14 @@ test('renaming cannot recreate retired generic presentation responsibilities', (
     if (/className\s*:\s*['"]is-ai['"]/.test(source)) violations.push(`${relative}: stale is-ai class`)
   }
   assert.deepEqual(violations, [])
+})
+
+test('navigation ownership remains canonical', () => {
+  const owners = production
+    .filter((file) => fs.readFileSync(file, 'utf8').includes('APP_NAVIGATION'))
+    .map((file) => path.relative(root, file).split(path.sep).join('/'))
+    .sort()
+  assert.deepEqual(owners, ['src/app/AppNavigation.tsx', 'src/app/navigation.ts'])
 })
 
 test('operator presentation is the sole generic owner consumed by routes', () => {
