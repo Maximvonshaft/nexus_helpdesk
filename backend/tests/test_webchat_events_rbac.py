@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from starlette.requests import Request
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_events_rbac_tests.db")
@@ -41,6 +42,10 @@ def db_session(tmp_path):
         session.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def _request(path: str = "/api/webchat/admin/tickets/1/events") -> Request:
+    return Request({"type": "http", "method": "GET", "path": path, "headers": []})
 
 
 def make_team(db, name: str) -> Team:
@@ -104,7 +109,7 @@ def make_conversation_with_events(db, ticket: Ticket, *, public_id: str = "wc-a"
 
 def test_unauthenticated_admin_events_auth_dependency_returns_401(db_session):
     with pytest.raises(HTTPException) as exc:
-        get_current_user(credentials=None, x_user_id=None, db=db_session)
+        get_current_user(request=_request(), credentials=None, x_user_id=None, db=db_session)
 
     assert exc.value.status_code == 401
 
@@ -149,7 +154,7 @@ def test_inactive_user_token_returns_401(db_session):
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     with pytest.raises(HTTPException) as exc:
-        get_current_user(credentials=credentials, x_user_id=None, db=db_session)
+        get_current_user(request=_request(), credentials=credentials, x_user_id=None, db=db_session)
 
     assert exc.value.status_code == 401
 
