@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import uuid
+from contextlib import nullcontext
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 
 _PATCHED = False
 
@@ -12,8 +14,86 @@ def _exception_reason(exc: Exception) -> str:
     return f"Unhandled dispatch exception: {type(exc).__name__}"
 
 
-def _recover_unhandled_dispatch_exception(db: Any, *, message_id: int, exc: Exception):
+def _is_sqlalchemy_session(db: Any) -> bool:
+    return hasattr(db, "execute") and getattr(db, "bind", None) is not None
+
+
+def _claim_token(worker_id: str | None) -> str:
+    prefix = (worker_id or "outbound-worker").strip() or "outbound-worker"
+    return f"{prefix[:80]}:{uuid.uuid4().hex}"
+
+
+def _refresh_message_lease(db: Any, *, message_id: int, lease_token: str) -> bool:
+    if not _is_sqlalchemy_session(db):
+        return True
+
     from . import message_dispatch
+
+    now = message_dispatch.utc_now()
+    result = db.execute(
+        update(message_dispatch.TicketOutboundMessage)
+        .where(
+            message_dispatch.TicketOutboundMessage.id == message_id,
+            message_dispatch.TicketOutboundMessage.status
+            == message_dispatch.MessageStatus.processing,
+            message_dispatch.TicketOutboundMessage.locked_by == lease_token,
+        )
+        .values(locked_at=now)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        message_dispatch.LOGGER.warning(
+            "outbound_message_lease_refresh_rejected",
+            extra={"event_payload": {"message_id": message_id}},
+        )
+        return False
+    db.commit()
+    return True
+
+
+def _owns_message_lease(db: Any, *, message_id: int, lease_token: str) -> bool:
+    if not _is_sqlalchemy_session(db):
+        return True
+
+    from . import message_dispatch
+
+    no_autoflush = getattr(db, "no_autoflush", nullcontext())
+    with no_autoflush:
+        row = (
+            db.query(
+                message_dispatch.TicketOutboundMessage.locked_by,
+                message_dispatch.TicketOutboundMessage.status,
+            )
+            .filter(message_dispatch.TicketOutboundMessage.id == message_id)
+            .first()
+        )
+    if row is None:
+        return False
+    return (
+        row[0] == lease_token
+        and row[1] == message_dispatch.MessageStatus.processing
+    )
+
+
+def _recover_unhandled_dispatch_exception(
+    db: Any,
+    *,
+    message_id: int,
+    lease_token: str,
+    exc: Exception,
+):
+    from . import message_dispatch
+
+    if not _owns_message_lease(
+        db,
+        message_id=message_id,
+        lease_token=lease_token,
+    ):
+        message_dispatch.LOGGER.warning(
+            "outbound_stale_exception_result_rejected",
+            extra={"event_payload": {"message_id": message_id, "error_type": type(exc).__name__}},
+        )
+        return None
 
     message = (
         db.query(message_dispatch.TicketOutboundMessage)
@@ -157,15 +237,42 @@ def _dispatch_pending_messages_with_attempt_boundary(
         return []
 
     reclaim_stale_processing_messages(db, limit=limit)
-    claimed = message_dispatch.claim_pending_messages(db, limit=limit, worker_id=worker_id)
+    lease_token = _claim_token(worker_id)
+    claimed = message_dispatch.claim_pending_messages(
+        db,
+        limit=limit,
+        worker_id=lease_token,
+    )
     processed: list[Any] = []
     for message in claimed:
         message_id = message.id
+        if not _refresh_message_lease(
+            db,
+            message_id=message_id,
+            lease_token=lease_token,
+        ):
+            continue
         try:
             message_dispatch.process_outbound_message(db, message)
+            if not _owns_message_lease(
+                db,
+                message_id=message_id,
+                lease_token=lease_token,
+            ):
+                db.rollback()
+                message_dispatch.LOGGER.warning(
+                    "outbound_stale_completion_rejected",
+                    extra={"event_payload": {"message_id": message_id}},
+                )
+                continue
         except Exception as exc:
             db.rollback()
-            recovered = _recover_unhandled_dispatch_exception(db, message_id=message_id, exc=exc)
+            recovered = _recover_unhandled_dispatch_exception(
+                db,
+                message_id=message_id,
+                lease_token=lease_token,
+                exc=exc,
+            )
             if recovered is not None:
                 db.commit()
                 processed.append(recovered)
