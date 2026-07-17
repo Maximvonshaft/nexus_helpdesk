@@ -62,6 +62,20 @@ def test_kill_switch_has_precedence():
     assert selection.authoritative is False
 
 
+def test_kill_switch_remains_authoritative_with_invalid_lower_configuration():
+    selection = select_provider_traffic(
+        _request(),
+        canary_percent="invalid",
+        kill_switch=True,
+        configured_mode_value="invalid",
+    )
+    assert selection.path == ProviderTrafficPath.KILL_SWITCH
+    assert selection.configured_mode == "invalid"
+    assert selection.canary_percent == 0
+    assert selection.execute_candidate is False
+    assert selection.authoritative is False
+
+
 def test_control_mode_never_executes_candidate():
     selection = select_provider_traffic(
         _request(),
@@ -71,6 +85,19 @@ def test_control_mode_never_executes_candidate():
     )
     assert selection.path == ProviderTrafficPath.CONTROL
     assert selection.execute_candidate is False
+
+
+def test_missing_mode_defaults_to_control_even_with_full_percent(monkeypatch):
+    monkeypatch.delenv("PROVIDER_RUNTIME_TRAFFIC_MODE", raising=False)
+    selection = select_provider_traffic(
+        _request(),
+        canary_percent=100,
+        kill_switch=False,
+    )
+    assert selection.configured_mode == "control"
+    assert selection.path == ProviderTrafficPath.CONTROL
+    assert selection.execute_candidate is False
+    assert selection.authoritative is False
 
 
 def test_zero_percent_canary_never_executes_candidate():
