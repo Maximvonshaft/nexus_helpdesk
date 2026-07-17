@@ -105,6 +105,26 @@ function normalizeValue(value?: string | null) {
   return String(value || '').trim().toLowerCase()
 }
 
+export function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+export function recordArrayValue(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(recordValue) : []
+}
+
+export function stringValue(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+export function finiteNumber(value: unknown): number | null
+export function finiteNumber(value: unknown, fallback: number): number
+export function finiteNumber(value: unknown, fallback: number | null = null) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
 export function formatDateTime(value?: string | null) {
   if (!value) return '—'
   try {
