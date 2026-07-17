@@ -8,7 +8,9 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import support_conversations as support
+from app.api import webchat_admin
 from app.enums import ConversationState, SourceChannel, TicketStatus
+from app.services import support_sensitive_access
 from app.services.permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
@@ -118,3 +120,26 @@ def test_action_flags_are_capability_derived():
     assert with_capabilities["can_force_takeover"] is True
     assert with_capabilities["can_resume_ai"] is True
     assert with_capabilities["can_release"] is False
+
+
+def test_thread_route_does_not_requery_or_reimplement_sensitive_state():
+    source = inspect.getsource(webchat_admin.get_webchat_thread)
+
+    assert "db.query" not in source
+    assert "WebchatConversation" not in source
+    assert "ai_snapshot" not in source
+    assert "surface=" not in source
+    assert "admin_get_thread" in source
+    assert "build_support_memory_ledger" in source
+    assert "audit_sensitive_support_read" in source
+
+
+def test_sensitive_access_has_no_path_registry_or_single_value_dispatch():
+    source = inspect.getsource(support_sensitive_access)
+
+    assert "Request" not in source
+    assert "url.path" not in source
+    assert "Literal" not in source
+    assert "_ALLOWED_SURFACES" not in source
+    assert "classify_sensitive_support_request" not in source
+    assert "enforce_sensitive_support_request" not in source
