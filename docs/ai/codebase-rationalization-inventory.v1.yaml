@@ -1,28 +1,35 @@
 schema: nexus.osr.codebase-rationalization-inventory.v1
 work_item: 744
 baseline_main_sha: 7ffdbf5941853b4c70d0ec0c2ef0a02cfaa60498
-status: integrated_into_canonical_branch
+status: exact_head_verified_ready_to_merge
 authority:
   canonical_issue: 747
   canonical_pr: 748
   canonical_branch: work/744-canonical-operator-console-consolidation
+  current_ui_work_item: 753
+  current_ui_pr: 754
   rule: >
     This is the sole repository rationalization ledger. It records physical
-    retirement and delegates product, transport, authorization and design
+    retirement and delegates product, transport, authorization and visual
     authority to their canonical implementations; it does not define a second
-    product or GitHub Actions execution chain.
+    product, design system or GitHub Actions execution chain.
 verification:
   entrypoint: python scripts/verify_repository.py
   static_entrypoint: python scripts/verify_repository.py --static-only
   frontend_entrypoint: cd webapp && npm run verify
-  github_actions: disabled_and_absent
+  browser_entrypoint: cd webapp && npm run e2e
+  github_actions: retired_and_absent
+  exact_head_status: verified
 canonical_authorities:
   operator_product: webapp
   application_shell: webapp/src/app/AppShell.tsx
   navigation: webapp/src/app/navigation.ts
   http_transport: webapp/src/lib/apiClient.ts
-  ui_components: webapp/src/components/ui
-  design_tokens: webapp/src/styles/tokens.css
+  ui_framework: '@mui/material@9.2.0'
+  icon_framework: '@mui/icons-material@9.2.0'
+  mui_theme: webapp/src/theme/nexusTheme.ts
+  theme_provider: webapp/src/theme/NexusThemeProvider.tsx
+  operator_presentation: webapp/src/app/OperatorPresentation.tsx
   operational_status: webapp/src/domain/operationalPresentation.ts
   backend_policy: backend/app/services/permissions.py
   visibility_scope: backend/app/services/scope_permissions.py
@@ -56,9 +63,14 @@ deletion_slices:
     paths:
       - webapp/src/shared/ui
       - webapp/src/shared/api
-    replacement:
       - webapp/src/components/ui
       - webapp/src/styles/tokens.css
+      - webapp/src/styles/components.css
+    replacement:
+      - '@mui/material@9.2.0'
+      - webapp/src/theme/nexusTheme.ts
+      - webapp/src/theme/NexusThemeProvider.tsx
+      - webapp/src/app/OperatorPresentation.tsx
   - id: unreachable_frontend_modules
     disposition: DEAD_DELETE
     state: deleted_on_canonical_branch
@@ -72,10 +84,18 @@ deletion_slices:
       - webapp/src/components/ui/Skeleton.tsx
       - webapp/src/components/ui/Toast.tsx
       - webapp/src/hooks/useAutoRefresh.ts
+      - webapp/src/lib/cn.ts
       - webapp/src/lib/outboundChannels.ts
       - webapp/src/lib/uxCopy.ts
       - webapp/src/lib/webchatRealtime.ts
       - webapp/src/lib/webchatVoiceTypes.ts
+  - id: duplicate_knowledge_surface
+    disposition: DUPLICATE_DELETE
+    state: deleted_on_canonical_branch
+    paths:
+      - webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx
+    replacement:
+      - webapp/src/features/knowledge/KnowledgePage.tsx
   - id: orphan_backend_and_compatibility_cleanup
     disposition: DEAD_DELETE
     state: deleted_on_canonical_branch
@@ -98,6 +118,8 @@ anti_reintroduction:
   - scripts/verify_repository.py
   - webapp/scripts/assert-frontend-architecture.mjs
   - webapp/tests/canonical-convergence-regression.test.mjs
+  - webapp/tests/mui-visual-authority-contract.test.mjs
+  - webapp/tests/ui-visual-inventory-contract.test.mjs
 protected_assets:
   - id: historical_alembic_revisions
     owner_issue: 532

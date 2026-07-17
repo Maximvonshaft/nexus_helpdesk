@@ -38,32 +38,16 @@ It consumes #585, #587 and #526 contracts when those capabilities are implemente
 
 ## Color strategy
 
-Use a restrained product palette. Accent and state colors are operational signals, not decoration.
+Exact palette values live only in `webapp/src/theme/nexusTheme.ts`. This register defines semantic use, not a second token table.
 
-| Token role | Value | Intended use |
-|---|---|---|
-| Ink | `#172033` | Primary text and strong neutral controls |
-| Canvas | `#F5F7FB` | Application background |
-| Surface | `#FFFFFF` | Primary work surfaces |
-| Surface subdued | `#F8FAFC` | Secondary panels and grouped rows |
-| Line | `#D7DEE7` | Dividers and controls |
-| Line strong | `#B9C5D4` | Selected/interactive borders |
-| Selection / information | `#1D4ED8` | Current selection, focus and information |
-| Operational accent | `#C2410C` | Restricted Speedaf or exception emphasis |
-| Success | `#067647` | Verified success only |
-| Warning | `#B54708` | At risk or requires attention |
-| Danger | `#B42318` | Unsafe, blocked or failed |
-| AI assistance | `#6D28D9` | AI recommendation/history, never fact authority |
+- Primary: current selection, focus and primary action.
+- Success: verified successful state only.
+- Warning: at risk or requires attention.
+- Error: unsafe, blocked or failed.
+- Information: neutral operational context.
+- Background, surface, text and divider values are owned by the MUI theme.
 
-### Color rules
-
-- Normal text contrast must satisfy WCAG AA at 4.5:1.
-- Large text and non-text UI contrast follow applicable WCAG thresholds.
-- No meaning is conveyed by color alone; pair color with text, icon or shape.
-- White normal text on `#F06423` is not an approved pair.
-- Accent is used for primary action, current selection and meaningful state only.
-- Do not introduce raw feature-level hex colors after migration; consume semantic tokens.
-- Dark mode is not a default requirement. It requires a separate physical-use justification and complete contrast review.
+No feature-level raw colors are permitted. Meaning is never conveyed by color alone, and all combinations must meet WCAG AA.
 
 ## Typography
 
@@ -114,26 +98,17 @@ Responsive behavior is structural:
 
 ## Component authority
 
-The target semantic authority is:
+The single visual authority is:
 
-- Tokens: `webapp/src/styles/tokens.css`
-- React primitives: `webapp/src/components/ui/`
+- generic components: `@mui/material@9.2.0`;
+- icons: `@mui/icons-material@9.2.0`;
+- theme and semantic design values: `webapp/src/theme/nexusTheme.ts`;
+- root provider and baseline: `webapp/src/theme/NexusThemeProvider.tsx`;
+- bounded operational states: `webapp/src/app/OperatorPresentation.tsx`.
 
-Feature CSS may arrange primitives but must not create another color, radius, button, badge, field or status system.
+Feature code composes MUI directly. It must not create generic Button, Input, Dialog, Badge or Field wrappers, route-private palettes, route CSS, a second ThemeProvider, or a parallel design system.
 
-Every interactive component defines the states that apply:
-
-- default;
-- hover;
-- focus;
-- active/pressed;
-- selected;
-- disabled;
-- loading;
-- error;
-- success/confirmed.
-
-Shared primitives must be used consistently across operator, Knowledge, channels, Runtime and management surfaces.
+Every interactive component implements the applicable default, hover, focus, active, selected, disabled, loading, error and confirmed states through the single theme.
 
 ## Interaction
 
@@ -181,18 +156,11 @@ Shared primitives must be used consistently across operator, Knowledge, channels
 
 ## Operator language
 
-Use plain verbs and domain language:
+Primary interfaces show only the task or section name, current state, relevant facts, blocking reason, recovery path and explicit action.
 
-- `接管案例`, not generic `提交`;
-- `创建催派工单`, not `执行操作`;
-- `请求已排队`, not `处理成功`;
-- `运营已完成`, only with operational evidence;
-- `已通知客户`, only with notification evidence;
-- `符合安全结案条件`, only with closure evaluation.
+Use direct operator terms such as `待处理任务`, `当前负责人`, `处理时限`, `接手处理`, `转回待处理`, `恢复自动回复`, `搜索测试` and `系统状态`. Technical identifiers remain behind named disclosures such as `系统信息`, `审计数据`, `原始数据` or `处理编号`.
 
-Do not use `记忆证据` for Case Context. Prefer `案例证据`, `事实与依据`, or the concrete evidence type.
-
-Technical identifiers such as model name, Runtime trace and Job ID belong behind progressive disclosure or in `/runtime`, not in the primary operator hierarchy.
+Product narration, architecture explanations, frontend/backend responsibility text, permission philosophy and AI self-description are prohibited from primary operator surfaces.
 
 ## Anti-patterns
 
@@ -210,14 +178,11 @@ Technical identifiers such as model name, Runtime trace and Job ID belong behind
 - No internal implementation terms in primary operator copy.
 - No false closure or false success language.
 
-## Migration direction
+## Extension rules
 
-1. Inventory current tokens, primitives and feature styles.
-2. Map legacy values to semantic tokens.
-3. Make shared React primitives consume the semantic authority.
-4. Build #525 Workspace using only the accepted authority.
-5. Prove touch, keyboard, responsive, degraded and large-list behavior in #564.
-6. Migrate supporting route domains.
-7. Remove legacy frontend and redundant style authorities through #573.
-
-This register defines the future design authority. It does not claim the current production UI already conforms.
+1. Extend existing canonical routes and feature modules; do not create V2 or legacy alternatives.
+2. Use MUI and the existing Nexus theme; do not add a second framework or token authority.
+3. Add domain composition only when MUI cannot express the business concept directly.
+4. Keep one API transport, one Workspace state graph and one Knowledge implementation.
+5. Update architecture, contract and browser evidence in the same change.
+6. Delete superseded code and documentation in the same delivery.

@@ -69,7 +69,7 @@ The canonical journey is:
 | Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded evidence |
 | Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
 
-`/webchat` is transitional. It may redirect or retain a compatibility view during migration, but it is not the canonical product spine.
+`/webchat` is a compatibility redirect only. It does not mount a second product surface.
 
 Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
 
@@ -179,12 +179,13 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 - No technical-status-as-closure language.
 - No C-end long-term customer memory.
 
-## Delivery ownership
+## Current implementation authority
 
-- #525 implements the canonical queue-driven Case Workspace.
-- #587 defines action and business-result outcomes.
-- #526 defines complete, close, observation and reopen.
-- #564 proves scale, accessibility and degraded-state quality.
-- #573 retires the legacy frontend after parity.
+- `webapp/src/routes/` contains the only route registry.
+- `/workspace` is the only queue, case, conversation and governed-action surface.
+- `KnowledgePage.tsx` is the only Knowledge implementation; capability controls editing.
+- `apiClient.ts` is the only generic HTTP transport.
+- Material UI, one Nexus theme and one bounded operator-presentation module are the only generic visual authorities.
+- `/webchat` redirects to canonical routes and does not own a product UI.
 
-This register defines product intent. It does not claim those runtime capabilities are already implemented.
+New work must extend these authorities and remove any superseded path in the same delivery.
