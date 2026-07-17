@@ -1,85 +1,60 @@
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
+from typing import Literal
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from .audit_service import log_admin_audit
-from .permissions import CAP_CUSTOMER_PROFILE_READ, resolve_capabilities
+from .permissions import CAP_CUSTOMER_PROFILE_READ, ensure_capability
 
 
-_AUDIT_SESSION_KEY = "support_sensitive_access_prechecked"
-_TICKET_PATH = re.compile(
-    r"^/api/webchat/admin/tickets/(?P<ticket_id>[1-9]\d*)/(?P<surface>thread|support-memory)$"
-)
+SensitiveSupportSurface = Literal["webchat_thread"]
+_ALLOWED_SURFACES: frozenset[str] = frozenset({"webchat_thread"})
 
 
-@dataclass(frozen=True)
-class SensitiveSupportSurface:
-    name: str
-    target_id: int
+def ensure_sensitive_support_capability(db: Session, current_user) -> None:
+    """Require the single capability that permits full customer-detail reads."""
 
-
-def classify_sensitive_support_request(request: Request) -> SensitiveSupportSurface | None:
-    if request.method.upper() != "GET":
-        return None
-
-    path = request.url.path.rstrip("/") or "/"
-    match = _TICKET_PATH.fullmatch(path)
-    if not match:
-        return None
-    return SensitiveSupportSurface(
-        f"webchat_{match.group('surface').replace('-', '_')}",
-        int(match.group("ticket_id")),
+    ensure_capability(
+        current_user,
+        CAP_CUSTOMER_PROFILE_READ,
+        db,
+        message="support_sensitive_read_requires_customer_profile_capability",
     )
 
 
-def enforce_sensitive_support_request(
-    request: Request,
+def audit_sensitive_support_read(
     *,
-    db: Session,
     current_user,
+    ticket_id: int,
+    surface: SensitiveSupportSurface,
+    includes_support_memory: bool,
 ) -> None:
-    """Require sensitive-read capability and persist a bounded precheck event.
+    """Persist bounded evidence only after object-scope authorization succeeds."""
 
-    Object existence, tenant authority and ticket visibility remain fail-closed in
-    the canonical Thread/Memory service boundary. This precheck deliberately does
-    not claim that object-level authorization or data disclosure succeeded.
-    """
-
-    surface = classify_sensitive_support_request(request)
-    if surface is None:
-        return
-
-    if CAP_CUSTOMER_PROFILE_READ not in resolve_capabilities(current_user, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="support_sensitive_read_requires_customer_profile_capability",
-        )
-
-    audit_key = (int(current_user.id), surface.name, surface.target_id)
-    prechecked = db.info.setdefault(_AUDIT_SESSION_KEY, set())
-    if audit_key in prechecked:
-        return
+    if surface not in _ALLOWED_SURFACES:
+        raise ValueError("unsupported_sensitive_support_surface")
+    target_id = int(ticket_id)
+    if target_id <= 0:
+        raise ValueError("invalid_sensitive_support_target")
 
     audit_db = SessionLocal()
     try:
         log_admin_audit(
             audit_db,
             actor_id=int(current_user.id),
-            action="support_sensitive_read_capability_precheck",
+            action="support_sensitive_read_authorized",
             target_type="support_conversation",
-            target_id=surface.target_id,
+            target_id=target_id,
             new_value={
-                "surface": surface.name,
+                "surface": surface,
                 "method": "GET",
                 "capability": CAP_CUSTOMER_PROFILE_READ,
-                "authorization_stage": "capability_precheck",
-                "object_scope_enforced_by_endpoint": True,
-                "access_outcome": "pending_object_scope",
+                "authorization_stage": "object_scope_completed",
+                "access_outcome": "authorized",
+                "includes_support_memory": bool(includes_support_memory),
                 "pii_payload_logged": False,
             },
         )
@@ -92,5 +67,3 @@ def enforce_sensitive_support_request(
         ) from exc
     finally:
         audit_db.close()
-
-    prechecked.add(audit_key)
