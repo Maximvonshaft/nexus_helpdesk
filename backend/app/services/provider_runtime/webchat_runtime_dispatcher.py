@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import math
+import re
 from typing import Any
 
 from app.db import SessionLocal
@@ -16,6 +18,7 @@ from .schemas import ProviderRequest
 logger = logging.getLogger(__name__)
 
 WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
+_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:/+-]{1,120}$")
 
 
 def _fallback_runtime_context(
@@ -133,16 +136,23 @@ def _ai_grounding_summary(
     summary = {
         "grounding_validation": validation["status"],
         "grounding_applied": validation["status"] == "pass",
-        "locked_fact_ids": validation.get("locked_fact_ids") or [],
+        "locked_fact_ids": [
+            item
+            for item in (validation.get("locked_fact_ids") or [])[:20]
+            if isinstance(item, str) and _SAFE_TOKEN.fullmatch(item)
+        ],
     }
-    if validation.get("source"):
-        summary["grounding_source"] = validation["source"]
+    source = validation.get("source")
+    if isinstance(source, dict):
+        item_key = source.get("item_key")
+        if isinstance(item_key, str) and _SAFE_TOKEN.fullmatch(item_key):
+            summary["grounding_source_item_key"] = item_key
     if validation["status"] == "pass":
         summary["grounding_reason"] = "locked_fact_ai_grounded"
     return summary
 
 
-def _ai_decision_summary_from_output(
+def _bounded_ai_decision_summary(
     output: dict[str, Any],
 ) -> dict[str, Any] | None:
     if not isinstance(output, dict):
@@ -151,32 +161,82 @@ def _ai_decision_summary_from_output(
     if not isinstance(reply, str) or not reply.strip():
         return None
     handoff_required = bool(output.get("handoff_required", False))
+    confidence = output.get("confidence", 0.7)
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not math.isfinite(float(confidence)):
+        confidence = 0.0
+    intent = str(output.get("intent") or "other").strip().lower()
+    if not _SAFE_TOKEN.fullmatch(intent):
+        intent = "other"
+    risk_level = str(output.get("risk_level") or ("medium" if handoff_required else "low")).strip().lower()
+    if risk_level not in {"low", "medium", "high", "critical"}:
+        risk_level = "unknown"
+    next_action = str(output.get("next_action") or ("request_handoff" if handoff_required else "reply")).strip().lower()
+    if not _SAFE_TOKEN.fullmatch(next_action):
+        next_action = "unknown"
     return {
-        "customer_reply": reply,
-        "intent": output.get("intent") or "other",
-        "confidence": output.get("confidence", 0.7),
-        "risk_level": output.get("risk_level")
-        or ("medium" if handoff_required else "low"),
-        "next_action": output.get("next_action")
-        or ("request_handoff" if handoff_required else "reply"),
+        "intent": intent,
+        "confidence": max(0.0, min(1.0, float(confidence))),
+        "risk_level": risk_level,
+        "next_action": next_action,
         "handoff_required": handoff_required,
-        "handoff_reason": output.get("handoff_reason"),
-        "tool_calls": (
-            output.get("tool_calls")
-            if isinstance(output.get("tool_calls"), list)
-            else []
-        ),
-        "evidence_used": (
-            output.get("evidence_used")
-            if isinstance(output.get("evidence_used"), list)
-            else []
-        ),
-        "safety_notes": (
-            output.get("safety_notes")
-            if isinstance(output.get("safety_notes"), list)
-            else []
-        ),
+        "tool_call_count": len(output.get("tool_calls")) if isinstance(output.get("tool_calls"), list) else 0,
+        "evidence_count": len(output.get("evidence_used")) if isinstance(output.get("evidence_used"), list) else 0,
+        "safety_note_count": len(output.get("safety_notes")) if isinstance(output.get("safety_notes"), list) else 0,
     }
+
+
+def _bounded_rag_trace(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    raw = summarize_rag_trace(runtime_context)
+    if not isinstance(raw, dict):
+        return {}
+    summary: dict[str, Any] = {}
+    retrieval = raw.get("retrieval")
+    if isinstance(retrieval, str) and _SAFE_TOKEN.fullmatch(retrieval):
+        summary["retrieval"] = retrieval
+    for key in ("candidate_count", "total_matches", "latency_ms"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            summary[key] = max(0, value)
+        elif isinstance(value, float) and math.isfinite(value):
+            summary[key] = max(0.0, value)
+    methods = raw.get("retrieval_methods")
+    if isinstance(methods, list):
+        summary["retrieval_methods"] = [
+            item
+            for item in methods[:12]
+            if isinstance(item, str) and _SAFE_TOKEN.fullmatch(item)
+        ]
+    no_answer_reason = raw.get("no_answer_reason")
+    if isinstance(no_answer_reason, str) and _SAFE_TOKEN.fullmatch(no_answer_reason):
+        summary["no_answer_reason"] = no_answer_reason
+    summary["grounding_would_apply"] = bool(raw.get("grounding_would_apply"))
+    summary["evidence_pack"] = _bounded_evidence_rows(raw.get("evidence_pack"))
+    summary["injected_knowledge"] = _bounded_evidence_rows(raw.get("injected_knowledge"))
+    return summary
+
+
+def _bounded_evidence_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value[:5]:
+        if not isinstance(item, dict):
+            continue
+        row: dict[str, Any] = {}
+        for key in ("item_key", "retrieval_method"):
+            candidate = item.get(key)
+            if isinstance(candidate, str) and _SAFE_TOKEN.fullmatch(candidate):
+                row[key] = candidate
+        for key in ("source_version", "published_version", "chunk_index"):
+            candidate = item.get(key)
+            if isinstance(candidate, int) and not isinstance(candidate, bool):
+                row[key] = candidate
+        score = item.get("score")
+        if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(float(score)):
+            row["score"] = float(score)
+        if row:
+            rows.append(row)
+    return rows
 
 
 async def dispatch_webchat_runtime_reply(
@@ -225,7 +285,7 @@ async def dispatch_webchat_runtime_reply(
         output = result.structured_output
         safe_summary = dict(result.raw_payload_safe_summary or {})
         safe_summary["provider_runtime"] = True
-        safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
+        safe_summary["rag_trace"] = _bounded_rag_trace(runtime_context)
         safe_summary["provider_bypassed"] = False
         grounding_summary = _ai_grounding_summary(
             output,
@@ -259,7 +319,7 @@ async def dispatch_webchat_runtime_reply(
                 elapsed_ms=result.elapsed_ms,
                 safe_summary=safe_summary,
             )
-        ai_decision = _ai_decision_summary_from_output(output)
+        ai_decision = _bounded_ai_decision_summary(output)
         if ai_decision is not None:
             safe_summary["ai_decision"] = ai_decision
 
