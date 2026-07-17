@@ -1,8 +1,4 @@
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -14,12 +10,12 @@ import {
   Typography,
 } from '@mui/material'
 import { lazy, Suspense, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   OperatorErrorNotice,
   OperatorFactGrid,
   OperatorLoadingState,
+  OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
 import { sanitizeDisplayText } from '@/lib/format'
@@ -35,22 +31,6 @@ function compactLatency(value: number | null | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '暂无'
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s`
   return `${Math.max(0, Math.round(value))}ms`
-}
-
-function TechnicalDisclosure({ title, summary, children }: { title: string; summary: string; children: ReactNode }) {
-  return (
-    <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
-      <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-        <Box>
-          <Typography variant="subtitle2">{title}</Typography>
-          <Typography variant="caption" sx={{
-            color: "text.secondary"
-          }}>{summary}</Typography>
-        </Box>
-      </AccordionSummary>
-      <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>{children}</AccordionDetails>
-    </Accordion>
-  );
 }
 
 export function RuntimePage() {
@@ -81,20 +61,12 @@ export function RuntimePage() {
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
-        sx={{
-          alignItems: { xs: 'stretch', sm: 'flex-start' },
-          justifyContent: "space-between",
-          mb: 2.5
-        }}>
+        alignItems={{ xs: 'stretch', sm: 'flex-start' }}
+        justifyContent="space-between"
+        sx={{ mb: 2.5 }}
+      >
         <Typography component="h1" variant="h1">系统运行</Typography>
-        <Stack
-          direction="row"
-          spacing={1}
-          useFlexGap
-          sx={{
-            alignItems: "center",
-            flexWrap: "wrap"
-          }}>
+        <Stack direction="row" spacing={1} useFlexGap alignItems="center" flexWrap="wrap">
           <Chip color={operatorToneColor(state.tone)} label={state.label} />
           <Button variant="outlined" color="inherit" onClick={() => setShowEvidenceAudit((current) => !current)}>
             {showEvidenceAudit ? '运行概览' : '证据审计'}
@@ -108,13 +80,7 @@ export function RuntimePage() {
       ) : (
         <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.4fr) minmax(300px, 0.8fr)' } }}>
           <Paper component="section" variant="outlined" aria-labelledby="service-readiness-title" sx={{ minWidth: 0, p: 2 }}>
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{
-                alignItems: "center",
-                justifyContent: "space-between"
-              }}>
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
               <Typography id="service-readiness-title" component="h2" variant="h3">系统状态</Typography>
               {runtime.isFetching ? <CircularProgress size={18} aria-label="正在检查" /> : null}
             </Stack>
@@ -136,42 +102,24 @@ export function RuntimePage() {
                     {runtime.data.warnings.map((item) => <Alert key={String(item)} severity="warning" variant="outlined">{sanitizeDisplayText(String(item))}</Alert>)}
                   </Stack>
                 ) : <Alert severity="success" variant="outlined">无运行提醒</Alert>}
-                <TechnicalDisclosure title="系统信息" summary="状态代码、服务配置与诊断">
+                <OperatorTechnicalDisclosure title="系统信息" summary="状态代码、服务配置与诊断">
                   <OperatorFactGrid facts={[
                     ['状态代码', <Box component="code">{sanitizeDisplayText(runtime.data?.status || 'unknown')}</Box>],
                     ['服务提供方', <Box component="code">{sanitizeDisplayText(runtime.data?.configured_provider || selectedProvider?.name || '未配置')}</Box>],
                     ['备用服务', <Box component="code">{sanitizeDisplayText(runtime.data?.fallback_provider || '无')}</Box>],
                     ['运行环境', <Box component="code">{sanitizeDisplayText(runtime.data?.app_env || 'unknown')}</Box>],
                   ]} />
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                      display: "block",
-                      mt: 2
-                    }}>服务诊断</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>服务诊断</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(selectedProvider?.diagnostics || {}, null, 2)}</Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                      display: "block",
-                      mt: 2
-                    }}>安全配置</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>安全配置</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(runtime.data?.boundary || {}, null, 2)}</Box>
-                </TechnicalDisclosure>
+                </OperatorTechnicalDisclosure>
               </Stack>
             )}
           </Paper>
 
           <Paper component="aside" variant="outlined" aria-labelledby="runtime-workload-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{
-                alignItems: "center",
-                justifyContent: "space-between"
-              }}>
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
               <Typography id="runtime-workload-title" component="h2" variant="h3">最近 24 小时</Typography>
               {metrics.isFetching ? <CircularProgress size={18} aria-label="正在刷新" /> : null}
             </Stack>
@@ -187,7 +135,7 @@ export function RuntimePage() {
                   ['WhatsApp', metrics.data?.by_channel?.whatsapp ?? 0],
                 ]} />
                 {latency ? (
-                  <TechnicalDisclosure title="响应时间" summary="高级指标">
+                  <OperatorTechnicalDisclosure title="响应时间" summary="高级指标">
                     <OperatorFactGrid facts={[
                       ['样本数', latency.sample_count],
                       ['端到端 p50 / p90', `${compactLatency(latency.total_turn.p50_ms)} / ${compactLatency(latency.total_turn.p90_ms)}`],
@@ -196,7 +144,7 @@ export function RuntimePage() {
                       ['冷加载', latency.cold_load_count],
                       ['慢输入处理', latency.slow_prompt_eval_count],
                     ]} />
-                  </TechnicalDisclosure>
+                  </OperatorTechnicalDisclosure>
                 ) : null}
               </Stack>
             )}
@@ -204,5 +152,5 @@ export function RuntimePage() {
         </Box>
       )}
     </Box>
-  );
+  )
 }
