@@ -144,6 +144,20 @@ async def test_zero_percent_canary_never_calls_provider(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_zero_percent_shadow_never_calls_provider(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
+    db = _mock_db(_rule(canary_percent=0))
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.ok is False
+    assert result.error_code == "provider_canary_control_path"
+    assert result.raw_payload_safe_summary["traffic"]["configured_mode"] == "shadow"
+    assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_kill_switch_precedes_full_canary(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=100, kill_switch=True))
@@ -173,7 +187,7 @@ async def test_environment_false_cannot_clear_persisted_kill_switch(monkeypatch)
 @pytest.mark.asyncio
 async def test_shadow_executes_but_never_returns_candidate_authority(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
-    db = _mock_db(_rule(canary_percent=25))
+    db = _mock_db(_rule(canary_percent=100))
     adapter = _register_adapter()
 
     result = await ProviderRuntimeRouter(db).route(_request())
