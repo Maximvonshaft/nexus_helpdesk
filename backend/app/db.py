@@ -38,11 +38,59 @@ def _slow_query_ms() -> float:
         return 500.0
 
 
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise RuntimeError(f'{name}_invalid') from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f'{name}_out_of_range')
+    return value
+
+
+def database_pool_configuration() -> dict[str, int | str]:
+    """Return the sole sanitized SQLAlchemy pool contract for this process."""
+    pool_size = _bounded_int_env('DB_POOL_SIZE', 5, minimum=1, maximum=50)
+    max_overflow = _bounded_int_env('DB_MAX_OVERFLOW', 5, minimum=0, maximum=50)
+    pool_timeout_seconds = _bounded_int_env(
+        'DB_POOL_TIMEOUT_SECONDS',
+        10,
+        minimum=1,
+        maximum=120,
+    )
+    pool_recycle_seconds = _bounded_int_env(
+        'DB_POOL_RECYCLE_SECONDS',
+        1800,
+        minimum=60,
+        maximum=86400,
+    )
+    return {
+        'process_role': (os.getenv('NEXUS_PROCESS_ROLE', 'unspecified').strip() or 'unspecified')[:80],
+        'pool_size': pool_size,
+        'max_overflow': max_overflow,
+        'pool_timeout_seconds': pool_timeout_seconds,
+        'pool_recycle_seconds': pool_recycle_seconds,
+        'max_connections_per_process': pool_size + max_overflow,
+    }
+
+
 db_url = make_url(DATABASE_URL)
 connect_args = {"check_same_thread": False, "timeout": 30} if db_url.drivername.startswith("sqlite") else {}
 engine_kwargs = {"future": True, "echo": settings.database_echo, "pool_pre_ping": True}
 if db_url.drivername.startswith("postgresql"):
-    engine_kwargs.update({"pool_size": 10, "max_overflow": 20, "pool_recycle": 1800})
+    pool_configuration = database_pool_configuration()
+    engine_kwargs.update(
+        {
+            "pool_size": pool_configuration['pool_size'],
+            "max_overflow": pool_configuration['max_overflow'],
+            "pool_timeout": pool_configuration['pool_timeout_seconds'],
+            "pool_recycle": pool_configuration['pool_recycle_seconds'],
+            "pool_use_lifo": True,
+        }
+    )
 engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
 
 
@@ -89,7 +137,6 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 
 class Base(DeclarativeBase):
     pass
-
 
 
 def get_db():
