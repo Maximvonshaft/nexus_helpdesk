@@ -50,12 +50,8 @@ class ProviderTrafficSelection:
         }
 
 
-def configured_traffic_mode(
-    value: str | None = None,
-    *,
-    default: str = "control",
-) -> str:
-    raw = os.getenv(TRAFFIC_MODE_ENV, default) if value is None else value
+def configured_traffic_mode(value: str | None = None) -> str:
+    raw = os.getenv(TRAFFIC_MODE_ENV, "control") if value is None else value
     mode = str(raw or "").strip().lower()
     if mode not in _VALID_MODES:
         raise ValueError("provider_runtime_traffic_mode_invalid")
@@ -100,8 +96,6 @@ def effective_kill_switch(default: Any) -> bool:
     if normalized in _TRUE_VALUES:
         return True
     if normalized in _FALSE_VALUES:
-        # Environment configuration may activate a kill switch, but may not
-        # clear a persisted tenant/channel kill switch.
         return persisted
     raise ValueError("provider_runtime_kill_switch_invalid")
 
@@ -135,12 +129,9 @@ def select_provider_traffic(
         except ValueError:
             percent = 0
         try:
-            mode = configured_traffic_mode(
-                configured_mode_value,
-                default="canary" if percent else "control",
-            )
+            mode = configured_traffic_mode(configured_mode_value)
         except ValueError:
-            mode = "control"
+            mode = "invalid"
         return ProviderTrafficSelection(
             configured_mode=mode,
             path=ProviderTrafficPath.KILL_SWITCH,
@@ -152,10 +143,7 @@ def select_provider_traffic(
         )
 
     percent = validate_canary_percent(canary_percent)
-    mode = configured_traffic_mode(
-        configured_mode_value,
-        default="canary" if percent else "control",
-    )
+    mode = configured_traffic_mode(configured_mode_value)
     bucket = stable_canary_bucket(request)
 
     if mode == "control":
