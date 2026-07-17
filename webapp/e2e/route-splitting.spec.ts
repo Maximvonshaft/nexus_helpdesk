@@ -106,9 +106,9 @@ test('authenticated legacy conversation entry redirects to the canonical workspa
 })
 
 for (const [query, destination, heading] of [
-  ['tab=knowledge', '/knowledge', '知识与处理规则'],
+  ['tab=knowledge', '/knowledge', '知识与流程'],
   ['tab=channels', '/channels', '渠道管理'],
-  ['tab=runtime', '/runtime', '运行与审计'],
+  ['tab=runtime', '/runtime', '系统运行'],
 ] as const) {
   test(`authenticated /webchat?${query} redirects to ${destination}`, async ({ page }) => {
     await setAuthenticatedSession(page)
