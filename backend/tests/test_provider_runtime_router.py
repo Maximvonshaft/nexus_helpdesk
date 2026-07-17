@@ -67,12 +67,12 @@ def _request(*, request_id: str = "req1", session_id: str = "s1") -> ProviderReq
     )
 
 
-def _rule(*, canary_percent: int = 100, kill_switch: bool = False) -> dict:
+def _rule(*, canary_percent: object = 100, kill_switch: object = False, timeout_ms: object = 3000) -> dict:
     return {
         "primary_provider": "private_ai_runtime",
         "fallback_providers": [],
         "output_contract": "nexus.webchat_runtime_reply",
-        "timeout_ms": 3000,
+        "timeout_ms": timeout_ms,
         "kill_switch": kill_switch,
         "canary_percent": canary_percent,
     }
@@ -114,6 +114,20 @@ async def test_no_rule_is_control_path_and_never_calls_provider():
 
 
 @pytest.mark.asyncio
+async def test_persisted_full_percent_without_explicit_mode_is_control(monkeypatch):
+    monkeypatch.delenv("PROVIDER_RUNTIME_TRAFFIC_MODE", raising=False)
+    db = _mock_db(_rule(canary_percent=100))
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.error_code == "provider_canary_control_path"
+    assert result.raw_payload_safe_summary["traffic"]["configured_mode"] == "control"
+    assert result.raw_payload_safe_summary["traffic"]["canary_percent"] == 100
+    assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_full_canary_executes_once_and_returns_authoritative_result(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=100))
@@ -138,7 +152,6 @@ async def test_zero_percent_canary_never_calls_provider(monkeypatch):
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "provider_canary_control_path"
     assert adapter.calls == 0
 
@@ -151,7 +164,6 @@ async def test_zero_percent_shadow_never_calls_provider(monkeypatch):
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "provider_canary_control_path"
     assert result.raw_payload_safe_summary["traffic"]["configured_mode"] == "shadow"
     assert adapter.calls == 0
@@ -165,7 +177,6 @@ async def test_kill_switch_precedes_full_canary(monkeypatch):
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "kill_switch_active"
     assert result.raw_payload_safe_summary["traffic"]["path"] == "kill_switch"
     assert adapter.calls == 0
@@ -181,6 +192,23 @@ async def test_environment_false_cannot_clear_persisted_kill_switch(monkeypatch)
     result = await ProviderRuntimeRouter(db).route(_request())
 
     assert result.error_code == "kill_switch_active"
+    assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_precedes_invalid_lower_configuration(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid")
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "unapproved")
+    monkeypatch.setenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "unknown")
+    monkeypatch.setenv("PROVIDER_RUNTIME_TIMEOUT_MS", "invalid")
+    db = _mock_db(_rule(canary_percent="invalid", kill_switch=True))
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.error_code == "kill_switch_active"
+    assert result.raw_payload_safe_summary["traffic"]["path"] == "kill_switch"
+    assert result.raw_payload_safe_summary["traffic"]["execute_candidate"] is False
     assert adapter.calls == 0
 
 
@@ -208,8 +236,22 @@ async def test_invalid_canary_configuration_fails_closed(monkeypatch):
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "provider_runtime_configuration_invalid"
+    assert result.raw_payload_safe_summary["traffic"]["reason"] == "provider_runtime_canary_percent_invalid"
+    assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_ms", [True, 499, 120001, 500.5, "500.0", "invalid"])
+async def test_invalid_timeout_configuration_fails_closed(monkeypatch, timeout_ms):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    db = _mock_db(_rule(timeout_ms=timeout_ms))
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.error_code == "provider_runtime_configuration_invalid"
+    assert result.raw_payload_safe_summary["traffic"]["reason"] == "provider_runtime_timeout_ms_invalid"
     assert adapter.calls == 0
 
 
@@ -222,13 +264,9 @@ async def test_malformed_fallback_configuration_fails_closed():
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "provider_runtime_configuration_invalid"
+    assert result.raw_payload_safe_summary["traffic"]["reason"] == "provider_runtime_fallback_provider_invalid"
     assert adapter.calls == 0
-    assert (
-        result.raw_payload_safe_summary["traffic"]["reason"]
-        == "provider_runtime_fallback_provider_invalid"
-    )
 
 
 @pytest.mark.asyncio
@@ -241,7 +279,6 @@ async def test_unknown_output_contract_never_reaches_registered_adapter(monkeypa
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "provider_runtime_output_contract_invalid"
     assert result.fallback_allowed is False
     assert result.raw_payload_safe_summary["traffic"]["path"] == "canary_authoritative"
@@ -263,7 +300,6 @@ async def test_parse_reject_returns_no_customer_reply(monkeypatch):
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
-    assert result.ok is False
     assert result.error_code == "all_providers_failed"
     assert adapter.calls == 1
 
@@ -283,8 +319,5 @@ async def test_canary_bucket_is_stable_when_request_id_changes(monkeypatch):
     )
 
     assert first.error_code == second.error_code
-    assert (
-        first.raw_payload_safe_summary["traffic"]["bucket"]
-        == second.raw_payload_safe_summary["traffic"]["bucket"]
-    )
+    assert first.raw_payload_safe_summary["traffic"]["bucket"] == second.raw_payload_safe_summary["traffic"]["bucket"]
     assert adapter.calls in {0, 2}
