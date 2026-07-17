@@ -169,17 +169,6 @@ def select_provider_traffic(
             reason="control_mode_configured",
         )
 
-    if mode == "shadow":
-        return ProviderTrafficSelection(
-            configured_mode=mode,
-            path=ProviderTrafficPath.SHADOW_ONLY,
-            canary_percent=percent,
-            bucket=bucket,
-            execute_candidate=True,
-            authoritative=False,
-            reason="shadow_mode_configured",
-        )
-
     if percent == 0 or bucket >= percent:
         return ProviderTrafficSelection(
             configured_mode=mode,
@@ -188,7 +177,18 @@ def select_provider_traffic(
             bucket=bucket,
             execute_candidate=False,
             authoritative=False,
-            reason="canary_percent_zero" if percent == 0 else "bucket_not_selected",
+            reason="traffic_percent_zero" if percent == 0 else "bucket_not_selected",
+        )
+
+    if mode == "shadow":
+        return ProviderTrafficSelection(
+            configured_mode=mode,
+            path=ProviderTrafficPath.SHADOW_ONLY,
+            canary_percent=percent,
+            bucket=bucket,
+            execute_candidate=True,
+            authoritative=False,
+            reason="shadow_bucket_selected",
         )
 
     return ProviderTrafficSelection(
@@ -198,5 +198,5 @@ def select_provider_traffic(
         bucket=bucket,
         execute_candidate=True,
         authoritative=True,
-        reason="bucket_selected",
+        reason="canary_bucket_selected",
     )
