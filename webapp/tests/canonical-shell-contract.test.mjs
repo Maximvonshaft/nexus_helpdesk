@@ -77,6 +77,7 @@ test('canonical shell has one theme authority and no route stylesheet authority'
     'src/app/app-shell.css',
   ]
   for (const path of sourcePaths) assert.equal(existsSync(join(WEBAPP_ROOT, path)), false)
-  assert.equal((main.match(/NexusThemeProvider/g) ?? []).length, 2)
+  assert.equal((main.match(/<NexusThemeProvider>/g) ?? []).length, 1)
+  assert.equal((main.match(/from '@\/theme\/NexusThemeProvider'/g) ?? []).length, 1)
   assert.doesNotMatch(main, /tokens\.css|components\.css|app-shell\.css/)
 })

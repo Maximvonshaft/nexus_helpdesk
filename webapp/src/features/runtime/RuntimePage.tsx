@@ -43,12 +43,14 @@ function TechnicalDisclosure({ title, summary, children }: { title: string; summ
       <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
         <Box>
           <Typography variant="subtitle2">{title}</Typography>
-          <Typography variant="caption" color="text.secondary">{summary}</Typography>
+          <Typography variant="caption" sx={{
+            color: "text.secondary"
+          }}>{summary}</Typography>
         </Box>
       </AccordionSummary>
       <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>{children}</AccordionDetails>
     </Accordion>
-  )
+  );
 }
 
 export function RuntimePage() {
@@ -76,16 +78,29 @@ export function RuntimePage() {
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{
+          alignItems: { xs: 'stretch', sm: 'flex-start' },
+          justifyContent: "space-between",
+          mb: 2.5
+        }}>
         <Typography component="h1" variant="h1">系统运行</Typography>
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+        <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{
+            alignItems: "center",
+            flexWrap: "wrap"
+          }}>
           <Chip color={operatorToneColor(state.tone)} label={state.label} />
           <Button variant="outlined" color="inherit" onClick={() => setShowEvidenceAudit((current) => !current)}>
             {showEvidenceAudit ? '运行概览' : '证据审计'}
           </Button>
         </Stack>
       </Stack>
-
       {showEvidenceAudit ? (
         <Suspense fallback={<OperatorLoadingState label="正在加载证据审计…" minHeight={240} />}>
           <LazyRuntimeEvidenceAudit />
@@ -93,7 +108,13 @@ export function RuntimePage() {
       ) : (
         <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.4fr) minmax(300px, 0.8fr)' } }}>
           <Paper component="section" variant="outlined" aria-labelledby="service-readiness-title" sx={{ minWidth: 0, p: 2 }}>
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Typography id="service-readiness-title" component="h2" variant="h3">系统状态</Typography>
               {runtime.isFetching ? <CircularProgress size={18} aria-label="正在检查" /> : null}
             </Stack>
@@ -122,9 +143,21 @@ export function RuntimePage() {
                     ['备用服务', <Box component="code">{sanitizeDisplayText(runtime.data?.fallback_provider || '无')}</Box>],
                     ['运行环境', <Box component="code">{sanitizeDisplayText(runtime.data?.app_env || 'unknown')}</Box>],
                   ]} />
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>服务诊断</Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                      display: "block",
+                      mt: 2
+                    }}>服务诊断</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(selectedProvider?.diagnostics || {}, null, 2)}</Box>
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>安全配置</Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                      display: "block",
+                      mt: 2
+                    }}>安全配置</Typography>
                   <Box component="pre" sx={{ m: 0, mt: 0.5, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(runtime.data?.boundary || {}, null, 2)}</Box>
                 </TechnicalDisclosure>
               </Stack>
@@ -132,7 +165,13 @@ export function RuntimePage() {
           </Paper>
 
           <Paper component="aside" variant="outlined" aria-labelledby="runtime-workload-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Typography id="runtime-workload-title" component="h2" variant="h3">最近 24 小时</Typography>
               {metrics.isFetching ? <CircularProgress size={18} aria-label="正在刷新" /> : null}
             </Stack>
@@ -165,5 +204,5 @@ export function RuntimePage() {
         </Box>
       )}
     </Box>
-  )
+  );
 }

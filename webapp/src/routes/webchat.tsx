@@ -42,12 +42,14 @@ function WebchatCompatibilityRedirect() {
 
   return (
     <Box component="main" aria-busy="true" sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}>
-      <Stack role="status" aria-live="polite" alignItems="center" spacing={1.5}>
+      <Stack role="status" aria-live="polite" spacing={1.5} sx={{
+        alignItems: "center"
+      }}>
         <CircularProgress size={30} />
         <Typography variant="subtitle1">正在跳转…</Typography>
       </Stack>
     </Box>
-  )
+  );
 }
 
 export const Route = createRoute({

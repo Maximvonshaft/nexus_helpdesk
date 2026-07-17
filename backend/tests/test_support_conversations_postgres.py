@@ -237,7 +237,9 @@ def test_postgres_support_scope_idor_volume_and_query_count(
     assert "private-alpha-" not in serialized
     assert "Raw private message" not in serialized
     assert all(item["pii_minimized"] is True for item in page["items"])
-    assert all(item["tracking_number"] is None for item in page["items"])
+    assert all("tracking_number" not in item for item in page["items"])
+    assert all(item["tracking_number_present"] is False for item in page["items"])
+    assert all(item["tracking_reference"] is None for item in page["items"])
 
     hidden_ticket_id, hidden_public_id = hidden[0]
     with pytest.raises(HTTPException) as exc:

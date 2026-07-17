@@ -40,34 +40,53 @@ const toneColor: Record<BadgeTone, string> = {
 
 function StatusCount({ value, tone }: { value: number; tone: BadgeTone }) {
   return (
-    <Stack direction="row" spacing={0.75} alignItems="center">
+    <Stack direction="row" spacing={0.75} sx={{
+      alignItems: "center"
+    }}>
       <Box aria-hidden="true" sx={{ bgcolor: toneColor[tone], borderRadius: '50%', height: 8, width: 8 }} />
       <Typography variant="subtitle2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
     </Stack>
-  )
+  );
 }
 
 function ActionRow({ item }: { item: ControlTowerAction }) {
   const href = canonicalAppHref(item.href)
   const tone = safeTone(item.tone)
   return (
-    <Stack component="article" direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" sx={{ py: 1.5 }}>
+    <Stack
+      component="article"
+      direction={{ xs: 'column', sm: 'row' }}
+      spacing={2}
+      sx={{
+        alignItems: { xs: 'stretch', sm: 'center' },
+        justifyContent: "space-between",
+        py: 1.5
+      }}>
       <Box sx={{ minWidth: 0 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} sx={{
+          alignItems: "center"
+        }}>
           <Typography variant="subtitle2">{sanitizeDisplayText(item.label)}</Typography>
           <StatusCount value={item.count} tone={tone} />
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{sanitizeDisplayText(item.next)}</Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+            mt: 0.5
+          }}>{sanitizeDisplayText(item.next)}</Typography>
       </Box>
       {item.enabled && href ? (
         <Button component="a" href={href} variant="outlined" color="inherit" endIcon={<OpenInNewRoundedIcon />} sx={{ flexShrink: 0 }}>
           去处理
         </Button>
       ) : (
-        <Typography variant="caption" color="text.secondary">{item.enabled ? '暂时无法打开' : '无操作权限'}</Typography>
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>{item.enabled ? '暂时无法打开' : '无操作权限'}</Typography>
       )}
     </Stack>
-  )
+  );
 }
 
 function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
@@ -78,10 +97,12 @@ function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
       <TableCell><StatusCount value={item.value} tone={safeTone(item.risk)} /></TableCell>
       <TableCell>{sanitizeDisplayText(item.next)}</TableCell>
       <TableCell>
-        {item.enabled && href ? <Button component="a" href={href} size="small" color="inherit">查看</Button> : <Typography variant="caption" color="text.secondary">不可用</Typography>}
+        {item.enabled && href ? <Button component="a" href={href} size="small" color="inherit">查看</Button> : <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>不可用</Typography>}
       </TableCell>
     </TableRow>
-  )
+  );
 }
 
 export function ControlTowerPage() {
@@ -94,11 +115,17 @@ export function ControlTowerPage() {
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{
+          alignItems: { xs: 'stretch', sm: 'flex-start' },
+          justifyContent: "space-between",
+          mb: 2.5
+        }}>
         <Typography component="h1" variant="h1">运营监控</Typography>
         {tower.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
-
       {tower.isError ? (
         <OperatorErrorNotice title="无法读取运营监控" error={tower.error} fallback="请稍后重试" />
       ) : tower.isLoading ? (
@@ -109,7 +136,9 @@ export function ControlTowerPage() {
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: `repeat(${Math.min(4, Math.max(1, tower.data.kpis.length))}, minmax(0, 1fr))` } }}>
               {tower.data.kpis.map((item, index) => (
                 <Box key={item.key} sx={{ borderBottom: { xs: 1, md: 0 }, borderColor: 'divider', borderRight: { md: index === tower.data.kpis.length - 1 ? 0 : 1 }, minWidth: 0, p: 2 }}>
-                  <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(item.label)}</Typography>
+                  <Typography variant="caption" sx={{
+                    color: "text.secondary"
+                  }}>{sanitizeDisplayText(item.label)}</Typography>
                   <Typography variant="h2" sx={{ mt: 0.5, fontVariantNumeric: 'tabular-nums' }}>{item.value}</Typography>
                 </Box>
               ))}
@@ -118,9 +147,20 @@ export function ControlTowerPage() {
 
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.4fr) minmax(300px, 0.8fr)' } }}>
             <Paper component="section" variant="outlined" aria-labelledby="control-actions-title" sx={{ minWidth: 0, p: 2 }}>
-              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}>
                 <Typography id="control-actions-title" component="h2" variant="h3">需要处理</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{tower.data.manager_actions.reduce((sum, item) => sum + item.count, 0)} 项</Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                    fontVariantNumeric: 'tabular-nums'
+                  }}>{tower.data.manager_actions.reduce((sum, item) => sum + item.count, 0)} 项</Typography>
               </Stack>
               <Divider sx={{ mt: 2 }} />
               {tower.data.manager_actions.length
@@ -144,7 +184,9 @@ export function ControlTowerPage() {
                           ['已超时', team.overdue],
                         ].map(([label, value]) => (
                           <Box key={String(label)}>
-                            <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
+                            <Typography component="dt" variant="caption" sx={{
+                              color: "text.secondary"
+                            }}>{label}</Typography>
                             <Typography component="dd" variant="subtitle2" sx={{ m: 0, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
                           </Box>
                         ))}
@@ -169,5 +211,5 @@ export function ControlTowerPage() {
         </Stack>
       ) : null}
     </Box>
-  )
+  );
 }

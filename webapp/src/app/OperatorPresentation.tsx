@@ -36,11 +36,20 @@ export function operatorScrollBehavior(): ScrollBehavior {
 
 export function OperatorLoadingState({ label, minHeight = 150 }: { label: string; minHeight?: number | string }) {
   return (
-    <Stack role="status" aria-live="polite" alignItems="center" justifyContent="center" spacing={1.5} sx={{ minHeight, p: 3 }}>
+    <Stack
+      role="status"
+      aria-live="polite"
+      spacing={1.5}
+      sx={{
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight,
+        p: 3
+      }}>
       <CircularProgress size={28} />
       <Typography variant="subtitle2">{label}</Typography>
     </Stack>
-  )
+  );
 }
 
 export function RouteLoadingState({ label }: { label: string }) {
@@ -59,12 +68,23 @@ export function OperatorEmptyState({
   minHeight?: number | string
 }) {
   return (
-    <Stack role="status" alignItems="center" justifyContent="center" spacing={0.75} sx={{ minHeight, p: 3, textAlign: 'center' }}>
+    <Stack
+      role="status"
+      spacing={0.75}
+      sx={{
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight,
+        p: 3,
+        textAlign: 'center'
+      }}>
       <Typography variant="subtitle2">{title}</Typography>
-      {description ? <Typography variant="body2" color="text.secondary">{description}</Typography> : null}
+      {description ? <Typography variant="body2" sx={{
+        color: "text.secondary"
+      }}>{description}</Typography> : null}
       {action ? <Box sx={{ pt: 0.75 }}>{action}</Box> : null}
     </Stack>
-  )
+  );
 }
 
 export function OperatorErrorNotice({
@@ -109,7 +129,9 @@ export function OperatorFactGrid({
     >
       {facts.map(([label, value]) => (
         <Box key={label} sx={{ minWidth: 0 }}>
-          <Typography component="dt" variant="caption" color="text.secondary">{label}</Typography>
+          <Typography component="dt" variant="caption" sx={{
+            color: "text.secondary"
+          }}>{label}</Typography>
           <Typography
             component="dd"
             variant="body2"
@@ -120,5 +142,5 @@ export function OperatorFactGrid({
         </Box>
       ))}
     </Box>
-  )
+  );
 }

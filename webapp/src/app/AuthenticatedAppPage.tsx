@@ -55,12 +55,14 @@ export function AuthenticatedAppPage({
     }
     return (
       <FullPageBoundary busy>
-        <Stack role="status" alignItems="center" spacing={2} aria-live="polite">
+        <Stack role="status" spacing={2} aria-live="polite" sx={{
+          alignItems: "center"
+        }}>
           <CircularProgress size={32} />
           <Typography variant="subtitle1">正在登录…</Typography>
         </Stack>
       </FullPageBoundary>
-    )
+    );
   }
 
   const allowed = requiredAny.some((capability) => capabilities.has(capability))

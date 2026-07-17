@@ -18,7 +18,6 @@ const typeOwners = [
   'core',
   'operations',
   'channels',
-  'channelControl',
   'runtime',
   'knowledge',
   'webchat',
@@ -69,9 +68,18 @@ test('type exports have one declaration and one domain owner', () => {
     assert.doesNotMatch(source, /export\s*\{[^}]*\bas\b/, `${owner} contains a compatibility alias`)
   }
 
+  const channelControlSource = read('src/lib/channelControlTypes.ts')
+  assert.match(barrel, /export \* from '.\/channelControlTypes'/)
+  for (const match of channelControlSource.matchAll(/export\s+(?:interface|type)\s+([A-Za-z_$][\w$]*)/g)) {
+    const name = match[1]
+    assert.equal(declarations.has(name), false, `${name} is declared by both ${declarations.get(name)} and channelControlTypes`)
+    declarations.set(name, 'channelControlTypes')
+  }
+  assert.doesNotMatch(channelControlSource, /export\s*\{[^}]*\bas\b/, 'channelControlTypes contains a compatibility alias')
+
   const operations = read('src/lib/types/operations.ts')
   const knowledge = read('src/lib/types/knowledge.ts')
-  const channelControl = read('src/lib/types/channelControl.ts')
+  const channelControl = channelControlSource
   assert.doesNotMatch(operations, /KnowledgeStudio|PersonaBuilder|ChannelOnboardingTask|ExternalChannelUnresolvedEvent/)
   assert.match(knowledge, /KnowledgeStudio/)
   assert.match(knowledge, /PersonaBuilder/)

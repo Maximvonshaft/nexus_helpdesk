@@ -136,7 +136,7 @@ export function labelize(value?: string | null) {
   if (!value) return '—'
   const normalized = normalizeValue(value)
   if (valueLabels[normalized]) return valueLabels[normalized]
-  return sanitizeDisplayText(String(value).replaceAll('_', ' ').replace(/\w+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1)))
+  return sanitizeDisplayText(String(value).replaceAll('_', ' ').replace(/\w+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1)));
 }
 
 export function marketLabel(marketCode?: string | null, countryCode?: string | null) {

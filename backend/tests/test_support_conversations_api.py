@@ -144,7 +144,8 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     assert payload["source"] == "nexus_support_conversations"
     by_key = {item["session_key"]: item for item in payload["items"]}
     webchat_item = by_key[f"webchat:{webchat.public_id}"]
-    assert webchat_item["latest_message"] == "hello from webchat"
+    assert "latest_message" not in webchat_item
+    assert "hello from webchat" not in listing.text
     assert "tracking_number" not in webchat_item
     assert webchat_item["tracking_reference"] == "parcel ending 129131"
     assert webchat_item["pii_minimized"] is True

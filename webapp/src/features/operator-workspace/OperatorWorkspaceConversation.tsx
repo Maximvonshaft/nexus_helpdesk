@@ -162,14 +162,25 @@ export function OperatorWorkspaceConversation({
                     py: 1.25,
                   }}
                 >
-                  <Stack direction="row" spacing={2} justifyContent="space-between">
+                  <Stack direction="row" spacing={2} sx={{
+                    justifyContent: "space-between"
+                  }}>
                     <Typography variant="subtitle2">{sanitizeDisplayText(message.author_label || workspaceDirectionLabel(message.direction))}</Typography>
-                    {message.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(message.created_at)}</Typography> : null}
+                    {message.created_at ? <Typography component="time" variant="caption" sx={{
+                      color: "text.disabled"
+                    }}>{formatDateTime(message.created_at)}</Typography> : null}
                   </Stack>
                   <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{sanitizeDisplayText(message.body_text || message.body)}</Typography>
-                  {outbound ? <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} aria-label="送达状态"><WorkspaceStatusLine presentation={delivery} compact /></Stack> : null}
+                  {outbound ? <Stack
+                    direction="row"
+                    spacing={1}
+                    aria-label="送达状态"
+                    sx={{
+                      alignItems: "center",
+                      mt: 1
+                    }}><WorkspaceStatusLine presentation={delivery} compact /></Stack> : null}
                 </Box>
-              )
+              );
             })}
             {!thread.messages.length ? <OperatorEmptyState title="暂无消息" /> : null}
           </Stack>
@@ -184,5 +195,5 @@ export function OperatorWorkspaceConversation({
         </Stack>
       ) : !isLoading ? <OperatorEmptyState title="暂无客户沟通" description="回复和接手处理暂不可用" /> : null}
     </Box>
-  )
+  );
 }

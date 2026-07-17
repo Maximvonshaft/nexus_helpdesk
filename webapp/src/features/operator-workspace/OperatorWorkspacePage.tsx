@@ -198,13 +198,25 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
         {(handoff?.can_accept || handoff?.can_force_takeover || handoff?.can_decline || handoff?.can_release || handoff?.can_resume_ai) ? (
           <Box>
             <Typography component="h3" variant="subtitle1">接手任务</Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              useFlexGap
+              sx={{
+                flexWrap: "wrap",
+                mt: 1
+              }}>
               {handoff?.can_accept || handoff?.can_force_takeover ? <Button variant="contained" disabled={!handoffAllowed || handoffMutation.isPending} startIcon={handoffMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => handoffMutation.mutate(handoff?.can_accept ? 'accept' : 'force')}>接手处理</Button> : null}
               {handoff?.can_decline ? <Button color="inherit" variant="outlined" onClick={() => handoffMutation.mutate('decline')}>暂不处理</Button> : null}
               {handoff?.can_release ? <Button color="inherit" onClick={() => handoffMutation.mutate('release')}>转回待处理</Button> : null}
               {handoff?.can_resume_ai ? <Button color="inherit" onClick={() => handoffMutation.mutate('resume')}>恢复自动回复</Button> : null}
             </Stack>
-            {handoff?.reason_text ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>接手原因：{sanitizeDisplayText(handoff.reason_text)}</Typography> : null}
+            {handoff?.reason_text ? <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mt: 1
+              }}>接手原因：{sanitizeDisplayText(handoff.reason_text)}</Typography> : null}
           </Box>
         ) : null}
 
@@ -230,20 +242,35 @@ function ActionPanel({ item, thread, capabilities, onRefresh }: {
               <Paper variant="outlined" sx={{ p: 1.5 }}>
                 <Typography variant="subtitle2">候选运单</Typography>
                 <Stack divider={<Divider flexItem />} sx={{ mt: 1 }}>
-                  {candidates.map((candidate) => <Stack key={workspaceText(candidate.waybillCode)} direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ py: 1 }}><Typography component="code" variant="body2">{sanitizeDisplayText(workspaceText(candidate.waybillCode))}</Typography><Button size="small" color="inherit" variant="outlined" onClick={() => { setWaybill(workspaceText(candidate.waybillCode)); setAction('work_order'); invalidateCancelPreview() }}>填入催派</Button></Stack>)}
+                  {candidates.map((candidate) => <Stack
+                    key={workspaceText(candidate.waybillCode)}
+                    direction="row"
+                    spacing={1}
+                    sx={{
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      py: 1
+                    }}><Typography component="code" variant="body2">{sanitizeDisplayText(workspaceText(candidate.waybillCode))}</Typography><Button size="small" color="inherit" variant="outlined" onClick={() => { setWaybill(workspaceText(candidate.waybillCode)); setAction('work_order'); invalidateCancelPreview() }}>填入催派</Button></Stack>)}
                 </Stack>
               </Paper>
             ) : null}
-            {cancelPreview ? <Alert severity={cancelPreview.result.cancelAllowed ? 'info' : 'warning'} variant="outlined" role="status"><AlertTitle>{cancelPreview.result.cancelAllowed ? '可以申请取消' : '当前不可取消'}</AlertTitle>{sanitizeDisplayText(cancelPreview.result.currentStatusLabel || cancelPreview.result.reasonLabel || '未返回原因')}<Typography variant="caption" display="block" sx={{ mt: 0.75 }}>修改运单、电话或原因后需重新检查。</Typography></Alert> : null}
+            {cancelPreview ? <Alert severity={cancelPreview.result.cancelAllowed ? 'info' : 'warning'} variant="outlined" role="status"><AlertTitle>{cancelPreview.result.cancelAllowed ? '可以申请取消' : '当前不可取消'}</AlertTitle>{sanitizeDisplayText(cancelPreview.result.currentStatusLabel || cancelPreview.result.reasonLabel || '未返回原因')}<Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                mt: 0.75
+              }}>修改运单、电话或原因后需重新检查。</Typography></Alert> : null}
             {resultPresentation ? <Alert severity={resultPresentation.tone === 'danger' ? 'error' : resultPresentation.tone === 'warning' ? 'warning' : resultPresentation.tone === 'success' ? 'success' : 'info'} variant="outlined" role="status"><AlertTitle>{resultPresentation.label}</AlertTitle>{resultPresentation.detail}{workspaceNumber(resultRecord.jobId) ? <Accordion disableGutters elevation={0} sx={{ mt: 1, bgcolor: 'transparent', '&:before': { display: 'none' } }}><AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ px: 0 }}><Typography variant="caption">处理编号</Typography></AccordionSummary><AccordionDetails sx={{ px: 0 }}><Typography component="code" variant="caption">#{workspaceNumber(resultRecord.jobId)}</Typography></AccordionDetails></Accordion> : null}</Alert> : null}
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Stack direction="row" spacing={1} useFlexGap sx={{
+              flexWrap: "wrap"
+            }}>
               {action === 'cancel' ? <><Button color="inherit" variant="outlined" disabled={Boolean(disabledReason) || busy} startIcon={cancelPreviewMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => cancelPreviewMutation.mutate()}>检查是否可取消</Button><Button color="error" variant="contained" disabled={!cancelPreview?.result.cancelAllowed || !cancelPreview.result.confirmToken || cancelPreview.fingerprint !== currentCancelFingerprint || busy} startIcon={cancelConfirmMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => cancelConfirmMutation.mutate()}>确认申请取消</Button></> : action !== 'none' ? <Button variant={action === 'work_order' ? 'contained' : 'outlined'} color={action === 'work_order' ? 'primary' : 'inherit'} disabled={Boolean(disabledReason) || busy} startIcon={actionMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => actionMutation.mutate()}>{action === 'waybill_lookup' ? '查询运单' : action === 'work_order' ? '创建催派工单' : '更新联系号码'}</Button> : null}
             </Stack>
           </Stack>
         </Box>
       </Stack>
     </Box>
-  )
+  );
 }
 
 export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {

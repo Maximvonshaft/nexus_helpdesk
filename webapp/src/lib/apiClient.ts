@@ -39,7 +39,7 @@ export class ApiError extends Error {
 
 export function normalizeApiBaseUrl(raw: string | undefined | null) {
   const trimmed = (raw ?? '').trim().replace(/\/+$/, '')
-  return trimmed.replace(/\/api$/i, '')
+  return trimmed.replace(/\/api$/i, '');
 }
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)

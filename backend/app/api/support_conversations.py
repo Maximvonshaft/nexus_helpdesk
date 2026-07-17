@@ -27,7 +27,6 @@ from ..services.permissions import (
 from ..services.support_conversation_privacy import (
     mask_support_contact,
     mask_support_display_name,
-    safe_support_message_preview,
     safe_support_tracking_reference,
 )
 from ..services.support_conversation_scope import apply_support_ticket_scope
@@ -344,11 +343,6 @@ def _conversation_out(
         conversation.visitor_phone
         or conversation.visitor_email
     )
-    raw_latest_message = (
-        (last_message.body_text or last_message.body)
-        if last_message
-        else ticket.last_customer_message
-    )
     item: dict[str, Any] = {
         "session_key": _session_key(conversation, ticket),
         "conversation_id": conversation.public_id,
@@ -366,10 +360,6 @@ def _conversation_out(
         "customer_contact": mask_support_contact(raw_contact),
         "updated_at": _iso(conversation.updated_at or ticket.updated_at),
         "last_seen_at": _iso(conversation.last_seen_at),
-        "latest_message": safe_support_message_preview(
-            raw_latest_message,
-            limit=160,
-        ),
         "latest_author": (
             _author(last_message.direction)
             if last_message

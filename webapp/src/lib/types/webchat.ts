@@ -289,7 +289,6 @@ export interface SupportConversation {
   customer_contact?: string | null
   updated_at?: string | null
   last_seen_at?: string | null
-  latest_message?: string | null
   latest_author?: 'customer' | 'agent' | 'ai' | 'system' | string | null
   needs_human: boolean
   required_action?: string | null

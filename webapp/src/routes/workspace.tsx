@@ -15,12 +15,14 @@ const LazyOperatorWorkspacePage = lazy(() => import('@/features/operator-workspa
 function WorkspaceLoading() {
   return (
     <Box sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '52vh', p: 3 }} aria-busy="true">
-      <Stack role="status" alignItems="center" spacing={2} aria-live="polite">
+      <Stack role="status" spacing={2} aria-live="polite" sx={{
+        alignItems: "center"
+      }}>
         <CircularProgress size={34} />
         <Typography variant="subtitle1">正在加载…</Typography>
       </Stack>
     </Box>
-  )
+  );
 }
 
 function authorizedScopeKey(scope: AuthorizedWorkspaceScope) {

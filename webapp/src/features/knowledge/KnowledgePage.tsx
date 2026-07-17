@@ -72,7 +72,7 @@ function normalizeKnowledgeKey(value: string) {
     .replace(/[^a-z0-9_.-]+/g, '-')
     .replace(/^[^a-z0-9]+/, '')
     .replace(/[^a-z0-9]+$/, '')
-    .slice(0, 120)
+    .slice(0, 120);
 }
 
 function createKnowledgeKey() {
@@ -156,7 +156,13 @@ function KnowledgeDetail({ item }: { item: KnowledgeItem }) {
   const status = knowledgeStatusPresentation(item.status)
   return (
     <Paper component="section" variant="outlined" aria-labelledby="knowledge-detail-title" sx={{ minWidth: 0, p: { xs: 2, md: 2.5 } }}>
-      <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
+      <Stack
+        direction="row"
+        spacing={2}
+        sx={{
+          alignItems: "flex-start",
+          justifyContent: "space-between"
+        }}>
         <Typography id="knowledge-detail-title" component="h2" variant="h3">知识详情</Typography>
         <Chip color={operatorToneColor(status.tone)} label={status.label} />
       </Stack>
@@ -176,7 +182,7 @@ function KnowledgeDetail({ item }: { item: KnowledgeItem }) {
       />
       <Alert severity="info" variant="outlined" sx={{ mt: 2.5 }}>只读权限</Alert>
     </Paper>
-  )
+  );
 }
 
 export function KnowledgePage({ canManage }: { canManage: boolean }) {
@@ -352,17 +358,31 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{
+          alignItems: { xs: 'stretch', sm: 'flex-start' },
+          justifyContent: "space-between",
+          mb: 2.5
+        }}>
         <Typography component="h1" variant="h1">知识与流程</Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} sx={{
+          alignItems: "center"
+        }}>
           {!canManage ? <Chip label="只读" /> : null}
           {items.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
         </Stack>
       </Stack>
-
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(270px, 320px) minmax(0, 1fr) minmax(280px, 340px)' } }} aria-label="知识管理">
         <Paper component="aside" variant="outlined" aria-labelledby="knowledge-list-title" sx={{ minWidth: 0, p: 1.5 }}>
-          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: "center",
+              justifyContent: "space-between"
+            }}>
             <Typography id="knowledge-list-title" component="h2" variant="h3">知识列表</Typography>
             {canManage ? <Button variant="contained" size="small" startIcon={<AddRoundedIcon />} onClick={resetForNew}>新建</Button> : null}
           </Stack>
@@ -396,14 +416,24 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
                   >
                     <Stack spacing={0.75}>
                       <Typography variant="subtitle2">{sanitizeDisplayText(item.title)}</Typography>
-                      <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(item.fact_question || item.summary || item.item_key)}</Typography>
-                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                      <Typography variant="caption" sx={{
+                        color: "text.secondary"
+                      }}>{sanitizeDisplayText(item.fact_question || item.summary || item.item_key)}</Typography>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{
+                          alignItems: "center",
+                          justifyContent: "space-between"
+                        }}>
                         <Chip color={operatorToneColor(presentation.tone)} label={presentation.label} />
-                        <Typography variant="caption" color="text.secondary">{knowledgeKindLabel(item.knowledge_kind)} · v{item.published_version || 0}</Typography>
+                        <Typography variant="caption" sx={{
+                          color: "text.secondary"
+                        }}>{knowledgeKindLabel(item.knowledge_kind)} · v{item.published_version || 0}</Typography>
                       </Stack>
                     </Stack>
                   </ListItemButton>
-                )
+                );
               })}
               {!items.data?.items?.length ? <OperatorEmptyState title="没有找到知识" description={canManage ? '请调整筛选或新建知识' : '请调整筛选'} /> : null}
             </List>
@@ -412,7 +442,13 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
 
         {canManage ? (
           <Paper component="section" ref={editorRef} variant="outlined" aria-labelledby="knowledge-editor-title" sx={{ minWidth: 0, p: { xs: 2, md: 2.5 } }}>
-            <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={2}
+              sx={{
+                alignItems: "flex-start",
+                justifyContent: "space-between"
+              }}>
               <Typography id="knowledge-editor-title" component="h2" variant="h3">{selectedId && !isCreating ? '编辑知识' : '新建知识'}</Typography>
               <Chip color={operatorToneColor(statusPresentation.tone)} label={statusPresentation.label} />
             </Stack>
@@ -442,7 +478,9 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
                 </TextField>
               </Box>
               <TextField label="内部备注" value={draft.summary} onChange={(event) => setDraft((current) => ({ ...current, summary: event.target.value }))} multiline minRows={3} placeholder="可选" autoComplete="off" />
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} useFlexGap sx={{
+                flexWrap: "wrap"
+              }}>
                 <Button variant="contained" disabled={busy || !isDirty} startIcon={saveMutation.isPending && !publishReviewOpen ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => saveMutation.mutate(false)}>
                   {saveMutation.isPending && !publishReviewOpen ? '保存中…' : '保存草稿'}
                 </Button>
@@ -455,7 +493,13 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
         <Stack component="aside" spacing={2} aria-label="搜索测试和发布状态" sx={{ minWidth: 0, alignSelf: 'start' }}>
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Stack spacing={1.5}>
-              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}>
                 <Typography component="h2" variant="h3">搜索测试</Typography>
                 {retrievalMutation.isPending ? <CircularProgress size={18} aria-label="测试中" /> : null}
               </Stack>
@@ -466,13 +510,22 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
                 <Stack spacing={1.25}>
                   <Box>
                     <Typography variant="subtitle2">{retrievalHits.length ? `找到 ${retrievalHits.length} 条` : '未找到结果'}</Typography>
-                    <Typography variant="caption" color="text.secondary">{retrievalMutation.data.grounding_would_apply ? '可用于回复' : '当前不会用于回复'}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{retrievalMutation.data.grounding_would_apply ? '可用于回复' : '当前不会用于回复'}</Typography>
                   </Box>
                   {retrievalHits.slice(0, 5).map((hit) => (
                     <Box component="article" key={`${hit.item_id}-${hit.chunk_index}`} sx={{ borderTop: 1, borderColor: 'divider', pt: 1.25 }}>
                       <Typography variant="subtitle2">{sanitizeDisplayText(hit.title)}</Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{sanitizeDisplayText(hit.direct_answer || hit.text).slice(0, 260)}</Typography>
-                      <Typography variant="caption" color="text.disabled">匹配度 {typeof hit.score === 'number' ? hit.score.toFixed(3) : hit.score}</Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: "text.secondary",
+                          mt: 0.5
+                        }}>{sanitizeDisplayText(hit.direct_answer || hit.text).slice(0, 260)}</Typography>
+                      <Typography variant="caption" sx={{
+                        color: "text.disabled"
+                      }}>匹配度 {typeof hit.score === 'number' ? hit.score.toFixed(3) : hit.score}</Typography>
                     </Box>
                   ))}
                 </Stack>
@@ -481,7 +534,13 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
           </Paper>
 
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Typography component="h2" variant="h3">发布状态</Typography>
               {studio.isFetching ? <CircularProgress size={18} aria-label="正在刷新" /> : null}
             </Stack>
@@ -496,7 +555,6 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
           </Paper>
         </Stack>
       </Box>
-
       <Dialog open={discardDraftOpen} onClose={() => { setDiscardDraftOpen(false); pendingDraftActionRef.current = null }} aria-labelledby="knowledge-discard-title">
         <DialogTitle id="knowledge-discard-title">放弃未保存的修改？</DialogTitle>
         <DialogContent><DialogContentText>未保存的修改将丢失。</DialogContentText></DialogContent>
@@ -505,8 +563,7 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
           <Button color="error" variant="contained" onClick={() => { const action = pendingDraftActionRef.current; pendingDraftActionRef.current = null; setDiscardDraftOpen(false); action?.() }}>放弃修改</Button>
         </DialogActions>
       </Dialog>
-
-      <Dialog open={publishReviewOpen} onClose={() => { if (!busy) setPublishReviewOpen(false) }} disableEscapeKeyDown={busy} aria-labelledby="knowledge-publish-title">
+      <Dialog open={publishReviewOpen} onClose={() => { if (!busy) setPublishReviewOpen(false) }} aria-labelledby="knowledge-publish-title">
         <DialogTitle id="knowledge-publish-title">发布知识</DialogTitle>
         <DialogContent>
           <DialogContentText>请确认以下内容。</DialogContentText>
@@ -531,5 +588,5 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
         </DialogActions>
       </Dialog>
     </Box>
-  )
+  );
 }

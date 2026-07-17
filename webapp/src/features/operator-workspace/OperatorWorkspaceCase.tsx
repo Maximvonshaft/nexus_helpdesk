@@ -30,8 +30,16 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
   const retry = retryPresentation(item.retry)
   return (
     <Box component="header" sx={{ pb: 2.5 }}>
-      <Typography variant="overline" color="text.secondary">{source.label} · {item.country_code} · {item.channel_key}</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'flex-start' }}>
+      <Typography variant="overline" sx={{
+        color: "text.secondary"
+      }}>{source.label} · {item.country_code} · {item.channel_key}</Typography>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{
+          justifyContent: "space-between",
+          alignItems: { xs: 'stretch', sm: 'flex-start' }
+        }}>
         <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
         <Stack spacing={0.75} sx={{ minWidth: { sm: 220 } }}>
           <WorkspaceStatusLine presentation={status} />
@@ -43,14 +51,16 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
       </Stack>
       <Accordion disableGutters elevation={0} sx={{ mt: 1.5, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
         <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ minHeight: 36, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
-          <Typography variant="caption" color="text.secondary">系统信息</Typography>
+          <Typography variant="caption" sx={{
+            color: "text.secondary"
+          }}>系统信息</Typography>
         </AccordionSummary>
         <AccordionDetails sx={{ px: 0, pt: 0 }}>
           <Typography component="code" variant="caption" sx={{ overflowWrap: 'anywhere' }}>任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ''}</Typography>
         </AccordionDetails>
       </Accordion>
     </Box>
-  )
+  );
 }
 
 function CaseSpine({ item, memory }: { item: UnifiedOperatorQueueItem; memory: SupportMemoryLedger | null }) {
@@ -75,13 +85,20 @@ function CaseSpine({ item, memory }: { item: UnifiedOperatorQueueItem; memory: S
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(7, minmax(0, 1fr))' } }}>
         {stages.map(([label, value, available], index) => (
           <Box key={label} sx={{ borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 }, borderColor: 'divider', borderRight: { xl: index === stages.length - 1 ? 0 : 1 }, minWidth: 0, p: 1.5 }}>
-            <Stack direction="row" spacing={0.75} alignItems="center"><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography variant="caption" color="text.secondary" sx={{ fontWeight: 650 }}>{label}</Typography></Stack>
+            <Stack direction="row" spacing={0.75} sx={{
+              alignItems: "center"
+            }}><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                fontWeight: 650
+              }}>{label}</Typography></Stack>
             <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{value}</Typography>
           </Box>
         ))}
       </Box>
     </Paper>
-  )
+  );
 }
 
 function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
@@ -96,9 +113,17 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
           const presentation = evidencePresentation(entry)
           return (
             <Box component="article" key={`${entry.kind}-${entry.source_id || index}`} sx={{ py: 1.75 }}>
-              <Stack direction="row" spacing={2} justifyContent="space-between" alignItems="flex-start">
+              <Stack
+                direction="row"
+                spacing={2}
+                sx={{
+                  justifyContent: "space-between",
+                  alignItems: "flex-start"
+                }}>
                 <WorkspaceStatusLine presentation={presentation} />
-                {entry.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(entry.created_at)}</Typography> : null}
+                {entry.created_at ? <Typography component="time" variant="caption" sx={{
+                  color: "text.disabled"
+                }}>{formatDateTime(entry.created_at)}</Typography> : null}
               </Stack>
               <Typography variant="subtitle2" sx={{ mt: 1 }}>{sanitizeDisplayText(entry.label || entry.kind)}</Typography>
               {entry.summary && Object.keys(entry.summary).length ? (
@@ -108,11 +133,11 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
                 </Accordion>
               ) : null}
             </Box>
-          )
+          );
         })}
       </Stack>
     </Box>
-  )
+  );
 }
 
 function SourceSummary({ data, item }: { data: Record<string, unknown>; item: UnifiedOperatorQueueItem }) {

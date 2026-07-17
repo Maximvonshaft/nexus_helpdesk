@@ -1,7 +1,6 @@
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -144,14 +143,21 @@ export function RuntimeEvidenceAudit() {
 
   return (
     <Box component="section" aria-labelledby="runtime-audit-title" data-testid="runtime-evidence-audit">
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between">
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{
+          alignItems: { xs: 'stretch', sm: 'flex-start' },
+          justifyContent: "space-between"
+        }}>
         <Typography id="runtime-audit-title" component="h2" variant="h2">证据审计</Typography>
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+        <Stack direction="row" spacing={1} useFlexGap sx={{
+          flexWrap: "wrap"
+        }}>
           <Button color="inherit" variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => runsQuery.refetch()}>刷新</Button>
           <Button color="inherit" variant="outlined" startIcon={<ContentCopyRoundedIcon />} disabled={!bundle} onClick={copyBundle}>复制审计数据</Button>
         </Stack>
       </Stack>
-
       <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
         <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(5, 1fr)' } }}>
           <TextField select label="时间范围" value={String(sinceHours)} onChange={(event) => setSinceHours(Number(event.target.value))}>
@@ -169,14 +175,23 @@ export function RuntimeEvidenceAudit() {
           </TextField>
         </Box>
       </Paper>
-
       {runsQuery.isError ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取审计数据" error={runsQuery.error} fallback="请稍后重试" /></Box> : null}
-
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 340px) minmax(0, 1fr)' }, mt: 2 }}>
         <Paper component="aside" variant="outlined" aria-label="处理记录" sx={{ alignSelf: 'start', minWidth: 0, p: 1.5, position: { lg: 'sticky' }, top: { lg: 84 } }}>
-          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: "center",
+              justifyContent: "space-between"
+            }}>
             <Typography component="h3" variant="h3">处理记录</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{runs.length}</Typography>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                fontVariantNumeric: 'tabular-nums'
+              }}>{runs.length}</Typography>
           </Stack>
           <Divider sx={{ mt: 1.5 }} />
           {!runs.length ? <OperatorEmptyState title="暂无记录" description="暂无数据" /> : (
@@ -190,12 +205,22 @@ export function RuntimeEvidenceAudit() {
                   sx={{ borderBottom: 1, borderColor: 'divider', display: 'block', px: 1.25, py: 1.25, textAlign: 'left', width: '100%' }}
                 >
                   <Stack spacing={0.75}>
-                    <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      sx={{
+                        alignItems: "center",
+                        justifyContent: "space-between"
+                      }}>
                       <Typography variant="subtitle2">处理 #{run.ai_turn_id}</Typography>
                       <Chip color={operatorToneColor(runTone(run))} label={sanitizeDisplayText(run.status)} />
                     </Stack>
-                    <Typography variant="caption" color="text.secondary">工单 #{run.ticket_id} · {sanitizeDisplayText(run.channel || '未知渠道')}</Typography>
-                    <Typography variant="caption" color="text.disabled">{run.created_at ? formatDateTime(run.created_at) : '暂无时间'}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>工单 #{run.ticket_id} · {sanitizeDisplayText(run.channel || '未知渠道')}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.disabled"
+                    }}>{run.created_at ? formatDateTime(run.created_at) : '暂无时间'}</Typography>
                   </Stack>
                 </ListItemButton>
               ))}
@@ -205,7 +230,13 @@ export function RuntimeEvidenceAudit() {
 
         <Stack spacing={2} sx={{ minWidth: 0 }}>
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Typography component="h3" variant="h3">处理结果</Typography>
               {selectedRun ? <Chip color={operatorToneColor(runTone(selectedRun))} label={sanitizeDisplayText(selectedRun.status)} /> : null}
             </Stack>
@@ -230,15 +261,23 @@ export function RuntimeEvidenceAudit() {
                     const color = status === 'success' ? 'success' : status === 'failed' ? 'error' : 'warning'
                     return (
                       <Box component="article" key={`${textValue(call.id, String(index))}-${textValue(call.tool_name)}`} sx={{ py: 1.25 }}>
-                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{
+                            alignItems: "center",
+                            justifyContent: "space-between"
+                          }}>
                           <Typography variant="subtitle2">{sanitizeDisplayText(textValue(call.tool_name, '未知操作'))}</Typography>
                           <Chip color={color} label={sanitizeDisplayText(status)} />
                         </Stack>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" sx={{
+                          color: "text.secondary"
+                        }}>
                           {sanitizeDisplayText(textValue(call.provider, '未知服务'))} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied === true ? '已脱敏' : '脱敏状态未知'}
                         </Typography>
                       </Box>
-                    )
+                    );
                   })}
                 </Stack>
               )}
@@ -251,11 +290,19 @@ export function RuntimeEvidenceAudit() {
                 <Stack divider={<Divider flexItem />}>
                   {timeline.map((item, index) => (
                     <Box component="article" key={`${textValue(item.event_id, String(index))}-${textValue(item.event_type)}`} sx={{ py: 1.25 }}>
-                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{
+                          alignItems: "center",
+                          justifyContent: "space-between"
+                        }}>
                         <Typography variant="subtitle2">{sanitizeDisplayText(textValue(item.event_type, textValue(item.phase, '事件')))}</Typography>
                         <Chip label={sanitizeDisplayText(textValue(item.status, textValue(item.phase, '事件')))} />
                       </Stack>
-                      <Typography variant="caption" color="text.disabled">{textValue(item.created_at) ? formatDateTime(textValue(item.created_at)) : ''}</Typography>
+                      <Typography variant="caption" sx={{
+                        color: "text.disabled"
+                      }}>{textValue(item.created_at) ? formatDateTime(textValue(item.created_at)) : ''}</Typography>
                     </Box>
                   ))}
                 </Stack>
@@ -264,7 +311,13 @@ export function RuntimeEvidenceAudit() {
           </Box>
 
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Typography component="h3" variant="h3">记录问题</Typography>
               {lastFinding?.id ? <Chip color="success" label={`问题记录 #${lastFinding.id}`} /> : null}
             </Stack>
@@ -284,7 +337,9 @@ export function RuntimeEvidenceAudit() {
                 <TextField label="实际结果" value={actualBehavior} onChange={(event) => setActualBehavior(event.target.value)} multiline minRows={2} />
               </Box>
               {findingMutation.isError ? <OperatorErrorNotice title="保存失败" error={findingMutation.error} fallback="请稍后重试" /> : null}
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} useFlexGap sx={{
+                flexWrap: "wrap"
+              }}>
                 <Button variant="contained" disabled={!selectedRun || findingMutation.isPending} startIcon={findingMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => findingMutation.mutate()}>
                   {findingMutation.isPending ? '保存中…' : '保存问题'}
                 </Button>
@@ -294,7 +349,13 @@ export function RuntimeEvidenceAudit() {
           </Paper>
 
           <Paper component="section" variant="outlined" sx={{ p: 2 }}>
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Typography component="h3" variant="h3">审计数据</Typography>
               <Button color="inherit" onClick={() => setShowJson((value) => !value)}>{showJson ? '收起原始数据' : '查看原始数据'}</Button>
             </Stack>
@@ -309,5 +370,5 @@ export function RuntimeEvidenceAudit() {
         </Stack>
       </Box>
     </Box>
-  )
+  );
 }

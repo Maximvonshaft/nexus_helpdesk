@@ -34,21 +34,43 @@ export function isOutboundWorkspaceMessage(message: WebchatMessage) {
 
 export function WorkspaceStatusLine({ presentation, compact = false }: { presentation: WorkspacePresentation; compact?: boolean }) {
   return (
-    <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
+    <Stack
+      direction="row"
+      spacing={0.75}
+      sx={{
+        alignItems: "flex-start",
+        minWidth: 0
+      }}>
       <Box aria-hidden="true" sx={{ bgcolor: operatorTonePalettePath(presentation.tone), borderRadius: '50%', flex: '0 0 auto', height: 8, mt: '6px', width: 8 }} />
       <Box sx={{ minWidth: 0 }}>
-        <Typography variant={compact ? 'caption' : 'body2'} color="text.primary" sx={{ fontWeight: 650 }}>{presentation.label}</Typography>
-        {!compact && presentation.detail ? <Typography variant="caption" color="text.secondary" display="block">{presentation.detail}</Typography> : null}
+        <Typography
+          variant={compact ? 'caption' : 'body2'}
+          sx={{
+            color: "text.primary",
+            fontWeight: 650
+          }}>{presentation.label}</Typography>
+        {!compact && presentation.detail ? <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            display: "block"
+          }}>{presentation.detail}</Typography> : null}
       </Box>
     </Stack>
-  )
+  );
 }
 
 export function WorkspaceSectionHeading({ title, action, id }: { title: string; action?: ReactNode; id?: string }) {
   return (
-    <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
+    <Stack
+      direction="row"
+      spacing={2}
+      sx={{
+        alignItems: "flex-start",
+        justifyContent: "space-between"
+      }}>
       <Typography id={id} component="h2" variant="h3">{title}</Typography>
       {action}
     </Stack>
-  )
+  );
 }
