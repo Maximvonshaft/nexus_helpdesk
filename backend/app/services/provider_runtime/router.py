@@ -24,7 +24,7 @@ from .traffic_selection import (
 
 logger = logging.getLogger(__name__)
 
-_DIRECT_ENV_PROVIDERS = frozenset({"private_ai_runtime"})
+_APPROVED_PROVIDERS = frozenset({"private_ai_runtime"})
 _CONFIGURATION_ERROR_CODES = frozenset(
     {
         "provider_runtime_traffic_mode_invalid",
@@ -70,12 +70,7 @@ class ProviderRuntimeRouter:
                     "session_id": request.session_id,
                     "operation": operation,
                     "status": status,
-                    "safe_summary": json.dumps(
-                        safe_summary or {},
-                        ensure_ascii=True,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ),
+                    "safe_summary": json.dumps(safe_summary or {}, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
                     "error_code": error_code,
                     "elapsed_ms": elapsed_ms,
                     "now": datetime.now(timezone.utc),
@@ -83,182 +78,47 @@ class ProviderRuntimeRouter:
             )
             self.db.commit()
         except Exception:
-            # Provider payloads and exception strings are intentionally excluded.
             logger.error("provider_runtime_audit_write_failed")
             self.db.rollback()
-
-    @staticmethod
-    def _parse_webchat_runtime_output(
-        request: ProviderRequest,
-        result: ProviderResult,
-    ) -> dict[str, Any]:
-        """Accept Runtime decision JSON before customer visibility."""
-
-        from app.services.webchat_runtime_output_parser import (
-            parse_runtime_reply_provider_output,
-        )
-
-        try:
-            parsed_reply = parse_runtime_reply_provider_output(
-                result.structured_output,
-                evidence_present=request.tracking_fact_evidence_present,
-            )
-            parsed = dict(result.structured_output or {})
-        except Exception:
-            if (
-                not request.tracking_fact_evidence_present
-                or not isinstance(result.structured_output, dict)
-            ):
-                raise
-            parsed = dict(result.structured_output or {})
-            reply = parsed.get("customer_reply") or parsed.get("reply")
-            if not isinstance(reply, str) or not reply.strip():
-                raise
-            OutputContracts.check_security_rules(
-                raw_output=json.dumps(parsed, ensure_ascii=False, default=str),
-                parsed=parsed,
-                evidence_present=True,
-                request_body=request.body,
-                knowledge_context=(request.metadata or {}).get("knowledge_context"),
-            )
-            parsed_reply = type(
-                "_ParsedRuntimeFallback",
-                (),
-                {
-                    "reply": reply.strip(),
-                    "intent": parsed.get("intent") or "tracking",
-                    "tracking_number": parsed.get("tracking_number"),
-                    "handoff_required": bool(parsed.get("handoff_required", False)),
-                    "handoff_reason": parsed.get("handoff_reason"),
-                    "recommended_agent_action": parsed.get(
-                        "recommended_agent_action"
-                    ),
-                    "ai_decision": None,
-                },
-            )()
-
-        parsed.setdefault("customer_reply", parsed_reply.reply)
-        parsed.setdefault("reply", parsed_reply.reply)
-        parsed.setdefault("language", "unknown")
-        parsed.setdefault("intent", parsed_reply.intent)
-        parsed.setdefault("tracking_number", parsed_reply.tracking_number)
-        parsed.setdefault("handoff_required", parsed_reply.handoff_required)
-        parsed.setdefault("handoff_reason", parsed_reply.handoff_reason)
-        parsed.setdefault(
-            "recommended_agent_action",
-            parsed_reply.recommended_agent_action,
-        )
-        parsed.setdefault(
-            "ticket_should_create",
-            bool(parsed_reply.handoff_required),
-        )
-        if parsed_reply.ai_decision:
-            parsed.setdefault("ai_decision", parsed_reply.ai_decision)
-        OutputContracts.check_security_rules(
-            raw_output=json.dumps(parsed, ensure_ascii=False, default=str),
-            parsed=parsed,
-            evidence_present=request.tracking_fact_evidence_present,
-            request_body=request.body,
-            knowledge_context=(request.metadata or {}).get("knowledge_context"),
-        )
-        return parsed
 
     async def route(self, request: ProviderRequest) -> ProviderResult:
         from . import bootstrap_provider_runtime
 
         bootstrap_provider_runtime()
-        rule = self.db.execute(
-            text(
-                """
-                SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
-                FROM provider_routing_rules
-                WHERE tenant_id = :tenant_id
-                  AND channel_key = :channel
-                  AND scenario = :scenario
-                  AND enabled = true
-                """
-            ),
-            {
-                "tenant_id": request.tenant_id,
-                "channel": request.channel_key,
-                "scenario": request.scenario,
-            },
-        ).mappings().first()
-
-        if not rule:
-            # Absence of a persisted routing rule is a control path, never an
-            # implicit authorization to send all traffic to a Provider.
-            primary_provider = "private_ai_runtime"
-            fallbacks: Any = []
-            output_contract = WEBCHAT_RUNTIME_OUTPUT_CONTRACT
-            timeout_ms = 10000
-            kill_switch: Any = False
-            canary_percent: Any = 0
-        else:
-            primary_provider = str(rule["primary_provider"] or "").strip()
-            fallbacks = rule["fallback_providers"]
-            output_contract = str(rule["output_contract"] or "").strip()
-            timeout_ms = rule["timeout_ms"]
-            kill_switch = rule["kill_switch"]
-            canary_percent = rule["canary_percent"]
+        raw = _load_rule(self.db, request)
 
         try:
-            (
-                primary_provider,
-                fallbacks,
-                output_contract,
-                timeout_ms,
-                kill_switch,
-                canary_percent,
-            ) = _apply_env_overrides(
-                primary_provider,
-                fallbacks,
-                output_contract,
-                timeout_ms,
-                kill_switch,
-                canary_percent,
-            )
+            kill_switch = effective_kill_switch(raw["kill_switch"])
+        except (TypeError, ValueError) as exc:
+            return self._reject_configuration(request, _configuration_error_code(exc))
+
+        if kill_switch:
             traffic = select_provider_traffic(
                 request,
-                canary_percent=canary_percent,
-                kill_switch=kill_switch,
+                canary_percent=raw["canary_percent"],
+                kill_switch=True,
             )
-        except (RuntimeError, TypeError, ValueError) as exc:
-            error_code = _configuration_error_code(exc)
-            summary = {
-                "traffic": {
-                    "path": "blocked",
-                    "authoritative": False,
-                    "execute_candidate": False,
-                    "reason": error_code,
-                }
-            }
-            self._write_audit(
-                request,
-                "traffic_select",
-                "failed",
-                "router",
-                0,
-                summary,
-                error_code,
-            )
-            return _unavailable_with_summary(
-                "provider_runtime_configuration_invalid",
-                summary,
-            )
-
-        if traffic.path == ProviderTrafficPath.KILL_SWITCH:
             summary = _traffic_summary(traffic)
             self._write_audit(
                 request,
                 "traffic_select",
                 "skipped",
-                primary_provider,
+                str(raw["primary_provider"] or "router"),
                 0,
                 summary,
                 "kill_switch_active",
             )
-            return _unavailable_with_summary("kill_switch_active", summary)
+            return _unavailable("kill_switch_active", summary)
+
+        try:
+            config = _effective_configuration(raw)
+            traffic = select_provider_traffic(
+                request,
+                canary_percent=config["canary_percent"],
+                kill_switch=False,
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            return self._reject_configuration(request, _configuration_error_code(exc))
 
         if traffic.path == ProviderTrafficPath.CONTROL:
             summary = _traffic_summary(traffic)
@@ -266,24 +126,35 @@ class ProviderRuntimeRouter:
                 request,
                 "traffic_select",
                 "skipped",
-                primary_provider,
+                config["primary_provider"],
                 0,
                 summary,
                 "provider_canary_control_path",
             )
-            return _unavailable_with_summary(
-                "provider_canary_control_path",
+            return _unavailable("provider_canary_control_path", summary)
+
+        output_contract = config["output_contract"]
+        if not OutputContracts.get_schema(output_contract):
+            summary = _traffic_summary(traffic, {"configuration_error": "provider_runtime_output_contract_invalid"})
+            self._write_audit(
+                request,
+                "traffic_select",
+                "failed",
+                "router",
+                0,
                 summary,
+                "provider_runtime_output_contract_invalid",
             )
+            return _unavailable("provider_runtime_output_contract_invalid", summary)
 
         request.output_contract = output_contract
-        request.timeout_ms = timeout_ms
-        providers_to_try = _dedupe_providers([primary_provider, *fallbacks])
+        request.timeout_ms = config["timeout_ms"]
+        providers = _dedupe_providers([config["primary_provider"], *config["fallbacks"]])
         shadow_only = traffic.path == ProviderTrafficPath.SHADOW_ONLY
         operation = "shadow_generate" if shadow_only else "generate"
         last_elapsed_ms = 0
 
-        for provider_name in providers_to_try:
+        for provider_name in providers:
             health_decision = ProviderRuntimeHealth.should_skip(provider_name)
             if health_decision.skip:
                 self._write_audit(
@@ -292,16 +163,13 @@ class ProviderRuntimeRouter:
                     "skipped",
                     provider_name,
                     0,
-                    _traffic_summary(
-                        traffic,
-                        {"provider_health": health_decision.safe_summary()},
-                    ),
+                    _traffic_summary(traffic, {"provider_health": health_decision.safe_summary()}),
                     health_decision.reason or "provider_health_skip",
                 )
                 continue
 
             adapter = ProviderRegistry.get(provider_name, self.db)
-            if not adapter:
+            if adapter is None:
                 self._write_audit(
                     request,
                     operation,
@@ -316,14 +184,10 @@ class ProviderRuntimeRouter:
             result = await adapter.generate(self.db, request)
             last_elapsed_ms = max(last_elapsed_ms, int(result.elapsed_ms or 0))
             if not result.ok:
-                safe_summary = dict(result.raw_payload_safe_summary or {})
-                health_event = ProviderRuntimeHealth.record_failure(
-                    provider_name,
-                    result.error_code,
-                )
+                safe_summary = _traffic_summary(traffic, dict(result.raw_payload_safe_summary or {}))
+                health_event = ProviderRuntimeHealth.record_failure(provider_name, result.error_code)
                 if health_event:
                     safe_summary["provider_health"] = health_event
-                safe_summary = _traffic_summary(traffic, safe_summary)
                 result.raw_payload_safe_summary = safe_summary
                 self._write_audit(
                     request,
@@ -335,63 +199,23 @@ class ProviderRuntimeRouter:
                     result.error_code,
                 )
                 if not result.fallback_allowed:
-                    return (
-                        _shadow_result(traffic, result.elapsed_ms, safe_summary)
-                        if shadow_only
-                        else result
-                    )
+                    return _shadow_result(traffic, result.elapsed_ms, safe_summary) if shadow_only else result
                 continue
 
             try:
                 if not result.structured_output:
-                    raise ValueError("No structured output provided")
-                if (
-                    request.scenario == "webchat_runtime_reply"
-                    and output_contract == WEBCHAT_RUNTIME_OUTPUT_CONTRACT
-                ):
-                    parsed = self._parse_webchat_runtime_output(request, result)
-                else:
-                    parsed = OutputContracts.validate_and_parse(
-                        output_contract,
-                        json.dumps(result.structured_output),
-                        request.tracking_fact_evidence_present,
-                        (request.metadata or {}).get("persona_context"),
-                        request.body,
-                        (request.metadata or {}).get("knowledge_context"),
-                    )
-                result.structured_output = parsed
-                safe_summary = dict(result.raw_payload_safe_summary or {})
-                health_event = ProviderRuntimeHealth.record_success(provider_name)
-                if health_event:
-                    safe_summary["provider_health"] = health_event
-                safe_summary = _traffic_summary(traffic, safe_summary)
-                result.raw_payload_safe_summary = safe_summary
-                self._write_audit(
-                    request,
-                    operation,
-                    "shadow_ok" if shadow_only else "ok",
-                    provider_name,
-                    result.elapsed_ms,
-                    safe_summary,
+                    raise ValueError("provider_output_missing")
+                parsed = OutputContracts.validate_and_parse(
+                    output_contract,
+                    json.dumps(result.structured_output),
+                    request.tracking_fact_evidence_present,
+                    (request.metadata or {}).get("persona_context"),
+                    request.body,
+                    (request.metadata or {}).get("knowledge_context"),
                 )
-                if shadow_only:
-                    # Shadow execution never returns candidate text or decision
-                    # authority to the caller.
-                    return _shadow_result(
-                        traffic,
-                        result.elapsed_ms,
-                        safe_summary,
-                    )
-                return result
             except Exception:
-                safe_summary = _traffic_summary(
-                    traffic,
-                    {"parse_error": "provider_output_rejected"},
-                )
-                health_event = ProviderRuntimeHealth.record_failure(
-                    provider_name,
-                    "parse_reject",
-                )
+                safe_summary = _traffic_summary(traffic, {"parse_error": "provider_output_rejected"})
+                health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
                 if health_event:
                     safe_summary["provider_health"] = health_event
                 self._write_audit(
@@ -403,6 +227,25 @@ class ProviderRuntimeRouter:
                     safe_summary,
                     "parse_reject",
                 )
+                continue
+
+            result.structured_output = parsed
+            safe_summary = _traffic_summary(traffic, dict(result.raw_payload_safe_summary or {}))
+            health_event = ProviderRuntimeHealth.record_success(provider_name)
+            if health_event:
+                safe_summary["provider_health"] = health_event
+            result.raw_payload_safe_summary = safe_summary
+            self._write_audit(
+                request,
+                operation,
+                "shadow_ok" if shadow_only else "ok",
+                provider_name,
+                result.elapsed_ms,
+                safe_summary,
+            )
+            if shadow_only:
+                return _shadow_result(traffic, result.elapsed_ms, safe_summary)
+            return result
 
         summary = _traffic_summary(traffic)
         self._write_audit(
@@ -416,101 +259,102 @@ class ProviderRuntimeRouter:
         )
         if shadow_only:
             return _shadow_result(traffic, last_elapsed_ms, summary)
-        return _unavailable_with_summary(
-            "all_providers_failed",
-            summary,
-            elapsed_ms=last_elapsed_ms,
-        )
+        return _unavailable("all_providers_failed", summary, elapsed_ms=last_elapsed_ms)
+
+    def _reject_configuration(self, request: ProviderRequest, reason: str) -> ProviderResult:
+        summary = {
+            "traffic": {
+                "path": "blocked",
+                "authoritative": False,
+                "execute_candidate": False,
+                "reason": reason,
+            }
+        }
+        self._write_audit(request, "traffic_select", "failed", "router", 0, summary, reason)
+        return _unavailable("provider_runtime_configuration_invalid", summary)
 
 
-def _traffic_summary(
-    traffic: ProviderTrafficSelection,
-    additional: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    summary = dict(additional or {})
-    summary["traffic"] = traffic.safe_summary()
-    return summary
+def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
+    rule = db.execute(
+        text(
+            """
+            SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
+            FROM provider_routing_rules
+            WHERE tenant_id = :tenant_id
+              AND channel_key = :channel
+              AND scenario = :scenario
+              AND enabled = true
+            """
+        ),
+        {
+            "tenant_id": request.tenant_id,
+            "channel": request.channel_key,
+            "scenario": request.scenario,
+        },
+    ).mappings().first()
+    if rule is None:
+        return {
+            "primary_provider": "private_ai_runtime",
+            "fallback_providers": [],
+            "output_contract": WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
+            "timeout_ms": 10000,
+            "kill_switch": False,
+            "canary_percent": 0,
+        }
+    return {
+        "primary_provider": rule["primary_provider"],
+        "fallback_providers": rule["fallback_providers"],
+        "output_contract": rule["output_contract"],
+        "timeout_ms": rule["timeout_ms"],
+        "kill_switch": rule["kill_switch"],
+        "canary_percent": rule["canary_percent"],
+    }
 
 
-def _unavailable_with_summary(
-    error_code: str,
-    summary: dict[str, Any],
-    *,
-    elapsed_ms: int = 0,
-) -> ProviderResult:
-    result = ProviderResult.unavailable(
-        "router",
-        error_code,
-        elapsed_ms,
-        fallback_allowed=False,
-    )
-    result.raw_payload_safe_summary = summary
-    return result
-
-
-def _shadow_result(
-    traffic: ProviderTrafficSelection,
-    elapsed_ms: int,
-    summary: dict[str, Any] | None = None,
-) -> ProviderResult:
-    return _unavailable_with_summary(
-        "provider_shadow_only",
-        summary or _traffic_summary(traffic),
-        elapsed_ms=elapsed_ms,
-    )
-
-
-def _apply_env_overrides(
-    primary_provider: str,
-    fallbacks: Any,
-    output_contract: str,
-    timeout_ms: Any,
-    kill_switch: Any,
-    canary_percent: Any,
-) -> tuple[str, list[str], str, int, bool, int]:
-    fallbacks = _coerce_fallbacks(fallbacks)
-
-    env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
-    if env_primary:
-        primary_provider = env_primary
-
-    if primary_provider not in _DIRECT_ENV_PROVIDERS:
+def _effective_configuration(raw: dict[str, Any]) -> dict[str, Any]:
+    primary_provider = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip() or str(raw["primary_provider"] or "").strip()
+    if primary_provider not in _APPROVED_PROVIDERS:
         raise ValueError("provider_runtime_primary_provider_invalid")
 
-    env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS")
-    if env_fallbacks is not None:
-        fallbacks = _coerce_fallbacks(env_fallbacks)
+    fallback_value = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS")
+    fallbacks = _coerce_fallbacks(raw["fallback_providers"] if fallback_value is None else fallback_value)
+    if any(provider not in _APPROVED_PROVIDERS for provider in fallbacks):
+        raise ValueError("provider_runtime_fallback_provider_invalid")
 
-    for provider in fallbacks:
-        if provider not in _DIRECT_ENV_PROVIDERS:
-            raise ValueError("provider_runtime_fallback_provider_invalid")
-
-    env_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
-    if env_contract:
-        output_contract = env_contract
+    output_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip() or str(raw["output_contract"] or "").strip()
     if not output_contract:
         raise ValueError("provider_runtime_output_contract_invalid")
 
-    timeout_ms = _int_env(
-        "PROVIDER_RUNTIME_TIMEOUT_MS",
-        timeout_ms,
-        minimum=500,
-        maximum=120000,
-    )
-    canary_percent = effective_canary_percent(canary_percent)
-    kill_switch = effective_kill_switch(kill_switch)
-    return (
-        primary_provider,
-        fallbacks,
-        output_contract,
-        timeout_ms,
-        kill_switch,
-        canary_percent,
-    )
+    timeout_value = os.getenv("PROVIDER_RUNTIME_TIMEOUT_MS")
+    timeout_ms = _validate_timeout_ms(raw["timeout_ms"] if timeout_value is None else timeout_value.strip())
+
+    return {
+        "primary_provider": primary_provider,
+        "fallbacks": fallbacks,
+        "output_contract": output_contract,
+        "timeout_ms": timeout_ms,
+        "canary_percent": effective_canary_percent(raw["canary_percent"]),
+    }
+
+
+def _validate_timeout_ms(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("provider_runtime_timeout_ms_invalid")
+    try:
+        timeout_ms = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("provider_runtime_timeout_ms_invalid") from exc
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("provider_runtime_timeout_ms_invalid")
+    if isinstance(value, str) and value.strip() != str(timeout_ms):
+        raise ValueError("provider_runtime_timeout_ms_invalid")
+    if not 500 <= timeout_ms <= 120000:
+        raise ValueError("provider_runtime_timeout_ms_invalid")
+    return timeout_ms
 
 
 def _coerce_fallbacks(value: Any) -> list[str]:
-    if not value:
+    if value in (None, "", []):
         return []
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -525,32 +369,25 @@ def _coerce_fallbacks(value: Any) -> list[str]:
 
 
 def _dedupe_providers(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    return [
-        value
-        for value in values
-        if value and not (value in seen or seen.add(value))
-    ]
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _configuration_error_code(exc: Exception) -> str:
     candidate = str(exc).strip()
-    return (
-        candidate
-        if candidate in _CONFIGURATION_ERROR_CODES
-        else "provider_runtime_configuration_invalid"
-    )
+    return candidate if candidate in _CONFIGURATION_ERROR_CODES else "provider_runtime_configuration_invalid"
 
 
-def _int_env(
-    name: str,
-    default: Any,
-    *,
-    minimum: int,
-    maximum: int,
-) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name.lower()}_invalid") from exc
-    return max(minimum, min(value, maximum))
+def _traffic_summary(traffic: ProviderTrafficSelection, additional: dict[str, Any] | None = None) -> dict[str, Any]:
+    summary = dict(additional or {})
+    summary["traffic"] = traffic.safe_summary()
+    return summary
+
+
+def _unavailable(error_code: str, summary: dict[str, Any], *, elapsed_ms: int = 0) -> ProviderResult:
+    result = ProviderResult.unavailable("router", error_code, elapsed_ms, fallback_allowed=False)
+    result.raw_payload_safe_summary = summary
+    return result
+
+
+def _shadow_result(traffic: ProviderTrafficSelection, elapsed_ms: int, summary: dict[str, Any] | None = None) -> ProviderResult:
+    return _unavailable("provider_shadow_only", summary or _traffic_summary(traffic), elapsed_ms=elapsed_ms)
