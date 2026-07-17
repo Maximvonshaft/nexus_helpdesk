@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 from datetime import timezone
 from typing import Any
@@ -19,7 +18,10 @@ from ..services.observability import log_event, record_webchat_websocket_fallbac
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
 from ..services.webchat_performance import list_public_messages_throttled, webchat_poll_interval_ms
-from ..services.webchat_public_payload import public_webchat_metadata
+from ..services.webchat_public_payload import (
+    parse_public_webchat_json,
+    public_webchat_message_payload,
+)
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..services.webchat_service import add_visitor_message, create_or_resume_conversation, submit_card_action
 from ..settings import get_settings
@@ -134,35 +136,6 @@ def _validate_public_conversation_token(conversation: WebchatConversation, token
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
 
 
-def _loads_json(value: str | None) -> Any:
-    if not value:
-        return None
-    try:
-        return json.loads(value)
-    except Exception:
-        return None
-
-
-def _message_read(row: WebchatMessage) -> dict[str, Any]:
-    body_text = getattr(row, "body_text", None) or row.body
-    metadata = _loads_json(getattr(row, "metadata_json", None))
-    return {
-        "id": row.id,
-        "direction": row.direction,
-        "body": row.body,
-        "body_text": body_text,
-        "message_type": getattr(row, "message_type", None) or "text",
-        "payload_json": _loads_json(getattr(row, "payload_json", None)),
-        "metadata_json": public_webchat_metadata(metadata),
-        "client_message_id": getattr(row, "client_message_id", None),
-        "ai_turn_id": getattr(row, "ai_turn_id", None),
-        "delivery_status": getattr(row, "delivery_status", None) or "sent",
-        "action_status": getattr(row, "action_status", None),
-        "author_label": row.author_label,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    }
-
-
 def _attach_ai_snapshot(result: dict[str, Any], conversation: WebchatConversation) -> dict[str, Any]:
     result.update(ai_snapshot(conversation))
     return result
@@ -231,7 +204,7 @@ def _find_existing_action_response(db: Session, *, public_conversation_id: str, 
         WebchatCardAction.submitted_by == "visitor",
     ).order_by(WebchatCardAction.id.asc()).all()
     for action in candidates:
-        stored_payload = _loads_json(action.action_payload_json) or {}
+        stored_payload = parse_public_webchat_json(action.action_payload_json) or {}
         if stored_payload.get("action_id") != payload.action_id:
             continue
         message = db.query(WebchatMessage).filter(
@@ -246,7 +219,7 @@ def _find_existing_action_response(db: Session, *, public_conversation_id: str, 
             "idempotent": True,
             "action_id": action.id,
             "status": action.status,
-            "message": _message_read(message),
+            "message": public_webchat_message_payload(message),
             "handoff_triggered": payload.action_type == "handoff_request" or stored_payload.get("card_type") == "handoff" or payload.action_id == "talk_to_human",
         }
     return None
