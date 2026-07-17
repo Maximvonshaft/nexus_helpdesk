@@ -5,6 +5,7 @@ import os
 from datetime import timezone
 from typing import Any
 
+from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -152,64 +153,13 @@ def admin_list_conversations_optimized(
     *,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Compatibility projection backed by the canonical support list authority."""
+    """Permanent tombstone for the retired duplicate admin conversation list."""
 
-    # Local import avoids coupling public WebChat polling startup to the
-    # authenticated support API module. No independent query authority remains.
-    from app.api.support_conversations import list_support_conversations
-
-    payload = list_support_conversations(
-        view="all",
-        channel="all",
-        q=None,
-        limit=max(1, min(int(limit or 50), 100)),
-        current_user=current_user,
-        db=db,
+    del db, current_user, limit
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "legacy_webchat_conversation_list_retired",
+            "canonical_endpoint": "/api/support/conversations",
+        },
     )
-    items = payload.get("items") if isinstance(payload, dict) else []
-    rows: list[dict[str, Any]] = []
-    for item in items if isinstance(items, list) else []:
-        session_key = str(item.get("session_key") or "")
-        public_id = session_key.split(":", 1)[-1]
-        rows.append(
-            {
-                "conversation_id": public_id,
-                "ticket_id": item.get("ticket_id"),
-                "ticket_no": item.get("ticket_no"),
-                "title": item.get("title"),
-                "status": item.get("status"),
-                "visitor_name": item.get("display_name"),
-                "visitor_email": None,
-                "visitor_phone": item.get("customer_contact"),
-                "origin": None,
-                "page_url": None,
-                "last_seen_at": item.get("last_seen_at"),
-                "updated_at": item.get("updated_at"),
-                "last_message_type": None,
-                "last_action_status": None,
-                "needs_human": bool(item.get("needs_human")),
-                "conversation_state": item.get("conversation_state"),
-                "required_action": item.get("required_action"),
-                "ai_pending": bool(item.get("ai_pending")),
-                "ai_status": item.get("ai_status"),
-                "ai_turn_id": item.get("ai_turn_id"),
-                "ai_pending_for_message_id": item.get(
-                    "ai_pending_for_message_id"
-                ),
-                "current_handoff_request_id": item.get(
-                    "handoff_request_id"
-                ),
-                "handoff_status": item.get("handoff_status") or "none",
-                "active_agent_id": item.get("active_agent_id"),
-                "ai_suspended": bool(item.get("ai_suspended")),
-                "takeover_mode": item.get("takeover_mode"),
-                "last_handoff_reason": item.get("last_handoff_reason"),
-                "marked_unread": bool(item.get("marked_unread", False)),
-                "read_at": item.get("read_at"),
-                "last_read_message_id": item.get("last_read_message_id"),
-                "pii_minimized": True,
-                "deprecated_transport": True,
-                "canonical_endpoint": "/api/support/conversations",
-            }
-        )
-    return rows
