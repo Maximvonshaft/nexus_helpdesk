@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from app.api import webchat_admin
 from app.api.support_conversations import (
     list_support_conversations,
     resolve_support_conversation,
@@ -165,7 +167,10 @@ def _add_conversations(
     return created
 
 
-def test_postgres_support_scope_idor_volume_and_query_count(pg_session):
+def test_postgres_support_scope_idor_volume_and_query_count(
+    pg_session,
+    monkeypatch,
+):
     db, connection = pg_session
     suffix = uuid4().hex[:10]
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -234,7 +239,7 @@ def test_postgres_support_scope_idor_volume_and_query_count(pg_session):
     assert all(item["pii_minimized"] is True for item in page["items"])
     assert all(item["tracking_number"] is None for item in page["items"])
 
-    hidden_public_id = hidden[0][1]
+    hidden_ticket_id, hidden_public_id = hidden[0]
     with pytest.raises(HTTPException) as exc:
         resolve_support_conversation(
             session_key=f"webchat:{hidden_public_id}",
@@ -243,6 +248,23 @@ def test_postgres_support_scope_idor_volume_and_query_count(pg_session):
         )
     assert exc.value.status_code == 404
     assert exc.value.detail == "support_conversation_not_found"
+
+    audit = Mock()
+    memory = Mock(side_effect=AssertionError("hidden thread loaded memory"))
+    monkeypatch.setattr(webchat_admin, "audit_sensitive_support_read", audit)
+    monkeypatch.setattr(webchat_admin, "build_support_memory_ledger", memory)
+    with pytest.raises(HTTPException) as exc:
+        webchat_admin.get_webchat_thread(
+            ticket_id=hidden_ticket_id,
+            before_message_id=None,
+            message_limit=100,
+            db=db,
+            current_user=agent_a,
+        )
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "support_conversation_not_found"
+    audit.assert_not_called()
+    memory.assert_not_called()
 
     search = list_support_conversations(
         q="private-bravo-0@example.test",
