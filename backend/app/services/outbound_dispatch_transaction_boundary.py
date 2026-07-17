@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
+
+from sqlalchemy import or_
 
 _PATCHED = False
 
@@ -60,7 +63,78 @@ def _recover_unhandled_dispatch_exception(db: Any, *, message_id: int, exc: Exce
     return message
 
 
-def _dispatch_pending_messages_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None):
+def reclaim_stale_processing_messages(db: Any, *, limit: int | None = None) -> int:
+    """Return expired processing attempts to the canonical retry/dead state machine.
+
+    The stable provider idempotency key is preserved. This closes the crash window
+    where a worker had already changed a row to ``processing`` and disappeared
+    before persisting a terminal result.
+    """
+    from . import message_dispatch
+
+    now = message_dispatch.utc_now()
+    lock_deadline = now - timedelta(seconds=message_dispatch.settings.outbox_lock_seconds)
+    query = (
+        db.query(message_dispatch.TicketOutboundMessage)
+        .filter(
+            message_dispatch.TicketOutboundMessage.channel.in_(
+                message_dispatch.external_channel_values()
+            ),
+            message_dispatch.TicketOutboundMessage.status
+            == message_dispatch.MessageStatus.processing,
+            or_(
+                message_dispatch.TicketOutboundMessage.locked_at.is_(None),
+                message_dispatch.TicketOutboundMessage.locked_at < lock_deadline,
+            ),
+        )
+        .order_by(message_dispatch.TicketOutboundMessage.created_at.asc())
+        .limit(limit or message_dispatch.settings.outbox_batch_size)
+    )
+    bind = getattr(db, "bind", None)
+    if bind is not None and bind.dialect.name.startswith("postgresql"):
+        query = query.with_for_update(skip_locked=True)
+    rows = query.all()
+    if not rows:
+        return 0
+
+    for message in rows:
+        message_dispatch._mark_retry(
+            message,
+            "Previous outbound worker lease expired before a terminal result",
+            failure_code="worker_lease_expired",
+        )
+        event_type = (
+            message_dispatch.EventType.outbound_dead
+            if message.status == message_dispatch.MessageStatus.dead
+            else message_dispatch.EventType.outbound_retry_scheduled
+        )
+        message_dispatch.log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=event_type,
+            note="Expired outbound processing attempt was recovered",
+            payload={
+                "message_id": message.id,
+                "failure_code": message.failure_code,
+                "retry_count": message.retry_count,
+                "previous_worker": getattr(message, "locked_by", None),
+            },
+        )
+    db.commit()
+    message_dispatch.LOGGER.warning(
+        "outbound_stale_processing_recovered",
+        extra={"event_payload": {"count": len(rows)}},
+    )
+    return len(rows)
+
+
+def _dispatch_pending_messages_with_attempt_boundary(
+    db: Any,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+):
     from . import message_dispatch
 
     blocked = message_dispatch._external_dispatch_block_reason()
@@ -79,6 +153,7 @@ def _dispatch_pending_messages_with_attempt_boundary(db: Any, *, limit: int | No
         )
         return []
 
+    reclaim_stale_processing_messages(db, limit=limit)
     claimed = message_dispatch.claim_pending_messages(db, limit=limit, worker_id=worker_id)
     processed: list[Any] = []
     for message in claimed:
@@ -93,9 +168,8 @@ def _dispatch_pending_messages_with_attempt_boundary(db: Any, *, limit: int | No
                 processed.append(recovered)
             continue
         processed.append(message)
-        # Commit after each external dispatch attempt to keep the previous
-        # provider-idempotency/crash-recovery semantics while preventing one bad
-        # message from aborting the whole worker cycle.
+        # Commit after each external dispatch attempt to retain the stable
+        # idempotency boundary and prevent one failure from aborting the batch.
         db.commit()
     return processed
 
