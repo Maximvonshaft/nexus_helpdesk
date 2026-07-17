@@ -10,6 +10,7 @@ authority:
   ui_pr: 754
   ui_pr_state: merged
   residue_followup_branch: work/754-remove-ui-duplication-residue
+  residue_followup_pr: 762
   rule: >
     This is the sole repository rationalization ledger. It records physical
     retirement and delegates product, transport, authorization, presentation
