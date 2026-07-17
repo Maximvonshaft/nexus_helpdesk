@@ -117,7 +117,7 @@ test('Channels is a canonical route in the shared shell and keeps identifiers se
   await page.goto('/channels')
 
   await expect(page).toHaveURL(/\/channels$/)
-  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '渠道' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '渠道管理', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('heading', { level: 1, name: '渠道管理' })).toBeVisible()
   await expect(page.getByText('WhatsApp 主线路')).toBeVisible()
   await expect(page.getByText('•••• 1234')).toBeVisible()
@@ -131,15 +131,15 @@ test('Runtime primary hierarchy stays operational while model diagnostics remain
   await page.goto('/runtime')
 
   await expect(page).toHaveURL(/\/runtime$/)
-  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '运行与审计' })).toHaveAttribute('aria-current', 'page')
-  await expect(page.getByRole('heading', { level: 1, name: '运行与审计' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '服务就绪状态' })).toBeVisible()
-  await expect(page.getByText('自动处理已启用')).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '系统运行', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1, name: '系统运行' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '系统状态' })).toBeVisible()
+  await expect(page.getByText('处理方式').locator('..')).toContainText('自动处理')
   await expect(page.getByText('internal-model-name')).toBeHidden()
   await expect(page.getByText('internal-rag-model-name')).toBeHidden()
   await expect(page.getByText('会话总量').locator('..')).toContainText('120')
 
-  await page.getByText('技术运行详情').click()
+  await page.getByRole('button', { name: /系统信息/ }).click()
   await expect(page.getByText('internal-model-name')).toBeVisible()
 })
 
@@ -154,5 +154,5 @@ test('supporting routes fail closed for an account without the required capabili
   })
 
   await page.goto('/runtime')
-  await expect(page.getByRole('heading', { level: 1, name: '当前账号无权访问此页面' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '无权访问此页面' })).toBeVisible()
 })

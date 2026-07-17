@@ -17,7 +17,8 @@ export type AiDebugRun = {
   created_at?: string | null
 }
 
-export type AiDebugBundle = Record<string, any>
+export type AiDebugBundle = Record<string, unknown>
+export type AiDebugFinding = Record<string, unknown> & { id?: number }
 
 export const aiDebugApi = {
   listDebugRuns: (params: {
@@ -40,12 +41,12 @@ export const aiDebugApi = {
   getDebugBundle: (aiTurnId: number) => apiRequest<AiDebugBundle>(`/api/webchat/admin/ai-turns/${aiTurnId}/debug-bundle`, {
     requestIdPrefix: 'runtime-audit',
   }),
-  createFinding: (aiTurnId: number, payload: Record<string, unknown>) => apiRequest<Record<string, any>>(`/api/webchat/admin/ai-turns/${aiTurnId}/test-findings`, {
+  createFinding: (aiTurnId: number, payload: Record<string, unknown>) => apiRequest<AiDebugFinding>(`/api/webchat/admin/ai-turns/${aiTurnId}/test-findings`, {
     method: 'POST',
     body: JSON.stringify(payload),
     requestIdPrefix: 'runtime-audit',
   }),
-  createEvalCase: (findingId: number) => apiRequest<Record<string, any>>(`/api/webchat/admin/test-findings/${findingId}/eval-case`, {
+  createEvalCase: (findingId: number) => apiRequest<Record<string, unknown>>(`/api/webchat/admin/test-findings/${findingId}/eval-case`, {
     method: 'POST',
     requestIdPrefix: 'runtime-audit',
   }),

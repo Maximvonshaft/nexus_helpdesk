@@ -224,15 +224,15 @@ async function mockAuthenticatedConsole(page: Page) {
 
 test('login page renders', async ({ page }) => {
   await page.goto('/login')
-  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '登录' })).toBeVisible()
   await expect(page.getByLabel('账号')).toBeVisible()
-  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '登录' })).toBeVisible()
 })
 
 test('unauthenticated protected route redirects back to login', async ({ page }) => {
   await page.goto('/webchat')
   await expect(page).toHaveURL(/\/login$/)
-  await expect(page.getByText(/登录状态只保存在当前浏览器会话中/)).toBeVisible()
+  await expect(page.getByText('请勿在共享设备保存密码。')).toBeVisible()
 })
 
 test('canonical workspace renders the unified queue, evidence, and delivery truth', async ({ page }) => {
@@ -240,14 +240,13 @@ test('canonical workspace renders the unified queue, evidence, and delivery trut
   await page.goto('/workspace')
 
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '事实与证据' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '已知信息' })).toBeVisible()
   const queueRow = page.getByRole('button', { name: /ticket:11/ })
-  const caseStatus = page.getByLabel('案例状态')
   await expect(queueRow).toBeVisible()
-  await expect(caseStatus.getByText('SLA 即将超时')).toBeVisible()
-  await expect(page.locator('.operator-evidence-panel').getByText('客户主张').first()).toBeVisible()
-  await expect(page.locator('.operator-message').getByText('等待发送')).toBeVisible()
-  await expect(page.getByText('回复始终经过服务端权限、事实和安全检查。')).toBeVisible()
+  await expect(page.getByText('即将超时', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('客户通知', { exact: true }).first()).toBeVisible()
+  await expect(page.getByLabel('送达状态').getByText('等待发送')).toBeVisible()
+  await expect(page.getByText('服务端最终授权')).toHaveCount(0)
   await expect(page.getByText('业务结果已确认')).toHaveCount(0)
 })
 
@@ -262,7 +261,7 @@ test('canonical supporting routes render in one application shell', async ({ pag
   await mockAuthenticatedConsole(page)
 
   await page.goto('/knowledge')
-  await expect(page.getByRole('heading', { level: 1, name: '知识与处理规则' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Delivery status/ })).toBeVisible()
 
   await page.goto('/channels')
@@ -271,11 +270,11 @@ test('canonical supporting routes render in one application shell', async ({ pag
   await expect(page.getByText('Disabled history')).toHaveCount(0)
 
   await page.goto('/runtime')
-  await expect(page.getByRole('heading', { level: 1, name: '运行与审计' })).toBeVisible()
-  await expect(page.getByText('自动处理已启用')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '系统运行' })).toBeVisible()
+  await expect(page.getByText('处理方式').locator('..')).toContainText('自动处理')
 
   await page.goto('/control-tower')
-  await expect(page.getByRole('heading', { level: 1, name: '运营总览' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '运营监控' })).toBeVisible()
 })
 
 test('runtime failure never presents normal operation', async ({ page }) => {
@@ -286,26 +285,26 @@ test('runtime failure never presents normal operation', async ({ page }) => {
     body: JSON.stringify({ detail: 'runtime unavailable' }),
   }))
   await page.goto('/runtime')
-  await expect(page.getByText('不可用', { exact: true })).toBeVisible()
-  await expect(page.getByText('正常', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('alert').filter({ hasText: '无法读取系统状态' })).toBeVisible()
+  await expect(page.getByText('无运行提醒')).toHaveCount(0)
 })
 
 test('queued controlled action remains pending and hides technical id by default', async ({ page }) => {
   await mockAuthenticatedConsole(page)
   await page.goto('/workspace')
 
-  await page.getByLabel('选择动作').selectOption('work_order')
-  await page.getByLabel('运单 必填').fill('WB123456')
-  await page.getByLabel('客户电话 必填').fill('+41790000000')
-  await page.getByLabel('催派说明 必填').fill('Follow up delivery')
+  await page.getByRole('combobox', { name: '选择操作' }).click()
+  await page.getByRole('option', { name: '创建催派工单' }).click()
+  await page.getByRole('textbox', { name: '运单', exact: true }).fill('WB123456')
+  await page.getByRole('textbox', { name: '客户电话', exact: true }).fill('+41790000000')
+  await page.getByRole('textbox', { name: '催派说明', exact: true }).fill('Follow up delivery')
   await page.getByRole('button', { name: '创建催派工单' }).click()
 
-  const result = page.locator('.operator-action-receipt').filter({ hasText: '请求已排队' })
+  const result = page.getByRole('status').filter({ hasText: '请求已排队' })
   await expect(result).toBeVisible()
-  await expect(result).not.toHaveClass(/success/)
-  await expect(page.getByText('Job #91')).not.toBeVisible()
-  await result.getByText('请求追踪').click()
-  await expect(page.getByText('Job #91')).toBeVisible()
+  await expect(page.getByText('#91', { exact: true })).not.toBeVisible()
+  await result.getByRole('button', { name: '处理编号' }).click()
+  await expect(page.getByText('#91', { exact: true })).toBeVisible()
 })
 
 test('mobile workspace navigation and primary controls meet the 44px target floor', async ({ page }) => {
@@ -313,10 +312,10 @@ test('mobile workspace navigation and primary controls meet the 44px target floo
   await mockAuthenticatedConsole(page)
   await page.goto('/workspace')
 
-  const mobileButtons = page.locator('.operator-mobile-nav').getByRole('button')
-  await expect(mobileButtons.first()).toBeVisible()
-  for (let index = 0; index < await mobileButtons.count(); index += 1) {
-    expect((await mobileButtons.nth(index).boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  const mobileTabs = page.getByRole('tab')
+  await expect(mobileTabs.first()).toBeVisible()
+  for (let index = 0; index < await mobileTabs.count(); index += 1) {
+    expect((await mobileTabs.nth(index).boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
   }
   expect((await page.getByRole('button', { name: '退出' }).boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
 })
@@ -325,7 +324,7 @@ test('knowledge editing protects drafts and requires an explicit publication rev
   await mockAuthenticatedConsole(page)
   await page.goto('/knowledge')
 
-  const title = page.getByLabel('知识标题 必填')
+  const title = page.getByRole('textbox', { name: '知识标题', exact: true })
   await expect(title).toHaveValue('Delivery status')
   await title.fill('Edited delivery status')
 
@@ -336,10 +335,10 @@ test('knowledge editing protects drafts and requires an explicit publication rev
   await expect(title).toHaveValue('Return policy')
 
   await title.fill('Return policy — reviewed')
-  await page.getByRole('button', { name: '审核并发布' }).click()
-  const review = page.getByRole('dialog', { name: '审核并发布知识' })
+  await page.getByRole('button', { name: '发布', exact: true }).click()
+  const review = page.getByRole('dialog', { name: '发布知识' })
   await expect(review).toBeVisible()
   await expect(review.getByText('Return policy — reviewed')).toBeVisible()
   await expect(review.getByText('Can I return my parcel?')).toBeVisible()
-  await expect(review.getByText(/知识同步完成才会影响后续客服处理/)).toBeVisible()
+  await expect(review.getByText('提交后等待发布状态更新。')).toBeVisible()
 })

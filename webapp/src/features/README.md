@@ -1,26 +1,13 @@
 # features layer
 
-The `features` layer owns user-facing business workflows.
+The `features` layer owns the current user-facing workflows:
 
-Target feature domains:
+- `operator-workspace`;
+- `knowledge`;
+- `channels`;
+- `runtime`;
+- `control-tower`.
 
-- workspace
-- webchat-admin
-- ai-governance
-- runtime-control
-- channel-accounts
-- users-admin
-- bulletins
+Each domain has one implementation and one lazy boundary. Generic controls come directly from MUI; bounded operational states come from `app/OperatorPresentation.tsx`; HTTP calls delegate to the canonical `lib/apiClient.ts` transport through domain adapters.
 
-This foundation branch does not move existing route modules yet. Future PRs should extract one feature at a time with smoke evidence.
-
-Allowed dependencies:
-
-- `entities`
-- `shared`
-
-Not allowed:
-
-- importing from another feature's private internals
-- owning generic primitives that belong in `shared/ui`
-- changing backend API contracts without API review
+A feature must not import another feature's private internals, create a second route/store/API authority, add route CSS, or create generic Button/Input/Dialog wrappers.

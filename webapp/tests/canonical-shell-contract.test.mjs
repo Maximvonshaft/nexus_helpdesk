@@ -28,39 +28,55 @@ test('workspace route consumes the server-owned current scope projection', () =>
   assert.doesNotMatch(route, /tenantKey:\s*['"][^'"]+['"]/)
 })
 
-test('one shared application shell owns product identity, navigation, session and scope selection', () => {
+test('one MUI application shell owns product identity, navigation, session and scope selection', () => {
   const shell = read('src/app/AppShell.tsx')
   const navigation = read('src/app/navigation.ts')
   const navigationView = read('src/app/AppNavigation.tsx')
-  const styles = read('src/app/app-shell.css')
+  const theme = read('src/theme/nexusTheme.ts')
+  const provider = read('src/theme/NexusThemeProvider.tsx')
 
   assert.match(shell, /Nexus OSR/)
-  assert.match(shell, /客服与运营工作台/)
+  assert.doesNotMatch(shell, /客服与运营工作台/)
   assert.match(shell, /工作范围/)
   assert.match(shell, /跳到主要内容/)
   assert.match(shell, /scope\.country_code/)
   assert.match(shell, /channelLabel\(scope\.channel_key\)/)
+  assert.match(shell, /<AppBar/)
+  assert.match(shell, /<Toolbar/)
   assert.match(navigationView, /APP_NAVIGATION\.filter/)
+  assert.match(navigationView, /from '@mui\/material'/)
+  assert.match(navigationView, /from '@tanstack\/react-router'/)
   for (const route of ['/workspace', '/knowledge', '/channels', '/runtime', '/control-tower']) {
     assert.match(navigation, new RegExp(route.replace('/', '\\/')))
   }
-  assert.match(styles, /\.nd-app-content > \.operator-workspace \.operator-app-header/)
-  assert.match(styles, /\.nd-app-content > \.operator-workspace \.operator-scope/)
+  assert.match(theme, /MuiButton:/)
+  assert.match(theme, /minHeight:\s*44/)
+  assert.match(theme, /prefers-reduced-motion/)
+  assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
+  assert.match(provider, /<CssBaseline \/>/)
+  assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'app', 'app-shell.css')), false)
   assert.doesNotMatch(shell, />\s*\{scope\.tenant_key\}\s*</)
   assert.doesNotMatch(shell, />\s*\{scope\.tenant_hash\}\s*</)
 })
 
-test('normal operators fail closed when no authorized scope exists', () => {
+test('normal operators fail closed with concise recovery copy when no scope exists', () => {
   const route = read('src/routes/workspace.tsx')
-  assert.match(route, /当前账号没有可用工作范围/)
-  assert.match(route, /系统不会自动猜测、扩大或允许手工输入 Tenant、国家和渠道/)
+  assert.match(route, /未分配工作范围/)
+  assert.match(route, /请联系管理员。/)
+  assert.match(route, /无法读取工作范围/)
+  assert.match(route, /请重新加载。/)
+  assert.doesNotMatch(route, /系统不会自动扩大|手工猜测|服务端授权/)
   assert.doesNotMatch(route, /requires_explicit_admin_scope|LegacyWorkspaceFallback/)
-  assert.match(route, /不会回退到手工 Tenant、国家或渠道/)
 })
 
-test('canonical shell controls meet target and reduced-motion contracts', () => {
-  const styles = read('src/app/app-shell.css')
-  assert.match(styles, /min-height:\s*var\(--nd-control-height-md\)/)
-  assert.match(styles, /:focus-visible/)
-  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/)
+test('canonical shell has one theme authority and no route stylesheet authority', () => {
+  const main = read('src/main.tsx')
+  const sourcePaths = [
+    'src/styles/tokens.css',
+    'src/styles/components.css',
+    'src/app/app-shell.css',
+  ]
+  for (const path of sourcePaths) assert.equal(existsSync(join(WEBAPP_ROOT, path)), false)
+  assert.equal((main.match(/NexusThemeProvider/g) ?? []).length, 2)
+  assert.doesNotMatch(main, /tokens\.css|components\.css|app-shell\.css/)
 })

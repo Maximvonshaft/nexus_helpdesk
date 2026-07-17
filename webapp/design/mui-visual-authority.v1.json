@@ -1,0 +1,49 @@
+{
+  "schema": "nexus.mui-visual-authority.v1",
+  "version": "mui_visual_authority.v3",
+  "work_item": 753,
+  "decision": {
+    "status": "exact_head_verification_complete",
+    "selected_framework": "Material UI",
+    "selected_package": "@mui/material",
+    "selected_version": "9.2.0",
+    "license": "MIT"
+  },
+  "runtime_packages": {
+    "@mui/material": "9.2.0",
+    "@mui/icons-material": "9.2.0",
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "react-is": "18.3.1"
+  },
+  "authorities": {
+    "theme": "webapp/src/theme/nexusTheme.ts",
+    "provider": "webapp/src/theme/NexusThemeProvider.tsx",
+    "operator_presentation": "webapp/src/app/OperatorPresentation.tsx"
+  },
+  "retired_paths": [
+    "webapp/src/components/ui",
+    "webapp/src/styles/tokens.css",
+    "webapp/src/styles/components.css",
+    "webapp/src/styles/auth.css",
+    "webapp/src/app/app-shell.css",
+    "webapp/src/features/operator-workspace/operator-workspace.css",
+    "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
+    "webapp/src/features/admin-routes/admin-routes.css",
+    "webapp/src/features/knowledge/knowledge.css",
+    "webapp/src/features/runtime/runtime-evidence-audit.css"
+  ],
+  "verification": {
+    "package_lock": "exact",
+    "architecture": "passed",
+    "lint": "passed",
+    "typecheck": "passed",
+    "tests": "passed",
+    "build": "passed",
+    "browser": "passed"
+  },
+  "react_compatibility": {
+    "react": "18.3.1",
+    "react_is_override": "18.3.1"
+  }
+}

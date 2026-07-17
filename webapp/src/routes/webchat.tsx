@@ -1,3 +1,4 @@
+import { Box, CircularProgress, Stack, Typography } from '@mui/material'
 import { useEffect } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
@@ -34,20 +35,18 @@ function WebchatCompatibilityRedirect() {
       return () => { active = false }
     }
 
-    // The canonical workspace resolves the session after its tenant, country,
-    // and channel scope is authoritative.
     if (active) replaceWithWorkspace(legacySession)
 
     return () => { active = false }
   }, [navigate])
 
   return (
-    <main className="content" aria-busy="true">
-      <section className="empty-state" role="status" aria-live="polite">
-        <strong>正在进入新的工作页面…</strong>
-        <p>旧客服后台入口已合并到统一操作员后台。</p>
-      </section>
-    </main>
+    <Box component="main" aria-busy="true" sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}>
+      <Stack role="status" aria-live="polite" alignItems="center" spacing={1.5}>
+        <CircularProgress size={30} />
+        <Typography variant="subtitle1">正在跳转…</Typography>
+      </Stack>
+    </Box>
   )
 }
 

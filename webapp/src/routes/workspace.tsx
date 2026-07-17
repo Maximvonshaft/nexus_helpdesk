@@ -1,11 +1,9 @@
+import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/app/AppShell'
-import '@/app/app-shell.css'
-import { Button } from '@/components/ui/Button'
-import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
@@ -16,12 +14,12 @@ const LazyOperatorWorkspacePage = lazy(() => import('@/features/operator-workspa
 
 function WorkspaceLoading() {
   return (
-    <main className="operator-workspace" aria-busy="true">
-      <section className="operator-session-state" role="status" aria-live="polite">
-        <strong>正在加载操作员工作台…</strong>
-        <p>正在载入统一队列、案例状态和受控动作界面。</p>
-      </section>
-    </main>
+    <Box sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '52vh', p: 3 }} aria-busy="true">
+      <Stack role="status" alignItems="center" spacing={2} aria-live="polite">
+        <CircularProgress size={34} />
+        <Typography variant="subtitle1">正在加载…</Typography>
+      </Stack>
+    </Box>
   )
 }
 
@@ -59,13 +57,17 @@ function AuthorizedWorkspaceRoutePage() {
 
   if (session.isError) {
     return (
-      <main className="nd-app-boundary-state">
-        <ErrorSummary
-          title="无法读取当前账号"
-          errors={['登录状态可能已失效，请重新登录。']}
-          action={<Button onClick={handleLogout}>返回登录</Button>}
-        />
-      </main>
+      <Box component="main" sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}>
+        <Alert
+          severity="error"
+          variant="outlined"
+          sx={{ maxWidth: 560, width: '100%' }}
+          action={<Button color="inherit" onClick={handleLogout}>返回登录</Button>}
+        >
+          <Typography variant="subtitle1">无法读取账号</Typography>
+          <Typography variant="body2">请重新登录。</Typography>
+        </Alert>
+      </Box>
     )
   }
 
@@ -79,13 +81,16 @@ function AuthorizedWorkspaceRoutePage() {
         userLabel={session.data?.display_name || session.data?.username || '操作员'}
         onLogout={handleLogout}
       >
-        <main className="nd-app-boundary-state">
-          <ErrorSummary
-            title="无法读取授权工作范围"
-            errors={['服务器未能返回当前账号的授权范围。系统不会回退到手工 Tenant、国家或渠道。']}
-            action={<Button onClick={() => scopes.refetch()}>重新加载</Button>}
-          />
-        </main>
+        <Box sx={{ p: { xs: 2, md: 4 } }}>
+          <Alert
+            severity="error"
+            variant="outlined"
+            action={<Button color="inherit" onClick={() => scopes.refetch()}>重新加载</Button>}
+          >
+            <Typography variant="subtitle1">无法读取工作范围</Typography>
+            <Typography variant="body2">请重新加载。</Typography>
+          </Alert>
+        </Box>
       </AppShell>
     )
   }
@@ -98,12 +103,16 @@ function AuthorizedWorkspaceRoutePage() {
         userLabel={session.data?.display_name || session.data?.username || '操作员'}
         onLogout={handleLogout}
       >
-        <main className="nd-app-boundary-state">
-          <section className="empty-state" role="status" aria-labelledby="workspace-no-scope-title">
-            <h1 id="workspace-no-scope-title">当前账号没有可用工作范围</h1>
-            <p>请联系管理员分配授权范围。系统不会自动猜测、扩大或允许手工输入 Tenant、国家和渠道。</p>
-          </section>
-        </main>
+        <Box sx={{ p: { xs: 2, md: 4 } }}>
+          <Alert severity="warning" variant="outlined" aria-labelledby="workspace-no-scope-title">
+            <Typography id="workspace-no-scope-title" component="h1" variant="h3">
+              未分配工作范围
+            </Typography>
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
+              请联系管理员。
+            </Typography>
+          </Alert>
+        </Box>
       </AppShell>
     )
   }

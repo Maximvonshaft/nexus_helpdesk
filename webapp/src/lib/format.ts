@@ -30,7 +30,7 @@ const displayTextLabels: Record<string, string> = {
   'check latest speedaf evidence before quoting parcel status': '查询最新 Speedaf 证据后再说明物流状态',
   'review latest message and evidence before replying': '核实最新消息和证据后回复',
   'handle active customer handoff': '处理当前人工接管请求',
-  'ai paused; review handoff and decide reply/resume': 'AI 已暂停，请核实接管原因并决定人工回复或恢复 AI',
+  'ai paused; review handoff and decide reply/resume': '自动回复已暂停，请核实接手原因并决定人工回复或恢复自动回复',
 }
 
 const valueLabels: Record<string, string> = {

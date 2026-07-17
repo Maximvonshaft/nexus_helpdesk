@@ -1,20 +1,12 @@
 # app layer
 
-The `app` layer owns application bootstrapping, providers, router assembly, shell wiring, and global boundaries.
+The `app` layer owns the single Nexus application frame.
 
-This initial foundation commit is intentionally behavior-neutral. Existing runtime code remains in its current locations until later reviewed migration PRs.
+Current authorities:
 
-Allowed responsibilities:
+- `main.tsx` mounts one query client, router and `NexusThemeProvider`;
+- `AppShell.tsx` owns the authenticated shell, account and work-scope controls;
+- `navigation.ts` owns capability-derived navigation;
+- `OperatorPresentation.tsx` owns bounded operational empty, error, loading, fact-grid and tone presentation.
 
-- app providers
-- router wiring
-- global shell composition
-- app-level error/loading boundaries
-- bootstrap-only code
-
-Not allowed:
-
-- feature business logic
-- domain model code
-- direct backend API implementation details
-- WebChat visitor widget runtime code
+The layer must not own feature business logic, backend transport implementations, a second theme, or route-private visual systems.

@@ -44,20 +44,23 @@ async function mockAuth(page: Page, options?: { rejectLogin?: boolean }) {
   await page.route('**/api/**', (route) => fulfillAuth(route, options))
 }
 
-test('Login exposes a direct operator purpose, semantic form, visible labels, and password reveal', async ({ page }) => {
+test('Login is a concise semantic form with visible labels and password reveal', async ({ page }) => {
   await mockAuth(page)
   await page.goto('/login')
 
   await expect(page.getByRole('main')).toBeVisible()
-  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()
-  await expect(page.getByRole('heading', { level: 2, name: '客服与运营工作台' })).toBeVisible()
-  await expect(page.getByText('可见国家、渠道和操作权限由当前账号决定。')).toBeVisible()
-  await expect(page.getByText('从可信事实到可验证结案')).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1, name: '登录' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: 'Nexus OSR' })).toBeVisible()
+  await expect(page.getByText('客服与运营工作台')).toHaveCount(0)
+  await expect(page.getByText(/系统会根据账号权限/)).toHaveCount(0)
   await expect(page.locator('form')).toHaveCount(1)
-  await expect(page.getByLabel('账号 必填')).toBeVisible()
+  const username = page.getByRole('textbox', { name: '账号', exact: true })
+  await expect(username).toBeVisible()
+  await expect(username).toHaveAttribute('required', '')
 
-  const password = page.getByLabel('密码 必填')
+  const password = page.getByRole('textbox', { name: '密码', exact: true })
   const reveal = page.getByRole('button', { name: '显示密码' })
+  await expect(password).toHaveAttribute('required', '')
   await expect(password).toHaveAttribute('type', 'password')
   await expect(reveal).toHaveAttribute('aria-pressed', 'false')
   await reveal.click()
@@ -69,9 +72,9 @@ test('Enter submits through one root destination and reaches the protected works
   await mockAuth(page)
   await page.goto('/login')
 
-  await page.getByLabel('账号 必填').fill('operator')
-  await page.getByLabel('密码 必填').fill('correct-password')
-  await page.getByLabel('密码 必填').press('Enter')
+  await page.getByRole('textbox', { name: '账号', exact: true }).fill('operator')
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill('correct-password')
+  await page.getByRole('textbox', { name: '密码', exact: true }).press('Enter')
 
   await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/)
   await expect.poll(() => page.evaluate((key) => sessionStorage.getItem(key), TOKEN_KEY)).toBe('operator-token')
@@ -81,12 +84,12 @@ test('Login failure is bounded, announced, and focused without exposing backend 
   await mockAuth(page, { rejectLogin: true })
   await page.goto('/login')
 
-  await page.getByLabel('账号 必填').fill('operator')
-  await page.getByLabel('密码 必填').fill('wrong-password')
-  await page.getByRole('button', { name: '登录运营工作台' }).click()
+  await page.getByRole('textbox', { name: '账号', exact: true }).fill('operator')
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill('wrong-password')
+  await page.getByRole('button', { name: '登录' }).click()
 
   const alert = page.getByRole('alert')
-  await expect(alert).toHaveText('无法登录。请检查账号和密码后重试。')
+  await expect(alert).toHaveText('账号或密码错误。')
   await expect(alert).toBeFocused()
   await expect(page.getByText('raw-private-backend-error')).toHaveCount(0)
 })
@@ -98,10 +101,10 @@ test('375px Login has no horizontal overflow and primary controls meet target si
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
-  const username = await page.getByLabel('账号 必填').boundingBox()
-  const password = await page.getByLabel('密码 必填').boundingBox()
+  const username = await page.getByRole('textbox', { name: '账号', exact: true }).locator('xpath=..').boundingBox()
+  const password = await page.getByRole('textbox', { name: '密码', exact: true }).locator('xpath=..').boundingBox()
   const reveal = await page.getByRole('button', { name: '显示密码' }).boundingBox()
-  const submit = await page.getByRole('button', { name: '登录运营工作台' }).boundingBox()
+  const submit = await page.getByRole('button', { name: '登录' }).boundingBox()
 
   expect(username?.height ?? 0).toBeGreaterThanOrEqual(44)
   expect(password?.height ?? 0).toBeGreaterThanOrEqual(44)

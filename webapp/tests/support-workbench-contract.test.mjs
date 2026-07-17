@@ -6,113 +6,52 @@ import { resolve } from 'node:path'
 const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 const exists = (path) => existsSync(resolve(root, path))
+const workspace = [
+  'src/features/operator-workspace/OperatorWorkspacePage.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
+  'src/features/operator-workspace/operatorWorkspaceState.ts',
+].map(read).join('\n')
 
-const router = read('src/router.tsx')
-const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
-const knowledge = read('src/features/knowledge/KnowledgePage.tsx')
-const channels = read('src/features/channels/ChannelsPage.tsx')
-const runtime = read('src/features/runtime/RuntimePage.tsx')
-const controlTower = read('src/features/control-tower/ControlTowerPage.tsx')
-const canonicalRoutes = read('src/app/canonicalRoutes.ts')
-const webchatRoute = read('src/routes/webchat.tsx')
-const confirmDialog = read('src/components/ui/ConfirmDialog.tsx')
-const componentCss = read('src/styles/components.css')
-const routeFiles = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
-
-
-test('production router exposes one canonical domain route per supported backend job', () => {
-  assert.deepEqual(routeFiles, [
-    'channels.tsx',
-    'control-tower.tsx',
-    'index.tsx',
-    'knowledge.tsx',
-    'login.tsx',
-    'root.tsx',
-    'runtime.tsx',
-    'webchat.tsx',
-    'workspace.tsx',
-  ])
-  for (const routeName of [
-    'LoginRoute',
-    'IndexRoute',
-    'WorkspaceRoute',
-    'KnowledgeRoute',
-    'ChannelsRoute',
-    'RuntimeRoute',
-    'ControlTowerRoute',
-    'WebchatRoute',
-  ]) {
-    assert.match(router, new RegExp(routeName))
-  }
+test('router exposes only the owned canonical route files', () => {
+  const actual = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
+  assert.deepEqual(actual, ['channels.tsx', 'control-tower.tsx', 'index.tsx', 'knowledge.tsx', 'login.tsx', 'root.tsx', 'runtime.tsx', 'webchat.tsx', 'workspace.tsx'])
 })
 
-
-test('workspace is the only conversation queue, reply, handoff and governed-action product surface', () => {
-  assert.match(workspace, /统一队列/)
-  assert.match(workspace, /客户沟通/)
-  assert.match(workspace, /operatorWorkspaceApi\.reply/)
-  assert.match(workspace, /webchatAcceptHandoff/)
-  assert.match(workspace, /webchatForceTakeover/)
-  assert.match(workspace, /webchatReleaseHandoff/)
-  assert.match(workspace, /webchatResumeAi/)
-  assert.match(workspace, /querySpeedafWaybills/)
-  assert.match(workspace, /createSpeedafWorkOrder/)
-  assert.match(workspace, /submitSpeedafAddressUpdate/)
-  assert.match(workspace, /previewSpeedafCancel/)
-  assert.match(workspace, /confirmSpeedafCancel/)
+test('workspace is the sole queue, conversation and governed-action surface', () => {
+  const api = read('src/lib/operatorWorkspaceApi.ts')
+  for (const text of ['待处理任务', '客户沟通', '处理进度', '已知信息', '下一步', '接手处理', '确认申请取消']) assert.match(workspace, new RegExp(text))
+  for (const name of ['operatorWorkspaceApi.reply', 'webchatAcceptHandoff', 'querySpeedafWaybills', 'createSpeedafWorkOrder', 'previewSpeedafCancel', 'confirmSpeedafCancel']) assert.match(workspace, new RegExp(name.replace('.', '\\.')))
+  assert.match(workspace, /mergeLatestWorkspaceThread/)
+  assert.match(workspace, /conversationEvents/)
+  assert.match(api, /before_message_id/)
+  assert.doesNotMatch(workspace + api, /workspace-v2|thread-v2|thread-page/)
 })
 
-
-test('knowledge is a complete maintainable route with draft, review, publication and retrieval evidence', () => {
-  assert.match(knowledge, /知识与处理规则/)
-  assert.match(knowledge, /客户会怎么问/)
-  assert.match(knowledge, /答案事实与处理规则/)
-  assert.match(knowledge, /保存草稿/)
-  assert.match(knowledge, /审核并发布/)
-  assert.match(knowledge, /测试知识命中/)
-  assert.match(knowledge, /supportApi\.knowledgeItems/)
-  assert.match(knowledge, /supportApi\.createKnowledgeItem/)
-  assert.match(knowledge, /supportApi\.updateKnowledgeItem/)
-  assert.match(knowledge, /supportApi\.publishKnowledgeItem/)
-  assert.match(knowledge, /supportApi\.testKnowledgeRetrieval/)
-  assert.match(knowledge, /beforeunload/)
-  assert.match(knowledge, /放弃未保存的修改/)
-  assert.match(confirmDialog, /@radix-ui\/react-dialog/)
-  assert.match(componentCss, /\.nd-dialog__overlay/)
+test('knowledge is one capability-aware implementation', () => {
+  const page = read('src/features/knowledge/KnowledgePage.tsx')
+  const route = read('src/routes/knowledge.tsx')
+  assert.match(page, /KnowledgePage\(\{ canManage \}/)
+  assert.match(route, /LazyKnowledgePage canManage/)
+  assert.equal(exists('src/features/knowledge/KnowledgeReadOnlyPage.tsx'), false)
+  for (const text of ['知识与流程', '标准答案与处理步骤', '搜索测试', '发布状态']) assert.match(page, new RegExp(text))
 })
 
-
-test('channels and runtime are separate bounded administrative domains', () => {
-  assert.match(channels, /渠道管理/)
-  assert.match(channels, /supportApi\.channelAccounts/)
-  assert.match(channels, /supportApi\.whatsappNativeStatus/)
-  assert.match(channels, /maskPhone/)
-  assert.match(runtime, /运行与审计/)
-  assert.match(runtime, /supportApi\.providerRuntimeStatus/)
-  assert.match(runtime, /supportApi\.supportConversationMetrics/)
-  assert.match(runtime, /TechnicalDetails/)
-  assert.doesNotMatch(runtime, /模型名称/)
+test('MUI and one bounded presentation module are the only generic visual authorities', () => {
+  const theme = read('src/theme/nexusTheme.ts')
+  const presentation = read('src/app/OperatorPresentation.tsx')
+  assert.match(theme, /createTheme/)
+  assert.match(presentation, /OperatorEmptyState/)
+  assert.match(presentation, /OperatorErrorNotice/)
+  assert.equal(exists('src/components/ui'), false)
+  for (const path of ['src/styles/tokens.css', 'src/styles/components.css', 'src/styles/auth.css', 'src/app/app-shell.css', 'src/features/operator-workspace/operator-workspace.css', 'src/features/knowledge/knowledge.css']) assert.equal(exists(path), false, path)
 })
 
-
-test('control tower is a management projection that drills into canonical routes', () => {
-  assert.match(controlTower, /supportApi\.controlTower/)
-  assert.match(controlTower, /canonicalAppHref/)
-  assert.match(canonicalRoutes, /\/workspace/)
-  assert.match(canonicalRoutes, /\/channels/)
-  assert.match(canonicalRoutes, /\/runtime/)
-  assert.match(canonicalRoutes, /\/knowledge/)
-  assert.doesNotMatch(controlTower, /second queue/i)
-})
-
-
-test('webchat remains compatibility-only and the competing support console cannot return', () => {
-  assert.match(webchatRoute, /WebchatCompatibilityRedirect/)
-  assert.match(webchatRoute, /旧客服后台入口已合并到统一操作员后台/)
-  assert.match(webchatRoute, /workspace\?session=/)
-  assert.doesNotMatch(webchatRoute, /supportConversationDetail/)
-  assert.doesNotMatch(webchatRoute, /support-console/)
-  assert.equal(exists('src/features/support-console/SupportConsolePage.tsx'), false)
-  assert.equal(exists('src/features/support-console/lazy.tsx'), false)
-  assert.equal(exists('src/features/support-console/support-console.css'), false)
+test('webchat remains a concise compatibility redirect only', () => {
+  const source = read('src/routes/webchat.tsx')
+  assert.match(source, /WebchatCompatibilityRedirect/)
+  assert.match(source, /正在跳转/)
+  assert.match(source, /workspace\?session=/)
+  assert.doesNotMatch(source, /supportConversationDetail|support-console|旧客服后台入口已合并/)
 })

@@ -75,17 +75,17 @@ test('Knowledge uses operator language and guards an unsaved draft', async ({ pa
   await page.goto('/knowledge')
 
   await expect(page).toHaveURL(/\/knowledge$/)
-  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '知识' })).toHaveAttribute('aria-current', 'page')
-  await expect(page.getByRole('heading', { level: 1, name: '知识与处理规则' })).toBeVisible()
-  await expect(page.getByLabel('答案事实与处理规则 必填')).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '知识与流程' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '标准答案与处理步骤', exact: true })).toBeVisible()
   await expect(page.getByText('AI 应该知道的答案')).toHaveCount(0)
   await expect(page.getByText('让 AI 组织语言')).toHaveCount(0)
 
-  await page.getByLabel('知识标题 必填').fill('已修改但未保存')
+  await page.getByRole('textbox', { name: '知识标题', exact: true }).fill('已修改但未保存')
   await page.getByRole('button', { name: /取消订单/ }).click()
   await expect(page.getByRole('dialog', { name: '放弃未保存的修改？' })).toBeVisible()
   await page.getByRole('button', { name: '放弃修改' }).click()
-  await expect(page.getByLabel('知识标题 必填')).toHaveValue('取消订单')
+  await expect(page.getByRole('textbox', { name: '知识标题', exact: true })).toHaveValue('取消订单')
 })
 
 test('Knowledge retrieval test explains whether the current service can use the result', async ({ page }) => {
@@ -113,10 +113,11 @@ test('Knowledge retrieval test explains whether the current service can use the 
   })
 
   await page.goto('/knowledge')
-  await page.getByLabel('用一句客户问题测试').fill('包裹派送失败怎么办')
-  await page.getByRole('button', { name: '测试知识命中' }).click()
-  await expect(page.getByText('命中 1 条知识')).toBeVisible()
-  await expect(page.getByText('当前服务可以使用这些知识')).toBeVisible()
+  const searchTest = page.getByRole('complementary', { name: '搜索测试和发布状态' })
+  await searchTest.getByRole('textbox', { name: '客户问题', exact: true }).fill('包裹派送失败怎么办')
+  await searchTest.getByRole('button', { name: '测试搜索' }).click()
+  await expect(searchTest.getByText('找到 1 条')).toBeVisible()
+  await expect(searchTest.getByText('可用于回复')).toBeVisible()
 })
 
 test('Control Tower accepts canonical hrefs and fails closed for retired routes', async ({ page }) => {
@@ -155,13 +156,13 @@ test('Control Tower accepts canonical hrefs and fails closed for retired routes'
   await page.goto('/control-tower')
 
   await expect(page).toHaveURL(/\/control-tower$/)
-  await expect(page.getByRole('heading', { level: 1, name: '运营总览' })).toBeVisible()
-  const kpiRegion = page.getByRole('region', { name: '关键运营指标' })
+  await expect(page.getByRole('heading', { level: 1, name: '运营监控' })).toBeVisible()
+  const kpiRegion = page.getByLabel('关键运营指标')
   await expect(kpiRegion.getByText('未分配', { exact: true }).locator('..')).toContainText('12')
-  const links = page.getByRole('link', { name: '打开处理页面' })
+  const links = page.getByRole('link', { name: '去处理' })
   await expect(links.nth(0)).toHaveAttribute('href', '/workspace')
   await expect(links).toHaveCount(1)
-  await expect(page.getByText('后端未返回受支持的处理入口')).toHaveCount(2)
+  await expect(page.getByText('暂时无法打开')).toHaveCount(2)
   await expect(page.locator('a[href="/accounts"]')).toHaveCount(0)
   await expect(page.locator('a[href="/ai-control"]')).toHaveCount(0)
 })

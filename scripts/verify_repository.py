@@ -10,7 +10,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github/workflows"
-CANONICAL_WORKFLOW = WORKFLOW_DIR / "canonical-verification.yml"
 
 RETIRED_PATHS = (
     "frontend",
@@ -19,6 +18,18 @@ RETIRED_PATHS = (
     "webapp/src/shared/api",
     "webapp/src/lib/api.ts",
     "webapp/src/lib/webchatRealtime.ts",
+    "webapp/src/components/ui",
+    "webapp/src/styles/tokens.css",
+    "webapp/src/styles/components.css",
+    "webapp/src/styles/auth.css",
+    "webapp/src/app/app-shell.css",
+    "webapp/src/features/operator-workspace/operator-workspace.css",
+    "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
+    "webapp/src/features/admin-routes/admin-routes.css",
+    "webapp/src/features/knowledge/knowledge.css",
+    "webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx",
+    "webapp/src/features/runtime/runtime-evidence-audit.css",
+    "webapp/src/lib/cn.ts",
 )
 
 ACTIONS_RESIDUE = (
@@ -30,12 +41,18 @@ ACTIONS_RESIDUE = (
 )
 
 REQUIRED_CANONICAL_PATHS = (
-    ".github/workflows/canonical-verification.yml",
+    "webapp/package-lock.json",
     "webapp/src/app/AppShell.tsx",
     "webapp/src/app/navigation.ts",
+    "webapp/src/app/OperatorPresentation.tsx",
+    "webapp/src/theme/nexusTheme.ts",
+    "webapp/src/theme/NexusThemeProvider.tsx",
+    "webapp/src/features/knowledge/KnowledgePage.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceQueue.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx",
     "webapp/src/lib/apiClient.ts",
-    "webapp/src/styles/tokens.css",
-    "webapp/src/components/ui/Button.tsx",
     "webapp/src/domain/operationalPresentation.ts",
     "backend/app/services/permissions.py",
     "backend/app/services/canonical_route_projection.py",
@@ -73,11 +90,10 @@ def static_failures() -> list[str]:
         for path in WORKFLOW_DIR.rglob("*")
         if path.is_file()
     } if WORKFLOW_DIR.is_dir() else set()
-    expected_workflows = {CANONICAL_WORKFLOW.relative_to(ROOT).as_posix()}
-    if workflow_files != expected_workflows:
+    if workflow_files:
         failures.append(
-            "GitHub Actions must contain exactly the canonical verification workflow: "
-            f"expected={sorted(expected_workflows)}, actual={sorted(workflow_files)}"
+            "GitHub Actions are retired and the workflows directory must contain no files: "
+            f"actual={sorted(workflow_files)}"
         )
 
     for relative in RETIRED_PATHS:
@@ -117,7 +133,7 @@ def static_failures() -> list[str]:
                 failures.append(f"workspace owns retired shell/navigation marker: {marker}")
         required_cancel_markers = (
             "type CancelPreviewBinding",
-            "cancelFingerprint(",
+            "cancelPreviewFingerprint(",
             "cancelPreview.fingerprint !== currentCancelFingerprint",
             "invalidateCancelPreview()",
         )
@@ -158,7 +174,7 @@ def run(command: list[str], *, cwd: Path | None = None) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify the single canonical Nexus implementation and its sole GitHub Actions entrypoint."
+        description="Verify the single canonical Nexus implementation with GitHub Actions retired."
     )
     parser.add_argument("--static-only", action="store_true", help="Run repository structure checks only.")
     parser.add_argument("--skip-browser", action="store_true", help="Skip Playwright browser journeys.")
