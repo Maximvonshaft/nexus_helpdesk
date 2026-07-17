@@ -5,139 +5,99 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
-from starlette.requests import Request
 
 from app.services import support_sensitive_access as access
-
-
-def _request(path: str, method: str = "GET") -> Request:
-    return Request(
-        {
-            "type": "http",
-            "method": method,
-            "path": path,
-            "query_string": b"",
-            "headers": [],
-        }
-    )
 
 
 def _user() -> SimpleNamespace:
     return SimpleNamespace(id=7)
 
 
-def test_non_sensitive_support_routes_are_ignored(monkeypatch):
+def test_sensitive_capability_uses_canonical_permission_authority(monkeypatch):
     db = Mock()
-    db.info = {}
-    monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: set())
+    ensure = Mock()
+    monkeypatch.setattr(access, "ensure_capability", ensure)
 
-    for path in (
-        "/api/support/conversations",
-        "/api/support/conversations/resolve",
-        "/api/support/conversations/metrics",
-        "/api/support/conversations/state",
-    ):
-        access.enforce_sensitive_support_request(
-            _request(path),
-            db=db,
-            current_user=_user(),
-        )
+    access.ensure_sensitive_support_capability(db, _user())
 
-
-def test_webchat_thread_requires_customer_profile_capability(monkeypatch):
-    db = Mock()
-    db.info = {}
-    monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: {"ticket.read"})
-
-    with pytest.raises(HTTPException) as exc:
-        access.enforce_sensitive_support_request(
-            _request("/api/webchat/admin/tickets/42/thread"),
-            db=db,
-            current_user=_user(),
-        )
-
-    assert exc.value.status_code == 403
-    assert exc.value.detail == "support_sensitive_read_requires_customer_profile_capability"
-
-
-def test_support_memory_requires_customer_profile_capability(monkeypatch):
-    db = Mock()
-    db.info = {}
-    monkeypatch.setattr(access, "resolve_capabilities", lambda user, session: {"ticket.read"})
-
-    with pytest.raises(HTTPException) as exc:
-        access.enforce_sensitive_support_request(
-            _request("/api/webchat/admin/tickets/42/support-memory"),
-            db=db,
-            current_user=_user(),
-        )
-
-    assert exc.value.status_code == 403
-
-
-def test_capability_precheck_persists_bounded_audit_once(monkeypatch):
-    caller_db = Mock()
-    caller_db.info = {}
-    audit_db = Mock()
-    monkeypatch.setattr(
-        access,
-        "resolve_capabilities",
-        lambda user, session: {"ticket.read", "customer_profile.read"},
+    ensure.assert_called_once_with(
+        _user(),
+        "customer_profile.read",
+        db,
+        message="support_sensitive_read_requires_customer_profile_capability",
     )
+
+
+def test_authorized_read_persists_bounded_post_scope_evidence(monkeypatch):
+    audit_db = Mock()
     monkeypatch.setattr(access, "SessionLocal", lambda: audit_db)
     log = Mock()
     monkeypatch.setattr(access, "log_admin_audit", log)
 
-    request = _request("/api/webchat/admin/tickets/42/thread")
-    access.enforce_sensitive_support_request(
-        request,
-        db=caller_db,
+    access.audit_sensitive_support_read(
         current_user=_user(),
-    )
-    access.enforce_sensitive_support_request(
-        request,
-        db=caller_db,
-        current_user=_user(),
+        ticket_id=42,
+        surface="webchat_thread",
+        includes_support_memory=True,
     )
 
     log.assert_called_once()
     _, kwargs = log.call_args
-    assert kwargs["action"] == "support_sensitive_read_capability_precheck"
-    assert kwargs["actor_id"] == 7
-    assert kwargs["target_id"] == 42
-    assert kwargs["new_value"] == {
-        "surface": "webchat_thread",
-        "method": "GET",
-        "capability": "customer_profile.read",
-        "authorization_stage": "capability_precheck",
-        "object_scope_enforced_by_endpoint": True,
-        "access_outcome": "pending_object_scope",
-        "pii_payload_logged": False,
+    assert kwargs == {
+        "actor_id": 7,
+        "action": "support_sensitive_read_authorized",
+        "target_type": "support_conversation",
+        "target_id": 42,
+        "new_value": {
+            "surface": "webchat_thread",
+            "method": "GET",
+            "capability": "customer_profile.read",
+            "authorization_stage": "object_scope_completed",
+            "access_outcome": "authorized",
+            "includes_support_memory": True,
+            "pii_payload_logged": False,
+        },
     }
-    assert "authorized" not in kwargs["action"]
     assert "phone" not in str(kwargs)
+    assert "email" not in str(kwargs)
     audit_db.commit.assert_called_once()
     audit_db.close.assert_called_once()
 
 
+def test_invalid_surface_or_target_never_creates_audit_session(monkeypatch):
+    session_factory = Mock()
+    monkeypatch.setattr(access, "SessionLocal", session_factory)
+
+    with pytest.raises(ValueError, match="unsupported_sensitive_support_surface"):
+        access.audit_sensitive_support_read(
+            current_user=_user(),
+            ticket_id=42,
+            surface="retired_surface",  # type: ignore[arg-type]
+            includes_support_memory=False,
+        )
+    with pytest.raises(ValueError, match="invalid_sensitive_support_target"):
+        access.audit_sensitive_support_read(
+            current_user=_user(),
+            ticket_id=0,
+            surface="webchat_thread",
+            includes_support_memory=False,
+        )
+
+    session_factory.assert_not_called()
+
+
 def test_sensitive_read_fails_closed_when_audit_is_unavailable(monkeypatch):
-    caller_db = Mock()
-    caller_db.info = {}
     audit_db = Mock()
     audit_db.commit.side_effect = RuntimeError("database unavailable")
-    monkeypatch.setattr(
-        access,
-        "resolve_capabilities",
-        lambda user, session: {"ticket.read", "customer_profile.read"},
-    )
     monkeypatch.setattr(access, "SessionLocal", lambda: audit_db)
     monkeypatch.setattr(access, "log_admin_audit", Mock())
 
     with pytest.raises(HTTPException) as exc:
-        access.enforce_sensitive_support_request(
-            _request("/api/webchat/admin/tickets/42/thread"),
-            db=caller_db,
+        access.audit_sensitive_support_read(
             current_user=_user(),
+            ticket_id=42,
+            surface="webchat_thread",
+            includes_support_memory=False,
         )
 
     assert exc.value.status_code == 503
