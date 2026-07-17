@@ -17,6 +17,13 @@ function walk(directory) {
 
 const production = walk(src).filter((file) => /\.(?:ts|tsx)$/.test(file))
 const presentationPath = path.join(src, 'app', 'OperatorPresentation.tsx')
+const casePath = path.join(src, 'features', 'operator-workspace', 'OperatorWorkspaceCase.tsx')
+const allowedFullPageOwners = new Set([
+  presentationPath,
+  path.join(src, 'app', 'AppShell.tsx'),
+  path.join(src, 'routes', 'login.tsx'),
+  path.join(src, 'theme', 'nexusTheme.ts'),
+])
 const forbiddenDefinitions = /\b(?:function|const|type|interface)\s+(WorkspacePresentation|WorkspaceStatusLine|WorkspaceSectionHeading|WorkspaceLoading|FullPageBoundary|TechnicalDisclosure|StatusCount|safeTone|toneColor|providerLabel|channelLabel|safeRecord|safeRecordArray|safeWorkspaceRecord|workspaceText|workspaceNumber|textValue|numberValue)\b/g
 
 test('renaming cannot recreate retired generic presentation responsibilities', () => {
@@ -27,6 +34,9 @@ test('renaming cannot recreate retired generic presentation responsibilities', (
     if (file !== presentationPath && /\b(?:Accordion|AccordionSummary|AccordionDetails)\b/.test(source)) {
       violations.push(`${relative}: direct Accordion disclosure`)
     }
+    if (file !== presentationPath && /component=["']dl["']/.test(source)) violations.push(`${relative}: direct fact grid`)
+    if (file !== presentationPath && file !== casePath && /borderRadius\s*:\s*["']50%["']/.test(source)) violations.push(`${relative}: generic status marker`)
+    if (!allowedFullPageOwners.has(file) && /minHeight\s*:\s*["']100dvh["']/.test(source)) violations.push(`${relative}: route-private full-page layout`)
     for (const match of source.matchAll(forbiddenDefinitions)) violations.push(`${relative}: ${match[1]}`)
     if (/className\s*:\s*['"]is-ai['"]/.test(source)) violations.push(`${relative}: stale is-ai class`)
   }
