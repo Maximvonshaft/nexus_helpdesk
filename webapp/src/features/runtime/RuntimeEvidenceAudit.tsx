@@ -24,11 +24,18 @@ import {
   OperatorFactGrid,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
-import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
+import type { OperatorTone } from '@/app/OperatorPresentation'
+import {
+  finiteNumber,
+  formatDateTime,
+  recordArrayValue,
+  recordValue,
+  sanitizeDisplayText,
+  stringValue,
+} from '@/lib/format'
 import { aiDebugApi, type AiDebugBundle, type AiDebugFinding, type AiDebugRun } from './aiDebugApi'
 
 type BoolFilter = 'all' | 'true' | 'false'
-type Tone = 'default' | 'warning' | 'success' | 'danger'
 
 const findingTypes = [
   ['irrelevant_answer', '回复不相关'],
@@ -52,29 +59,13 @@ function filterBool(value: BoolFilter) {
   return undefined
 }
 
-function runTone(run?: AiDebugRun | null): Tone {
+function runTone(run?: AiDebugRun | null): OperatorTone {
   if (!run) return 'default'
   if (run.status === 'failed' || run.status === 'timeout') return 'danger'
   if (run.tracking_intent_detected && !run.tracking_fact_evidence_present && run.live_tracking_answer_allowed) return 'danger'
   if (run.status === 'completed' || run.customer_visible_message_created) return 'success'
   if (run.status === 'processing' || run.status === 'bridge_calling' || run.status === 'queued') return 'warning'
   return 'default'
-}
-
-function safeRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-
-function safeRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.map(safeRecord) : []
-}
-
-function textValue(value: unknown, fallback = '') {
-  return typeof value === 'string' && value.trim() ? value : fallback
-}
-
-function numberValue(value: unknown, fallback = 0) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
 export function RuntimeEvidenceAudit() {
@@ -118,10 +109,10 @@ export function RuntimeEvidenceAudit() {
     retry: false,
   })
   const bundle: AiDebugBundle | null = bundleQuery.data ?? null
-  const summary = safeRecord(bundle?.summary)
-  const evidence = safeRecord(bundle?.evidence)
-  const timeline = safeRecordArray(bundle?.timeline)
-  const toolCalls = safeRecordArray(bundle?.tool_calls)
+  const summary = recordValue(bundle?.summary)
+  const evidence = recordValue(bundle?.evidence)
+  const timeline = recordArrayValue(bundle?.timeline)
+  const toolCalls = recordArrayValue(bundle?.tool_calls)
 
   const findingMutation = useMutation({
     mutationFn: () => aiDebugApi.createFinding(selectedRun?.ai_turn_id ?? 0, {
@@ -134,7 +125,7 @@ export function RuntimeEvidenceAudit() {
     onSuccess: setLastFinding,
   })
   const evalMutation = useMutation({
-    mutationFn: () => aiDebugApi.createEvalCase(numberValue(lastFinding?.id)),
+    mutationFn: () => aiDebugApi.createEvalCase(finiteNumber(lastFinding?.id, 0)),
   })
 
   const copyBundle = async () => {
@@ -211,10 +202,10 @@ export function RuntimeEvidenceAudit() {
             </Stack>
             <Divider sx={{ my: 2 }} />
             <OperatorFactGrid columns={5} facts={[
-              ['问题类型', sanitizeDisplayText(selectedRun?.intent || textValue(summary.intent, '未知'))],
+              ['问题类型', sanitizeDisplayText(selectedRun?.intent || stringValue(summary.intent, '未知'))],
               ['查询结果', selectedRun?.tracking_fact_evidence_present ? '有' : '无'],
               ['实时物流回复', selectedRun?.live_tracking_answer_allowed ? '允许' : '禁止'],
-              ['知识匹配', selectedRun?.kb_hits_count ?? numberValue(evidence.kb_hits_count)],
+              ['知识匹配', selectedRun?.kb_hits_count ?? finiteNumber(evidence.kb_hits_count, 0)],
               ['客户消息', selectedRun?.customer_visible_message_created ? '已创建' : '未创建'],
             ]} />
           </Paper>
@@ -226,16 +217,16 @@ export function RuntimeEvidenceAudit() {
               {!toolCalls.length ? <OperatorEmptyState title="暂无查询或操作" description="暂无数据" /> : (
                 <Stack divider={<Divider flexItem />}>
                   {toolCalls.map((call, index) => {
-                    const status = textValue(call.status, 'unknown')
+                    const status = stringValue(call.status, 'unknown')
                     const color = status === 'success' ? 'success' : status === 'failed' ? 'error' : 'warning'
                     return (
-                      <Box component="article" key={`${textValue(call.id, String(index))}-${textValue(call.tool_name)}`} sx={{ py: 1.25 }}>
+                      <Box component="article" key={`${stringValue(call.id, String(index))}-${stringValue(call.tool_name)}`} sx={{ py: 1.25 }}>
                         <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                          <Typography variant="subtitle2">{sanitizeDisplayText(textValue(call.tool_name, '未知操作'))}</Typography>
+                          <Typography variant="subtitle2">{sanitizeDisplayText(stringValue(call.tool_name, '未知操作'))}</Typography>
                           <Chip color={color} label={sanitizeDisplayText(status)} />
                         </Stack>
                         <Typography variant="caption" color="text.secondary">
-                          {sanitizeDisplayText(textValue(call.provider, '未知服务'))} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied === true ? '已脱敏' : '脱敏状态未知'}
+                          {sanitizeDisplayText(stringValue(call.provider, '未知服务'))} · {typeof call.elapsed_ms === 'number' ? `${call.elapsed_ms}ms` : '暂无耗时'} · {call.redaction_applied === true ? '已脱敏' : '脱敏状态未知'}
                         </Typography>
                       </Box>
                     )
@@ -250,12 +241,12 @@ export function RuntimeEvidenceAudit() {
               {!timeline.length ? <OperatorEmptyState title="暂无时间线" description="暂无数据" /> : (
                 <Stack divider={<Divider flexItem />}>
                   {timeline.map((item, index) => (
-                    <Box component="article" key={`${textValue(item.event_id, String(index))}-${textValue(item.event_type)}`} sx={{ py: 1.25 }}>
+                    <Box component="article" key={`${stringValue(item.event_id, String(index))}-${stringValue(item.event_type)}`} sx={{ py: 1.25 }}>
                       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="subtitle2">{sanitizeDisplayText(textValue(item.event_type, textValue(item.phase, '事件')))}</Typography>
-                        <Chip label={sanitizeDisplayText(textValue(item.status, textValue(item.phase, '事件')))} />
+                        <Typography variant="subtitle2">{sanitizeDisplayText(stringValue(item.event_type, stringValue(item.phase, '事件')))}</Typography>
+                        <Chip label={sanitizeDisplayText(stringValue(item.status, stringValue(item.phase, '事件')))} />
                       </Stack>
-                      <Typography variant="caption" color="text.disabled">{textValue(item.created_at) ? formatDateTime(textValue(item.created_at)) : ''}</Typography>
+                      <Typography variant="caption" color="text.disabled">{stringValue(item.created_at) ? formatDateTime(stringValue(item.created_at)) : ''}</Typography>
                     </Box>
                   ))}
                 </Stack>
