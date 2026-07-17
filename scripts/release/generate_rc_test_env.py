@@ -204,6 +204,7 @@ def build_values(
         "PROVIDER_RUNTIME_ENABLED": "false",
         "PROVIDER_RUNTIME_PRIMARY_PROVIDER": "private_ai_runtime",
         "PROVIDER_RUNTIME_FALLBACK_PROVIDERS": "[]",
+        "PROVIDER_RUNTIME_TRAFFIC_MODE": "control",
         "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
         "PROVIDER_RUNTIME_KILL_SWITCH": "true",
         "PRIVATE_AI_RUNTIME_ENABLED": "false",
