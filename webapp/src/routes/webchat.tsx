@@ -1,7 +1,10 @@
-import { Box, CircularProgress, Stack, Typography } from '@mui/material'
 import { useEffect } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
+import {
+  OperatorLoadingState,
+  OperatorPageBoundary,
+} from '@/app/OperatorPresentation'
 import { getSupportToken } from '@/lib/supportApi'
 
 function replaceWithWorkspace(sessionKey?: string | null) {
@@ -41,12 +44,9 @@ function WebchatCompatibilityRedirect() {
   }, [navigate])
 
   return (
-    <Box component="main" aria-busy="true" sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}>
-      <Stack role="status" aria-live="polite" alignItems="center" spacing={1.5}>
-        <CircularProgress size={30} />
-        <Typography variant="subtitle1">正在跳转…</Typography>
-      </Stack>
-    </Box>
+    <OperatorPageBoundary busy>
+      <OperatorLoadingState label="正在跳转…" minHeight={0} />
+    </OperatorPageBoundary>
   )
 }
 
