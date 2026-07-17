@@ -16,8 +16,10 @@ from ..services.permissions import (
     ensure_can_resume_webchat_ai,
 )
 from ..services.support_memory_ledger import build_support_memory_ledger
-from ..services.support_sensitive_access import audit_sensitive_support_read, ensure_sensitive_support_capability
-from ..services.webchat_ai_turn_service import ai_snapshot
+from ..services.support_sensitive_access import (
+    audit_sensitive_support_read,
+    ensure_sensitive_support_capability,
+)
 from ..services.webchat_handoff_service import (
     accept_handoff_request,
     decline_handoff_request,
@@ -29,7 +31,6 @@ from ..services.webchat_handoff_service import (
 from ..services.webchat_inbox_read_state import mark_webchat_read_state
 from ..services.webchat_service import admin_get_thread, admin_reply
 from ..unit_of_work import managed_session
-from ..webchat_models import WebchatConversation
 from .deps import get_current_user
 
 router = APIRouter()
@@ -58,7 +59,9 @@ class WebchatReadStateRequest(BaseModel):
 
 
 @router.get("/admin/conversations")
-def list_webchat_conversations(current_user=Depends(get_current_user)) -> None:
+def list_webchat_conversations(
+    current_user=Depends(get_current_user),
+) -> None:
     del current_user
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
@@ -71,7 +74,10 @@ def list_webchat_conversations(current_user=Depends(get_current_user)) -> None:
 
 @router.get("/admin/handoff/queue")
 def get_webchat_handoff_queue(
-    view: str = Query(default="requested", pattern="^(requested|ai_active|mine|closed)$"),
+    view: str = Query(
+        default="requested",
+        pattern="^(requested|ai_active|mine|closed)$",
+    ),
     include_declined: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -81,18 +87,39 @@ def get_webchat_handoff_queue(
         ensure_can_monitor_webchat_ai(current_user, db)
     else:
         ensure_can_accept_webchat_handoff(current_user, db)
-    return list_handoff_queue(db, current_user, view=view, include_declined=include_declined, limit=limit)
+    return list_handoff_queue(
+        db,
+        current_user,
+        view=view,
+        include_declined=include_declined,
+        limit=limit,
+    )
 
 
 @router.post("/admin/handoff/{request_id}/accept")
-def accept_webchat_handoff(request_id: int, payload: WebchatHandoffTransitionRequest | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def accept_webchat_handoff(
+    request_id: int,
+    payload: WebchatHandoffTransitionRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     ensure_can_accept_webchat_handoff(current_user, db)
     with managed_session(db):
-        return accept_handoff_request(db, request_id=request_id, current_user=current_user, note=payload.note if payload else None)
+        return accept_handoff_request(
+            db,
+            request_id=request_id,
+            current_user=current_user,
+            note=payload.note if payload else None,
+        )
 
 
 @router.post("/admin/handoff/{request_id}/decline")
-def decline_webchat_handoff(request_id: int, payload: WebchatHandoffDecisionRequest | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def decline_webchat_handoff(
+    request_id: int,
+    payload: WebchatHandoffDecisionRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     ensure_can_decline_webchat_handoff(current_user, db)
     with managed_session(db):
         return decline_handoff_request(
@@ -105,7 +132,12 @@ def decline_webchat_handoff(request_id: int, payload: WebchatHandoffDecisionRequ
 
 
 @router.post("/admin/tickets/{ticket_id}/force-takeover")
-def force_takeover_webchat(ticket_id: int, payload: WebchatHandoffDecisionRequest | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def force_takeover_webchat(
+    ticket_id: int,
+    payload: WebchatHandoffDecisionRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     ensure_can_force_takeover_webchat(current_user, db)
     with managed_session(db):
         return force_takeover_ticket(
@@ -118,17 +150,37 @@ def force_takeover_webchat(ticket_id: int, payload: WebchatHandoffDecisionReques
 
 
 @router.post("/admin/handoff/{request_id}/release")
-def release_webchat_handoff(request_id: int, payload: WebchatHandoffTransitionRequest | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def release_webchat_handoff(
+    request_id: int,
+    payload: WebchatHandoffTransitionRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     ensure_can_release_webchat_handoff(current_user, db)
     with managed_session(db):
-        return release_handoff_request(db, request_id=request_id, current_user=current_user, note=payload.note if payload else None)
+        return release_handoff_request(
+            db,
+            request_id=request_id,
+            current_user=current_user,
+            note=payload.note if payload else None,
+        )
 
 
 @router.post("/admin/handoff/{request_id}/resume-ai")
-def resume_webchat_ai(request_id: int, payload: WebchatHandoffTransitionRequest | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def resume_webchat_ai(
+    request_id: int,
+    payload: WebchatHandoffTransitionRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     ensure_can_resume_webchat_ai(current_user, db)
     with managed_session(db):
-        return resume_ai_for_handoff(db, request_id=request_id, current_user=current_user, note=payload.note if payload else None)
+        return resume_ai_for_handoff(
+            db,
+            request_id=request_id,
+            current_user=current_user,
+            note=payload.note if payload else None,
+        )
 
 
 @router.get("/admin/tickets/{ticket_id}/thread")
@@ -149,31 +201,56 @@ def get_webchat_thread(
             message_limit=message_limit,
         )
         if before_message_id is None:
-            conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == result.get("conversation_id")).first()
-            if conversation:
-                result.update(ai_snapshot(conversation))
-            result["support_memory"] = build_support_memory_ledger(db, ticket_id=ticket_id, current_user=current_user)
+            memory = build_support_memory_ledger(
+                db,
+                ticket_id=ticket_id,
+                current_user=current_user,
+            )
+            result["support_memory"] = memory
+            ai_state = memory.get("ai_state")
+            if isinstance(ai_state, dict):
+                result.update(ai_state)
     except HTTPException as exc:
-        if exc.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="support_conversation_not_found") from exc
+        if exc.status_code in {
+            status.HTTP_403_FORBIDDEN,
+            status.HTTP_404_NOT_FOUND,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="support_conversation_not_found",
+            ) from exc
         raise
     audit_sensitive_support_read(
         current_user=current_user,
         ticket_id=ticket_id,
-        surface="webchat_thread",
         includes_support_memory=before_message_id is None,
     )
     return result
 
 
 @router.post("/admin/tickets/{ticket_id}/read-state")
-def update_webchat_read_state(ticket_id: int, payload: WebchatReadStateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def update_webchat_read_state(
+    ticket_id: int,
+    payload: WebchatReadStateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     with managed_session(db):
-        return mark_webchat_read_state(db, ticket_id=ticket_id, current_user=current_user, marked_unread=payload.marked_unread)
+        return mark_webchat_read_state(
+            db,
+            ticket_id=ticket_id,
+            current_user=current_user,
+            marked_unread=payload.marked_unread,
+        )
 
 
 @router.post("/admin/tickets/{ticket_id}/reply")
-def reply_webchat(ticket_id: int, payload: WebchatReplyRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+def reply_webchat(
+    ticket_id: int,
+    payload: WebchatReplyRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
     with managed_session(db):
         return admin_reply(
             db,
