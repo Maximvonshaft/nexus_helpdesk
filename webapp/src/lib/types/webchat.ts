@@ -316,6 +316,24 @@ export interface SupportConversationPage {
   source: string
   view: string
 }
+export interface SupportConversationResolution {
+  conversation: {
+    session_key: string
+    conversation_id: string
+    ticket_id: number
+    handoff_request_id?: number | null
+    channel: SupportConversationChannel
+    source?: string | null
+    pii_minimized: true
+  }
+  ticket: {
+    id: number
+    ticket_no: string
+    status: string
+    priority: string
+  }
+  source: 'nexus_support_conversation_resolver'
+}
 export interface SupportConversationMetrics {
   source: string
   since_hours: number
