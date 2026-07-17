@@ -5,25 +5,29 @@ import os
 from datetime import timezone
 from typing import Any
 
-from fastapi import HTTPException, status
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState
-from ..models import Ticket, User
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
-from .permissions import CAP_TICKET_READ, resolve_capabilities
-from .scope_permissions import has_global_case_visibility
-from .webchat_public_payload import PUBLIC_WEBCHAT_HIDDEN_MESSAGE_TYPES, public_webchat_metadata
-from .webchat_inbox_read_state import webchat_read_state_payloads
+from .webchat_public_payload import (
+    PUBLIC_WEBCHAT_HIDDEN_MESSAGE_TYPES,
+    public_webchat_metadata,
+)
+
 
 DEFAULT_POLL_LIMIT = 50
 MAX_POLL_LIMIT = 100
 DEFAULT_LAST_SEEN_WRITE_INTERVAL_SECONDS = 60
 
 
-def _int_env(name: str, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
+def _int_env(
+    name: str,
+    default: int,
+    *,
+    minimum: int = 0,
+    maximum: int | None = None,
+) -> int:
     try:
         value = int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
@@ -35,7 +39,12 @@ def _int_env(name: str, default: int, *, minimum: int = 0, maximum: int | None =
 
 
 def webchat_poll_interval_ms() -> int:
-    return _int_env("WEBCHAT_POLL_INTERVAL_MS", 1000, minimum=500, maximum=60000)
+    return _int_env(
+        "WEBCHAT_POLL_INTERVAL_MS",
+        1000,
+        minimum=500,
+        maximum=60000,
+    )
 
 
 def webchat_last_seen_write_interval_seconds() -> int:
@@ -108,7 +117,9 @@ def list_public_messages_throttled(
         WebchatMessage.conversation_id == conversation.id,
         or_(
             WebchatMessage.message_type.is_(None),
-            WebchatMessage.message_type.notin_(tuple(PUBLIC_WEBCHAT_HIDDEN_MESSAGE_TYPES)),
+            WebchatMessage.message_type.notin_(
+                tuple(PUBLIC_WEBCHAT_HIDDEN_MESSAGE_TYPES)
+            ),
         ),
     )
     if after_id is not None:
@@ -135,86 +146,70 @@ def list_public_messages_throttled(
     }
 
 
-def _assert_ticket_read(user: User, db: Session) -> set[str]:
-    capabilities = resolve_capabilities(user, db)
-    if CAP_TICKET_READ not in capabilities:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ticket not visible for current user")
-    return capabilities
+def admin_list_conversations_optimized(
+    db: Session,
+    current_user,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Compatibility projection backed by the canonical support list authority."""
 
+    # Local import avoids coupling public WebChat polling startup to the
+    # authenticated support API module. No independent query authority remains.
+    from app.api.support_conversations import list_support_conversations
 
-def _ticket_visible_from_preloaded(user: User, ticket: Ticket, *, global_visibility: bool) -> bool:
-    if global_visibility:
-        return True
-    if ticket.assignee_id == user.id:
-        return True
-    if user.team_id and ticket.team_id == user.team_id:
-        return True
-    return False
-
-
-def admin_list_conversations_optimized(db: Session, current_user: User, *, limit: int = 50) -> list[dict[str, Any]]:
-    _assert_ticket_read(current_user, db)
-    global_visibility = has_global_case_visibility(current_user, db)
-    safe_limit = max(1, min(int(limit or 50), 100))
-
-    latest_message_ids = (
-        db.query(
-            WebchatMessage.conversation_id.label("conversation_id"),
-            func.max(WebchatMessage.id).label("last_message_id"),
+    payload = list_support_conversations(
+        view="all",
+        channel="all",
+        q=None,
+        limit=max(1, min(int(limit or 50), 100)),
+        current_user=current_user,
+        db=db,
+    )
+    items = payload.get("items") if isinstance(payload, dict) else []
+    rows: list[dict[str, Any]] = []
+    for item in items if isinstance(items, list) else []:
+        session_key = str(item.get("session_key") or "")
+        public_id = session_key.split(":", 1)[-1]
+        rows.append(
+            {
+                "conversation_id": public_id,
+                "ticket_id": item.get("ticket_id"),
+                "ticket_no": item.get("ticket_no"),
+                "title": item.get("title"),
+                "status": item.get("status"),
+                "visitor_name": item.get("display_name"),
+                "visitor_email": None,
+                "visitor_phone": item.get("customer_contact"),
+                "origin": None,
+                "page_url": None,
+                "last_seen_at": item.get("last_seen_at"),
+                "updated_at": item.get("updated_at"),
+                "last_message_type": None,
+                "last_action_status": None,
+                "needs_human": bool(item.get("needs_human")),
+                "conversation_state": item.get("conversation_state"),
+                "required_action": item.get("required_action"),
+                "ai_pending": bool(item.get("ai_pending")),
+                "ai_status": item.get("ai_status"),
+                "ai_turn_id": item.get("ai_turn_id"),
+                "ai_pending_for_message_id": item.get(
+                    "ai_pending_for_message_id"
+                ),
+                "current_handoff_request_id": item.get(
+                    "handoff_request_id"
+                ),
+                "handoff_status": item.get("handoff_status") or "none",
+                "active_agent_id": item.get("active_agent_id"),
+                "ai_suspended": bool(item.get("ai_suspended")),
+                "takeover_mode": item.get("takeover_mode"),
+                "last_handoff_reason": item.get("last_handoff_reason"),
+                "marked_unread": bool(item.get("marked_unread", False)),
+                "read_at": item.get("read_at"),
+                "last_read_message_id": item.get("last_read_message_id"),
+                "pii_minimized": True,
+                "deprecated_transport": True,
+                "canonical_endpoint": "/api/support/conversations",
+            }
         )
-        .group_by(WebchatMessage.conversation_id)
-        .subquery()
-    )
-
-    rows = (
-        db.query(WebchatConversation, Ticket, WebchatMessage)
-        .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
-        .outerjoin(latest_message_ids, latest_message_ids.c.conversation_id == WebchatConversation.id)
-        .outerjoin(WebchatMessage, WebchatMessage.id == latest_message_ids.c.last_message_id)
-        .order_by(WebchatConversation.updated_at.desc(), WebchatConversation.id.desc())
-        .limit(safe_limit)
-        .all()
-    )
-    read_states = webchat_read_state_payloads(
-        db,
-        conversation_ids=[conversation.id for conversation, _, _ in rows],
-        user_id=current_user.id,
-    )
-
-    items: list[dict[str, Any]] = []
-    for conversation, ticket, last_message in rows:
-        if not _ticket_visible_from_preloaded(current_user, ticket, global_visibility=global_visibility):
-            continue
-        status_value = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
-        state_value = ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state)
-        items.append({
-            "conversation_id": conversation.public_id,
-            "ticket_id": conversation.ticket_id,
-            "ticket_no": ticket.ticket_no,
-            "title": ticket.title,
-            "status": status_value,
-            "visitor_name": conversation.visitor_name,
-            "visitor_email": conversation.visitor_email,
-            "visitor_phone": conversation.visitor_phone,
-            "origin": conversation.origin,
-            "page_url": conversation.page_url,
-            "last_seen_at": conversation.last_seen_at.isoformat() if conversation.last_seen_at else None,
-            "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
-            "last_message_type": last_message.message_type if last_message else None,
-            "last_action_status": last_message.action_status if last_message else None,
-            "needs_human": ticket.conversation_state == ConversationState.human_review_required or bool(ticket.required_action),
-            "conversation_state": state_value,
-            "required_action": ticket.required_action,
-            "ai_pending": bool(getattr(conversation, "active_ai_status", None) in {"queued", "processing", "bridge_calling", "fallback_generating"} and getattr(conversation, "active_ai_turn_id", None)),
-            "ai_status": getattr(conversation, "active_ai_status", None),
-            "ai_turn_id": getattr(conversation, "active_ai_turn_id", None),
-            "ai_pending_for_message_id": getattr(conversation, "active_ai_for_message_id", None),
-            "current_handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
-            "handoff_status": getattr(conversation, "handoff_status", None) or "none",
-            "active_agent_id": getattr(conversation, "active_agent_id", None),
-            "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
-            "takeover_mode": getattr(conversation, "takeover_mode", None),
-            "last_handoff_reason": getattr(conversation, "last_handoff_reason", None),
-            **read_states.get(conversation.id, {}),
-        })
-    return items
+    return rows
