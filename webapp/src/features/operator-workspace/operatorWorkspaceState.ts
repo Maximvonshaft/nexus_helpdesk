@@ -11,6 +11,10 @@ export function initialWorkspaceSessionKey() {
   return new URLSearchParams(window.location.search).get('session')
 }
 
+export function hasWorkspaceCapability(capabilities: Set<string>, ...values: string[]) {
+  return values.some((value) => capabilities.has(value))
+}
+
 function mergeMessages(...groups: WebchatMessage[][]) {
   const byId = new Map<string, WebchatMessage>()
   groups.flat().forEach((message) => byId.set(String(message.id), message))
