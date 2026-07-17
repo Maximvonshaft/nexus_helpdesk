@@ -232,6 +232,23 @@ async def test_malformed_fallback_configuration_fails_closed():
 
 
 @pytest.mark.asyncio
+async def test_unknown_output_contract_never_reaches_registered_adapter(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    rule = _rule(canary_percent=100)
+    rule["output_contract"] = "nexus.unknown.contract"
+    db = _mock_db(rule)
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.ok is False
+    assert result.error_code == "provider_runtime_output_contract_invalid"
+    assert result.fallback_allowed is False
+    assert result.raw_payload_safe_summary["traffic"]["path"] == "canary_authoritative"
+    assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_parse_reject_returns_no_customer_reply(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=100))
