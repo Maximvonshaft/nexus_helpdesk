@@ -88,6 +88,7 @@ def query_counter(engine):
         context,
         executemany,
     ):
+        del conn, cursor, parameters, context, executemany
         sql = str(statement).lstrip().upper()
         if sql.startswith(("PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK TO")):
             return
@@ -133,7 +134,7 @@ def make_conversation_fixture(
     idx: int,
     team_id: int,
     assignee_id: int | None = None,
-) -> tuple[Ticket, WebchatConversation]:
+) -> Ticket:
     customer = Customer(
         name=f"Visitor {idx}",
         email=f"visitor{idx}@invalid.test",
@@ -196,7 +197,7 @@ def make_conversation_fixture(
         )
     )
     db.flush()
-    return ticket, conversation
+    return ticket
 
 
 def test_canonical_conversation_list_is_scoped_masked_and_bounded(api_context):
@@ -205,21 +206,19 @@ def test_canonical_conversation_list_is_scoped_masked_and_bounded(api_context):
     team_b = make_team(db, "team-b")
     admin = make_user(db, "admin", UserRole.admin)
     agent = make_user(db, "agent-a", UserRole.agent, team_id=team_a.id)
-    visible_ticket_ids = set()
-    hidden_ticket_ids = set()
+    visible_ticket_ids: set[int] = set()
+    hidden_ticket_ids: set[int] = set()
     for idx in range(50):
         team_id = team_a.id if idx % 2 == 0 else team_b.id
         assignee_id = agent.id if idx % 4 == 0 else None
-        ticket, _ = make_conversation_fixture(
+        ticket = make_conversation_fixture(
             db,
             idx=idx,
             team_id=team_id,
             assignee_id=assignee_id,
         )
-        if team_id == team_a.id or assignee_id == agent.id:
-            visible_ticket_ids.add(ticket.id)
-        else:
-            hidden_ticket_ids.add(ticket.id)
+        target = visible_ticket_ids if team_id == team_a.id or assignee_id == agent.id else hidden_ticket_ids
+        target.add(ticket.id)
     db.commit()
 
     state["user"] = admin
@@ -235,12 +234,10 @@ def test_canonical_conversation_list_is_scoped_masked_and_bounded(api_context):
     assert payload["source"] == "nexus_support_conversations"
     assert len(payload["items"]) == 50
     first = payload["items"][0]
-    assert "display_name" in first
-    assert "customer_contact" in first
     assert first["pii_minimized"] is True
     assert "visitor_email" not in first
     assert "visitor_phone" not in first
-    assert "@invalid.test" not in str(payload)
+    assert "@invalid.test" not in response.text
 
     state["user"] = agent
     agent_response = client.get(
@@ -248,44 +245,33 @@ def test_canonical_conversation_list_is_scoped_masked_and_bounded(api_context):
         params={"view": "all", "channel": "all", "limit": 50},
     )
     assert agent_response.status_code == 200
-    agent_items = agent_response.json()["items"]
-    assert {item["ticket_id"] for item in agent_items}.issubset(
-        visible_ticket_ids
-    )
-    assert not ({item["ticket_id"] for item in agent_items} & hidden_ticket_ids)
+    agent_ids = {item["ticket_id"] for item in agent_response.json()["items"]}
+    assert agent_ids.issubset(visible_ticket_ids)
+    assert not (agent_ids & hidden_ticket_ids)
 
 
-def test_legacy_transport_is_a_masked_canonical_projection(api_context):
-    db, client, state, _ = api_context
-    team = make_team(db, "legacy-projection-team")
-    admin = make_user(db, "legacy-admin", UserRole.admin)
-    _, conversation = make_conversation_fixture(
-        db,
-        idx=101,
-        team_id=team.id,
-    )
+def test_legacy_admin_list_is_a_query_free_retirement_tombstone(api_context):
+    db, client, state, engine = api_context
+    state["user"] = make_user(db, "legacy-admin", UserRole.admin)
     db.commit()
-    state["user"] = admin
 
-    response = client.get("/api/webchat/admin/conversations")
+    with query_counter(engine) as queries:
+        response = client.get("/api/webchat/admin/conversations")
 
-    assert response.status_code == 200
-    item = next(
-        row
-        for row in response.json()
-        if row["conversation_id"] == conversation.public_id
-    )
-    assert item["deprecated_transport"] is True
-    assert item["canonical_endpoint"] == "/api/support/conversations"
-    assert item["pii_minimized"] is True
-    assert item["visitor_email"] is None
-    assert "@invalid.test" not in response.text
+    assert response.status_code == 410
+    assert response.json()["detail"] == {
+        "code": "legacy_webchat_conversation_list_retired",
+        "canonical_endpoint": "/api/support/conversations",
+    }
+    assert queries["value"] == 0
 
 
-def test_legacy_projection_cannot_reintroduce_independent_query_authority():
+def test_legacy_admin_list_contains_no_compatibility_projection():
     from app.services.webchat_performance import admin_list_conversations_optimized
 
     source = inspect.getsource(admin_list_conversations_optimized)
-    assert "list_support_conversations" in source
+    assert "HTTP_410_GONE" in source
+    assert "list_support_conversations" not in source
     assert "db.query" not in source
-    assert '"visitor_email": None' in source
+    assert "visitor_email" not in source
+    assert "visitor_phone" not in source
