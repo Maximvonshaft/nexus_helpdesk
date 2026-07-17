@@ -5,7 +5,6 @@ import os
 from datetime import timezone
 from typing import Any
 
-from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -145,21 +144,3 @@ def list_public_messages_throttled(
         "next_after_id": rows[-1].id if rows else after_id,
         "last_seen_touched": last_seen_touched,
     }
-
-
-def admin_list_conversations_optimized(
-    db: Session,
-    current_user,
-    *,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    """Permanent tombstone for the retired duplicate admin conversation list."""
-
-    del db, current_user, limit
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail={
-            "code": "legacy_webchat_conversation_list_retired",
-            "canonical_endpoint": "/api/support/conversations",
-        },
-    )
