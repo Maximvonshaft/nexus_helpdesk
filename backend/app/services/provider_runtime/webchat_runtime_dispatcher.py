@@ -5,6 +5,8 @@ import math
 import re
 from typing import Any
 
+from sqlalchemy import text
+
 from app.db import SessionLocal
 
 from ..ai_runtime.schemas import RuntimeAIProviderRequest, RuntimeAIProviderResult
@@ -239,6 +241,49 @@ def _bounded_evidence_rows(value: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def _authoritative_provider_audit_exists(
+    db: Any,
+    *,
+    request: ProviderRequest,
+    provider: str | None,
+) -> bool:
+    """Require durable audit evidence before a Provider result becomes authoritative."""
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM provider_runtime_audit_logs
+                WHERE request_id = :request_id
+                  AND tenant_id = :tenant_id
+                  AND channel_key = :channel_key
+                  AND session_id = :session_id
+                  AND provider = :provider
+                  AND operation = 'generate'
+                  AND status = 'ok'
+                  AND error_code IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {
+                "request_id": request.request_id,
+                "tenant_id": request.tenant_id,
+                "channel_key": request.channel_key,
+                "session_id": request.session_id,
+                "provider": provider,
+            },
+        ).first()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.error("provider_runtime_authoritative_audit_check_failed")
+        return False
+    return row is not None
+
+
 async def dispatch_webchat_runtime_reply(
     *,
     request: RuntimeAIProviderRequest,
@@ -278,6 +323,26 @@ async def dispatch_webchat_runtime_reply(
             return RuntimeAIProviderResult.unavailable(
                 provider="provider_runtime",
                 error_code=result.error_code or "all_failed",
+                elapsed_ms=result.elapsed_ms,
+                safe_summary=safe_summary,
+            )
+
+        if not _authoritative_provider_audit_exists(
+            db,
+            request=provider_request,
+            provider=result.provider,
+        ):
+            safe_summary = dict(result.raw_payload_safe_summary or {})
+            safe_summary.update(
+                {
+                    "provider_runtime": True,
+                    "provider_bypassed": False,
+                    "authoritative_audit": "unavailable",
+                }
+            )
+            return RuntimeAIProviderResult.unavailable(
+                provider="provider_runtime",
+                error_code="provider_runtime_audit_unavailable",
                 elapsed_ms=result.elapsed_ms,
                 safe_summary=safe_summary,
             )
