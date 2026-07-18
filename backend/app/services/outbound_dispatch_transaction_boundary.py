@@ -7,8 +7,6 @@ from typing import Any
 
 from sqlalchemy import or_, update
 
-_PATCHED = False
-
 
 def _exception_reason(exc: Exception) -> str:
     return f"Unhandled dispatch exception: {type(exc).__name__}"
@@ -23,7 +21,12 @@ def _claim_token(worker_id: str | None) -> str:
     return f"{prefix[:80]}:{uuid.uuid4().hex}"
 
 
-def _refresh_message_lease(db: Any, *, message_id: int, lease_token: str) -> bool:
+def _refresh_message_lease(
+    db: Any,
+    *,
+    message_id: int,
+    lease_token: str,
+) -> bool:
     if not _is_sqlalchemy_session(db):
         return True
 
@@ -51,7 +54,12 @@ def _refresh_message_lease(db: Any, *, message_id: int, lease_token: str) -> boo
     return True
 
 
-def _owns_message_lease(db: Any, *, message_id: int, lease_token: str) -> bool:
+def _owns_message_lease(
+    db: Any,
+    *,
+    message_id: int,
+    lease_token: str,
+) -> bool:
     if not _is_sqlalchemy_session(db):
         return True
 
@@ -91,7 +99,12 @@ def _recover_unhandled_dispatch_exception(
     ):
         message_dispatch.LOGGER.warning(
             "outbound_stale_exception_result_rejected",
-            extra={"event_payload": {"message_id": message_id, "error_type": type(exc).__name__}},
+            extra={
+                "event_payload": {
+                    "message_id": message_id,
+                    "error_type": type(exc).__name__,
+                }
+            },
         )
         return None
 
@@ -103,7 +116,12 @@ def _recover_unhandled_dispatch_exception(
     if message is None:
         message_dispatch.LOGGER.warning(
             "outbound_dispatch_exception_recovery_missing_message",
-            extra={"event_payload": {"message_id": message_id, "error_type": type(exc).__name__}},
+            extra={
+                "event_payload": {
+                    "message_id": message_id,
+                    "error_type": type(exc).__name__,
+                }
+            },
         )
         return None
 
@@ -136,24 +154,29 @@ def _recover_unhandled_dispatch_exception(
                 "error_type": type(exc).__name__,
                 "failure_code": message.failure_code,
                 "retry_count": message.retry_count,
-                "next_status": message.status.value if hasattr(message.status, "value") else str(message.status),
+                "next_status": (
+                    message.status.value
+                    if hasattr(message.status, "value")
+                    else str(message.status)
+                ),
             }
         },
     )
     return message
 
 
-def reclaim_stale_processing_messages(db: Any, *, limit: int | None = None) -> int:
-    """Return expired processing attempts to the canonical retry/dead state machine.
-
-    The stable provider idempotency key is preserved. This closes the crash window
-    where a worker had already changed a row to ``processing`` and disappeared
-    before persisting a terminal result.
-    """
+def reclaim_stale_processing_messages(
+    db: Any,
+    *,
+    limit: int | None = None,
+) -> int:
+    """Return expired processing attempts to the canonical retry/dead state machine."""
     from . import message_dispatch
 
     now = message_dispatch.utc_now()
-    lock_deadline = now - timedelta(seconds=message_dispatch.settings.outbox_lock_seconds)
+    lock_deadline = now - timedelta(
+        seconds=message_dispatch.settings.outbox_lock_seconds
+    )
     query = (
         db.query(message_dispatch.TicketOutboundMessage)
         .filter(
@@ -212,7 +235,7 @@ def reclaim_stale_processing_messages(db: Any, *, limit: int | None = None) -> i
     return len(rows)
 
 
-def _dispatch_pending_messages_with_attempt_boundary(
+def dispatch_pending_messages(
     db: Any,
     *,
     limit: int | None = None,
@@ -230,7 +253,9 @@ def _dispatch_pending_messages_with_attempt_boundary(
                     "failure_code": failure_code,
                     "reason": reason,
                     "outbound_provider": message_dispatch.settings.outbound_provider,
-                    "enable_outbound_dispatch": message_dispatch.settings.enable_outbound_dispatch,
+                    "enable_outbound_dispatch": (
+                        message_dispatch.settings.enable_outbound_dispatch
+                    ),
                 }
             },
         )
@@ -278,18 +303,5 @@ def _dispatch_pending_messages_with_attempt_boundary(
                 processed.append(recovered)
             continue
         processed.append(message)
-        # Commit after each external dispatch attempt to retain the stable
-        # idempotency boundary and prevent one failure from aborting the batch.
         db.commit()
     return processed
-
-
-def apply_outbound_dispatch_transaction_boundary_patch() -> None:
-    global _PATCHED
-    if _PATCHED:
-        return
-
-    from . import message_dispatch
-
-    message_dispatch.dispatch_pending_messages = _dispatch_pending_messages_with_attempt_boundary
-    _PATCHED = True
