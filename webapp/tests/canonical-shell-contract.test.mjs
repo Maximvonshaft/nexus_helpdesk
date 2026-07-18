@@ -40,7 +40,7 @@ test('one MUI application shell owns product identity, navigation, session and s
   assert.match(shell, /工作范围/)
   assert.match(shell, /跳到主要内容/)
   assert.match(shell, /scope\.country_code/)
-  assert.match(shell, /channelLabel\(scope\.channel_key\)/)
+  assert.match(shell, /channelPresentation\(scope\.channel_key\)\.label/)
   assert.match(shell, /<AppBar/)
   assert.match(shell, /<Toolbar/)
   assert.match(navigationView, /APP_NAVIGATION\.filter/)

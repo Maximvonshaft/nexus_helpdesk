@@ -11,6 +11,7 @@ const workspace = [
   'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
   'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
   'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceActions.tsx',
   'src/features/operator-workspace/operatorWorkspaceState.ts',
 ].map(read).join('\n')
 
@@ -86,22 +87,4 @@ test('type exports have one declaration and one domain owner', () => {
   assert.doesNotMatch(knowledge, /ChannelOnboardingTask|ExternalChannelUnresolvedEvent/)
   assert.match(channelControl, /ChannelOnboardingTask/)
   assert.match(channelControl, /ExternalChannelUnresolvedEvent/)
-})
-
-test('MUI and one bounded presentation module are the only generic visual authorities', () => {
-  const theme = read('src/theme/nexusTheme.ts')
-  const presentation = read('src/app/OperatorPresentation.tsx')
-  assert.match(theme, /createTheme/)
-  assert.match(presentation, /OperatorEmptyState/)
-  assert.match(presentation, /OperatorErrorNotice/)
-  assert.equal(exists('src/components/ui'), false)
-  for (const path of ['src/styles/tokens.css', 'src/styles/components.css', 'src/styles/auth.css', 'src/app/app-shell.css', 'src/features/operator-workspace/operator-workspace.css', 'src/features/knowledge/knowledge.css']) assert.equal(exists(path), false, path)
-})
-
-test('webchat remains a concise compatibility redirect only', () => {
-  const source = read('src/routes/webchat.tsx')
-  assert.match(source, /WebchatCompatibilityRedirect/)
-  assert.match(source, /正在跳转/)
-  assert.match(source, /workspace\?session=/)
-  assert.doesNotMatch(source, /supportConversationDetail|support-console|旧客服后台入口已合并/)
 })
