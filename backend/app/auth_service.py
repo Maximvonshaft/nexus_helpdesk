@@ -8,6 +8,7 @@ import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHash, VerifyMismatchError
 
+from .services.password_policy import validate_admin_password_policy
 from .settings import get_settings
 
 settings = get_settings()
@@ -18,6 +19,9 @@ PASSWORD_HASHER = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
+    """Hash a user password only after the canonical policy accepts it."""
+
+    validate_admin_password_policy(password)
     return PASSWORD_HASHER.hash(password)
 
 
@@ -29,6 +33,8 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def hash_secret(secret: str) -> str:
+    """Hash non-password credentials without applying the user password policy."""
+
     return PASSWORD_HASHER.hash(secret)
 
 
