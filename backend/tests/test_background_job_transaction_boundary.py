@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,15 +68,56 @@ def _job(job_id: int, *, job_type: str = background_jobs.AUTO_REPLY_JOB) -> Simp
     )
 
 
+def _assert_thin_delegates(
+    path: Path,
+    *,
+    names: tuple[str, ...],
+    authority_module: str,
+) -> None:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    for name in names:
+        node = functions[name]
+        assert len(node.body) == 2, name
+        import_node, return_node = node.body
+        assert isinstance(import_node, ast.ImportFrom), name
+        assert import_node.module == authority_module, name
+        assert isinstance(return_node, ast.Return), name
+        assert isinstance(return_node.value, ast.Call), name
+        segment = ast.get_source_segment(source, node) or ""
+        for forbidden in (
+            "claim_pending_",
+            "process_background_job(",
+            "process_outbound_message(",
+            "db.commit()",
+            "for job in",
+            "for message in",
+        ):
+            assert forbidden not in segment, (name, forbidden)
+
+
 def test_worker_runtime_selects_boundaries_without_package_monkey_patch():
     root = Path(__file__).resolve().parents[2]
     services_init = (root / "backend/app/services/__init__.py").read_text(
         encoding="utf-8"
     )
     runner = (root / "backend/scripts/run_worker.py").read_text(encoding="utf-8")
+    background_boundary = (
+        root / "backend/app/services/background_job_transaction_boundary.py"
+    ).read_text(encoding="utf-8")
+    outbound_boundary = (
+        root / "backend/app/services/outbound_dispatch_transaction_boundary.py"
+    ).read_text(encoding="utf-8")
 
     assert "apply_background_job_transaction_boundary_patch" not in services_init
     assert "apply_outbound_dispatch_transaction_boundary_patch" not in services_init
+    assert "apply_background_job_transaction_boundary_patch" not in background_boundary
+    assert "apply_outbound_dispatch_transaction_boundary_patch" not in outbound_boundary
     assert "background_job_transaction_boundary" in runner
     assert "outbound_dispatch_transaction_boundary" in runner
     assert "_dispatch_pending_" not in runner
@@ -84,6 +126,21 @@ def test_worker_runtime_selects_boundaries_without_package_monkey_patch():
         not in runner
     )
     assert "from app.services.message_dispatch import dispatch_pending_messages" not in runner
+
+    _assert_thin_delegates(
+        root / "backend/app/services/background_jobs.py",
+        names=(
+            "dispatch_pending_background_jobs",
+            "dispatch_pending_webchat_ai_reply_jobs",
+            "dispatch_pending_sync_jobs",
+        ),
+        authority_module="background_job_transaction_boundary",
+    )
+    _assert_thin_delegates(
+        root / "backend/app/services/message_dispatch.py",
+        names=("dispatch_pending_messages",),
+        authority_module="outbound_dispatch_transaction_boundary",
+    )
 
 
 def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_continues(monkeypatch):
