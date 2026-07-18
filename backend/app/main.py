@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
@@ -15,6 +15,7 @@ from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_whatsapp_native import router as admin_whatsapp_native_router
 from .api.admin import router as admin_router
+from .api.admin_password_policy import enforce_admin_password_request_policy
 from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
 from .api.channel_control import router as channel_control_router
@@ -436,7 +437,10 @@ app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
 app.include_router(admin_whatsapp_native_router)
 app.include_router(ticket_perf_router)
-app.include_router(admin_router)
+app.include_router(
+    admin_router,
+    dependencies=[Depends(enforce_admin_password_request_policy)],
+)
 app.include_router(admin_queue_router)
 app.include_router(osr_admin_router)
 app.include_router(operator_queue_router)
