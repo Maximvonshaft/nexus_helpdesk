@@ -13,6 +13,7 @@ env:
   CI: "true"
   PYTHON_VERSION: "3.11"
   NODE_VERSION: "22"
+  PYTHONPATH: backend
   APP_ENV: test
   AUTO_INIT_DB: "false"
   SEED_DEMO_DATA: "false"
@@ -179,12 +180,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: webapp/package-lock.json
+      - name: Generate React 18 type-aligned lockfile probe
+        working-directory: webapp
+        run: npm install --package-lock-only --ignore-scripts --save-dev-exact @types/react@18.3.28 @types/react-dom@18.3.7
       - name: Install exact frontend dependencies
         working-directory: webapp
         run: npm ci --ignore-scripts
       - name: Verify architecture, lint, types, units and build
         working-directory: webapp
-        run: npm run verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-frontend
+          npm run verify 2>&1 | tee /tmp/nexus-frontend/verify.log
       - name: Install Playwright Chromium
         working-directory: webapp
         run: npx playwright install --with-deps chromium
@@ -193,12 +201,15 @@ jobs:
         env:
           RC_RUN_BROWSER_SMOKE: "true"
         run: npm run e2e
-      - name: Upload browser evidence
+      - name: Upload frontend probe and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: browser-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          name: frontend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
           path: |
+            /tmp/nexus-frontend
+            webapp/package.json
+            webapp/package-lock.json
             webapp/playwright-report
             webapp/test-results
             frontend_dist
@@ -212,7 +223,7 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
-        image: docker.io/library/postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+        image: docker.io/pgvector/pgvector:0.8.5-pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
         env:
           POSTGRES_DB: nexus_ci_acceptance
           POSTGRES_USER: nexus_ci
@@ -274,7 +285,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: docker.io/library/postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+        image: docker.io/pgvector/pgvector:0.8.5-pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
         env:
           POSTGRES_DB: nexus_image_acceptance
           POSTGRES_USER: nexus_image
@@ -315,6 +326,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://nexus_image:nexus_image_only@127.0.0.1:55432/nexus_image_acceptance
         run: |
           docker run --rm --network host \
+            -e PYTHONPATH=/app/backend \
             -e APP_ENV=test \
             -e DATABASE_URL="$DATABASE_URL" \
             -e JWT_SECRET_KEY=ci-only-not-a-production-secret-0123456789abcdef \
@@ -331,6 +343,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker run -d --name nexus-ci-candidate --network host \
+            -e PYTHONPATH=/app/backend \
             -e APP_ENV=test \
             -e DATABASE_URL="$DATABASE_URL" \
             -e JWT_SECRET_KEY=ci-only-not-a-production-secret-0123456789abcdef \
