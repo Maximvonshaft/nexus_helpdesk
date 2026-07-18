@@ -4,15 +4,28 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
+
+
+def _load(name: str, relative: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+MODULE = _load(
     "nexus_exact_head_acceptance",
-    ROOT / "scripts/qualification/exact_head_acceptance.py",
+    "scripts/qualification/exact_head_acceptance.py",
 )
-assert SPEC is not None and SPEC.loader is not None
-MODULE = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = MODULE
-SPEC.loader.exec_module(MODULE)
+POSTGRES = _load(
+    "nexus_postgres_acceptance",
+    "scripts/qualification/postgres_acceptance.py",
+)
 
 
 def test_required_acceptance_domains_are_explicit() -> None:
@@ -113,3 +126,34 @@ def test_worker_fault_evidence_requires_every_scenario() -> None:
         findings,
     )
     assert any(item.startswith("worker_fault_scenario_failed:") for item in findings)
+
+
+def test_local_disposable_database_url_is_allowed() -> None:
+    POSTGRES._validate_database_url(
+        "postgresql+psycopg://user:password@postgres:5432/nexus_acceptance",
+        allow_remote=False,
+    )
+
+
+def test_database_name_without_disposable_marker_is_rejected() -> None:
+    with pytest.raises(ValueError, match="disposable_database_name_marker_required"):
+        POSTGRES._validate_database_url(
+            "postgresql+psycopg://user:password@postgres:5432/nexusdesk",
+            allow_remote=False,
+        )
+
+
+def test_remote_database_is_rejected_without_explicit_confirmation() -> None:
+    with pytest.raises(ValueError, match="remote_database_requires_explicit_confirmation"):
+        POSTGRES._validate_database_url(
+            "postgresql+psycopg://user:password@db.example.invalid:5432/nexus_test",
+            allow_remote=False,
+        )
+
+
+def test_query_and_multi_host_urls_are_rejected() -> None:
+    with pytest.raises(ValueError, match="postgresql_database_url_unbounded"):
+        POSTGRES._validate_database_url(
+            "postgresql://user:password@postgres:5432/nexus_test?sslmode=require",
+            allow_remote=False,
+        )
