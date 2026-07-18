@@ -29,40 +29,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/maintenance/backend_convergence_patch.py")
-          source = path.read_text(encoding="utf-8")
-
-          start = source.index("# Worker business-health timestamps")
-          end = source.index("# Healthy single-writer local storage")
-          queue_patch = '''# Worker business-health timestamps are normalized at the authority boundary.
-          replace_once(
-              "backend/app/services/queue_health.py",
-              "from ..utils.time import utc_now\\n",
-              "from ..utils.time import ensure_utc, utc_now\\n",
-          )
-          replace_once(
-              "backend/app/services/queue_health.py",
-              "def _age_ms(value, *, now) -> int | None:\\n    if value is None:\\n        return None\\n    return max(0, int((now - value).total_seconds() * 1000))\\n",
-              "def _age_ms(value, *, now) -> int | None:\\n    if value is None:\\n        return None\\n    return max(0, int((ensure_utc(now) - ensure_utc(value)).total_seconds() * 1000))\\n",
-          )
-
-          '''
-          source = source[:start] + queue_patch + source[end:]
-
-          start = source.index("# Healthy single-writer local storage")
-          end = source.index("# Dedicated WebChat AI queue")
-          storage_patch = '''# Healthy single-writer local storage is a measured NO_CHANGE state.
-          replace_once(
-              "scripts/qualification/infrastructure_decision.py",
-              '''    if storage is None:\n        object_reasons.append("storage_baseline_missing")\n    if storage_backend == "s3" and storage_status == "ok":\n        object_decision = "NO_CHANGE"\n        object_reasons.append("object_storage_already_authoritative")\n    elif storage is not None and (\n        multi_writer_required is True\n        or rpo_rto_met is False\n        or capacity_breached is True\n    ):\n        object_decision = "CONSIDER_ADR"\n        object_reasons.append("local_storage_boundary_confirmed")\n    else:\n        object_decision = "CONDITIONAL_HOLD"\n        if not object_reasons:\n            object_reasons.append("pilot_local_storage_boundary_not_exceeded")\n''',
-              '''    if storage is None:\n        object_reasons.append("storage_baseline_missing")\n    if storage_backend == "s3" and storage_status == "ok":\n        object_decision = "NO_CHANGE"\n        object_reasons.append("object_storage_already_authoritative")\n    elif storage is not None and (\n        multi_writer_required is True\n        or rpo_rto_met is False\n        or capacity_breached is True\n    ):\n        object_decision = "CONSIDER_ADR"\n        object_reasons.append("local_storage_boundary_confirmed")\n    elif storage is not None:\n        object_decision = "NO_CHANGE"\n        object_reasons.append("pilot_local_storage_boundary_not_exceeded")\n    else:\n        object_decision = "BLOCKED"\n''',
-          )
-
-          '''
-          path.write_text(source[:start] + storage_patch + source[end:], encoding="utf-8")
-          PY
+          python scripts/maintenance/reconcile_patch_preconditions.py
           python scripts/maintenance/backend_convergence_patch.py 2>&1 | tee /tmp/backend-convergence-patch.log
       - name: Upload patch diagnostics
         if: always()
@@ -70,7 +37,7 @@ jobs:
         with:
           name: backend-convergence-patch-${{ github.sha }}
           path: /tmp/backend-convergence-patch.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
       - name: Restore canonical workflow and remove maintenance assets
         shell: bash
@@ -78,8 +45,7 @@ jobs:
           set -Eeuo pipefail
           git checkout 285d7e214f0869577cec429806dd3c348bfdab8b -- .github/workflows/canonical-acceptance.yml
           rm -f .github/workflows/backend-convergence-maintenance.yml
-          rm -f scripts/maintenance/backend_convergence_patch.py
-          rmdir scripts/maintenance 2>/dev/null || true
+          rm -rf scripts/maintenance
           git config user.name "nexus-convergence-bot"
           git config user.email "nexus-convergence-bot@users.noreply.github.com"
           git add -A
