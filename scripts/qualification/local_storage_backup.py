@@ -3,6 +3,7 @@
 
 This tool does not copy or delete data. It compares source and backup contents,
 rejects symbolic links and writes an atomic marker only when both trees match.
+Acceptance inputs and outputs must remain outside the candidate repository.
 """
 
 from __future__ import annotations
@@ -15,8 +16,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "nexus.local-storage-backup.v1"
 DEFAULT_MARKER = ".nexus-backup-verified.json"
+
+
+def _inside_candidate_tree(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def _file_sha256(path: Path) -> str:
@@ -54,8 +64,12 @@ def _manifest_sha256(rows: list[dict[str, Any]]) -> str:
 
 
 def verify_backup(source: Path, backup: Path, *, marker_name: str = DEFAULT_MARKER) -> dict[str, Any]:
+    if source.expanduser().is_symlink() or backup.expanduser().is_symlink():
+        raise ValueError("source_or_backup_symlink_not_allowed")
     source = source.expanduser().resolve()
     backup = backup.expanduser().resolve()
+    if _inside_candidate_tree(source) or _inside_candidate_tree(backup):
+        raise ValueError("source_or_backup_inside_candidate_tree")
     if source == backup:
         raise ValueError("source_and_backup_must_differ")
     if not source.is_dir():
@@ -83,7 +97,11 @@ def verify_backup(source: Path, backup: Path, *, marker_name: str = DEFAULT_MARK
 
 
 def write_marker(backup: Path, payload: dict[str, Any], *, marker_name: str = DEFAULT_MARKER) -> Path:
+    if backup.expanduser().is_symlink():
+        raise ValueError("backup_symlink_not_allowed")
     backup = backup.expanduser().resolve()
+    if _inside_candidate_tree(backup):
+        raise ValueError("backup_inside_candidate_tree")
     target = backup / marker_name
     temporary = backup / f".{marker_name}.{os.getpid()}.tmp"
     rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -105,8 +123,11 @@ def main() -> int:
     result = {**payload, "marker": str(marker)}
     rendered = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rendered, encoding="utf-8")
+        output = args.output.expanduser().resolve()
+        if _inside_candidate_tree(output):
+            raise SystemExit("backup qualification output must remain outside candidate tree")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
     print(rendered, end="")
     return 0
 
