@@ -53,6 +53,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Prove exact identity and current-main relation
         id: identity
@@ -103,6 +104,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -137,6 +139,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -173,6 +176,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -180,12 +184,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: webapp/package-lock.json
-      - name: Generate React 18 type-aligned lockfile probe
-        working-directory: webapp
-        run: npm install --package-lock-only --ignore-scripts --save-dev-exact @types/react@18.3.28 @types/react-dom@18.3.7
       - name: Install exact frontend dependencies
         working-directory: webapp
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify architecture, lint, types, units and build
         working-directory: webapp
         shell: bash
@@ -201,7 +202,7 @@ jobs:
         env:
           RC_RUN_BROWSER_SMOKE: "true"
         run: npm run e2e
-      - name: Upload frontend probe and browser evidence
+      - name: Upload frontend and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -244,6 +245,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -302,6 +304,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Build exact-Head image
         shell: bash
