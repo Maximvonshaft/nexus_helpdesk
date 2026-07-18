@@ -16,16 +16,15 @@ def test_compose_authority_is_controlled_and_immutable():
     assert ":latest" not in controlled
 
 
-def test_source_release_script_defaults_to_current_release_and_includes_current_report():
+def test_source_release_script_packages_only_canonical_source_authorities():
     script = (ROOT / "scripts" / "build_source_release.sh").read_text()
-    assert (
-        "helpdesk_suite_lite_round20B_source_release.zip" in script
-        or "helpdesk_suite_lite_round27_source_release.zip" in script
-    )
-    assert (
-        "ROUND20B_LEGACY_PRODUCTION_REPORT.md" in script
-        or "ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md" in script
-    )
+    assert "nexus_canonical_source_release.zip" in script
+    assert 'copy_tree "$ROOT/backend"' in script
+    assert 'copy_tree "$ROOT/webapp"' in script
+    assert 'copy_tree "$ROOT/config"' in script
+    assert 'copy_tree "$ROOT/docs"' in script
+    assert 'copy_tree "$ROOT/frontend"' not in script
+    assert "ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md" not in script
 
 
 def test_frontend_routes_expose_canonical_product_domains_and_transitional_webchat():
