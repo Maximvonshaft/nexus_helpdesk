@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "architecture": "node scripts/assert-frontend-architecture.mjs",
+    "architecture": "node scripts/assert-frontend-architecture.mjs && node scripts/assert-http-transport-authority.mjs",
     "verify": "npm run architecture && npm run lint && npm run typecheck && npm test && npm run build && node scripts/assert-route-splitting.mjs",
     "size-report": "node scripts/size-report.mjs"
   },
