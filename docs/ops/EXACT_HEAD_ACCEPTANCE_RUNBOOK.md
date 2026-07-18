@@ -1,283 +1,364 @@
 # Nexus Exact-Head Acceptance Runbook
 
-This runbook is the sole operational sequence for accepting PR #763 or a later canonical candidate. It does not create a second verifier. Every executable check delegates to repository-local canonical tools.
+This is the sole operational sequence for accepting PR #763 or a later
+canonical candidate. `scripts/verify_repository.py` is the only final verifier.
+The qualification scripts it invokes are bounded subroutines, not alternative
+release authorities.
 
 ## Safety boundary
 
-- Run only from a clean clone of the exact candidate Head.
-- Use a disposable PostgreSQL database whose database name contains `test`, `acceptance`, `scratch`, `ci`, or `tmp`.
-- Keep Provider, WebChat AI, voice, outbound, WhatsApp and Operations writes disabled.
-- Store generated evidence outside the repository.
-- Do not use production credentials, customer data or production hosts.
-- A green technical result never grants production, Provider or outbound authorization.
-- Any Head or tree change invalidates all prior evidence.
+- Run from a clean clone of one exact candidate Head.
+- Use a disposable PostgreSQL database whose name contains `test`,
+  `acceptance`, `scratch`, `ci` or `tmp`.
+- Prefer a local/isolated PostgreSQL host. A remote disposable database requires
+  `NEXUS_ACCEPTANCE_REMOTE_DATABASE_CONFIRM=I_UNDERSTAND_DISPOSABLE_ONLY` and the
+  explicit verifier flag.
+- Keep Provider, WebChat AI, voice, outbound, WhatsApp, email synchronization,
+  SpeedAF writes and Operations Dispatch disabled.
+- Use synthetic test data only.
+- Store all generated evidence outside the repository.
+- Never use production credentials, customer records, production databases,
+  production uploads or production hosts.
+- A passing result never grants production, Provider or outbound authorization.
+- Any source SHA, tree SHA or immutable-input change invalidates all evidence.
 
-## 1. Freeze identity
+## 1. Freeze the candidate
 
 ```bash
 export EXPECTED_SHA='<40-hex-candidate-sha>'
 test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git status --porcelain)"
-git rev-parse 'HEAD^{tree}'
+export EXPECTED_TREE="$(git rev-parse 'HEAD^{tree}')"
 ```
 
-Record:
+Do not add commits after evidence collection begins.
 
-- source SHA;
-- tree SHA;
-- UTC start time;
-- repository URL;
-- operator identity;
-- execution host identity without private network details.
-
-## 2. Prepare external evidence directories
+## 2. Prepare external directories
 
 ```bash
 export NEXUS_ACCEPTANCE_EVIDENCE_DIR="$(mktemp -d /tmp/nexus-acceptance.XXXXXX)"
 export NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR="$(mktemp -d /tmp/nexus-supply-chain.XXXXXX)"
 ```
 
-Both directories must resolve outside the repository.
+Both paths must resolve outside the candidate repository and must not be
+symbolic links.
 
-## 3. Fail-closed environment
+## 3. Prepare immutable image evidence
 
-```bash
-export APP_ENV=test
-export AUTO_INIT_DB=false
-export SEED_DEMO_DATA=false
-export ALLOW_DEV_AUTH=false
-export PROVIDER_RUNTIME_ENABLED=false
-export PROVIDER_RUNTIME_TRAFFIC_MODE=control
-export PROVIDER_RUNTIME_KILL_SWITCH=true
-export PROVIDER_RUNTIME_CANARY_PERCENT=0
-export PRIVATE_AI_RUNTIME_ENABLED=false
-export WEBCHAT_AI_ENABLED=false
-export WEBCHAT_AI_AUTO_REPLY_MODE=off
-export WEBCHAT_VOICE_ENABLED=false
-export ENABLE_OUTBOUND_DISPATCH=false
-export OUTBOUND_PROVIDER=disabled
-export OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false
-export WHATSAPP_NATIVE_ENABLED=false
-export WHATSAPP_DISPATCH_MODE=disabled
-export EMAIL_MAILBOX_SYNC_ENABLED=false
-export SPEEDAF_MCP_ENABLED=false
-export SPEEDAF_TRACK_QUERY_ENABLED=false
-export SPEEDAF_WORK_ORDER_CREATE_ENABLED=false
-export SPEEDAF_UPDATE_ADDRESS_ENABLED=false
-export SPEEDAF_CANCEL_ENABLED=false
-export SPEEDAF_VOICE_CALLBACK_ENABLED=false
-export OPERATIONS_DISPATCH_MODE=disabled
-export OPERATIONS_DISPATCH_ADAPTER=disabled
-export PYTHONPATH=backend
+Build one image from the exact candidate and reference it by Digest:
+
+```text
+ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<64-hex-digest>
 ```
 
-Before continuing, verify that `DATABASE_URL` points to a disposable PostgreSQL database and does not contain a production database name.
+Generate outside the repository:
 
-## 4. Clean dependency installation
-
-Use a clean host or disposable container with the approved Python and Node versions.
-
-```bash
-python -m pip install --requirement backend/requirements.txt
-cd webapp
-npm ci --ignore-scripts
-cd ..
+```text
+$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR/sbom.spdx.json
+$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR/cosign.bundle.json
 ```
 
-Do not reuse `node_modules`, a Python virtual environment or build artifacts from another SHA.
-
-## 5. Generate and verify external supply-chain evidence
-
-Build the immutable image from the exact candidate. Generate an SPDX JSON SBOM and a cryptographic signature bundle using the approved builder/signing identity. Then assemble the bounded provenance outside the repository:
+Then assemble provenance:
 
 ```bash
 python scripts/release/assemble_supply_chain_evidence.py \
-  --image 'ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<64-hex-digest>' \
-  --sbom-source '/external/path/generated-sbom.spdx.json' \
-  --signature-bundle-source '/external/path/generated-cosign.bundle.json' \
+  --image 'ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<digest>' \
+  --sbom-source "$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR/sbom.spdx.json" \
+  --signature-bundle-source "$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR/cosign.bundle.json" \
   --output-dir "$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR"
-
-python scripts/qualification/supply_chain.py \
-  --release \
-  --evidence-dir "$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR" \
-  --output "$NEXUS_ACCEPTANCE_EVIDENCE_DIR/supply-chain.json"
 ```
 
-Separately verify the image signature with the approved verification identity. Store the sanitized verification result outside the repository.
+Verify the image signature with the approved verification identity and create:
 
-## 6. Canonical repository verification
+```text
+$NEXUS_ACCEPTANCE_EVIDENCE_DIR/signature-verification.json
+```
+
+Required schema and invariants:
+
+```json
+{
+  "schema": "nexus.signature-verification.v1",
+  "status": "pass",
+  "source_sha": "<EXPECTED_SHA>",
+  "tree_sha": "<EXPECTED_TREE>",
+  "verified": true,
+  "image": "ghcr.io/...@sha256:<digest>",
+  "verification_identity": "<bounded identity>",
+  "sanitized": true,
+  "contains_customer_data": false,
+  "contains_secrets": false
+}
+```
+
+Do not include certificates, credentials or unbounded signer output in the
+acceptance packet; keep the cryptographic bundle in the supply-chain directory.
+
+## 4. Prepare environment-generated evidence
+
+The final verifier automatically creates these files:
+
+```text
+supply-chain.json
+migration-rehearsal.json
+postgres-qualification.json
+database-capacity.json
+upload-backup.json
+infrastructure-decisions.json
+acceptance-manifest.json
+acceptance-qualification.json
+canonical-verification.json
+```
+
+Before running it, the controlled environment or independent reviewer must
+create the following bounded JSON files in
+`$NEXUS_ACCEPTANCE_EVIDENCE_DIR`.
+
+### Representative workload
+
+```text
+representative-workload.json
+schema: nexus.representative-workload.v1
+```
+
+It must contain a positive `sample_count` and numeric metrics for:
+
+- `latency_p50_ms`;
+- `latency_p95_ms`;
+- `latency_p99_ms`;
+- `throughput_per_second`;
+- `error_rate_percent`;
+- `pool_checkout_wait_p95_ms`;
+- `worker_busy_ratio_percent`;
+- `cpu_headroom_percent`.
+
+### Worker fault injection
+
+```text
+worker-fault-injection.json
+schema: nexus.worker-fault-injection.v1
+```
+
+All scenarios must pass:
+
+- `kill_after_claim`;
+- `kill_during_external_wait`;
+- `database_disconnect_before_commit`;
+- `lease_transfer`;
+- `stale_worker_resume`;
+- `ambiguous_external_result` against a non-production idempotency stub;
+- `full_worker_restart`.
+
+The document must explicitly prove no stuck processing, no stale completion,
+no duplicate durable action, no duplicate external action, and bounded
+retry/dead state.
+
+### Backup and recovery rehearsal
+
+```text
+recovery-rehearsal.json
+schema: nexus.recovery-rehearsal.v1
+```
+
+It must be based on a disposable restore and record:
+
+- database restore success;
+- uploads restore success;
+- referential checks;
+- attachment reads;
+- measured `rpo_seconds` and `rto_seconds`;
+- no production restore.
+
+### Controlled deployment and rollback
+
+```text
+controlled-deployment.json
+schema: nexus.controlled-deployment-acceptance.v1
+
+rollback-rehearsal.json
+schema: nexus.rollback-rehearsal.v1
+```
+
+Controlled deployment evidence must prove:
+
+- immutable image identity matches the candidate;
+- `/healthz` and `/readyz` pass;
+- queue, database pool and storage readiness pass;
+- service-specific database identities remain isolated;
+- all external writes remain fail closed.
+
+Rollback evidence must use a previously approved immutable release identity and
+prove health after rollback with a measured duration.
+
+### Queue, realtime and storage baselines
+
+```text
+queue-baseline.json       schema: nexus.queue-baseline.v1
+realtime-baseline.json    schema: nexus.realtime-baseline.v1
+storage-baseline.json     schema: nexus.storage-baseline.v1
+```
+
+Each must have `status=pass`, a positive `sample_count`, bounded sanitized data,
+and the fields consumed by
+`scripts/qualification/infrastructure_decision.py`.
+
+### Independent review
+
+```text
+independent-review.json
+schema: nexus.independent-review.v1
+```
+
+It must include:
+
+- a non-empty reviewer identity;
+- `independent=true`;
+- `decision=approved`;
+- `unresolved_findings=[]`;
+- explicit confirmation that no second UI, Transport, permission, Provider,
+  Worker or release authority remains.
+
+The author of the implementation cannot manufacture this evidence as a
+substitute for an independent review.
+
+### Repository protection
+
+```text
+repository-protection.json
+schema: nexus.repository-protection.v1
+```
+
+It must prove:
+
+- direct writes to `main` are restricted;
+- independent review is required;
+- Head changes invalidate stale evidence;
+- expected-Head merge is enforced;
+- administrator bypass is restricted.
+
+## 5. Prepare disposable PostgreSQL and uploads
+
+Set a disposable PostgreSQL URL. The URL is passed to the PostgreSQL acceptance
+subprocess through the environment and is never written to evidence.
+
+```bash
+export DATABASE_URL='postgresql+psycopg://.../nexus_acceptance'
+```
+
+Prepare two different synthetic upload directories:
+
+```bash
+export ACCEPTANCE_UPLOAD_SOURCE='/tmp/nexus-upload-source'
+export ACCEPTANCE_UPLOAD_BACKUP='/tmp/nexus-upload-backup'
+```
+
+The backup directory must already contain a complete copy of the source. The
+verifier compares content manifests and writes a bounded marker only when they
+are equal.
+
+## 6. Run the one final acceptance command
 
 ```bash
 python scripts/verify_repository.py \
+  --expected-sha "$EXPECTED_SHA" \
   --release-evidence-dir "$NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR" \
+  --acceptance-evidence-dir "$NEXUS_ACCEPTANCE_EVIDENCE_DIR" \
+  --acceptance-database-url "$DATABASE_URL" \
+  --acceptance-upload-source "$ACCEPTANCE_UPLOAD_SOURCE" \
+  --acceptance-upload-backup "$ACCEPTANCE_UPLOAD_BACKUP" \
   --evidence-out "$NEXUS_ACCEPTANCE_EVIDENCE_DIR/canonical-verification.json"
 ```
 
-This runs:
-
-- static authority and residue gates;
-- frontend architecture, lint, typecheck, unit and production build;
-- backend compile and full regression;
-- browser acceptance;
-- supply-chain qualification;
-- same-SHA, same-tree and clean-worktree checks before and after.
-
-Any skipped browser, focused-only test or dirty-tree result is insufficient for final acceptance.
-
-## 7. PostgreSQL migration rehearsal
-
-Run against a fresh disposable database:
+For an explicitly approved remote disposable database, add:
 
 ```bash
-cd backend
-python -m alembic upgrade head
-python -m alembic current
-python -m alembic downgrade -1
-python -m alembic current
-python -m alembic upgrade head
-python -m alembic current
-cd ..
+export NEXUS_ACCEPTANCE_REMOTE_DATABASE_CONFIRM=I_UNDERSTAND_DISPOSABLE_ONLY
 ```
 
-Record every command, return code and final Alembic revision. A failed rollback or re-upgrade blocks acceptance.
+and pass:
 
-## 8. PostgreSQL privacy and authorization
-
-```bash
-python -m pytest -q \
-  backend/tests/test_support_conversations_postgres.py \
-  backend/tests/test_support_conversation_privacy.py \
-  backend/tests/test_support_sensitive_access.py \
-  backend/tests/resilience/test_postgres_worker_recovery.py
+```text
+--allow-remote-acceptance-database
 ```
 
-The evidence must prove:
+Final acceptance deliberately rejects:
 
-- cross-Tenant/team identifiers do not reveal existence;
-- minimized lists contain no raw customer message text;
-- sensitive detail requires explicit capability and bounded audit;
-- concurrent claims do not duplicate jobs;
-- expired processing leases are reclaimed;
-- old attempts lose ownership after lease transfer.
+- `--static-only`;
+- `--focused-backend`;
+- `--skip-browser`;
+- missing release evidence;
+- missing disposable PostgreSQL URL;
+- missing upload source/backup;
+- any evidence directory inside the repository.
 
-## 9. Database capacity and hot-query snapshot
+## 7. What the final command executes
 
-```bash
-python scripts/qualification/database_capacity.py \
-  --database-url "$DATABASE_URL" \
-  --process-pool web:2:5:5 \
-  --process-pool outbound:1:2:2 \
-  --process-pool background:1:3:2 \
-  --process-pool webchat-ai:1:2:1 \
-  --process-pool handoff:1:2:1 \
-  --output "$NEXUS_ACCEPTANCE_EVIDENCE_DIR/database-capacity.json"
+On one unchanged Head, the verifier performs:
+
+1. candidate SHA/tree/immutable-input capture and clean-tree check;
+2. zero-duplicate/zero-residue static gates;
+3. service-authority AST qualification;
+4. actual FastAPI method + normalized-path qualification;
+5. Alembic Head inventory;
+6. clean frontend installation;
+7. frontend architecture, Transport, dependency, lint, typecheck, unit and build;
+8. Python compilation;
+9. complete backend regression;
+10. Playwright browser acceptance;
+11. disposable PostgreSQL upgrade → downgrade → re-upgrade;
+12. PostgreSQL privacy, authorization and Worker lease tests;
+13. sanitized connection-budget and hot-query snapshot;
+14. upload source/backup manifest equality;
+15. evidence-based infrastructure decisions;
+16. SHA-256 Manifest assembly for all 17 required artifacts;
+17. semantic qualification of every artifact;
+18. final SHA/tree/hash and clean-worktree reconciliation.
+
+Every failed subprocess produces a structured failure stage in
+`canonical-verification.json`. Command output is not copied into the evidence
+packet.
+
+## 8. Acceptance packet rules
+
+`acceptance-manifest.json` binds every required artifact by:
+
+- exact relative path;
+- expected Schema;
+- passing status;
+- SHA-256 file hash;
+- exact source SHA and tree SHA at packet level.
+
+The qualification fails when:
+
+- a file is missing, empty, too large or symbolic-linked;
+- a path escapes the evidence directory;
+- a file changes after Manifest assembly;
+- a Schema or status is wrong;
+- an artifact references another source/tree;
+- sanitization boundaries are absent;
+- Review or repository protection is missing;
+- any required fault, recovery, health or rollback invariant is false.
+
+## 9. Decision
+
+The candidate may move from Draft to review only when:
+
+```text
+canonical-verification.json: status=pass
+acceptance-qualification.json: status=pass
+same_identity=true
+browser_executed=true
+release_evidence_checked=true
+acceptance_evidence_checked=true
 ```
 
-The snapshot must remain sanitized and exclude SQL text and query parameters. Representative workload evidence must additionally capture pool checkout wait, p50/p95/p99, throughput, errors and saturation before any PgBouncer, Redis or Worker-scale decision.
+A passing acceptance packet still sets:
 
-## 10. Worker fault injection
-
-In a disposable controlled environment, exercise each queue with bounded fixtures:
-
-1. kill a Worker immediately after claim;
-2. kill it during external-call wait;
-3. simulate database disconnect before terminal commit;
-4. transfer an expired lease to a second Worker;
-5. allow the old Worker to resume and attempt completion;
-6. simulate ambiguous Provider success/timeout using a non-production stub that records idempotency keys;
-7. restart all Workers and reconcile queue state.
-
-Required evidence:
-
-- no permanently stuck `processing` row;
-- no stale completion accepted;
-- no duplicate durable action;
-- no duplicate external stub action for the same idempotency key;
-- bounded retry/dead state and operator-visible reason codes;
-- no payload or customer data in logs.
-
-## 11. Backup and recovery rehearsal
-
-After creating a disposable backup copy, verify attachment equality:
-
-```bash
-python scripts/qualification/local_storage_backup.py \
-  --source '/staging/uploads' \
-  --backup '/staging-backup/uploads' \
-  --output "$NEXUS_ACCEPTANCE_EVIDENCE_DIR/upload-backup.json"
+```text
+production_authorized=false
+provider_enablement_authorized=false
+outbound_enablement_authorized=false
 ```
 
-Restore a disposable PostgreSQL backup and the upload backup into a new environment. Record:
-
-- backup start/end;
-- restore start/end;
-- measured RPO and RTO;
-- final migration revision;
-- ticket/message/attachment referential checks;
-- attachment read checks;
-- recovery environment identity.
-
-No production restore is part of this runbook.
-
-## 12. Controlled deployment and rollback
-
-Use the immutable signed image and controlled Compose profile. Run the existing controlled preflight, migration, app and isolated Workers with all external writes disabled.
-
-Verify:
-
-- `/healthz` and `/readyz`;
-- release identity equals the frozen source SHA and image digest;
-- queue business health;
-- database pool state;
-- storage backup freshness;
-- service-specific database identities and mounts;
-- Provider/outbound/voice/Operations remain fail closed.
-
-Then exercise rollback to the previously approved immutable image in the same controlled environment and record the rollback duration and health evidence.
-
-## 13. Infrastructure decisions
-
-Feed sanitized database, queue, realtime and storage evidence into:
-
-```bash
-python scripts/qualification/infrastructure_decision.py \
-  --database "$NEXUS_ACCEPTANCE_EVIDENCE_DIR/database-capacity.json" \
-  --queue '/external/path/queue-baseline.json' \
-  --realtime '/external/path/realtime-baseline.json' \
-  --storage '/external/path/storage-baseline.json' \
-  --output "$NEXUS_ACCEPTANCE_EVIDENCE_DIR/infrastructure-decisions.json"
-```
-
-`CONSIDER_ADR` authorizes only a design review, not implementation or activation. Missing evidence must remain `HOLD` or `BLOCKED`.
-
-## 14. Independent review and repository protection
-
-The reviewer must review the frozen exact Head and record:
-
-- reviewer identity;
-- source SHA and tree SHA;
-- review decision;
-- unresolved findings;
-- confirmation that no second UI, transport, permission, Provider, Worker or release implementation remains.
-
-Confirm repository protection separately:
-
-- direct main writes are restricted;
-- required review cannot be bypassed silently;
-- stale evidence is invalidated when Head changes;
-- squash merge uses the expected exact Head.
-
-## 15. Final identity reconciliation
-
-```bash
-FINAL_SHA="$(git rev-parse HEAD)"
-FINAL_TREE="$(git rev-parse 'HEAD^{tree}')"
-test "$FINAL_SHA" = "$EXPECTED_SHA"
-test -z "$(git status --porcelain)"
-```
-
-Every evidence document must reference the same source SHA and tree SHA. Evidence without exact identity, sanitization status, command result and timestamp is not acceptance evidence.
-
-## 16. Decision
-
-The candidate can move from Draft to review only when every section passes on one unchanged Head. Merge, Provider enablement, outbound activation, deployment or production action requires a separate explicit authorization after the evidence packet is complete.
+Merge, deployment, Provider enablement, outbound activation, credential action
+or production data operation remains a separate explicit authorization.
