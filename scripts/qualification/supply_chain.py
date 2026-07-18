@@ -16,6 +16,29 @@ EXACT_REQUIREMENT_RE = re.compile(
 )
 EVIDENCE_DIR_ENV = "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR"
 
+SUPPLY_CHAIN_INPUTS = (
+    "Dockerfile",
+    "backend/requirements.txt",
+    "webapp/package.json",
+    "webapp/package-lock.json",
+    "deploy/docker-compose.controlled.yml",
+    "deploy/docker-compose.controlled-postgres.yml",
+    "deploy/docker-compose.server.yml",
+    "deploy/docker-compose.candidate.yml",
+    "deploy/.env.controlled.example",
+    "deploy/.env.controlled.local-postgres.example",
+    "deploy/postgres/init-controlled-roles.sh",
+    "deploy/nexus-prod-compose.sh",
+    "scripts/deploy/validate_controlled_server_preflight.py",
+)
+
+COMPOSE_INPUTS = (
+    "deploy/docker-compose.controlled.yml",
+    "deploy/docker-compose.controlled-postgres.yml",
+    "deploy/docker-compose.server.yml",
+    "deploy/docker-compose.candidate.yml",
+)
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -39,7 +62,10 @@ def _dockerfile_findings(path: Path) -> list[str]:
                 findings.append(f"dockerfile_base_not_pinned:{image}")
     if re.search(r"\bapk\s+upgrade\b", effective_content):
         findings.append("dockerfile_mutable_apk_upgrade")
-    if re.search(r"python\s+-m\s+pip\s+install\s+--upgrade\s+[^\\\n]*[><~=]", effective_content):
+    if re.search(
+        r"python\s+-m\s+pip\s+install\s+--upgrade\s+[^\\\n]*[><~=]",
+        effective_content,
+    ):
         findings.append("dockerfile_mutable_build_tool_range")
     return findings
 
@@ -65,11 +91,18 @@ def _compose_findings(path: Path) -> list[str]:
         if image.startswith("${"):
             continue
         if not DIGEST_RE.search(image):
-            findings.append(f"compose_image_not_pinned:{path.name}:{number}:{image}")
+            findings.append(
+                f"compose_image_not_pinned:{path.name}:{number}:{image}"
+            )
     return findings
 
 
-def _load_json(path: Path, *, label: str, findings: list[str]) -> dict[str, Any] | None:
+def _load_json(
+    path: Path,
+    *,
+    label: str,
+    findings: list[str],
+) -> dict[str, Any] | None:
     if not path.is_file() or path.stat().st_size == 0:
         findings.append(f"release_evidence_missing:{label}")
         return None
@@ -107,18 +140,13 @@ def collect_supply_chain_state(
     release: bool = False,
     evidence_dir: Path | None = None,
 ) -> dict[str, Any]:
-    tracked = [
-        ROOT / "Dockerfile",
-        ROOT / "backend" / "requirements.txt",
-        ROOT / "webapp" / "package.json",
-        ROOT / "webapp" / "package-lock.json",
-        ROOT / "deploy" / "docker-compose.server.yml",
-        ROOT / "deploy" / "docker-compose.controlled.yml",
-    ]
+    tracked = [ROOT / relative for relative in SUPPLY_CHAIN_INPUTS]
     findings: list[str] = []
     for path in tracked:
         if not path.is_file():
-            findings.append(f"supply_chain_input_missing:{path.relative_to(ROOT)}")
+            findings.append(
+                f"supply_chain_input_missing:{path.relative_to(ROOT)}"
+            )
 
     dockerfile = ROOT / "Dockerfile"
     requirements = ROOT / "backend" / "requirements.txt"
@@ -126,13 +154,21 @@ def collect_supply_chain_state(
         findings.extend(_dockerfile_findings(dockerfile))
     if requirements.is_file():
         findings.extend(_requirements_findings(requirements))
-    for relative in (
-        "deploy/docker-compose.server.yml",
-        "deploy/docker-compose.controlled.yml",
-    ):
+    for relative in COMPOSE_INPUTS:
         path = ROOT / relative
         if path.is_file():
             findings.extend(_compose_findings(path))
+
+    server_alias = ROOT / "deploy" / "docker-compose.server.yml"
+    candidate_alias = ROOT / "deploy" / "docker-compose.candidate.yml"
+    if server_alias.is_file():
+        content = server_alias.read_text(encoding="utf-8")
+        if "services:" in content or "docker-compose.controlled.yml" not in content:
+            findings.append("server_compose_not_thin_controlled_alias")
+    if candidate_alias.is_file():
+        content = candidate_alias.read_text(encoding="utf-8")
+        if "services:" in content or "docker-compose.controlled.yml" not in content:
+            findings.append("candidate_compose_not_thin_controlled_alias")
 
     evidence: dict[str, Any] = {
         "inputs": {
@@ -163,12 +199,16 @@ def collect_supply_chain_state(
             sbom = loaded["sbom"]
             provenance = loaded["provenance"]
             signature = loaded["signature_bundle"]
-            if sbom is not None and not str(sbom.get("spdxVersion") or "").startswith("SPDX-"):
+            if sbom is not None and not str(
+                sbom.get("spdxVersion") or ""
+            ).startswith("SPDX-"):
                 findings.append("release_evidence_invalid_spdx")
             if provenance is not None:
                 if provenance.get("_type") != "https://in-toto.io/Statement/v1":
                     findings.append("release_evidence_invalid_provenance_type")
-                if not isinstance(provenance.get("subject"), list) or not provenance.get("subject"):
+                if not isinstance(provenance.get("subject"), list) or not provenance.get(
+                    "subject"
+                ):
                     findings.append("release_evidence_missing_provenance_subject")
             if signature is not None and not signature:
                 findings.append("release_evidence_empty_signature_bundle")
