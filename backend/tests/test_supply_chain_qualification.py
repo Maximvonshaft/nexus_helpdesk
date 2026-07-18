@@ -34,8 +34,50 @@ def test_current_supply_chain_inputs_are_immutable():
     assert result["status"] == "pass", result["findings"]
     assert result["findings"] == []
     assert result["evidence"]["candidate_tree_mutated"] is False
-    assert "Dockerfile" in result["evidence"]["inputs"]
-    assert "backend/requirements.txt" in result["evidence"]["inputs"]
+    inputs = result["evidence"]["inputs"]
+    for required in (
+        "Dockerfile",
+        "backend/requirements.txt",
+        "deploy/docker-compose.controlled.yml",
+        "deploy/docker-compose.controlled-postgres.yml",
+        "deploy/docker-compose.server.yml",
+        "deploy/docker-compose.candidate.yml",
+        "deploy/.env.controlled.example",
+        "deploy/.env.controlled.local-postgres.example",
+        "deploy/postgres/init-controlled-roles.sh",
+        "deploy/nexus-prod-compose.sh",
+        "scripts/deploy/validate_controlled_server_preflight.py",
+        "scripts/deploy/safe_update_server.sh",
+        "scripts/deploy/rollback_release.sh",
+        "scripts/qualification/deployment_authority.py",
+    ):
+        assert required in inputs
+
+
+def test_deployment_authority_is_part_of_static_supply_chain_gate():
+    source = (ROOT / "scripts/qualification/supply_chain.py").read_text(
+        encoding="utf-8"
+    )
+    deployment = (
+        ROOT / "scripts/qualification/deployment_authority.py"
+    ).read_text(encoding="utf-8")
+
+    assert "deployment_authority_findings(ROOT)" in source
+    for marker in (
+        "RETIRED_DEPLOY_PATHS",
+        "TOMBSTONE_ENV_PATHS",
+        "server_compose_not_thin_controlled_alias",
+        "candidate_compose_not_thin_controlled_alias",
+        "rollback_controlled_contract_missing",
+        "controlled_postgres_duplicates_service",
+    ):
+        assert marker in deployment
+    for retired in (
+        "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh",
+        "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md",
+        "backend/tests/test_candidate_compose_contract.py",
+    ):
+        assert not (ROOT / retired).exists()
 
 
 def test_release_mode_requires_external_evidence_directory(monkeypatch):
@@ -136,8 +178,18 @@ def test_assembler_binds_external_evidence_to_clean_candidate(tmp_path, monkeypa
     assert result["tree_sha"] == "c" * 40
     assert result["evidence_dir"] == str(output.resolve())
     assert result["candidate_tree_mutated"] is False
+    assert result["candidate_input_count"] == len(module.SUPPLY_CHAIN_INPUTS) + 1
+    provenance = json.loads((output / "provenance.json").read_text(encoding="utf-8"))
+    dependencies = {
+        row["uri"]
+        for row in provenance["predicate"]["buildDefinition"][
+            "resolvedDependencies"
+        ]
+    }
+    for relative in module.SUPPLY_CHAIN_INPUTS:
+        assert relative in dependencies
+    assert "scripts/verify_repository.py" in dependencies
     assert (output / "sbom.spdx.json").is_file()
-    assert (output / "provenance.json").is_file()
     assert (output / "cosign.bundle.json").is_file()
 
 
