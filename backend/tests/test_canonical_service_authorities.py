@@ -8,6 +8,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 PROJECT = BACKEND.parent
 APP = BACKEND / "app"
 MANIFEST_PATH = PROJECT / "config" / "architecture" / "service-authority.v1.json"
+IGNORED_GENERATED_ROOTS = {".git", ".venv", "node_modules", "vendor"}
 
 
 def _manifest() -> dict:
@@ -164,7 +165,11 @@ def test_fastapi_method_and_normalized_path_are_unique() -> None:
 
 
 def test_alembic_is_the_only_executable_schema_mutation_authority() -> None:
-    sql_files = [path for path in PROJECT.rglob("*.sql") if ".git" not in path.parts]
+    sql_files = [
+        path
+        for path in PROJECT.rglob("*.sql")
+        if not any(part in IGNORED_GENERATED_ROOTS for part in path.parts)
+    ]
     assert sql_files == [], [str(path.relative_to(PROJECT)) for path in sql_files]
     history = PROJECT / "docs/history/migrations/20260505-webchat-ai-turn-runtime.md"
     assert history.is_file()
