@@ -10,7 +10,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import EventType, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketStatus, UserRole
+from ..enums import EventType, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketStatus
 from ..models import (
     Customer,
     Market,
@@ -62,6 +62,7 @@ from .permissions import (
     ensure_can_send_outbound,
     ensure_ticket_visible,
 )
+from .scope_permissions import has_global_case_visibility
 from ..utils.normalize import normalize_email, normalize_phone
 from ..utils.time import ensure_utc, utc_now
 from .sla_service import (
@@ -266,7 +267,7 @@ def validate_assignee_team(
         ensure_team_tenant(db, actor_tenant_id, team)
     if assignee is not None:
         ensure_user_tenant(db, actor_tenant_id, assignee)
-    if assignee and team and assignee.team_id != team.id and assignee.role not in {UserRole.admin, UserRole.manager}:
+    if assignee and team and assignee.team_id != team.id:
         raise HTTPException(status_code=400, detail="Assignee does not belong to selected team")
     return assignee, team
 
@@ -401,7 +402,7 @@ def list_tickets(
         query = query.filter(Ticket.tenant_id == actor_tenant_id)
     else:
         query = query.filter(Ticket.tenant_id.is_(None))
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if not has_global_case_visibility(current_user, db):
         query = query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
     if q:
@@ -943,8 +944,8 @@ def get_customer_history(db: Session, customer_id: int, current_user: User):
         ticket_query = ticket_query.filter(Ticket.tenant_id == actor_tenant_id)
     else:
         ticket_query = ticket_query.filter(Ticket.tenant_id.is_(None))
-    privileged_roles = {UserRole.admin, UserRole.manager, UserRole.auditor}
-    if current_user.role not in privileged_roles:
+    global_visibility = has_global_case_visibility(current_user, db)
+    if not global_visibility:
         ticket_query = ticket_query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
     tickets = ticket_query.order_by(Ticket.updated_at.desc()).limit(10).all()
     for ticket in tickets:
@@ -955,7 +956,7 @@ def get_customer_history(db: Session, customer_id: int, current_user: User):
             actor_tenant_id=actor_tenant_id,
         )
     total = ticket_query.count()
-    if current_user.role not in privileged_roles and total == 0:
+    if not global_visibility and total == 0:
         raise HTTPException(status_code=404, detail="Customer not found")
     return customer, total, tickets
 
@@ -973,7 +974,7 @@ def get_ticket_stats(db: Session, current_user: User):
         base_query = base_query.filter(Ticket.tenant_id == actor_tenant_id)
     else:
         base_query = base_query.filter(Ticket.tenant_id.is_(None))
-    if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if not has_global_case_visibility(current_user, db):
         base_query = base_query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
     total = base_query.count()
