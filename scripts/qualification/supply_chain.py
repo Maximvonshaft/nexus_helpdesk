@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 EXACT_REQUIREMENT_RE = re.compile(
     r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s;]+(?:\s*;.*)?$"
 )
+EVIDENCE_DIR_ENV = "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR"
 
 
 def _sha256(path: Path) -> str:
@@ -61,15 +63,50 @@ def _compose_findings(path: Path) -> list[str]:
             continue
         image = stripped.split(":", 1)[1].strip()
         if image.startswith("${"):
-            # Candidate application images are validated separately as mandatory
-            # immutable digest variables by the controlled-deployment preflight.
             continue
         if not DIGEST_RE.search(image):
             findings.append(f"compose_image_not_pinned:{path.name}:{number}:{image}")
     return findings
 
 
-def collect_supply_chain_state(*, release: bool = False) -> dict[str, Any]:
+def _load_json(path: Path, *, label: str, findings: list[str]) -> dict[str, Any] | None:
+    if not path.is_file() or path.stat().st_size == 0:
+        findings.append(f"release_evidence_missing:{label}")
+        return None
+    if path.stat().st_size > 64 * 1024 * 1024:
+        findings.append(f"release_evidence_too_large:{label}")
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        findings.append(f"release_evidence_invalid_json:{label}")
+        return None
+    if not isinstance(payload, dict):
+        findings.append(f"release_evidence_invalid_root:{label}")
+        return None
+    return payload
+
+
+def _evidence_directory(explicit: Path | None) -> Path | None:
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    raw = os.getenv(EVIDENCE_DIR_ENV, "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def _inside_candidate_tree(path: Path) -> bool:
+    try:
+        path.relative_to(ROOT.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def collect_supply_chain_state(
+    *,
+    release: bool = False,
+    evidence_dir: Path | None = None,
+) -> dict[str, Any]:
     tracked = [
         ROOT / "Dockerfile",
         ROOT / "backend" / "requirements.txt",
@@ -104,21 +141,44 @@ def collect_supply_chain_state(*, release: bool = False) -> dict[str, Any]:
             if path.is_file()
         },
         "release_evidence_required": release,
+        "candidate_tree_mutated": False,
     }
+
     if release:
-        required = {
-            "sbom": ROOT / "artifacts" / "supply-chain" / "sbom.spdx.json",
-            "provenance": ROOT / "artifacts" / "supply-chain" / "provenance.json",
-            "signature_bundle": ROOT / "artifacts" / "supply-chain" / "cosign.bundle.json",
-        }
-        for name, path in required.items():
-            if not path.is_file() or path.stat().st_size == 0:
-                findings.append(f"release_evidence_missing:{name}")
-            else:
-                evidence[name] = {
-                    "path": str(path.relative_to(ROOT)),
-                    "sha256": _sha256(path),
-                }
+        directory = _evidence_directory(evidence_dir)
+        if directory is None:
+            findings.append("release_evidence_dir_missing")
+        elif _inside_candidate_tree(directory):
+            findings.append("release_evidence_inside_candidate_tree")
+        else:
+            required = {
+                "sbom": directory / "sbom.spdx.json",
+                "provenance": directory / "provenance.json",
+                "signature_bundle": directory / "cosign.bundle.json",
+            }
+            loaded = {
+                name: _load_json(path, label=name, findings=findings)
+                for name, path in required.items()
+            }
+            sbom = loaded["sbom"]
+            provenance = loaded["provenance"]
+            signature = loaded["signature_bundle"]
+            if sbom is not None and not str(sbom.get("spdxVersion") or "").startswith("SPDX-"):
+                findings.append("release_evidence_invalid_spdx")
+            if provenance is not None:
+                if provenance.get("_type") != "https://in-toto.io/Statement/v1":
+                    findings.append("release_evidence_invalid_provenance_type")
+                if not isinstance(provenance.get("subject"), list) or not provenance.get("subject"):
+                    findings.append("release_evidence_missing_provenance_subject")
+            if signature is not None and not signature:
+                findings.append("release_evidence_empty_signature_bundle")
+            for name, path in required.items():
+                if path.is_file() and path.stat().st_size > 0:
+                    evidence[name] = {
+                        "path": str(path),
+                        "sha256": _sha256(path),
+                    }
+            evidence["evidence_dir"] = str(directory)
 
     return {
         "schema": "nexus.supply-chain-qualification.v1",
@@ -131,9 +191,13 @@ def collect_supply_chain_state(*, release: bool = False) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--release", action="store_true")
+    parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    payload = collect_supply_chain_state(release=args.release)
+    payload = collect_supply_chain_state(
+        release=args.release,
+        evidence_dir=args.evidence_dir,
+    )
     rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
