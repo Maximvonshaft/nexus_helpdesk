@@ -7,7 +7,6 @@ from typing import Any, Iterable
 
 from sqlalchemy import update
 
-_PATCHED = False
 LOGGER = logging.getLogger(__name__)
 
 
@@ -91,15 +90,29 @@ def _recover_unhandled_background_job_exception(
     if not _owns_job_lease(db, job_id=job_id, lease_token=lease_token):
         LOGGER.warning(
             "background_job_stale_exception_result_rejected",
-            extra={"event_payload": {"job_id": job_id, "error_type": type(exc).__name__}},
+            extra={
+                "event_payload": {
+                    "job_id": job_id,
+                    "error_type": type(exc).__name__,
+                }
+            },
         )
         return None
 
-    job = db.query(background_jobs.BackgroundJob).filter(background_jobs.BackgroundJob.id == job_id).first()
+    job = (
+        db.query(background_jobs.BackgroundJob)
+        .filter(background_jobs.BackgroundJob.id == job_id)
+        .first()
+    )
     if job is None:
         LOGGER.warning(
             "background_job_exception_recovery_missing_job",
-            extra={"event_payload": {"job_id": job_id, "error_type": type(exc).__name__}},
+            extra={
+                "event_payload": {
+                    "job_id": job_id,
+                    "error_type": type(exc).__name__,
+                }
+            },
         )
         return None
 
@@ -113,7 +126,11 @@ def _recover_unhandled_background_job_exception(
                 "queue_name": getattr(job, "queue_name", None),
                 "error_type": type(exc).__name__,
                 "attempt_count": getattr(job, "attempt_count", None),
-                "next_status": job.status.value if hasattr(job.status, "value") else str(job.status),
+                "next_status": (
+                    job.status.value
+                    if hasattr(job.status, "value")
+                    else str(job.status)
+                ),
             }
         },
     )
@@ -138,7 +155,11 @@ def _process_claimed_jobs_with_attempt_boundary(
             continue
         try:
             background_jobs.process_background_job(db, job)
-            if not _owns_job_lease(db, job_id=job_id, lease_token=lease_token):
+            if not _owns_job_lease(
+                db,
+                job_id=job_id,
+                lease_token=lease_token,
+            ):
                 db.rollback()
                 LOGGER.warning(
                     "background_job_stale_completion_rejected",
@@ -162,7 +183,7 @@ def _process_claimed_jobs_with_attempt_boundary(
     return processed
 
 
-def _dispatch_pending_background_jobs_with_attempt_boundary(
+def dispatch_pending_background_jobs(
     db: Any,
     *,
     limit: int | None = None,
@@ -181,7 +202,9 @@ def _dispatch_pending_background_jobs_with_attempt_boundary(
 
         enqueue_due_email_mailbox_sync_jobs(
             db,
-            interval_seconds=background_jobs.settings.email_mailbox_sync_interval_seconds,
+            interval_seconds=(
+                background_jobs.settings.email_mailbox_sync_interval_seconds
+            ),
             limit=background_jobs.settings.email_mailbox_sync_batch_size,
         )
         db.commit()
@@ -208,7 +231,7 @@ def _dispatch_pending_background_jobs_with_attempt_boundary(
     )
 
 
-def _dispatch_pending_sync_jobs_with_attempt_boundary(
+def dispatch_pending_sync_jobs(
     db: Any,
     *,
     limit: int | None = None,
@@ -237,7 +260,7 @@ def _dispatch_pending_sync_jobs_with_attempt_boundary(
     )
 
 
-def _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary(
+def dispatch_pending_webchat_ai_reply_jobs(
     db: Any,
     *,
     limit: int | None = None,
@@ -257,16 +280,3 @@ def _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary(
         claimed,
         lease_token=lease_token,
     )
-
-
-def apply_background_job_transaction_boundary_patch() -> None:
-    global _PATCHED
-    if _PATCHED:
-        return
-
-    from . import background_jobs
-
-    background_jobs.dispatch_pending_background_jobs = _dispatch_pending_background_jobs_with_attempt_boundary
-    background_jobs.dispatch_pending_sync_jobs = _dispatch_pending_sync_jobs_with_attempt_boundary
-    background_jobs.dispatch_pending_webchat_ai_reply_jobs = _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary
-    _PATCHED = True
