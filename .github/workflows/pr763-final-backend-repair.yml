@@ -40,6 +40,30 @@ jobs:
           wc -c /tmp/pr763-final-backend.patch
           git apply --check /tmp/pr763-final-backend.patch
           git apply /tmp/pr763-final-backend.patch
+          python - <<'PY'
+          from pathlib import Path
+
+          handoff = Path('backend/app/services/webchat_handoff_service_core.py')
+          text = handoff.read_text(encoding='utf-8')
+          old = '    ai_turn_id: int | None = None,\n    requested_by_actor_type: str = "system",'
+          new = '    ai_turn_id: int | None = None,\n    preserve_ai_turn_id: int | None = None,\n    requested_by_actor_type: str = "system",'
+          if text.count(old) != 1:
+              raise SystemExit('handoff signature precondition failed')
+          text = text.replace(old, new, 1)
+          old = '        exclude_turn_id=ai_turn_id,\n'
+          new = '        exclude_turn_id=preserve_ai_turn_id,\n'
+          if text.count(old) != 1:
+              raise SystemExit('handoff cancellation precondition failed')
+          handoff.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          ai_service = Path('backend/app/services/webchat_ai_service.py')
+          text = ai_service.read_text(encoding='utf-8')
+          old = '            ai_turn_id=ai_turn_id,\n            requested_by_actor_type="ai_runtime",'
+          new = '            ai_turn_id=ai_turn_id,\n            preserve_ai_turn_id=ai_turn_id,\n            requested_by_actor_type="ai_runtime",'
+          if text.count(old) != 1:
+              raise SystemExit('runtime handoff precondition failed')
+          ai_service.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           git checkout 285d7e214f0869577cec429806dd3c348bfdab8b -- .github/workflows/canonical-acceptance.yml
           rm -f .github/workflows/backend-convergence-maintenance.yml
           rm -f .github/workflows/pr763-final-backend-repair.yml
