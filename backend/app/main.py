@@ -14,7 +14,6 @@ from .api.admin_outbound_semantics import router as admin_outbound_semantics_rou
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_whatsapp_native import router as admin_whatsapp_native_router
-from .api import admin as admin_api
 from .api.admin import router as admin_router
 from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
@@ -44,70 +43,80 @@ from .api.webchat_ws import router as webchat_ws_router
 from .api.webchat_voice import router as webchat_voice_router
 from .api.whatsapp_native_integration import router as whatsapp_native_integration_router
 from .db import engine, reset_current_request_id, set_current_request_id
-from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
-from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
-from .services.release_metadata import runtime_identity_status
 from .services.ai_reply_contract import runtime_contract_secret_ready
+from .services.observability import (
+    configure_logging,
+    log_event as app_log_event,
+    record_request_metric,
+    render_prometheus_metrics,
+    timed_request,
+)
+from .services.password_policy import MIN_PASSWORD_LENGTH
+from .services.release_metadata import runtime_identity_status
 from .services.spa_fallback_hardening import should_block_spa_fallback
 from .services.storage_readiness import check_storage_readiness
 from .settings import get_settings
-from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
+from .webchat_voice_config import (
+    is_webchat_voice_path,
+    load_webchat_voice_runtime_config,
+    webchat_voice_connect_sources,
+)
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
-app = FastAPI(title='NexusDesk Helpdesk', version=settings.app_version)
-
-
-def _validate_admin_password_or_http(password: str) -> None:
-    try:
-        validate_admin_password_policy(password)
-    except PasswordPolicyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+app = FastAPI(title="NexusDesk Helpdesk", version=settings.app_version)
 
 
 def _custom_openapi() -> dict:
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
-    schemas = openapi_schema.get('components', {}).get('schemas', {})
-    for schema_name in ('UserCreate', 'PasswordResetRequest'):
-        password_schema = schemas.get(schema_name, {}).get('properties', {}).get('password')
+    schemas = openapi_schema.get("components", {}).get("schemas", {})
+    for schema_name in ("UserCreate", "PasswordResetRequest"):
+        password_schema = schemas.get(schema_name, {}).get("properties", {}).get("password")
         if isinstance(password_schema, dict):
-            password_schema['minLength'] = MIN_PASSWORD_LENGTH
-            password_schema['description'] = 'Admin password must satisfy the production password policy.'
+            password_schema["minLength"] = MIN_PASSWORD_LENGTH
+            password_schema["description"] = (
+                "Admin password must satisfy the production password policy."
+            )
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
 
-admin_api._validate_password_length = _validate_admin_password_or_http
 app.openapi = _custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[
-        'Authorization',
-        'Content-Type',
-        'X-API-Key',
-        'X-Client-Key-Id',
-        'X-Client-Key',
-        'Idempotency-Key',
-        'X-Requested-With',
-        'X-Nexus-Tenant',
-        'X-Webchat-Visitor-Token',
-        'X-Webchat-WS-Fallback',
+        "Authorization",
+        "Content-Type",
+        "X-API-Key",
+        "X-Client-Key-Id",
+        "X-Client-Key",
+        "Idempotency-Key",
+        "X-Requested-With",
+        "X-Nexus-Tenant",
+        "X-Webchat-Visitor-Token",
+        "X-Webchat-WS-Fallback",
         settings.request_id_header,
     ],
     expose_headers=[settings.request_id_header],
 )
 
-DEFAULT_PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=()'
-VOICE_PERMISSIONS_POLICY = 'camera=(), microphone=(self), geolocation=()'
+DEFAULT_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()"
+VOICE_PERMISSIONS_POLICY = "camera=(), microphone=(self), geolocation=()"
 CSP_SCRIPT_SRC = "'self' https://static.cloudflareinsights.com"
-CSP_BASE_CONNECT_SRC = "'self' https://cloudflareinsights.com https://static.cloudflareinsights.com"
-DEFAULT_CSP = f"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src {CSP_SCRIPT_SRC}; connect-src {CSP_BASE_CONNECT_SRC}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+CSP_BASE_CONNECT_SRC = (
+    "'self' https://cloudflareinsights.com https://static.cloudflareinsights.com"
+)
+DEFAULT_CSP = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    f"script-src {CSP_SCRIPT_SRC}; connect-src {CSP_BASE_CONNECT_SRC}; "
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+)
 
 
 def _runtime_identity() -> dict[str, object]:
@@ -116,7 +125,9 @@ def _runtime_identity() -> dict[str, object]:
 
 def _migration_revisions(conn: Connection) -> tuple[str | None, ...]:
     try:
-        rows = conn.execute(text('SELECT version_num FROM alembic_version ORDER BY version_num')).all()
+        rows = conn.execute(
+            text("SELECT version_num FROM alembic_version ORDER BY version_num")
+        ).all()
         return tuple(
             (str(row[0]).strip() or None) if row and row[0] is not None else None
             for row in rows
@@ -125,42 +136,48 @@ def _migration_revisions(conn: Connection) -> tuple[str | None, ...]:
         return ()
 
 
-def _migration_readiness(observed_heads: tuple[str | None, ...]) -> tuple[dict[str, object], list[str]]:
+def _migration_readiness(
+    observed_heads: tuple[str | None, ...],
+) -> tuple[dict[str, object], list[str]]:
     expected = settings.expected_migration_head
     required = bool(expected)
     invalid = any(head is None for head in observed_heads)
-    observed = observed_heads[0] if len(observed_heads) == 1 and observed_heads[0] is not None else None
+    observed = (
+        observed_heads[0]
+        if len(observed_heads) == 1 and observed_heads[0] is not None
+        else None
+    )
     reason_codes: list[str] = []
     ok = True
     if invalid:
         ok = False
-        reason_codes.append('migration_head_invalid')
+        reason_codes.append("migration_head_invalid")
     elif len(observed_heads) > 1:
         ok = False
-        reason_codes.append('migration_heads_multiple')
+        reason_codes.append("migration_heads_multiple")
     elif expected and not observed:
         ok = False
-        reason_codes.append('migration_head_unavailable')
+        reason_codes.append("migration_head_unavailable")
     elif expected and observed != expected:
         ok = False
-        reason_codes.append('migration_head_mismatch')
+        reason_codes.append("migration_head_mismatch")
     migration: dict[str, object] = {
-        'ok': ok,
-        'expected': expected,
-        'observed': observed,
-        'required': required,
+        "ok": ok,
+        "expected": expected,
+        "observed": observed,
+        "required": required,
     }
     if len(observed_heads) != 1 or invalid:
-        migration['observed_heads'] = list(observed_heads)
+        migration["observed_heads"] = list(observed_heads)
     return migration, reason_codes
 
 
 def _frontend_readiness() -> dict[str, object]:
     dist_index_exists = settings.frontend_dist_index.exists()
     return {
-        'ok': dist_index_exists,
-        'active_root': 'frontend_dist',
-        'frontend_dist_index': 'present' if dist_index_exists else 'missing',
+        "ok": dist_index_exists,
+        "active_root": "frontend_dist",
+        "frontend_dist_index": "present" if dist_index_exists else "missing",
     }
 
 
@@ -168,18 +185,28 @@ def _voice_runtime_config_for_headers(path: str):
     try:
         return load_webchat_voice_runtime_config()
     except Exception as exc:
-        app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
+        app_log_event(
+            30,
+            "webchat_voice_runtime_config_unavailable",
+            path=path,
+            error_type=type(exc).__name__,
+        )
         return None
 
 
 def _voice_runtime_headers_enabled(path: str, config=None) -> bool:
     runtime_config = config if config is not None else _voice_runtime_config_for_headers(path)
-    if runtime_config is None or not getattr(runtime_config, 'enabled', False):
+    if runtime_config is None or not getattr(runtime_config, "enabled", False):
         return False
     try:
         return bool(is_webchat_voice_path(path, runtime_config))
     except Exception as exc:
-        app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
+        app_log_event(
+            30,
+            "webchat_voice_runtime_config_unavailable",
+            path=path,
+            error_type=type(exc).__name__,
+        )
         return False
 
 
@@ -190,17 +217,33 @@ def _content_security_policy_for_request(path: str) -> str:
     try:
         connect_src = [CSP_BASE_CONNECT_SRC, *webchat_voice_connect_sources(config)]
     except Exception as exc:
-        app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
+        app_log_event(
+            30,
+            "webchat_voice_runtime_config_unavailable",
+            path=path,
+            error_type=type(exc).__name__,
+        )
         return DEFAULT_CSP
-    return f"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src {CSP_SCRIPT_SRC}; " + f"connect-src {' '.join(connect_src)}; " + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    return (
+        "default-src 'self'; img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        f"script-src {CSP_SCRIPT_SRC}; "
+        f"connect-src {' '.join(connect_src)}; "
+        "object-src 'none'; base-uri 'self'; form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
 
 
 def _permissions_policy_for_request(path: str) -> str:
     config = _voice_runtime_config_for_headers(path)
-    return VOICE_PERMISSIONS_POLICY if _voice_runtime_headers_enabled(path, config) else DEFAULT_PERMISSIONS_POLICY
+    return (
+        VOICE_PERMISSIONS_POLICY
+        if _voice_runtime_headers_enabled(path, config)
+        else DEFAULT_PERMISSIONS_POLICY
+    )
 
 
-@app.middleware('http')
+@app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
     request.state.request_id = request_id
@@ -211,52 +254,88 @@ async def request_context_middleware(request: Request, call_next):
     except Exception as exc:
         duration_ms = stop_timer()
         record_request_metric(request.url.path, request.method, 500, duration_ms)
-        app_log_event(40, 'request_failed', request_id=request_id, method=request.method, path=request.url.path, status_code=500, duration_ms=round(duration_ms, 3), error=str(exc))
+        app_log_event(
+            40,
+            "request_failed",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=500,
+            duration_ms=round(duration_ms, 3),
+            error=str(exc),
+        )
         raise
     finally:
         reset_current_request_id(request_id_token)
     duration_ms = stop_timer()
-    record_request_metric(request.url.path, request.method, response.status_code, duration_ms)
-    app_log_event(20, 'request_complete', request_id=request_id, method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=round(duration_ms, 3))
+    record_request_metric(
+        request.url.path,
+        request.method,
+        response.status_code,
+        duration_ms,
+    )
+    app_log_event(
+        20,
+        "request_complete",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=round(duration_ms, 3),
+    )
     response.headers.setdefault(settings.request_id_header, request_id)
-    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
-    response.headers.setdefault('X-Frame-Options', 'DENY')
-    response.headers.setdefault('Referrer-Policy', 'no-referrer')
-    response.headers['Permissions-Policy'] = _permissions_policy_for_request(request.url.path)
-    response.headers['Content-Security-Policy'] = _content_security_policy_for_request(request.url.path)
-    if request.url.path.startswith('/api/'):
-        response.headers.setdefault('Cache-Control', 'no-store')
-    elif request.url.path.startswith('/webchat/') or request.url.path.startswith('/static/webchat/'):
-        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
-    elif request.url.path.startswith('/assets/'):
-        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers["Permissions-Policy"] = _permissions_policy_for_request(
+        request.url.path
+    )
+    response.headers["Content-Security-Policy"] = _content_security_policy_for_request(
+        request.url.path
+    )
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    elif request.url.path.startswith("/webchat/") or request.url.path.startswith(
+        "/static/webchat/"
+    ):
+        response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    elif request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
     return response
 
 
-@app.get('/healthz')
+@app.get("/healthz")
 def healthz():
-    return {'status': 'ok', 'env': settings.app_env, **_runtime_identity()}
+    return {"status": "ok", "env": settings.app_env, **_runtime_identity()}
 
 
-@app.get('/metrics')
-def metrics(x_metrics_token: str | None = Header(default=None, alias='X-Metrics-Token')):
+@app.get("/metrics")
+def metrics(
+    x_metrics_token: str | None = Header(default=None, alias="X-Metrics-Token"),
+):
     if not settings.metrics_enabled:
-        return JSONResponse(status_code=404, content={'detail': 'metrics disabled'})
+        return JSONResponse(status_code=404, content={"detail": "metrics disabled"})
     if not settings.metrics_token:
-        return JSONResponse(status_code=503, content={'detail': 'metrics misconfigured'})
+        return JSONResponse(status_code=503, content={"detail": "metrics misconfigured"})
     if x_metrics_token != settings.metrics_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='metrics token required')
-    return PlainTextResponse(render_prometheus_metrics(), media_type='text/plain; version=0.0.4')
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="metrics token required",
+        )
+    return PlainTextResponse(
+        render_prometheus_metrics(),
+        media_type="text/plain; version=0.0.4",
+    )
 
 
-@app.get('/readyz')
+@app.get("/readyz")
 def readyz():
     storage_readiness = check_storage_readiness()
     frontend_readiness = _frontend_readiness()
     runtime_contract_readiness = runtime_contract_secret_ready()
     try:
         with engine.connect() as conn:
-            conn.execute(text('SELECT 1'))
+            conn.execute(text("SELECT 1"))
             migration_revisions = _migration_revisions(conn)
         migration_revision = (
             migration_revisions[0]
@@ -265,55 +344,91 @@ def readyz():
         )
         identity = _runtime_identity()
         migration, reason_codes = _migration_readiness(migration_revisions)
-        release_metadata_ready = not settings.readiness_require_release_metadata or bool(identity.get('release_metadata_complete'))
+        release_metadata_ready = (
+            not settings.readiness_require_release_metadata
+            or bool(identity.get("release_metadata_complete"))
+        )
         if not release_metadata_ready:
-            reason_codes.append('release_metadata_incomplete')
+            reason_codes.append("release_metadata_incomplete")
         if not storage_readiness.ok:
-            reason_codes.append('storage_not_ready')
-        if not frontend_readiness['ok']:
-            reason_codes.append('frontend_not_ready')
-        if not runtime_contract_readiness['ok']:
-            reason_codes.append('runtime_contract_signing_not_ready')
+            reason_codes.append("storage_not_ready")
+        if not frontend_readiness["ok"]:
+            reason_codes.append("frontend_not_ready")
+        if not runtime_contract_readiness["ok"]:
+            reason_codes.append("runtime_contract_signing_not_ready")
         ready = (
             storage_readiness.ok
-            and bool(frontend_readiness['ok'])
-            and bool(runtime_contract_readiness['ok'])
-            and bool(migration['ok'])
+            and bool(frontend_readiness["ok"])
+            and bool(runtime_contract_readiness["ok"])
+            and bool(migration["ok"])
             and release_metadata_ready
         )
         payload = {
-            'status': 'ready' if ready else 'not_ready',
-            'database': 'ok',
-            'migration_revision': migration_revision,
-            'migration': migration,
-            'release_metadata_ready': release_metadata_ready,
-            'reason_codes': reason_codes,
-            'storage': storage_readiness.as_dict(),
-            'frontend': frontend_readiness,
-            'runtime_contract_signing': runtime_contract_readiness,
+            "status": "ready" if ready else "not_ready",
+            "database": "ok",
+            "migration_revision": migration_revision,
+            "migration": migration,
+            "release_metadata_ready": release_metadata_ready,
+            "reason_codes": reason_codes,
+            "storage": storage_readiness.as_dict(),
+            "frontend": frontend_readiness,
+            "runtime_contract_signing": runtime_contract_readiness,
             **identity,
         }
-        if not migration['ok']:
-            app_log_event(40, 'readiness_migration_identity_failed', migration=migration, reason_codes=reason_codes)
+        if not migration["ok"]:
+            app_log_event(
+                40,
+                "readiness_migration_identity_failed",
+                migration=migration,
+                reason_codes=reason_codes,
+            )
             return JSONResponse(status_code=503, content=payload)
         if not release_metadata_ready:
-            app_log_event(40, 'readiness_release_metadata_incomplete', missing=identity.get('release_metadata_missing', []))
+            app_log_event(
+                40,
+                "readiness_release_metadata_incomplete",
+                missing=identity.get("release_metadata_missing", []),
+            )
             return JSONResponse(status_code=503, content=payload)
         if not storage_readiness.ok:
-            app_log_event(40, 'readiness_storage_check_failed', storage=storage_readiness.as_dict())
+            app_log_event(
+                40,
+                "readiness_storage_check_failed",
+                storage=storage_readiness.as_dict(),
+            )
             return JSONResponse(status_code=503, content=payload)
-        if not frontend_readiness['ok']:
-            app_log_event(40, 'readiness_frontend_check_failed', frontend=frontend_readiness)
+        if not frontend_readiness["ok"]:
+            app_log_event(
+                40,
+                "readiness_frontend_check_failed",
+                frontend=frontend_readiness,
+            )
             return JSONResponse(status_code=503, content=payload)
-        if not runtime_contract_readiness['ok']:
-            app_log_event(40, 'readiness_runtime_contract_signing_failed', runtime_contract_signing=runtime_contract_readiness)
+        if not runtime_contract_readiness["ok"]:
+            app_log_event(
+                40,
+                "readiness_runtime_contract_signing_failed",
+                runtime_contract_signing=runtime_contract_readiness,
+            )
             return JSONResponse(status_code=503, content=payload)
         if storage_readiness.warnings:
-            app_log_event(30, 'readiness_storage_warning', storage=storage_readiness.as_dict())
+            app_log_event(
+                30,
+                "readiness_storage_warning",
+                storage=storage_readiness.as_dict(),
+            )
         return payload
     except Exception as exc:
-        app_log_event(40, 'readiness_check_failed', error_type=type(exc).__name__, storage=storage_readiness.as_dict())
-        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
+        app_log_event(
+            40,
+            "readiness_check_failed",
+            error_type=type(exc).__name__,
+            storage=storage_readiness.as_dict(),
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "database": "error"},
+        )
 
 
 app.include_router(admin_outbound_semantics_router)
@@ -350,15 +465,23 @@ app.include_router(whatsapp_native_integration_router)
 app.include_router(webchat_router)
 
 
-@app.get('/webchat/voice/{voice_session_id}', response_class=HTMLResponse)
+@app.get("/webchat/voice/{voice_session_id}", response_class=HTMLResponse)
 def serve_webchat_voice_placeholder(voice_session_id: str):
     config = load_webchat_voice_runtime_config()
-    route_path = f'/webchat/voice/{voice_session_id}'
+    route_path = f"/webchat/voice/{voice_session_id}"
     if not config.enabled or not is_webchat_voice_path(route_path, config):
-        return JSONResponse(status_code=404, content={'detail': 'WebChat voice is disabled'})
-    safe_session_id = ''.join(ch for ch in voice_session_id if ch.isalnum() or ch in {'_', '-'})[:80]
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "WebChat voice is disabled"},
+        )
+    safe_session_id = "".join(
+        ch for ch in voice_session_id if ch.isalnum() or ch in {"_", "-"}
+    )[:80]
     if not safe_session_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='WebChat voice session not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="WebChat voice session not found",
+        )
     return HTMLResponse(
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -371,29 +494,54 @@ def serve_webchat_voice_placeholder(voice_session_id: str):
     )
 
 
-webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'
+webchat_static_dir = settings.backend_root / "app" / "static" / "webchat"
 if webchat_static_dir.exists():
-    app.mount('/webchat', StaticFiles(directory=str(webchat_static_dir), html=True), name='webchat_static')
-    app.mount('/static/webchat', StaticFiles(directory=str(webchat_static_dir), html=False), name='webchat_embeddable_static')
+    app.mount(
+        "/webchat",
+        StaticFiles(directory=str(webchat_static_dir), html=True),
+        name="webchat_static",
+    )
+    app.mount(
+        "/static/webchat",
+        StaticFiles(directory=str(webchat_static_dir), html=False),
+        name="webchat_embeddable_static",
+    )
 
 frontend_dir = settings.frontend_root
 assets_dir = frontend_dir / "assets"
 if frontend_dir.exists():
     if assets_dir.exists():
-        app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='assets')
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    @app.get('/', include_in_schema=False)
+    @app.get("/", include_in_schema=False)
     def serve_spa_root():
-        index_file = frontend_dir / 'index.html'
+        index_file = frontend_dir / "index.html"
         if index_file.exists():
             return FileResponse(index_file)
-        return JSONResponse(status_code=404, content={'detail': 'frontend build not found'})
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "frontend build not found"},
+        )
 
-    @app.get('/{full_path:path}', include_in_schema=False)
+    @app.get("/{full_path:path}", include_in_schema=False)
     def serve_spa_fallback(full_path: str):
-        if full_path.startswith(('api/', 'docs', 'openapi.json', 'healthz', 'readyz', 'metrics', 'webchat/', 'static/')) or should_block_spa_fallback(full_path):
-            return JSONResponse(status_code=404, content={'detail': 'not found'})
-        index_file = frontend_dir / 'index.html'
+        if full_path.startswith(
+            (
+                "api/",
+                "docs",
+                "openapi.json",
+                "healthz",
+                "readyz",
+                "metrics",
+                "webchat/",
+                "static/",
+            )
+        ) or should_block_spa_fallback(full_path):
+            return JSONResponse(status_code=404, content={"detail": "not found"})
+        index_file = frontend_dir / "index.html"
         if index_file.exists():
             return FileResponse(index_file)
-        return JSONResponse(status_code=404, content={'detail': 'frontend build not found'})
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "frontend build not found"},
+        )
