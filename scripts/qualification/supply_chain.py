@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from deployment_authority import deployment_authority_findings
+
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 EXACT_REQUIREMENT_RE = re.compile(
@@ -30,6 +32,11 @@ SUPPLY_CHAIN_INPUTS = (
     "deploy/postgres/init-controlled-roles.sh",
     "deploy/nexus-prod-compose.sh",
     "scripts/deploy/validate_controlled_server_preflight.py",
+    "scripts/deploy/safe_update_server.sh",
+    "scripts/deploy/rollback_release.sh",
+    "scripts/deploy/check_deploy_contract.sh",
+    "scripts/validate_pr27_closure.sh",
+    "scripts/qualification/deployment_authority.py",
 )
 
 COMPOSE_INPUTS = (
@@ -158,17 +165,7 @@ def collect_supply_chain_state(
         path = ROOT / relative
         if path.is_file():
             findings.extend(_compose_findings(path))
-
-    server_alias = ROOT / "deploy" / "docker-compose.server.yml"
-    candidate_alias = ROOT / "deploy" / "docker-compose.candidate.yml"
-    if server_alias.is_file():
-        content = server_alias.read_text(encoding="utf-8")
-        if "services:" in content or "docker-compose.controlled.yml" not in content:
-            findings.append("server_compose_not_thin_controlled_alias")
-    if candidate_alias.is_file():
-        content = candidate_alias.read_text(encoding="utf-8")
-        if "services:" in content or "docker-compose.controlled.yml" not in content:
-            findings.append("candidate_compose_not_thin_controlled_alias")
+    findings.extend(deployment_authority_findings(ROOT))
 
     evidence: dict[str, Any] = {
         "inputs": {
