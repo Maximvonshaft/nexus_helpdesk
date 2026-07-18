@@ -1,9 +1,10 @@
 name: Final convergence apply
-# Second push intentionally retriggers an already-present workflow.
 
 on:
   push:
     branches: [fix/722-final-production-convergence]
+  pull_request:
+    branches: [main]
   workflow_dispatch: {}
 
 concurrency:
@@ -94,7 +95,7 @@ jobs:
 
       - name: Commit immutable final candidate
         env:
-          STAGING_SHA: ${{ github.sha }}
+          STAGING_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: bash
         run: |
           set -Eeuo pipefail
