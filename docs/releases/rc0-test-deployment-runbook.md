@@ -1,12 +1,12 @@
-# RC0 controlled test deployment runbook
+# RC0 Isolated Test Deployment Runbook
 
 ## Purpose
 
-This runbook produces one isolated Nexus OSR test candidate from an exact Git
-commit. It proves build, migration, startup, core WebChat/operator flow,
-browser rendering, worker health, side-effect shutdown, and teardown.
+RC0 is a disposable, synthetic qualification fixture. It verifies that one exact
+candidate can build, migrate, start, serve bounded App/WebChat journeys and tear
+down in a test-only environment.
 
-Passing this runbook means only:
+Passing RC0 means only:
 
 ```text
 RC0_TEST_DEPLOYABLE=true
@@ -15,82 +15,60 @@ FULL_OSR_AUTOMATION=NO_GO
 ```
 
 It does not authorize production traffic, Provider execution, real outbound,
-production-data mutation, public DNS changes, or a release tag.
+production data, public DNS changes, a release tag or a controlled deployment.
 
-## Authority and remote skills
+## Relationship to canonical deployment
 
-Work Item: #626.
+The sole release topology is `deploy/docker-compose.controlled.yml`, with the
+optional local database overlay
+`deploy/docker-compose.controlled-postgres.yml`.
 
-Remote skill versions are governed by
-`docs/ai/remote-skills-registry.yaml`. For this release:
+`deploy/docker-compose.candidate.yml` is now only a thin compatibility alias to
+the controlled topology. It contains no candidate-specific services or sidecars.
 
-- Superpowers establishes investigation and verification discipline.
-- Deployment Validation supplies isolation, recovery, observability, and
-  simplicity checks.
-- GitHub Actions Hardening supplies trigger, permission, immutable action, and
-  expression-injection checks.
-- SecPriv supplies source/sink and personal-data review.
-- Anthropic Webapp Testing supplies browser reconnaissance and Playwright
-  acceptance.
+RC0 may continue to use `deploy/docker-compose.rc-test.yml` because it is an
+isolated test fixture, not an alternative product or release topology. It must:
 
-Nexus Issue #489, current code, tests, and #626 acceptance remain authoritative.
+- use synthetic data and its own PostgreSQL volume;
+- use its own internal network and uploads volume;
+- expose only a loopback test gateway;
+- mount no production path or credential;
+- keep Provider, AI, voice, outbound, WhatsApp, SpeedAF and Operations writes disabled;
+- remove its containers, network and volumes after qualification.
 
-## Why this path is separate
+## Prerequisites
 
-The existing `deploy/docker-compose.candidate.yml` is a side-by-side
-production-candidate topology. It can join a production runtime network, mount
-production upload paths, reuse runtime tokens, and enable WhatsApp/Provider
-features through its environment.
+- Docker Engine and Compose v2;
+- exact candidate checkout with a clean tree;
+- free loopback port configured by the RC environment;
+- locked frontend dependencies;
+- no production secret.
 
-RC0 instead uses `deploy/docker-compose.rc-test.yml`:
-
-- its own PostgreSQL volume and database;
-- an internal project network for App, PostgreSQL and Workers;
-- its own upload and backup volumes;
-- no production mounts;
-- no production network;
-- a credential-free Nginx gateway on a project-local edge network that publishes
-  only `127.0.0.1:${RC_APP_PORT}`;
-- no direct App port or App edge-network membership;
-- no WhatsApp sidecar or session;
-- Provider traffic, outbound, Speedaf writes, and Operations Dispatch disabled.
-
-The Nginx gateway does not load the RC environment file, business credentials,
-Provider tokens, customer data, or runtime secrets. Its only function is to
-expose the internal App to the local test host.
-
-## Local or test-server prerequisites
-
-- Docker Engine with Compose v2.
-- Git checkout at the exact candidate commit.
-- Free local port `18083`.
-- Sufficient disk for one image and isolated PostgreSQL volume.
-- Chrome available when browser smoke is enabled.
-- Locked webapp dependencies installed with `cd webapp && npm ci`.
-
-No production secret is required.
-
-## Prepare the RC environment
+## Prepare the isolated environment
 
 ```bash
 cp deploy/.env.rc-test.example deploy/.env.rc-test
 ```
 
-Replace every `<...>` placeholder. Use a unique image tag containing the exact
-40-character commit SHA. The following identities must agree:
+Replace synthetic placeholders only. Candidate identity must agree:
 
 ```text
 RC_IMAGE_TAG = IMAGE_TAG
 GIT_SHA = FRONTEND_BUILD_SHA = exact candidate commit
 ```
 
-Do not change these safety values:
+The RC local image tag is not a production reference. Release evidence later
+requires an immutable registry Digest and external SBOM/provenance/signature.
+
+Keep these controls disabled:
 
 ```text
 PROVIDER_RUNTIME_ENABLED=false
 PROVIDER_RUNTIME_CANARY_PERCENT=0
 PROVIDER_RUNTIME_KILL_SWITCH=true
 PRIVATE_AI_RUNTIME_ENABLED=false
+WEBCHAT_AI_ENABLED=false
+WEBCHAT_VOICE_ENABLED=false
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
 WHATSAPP_NATIVE_ENABLED=false
@@ -102,7 +80,7 @@ OPERATIONS_DISPATCH_MODE=disabled
 OPERATIONS_DISPATCH_ADAPTER=disabled
 ```
 
-## Execute the complete chain
+## Execute
 
 ```bash
 cd /path/to/nexus_helpdesk
@@ -111,63 +89,49 @@ RC_RUN_BROWSER_SMOKE=true \
   bash scripts/release/run_rc_test_candidate.sh
 ```
 
-The script performs:
+The script is expected to perform only isolated work:
 
-1. environment safety validation;
-2. exact-SHA image build;
-3. Compose validation without writing a rendered secret-bearing config;
-4. isolated PostgreSQL startup;
-5. `alembic upgrade head`;
-6. creation of a synthetic RC-only admin;
-7. App, credential-free loopback Nginx gateway and explicit Worker startup;
-8. condition-based App, gateway and Worker health waits;
-9. exact runtime identity checks;
-10. invalid and valid login checks;
-11. synthetic WebChat init, send, poll, and operator read;
-12. in-container side-effect configuration proof;
-13. Playwright login/protected-route smoke through the loopback gateway;
-14. teardown with isolated volume and network removal;
-15. exact candidate manifest validation.
+1. validate RC environment safety;
+2. build the exact local candidate;
+3. validate the RC Compose fixture;
+4. start isolated PostgreSQL, App, gateway and dedicated Workers;
+5. migrate the isolated database;
+6. create only synthetic RC users/data;
+7. run identity, health, login, WebChat, side-effect and browser smoke;
+8. collect bounded synthetic evidence;
+9. tear down the isolated project and volumes;
+10. bind the manifest to the exact source/image used.
 
-Evidence is written to `artifacts/rc-test/` and is ignored by Git.
+RC artifacts may be written to ignored `artifacts/rc-test/`; they are not release
+SBOM, provenance or signature evidence.
 
-## Controlled server execution
+## Test-server execution
 
-Run the same commands in a dedicated test directory or test VM. Do not run RC0
-inside the live production checkout. Do not reuse:
+Run in a dedicated test directory or VM, never in the live production checkout.
+Do not reuse:
 
-- the production Compose project name;
-- production PostgreSQL;
-- production uploads;
-- production WhatsApp sessions;
-- production runtime token mounts;
-- the public production Nginx target.
+- production Compose project name;
+- production PostgreSQL or uploads;
+- production Nginx target;
+- production Provider/AI/voice/WhatsApp credentials;
+- production network attachments.
 
-The included `nginx-rc` service binds only to loopback. Access it through an SSH
-tunnel or an explicitly controlled test-only ingress after the local smoke
-passes. Do not expose `app-rc` directly and do not join it to an external or
-production network.
+`KEEP_RC_STACK=true` is diagnostic-only and must not turn RC0 into a long-lived
+environment.
 
 ## Failure handling
 
-The script collects only bounded synthetic logs and runs the repository artifact
-scanner. It always tears down the isolated stack unless
-`KEEP_RC_STACK=true` is explicitly set for diagnosis.
-
 When a gate fails:
 
-1. keep the failure evidence;
+1. preserve bounded failure evidence;
 2. reproduce the exact failing step;
-3. trace the component boundary;
-4. change only the demonstrated blocker;
-5. add a failing regression test before the fix;
-6. rerun the complete chain.
+3. fix the demonstrated root cause in the canonical implementation;
+4. add a regression test;
+5. rerun the complete RC chain on one unchanged Head.
 
-Do not perform opportunistic cleanup or merge unrelated PRs.
+Do not use RC0 to bypass `scripts/verify_repository.py` or the exact-head runbook.
 
-## Rollback
-
-RC0 has no production cutover. Its rollback is complete removal:
+## Teardown
 
 ```bash
 COMPOSE_PROJECT_NAME=<rc-project-name> \
@@ -177,7 +141,7 @@ docker compose \
   down --volumes --remove-orphans
 ```
 
-Verify no RC containers remain:
+Then confirm no RC container remains:
 
 ```bash
 COMPOSE_PROJECT_NAME=<rc-project-name> \
@@ -187,22 +151,4 @@ docker compose \
   ps -q --all
 ```
 
-The command must return no container IDs.
-
-## Acceptance evidence
-
-Required files:
-
-- `candidate-manifest.json`;
-- `healthz.json`;
-- `readyz.json`;
-- `http-core-smoke.json`;
-- `side-effect-safety.json`;
-- `browser-smoke.txt`;
-- `compose-ps-healthy.txt`;
-- `migration.txt`;
-- `teardown.txt`;
-- `artifact-scan.json`.
-
-The manifest is authoritative only for the exact image and source SHA recorded
-inside it. A later commit requires a complete rerun.
+A later candidate Head requires a complete rerun.
