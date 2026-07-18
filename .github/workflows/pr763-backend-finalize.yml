@@ -1,0 +1,118 @@
+name: PR 763 Backend Finalize
+
+on:
+  push:
+    branches:
+      - repair/763-backend-final-5ef
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr763-backend-finalize
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CI: "true"
+      PYTHONPATH: backend
+      APP_ENV: test
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+      ALLOW_DEV_AUTH: "false"
+      PROVIDER_RUNTIME_ENABLED: "false"
+      PROVIDER_RUNTIME_TRAFFIC_MODE: control
+      PROVIDER_RUNTIME_KILL_SWITCH: "true"
+      PROVIDER_RUNTIME_CANARY_PERCENT: "0"
+      PRIVATE_AI_RUNTIME_ENABLED: "false"
+      WEBCHAT_AI_ENABLED: "false"
+      WEBCHAT_AI_AUTO_REPLY_MODE: off
+      WEBCHAT_VOICE_ENABLED: "false"
+      ENABLE_OUTBOUND_DISPATCH: "false"
+      OUTBOUND_PROVIDER: disabled
+      WHATSAPP_NATIVE_ENABLED: "false"
+      WHATSAPP_DISPATCH_MODE: disabled
+      EMAIL_MAILBOX_SYNC_ENABLED: "false"
+      SPEEDAF_MCP_ENABLED: "false"
+      SPEEDAF_TRACK_QUERY_ENABLED: "false"
+      SPEEDAF_WORK_ORDER_CREATE_ENABLED: "false"
+      SPEEDAF_UPDATE_ADDRESS_ENABLED: "false"
+      SPEEDAF_CANCEL_ENABLED: "false"
+      SPEEDAF_VOICE_CALLBACK_ENABLED: "false"
+      OPERATIONS_DISPATCH_MODE: disabled
+      OPERATIONS_DISPATCH_ADAPTER: disabled
+    steps:
+      - name: Checkout isolated repair branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: repair/763-backend-final-5ef
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Restore authority and apply frozen patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git checkout 241b28025e1d4269fe167bbad9e75171d3f841cb -- .github/workflows/canonical-acceptance.yml
+          rm -f .github/workflows/backend-convergence-maintenance.yml
+          rm -f backend/tests/conftest.py
+          rm -rf scripts/maintenance
+          cat .ci/pr763-backend-fix.part00.patch \
+              .ci/pr763-backend-fix.part01.patch \
+              .ci/pr763-backend-fix.part02.patch \
+              .ci/pr763-backend-fix.part03.patch > /tmp/pr763-backend-fix.patch
+          echo "e49fc934d5e47f64dd376ca46412e14a81b5f1c905d82948be17a76472a77525  /tmp/pr763-backend-fix.patch" | sha256sum -c -
+          git apply --check /tmp/pr763-backend-fix.patch
+          git apply /tmp/pr763-backend-fix.patch
+          rm -f .ci/pr763-backend-fix.part*.patch
+          rmdir .ci 2>/dev/null || true
+          rm -f .github/workflows/pr763-backend-finalize.yml
+          test "$(find .github/workflows -maxdepth 1 -type f | sort)" = ".github/workflows/canonical-acceptance.yml"
+          git diff --check
+          git config user.name "nexus-backend-finalizer"
+          git config user.email "nexus-backend-finalizer@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(backend): close canonical regression and worker fencing gaps"
+
+      - name: Install exact backend dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Verify clean static authority
+        run: |
+          mkdir -p /tmp/nexus-backend-finalize
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
+          python scripts/verify_repository.py --static-only \
+            --evidence-out /tmp/nexus-backend-finalize/repository-static.json \
+            2>&1 | tee /tmp/nexus-backend-finalize/static.log
+
+      - name: Run complete backend regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-backend-finalize/pytest.log
+
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr763-backend-finalize-${{ github.sha }}
+          path: /tmp/nexus-backend-finalize
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Push validated repair
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -z "$(git status --porcelain)"
+          git push origin HEAD:refs/heads/repair/763-backend-final-5ef
