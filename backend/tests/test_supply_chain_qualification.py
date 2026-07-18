@@ -178,7 +178,12 @@ def test_assembler_binds_external_evidence_to_clean_candidate(tmp_path, monkeypa
     assert result["tree_sha"] == "c" * 40
     assert result["evidence_dir"] == str(output.resolve())
     assert result["candidate_tree_mutated"] is False
-    assert result["candidate_input_count"] == len(module.SUPPLY_CHAIN_INPUTS) + 1
+    expected_inputs = tuple(
+        dict.fromkeys(
+            (*module.SUPPLY_CHAIN_INPUTS, *assembler.EVIDENCE_TOOL_INPUTS)
+        )
+    )
+    assert result["candidate_input_count"] == len(expected_inputs)
     provenance = json.loads((output / "provenance.json").read_text(encoding="utf-8"))
     dependencies = {
         row["uri"]
@@ -186,9 +191,8 @@ def test_assembler_binds_external_evidence_to_clean_candidate(tmp_path, monkeypa
             "resolvedDependencies"
         ]
     }
-    for relative in module.SUPPLY_CHAIN_INPUTS:
+    for relative in expected_inputs:
         assert relative in dependencies
-    assert "scripts/verify_repository.py" in dependencies
     assert (output / "sbom.spdx.json").is_file()
     assert (output / "cosign.bundle.json").is_file()
 
