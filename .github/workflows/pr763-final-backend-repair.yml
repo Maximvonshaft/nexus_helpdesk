@@ -34,7 +34,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          exec > >(tee /tmp/pr763-final-backend-repair.log) 2>&1
+          wc -c .ci/pr763-final-backend.patch.b64.*
           cat .ci/pr763-final-backend.patch.b64.* | tr -d '\n' | base64 --decode > /tmp/pr763-final-backend.patch
+          wc -c /tmp/pr763-final-backend.patch
           git apply --check /tmp/pr763-final-backend.patch
           git apply /tmp/pr763-final-backend.patch
           git checkout 285d7e214f0869577cec429806dd3c348bfdab8b -- .github/workflows/canonical-acceptance.yml
@@ -43,6 +46,7 @@ jobs:
           rm -rf scripts/maintenance
           rm -f backend/tests/conftest.py
           rm -f .ci/pr763-final-backend.patch.b64.*
+          rm -f .ci/pr763-final-backend-repair-failure.txt
           rmdir .ci 2>/dev/null || true
           git diff --check
       - name: Commit clean candidate locally
@@ -103,10 +107,14 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          cp /tmp/pr763-final-backend-repair.log /tmp/pr763-final-backend-repair-failure.log 2>/dev/null || true
           git fetch origin repair/763-final-backend-5ef0
           git reset --hard origin/repair/763-final-backend-5ef0
           mkdir -p .ci
-          printf 'run_id=%s\nstatus=failed\nhead=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/pr763-final-backend-repair-failure.txt
+          {
+            printf 'run_id=%s\nstatus=failed\nhead=%s\n\n' "$GITHUB_RUN_ID" "$GITHUB_SHA"
+            cat /tmp/pr763-final-backend-repair-failure.log 2>/dev/null || true
+          } > .ci/pr763-final-backend-repair-failure.txt
           git config user.name nexus-final-repair
           git config user.email nexus-final-repair@users.noreply.github.com
           git add .ci/pr763-final-backend-repair-failure.txt
