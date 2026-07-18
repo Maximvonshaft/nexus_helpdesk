@@ -141,6 +141,34 @@ def test_assembler_binds_external_evidence_to_clean_candidate(tmp_path, monkeypa
     assert (output / "cosign.bundle.json").is_file()
 
 
+def test_exact_head_acceptance_runbook_is_single_fail_closed_sequence():
+    runbook = (
+        ROOT / "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md"
+    ).read_text(encoding="utf-8")
+    required = (
+        "scripts/verify_repository.py",
+        "--release-evidence-dir",
+        "npm ci --ignore-scripts",
+        "python -m alembic upgrade head",
+        "python -m alembic downgrade -1",
+        "test_support_conversations_postgres.py",
+        "test_postgres_worker_recovery.py",
+        "scripts/qualification/database_capacity.py",
+        "scripts/qualification/local_storage_backup.py",
+        "scripts/qualification/infrastructure_decision.py",
+        "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR",
+        "Provider, WebChat AI, voice, outbound",
+        "No production restore is part of this runbook",
+        "Any Head or tree change invalidates all prior evidence",
+    )
+    for marker in required:
+        assert marker in runbook, marker
+    assert ".github/workflows" not in runbook
+    assert "production_authorized=true" not in runbook
+    assert "PROVIDER_RUNTIME_ENABLED=true" not in runbook
+    assert "ENABLE_OUTBOUND_DISPATCH=true" not in runbook
+
+
 def test_dockerfile_comments_do_not_create_mutable_instruction_findings(tmp_path):
     dockerfile = tmp_path / "Dockerfile"
     dockerfile.write_text(
