@@ -1,0 +1,104 @@
+name: Final convergence apply
+
+on:
+  push:
+    branches: [fix/722-final-production-convergence]
+  workflow_dispatch: {}
+
+concurrency:
+  group: final-convergence-apply
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact staging branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: fix/722-final-production-convergence
+
+      - name: Reconstruct and verify transparent patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: "768"
+          EXPECTED_SHA256: fdd708b2ac2d28cc7ed0e68e4a2deaae0716e0485c93708b548efb23b3f1e336
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" \
+            > /tmp/comments.json
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+
+          comments = json.load(open('/tmp/comments.json', encoding='utf-8'))
+          expected = [
+              '000', '001', '002', '003', '004', '005', '006',
+              '007a', '007b', '008', '009', '010', '011', '012',
+              '013', '014', '015', '016', '017', '018',
+          ]
+          marker = re.compile(r'^<!-- nexus-final-diff-part:([0-9]{3}[a-z]?)/[0-9]{3} -->\n')
+          found = {}
+          for row in comments:
+              body = row.get('body') or ''
+              match = marker.match(body)
+              if not match:
+                  continue
+              key = match.group(1)
+              if key in found:
+                  raise SystemExit(f'duplicate patch segment: {key}')
+              found[key] = body[match.end():]
+          missing = sorted(set(expected) - set(found))
+          extra = sorted(set(found) - set(expected))
+          if missing or extra:
+              raise SystemExit(f'patch segment mismatch missing={missing} extra={extra}')
+          data = ''.join(found[key] for key in expected).encode('utf-8')
+          digest = hashlib.sha256(data).hexdigest()
+          if digest != os.environ['EXPECTED_SHA256']:
+              raise SystemExit(f'patch digest mismatch: {digest}')
+          open('/tmp/final-convergence.patch', 'wb').write(data)
+          print(f'verified patch bytes={len(data)} sha256={digest}')
+          PY
+
+      - name: Apply exact-main patch and erase staging history
+        env:
+          BASE_SHA: 7260652e380e9b19818c079c4d3846a653354d24
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          git reset --hard "$BASE_SHA"
+          if git apply --check /tmp/final-convergence.patch; then
+            git apply --index /tmp/final-convergence.patch
+          else
+            git apply --3way --index /tmp/final-convergence.patch
+          fi
+          git diff --cached --check
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release scripts/security
+          test -z "$(git status --porcelain | grep '^??' || true)"
+
+      - name: Commit immutable final candidate
+        env:
+          STAGING_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "[P0][#768] Complete final production convergence"
+          git push --force-with-lease=refs/heads/fix/722-final-production-convergence:$STAGING_SHA \
+            origin HEAD:refs/heads/fix/722-final-production-convergence
