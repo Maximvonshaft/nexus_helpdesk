@@ -1,0 +1,43 @@
+name: Temporary main source snapshot
+
+on:
+  push:
+    branches:
+      - ci/763-workflow-proposal
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pushed commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove parent main and clean tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD^)" = "7260652e380e9b19818c079c4d3846a653354d24"
+          test -z "$(git status --porcelain)"
+      - name: Archive parent main source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-main-source
+          git archive --format=tar.gz --prefix=nexus-main-7260652/ 7260652e380e9b19818c079c4d3846a653354d24 > /tmp/nexus-main-source/nexus-main-7260652.tar.gz
+          printf '%s\n' 7260652e380e9b19818c079c4d3846a653354d24 > /tmp/nexus-main-source/source-sha.txt
+          git rev-parse '7260652e380e9b19818c079c4d3846a653354d24^{tree}' > /tmp/nexus-main-source/tree-sha.txt
+          sha256sum /tmp/nexus-main-source/nexus-main-7260652.tar.gz > /tmp/nexus-main-source/archive.sha256
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexus-main-source-7260652-${{ github.run_id }}
+          path: /tmp/nexus-main-source
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
