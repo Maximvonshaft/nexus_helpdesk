@@ -53,13 +53,12 @@ def _module_aliases(tree: ast.Module) -> set[str]:
 
 
 def _attribute_assignment_target(node: ast.AST) -> tuple[str, str] | None:
-    target: ast.AST | None = None
     if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for candidate in targets:
             if isinstance(candidate, ast.Attribute) and isinstance(candidate.value, ast.Name):
                 return candidate.value.id, candidate.attr
-    return target
+    return None
 
 
 def test_service_authority_manifest_is_complete_and_paths_exist() -> None:
@@ -153,6 +152,23 @@ def test_manifest_authorities_use_capabilities_not_role_name_branches() -> None:
     assert "ROLE_CAPABILITIES" in permissions
     assert "has_global_case_visibility" in permissions
     assert "ensure_ticket_visible(user, ticket, db)" in permissions
+
+
+def test_fastapi_method_and_normalized_path_are_unique() -> None:
+    from app.main import app
+    from scripts.qualification.route_authority import qualification_payload
+
+    payload = qualification_payload(app)
+    assert payload["duplicates"] == [], payload["duplicates"]
+    assert payload["status"] == "pass"
+
+
+def test_alembic_is_the_only_executable_schema_mutation_authority() -> None:
+    sql_files = [path for path in PROJECT.rglob("*.sql") if ".git" not in path.parts]
+    assert sql_files == [], [str(path.relative_to(PROJECT)) for path in sql_files]
+    history = PROJECT / "docs/history/migrations/20260505-webchat-ai-turn-runtime.md"
+    assert history.is_file()
+    assert "Alembic" in history.read_text(encoding="utf-8")
 
 
 def test_production_entrypoints_use_canonical_authorities() -> None:
