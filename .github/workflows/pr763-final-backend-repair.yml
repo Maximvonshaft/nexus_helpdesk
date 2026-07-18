@@ -10,10 +10,11 @@ permissions:
 
 concurrency:
   group: pr-763-final-backend-repair
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   repair:
+    if: ${{ !contains(github.event.head_commit.message, '[repair-status]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -97,3 +98,17 @@ jobs:
       - name: Push validated isolated candidate
         shell: bash
         run: git push origin HEAD:repair/763-final-backend-5ef0
+      - name: Publish explicit failure status
+        if: failure()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch origin repair/763-final-backend-5ef0
+          git reset --hard origin/repair/763-final-backend-5ef0
+          mkdir -p .ci
+          printf 'run_id=%s\nstatus=failed\nhead=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/pr763-final-backend-repair-failure.txt
+          git config user.name nexus-final-repair
+          git config user.email nexus-final-repair@users.noreply.github.com
+          git add .ci/pr763-final-backend-repair-failure.txt
+          git commit -m "[repair-status] final backend repair failed"
+          git push origin HEAD:repair/763-final-backend-5ef0
