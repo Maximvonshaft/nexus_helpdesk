@@ -10,6 +10,8 @@ from ..services.audit_service import log_admin_audit
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.message_dispatch import requeue_dead_outbound_message
 from ..services.permissions import ensure_can_manage_runtime
+from ..services.queue_health import collect_queue_health
+from ..services.runtime_permissions import ensure_can_read_runtime
 from ..settings import get_settings
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
@@ -30,6 +32,15 @@ def _requeue_dead_job_row(job: BackgroundJob) -> BackgroundJob:
     job.next_run_at = utc_now()
     job.updated_at = utc_now()
     return job
+
+
+@router.get('/queues/health')
+def read_queue_health(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_runtime(current_user, db)
+    return collect_queue_health(db)
 
 
 @router.post('/jobs/{job_id}/requeue')

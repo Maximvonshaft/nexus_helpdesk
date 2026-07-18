@@ -3,12 +3,19 @@ set -Eeuo pipefail
 
 BACKUP_BUNDLE="${1:-}"
 OLD_IMAGE_TAG="${OLD_IMAGE_TAG:-}"
-COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.server.yml}"
+ROLLBACK_CONTROLLED_ENV_FILE="${ROLLBACK_CONTROLLED_ENV_FILE:-}"
+ROLLBACK_DATABASE_TOPOLOGY="${ROLLBACK_DATABASE_TOPOLOGY:-}"
 ROLLBACK_HEALTH_URL="${ROLLBACK_HEALTH_URL:-}"
 ROLLBACK_STATUS_FILE="${ROLLBACK_STATUS_FILE:-./rollback-result.json}"
 ROLLBACK_ALLOW_IN_PLACE="${ROLLBACK_ALLOW_IN_PLACE:-}"
 ROLLBACK_WAIT_TIMEOUT_SECONDS="${ROLLBACK_WAIT_TIMEOUT_SECONDS:-180}"
-SERVICES=(app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot runtime-warmer)
+SERVICES=(
+  app-controlled
+  worker-outbound-controlled
+  worker-background-controlled
+  worker-webchat-ai-controlled
+  worker-handoff-snapshot-controlled
+)
 STATES=()
 OUTCOME="fail"
 FAILURE_STAGE="INITIALIZATION"
@@ -122,6 +129,51 @@ require_health_2xx() {
     echo "Health endpoint returned non-2xx status: $http_code" >&2
     return 1
   fi
+}
+
+validate_controlled_rollback_env() {
+  if [[ -z "$ROLLBACK_CONTROLLED_ENV_FILE" ]]; then
+    echo "ROLLBACK_CONTROLLED_ENV_FILE is required when OLD_IMAGE_TAG is set" >&2
+    exit 8
+  fi
+  if [[ ! -f "$ROLLBACK_CONTROLLED_ENV_FILE" || -L "$ROLLBACK_CONTROLLED_ENV_FILE" ]]; then
+    echo "ROLLBACK_CONTROLLED_ENV_FILE must be a regular non-symlink file" >&2
+    exit 8
+  fi
+  if [[ "$ROLLBACK_DATABASE_TOPOLOGY" != "external" && "$ROLLBACK_DATABASE_TOPOLOGY" != "local" ]]; then
+    echo "ROLLBACK_DATABASE_TOPOLOGY must be external or local" >&2
+    exit 8
+  fi
+
+  ROLLBACK_ENV_FILE="$ROLLBACK_CONTROLLED_ENV_FILE" EXPECTED_IMAGE="$OLD_IMAGE_TAG" python - <<'PYENV'
+import os
+from pathlib import Path
+
+path = Path(os.environ["ROLLBACK_ENV_FILE"])
+if path.stat().st_size > 2 * 1024 * 1024:
+    raise SystemExit("rollback_env_too_large")
+values = {}
+for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if "=" not in raw:
+        raise SystemExit(f"rollback_env_line_invalid:{number}")
+    key, value = raw.split("=", 1)
+    key = key.strip()
+    if key in values:
+        raise SystemExit(f"rollback_env_key_duplicate:{key}")
+    values[key] = value.strip()
+expected = os.environ["EXPECTED_IMAGE"]
+if values.get("CONTROLLED_IMAGE") != expected:
+    raise SystemExit("rollback_controlled_image_mismatch")
+if values.get("IMAGE_TAG") != expected:
+    raise SystemExit("rollback_image_tag_mismatch")
+if values.get("GIT_SHA", "") == "" or values.get("FRONTEND_BUILD_SHA") != values.get("GIT_SHA"):
+    raise SystemExit("rollback_source_identity_invalid")
+if values.get("EXPECTED_MIGRATION_HEAD", "") == "":
+    raise SystemExit("rollback_migration_identity_missing")
+PYENV
 }
 
 if [[ -z "$BACKUP_BUNDLE" && -z "$OLD_IMAGE_TAG" ]]; then
@@ -302,9 +354,18 @@ if [[ -n "$OLD_IMAGE_TAG" ]]; then
     echo "ROLLBACK_HEALTH_URL is required when OLD_IMAGE_TAG is set" >&2
     exit 8
   fi
+  validate_controlled_rollback_env
+  compose_args=(
+    --env-file "$ROLLBACK_CONTROLLED_ENV_FILE"
+    -f deploy/docker-compose.controlled.yml
+  )
+  if [[ "$ROLLBACK_DATABASE_TOPOLOGY" == "local" ]]; then
+    compose_args+=(-f deploy/docker-compose.controlled-postgres.yml)
+  fi
   FAILURE_STAGE="IMAGE_RESTART"
-  IMAGE_TAG="$OLD_IMAGE_TAG" docker compose -f "$COMPOSE_FILE" up \
-    -d --no-build --pull always --wait --wait-timeout "$ROLLBACK_WAIT_TIMEOUT_SECONDS" \
+  docker compose "${compose_args[@]}" up \
+    -d --no-build --pull always --wait \
+    --wait-timeout "$ROLLBACK_WAIT_TIMEOUT_SECONDS" \
     "${SERVICES[@]}"
   append_state "IMAGE_RESTARTED"
   FAILURE_STAGE="HEALTH_VERIFICATION"

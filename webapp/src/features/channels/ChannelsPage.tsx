@@ -1,8 +1,4 @@
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -32,12 +28,13 @@ import {
   OperatorEmptyState,
   OperatorErrorNotice,
   OperatorFactGrid,
+  OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
 import { operationalPresentation } from '@/domain/operationalPresentation'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
-import { healthPresentation } from '@/lib/supportStatus'
+import { channelPresentation, healthPresentation } from '@/lib/supportStatus'
 import type { ChannelOnboardingTask } from '@/lib/channelControlTypes'
 import type { ChannelAccount } from '@/lib/types'
 
@@ -57,14 +54,6 @@ const emptyDraft: OnboardingDraft = {
   displayName: '',
   accountBinding: '',
   externalAccountId: '',
-}
-
-function providerLabel(value: string) {
-  if (value === 'webchat') return '网页客服'
-  if (value === 'whatsapp') return 'WhatsApp'
-  if (value === 'email') return '邮件'
-  if (value === 'voice') return '语音'
-  return sanitizeDisplayText(value)
 }
 
 function maskPhone(value: string | null | undefined) {
@@ -191,7 +180,11 @@ export function ChannelsPage() {
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-start' }} justifyContent="space-between" sx={{ mb: 2.5 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between', mb: 2.5 }}
+      >
         <Typography component="h1" variant="h1">渠道管理</Typography>
         {accounts.isFetching || tasks.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
@@ -200,7 +193,7 @@ export function ChannelsPage() {
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 2fr) minmax(300px, 1fr)' } }}>
         <Paper component="section" variant="outlined" aria-labelledby="channel-accounts-title" sx={{ minWidth: 0, p: 2 }}>
-          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography id="channel-accounts-title" component="h2" variant="h3">已启用渠道</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{activeAccounts.length} 个账号</Typography>
           </Stack>
@@ -214,10 +207,11 @@ export function ChannelsPage() {
                 <TableBody>
                   {activeAccounts.map((item) => {
                     const health = healthPresentation(item.health_status)
+                    const channel = channelPresentation(item.provider)
                     return (
                       <TableRow key={item.id} hover>
-                        <TableCell>{providerLabel(item.provider)}</TableCell>
-                        <TableCell>{sanitizeDisplayText(item.display_name || `${providerLabel(item.provider)} 账号`)}</TableCell>
+                        <TableCell>{channel.label}</TableCell>
+                        <TableCell>{sanitizeDisplayText(item.display_name || `${channel.label} 账号`)}</TableCell>
                         <TableCell><Chip color={operatorToneColor(health.tone)} label={health.label} /></TableCell>
                         <TableCell align="right">{item.priority}</TableCell>
                         <TableCell>{formatDateTime(item.updated_at)}</TableCell>
@@ -231,7 +225,7 @@ export function ChannelsPage() {
         </Paper>
 
         <Paper component="aside" variant="outlined" aria-labelledby="whatsapp-health-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
-          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography id="whatsapp-health-title" component="h2" variant="h3">WhatsApp 状态</Typography>
             <Chip color={operatorToneColor(whatsappHealth.tone)} label={whatsappHealth.label} />
           </Stack>
@@ -247,17 +241,14 @@ export function ChannelsPage() {
                 ['最近连接', whatsappStatus.data?.last_connected_at ? formatDateTime(whatsappStatus.data.last_connected_at) : '暂无'],
               ]} />
               {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined">{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
-              <Accordion disableGutters variant="outlined" sx={{ '&:before': { display: 'none' } }}>
-                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}><Typography variant="subtitle2">系统信息</Typography></AccordionSummary>
-                <AccordionDetails sx={{ borderTop: 1, borderColor: 'divider' }}>
-                  <OperatorFactGrid facts={[
-                    ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
-                    ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
-                    ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
-                    ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
-                  ]} />
-                </AccordionDetails>
-              </Accordion>
+              <OperatorTechnicalDisclosure title="系统信息">
+                <OperatorFactGrid facts={[
+                  ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
+                  ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
+                  ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
+                  ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
+                ]} />
+              </OperatorTechnicalDisclosure>
             </Stack>
           )}
         </Paper>
@@ -282,7 +273,7 @@ export function ChannelsPage() {
         </Paper>
 
         <Paper component="section" variant="outlined" aria-labelledby="channel-onboarding-list-title" sx={{ minWidth: 0, p: 2 }}>
-          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography id="channel-onboarding-list-title" component="h2" variant="h3">接入任务</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{tasks.data?.total ?? 0} 项</Typography>
           </Stack>
@@ -294,17 +285,24 @@ export function ChannelsPage() {
               {tasks.data.tasks.map((task) => {
                 const status = taskStatus(task)
                 const result = operationalPresentation(task.status, task.last_error)
+                const channel = channelPresentation(task.provider)
                 return (
-                  <Stack component="article" key={task.id} direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" sx={{ py: 1.5 }}>
+                  <Stack
+                    component="article"
+                    key={task.id}
+                    direction={{ xs: 'column', md: 'row' }}
+                    spacing={2}
+                    sx={{ justifyContent: 'space-between', py: 1.5 }}
+                  >
                     <Box sx={{ minWidth: 0 }}>
-                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                        <Typography variant="subtitle2">{providerLabel(task.provider)} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
+                      <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Typography variant="subtitle2">{channel.label} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
                         <Chip color={operatorToneColor(status.tone)} label={status.label} />
                       </Stack>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{task.last_error ? sanitizeDisplayText(task.last_error) : result.detail || '等待处理'}</Typography>
                       <Typography variant="caption" color="text.disabled">更新于 {formatDateTime(task.updated_at)}</Typography>
                     </Box>
-                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ flexShrink: 0 }}>
+                    <Stack direction="row" spacing={1} useFlexGap sx={{ flexShrink: 0, flexWrap: 'wrap' }}>
                       {canStart(task) ? <Button size="small" variant="outlined" color="inherit" disabled={startTask.isPending} onClick={() => startTask.mutate(task.id)}>开始处理</Button> : null}
                       {canSettle(task) ? (
                         <>
@@ -322,7 +320,14 @@ export function ChannelsPage() {
         </Paper>
       </Box>
 
-      <Dialog open={Boolean(selectedTask && pendingAction)} onClose={closeTaskDialog} disableEscapeKeyDown={settleTask.isPending} aria-labelledby="channel-task-dialog-title">
+      <Dialog
+        open={Boolean(selectedTask && pendingAction)}
+        onClose={(_, reason) => {
+          if (settleTask.isPending && reason === 'escapeKeyDown') return
+          closeTaskDialog()
+        }}
+        aria-labelledby="channel-task-dialog-title"
+      >
         <DialogTitle id="channel-task-dialog-title">{pendingAction === 'complete' ? '确认任务完成？' : pendingAction === 'fail' ? '记录任务失败？' : '取消任务？'}</DialogTitle>
         <DialogContent>
           <DialogContentText>{pendingAction === 'complete' ? '确认已完成账号和绑定验证。' : pendingAction === 'fail' ? '请填写失败原因。' : '任务将停止，历史记录会保留。'}</DialogContentText>

@@ -13,11 +13,14 @@ The authenticated operator product has one implementation authority:
 - supporting routes: `/knowledge`, `/channels`, `/runtime`, `/control-tower`
 - compatibility-only route: `/webchat`
 - HTTP transport: `webapp/src/lib/apiClient.ts`
-- UI components: `webapp/src/components/ui/`
-- design tokens: `webapp/src/styles/tokens.css`
+- UI framework: `@mui/material`
+- theme: `webapp/src/theme/nexusTheme.ts`
+- theme provider: `webapp/src/theme/NexusThemeProvider.tsx`
+- bounded operator presentation: `webapp/src/app/OperatorPresentation.tsx`
+- global CSS boundary: reset, font, accessibility and document-level foundations only
 - operational status vocabulary: `webapp/src/domain/operationalPresentation.ts`
 
-The former static `frontend/`, Support Console product, `shared/ui`, `shared/api`, `webapp/src/lib/api.ts` and parallel WebSocket workspace authority are retired and must not be restored.
+The former static `frontend/`, Support Console product, `shared/ui`, `shared/api`, `webapp/src/lib/api.ts`, custom UI kit, CSS token system and parallel WebSocket workspace authority are retired and must not be restored.
 
 The customer-side public WebChat widget under `backend/app/static/webchat/` is a separate public surface. It is not a second operator product.
 
@@ -26,11 +29,13 @@ The customer-side public WebChat widget under `backend/app/static/webchat/` is a
 - `backend/app/api` — FastAPI routes for authentication, cases, WebChat, channels, runtime and integrations.
 - `backend/app/services` — policy, scope, ticket orchestration, storage, jobs, provider runtime, WebChat AI and Speedaf integrations.
 - `backend/app/models.py` — SQLAlchemy domain model.
-- `backend/alembic` — schema migrations.
+- `backend/alembic` — the only executable schema-migration authority.
 - `backend/scripts/run_worker.py` — queue worker entrypoint.
 - `webapp/` — the only React + TypeScript + Vite operator console source.
 - `frontend_dist/` — generated SPA output; intentionally not tracked.
 - `deploy/` — compose and proxy configuration.
+- `config/architecture/service-authority.v1.json` — machine-readable backend public/core/shim ownership.
+- `scripts/qualification/route_authority.py` — generated FastAPI method/path authority table and collision gate.
 - `scripts/verify_repository.py` — local end-to-end repository verification authority.
 
 ## Runtime model
@@ -108,7 +113,7 @@ npm ci --ignore-scripts
 npm run verify
 ```
 
-`npm run verify` executes architecture checks, lint, type checking, contract tests and the production build. Browser journeys run separately with:
+`npm run verify` executes architecture checks, the single-transport gate, lint, type checking, contract tests and the production build. Browser journeys run separately with:
 
 ```bash
 npm run e2e
@@ -134,6 +139,9 @@ The verifier rejects:
 
 - a second frontend or operator shell;
 - a second navigation, transport, UI or status authority;
+- backend public/core/shim ownership that diverges from the authority manifest;
+- duplicate FastAPI method + normalized-path registrations;
+- executable raw SQL migration paths outside Alembic;
 - retired paths and unreachable frontend modules;
 - reintroduced GitHub Actions or Actions-only governance files;
 - loss of Runtime read/manage separation;
@@ -142,7 +150,9 @@ The verifier rejects:
 
 ## Migration policy
 
-Migrations are linear, reversible and fail closed. The WebChat country authority migration is:
+Alembic is the sole executable schema-mutation authority. Migrations are linear, reversible and fail closed. Manually executable SQL migrations under `ops/`, deployment directories or runbooks are forbidden.
+
+The WebChat country authority migration is:
 
 ```text
 20260713_0059 → 20260715_0060

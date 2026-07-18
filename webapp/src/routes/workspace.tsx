@@ -1,9 +1,14 @@
-import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Typography } from '@mui/material'
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/app/AppShell'
+import {
+  OperatorLoadingState,
+  OperatorPageBoundary,
+  RouteLoadingState,
+} from '@/app/OperatorPresentation'
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
@@ -11,17 +16,6 @@ import { workspaceScopeFromAuthorized, workspaceScopeKey } from '@/lib/operatorW
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 
 const LazyOperatorWorkspacePage = lazy(() => import('@/features/operator-workspace/lazy'))
-
-function WorkspaceLoading() {
-  return (
-    <Box sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '52vh', p: 3 }} aria-busy="true">
-      <Stack role="status" alignItems="center" spacing={2} aria-live="polite">
-        <CircularProgress size={34} />
-        <Typography variant="subtitle1">正在加载…</Typography>
-      </Stack>
-    </Box>
-  )
-}
 
 function authorizedScopeKey(scope: AuthorizedWorkspaceScope) {
   return workspaceScopeKey(workspaceScopeFromAuthorized(scope))
@@ -53,11 +47,17 @@ function AuthorizedWorkspaceRoutePage() {
     navigate({ to: '/login', replace: true })
   }
 
-  if (!session.data && (session.isLoading || !session.isError)) return <WorkspaceLoading />
+  if (!session.data && (session.isLoading || !session.isError)) {
+    return (
+      <OperatorPageBoundary busy>
+        <OperatorLoadingState label="正在登录…" minHeight={0} />
+      </OperatorPageBoundary>
+    )
+  }
 
   if (session.isError) {
     return (
-      <Box component="main" sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}>
+      <OperatorPageBoundary>
         <Alert
           severity="error"
           variant="outlined"
@@ -67,11 +67,17 @@ function AuthorizedWorkspaceRoutePage() {
           <Typography variant="subtitle1">无法读取账号</Typography>
           <Typography variant="body2">请重新登录。</Typography>
         </Alert>
-      </Box>
+      </OperatorPageBoundary>
     )
   }
 
-  if (scopes.isLoading) return <WorkspaceLoading />
+  if (scopes.isLoading) {
+    return (
+      <OperatorPageBoundary busy>
+        <OperatorLoadingState label="正在读取工作范围…" minHeight={0} />
+      </OperatorPageBoundary>
+    )
+  }
 
   if (scopes.isError) {
     return (
@@ -81,7 +87,7 @@ function AuthorizedWorkspaceRoutePage() {
         userLabel={session.data?.display_name || session.data?.username || '操作员'}
         onLogout={handleLogout}
       >
-        <Box sx={{ p: { xs: 2, md: 4 } }}>
+        <Box component="main" sx={{ p: { xs: 2, md: 4 } }}>
           <Alert
             severity="error"
             variant="outlined"
@@ -103,7 +109,7 @@ function AuthorizedWorkspaceRoutePage() {
         userLabel={session.data?.display_name || session.data?.username || '操作员'}
         onLogout={handleLogout}
       >
-        <Box sx={{ p: { xs: 2, md: 4 } }}>
+        <Box component="main" sx={{ p: { xs: 2, md: 4 } }}>
           <Alert severity="warning" variant="outlined" aria-labelledby="workspace-no-scope-title">
             <Typography id="workspace-no-scope-title" component="h1" variant="h3">
               未分配工作范围
@@ -127,7 +133,7 @@ function AuthorizedWorkspaceRoutePage() {
       onScopeChange={(scope) => setRequestedScopeKey(authorizedScopeKey(scope))}
       onLogout={handleLogout}
     >
-      <Suspense fallback={<WorkspaceLoading />}>
+      <Suspense fallback={<RouteLoadingState label="正在加载案例处理…" />}>
         <LazyOperatorWorkspacePage
           key={selectedKey}
           scope={workspaceScopeFromAuthorized(selectedScope)}

@@ -16,19 +16,12 @@ import {
 import type { SelectChangeEvent } from '@mui/material/Select'
 import type { ReactNode } from 'react'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
+import { channelPresentation } from '@/lib/supportStatus'
 import { AppNavigation } from './AppNavigation'
 import type { AppRouteKey } from './navigation'
 
-function channelLabel(channel: string) {
-  if (channel === 'webchat') return '网页客服'
-  if (channel === 'whatsapp') return 'WhatsApp'
-  if (channel === 'email') return '邮件'
-  if (channel === 'voice') return '语音'
-  return channel
-}
-
 function scopeLabel(scope: AuthorizedWorkspaceScope, duplicatePosition?: number) {
-  const base = `${scope.country_code} · ${channelLabel(scope.channel_key)}`
+  const base = `${scope.country_code} · ${channelPresentation(scope.channel_key).label}`
   return duplicatePosition ? `${base} · 范围 ${duplicatePosition}` : base
 }
 
@@ -114,7 +107,7 @@ export function AppShell({
             px: { xs: 1.5, md: 2.5 },
           }}
         >
-          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexShrink: 0 }} aria-label="Nexus OSR">
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', flexShrink: 0 }} aria-label="Nexus OSR">
             <Avatar
               variant="rounded"
               sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }}
@@ -131,7 +124,7 @@ export function AppShell({
             <AppNavigation capabilities={capabilities} activeRoute={activeRoute} />
           </Box>
 
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexShrink: 0 }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
             {selectedScope && scopes.length === 1 ? (
               <Chip label={scopeLabel(selectedScope)} aria-label="当前工作范围" sx={{ display: { xs: 'none', md: 'inline-flex' } }} />
             ) : null}
@@ -172,7 +165,7 @@ export function AppShell({
         </Toolbar>
       </AppBar>
 
-      <Box id="nd-main-content" component="main" tabIndex={-1} sx={{ minHeight: 'calc(100dvh - 68px)', outline: 'none' }}>
+      <Box id="nd-main-content" component="div" tabIndex={-1} sx={{ minHeight: 'calc(100dvh - 68px)', outline: 'none' }}>
         {children}
       </Box>
     </Box>

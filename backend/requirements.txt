@@ -16,11 +16,11 @@ boto3==1.37.38
 
 httpx==0.28.1
 livekit-api==1.1.0
-livekit>=1.0.18,<2.0.0
+livekit==1.1.13
 
 prometheus-client==0.21.1
 cryptography==48.0.1
 jsonschema==4.21.1
 pypdf==6.13.3
 
-pytest-asyncio>=0.23.0
+pytest-asyncio==1.4.0

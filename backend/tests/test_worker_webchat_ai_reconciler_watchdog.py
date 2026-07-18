@@ -73,22 +73,51 @@ def test_webchat_ai_reconciler_watchdog_exception_rolls_back_and_does_not_raise(
     assert fake_db.closed is True
 
 
-def test_webchat_ai_reconciler_watchdog_only_worker_main_by_default(monkeypatch):
+def test_webchat_ai_reconciler_runs_from_dedicated_queue_when_enabled(monkeypatch):
     run_worker = _load_run_worker_module()
+    calls = []
+
+    class FakeContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
     monkeypatch.setattr(run_worker.settings, "webchat_ai_reconciler_enabled", True, raising=False)
+    monkeypatch.setattr(run_worker, "db_context", lambda: FakeContext())
+    monkeypatch.setattr(run_worker, "dispatch_pending_webchat_ai_reply_jobs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, "record_worker_poll", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "record_worker_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "_webchat_ai_reconciler_interval_seconds", lambda: 5)
+    monkeypatch.setattr(run_worker, "_run_webchat_ai_reconciler_watchdog", lambda worker_id: calls.append(worker_id) or 0)
+    monkeypatch.setattr(run_worker.time, "monotonic", lambda: 100.0)
+    run_worker._LAST_WEBCHAT_AI_RECONCILER_RUN_AT = 0.0
 
-    assert run_worker._should_run_webchat_ai_reconciler("worker-main") is True
-    assert run_worker._should_run_webchat_ai_reconciler("worker-external_channel-sync") is False
-    assert run_worker._should_run_webchat_ai_reconciler("worker-anything-else") is False
+    assert run_worker.run_queue_once("worker-webchat-ai-controlled", "webchat-ai") == 0
+    assert calls == ["worker-webchat-ai-controlled"]
 
 
-def test_webchat_ai_reconciler_watchdog_can_be_disabled(monkeypatch):
+def test_webchat_ai_reconciler_can_be_disabled(monkeypatch):
     run_worker = _load_run_worker_module()
+    calls = []
+
+    class FakeContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
     monkeypatch.setattr(run_worker.settings, "webchat_ai_reconciler_enabled", False, raising=False)
+    monkeypatch.setattr(run_worker, "db_context", lambda: FakeContext())
+    monkeypatch.setattr(run_worker, "dispatch_pending_webchat_ai_reply_jobs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, "record_worker_result", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(run_worker, "_run_webchat_ai_reconciler_watchdog", lambda worker_id: (_ for _ in ()).throw(AssertionError("watchdog must stay disabled")))
 
-    assert run_worker._should_run_webchat_ai_reconciler("worker-main") is False
+    assert run_worker._run_webchat_ai("worker-webchat-ai-controlled") == 0
+    assert calls
 
 
 def test_webchat_ai_reconciler_interval_is_clamped(monkeypatch):
@@ -98,19 +127,18 @@ def test_webchat_ai_reconciler_interval_is_clamped(monkeypatch):
 
     assert run_worker._webchat_ai_reconciler_interval_seconds() == 5
 
-def test_run_worker_main_uses_args_worker_id_without_locals_hack(monkeypatch):
+
+def test_run_worker_main_uses_parsed_worker_id_and_queue(monkeypatch):
     run_worker = _load_run_worker_module()
     calls = []
 
     class Args:
-        worker_id = "worker-main"
+        worker_id = "worker-webchat-ai-controlled"
+        queue = "webchat-ai"
         once = True
 
     monkeypatch.setattr(run_worker.argparse.ArgumentParser, "parse_args", lambda self: Args())
-    monkeypatch.setattr(run_worker, "_webchat_ai_reconciler_interval_seconds", lambda: 30)
-    monkeypatch.setattr(run_worker, "_should_run_webchat_ai_reconciler", lambda worker_id: worker_id == "worker-main")
-    monkeypatch.setattr(run_worker, "_run_webchat_ai_reconciler_watchdog", lambda worker_id: calls.append(worker_id))
-    monkeypatch.setattr(run_worker, "run_once", lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, "run_queue_once", lambda worker_id, queue: calls.append((worker_id, queue)) or 0)
 
     assert run_worker.main() == 0
-    assert calls == ["worker-main"]
+    assert calls == [("worker-webchat-ai-controlled", "webchat-ai")]

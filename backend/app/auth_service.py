@@ -18,6 +18,8 @@ PASSWORD_HASHER = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
+    """Hash user credentials; request-specific policy is enforced at API boundaries."""
+
     return PASSWORD_HASHER.hash(password)
 
 

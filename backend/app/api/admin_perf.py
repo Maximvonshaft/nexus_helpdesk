@@ -5,9 +5,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from ..db import get_db
+from ..db import database_pool_snapshot, get_db
 from ..models import User, UserCapabilityOverride
 from ..services.permissions import ALL_CAPABILITIES, _base_capabilities, ensure_can_manage_users
+from ..services.runtime_permissions import ensure_can_read_runtime
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -51,6 +52,15 @@ def _serialize_user_preloaded(user: User, overrides_by_user: dict[int, list[User
         "created_at": _serialize_dt(user.created_at),
         "updated_at": _serialize_dt(user.updated_at),
     }
+
+
+@router.get("/database/pool")
+def read_database_pool_snapshot(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_runtime(current_user, db)
+    return database_pool_snapshot()
 
 
 @router.get("/users")

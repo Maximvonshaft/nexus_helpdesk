@@ -51,7 +51,7 @@ export function normalizeOperationalStatus(value: unknown): string {
   return String(value ?? '')
     .trim()
     .toLowerCase()
-    .replace(/[\s-]+/g, '_')
+    .replace(/[\s-]+/g, '_');
 }
 
 export function operationalPhase(value: unknown): OperationalPhase {

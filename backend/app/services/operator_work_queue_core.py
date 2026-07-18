@@ -11,11 +11,11 @@ from fastapi import HTTPException
 from sqlalchemy import String, and_, case, cast, exists, func, not_, or_, select
 from sqlalchemy.orm import Session, aliased, defer
 
-# The operations outbox has an FK to the routing-rule model.  Import the FK
+# The operations outbox has an FK to the routing-rule model. Import the FK
 # target before the optional outbox module so isolated API/test imports build a
 # complete SQLAlchemy metadata graph even when model_registry is not called.
 from .. import models_osr as _models_osr  # noqa: F401
-from ..enums import TicketPriority, TicketStatus, UserRole
+from ..enums import TicketPriority, TicketStatus
 from ..models import Ticket
 from ..models_operations_dispatch import OperationsDispatchOutboxRecord
 from ..settings import get_settings
@@ -26,6 +26,7 @@ from .operator_queue_scope import (
     scope_grant_version,
     tenant_scope_hash,
 )
+from .permissions import has_global_case_visibility
 
 _SOURCE_RANK = {"handoff": 0, "ticket": 1, "dispatch": 2}
 _ACTIVE_HANDOFF = {"requested", "accepted"}
@@ -77,7 +78,7 @@ def _safe_ticket_status(value: Any) -> str:
 
 
 def _visibility_filter(query, *, current_user):
-    if current_user.role in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+    if has_global_case_visibility(current_user, query.session):
         return query
     predicates = [Ticket.assignee_id == int(current_user.id)]
     if getattr(current_user, "team_id", None):
@@ -168,9 +169,9 @@ def _links(*, ticket_id: int | None, conversation_id: int | None, handoff_id: in
         "ticket": f"/api/tickets/{ticket_id}" if ticket_id else None,
         "conversation": f"/api/webchat/admin/tickets/{ticket_id}/thread" if conversation_id and ticket_id else None,
         "handoff": "/api/webchat/admin/handoff/queue" if handoff_id else None,
-        # There is deliberately no mutable dispatch detail endpoint yet.  The
-        # canonical queue id is the only safe linkage until #526 adds governed
-        # retry/cancel operations.
+        # There is deliberately no mutable dispatch detail endpoint yet. The
+        # canonical queue id is the only safe linkage until governed
+        # retry/cancel operations exist.
         "dispatch": None,
     }
 
@@ -211,7 +212,9 @@ def _decode_cursor(raw: str) -> dict[str, Any]:
         if not hmac.compare_digest(signature, expected):
             raise ValueError("signature")
         payload = json.loads(body.decode("utf-8"))
-        if not isinstance(payload, dict) or set(payload) != {"v", "sort", "as_of", "created_at", "source", "id", "filter_hash", "actor_id", "grant_version"}:
+        if not isinstance(payload, dict) or set(payload) != {
+            "v", "sort", "as_of", "created_at", "source", "id", "filter_hash", "actor_id", "grant_version"
+        }:
             raise ValueError("shape")
         if payload["v"] != 1 or payload["source"] not in _SOURCE_RANK or not isinstance(payload["id"], int) or payload["id"] <= 0:
             raise ValueError("values")
@@ -669,7 +672,7 @@ def list_unified_operator_queue(
                 ),
             )
         )
-        if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
+        if not has_global_case_visibility(current_user, db):
             visible = [Ticket.assignee_id == int(current_user.id), Ticket.id.is_(None)]
             if getattr(current_user, "team_id", None):
                 visible.append(Ticket.team_id == int(current_user.team_id))
@@ -740,7 +743,14 @@ def list_unified_operator_queue(
                 items.append(item)
 
     reverse = sort == "newest"
-    items.sort(key=lambda item: (_utc(item["_created"]), _SOURCE_RANK[item["source_type"]], int(item["source_id"])), reverse=reverse)
+    items.sort(
+        key=lambda item: (
+            _utc(item["_created"]),
+            _SOURCE_RANK[item["source_type"]],
+            int(item["source_id"]),
+        ),
+        reverse=reverse,
+    )
     has_more = len(items) > limit
     page = items[:limit]
     next_cursor = None
@@ -764,6 +774,10 @@ def list_unified_operator_queue(
     return {
         "items": page,
         "next_cursor": next_cursor,
-        "scope": {"tenant_hash": tenant_scope_hash(tenant), "country_code": country, "channel_key": channel},
+        "scope": {
+            "tenant_hash": tenant_scope_hash(tenant),
+            "country_code": country,
+            "channel_key": channel,
+        },
         "filters": filters,
     }

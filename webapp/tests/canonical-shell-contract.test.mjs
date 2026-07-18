@@ -40,7 +40,7 @@ test('one MUI application shell owns product identity, navigation, session and s
   assert.match(shell, /工作范围/)
   assert.match(shell, /跳到主要内容/)
   assert.match(shell, /scope\.country_code/)
-  assert.match(shell, /channelLabel\(scope\.channel_key\)/)
+  assert.match(shell, /channelPresentation\(scope\.channel_key\)\.label/)
   assert.match(shell, /<AppBar/)
   assert.match(shell, /<Toolbar/)
   assert.match(navigationView, /APP_NAVIGATION\.filter/)
@@ -77,6 +77,7 @@ test('canonical shell has one theme authority and no route stylesheet authority'
     'src/app/app-shell.css',
   ]
   for (const path of sourcePaths) assert.equal(existsSync(join(WEBAPP_ROOT, path)), false)
-  assert.equal((main.match(/NexusThemeProvider/g) ?? []).length, 2)
+  assert.equal((main.match(/<NexusThemeProvider>/g) ?? []).length, 1)
+  assert.equal((main.match(/from '@\/theme\/NexusThemeProvider'/g) ?? []).length, 1)
   assert.doesNotMatch(main, /tokens\.css|components\.css|app-shell\.css/)
 })

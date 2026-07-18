@@ -99,11 +99,13 @@ def test_round20a_capabilities_are_available_through_one_authenticated_product_s
     for route_name in ('WorkspaceRoute', 'KnowledgeRoute', 'ChannelsRoute', 'RuntimeRoute'):
         assert route_name in router
     assert 'Nexus OSR' in shell
-    assert '客服与运营工作台' in shell
-    assert '统一队列' in workspace
-    assert '知识与处理规则' in knowledge
+    assert 'AppNavigation' in shell
+    assert 'WorkspaceQueuePane' in workspace
+    assert 'WorkspaceCasePane' in workspace
+    assert '知识与流程' in knowledge
     assert '渠道管理' in channels
-    assert '运行与审计' in runtime
+    assert '系统运行' in runtime
+    assert '证据审计' in runtime
     assert '/api/support/conversations' in support_api
     assert '/api/admin/channel-accounts' in support_api
 
@@ -115,7 +117,8 @@ def test_canonical_operator_surfaces_hide_internal_session_and_account_identifie
     assert '会话编号' not in workspace
     assert 'session_key' not in workspace
     assert 'maskPhone' in channels
-    assert 'TechnicalDetails' in channels
+    assert 'OperatorTechnicalDisclosure' in channels
+    assert '系统信息' in channels
     assert '>wa-primary-private<' not in channels
 
 

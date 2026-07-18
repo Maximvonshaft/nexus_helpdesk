@@ -1,0 +1,78 @@
+{
+  "schema": "nexus.compatibility-lifecycle.v1",
+  "policy": "Compatibility assets may redirect or document a canonical authority, but may not define services, secrets, runtime logic, schema mutations, or product behavior.",
+  "assets": [
+    {
+      "path": "deploy/docker-compose.server.yml",
+      "kind": "compose-alias",
+      "owner": "release-engineering",
+      "replacement": "deploy/nexus-prod-compose.sh with deploy/docker-compose.controlled.yml and deploy/docker-compose.controlled-postgres.yml",
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-10-31",
+      "constraints": ["no-services", "no-secrets", "include-only"]
+    },
+    {
+      "path": "deploy/docker-compose.candidate.yml",
+      "kind": "compose-alias",
+      "owner": "release-engineering",
+      "replacement": "deploy/docker-compose.controlled.yml",
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-10-31",
+      "constraints": ["no-services", "no-secrets", "include-only"]
+    },
+    {
+      "path": "deploy/.env.prod.example",
+      "kind": "environment-tombstone",
+      "owner": "release-engineering",
+      "replacement": "deploy/.env.controlled.example",
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-10-31",
+      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
+    },
+    {
+      "path": "deploy/.env.prod.local-postgres.example",
+      "kind": "environment-tombstone",
+      "owner": "release-engineering",
+      "replacement": "deploy/.env.controlled.local-postgres.example",
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-10-31",
+      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
+    },
+    {
+      "path": "deploy/.env.prod.external-postgres.example",
+      "kind": "environment-tombstone",
+      "owner": "release-engineering",
+      "replacement": "deploy/.env.controlled.example",
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-10-31",
+      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
+    },
+    {
+      "path": "backend/app/static/webchat",
+      "kind": "separate-public-product-surface",
+      "owner": "customer-channel-platform",
+      "replacement": null,
+      "introduced_at": "2026-07-18",
+      "remove_after": null,
+      "constraints": ["not-an-operator-console", "provider-governed-customer-messages"]
+    },
+    {
+      "path": "connectors/whatsapp-sidecar",
+      "kind": "disabled-connector-boundary",
+      "owner": "channel-platform",
+      "replacement": null,
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-12-31",
+      "constraints": ["disabled-by-default", "no-provider-authority", "separate-socket-lifecycle"]
+    },
+    {
+      "path": "vendor/chatwoot",
+      "kind": "vendor-reference-gitlink",
+      "owner": "architecture-governance",
+      "replacement": null,
+      "introduced_at": "2026-07-18",
+      "remove_after": "2026-12-31",
+      "constraints": ["not-runtime-code", "license-and-reference-purpose-must-remain-documented"]
+    }
+  ]
+}

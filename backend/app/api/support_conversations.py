@@ -7,29 +7,45 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..enums import ConversationState, TicketStatus
+from ..enums import ConversationState, SourceChannel, TicketStatus
 from ..models import Ticket
-from ..services.permissions import CAP_TICKET_READ, ensure_capability
+from ..services.permissions import (
+    CAP_OUTBOUND_SEND,
+    CAP_TICKET_READ,
+    CAP_WEBCHAT_HANDOFF_ACCEPT,
+    CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+    CAP_WEBCHAT_HANDOFF_RELEASE,
+    CAP_WEBCHAT_HANDOFF_RESUME_AI,
+    ensure_can_send_outbound,
+    ensure_capability,
+    resolve_capabilities,
+)
 from ..services.support_conversation_privacy import (
     mask_support_contact,
     mask_support_display_name,
-    safe_support_message_preview,
     safe_support_tracking_reference,
 )
 from ..services.support_conversation_scope import apply_support_ticket_scope
-from ..services.support_memory_ledger import build_support_memory_ledger
 from ..services.webchat_ai_turn_service import AI_TURN_TYPING_STATUSES, ai_snapshot
-from ..services.webchat_service import admin_get_thread, admin_reply
+from ..services.webchat_service import admin_reply
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
-from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatHandoffRequest, WebchatMessage
+from ..webchat_models import (
+    WebchatAITurn,
+    WebchatConversation,
+    WebchatHandoffRequest,
+    WebchatMessage,
+)
 from .deps import get_current_user
 
-router = APIRouter(prefix="/api/support/conversations", tags=["support-conversations"])
+router = APIRouter(
+    prefix="/api/support/conversations",
+    tags=["support-conversations"],
+)
 
 
 class SupportConversationReplyRequest(BaseModel):
@@ -46,20 +62,58 @@ def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
-def _clip(value: Any, limit: int) -> str | None:
-    text = " ".join(str(value or "").strip().split())
-    return text[:limit] if text else None
-
-
 def _channel(conversation: WebchatConversation, ticket: Ticket) -> str:
-    source_channel = _enum_value(ticket.source_channel).lower() if ticket.source_channel else ""
+    source_channel = (
+        _enum_value(ticket.source_channel).lower()
+        if ticket.source_channel
+        else ""
+    )
     channel_key = (conversation.channel_key or "").lower()
     origin = (conversation.origin or "").lower()
-    if source_channel == "whatsapp" or channel_key == "whatsapp" or "whatsapp" in origin:
+    if (
+        source_channel == SourceChannel.whatsapp.value
+        or channel_key == "whatsapp"
+        or "whatsapp" in origin
+    ):
         return "whatsapp"
-    if source_channel == "web_chat" or channel_key in {"webchat", "website", "default"}:
+    if (
+        source_channel == SourceChannel.web_chat.value
+        or channel_key in {"webchat", "website", "default"}
+    ):
         return "webchat"
     return source_channel or channel_key or "support"
+
+
+def _whatsapp_predicate():
+    return or_(
+        Ticket.source_channel == SourceChannel.whatsapp,
+        func.lower(
+            func.coalesce(WebchatConversation.channel_key, "")
+        )
+        == "whatsapp",
+        func.lower(
+            func.coalesce(WebchatConversation.origin, "")
+        ).like("%whatsapp%"),
+    )
+
+
+def _channel_predicate(channel: str):
+    if channel == "whatsapp":
+        return _whatsapp_predicate()
+    if channel == "webchat":
+        return and_(
+            ~_whatsapp_predicate(),
+            or_(
+                Ticket.source_channel == SourceChannel.web_chat,
+                func.lower(
+                    func.coalesce(
+                        WebchatConversation.channel_key,
+                        "",
+                    )
+                ).in_(("webchat", "website", "default")),
+            ),
+        )
+    raise ValueError("unsupported_support_channel")
 
 
 def _session_key(conversation: WebchatConversation, ticket: Ticket) -> str:
@@ -72,21 +126,7 @@ def _author(direction: str | None) -> str:
         return "customer"
     if normalized in {"agent", "human"}:
         return "agent"
-    if normalized == "ai":
-        return "ai"
-    return "system"
-
-
-def _message_out(row: WebchatMessage) -> dict[str, Any]:
-    return {
-        "id": str(row.id),
-        "author": _author(row.direction),
-        "body": row.body_text or row.body or "",
-        "timestamp": _iso(row.created_at),
-        "message_type": row.message_type,
-        "delivery_status": row.delivery_status,
-        "author_label": row.author_label,
-    }
+    return "ai" if normalized == "ai" else "system"
 
 
 def _load_conversation(
@@ -97,8 +137,15 @@ def _load_conversation(
 ) -> tuple[WebchatConversation, Ticket]:
     key = (session_key or "").strip()
     if not key:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="session_key_required")
-    public_id = key.split(":", 1)[1] if ":" in key else key
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="session_key_required",
+        )
+    requested_channel, separator, public_id = key.partition(":")
+    if not separator:
+        public_id = requested_channel
+        requested_channel = ""
+
     query = (
         db.query(WebchatConversation, Ticket)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
@@ -106,10 +153,20 @@ def _load_conversation(
     )
     row = apply_support_ticket_scope(query, current_user, db).first()
     if row is None:
-        # The same response is used for missing and unauthorized cases so object
-        # existence is not disclosed across support scopes.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="support_conversation_not_found")
-    return row
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="support_conversation_not_found",
+        )
+    conversation, ticket = row
+    if (
+        requested_channel
+        and requested_channel.lower() != _channel(conversation, ticket)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="support_conversation_not_found",
+        )
+    return conversation, ticket
 
 
 def _latest_message_subquery(db: Session):
@@ -123,24 +180,19 @@ def _latest_message_subquery(db: Session):
     )
 
 
-def _active_handoff(db: Session, conversation: WebchatConversation) -> WebchatHandoffRequest | None:
-    request_id = getattr(conversation, "current_handoff_request_id", None)
-    if not request_id:
-        return None
-    return db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.id == request_id).first()
-
-
 def _ai_pending(conversation: WebchatConversation) -> bool:
     return bool(
         getattr(conversation, "active_ai_turn_id", None)
-        and getattr(conversation, "active_ai_status", None) in AI_TURN_TYPING_STATUSES
+        and getattr(conversation, "active_ai_status", None)
+        in AI_TURN_TYPING_STATUSES
         and not getattr(conversation, "ai_suspended", False)
     )
 
 
 def _ai_blocks_manual_reply(conversation: WebchatConversation) -> bool:
     return bool(
-        getattr(conversation, "active_ai_status", None) in AI_TURN_TYPING_STATUSES
+        getattr(conversation, "active_ai_status", None)
+        in AI_TURN_TYPING_STATUSES
         and not getattr(conversation, "ai_suspended", False)
     )
 
@@ -150,7 +202,7 @@ def _parse_runtime_trace(raw: str | None) -> dict[str, Any]:
         return {}
     try:
         parsed = json.loads(raw)
-    except Exception:
+    except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
 
@@ -172,7 +224,12 @@ def _latency_stats(values: list[int]) -> dict[str, int | None]:
     }
 
 
-def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, Any]:
+def _runtime_latency_summary(
+    db: Session,
+    *,
+    since,
+    current_user,
+) -> dict[str, Any]:
     query = (
         db.query(WebchatAITurn)
         .join(Ticket, Ticket.id == WebchatAITurn.ticket_id)
@@ -200,14 +257,29 @@ def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, A
             failed_count += 1
         if turn.created_at and (turn.completed_at or turn.updated_at):
             total_turn_ms.append(
-                max(0, int(((turn.completed_at or turn.updated_at) - turn.created_at).total_seconds() * 1000))
+                max(
+                    0,
+                    int(
+                        (
+                            (turn.completed_at or turn.updated_at)
+                            - turn.created_at
+                        ).total_seconds()
+                        * 1000
+                    ),
+                )
             )
         if isinstance(turn.bridge_elapsed_ms, int):
             bridge_elapsed_ms.append(turn.bridge_elapsed_ms)
+
         trace = _parse_runtime_trace(turn.runtime_trace_json)
-        latency_class = str(trace.get("latency_class") or "unknown")
-        by_latency_class[latency_class] += 1
-        usage = trace.get("runtime_usage") if isinstance(trace.get("runtime_usage"), dict) else {}
+        by_latency_class[
+            str(trace.get("latency_class") or "unknown")
+        ] += 1
+        usage = (
+            trace.get("runtime_usage")
+            if isinstance(trace.get("runtime_usage"), dict)
+            else {}
+        )
         for key, bucket in (
             ("total_duration_ms", runtime_total_ms),
             ("load_duration_ms", runtime_load_ms),
@@ -215,13 +287,25 @@ def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, A
             ("eval_duration_ms", runtime_eval_ms),
         ):
             value = usage.get(key)
-            if isinstance(value, (int, float)):
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            ):
                 bucket.append(int(value))
+
         load_value = usage.get("load_duration_ms")
         prompt_value = usage.get("prompt_eval_duration_ms")
-        if isinstance(load_value, (int, float)) and load_value >= 1000:
+        if (
+            isinstance(load_value, (int, float))
+            and not isinstance(load_value, bool)
+            and load_value >= 1000
+        ):
             cold_load_count += 1
-        if isinstance(prompt_value, (int, float)) and prompt_value >= 1500:
+        if (
+            isinstance(prompt_value, (int, float))
+            and not isinstance(prompt_value, bool)
+            and prompt_value >= 1500
+        ):
             slow_prompt_eval_count += 1
 
     return {
@@ -240,42 +324,25 @@ def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, A
 
 
 def _conversation_out(
-    db: Session,
     *,
     conversation: WebchatConversation,
     ticket: Ticket,
-    last_message: WebchatMessage | None = None,
-    include_memory: bool = False,
-    include_sensitive: bool = False,
+    last_message: WebchatMessage | None,
     current_user,
+    capabilities: set[str],
 ) -> dict[str, Any]:
     channel = _channel(conversation, ticket)
-    state = _enum_value(ticket.conversation_state)
-    ticket_status = _enum_value(ticket.status)
-    handoff = _active_handoff(db, conversation)
-    needs_human = (
-        ticket.conversation_state == ConversationState.human_review_required
-        or bool(ticket.required_action)
-        or getattr(conversation, "handoff_status", None) in {"requested", "accepted"}
-    )
+    handoff_status = getattr(conversation, "handoff_status", None) or "none"
+    active_agent_id = getattr(conversation, "active_agent_id", None)
     raw_display_name = (
         conversation.visitor_name
-        or (ticket.customer.name if ticket.customer else None)
         or conversation.visitor_ref
         or ticket.ticket_no
     )
     raw_contact = (
         conversation.visitor_phone
         or conversation.visitor_email
-        or (ticket.customer.phone if ticket.customer else None)
-        or (ticket.customer.email if ticket.customer else None)
     )
-    raw_latest_message = (
-        (last_message.body_text or last_message.body)
-        if last_message
-        else ticket.last_customer_message
-    )
-    tracking_reference = safe_support_tracking_reference(ticket.tracking_number)
     item: dict[str, Any] = {
         "session_key": _session_key(conversation, ticket),
         "conversation_id": conversation.public_id,
@@ -284,161 +351,234 @@ def _conversation_out(
         "ticket_id": ticket.id,
         "ticket_no": ticket.ticket_no,
         "title": ticket.title,
-        "status": ticket_status,
-        "conversation_state": state,
-        "display_name": (
-            raw_display_name
-            if include_sensitive
-            else mask_support_display_name(raw_display_name, fallback=ticket.ticket_no)
+        "status": _enum_value(ticket.status),
+        "conversation_state": _enum_value(ticket.conversation_state),
+        "display_name": mask_support_display_name(
+            raw_display_name,
+            fallback=ticket.ticket_no,
         ),
-        "customer_contact": (
-            raw_contact if include_sensitive else mask_support_contact(raw_contact)
-        ),
+        "customer_contact": mask_support_contact(raw_contact),
         "updated_at": _iso(conversation.updated_at or ticket.updated_at),
         "last_seen_at": _iso(conversation.last_seen_at),
-        "latest_message": (
-            _clip(raw_latest_message, 220)
-            if include_sensitive
-            else safe_support_message_preview(raw_latest_message, limit=160)
+        "latest_author": (
+            _author(last_message.direction)
+            if last_message
+            else None
         ),
-        "latest_author": _author(last_message.direction if last_message else None) if last_message else None,
-        "needs_human": bool(needs_human),
+        "needs_human": bool(
+            ticket.conversation_state
+            == ConversationState.human_review_required
+            or ticket.required_action
+            or handoff_status in {"requested", "accepted"}
+        ),
         "required_action": ticket.required_action,
-        "handoff_status": getattr(conversation, "handoff_status", None) or "none",
-        "handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
-        "active_agent_id": getattr(conversation, "active_agent_id", None),
+        "handoff_status": handoff_status,
+        "handoff_request_id": getattr(
+            conversation,
+            "current_handoff_request_id",
+            None,
+        ),
+        "active_agent_id": active_agent_id,
         "ai_status": getattr(conversation, "active_ai_status", None),
-        "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
+        "ai_suspended": bool(
+            getattr(conversation, "ai_suspended", False)
+        ),
         "tracking_number_present": bool(ticket.tracking_number),
-        "tracking_number": ticket.tracking_number if include_sensitive else None,
-        "tracking_reference": tracking_reference,
-        "pii_minimized": not include_sensitive,
-        "can_force_takeover": bool(ticket.id),
-        "can_accept": bool(handoff and handoff.status == "requested"),
-        "can_release": bool(handoff and handoff.status == "accepted" and handoff.assigned_agent_id == current_user.id),
-        "can_resume_ai": bool(handoff and handoff.status in {"requested", "accepted"}),
+        "tracking_reference": safe_support_tracking_reference(
+            ticket.tracking_number
+        ),
+        "pii_minimized": True,
+        "can_force_takeover": bool(
+            ticket.id
+            and CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities
+        ),
+        "can_accept": bool(
+            handoff_status == "requested"
+            and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+        ),
+        "can_release": bool(
+            handoff_status == "accepted"
+            and active_agent_id == current_user.id
+            and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities
+        ),
+        "can_resume_ai": bool(
+            handoff_status in {"requested", "accepted"}
+            and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
+        ),
         "can_reply": bool(
             ticket.id
+            and CAP_OUTBOUND_SEND in capabilities
             and not _ai_blocks_manual_reply(conversation)
             and (
-                getattr(conversation, "handoff_status", None) in {None, "none"}
+                handoff_status == "none"
                 or (
-                    getattr(conversation, "handoff_status", None) == "accepted"
-                    and getattr(conversation, "active_agent_id", None) == current_user.id
+                    handoff_status == "accepted"
+                    and active_agent_id == current_user.id
                 )
             )
         ),
     }
     item.update(ai_snapshot(conversation))
-    if include_memory:
-        item["support_memory"] = build_support_memory_ledger(db, ticket_id=ticket.id, current_user=current_user)
     return item
 
 
 @router.get("")
 def list_support_conversations(
     q: str | None = Query(default=None, max_length=120),
-    channel: str | None = Query(default=None, pattern="^(all|webchat|whatsapp)$"),
-    view: str = Query(default="open", pattern="^(open|needs_human|ai_active|mine|all|closed)$"),
+    channel: str | None = Query(
+        default=None,
+        pattern="^(all|webchat|whatsapp)$",
+    ),
+    view: str = Query(
+        default="open",
+        pattern="^(open|needs_human|ai_active|mine|all|closed)$",
+    ),
     limit: int = Query(default=80, ge=1, le=120),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
-    ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
+    ensure_capability(
+        current_user,
+        CAP_TICKET_READ,
+        db,
+        message="support_conversation_read_requires_capability",
+    )
+    capabilities = resolve_capabilities(current_user, db)
     latest_message_ids = _latest_message_subquery(db)
     query = (
         db.query(WebchatConversation, Ticket, WebchatMessage)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
-        .outerjoin(latest_message_ids, latest_message_ids.c.conversation_id == WebchatConversation.id)
-        .outerjoin(WebchatMessage, WebchatMessage.id == latest_message_ids.c.last_message_id)
+        .outerjoin(
+            latest_message_ids,
+            latest_message_ids.c.conversation_id
+            == WebchatConversation.id,
+        )
+        .outerjoin(
+            WebchatMessage,
+            WebchatMessage.id
+            == latest_message_ids.c.last_message_id,
+        )
     )
     query = apply_support_ticket_scope(query, current_user, db)
+
     if view == "closed":
-        query = query.filter(Ticket.status.in_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
+        query = query.filter(
+            Ticket.status.in_(
+                [
+                    TicketStatus.resolved,
+                    TicketStatus.closed,
+                    TicketStatus.canceled,
+                ]
+            )
+        )
     elif view != "all":
-        query = query.filter(Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
+        query = query.filter(
+            Ticket.status.notin_(
+                [
+                    TicketStatus.resolved,
+                    TicketStatus.closed,
+                    TicketStatus.canceled,
+                ]
+            )
+        )
+
     if view == "needs_human":
         query = query.filter(
-            (Ticket.conversation_state == ConversationState.human_review_required)
-            | (Ticket.required_action.isnot(None))
-            | (WebchatConversation.handoff_status.in_(["requested", "accepted"]))
+            (
+                Ticket.conversation_state
+                == ConversationState.human_review_required
+            )
+            | Ticket.required_action.isnot(None)
+            | WebchatConversation.handoff_status.in_(
+                ["requested", "accepted"]
+            )
         )
     elif view == "ai_active":
         query = query.filter(
             WebchatConversation.ai_suspended.is_(False),
             WebchatConversation.active_ai_turn_id.is_not(None),
-            WebchatConversation.active_ai_status.in_(AI_TURN_TYPING_STATUSES),
+            WebchatConversation.active_ai_status.in_(
+                AI_TURN_TYPING_STATUSES
+            ),
         )
     elif view == "mine":
-        query = query.filter(WebchatConversation.active_agent_id == current_user.id)
-    if q:
+        query = query.filter(
+            WebchatConversation.active_agent_id == current_user.id
+        )
+
+    if channel and channel != "all":
+        query = query.filter(_channel_predicate(channel))
+
+    if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(
-            (Ticket.ticket_no.ilike(like))
-            | (Ticket.title.ilike(like))
-            | (Ticket.tracking_number.ilike(like))
-            | (WebchatConversation.visitor_name.ilike(like))
-            | (WebchatConversation.visitor_phone.ilike(like))
-            | (WebchatConversation.visitor_email.ilike(like))
+            Ticket.ticket_no.ilike(like)
+            | Ticket.title.ilike(like)
         )
 
-    rows = query.order_by(WebchatConversation.updated_at.desc(), WebchatConversation.id.desc()).limit(limit * 3).all()
-    items = []
-    for conversation, ticket, last_message in rows:
-        item = _conversation_out(
-            db,
-            conversation=conversation,
-            ticket=ticket,
-            last_message=last_message,
-            current_user=current_user,
+    rows = (
+        query.order_by(
+            WebchatConversation.updated_at.desc(),
+            WebchatConversation.id.desc(),
         )
-        if channel and channel != "all" and item["channel"] != channel:
-            continue
-        items.append(item)
-        if len(items) >= limit:
-            break
-    return {"items": items, "source": "nexus_support_conversations", "view": view}
+        .limit(limit)
+        .all()
+    )
+    return {
+        "items": [
+            _conversation_out(
+                conversation=conversation,
+                ticket=ticket,
+                last_message=last_message,
+                current_user=current_user,
+                capabilities=capabilities,
+            )
+            for conversation, ticket, last_message in rows
+        ],
+        "source": "nexus_support_conversations",
+        "view": view,
+    }
 
 
-@router.get("/detail")
-def get_support_conversation_detail(
+@router.get("/resolve")
+def resolve_support_conversation(
     session_key: str = Query(..., min_length=1, max_length=200),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
-    ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
-    conversation, ticket = _load_conversation(db, session_key, current_user=current_user)
-    messages = (
-        db.query(WebchatMessage)
-        .filter(WebchatMessage.conversation_id == conversation.id)
-        .order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc())
-        .limit(300)
-        .all()
-    )
-    base = _conversation_out(
+    ensure_capability(
+        current_user,
+        CAP_TICKET_READ,
         db,
-        conversation=conversation,
-        ticket=ticket,
-        last_message=messages[-1] if messages else None,
-        include_memory=True,
-        include_sensitive=True,
+        message="support_conversation_read_requires_capability",
+    )
+    conversation, ticket = _load_conversation(
+        db,
+        session_key,
         current_user=current_user,
     )
-    thread = admin_get_thread(db, ticket.id, current_user)
+    channel = _channel(conversation, ticket)
     return {
-        "conversation": base,
+        "conversation": {
+            "session_key": _session_key(conversation, ticket),
+            "conversation_id": conversation.public_id,
+            "ticket_id": ticket.id,
+            "handoff_request_id": getattr(
+                conversation,
+                "current_handoff_request_id",
+                None,
+            ),
+            "channel": channel,
+            "source": conversation.origin or channel,
+            "pii_minimized": True,
+        },
         "ticket": {
             "id": ticket.id,
             "ticket_no": ticket.ticket_no,
             "status": _enum_value(ticket.status),
             "priority": _enum_value(ticket.priority),
-            "required_action": ticket.required_action,
-            "tracking_number_present": bool(ticket.tracking_number),
         },
-        "messages": [_message_out(row) for row in messages],
-        "handoff": thread.get("handoff"),
-        "support_memory": thread.get("support_memory") or base.get("support_memory"),
-        "source": "nexus_support_conversations",
+        "source": "nexus_support_conversation_resolver",
     }
 
 
@@ -448,8 +588,13 @@ def reply_support_conversation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
+    ensure_can_send_outbound(current_user, db)
     with managed_session(db):
-        conversation, ticket = _load_conversation(db, payload.session_key, current_user=current_user)
+        conversation, ticket = _load_conversation(
+            db,
+            payload.session_key,
+            current_user=current_user,
+        )
         result = admin_reply(
             db,
             ticket.id,
@@ -460,10 +605,20 @@ def reply_support_conversation(
         )
     result["session_key"] = _session_key(conversation, ticket)
     result["channel"] = _channel(conversation, ticket)
-    message = result.get("message") if isinstance(result.get("message"), dict) else {}
-    metadata = message.get("metadata_json") if isinstance(message.get("metadata_json"), dict) else {}
+    message = (
+        result.get("message")
+        if isinstance(result.get("message"), dict)
+        else {}
+    )
+    metadata = (
+        message.get("metadata_json")
+        if isinstance(message.get("metadata_json"), dict)
+        else {}
+    )
     result["message_id"] = message.get("id")
-    result["outbound_message_id"] = metadata.get("outbound_message_id")
+    result["outbound_message_id"] = metadata.get(
+        "outbound_message_id"
+    )
     return result
 
 
@@ -473,7 +628,12 @@ def support_conversation_metrics(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
-    ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
+    ensure_capability(
+        current_user,
+        CAP_TICKET_READ,
+        db,
+        message="support_conversation_read_requires_capability",
+    )
     since = utc_now() - timedelta(hours=since_hours)
     query = (
         db.query(WebchatConversation, Ticket)
@@ -489,9 +649,11 @@ def support_conversation_metrics(
         by_channel[_channel(conversation, ticket)] += 1
         state_counts[_enum_value(ticket.conversation_state)] += 1
         if (
-            ticket.conversation_state == ConversationState.human_review_required
+            ticket.conversation_state
+            == ConversationState.human_review_required
             or ticket.required_action
-            or getattr(conversation, "handoff_status", None) in {"requested", "accepted"}
+            or getattr(conversation, "handoff_status", None)
+            in {"requested", "accepted"}
         ):
             needs_human += 1
         if _ai_pending(conversation):
@@ -504,7 +666,11 @@ def support_conversation_metrics(
         "ai_active": ai_active,
         "by_channel": dict(by_channel),
         "by_state": dict(state_counts),
-        "runtime_latency": _runtime_latency_summary(db, since=since, current_user=current_user),
+        "runtime_latency": _runtime_latency_summary(
+            db,
+            since=since,
+            current_user=current_user,
+        ),
     }
 
 
@@ -513,21 +679,41 @@ def support_conversation_state(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
-    ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
-
+    ensure_capability(
+        current_user,
+        CAP_TICKET_READ,
+        db,
+        message="support_conversation_read_requires_capability",
+    )
     open_query = (
         db.query(WebchatConversation.id)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
-        .filter(Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
+        .filter(
+            Ticket.status.notin_(
+                [
+                    TicketStatus.resolved,
+                    TicketStatus.closed,
+                    TicketStatus.canceled,
+                ]
+            )
+        )
     )
-    open_count = apply_support_ticket_scope(open_query, current_user, db).count()
+    open_count = apply_support_ticket_scope(
+        open_query,
+        current_user,
+        db,
+    ).count()
 
     requested_query = (
         db.query(WebchatHandoffRequest.id)
         .join(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
         .filter(WebchatHandoffRequest.status == "requested")
     )
-    requested_handoffs = apply_support_ticket_scope(requested_query, current_user, db).count()
+    requested_handoffs = apply_support_ticket_scope(
+        requested_query,
+        current_user,
+        db,
+    ).count()
 
     my_query = (
         db.query(WebchatHandoffRequest.id)
@@ -537,8 +723,11 @@ def support_conversation_state(
             WebchatHandoffRequest.assigned_agent_id == current_user.id,
         )
     )
-    my_handoffs = apply_support_ticket_scope(my_query, current_user, db).count()
-
+    my_handoffs = apply_support_ticket_scope(
+        my_query,
+        current_user,
+        db,
+    ).count()
     return {
         "source": "nexus_support_conversations",
         "open": open_count,

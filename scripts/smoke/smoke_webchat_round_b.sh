@@ -67,9 +67,9 @@ POLL_RESP=$(curl -fsS "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/
 printf '%s' "$POLL_RESP" | grep -q "Round B smoke visitor message"
 echo "PASS visitor poll inbound"
 
-echo "== 4) admin resolves ticket id =="
-ADMIN_LIST=$(curl -fsS "${BASE_URL}/api/webchat/admin/conversations" "${AUTH_HEADERS[@]}")
-TICKET_ID=$(printf '%s' "$ADMIN_LIST" | python3 -c "import json,sys; cid='$CONVERSATION_ID'; rows=json.load(sys.stdin); print(next(x['ticket_id'] for x in rows if x['conversation_id']==cid))")
+echo "== 4) admin resolves ticket id through canonical support authority =="
+ADMIN_LIST=$(curl -fsS "${BASE_URL}/api/support/conversations?view=all&channel=all&limit=100" "${AUTH_HEADERS[@]}")
+TICKET_ID=$(printf '%s' "$ADMIN_LIST" | python3 -c "import json,sys; cid='$CONVERSATION_ID'; payload=json.load(sys.stdin); print(next(x['ticket_id'] for x in payload['items'] if x['session_key'].endswith(':'+cid)))")
 echo "PASS ticket ${TICKET_ID}"
 
 echo "== 5) safety gate blocks secret-like reply =="

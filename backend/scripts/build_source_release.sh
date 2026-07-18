@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUT="${1:-$ROOT/helpdesk_suite_lite_round27_source_release.zip}"
+OUT="${1:-$ROOT/nexus_canonical_source_release.zip}"
 TMPDIR="$(mktemp -d)"
-PKGROOT="$TMPDIR/helpdesk_suite_lite"
+PKGROOT="$TMPDIR/nexus"
 trap 'rm -rf "$TMPDIR"' EXIT
 mkdir -p "$PKGROOT"
 
@@ -25,6 +26,7 @@ copy_tree() {
       --exclude '*.db' \
       --exclude '*.sqlite' \
       --exclude 'uploads' \
+      --exclude 'artifacts' \
       --exclude 'tsconfig.tsbuildinfo' \
       "$src/" "$dst/"
   fi
@@ -33,14 +35,13 @@ copy_tree() {
 cp "$ROOT/README.md" "$PKGROOT/README.md"
 cp "$ROOT/Dockerfile" "$PKGROOT/Dockerfile"
 copy_tree "$ROOT/backend" "$PKGROOT/backend"
-copy_tree "$ROOT/frontend" "$PKGROOT/frontend"
 copy_tree "$ROOT/webapp" "$PKGROOT/webapp"
 copy_tree "$ROOT/deploy" "$PKGROOT/deploy"
 copy_tree "$ROOT/scripts" "$PKGROOT/scripts"
-if [[ -f "$ROOT/.dockerignore" ]]; then
-  cp "$ROOT/.dockerignore" "$PKGROOT/.dockerignore"
-fi
-for optional in NEXT_PHASE_MAX_PUSH_REPORT.md ROUND20B_LEGACY_PRODUCTION_REPORT.md ROUND20A_RECTIFICATION_REPORT.md ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md ROUND26_FRONTEND_HARDENING_REPORT.md ROUND25_HARDENING_REPORT.md ROUND24_HARDENING_REPORT.md ROUND23_HARDENING_REPORT.md; do
+copy_tree "$ROOT/config" "$PKGROOT/config"
+copy_tree "$ROOT/docs" "$PKGROOT/docs"
+
+for optional in .dockerignore .gitmodules; do
   if [[ -f "$ROOT/$optional" ]]; then
     cp "$ROOT/$optional" "$PKGROOT/$optional"
   fi
@@ -52,5 +53,5 @@ find "$PKGROOT" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.db' -o -na
 
 mkdir -p "$(dirname "$OUT")"
 cd "$TMPDIR"
-zip -qr "$OUT" helpdesk_suite_lite
+zip -qr "$OUT" nexus
 printf 'Built %s\n' "$OUT"

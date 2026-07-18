@@ -12,7 +12,11 @@ from ..db import get_db
 from ..models import User
 from ..settings import get_settings
 from ..unit_of_work import managed_session
-from ..services.permissions import ensure_can_accept_webchat_handoff, ensure_can_monitor_webchat_ai
+from ..services.permissions import (
+    ensure_can_accept_webchat_handoff,
+    ensure_can_monitor_webchat_ai,
+    ensure_can_send_outbound,
+)
 from ..services.observability import (
     log_event,
     record_webchat_websocket_auth_failed,
@@ -364,6 +368,7 @@ async def _handle_command(websocket: WebSocket, db: Session, state: ConnectionSt
             if state.current_user is None:
                 await _send_error(websocket, "permission_denied", "agent reply requires an agent session", request_id=request_id)
                 return
+            ensure_can_send_outbound(state.current_user, db)
             with managed_session(db):
                 result = admin_reply(
                     db,

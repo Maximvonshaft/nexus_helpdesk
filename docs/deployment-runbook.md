@@ -1,87 +1,89 @@
-# NexusDesk Deployment Runbook
+# Nexus Deployment Runbook
+
+## Current authority
+
+This file is a compatibility navigation page. The current operational authority
+is `docs/runbook-production.md`, with exact-candidate evidence defined by
+`docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md`.
+
+The sole application topology is `deploy/docker-compose.controlled.yml`.
+A local database adds only `deploy/docker-compose.controlled-postgres.yml`.
+
+Retired concepts that must not be used:
+
+- generic `app`, `worker`, `runtime-warmer` or candidate service names;
+- `docker-compose.server.yml` service definitions;
+- shared `.env.prod` injection;
+- mutable image tags;
+- automatic Runtime warmup as a release gate;
+- candidate-specific WhatsApp sidecars;
+- production enablement of Provider, AI, voice or outbound as part of deployment.
+
+## Configuration rendering
+
+External PostgreSQL:
+
+```bash
+NEXUS_DATABASE_TOPOLOGY=external \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+deploy/nexus-prod-compose.sh config --quiet
+```
+
+Local PostgreSQL:
+
+```bash
+NEXUS_DATABASE_TOPOLOGY=local \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled.local-postgres \
+deploy/nexus-prod-compose.sh config --quiet
+```
+
+These commands render configuration only. Deployment requires separate explicit
+authorization after exact-head verification, recovery qualification and
+independent Review.
 
 ## Service roles
 
-- `app`: FastAPI API and SPA host.
-- `worker`: outbound queue dispatcher and general background jobs.
-- `nginx`: public reverse proxy, metrics restriction, health checks.
+- `app-controlled`: FastAPI API and packaged SPA; owns Web JWT and Metrics access.
+- `worker-outbound-controlled`: external outbound queue; disabled in first cutover.
+- `worker-background-controlled`: general background jobs and authoritative queue snapshots.
+- `worker-webchat-ai-controlled`: AI queue; AI disabled in first cutover.
+- `worker-handoff-snapshot-controlled`: handoff snapshots.
+- `migrate-controlled`: one-off Alembic role with schema authority.
+- `postgres-controlled`: optional local PostgreSQL only; never defines App/Workers.
 
-## Source of truth
+Each long-running service uses a distinct PostgreSQL identity. Disabled
+capabilities receive no Provider, AI, voice or WhatsApp credential.
 
-- `webapp/` is the current frontend source of truth.
-- `frontend_dist/` and `webapp/dist/` are build artifacts and must not be committed.
-- `frontend/` is legacy fallback only until the React webapp is fully signed off.
+## Backup and rollback
 
-## Runtime modes
-
-- Customer-visible WebChat replies use the unified `private_ai_runtime` provider through Provider Runtime.
-- Provider Runtime fallback providers must remain empty in production; backend failure returns no customer-visible text.
-- Legacy ExternalChannel runtime settings must remain disabled.
-- External customer sends are fail-closed unless `ENABLE_OUTBOUND_DISPATCH=true` and a native/email provider is explicitly enabled.
-
-## Runtime latency posture
-
-- For the current `qwen2.5:3b` Runtime host, keep WebChat AI generation single-lane unless Runtime-side parallel generation has been benchmarked and approved.
-- Candidate defaults are tuned for customer-facing latency: `WEBCHAT_AI_TURN_DEBOUNCE_SECONDS=0.05`, `WEBCHAT_AI_WORKER_POLL_SECONDS=0.10`, and `WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS=0.02`.
-- Default Ollama output budgets are intentionally concise: short `64`, service `96`, standard `192`, repair `96`.
-- Keep customer-facing WebChat on the low-latency direct model. If `qwen3:4b` or another heavier RAG model is enabled through `PRIVATE_AI_RUNTIME_CHAT_MODE=rag|auto`, configure `PRIVATE_AI_RUNTIME_RAG_BASE_URL` to an isolated Runtime host; do not share the low-latency WebChat Ollama slot unless an explicit benchmark approves `PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL=true`.
-- If concurrent smoke latency jumps while sequential smoke is fast, treat it as Runtime model contention first. Do not add customer-visible fallback text.
-
-## Safe update flow
+Before any cutover, preserve production-local files with:
 
 ```bash
 bash scripts/deploy/safe_update_server.sh
-bash scripts/deploy/preflight.sh
-bash scripts/deploy/backup_postgres.sh ./backups
-bash scripts/deploy/run_migrations.sh
-docker compose -f deploy/docker-compose.server.yml up -d postgres app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot runtime-warmer nginx
-curl -fsS http://127.0.0.1/healthz
-curl -fsS http://127.0.0.1/readyz
-docker compose -f deploy/docker-compose.server.yml exec -T app python /app/scripts/smoke/warm_private_ai_runtime.py
 ```
 
-`backup_postgres.sh` publishes an atomic directory bundle under `./backups/`.
-Each bundle contains `database.dump` and `backup_manifest.json`; retain the complete
-directory and its permissions. A legacy standalone `.sql.gz` file is not a valid
-input to the current rollback helper.
+Database restore qualification is owned by:
 
-Run the Runtime warmup after every app/worker restart and before public smoke.
-It keeps the first real customer turn from paying Ollama cold-load latency.
-Warmup is a gate: if it fails, keep the previous public target or investigate
-Runtime health; do not add customer-visible fallback text.
-
-## Outbound Email pilot gate
-
-Keep `ENABLE_OUTBOUND_DISPATCH=false`, `OUTBOUND_PROVIDER=disabled`, and `OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false` until the `/outbound-email` admin browser smoke and SMTP test-send gate pass. Follow [Outbound Email Production Pilot Runbook](runbooks/outbound-email-production-pilot.md) before enabling real Email dispatch.
-
-## Rollback flow
-
-Select the exact bundle directory produced by the backup step. Do not pass a
-standalone dump or `.sql.gz` file.
-
-```bash
-export ROLLBACK_CONFIRM=I_UNDERSTAND
-export POSTGRES_NATIVE_URL='postgresql://USER:PASSWORD@HOST:5432/helpdesk_restore'
-export OLD_IMAGE_TAG='nexusdesk/helpdesk:previous'
-export ROLLBACK_HEALTH_URL='http://127.0.0.1'
-bash scripts/deploy/rollback_release.sh ./backups/helpdesk_YYYYMMDDTHHMMSSZ
+```text
+scripts/qualification/recovery/run_recovery_qualification.sh
 ```
 
-The rollback helper validates the bundle manifest and archive before mutation,
-restores only to an approved clean target, restarts the exact old image without
-building from the current checkout, waits for the default image-backed services,
-and verifies `/healthz` plus `/readyz` before reporting success.
+Image rollback requires a frozen prior controlled environment whose image,
+source, frontend and migration identity all match the immutable prior Digest:
 
-## Termius / phone operation
+```text
+OLD_IMAGE_TAG=ghcr.io/...@sha256:<prior-digest>
+ROLLBACK_CONTROLLED_ENV_FILE=<prior-controlled-env>
+ROLLBACK_DATABASE_TOPOLOGY=external|local
+ROLLBACK_HEALTH_URL=<approved-loopback-url>
+ROLLBACK_CONFIRM=I_UNDERSTAND
+```
 
-Use `tmux`, `screen`, or `nohup` for long commands. Do not run migration or build commands in a fragile mobile SSH session without a persistent terminal.
+Never overwrite these production-local assets merely because repository files
+changed:
 
-## Files to protect on servers
-
-Never overwrite these blindly:
-
-- `deploy/.env.prod`
-- `deploy/docker-compose.server.yml`
-- local Nginx overrides
-- local secrets and token files
-- database volumes and backups
+- existing `.env.prod` or controlled env files;
+- server-local Compose/Nginx overrides;
+- database volumes and backups;
+- uploads and uploads backups;
+- secret files.

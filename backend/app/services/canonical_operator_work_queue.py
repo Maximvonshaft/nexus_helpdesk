@@ -1,24 +1,11 @@
-"""Canonical unified operator queue authority."""
+"""Canonical unified operator queue authority.
 
-from sqlalchemy import or_
+The private implementation owns capability-derived visibility directly. This
+facade exposes the queue without mutating implementation globals.
+"""
 
-from ..models import Ticket
 from . import operator_work_queue_core as _core
-from .permissions import has_global_case_visibility
-from .operator_work_queue_core import *  # noqa: F401,F403
-
-
-def _visibility_filter(query, *, current_user):
-    db = query.session
-    if has_global_case_visibility(current_user, db):
-        return query
-    predicates = [Ticket.assignee_id == int(current_user.id)]
-    if getattr(current_user, "team_id", None):
-        predicates.append(Ticket.team_id == int(current_user.team_id))
-    return query.filter(or_(*predicates))
-
-
-_core._visibility_filter = _visibility_filter
+from .operator_work_queue_core import list_unified_operator_queue
 
 
 def __getattr__(name: str):

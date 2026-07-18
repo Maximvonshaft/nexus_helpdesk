@@ -1,4 +1,4 @@
-FROM docker.io/library/node:22-bookworm-slim AS webapp-builder
+FROM docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS webapp-builder
 WORKDIR /build/webapp
 COPY webapp/package*.json ./
 RUN npm config set registry https://registry.npmjs.org/
@@ -6,25 +6,24 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/python:3.11-alpine3.22 AS python-wheel-builder
+FROM docker.io/library/python:3.11.15-alpine3.22@sha256:a4fc589b32e824f3f02ed9d7e7be19518aa47e105b80416336af9f202275a489 AS python-wheel-builder
 WORKDIR /build
 COPY backend/requirements.txt /build/requirements.txt
-RUN apk upgrade --no-cache \
-    && apk add --no-cache --virtual .build-deps \
+RUN apk add --no-cache --virtual .build-deps \
         build-base \
         cargo \
         libffi-dev \
         openssl-dev \
     && python -m pip install --upgrade \
-        "pip>=26.1.1" \
-        "setuptools>=82.0.0" \
-        "wheel>=0.46.2" \
-        "jaraco.context>=6.1.0" \
+        "pip==26.1.1" \
+        "setuptools==82.0.0" \
+        "wheel==0.46.2" \
+        "jaraco.context==6.1.0" \
     && python -m pip wheel \
         --wheel-dir /wheels \
         --requirement /build/requirements.txt
 
-FROM docker.io/library/python:3.11-alpine3.22
+FROM docker.io/library/python:3.11.15-alpine3.22@sha256:a4fc589b32e824f3f02ed9d7e7be19518aa47e105b80416336af9f202275a489
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
@@ -49,14 +48,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Apply the current Alpine security repository before installing the candidate.
+# Security updates are performed by reviewing and advancing the immutable base
+# digest. The build itself must not mutate package resolution with apk upgrade.
 # Install only prebuilt wheels; compilers, Cargo and development headers remain
 # in the discarded wheel-builder stage. Packaging/build tools are removed from
 # the runtime after installation because the service never builds packages.
 COPY backend/requirements.txt /tmp/requirements.txt
 COPY --from=python-wheel-builder /wheels /wheels
-RUN apk upgrade --no-cache \
-    && python -m pip install \
+RUN python -m pip install \
         --no-index \
         --find-links=/wheels \
         --requirement /tmp/requirements.txt \

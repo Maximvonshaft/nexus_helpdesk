@@ -71,7 +71,11 @@ def make_user(db, username: str = "support-admin") -> User:
 
 
 def make_support_conversation(db, *, channel: SourceChannel, public_id: str, body: str, offset: int = 0) -> tuple[Ticket, WebchatConversation]:
-    customer = Customer(name=f"{channel.value} customer", phone=f"+4100000{offset}")
+    customer = Customer(
+        name=f"{channel.value} customer",
+        email=f"private-{offset}@invalid.test",
+        phone=f"+4100000{offset}",
+    )
     db.add(customer)
     db.flush()
     now = utc_now() - timedelta(minutes=offset)
@@ -100,6 +104,7 @@ def make_support_conversation(db, *, channel: SourceChannel, public_id: str, bod
         channel_key="whatsapp" if channel == SourceChannel.whatsapp else "default",
         ticket_id=ticket.id,
         visitor_name=customer.name,
+        visitor_email=customer.email,
         visitor_phone=customer.phone,
         origin="whatsapp-native" if channel == SourceChannel.whatsapp else "webchat-demo",
         status="open",
@@ -130,7 +135,7 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     db, client, state = api_context
     state["user"] = make_user(db)
     _, webchat = make_support_conversation(db, channel=SourceChannel.web_chat, public_id="wc_support_1", body="hello from webchat", offset=1)
-    _, whatsapp = make_support_conversation(db, channel=SourceChannel.whatsapp, public_id="wa_support_1", body="hello from whatsapp", offset=2)
+    whatsapp_ticket, whatsapp = make_support_conversation(db, channel=SourceChannel.whatsapp, public_id="wa_support_1", body="hello from whatsapp", offset=2)
     db.commit()
 
     listing = client.get("/api/support/conversations", params={"view": "all", "channel": "all"})
@@ -139,34 +144,72 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     assert payload["source"] == "nexus_support_conversations"
     by_key = {item["session_key"]: item for item in payload["items"]}
     webchat_item = by_key[f"webchat:{webchat.public_id}"]
-    assert webchat_item["latest_message"] == "hello from webchat"
-    assert webchat_item["tracking_number"] is None
+    assert "latest_message" not in webchat_item
+    assert "hello from webchat" not in listing.text
+    assert "tracking_number" not in webchat_item
     assert webchat_item["tracking_reference"] == "parcel ending 129131"
     assert webchat_item["pii_minimized"] is True
     assert webchat_item["customer_contact"] == "phone ending 01"
     assert webchat_item["display_name"].endswith("•••")
+    assert "private-1@invalid.test" not in listing.text
+    assert "+41000001" not in listing.text
+    assert "CH020000129131" not in listing.text
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["channel"] == "whatsapp"
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["ai_status"] == "queued"
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["ai_pending"] is False
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["can_reply"] is False
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["can_force_takeover"] is True
 
-    detail = client.get("/api/support/conversations/detail", params={"session_key": f"whatsapp:{whatsapp.public_id}"})
-    assert detail.status_code == 200
-    detail_payload = detail.json()
-    assert detail_payload["conversation"]["channel"] == "whatsapp"
-    assert detail_payload["conversation"]["can_reply"] is False
-    assert detail_payload["conversation"]["can_force_takeover"] is True
-    assert detail_payload["messages"][0]["author"] == "customer"
-    assert detail_payload["messages"][0]["body"] == "hello from whatsapp"
-    assert detail_payload["conversation"]["tracking_number"] == "CH020000129132"
-    assert detail_payload["conversation"]["pii_minimized"] is False
+    resolution = client.get("/api/support/conversations/resolve", params={"session_key": f"whatsapp:{whatsapp.public_id}"})
+    assert resolution.status_code == 200
+    resolved = resolution.json()
+    assert resolved["source"] == "nexus_support_conversation_resolver"
+    assert resolved["conversation"]["channel"] == "whatsapp"
+    assert resolved["conversation"]["ticket_id"] == whatsapp_ticket.id
+    assert resolved["conversation"]["pii_minimized"] is True
+    assert "messages" not in resolved
+    assert "support_memory" not in resolved
+    assert "tracking_number" not in resolution.text
+    assert "customer_contact" not in resolved["conversation"]
 
     metrics = client.get("/api/support/conversations/metrics", params={"since_hours": 24})
     assert metrics.status_code == 200
     assert metrics.json()["by_channel"]["whatsapp"] == 1
     assert metrics.json()["ai_active"] == 0
     assert metrics.json()["runtime_latency"]["sample_count"] == 0
+
+
+def test_list_search_does_not_use_raw_customer_or_tracking_fields(api_context):
+    db, client, state = api_context
+    state["user"] = make_user(db, "search-admin")
+    ticket, _ = make_support_conversation(
+        db,
+        channel=SourceChannel.web_chat,
+        public_id="wc_search_private",
+        body="private search fixture",
+        offset=7,
+    )
+    db.commit()
+
+    for raw_value in (
+        "+41000007",
+        "private-7@invalid.test",
+        "web_chat customer",
+        "CH020000129137",
+    ):
+        response = client.get(
+            "/api/support/conversations",
+            params={"view": "all", "channel": "all", "q": raw_value},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+
+    by_ticket = client.get(
+        "/api/support/conversations",
+        params={"view": "all", "channel": "all", "q": ticket.ticket_no},
+    )
+    assert by_ticket.status_code == 200
+    assert [item["ticket_id"] for item in by_ticket.json()["items"]] == [ticket.id]
 
 
 def test_support_conversation_ai_active_requires_live_turn(api_context):
@@ -194,10 +237,10 @@ def test_support_conversation_ai_active_requires_live_turn(api_context):
     assert listing.json()["items"][0]["can_reply"] is False
     assert listing.json()["items"][0]["can_force_takeover"] is True
 
-    detail = client.get("/api/support/conversations/detail", params={"session_key": f"webchat:{conversation.public_id}"})
-    assert detail.status_code == 200
-    assert detail.json()["conversation"]["can_reply"] is False
-    assert detail.json()["conversation"]["can_force_takeover"] is True
+    resolution = client.get("/api/support/conversations/resolve", params={"session_key": f"webchat:{conversation.public_id}"})
+    assert resolution.status_code == 200
+    assert resolution.json()["conversation"]["ticket_id"] == ticket.id
+    assert resolution.json()["conversation"]["pii_minimized"] is True
 
     metrics = client.get("/api/support/conversations/metrics", params={"since_hours": 24})
     assert metrics.status_code == 200

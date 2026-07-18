@@ -9,11 +9,11 @@ import type {
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
   ProviderRuntimeStatus,
-  SupportConversationDetail,
   SupportConversationMetrics,
   SupportConversationPage,
   SupportConversationReplyPayload,
   SupportConversationReplyResult,
+  SupportConversationResolution,
   SupportConversationState,
   WebchatHandoffRequest,
   WhatsAppNativeAccountStatus,
@@ -62,9 +62,9 @@ export const supportApi = {
     if (params?.q?.trim()) search.set('q', params.q.trim())
     return apiRequest<SupportConversationPage>(`/api/support/conversations?${search.toString()}`, init)
   },
-  supportConversationDetail: (sessionKey: string, init?: RequestInit) => {
+  resolveSupportConversation: (sessionKey: string, init?: RequestInit) => {
     const search = new URLSearchParams({ session_key: sessionKey })
-    return apiRequest<SupportConversationDetail>(`/api/support/conversations/detail?${search.toString()}`, init)
+    return apiRequest<SupportConversationResolution>(`/api/support/conversations/resolve?${search.toString()}`, init)
   },
   supportConversationMetrics: (sinceHours = 24, init?: RequestInit) => apiRequest<SupportConversationMetrics>(`/api/support/conversations/metrics?since_hours=${sinceHours}`, init),
   supportConversationState: (init?: RequestInit) => apiRequest<SupportConversationState>('/api/support/conversations/state', init),

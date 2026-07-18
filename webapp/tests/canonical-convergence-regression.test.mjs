@@ -12,7 +12,7 @@ const workspace = [
   'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
   'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
   'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
-  'src/features/operator-workspace/OperatorWorkspaceCommon.tsx',
+  'src/features/operator-workspace/OperatorWorkspaceActions.tsx',
   'src/features/operator-workspace/operatorWorkspaceState.ts',
 ].map(read).join('\n')
 
@@ -27,6 +27,7 @@ test('retired frontend and visual authorities are physically absent', () => {
     'src/styles/components.css',
     'src/styles/auth.css',
     'src/app/app-shell.css',
+    'src/features/operator-workspace/OperatorWorkspaceCommon.tsx',
     'src/features/operator-workspace/operator-workspace.css',
     'src/features/operator-workspace/operator-workspace-refinements.css',
     'src/features/admin-routes/admin-routes.css',
@@ -39,12 +40,13 @@ test('retired frontend and visual authorities are physically absent', () => {
 
 test('workspace has one shell, one bounded thread state and input-bound cancel preview', () => {
   const page = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
+  const actions = read('src/features/operator-workspace/OperatorWorkspaceActions.tsx')
   const state = read('src/features/operator-workspace/operatorWorkspaceState.ts')
   const api = read('src/lib/operatorWorkspaceApi.ts')
   assert.doesNotMatch(workspace, /function\s+AppNavigation\b|operator-app-header|\/webchat\?tab=/)
-  assert.match(page, /type CancelPreviewBinding/)
+  assert.match(actions, /type CancelPreviewBinding/)
   assert.match(state, /ticketId[\s\S]*waybill[\s\S]*caller[\s\S]*reasonCode/)
-  assert.match(page, /cancelPreview\.fingerprint !== currentCancelFingerprint/)
+  assert.match(actions, /cancelPreview\.fingerprint !== currentCancelFingerprint/)
   assert.match(workspace, /处理进度/)
   assert.match(state, /mergeLatestWorkspaceThread/)
   assert.match(state, /mergeOlderWorkspaceThread/)
@@ -65,13 +67,25 @@ test('MUI, operator presentation and operational status are the only shared auth
   assert.match(theme, /createTheme\(/)
   assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
   assert.match(provider, /<CssBaseline \/>/)
-  for (const name of ['OperatorEmptyState', 'OperatorErrorNotice', 'OperatorLoadingState', 'OperatorFactGrid']) assert.match(presentation, new RegExp(`export function ${name}`))
+  for (const name of [
+    'OperatorPageBoundary',
+    'OperatorEmptyState',
+    'OperatorErrorNotice',
+    'OperatorLoadingState',
+    'RouteLoadingState',
+    'OperatorFactGrid',
+    'OperatorSectionHeading',
+    'OperatorStatusLine',
+    'OperatorTechnicalDisclosure',
+  ]) assert.match(presentation, new RegExp(`export function ${name}`))
   assert.match(status, /technical_complete/)
   assert.match(status, /operational_complete/)
   assert.match(status, /customer_notified/)
   assert.match(supportStatus, /operationalPresentation\(status, message\)/)
+  assert.match(supportStatus, /export function channelPresentation/)
   assert.match(workspaceStatus, /return operationalPresentation\(statusValue, messageValue\)/)
   assert.match(workspaceStatus, /自动回复建议/)
+  assert.doesNotMatch(workspaceStatus, /className\??:|className\s*:/)
 })
 
 test('runtime and knowledge permissions use one route projection each', () => {
@@ -88,6 +102,8 @@ test('runtime and knowledge permissions use one route projection each', () => {
 test('control tower accepts only canonical hrefs in the browser', () => {
   const source = read('src/features/control-tower/ControlTowerPage.tsx')
   assert.match(source, /canonicalAppHref/)
+  assert.match(source, /OperatorStatusLine/)
+  assert.doesNotMatch(source, /function\s+StatusCount|const\s+toneColor/)
   assert.doesNotMatch(source, /\/accounts|\/outbound-email|\/ai-control/)
 })
 

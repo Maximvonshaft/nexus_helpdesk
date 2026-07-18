@@ -69,7 +69,12 @@ function LoginPage() {
     >
       <Container maxWidth="sm">
         <Stack spacing={3}>
-          <Stack spacing={1} alignItems="center" textAlign="center">
+          <Stack
+            spacing={1}
+            sx={{
+              alignItems: "center",
+              textAlign: "center"
+            }}>
             <Box
               aria-hidden="true"
               sx={{
@@ -145,7 +150,9 @@ function LoginPage() {
                 </Alert>
               ) : null}
 
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{
+                color: "text.secondary"
+              }}>
                 请勿在共享设备保存密码。
               </Typography>
 
@@ -162,7 +169,7 @@ function LoginPage() {
         </Stack>
       </Container>
     </Box>
-  )
+  );
 }
 
 export const Route = createRoute({

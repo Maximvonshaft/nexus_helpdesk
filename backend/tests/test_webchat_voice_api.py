@@ -87,9 +87,17 @@ def _create_webchat_conversation(client: TestClient, name: str = "Voice Visitor"
     conversation_id = payload["conversation_id"]
     visitor_token = payload["visitor_token"]
 
-    thread_candidates = client.get("/api/webchat/admin/conversations", headers=_admin_headers())
+    thread_candidates = client.get(
+        "/api/support/conversations",
+        params={"view": "all", "channel": "all", "limit": 100},
+        headers=_admin_headers(),
+    )
     assert thread_candidates.status_code == 200, thread_candidates.text
-    ticket_id = next(item["ticket_id"] for item in thread_candidates.json() if item["conversation_id"] == conversation_id)
+    ticket_id = next(
+        item["ticket_id"]
+        for item in thread_candidates.json()["items"]
+        if item["conversation_id"] == conversation_id
+    )
     return conversation_id, visitor_token, ticket_id
 
 

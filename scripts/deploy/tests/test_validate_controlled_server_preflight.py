@@ -7,7 +7,10 @@ import unittest
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "validate_controlled_server_preflight.py"
-SPEC = importlib.util.spec_from_file_location("validate_controlled_server_preflight", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "validate_controlled_server_preflight",
+    MODULE_PATH,
+)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
@@ -21,8 +24,8 @@ class ControlledServerPreflightTests(unittest.TestCase):
     build_time = "20260713T190000Z"
     app_version = "controlled-aaaaaaaaaaaa"
 
-    def _write_fixture(self, root: Path) -> tuple[Path, Path, Path]:
-        manifest = {
+    def _manifest(self) -> dict:
+        return {
             "schema": "nexus.osr.controlled-candidate-manifest.v1",
             "status": "pass",
             "decision": "CONTROLLED_SERVER_CANDIDATE_PUBLISHED",
@@ -59,26 +62,41 @@ class ControlledServerPreflightTests(unittest.TestCase):
                 "operations_dispatch_enabled": False,
             },
         }
-        manifest_path = root / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-        compose_path = root / "compose.yml"
-        compose_path.write_text(
-            """services:
+
+    @staticmethod
+    def _compose() -> str:
+        return """services:
   migrate-controlled:
     image: ${CONTROLLED_IMAGE:?digest required}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_MIGRATION:?required}
   app-controlled:
     image: ${CONTROLLED_IMAGE:?digest required}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_APP:?required}
   worker-outbound-controlled:
     image: ${CONTROLLED_IMAGE:?digest required}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_OUTBOUND:?required}
+    command: python scripts/run_worker.py --queue outbound
   worker-background-controlled:
     image: ${CONTROLLED_IMAGE:?digest required}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_BACKGROUND:?required}
+    command: python scripts/run_worker.py --queue background
   worker-webchat-ai-controlled:
     image: ${CONTROLLED_IMAGE:?digest required}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_WEBCHAT_AI:?required}
+    command: python scripts/run_worker.py --queue webchat-ai
   worker-handoff-snapshot-controlled:
     image: ${CONTROLLED_IMAGE:?digest required}
-""",
-            encoding="utf-8",
-        )
+    environment:
+      DATABASE_URL: ${DATABASE_URL_HANDOFF:?required}
+    command: python scripts/run_worker.py --queue handoff-snapshot
+"""
+
+    def _values(self) -> dict[str, str]:
         values = {
             "COMPOSE_PROJECT_NAME": "nexusdesk_controlled",
             "CONTROLLED_IMAGE": self.image,
@@ -92,18 +110,30 @@ class ControlledServerPreflightTests(unittest.TestCase):
             "APP_ENV": "production",
             "READINESS_REQUIRE_RELEASE_METADATA": "true",
             "SECRET_KEY": "s" * 48,
-            "RUNTIME_CONTRACT_SIGNING_SECRET": "r" * 48,
-            "DATABASE_URL": "postgresql+psycopg://user:secret-value@10.2.64.2:5432/nexusdesk",
+            "METRICS_TOKEN": "m" * 48,
             "ALLOWED_ORIGINS": "https://mcs.speedaf.com",
             "WEBCHAT_ALLOWED_ORIGINS": "https://mcs.speedaf.com",
-            "NEXUS_RUNTIME_SECRETS_HOST_PATH": "/run/secrets",
             "NEXUS_UPLOADS_HOST_PATH": "/opt/nexus_helpdesk/data/uploads",
             "NEXUS_UPLOAD_BACKUP_HOST_PATH": "/var/backups/nexusdesk/uploads",
-            "AI_RUNTIME_TOKEN_HOST_PATH": "/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token",
             **MODULE.SAFE_CONTROLS,
         }
+        for index, key in enumerate(MODULE.DATABASE_ROLE_KEYS.values(), start=1):
+            values[key] = (
+                f"postgresql+psycopg://role_{index}:password-{index}-bounded"
+                "@10.2.64.2:5432/nexusdesk"
+            )
+        return values
+
+    def _write_fixture(self, root: Path) -> tuple[Path, Path, Path]:
+        manifest_path = root / "manifest.json"
+        manifest_path.write_text(json.dumps(self._manifest()), encoding="utf-8")
+        compose_path = root / "compose.yml"
+        compose_path.write_text(self._compose(), encoding="utf-8")
         env_path = root / ".env.controlled"
-        env_path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
+        env_path.write_text(
+            "".join(f"{key}={value}\n" for key, value in self._values().items()),
+            encoding="utf-8",
+        )
         return env_path, compose_path, manifest_path
 
     def _validate(self, env_path: Path, compose_path: Path, manifest_path: Path):
@@ -117,35 +147,78 @@ class ControlledServerPreflightTests(unittest.TestCase):
             check_host_paths=False,
         )
 
-    def test_accepts_digest_only_safe_cutover(self) -> None:
+    def test_accepts_digest_only_safe_cutover_with_distinct_database_roles(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
             payload = self._validate(env_path, compose_path, manifest_path)
-            self.assertEqual(payload["status"], "pass")
-            self.assertEqual(payload["database_port"], 5432)
-            self.assertEqual(payload["build_time"], self.build_time)
-            self.assertFalse(payload["external_effects_enabled"])
+
+        self.assertEqual(payload["schema"], "nexus.osr.controlled-server-preflight.v2")
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["database_port"], 5432)
+        self.assertEqual(payload["build_time"], self.build_time)
+        self.assertEqual(set(payload["database_roles"]), set(MODULE.DATABASE_ROLE_KEYS))
+        self.assertEqual(
+            len({row["username"] for row in payload["database_roles"].values()}),
+            len(MODULE.DATABASE_ROLE_KEYS),
+        )
+        self.assertFalse(payload["database_passwords_included"])
+        self.assertFalse(payload["shared_env_file_injected"])
+        self.assertFalse(payload["disabled_capability_credentials_injected"])
+        self.assertFalse(payload["external_effects_enabled"])
+        rendered = json.dumps(payload, sort_keys=True)
+        for index in range(1, len(MODULE.DATABASE_ROLE_KEYS) + 1):
+            self.assertNotIn(f"password-{index}-bounded", rendered)
 
     def test_rejects_mutable_image_tag(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
-            text = env_path.read_text().replace(self.image, "ghcr.io/maximvonshaft/nexus_helpdesk:latest")
-            env_path.write_text(text)
-            with self.assertRaisesRegex(MODULE.PreflightError, "controlled_image_not_digest_pinned"):
+            env_path.write_text(
+                env_path.read_text().replace(
+                    self.image,
+                    "ghcr.io/maximvonshaft/nexus_helpdesk:latest",
+                )
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "controlled_image_not_digest_pinned",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
     def test_rejects_reenabled_provider_canary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
-            text = env_path.read_text().replace("PROVIDER_RUNTIME_CANARY_PERCENT=0", "PROVIDER_RUNTIME_CANARY_PERCENT=100")
-            env_path.write_text(text)
-            with self.assertRaisesRegex(MODULE.PreflightError, "unsafe_control:PROVIDER_RUNTIME_CANARY_PERCENT"):
+            env_path.write_text(
+                env_path.read_text().replace(
+                    "PROVIDER_RUNTIME_CANARY_PERCENT=0",
+                    "PROVIDER_RUNTIME_CANARY_PERCENT=100",
+                )
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "unsafe_control:PROVIDER_RUNTIME_CANARY_PERCENT",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
-    def test_rejects_compose_build_directive(self) -> None:
+    def test_rejects_provider_traffic_mode_outside_control(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, compose_path, manifest_path = self._write_fixture(root)
+            env_path.write_text(
+                env_path.read_text().replace(
+                    "PROVIDER_RUNTIME_TRAFFIC_MODE=control",
+                    "PROVIDER_RUNTIME_TRAFFIC_MODE=canary",
+                )
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "unsafe_control:PROVIDER_RUNTIME_TRAFFIC_MODE",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
+
+    def test_rejects_compose_build_or_shared_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
@@ -153,27 +226,80 @@ class ControlledServerPreflightTests(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.PreflightError, "compose_build_forbidden"):
                 self._validate(env_path, compose_path, manifest_path)
 
+            compose_path.write_text(self._compose() + "    env_file: .env.controlled\n")
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_shared_env_file_forbidden",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
+
+    def test_rejects_generic_or_duplicate_database_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, compose_path, manifest_path = self._write_fixture(root)
+            env_path.write_text(
+                env_path.read_text()
+                + "DATABASE_URL=postgresql+psycopg://generic:generic-pass@10.2.64.2:5432/nexusdesk\n"
+            )
+            with self.assertRaisesRegex(MODULE.PreflightError, "generic_database_url_forbidden"):
+                self._validate(env_path, compose_path, manifest_path)
+
+            env_path.write_text(
+                "".join(
+                    f"{key}={value}\n"
+                    for key, value in self._values().items()
+                ).replace("role_2:password-2-bounded", "role_1:password-2-bounded")
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "database_role_usernames_must_be_distinct",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
+
     def test_rejects_wrong_database_port(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
-            env_path.write_text(env_path.read_text().replace(":5432/nexusdesk", ":6432/nexusdesk"))
-            with self.assertRaisesRegex(MODULE.PreflightError, "database_port_mismatch"):
+            env_path.write_text(
+                env_path.read_text().replace(
+                    "role_3:password-3-bounded@10.2.64.2:5432/nexusdesk",
+                    "role_3:password-3-bounded@10.2.64.2:6432/nexusdesk",
+                )
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "database_port_mismatch:DATABASE_URL_OUTBOUND",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
-    def test_rejects_placeholder_signing_secret(self) -> None:
+    def test_rejects_disabled_capability_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
-            env_path.write_text(env_path.read_text().replace("RUNTIME_CONTRACT_SIGNING_SECRET=" + "r" * 48, "RUNTIME_CONTRACT_SIGNING_SECRET=<server-secret>"))
-            with self.assertRaisesRegex(MODULE.PreflightError, "secret_invalid:RUNTIME_CONTRACT_SIGNING_SECRET"):
+            env_path.write_text(
+                env_path.read_text()
+                + "AI_RUNTIME_TOKEN_HOST_PATH=/tmp/ai-runtime-token\n"
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "disabled_capability_credential_forbidden:AI_RUNTIME_TOKEN_HOST_PATH",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
-    def test_rejects_build_metadata_mismatch(self) -> None:
+    def test_rejects_missing_web_secret_or_build_metadata_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
-            env_path.write_text(env_path.read_text().replace(self.build_time, "20260713T190001Z"))
+            env_path.write_text(env_path.read_text().replace("SECRET_KEY=" + "s" * 48, "SECRET_KEY=short"))
+            with self.assertRaisesRegex(MODULE.PreflightError, "secret_invalid:SECRET_KEY"):
+                self._validate(env_path, compose_path, manifest_path)
+
+            env_path.write_text(
+                "".join(
+                    f"{key}={value}\n"
+                    for key, value in self._values().items()
+                ).replace(self.build_time, "20260713T190001Z")
+            )
             with self.assertRaisesRegex(MODULE.PreflightError, "build_time_manifest_mismatch"):
                 self._validate(env_path, compose_path, manifest_path)
 
@@ -181,8 +307,16 @@ class ControlledServerPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env_path, compose_path, manifest_path = self._write_fixture(root)
-            env_path.write_text(env_path.read_text().replace("ALLOW_DEV_AUTH=false", "ALLOW_DEV_AUTH=true"))
-            with self.assertRaisesRegex(MODULE.PreflightError, "unsafe_control:ALLOW_DEV_AUTH"):
+            env_path.write_text(
+                env_path.read_text().replace(
+                    "ALLOW_DEV_AUTH=false",
+                    "ALLOW_DEV_AUTH=true",
+                )
+            )
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "unsafe_control:ALLOW_DEV_AUTH",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
 

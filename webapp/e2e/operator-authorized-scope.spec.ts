@@ -84,7 +84,7 @@ test('normal operators enter the canonical shell through a server-authorized sco
 
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
   await expect(page.getByLabel('Nexus OSR')).toBeVisible()
-  await expect(page.getByLabel('当前工作范围')).toHaveText('CH · 网页客服')
+  await expect(page.getByLabel('当前工作范围')).toHaveText('CH · WebChat')
   await expect(page.locator('.operator-app-header')).toHaveCount(0)
   await expect(page.locator('.operator-scope')).toHaveCount(0)
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
@@ -130,7 +130,7 @@ test('switching among multiple authorized scopes remounts the workspace with the
   await page.goto('/workspace')
   const selector = page.getByRole('combobox', { name: '工作范围' })
   await expect(selector).toBeVisible()
-  await expect(selector).toHaveText('CH · 网页客服')
+  await expect(selector).toHaveText('CH · WebChat')
   await expect.poll(() => seen.includes('tenant-ch:CH:webchat')).toBe(true)
 
   await selector.click()

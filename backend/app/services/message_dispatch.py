@@ -8,13 +8,21 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import ConversationState, EventType, MessageStatus, SourceChannel
-from ..models import ChannelAccount, ExternalChannelConversationLink, Ticket, TicketOutboundAttachment, TicketOutboundMessage
+from ..enums import (
+    ConversationState,
+    EventType,
+    MessageStatus,
+    SourceChannel,
+)
+from ..models import (
+    ChannelAccount,
+    ExternalChannelConversationLink,
+    Ticket,
+    TicketOutboundAttachment,
+    TicketOutboundMessage,
+)
 from ..settings import get_settings
 from ..utils.time import utc_now
-from .audit_service import log_event
-from .email_mailbox_identity import ensure_outbound_mailbox_identity
-from .observability import LOGGER
 from .ai_reply_contract import (
     AI_ORIGINS,
     AI_REPLY_CONTRACT,
@@ -27,33 +35,62 @@ from .ai_reply_contract import (
     validate_ai_reply_contract,
     validate_contract_payload_hash,
 )
-from .external_channel_bridge import dispatch_via_external_channel_bridge, dispatch_via_external_channel_cli, dispatch_via_external_channel_mcp
+from .audit_service import log_event
+from .customer_visible_policy import (
+    evaluate_customer_visible_policy,
+    format_policy_reasons,
+)
+from .email_mailbox_identity import ensure_outbound_mailbox_identity
+from .observability import LOGGER
 from .outbound_adapters.email import dispatch_email_outbound
-from .outbound_adapters.whatsapp_native import dispatch_whatsapp_native_outbound
-from .outbound_semantics import external_channel_values, is_external_outbound_message
-from .customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
+from .outbound_adapters.whatsapp_native import (
+    dispatch_whatsapp_native_outbound,
+)
+from .outbound_semantics import (
+    external_channel_values,
+    is_external_outbound_message,
+)
 
 settings = get_settings()
-ALLOWED_OUTBOUND_PROVIDERS = {'native', 'smtp', 'email'}
+ALLOWED_OUTBOUND_PROVIDERS = {"native", "smtp", "email"}
 
 
 def _external_dispatch_block_reason() -> tuple[str, str] | None:
     if not settings.enable_outbound_dispatch:
-        return 'outbound_dispatch_disabled', 'ENABLE_OUTBOUND_DISPATCH=false blocks external dispatch'
-    if settings.outbound_provider == 'disabled':
-        return 'outbound_provider_disabled', 'OUTBOUND_PROVIDER=disabled blocks external dispatch'
+        return (
+            "outbound_dispatch_disabled",
+            "ENABLE_OUTBOUND_DISPATCH=false blocks external dispatch",
+        )
+    if settings.outbound_provider == "disabled":
+        return (
+            "outbound_provider_disabled",
+            "OUTBOUND_PROVIDER=disabled blocks external dispatch",
+        )
     if settings.outbound_provider not in ALLOWED_OUTBOUND_PROVIDERS:
-        return 'unsupported_outbound_provider', f"Unsupported OUTBOUND_PROVIDER: {settings.outbound_provider}"
+        return (
+            "unsupported_outbound_provider",
+            f"Unsupported OUTBOUND_PROVIDER: {settings.outbound_provider}",
+        )
     return None
 
 
-def _resolve_channel_account(db: Session, *, market_id: int | None, account_id: str | None) -> ChannelAccount | None:
+def _resolve_channel_account(
+    db: Session,
+    *,
+    market_id: int | None,
+    account_id: str | None,
+) -> ChannelAccount | None:
+    provider_values = [
+        SourceChannel.whatsapp.value,
+        SourceChannel.telegram.value,
+        SourceChannel.sms.value,
+    ]
     if account_id:
         row = (
             db.query(ChannelAccount)
             .filter(
                 ChannelAccount.account_id == account_id,
-                ChannelAccount.provider.in_([SourceChannel.whatsapp.value, SourceChannel.telegram.value, SourceChannel.sms.value]),
+                ChannelAccount.provider.in_(provider_values),
                 ChannelAccount.is_active.is_(True),
             )
             .first()
@@ -61,18 +98,26 @@ def _resolve_channel_account(db: Session, *, market_id: int | None, account_id: 
         if row is not None:
             return row
     query = db.query(ChannelAccount).filter(
-        ChannelAccount.provider.in_([SourceChannel.whatsapp.value, SourceChannel.telegram.value, SourceChannel.sms.value]),
+        ChannelAccount.provider.in_(provider_values),
         ChannelAccount.is_active.is_(True),
     )
     if market_id is not None:
-        row = query.filter(ChannelAccount.market_id == market_id).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+        row = (
+            query.filter(ChannelAccount.market_id == market_id)
+            .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
+            .first()
+        )
         if row is not None:
             return row
-    return query.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+    return (
+        query.filter(ChannelAccount.market_id.is_(None))
+        .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
+        .first()
+    )
 
 
 def ensure_external_dispatch_allowed() -> None:
-    """Fail closed unless the runtime is explicitly configured for external sends."""
+    """Fail closed unless runtime is explicitly configured for external sends."""
     blocked = _external_dispatch_block_reason()
     if blocked:
         _, reason = blocked
@@ -80,28 +125,51 @@ def ensure_external_dispatch_allowed() -> None:
 
 
 def _provider_idempotency_key(message: TicketOutboundMessage) -> str:
-    return message.provider_message_id or f'nexusdesk-outbound-{message.id}'
+    return message.provider_message_id or f"nexusdesk-outbound-{message.id}"
 
 
-def _ensure_provider_idempotency_key(message: TicketOutboundMessage) -> str:
+def _ensure_provider_idempotency_key(
+    message: TicketOutboundMessage,
+) -> str:
     key = _provider_idempotency_key(message)
     if not message.provider_message_id:
-        # The current provider bridge does not yet return a remote provider id before dispatch.
-        # Keep a stable local idempotency key in the existing provider_message_id field so retry/recovery
-        # can correlate attempts and future bridge implementations can consume the same key.
+        # Persist one stable key before attempting an external effect so retry,
+        # recovery and future Provider adapters use the same identity.
         message.provider_message_id = key
     return key
 
 
-def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> ChannelAccount | None:
-    if link is not None and getattr(link, 'channel_account_id', None):
-        return db.query(ChannelAccount).filter(ChannelAccount.id == link.channel_account_id, ChannelAccount.is_active.is_(True)).first()
-    if ticket is not None and getattr(ticket, 'channel_account_id', None):
-        row = db.query(ChannelAccount).filter(ChannelAccount.id == ticket.channel_account_id, ChannelAccount.is_active.is_(True)).first()
+def _resolve_first_send_channel_account(
+    db: Session,
+    ticket: Ticket | None,
+    link: ExternalChannelConversationLink | None,
+) -> ChannelAccount | None:
+    if link is not None and getattr(link, "channel_account_id", None):
+        return (
+            db.query(ChannelAccount)
+            .filter(
+                ChannelAccount.id == link.channel_account_id,
+                ChannelAccount.is_active.is_(True),
+            )
+            .first()
+        )
+    if ticket is not None and getattr(ticket, "channel_account_id", None):
+        row = (
+            db.query(ChannelAccount)
+            .filter(
+                ChannelAccount.id == ticket.channel_account_id,
+                ChannelAccount.is_active.is_(True),
+            )
+            .first()
+        )
         if row:
             return row
     if ticket is not None:
-        return _resolve_channel_account(db, market_id=ticket.market_id, account_id=None)
+        return _resolve_channel_account(
+            db,
+            market_id=ticket.market_id,
+            account_id=None,
+        )
     return None
 
 
@@ -113,7 +181,7 @@ def queue_outbound_message(
     body: str,
     created_by: int | None,
     subject: str | None = None,
-    provider_status: str = 'queued',
+    provider_status: str = "queued",
     origin: str | None = None,
     runtime_trace_id: str | None = None,
     runtime_contract_version: str | None = None,
@@ -124,9 +192,14 @@ def queue_outbound_message(
     safety_status: str | None = None,
 ) -> TicketOutboundMessage:
     if runtime_contract_payload_json and not runtime_contract_payload_sha256:
-        runtime_contract_payload_sha256 = contract_payload_sha256(runtime_contract_payload_json)
+        runtime_contract_payload_sha256 = contract_payload_sha256(
+            runtime_contract_payload_json
+        )
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-    normalized_origin = _normalize_customer_visible_origin(origin, created_by=created_by)
+    normalized_origin = _normalize_customer_visible_origin(
+        origin,
+        created_by=created_by,
+    )
     _enforce_customer_visible_origin(
         body=body,
         origin=normalized_origin,
@@ -168,7 +241,11 @@ def queue_outbound_message(
     return message
 
 
-def _normalize_customer_visible_origin(origin: str | None, *, created_by: int | None) -> str:
+def _normalize_customer_visible_origin(
+    origin: str | None,
+    *,
+    created_by: int | None,
+) -> str:
     cleaned = (origin or "").strip().lower()
     if cleaned:
         return cleaned
@@ -192,21 +269,45 @@ def _enforce_customer_visible_origin(
     if origin in FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS:
         raise ValueError(f"{origin}_cannot_queue_customer_visible_text")
     if origin in AI_ORIGINS:
-        if ticket is not None and ticket.conversation_state in HUMAN_REPLY_STATES:
+        if (
+            ticket is not None
+            and ticket.conversation_state in HUMAN_REPLY_STATES
+        ):
             raise ValueError("human_active_blocks_ai_autoreply")
-        payload_violation = validate_contract_payload_hash(runtime_contract_payload_json, runtime_contract_payload_sha256)
+        payload_violation = validate_contract_payload_hash(
+            runtime_contract_payload_json,
+            runtime_contract_payload_sha256,
+        )
         if payload_violation:
             raise ValueError(payload_violation)
-        contract_payload = parse_runtime_contract_payload(runtime_contract_payload_json)
-        payload_args = contract_validation_args_from_payload(contract_payload) if contract_payload else {}
-        if runtime_reply_type == "null_reply" or payload_args.get("reply_type") == "null_reply":
+        contract_payload = parse_runtime_contract_payload(
+            runtime_contract_payload_json
+        )
+        payload_args = (
+            contract_validation_args_from_payload(contract_payload)
+            if contract_payload
+            else {}
+        )
+        if (
+            runtime_reply_type == "null_reply"
+            or payload_args.get("reply_type") == "null_reply"
+        ):
             raise ValueError("ai_reply_null_reply_not_customer_visible")
         violation = validate_ai_reply_contract(
             body=body,
-            runtime_trace_id=payload_args.get("runtime_trace_id") or runtime_trace_id,
-            contract_version=payload_args.get("contract_version") or runtime_contract_version,
-            runtime_signature=payload_args.get("runtime_signature") or runtime_signature,
-            safety_status=payload_args.get("safety_status") or safety_status,
+            runtime_trace_id=(
+                payload_args.get("runtime_trace_id") or runtime_trace_id
+            ),
+            contract_version=(
+                payload_args.get("contract_version")
+                or runtime_contract_version
+            ),
+            runtime_signature=(
+                payload_args.get("runtime_signature") or runtime_signature
+            ),
+            safety_status=(
+                payload_args.get("safety_status") or safety_status
+            ),
             reply_type=payload_args.get("reply_type", "answer"),
             used_sources=payload_args.get("used_sources"),
             unsupported_claims=payload_args.get("unsupported_claims"),
@@ -221,17 +322,28 @@ def _enforce_customer_visible_origin(
     if origin == HUMAN_ORIGIN:
         if created_by is None:
             raise ValueError("human_agent_origin_requires_actor")
-        if ticket is not None and ticket.conversation_state == ConversationState.ai_active:
+        if (
+            ticket is not None
+            and ticket.conversation_state == ConversationState.ai_active
+        ):
             raise ValueError("human_agent_reply_requires_handoff_or_takeover")
         return
     raise ValueError("unsupported_customer_visible_origin")
 
 
-def _mark_origin_blocked(message: TicketOutboundMessage, reason: str) -> None:
+def _mark_origin_blocked(
+    message: TicketOutboundMessage,
+    reason: str,
+) -> None:
     _mark_dead(message, reason, failure_code=reason)
 
 
-def _mark_retry(message: TicketOutboundMessage, reason: str, *, failure_code: str | None = None) -> None:
+def _mark_retry(
+    message: TicketOutboundMessage,
+    reason: str,
+    *,
+    failure_code: str | None = None,
+) -> None:
     message.retry_count += 1
     message.error_message = reason
     message.failure_reason = reason
@@ -241,20 +353,29 @@ def _mark_retry(message: TicketOutboundMessage, reason: str, *, failure_code: st
     backoff_minutes = min(2 ** max(message.retry_count - 1, 0), 30)
     if message.retry_count >= message.max_retries:
         message.status = MessageStatus.dead
-        message.failure_code = failure_code or 'max_retries'
-        message.provider_status = f'dead:{message.failure_code}'
+        message.failure_code = failure_code or "max_retries"
+        message.provider_status = f"dead:{message.failure_code}"
         message.next_retry_at = None
     else:
         message.status = MessageStatus.pending
-        message.failure_code = failure_code or 'retryable_dispatch_error'
-        suffix = f':{message.failure_code}' if failure_code else ''
-        message.provider_status = f'retry_scheduled:{backoff_minutes}m{suffix}'
-        message.next_retry_at = utc_now() + timedelta(minutes=backoff_minutes)
+        message.failure_code = failure_code or "retryable_dispatch_error"
+        failure_suffix = f":{message.failure_code}" if failure_code else ""
+        message.provider_status = (
+            f"retry_scheduled:{backoff_minutes}m{failure_suffix}"
+        )
+        message.next_retry_at = utc_now() + timedelta(
+            minutes=backoff_minutes
+        )
 
 
-def _mark_dead(message: TicketOutboundMessage, reason: str, *, failure_code: str) -> None:
+def _mark_dead(
+    message: TicketOutboundMessage,
+    reason: str,
+    *,
+    failure_code: str,
+) -> None:
     message.status = MessageStatus.dead
-    message.provider_status = f'dead:{failure_code}'
+    message.provider_status = f"dead:{failure_code}"
     message.error_message = reason
     message.failure_code = failure_code
     message.failure_reason = reason
@@ -264,7 +385,11 @@ def _mark_dead(message: TicketOutboundMessage, reason: str, *, failure_code: str
     message.locked_by = None
 
 
-def _mark_sent(message: TicketOutboundMessage, provider_status: str | None, sent_at) -> None:
+def _mark_sent(
+    message: TicketOutboundMessage,
+    provider_status: str | None,
+    sent_at,
+) -> None:
     message.status = MessageStatus.sent
     message.provider_status = provider_status
     message.sent_at = sent_at
@@ -277,16 +402,33 @@ def _mark_sent(message: TicketOutboundMessage, provider_status: str | None, sent
     message.locked_by = None
 
 
-def requeue_dead_outbound_message(db: Session, *, message_id: int) -> TicketOutboundMessage:
-    message = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.id == message_id).first()
+def requeue_dead_outbound_message(
+    db: Session,
+    *,
+    message_id: int,
+) -> TicketOutboundMessage:
+    message = (
+        db.query(TicketOutboundMessage)
+        .filter(TicketOutboundMessage.id == message_id)
+        .first()
+    )
     if message is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Outbound message not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Outbound message not found",
+        )
     if message.status != MessageStatus.dead:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only dead outbound messages can be requeued')
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only dead outbound messages can be requeued",
+        )
     if not is_external_outbound_message(message):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only external outbound messages can be requeued')
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only external outbound messages can be requeued",
+        )
     message.status = MessageStatus.pending
-    message.provider_status = 'requeued_by_admin'
+    message.provider_status = "requeued_by_admin"
     message.retry_count = 0
     message.error_message = None
     message.failure_code = None
@@ -300,20 +442,29 @@ def requeue_dead_outbound_message(db: Session, *, message_id: int) -> TicketOutb
     return message
 
 
-def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[TicketOutboundMessage]:
-    worker_id = worker_id or f'worker-{uuid.uuid4().hex[:8]}'
+def claim_pending_messages(
+    db: Session,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+) -> list[TicketOutboundMessage]:
+    worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
     limit = limit or settings.outbox_batch_size
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.outbox_lock_seconds)
-
     pending_filters = [
         TicketOutboundMessage.channel.in_(external_channel_values()),
         TicketOutboundMessage.status == MessageStatus.pending,
-        or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
-        or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
+        or_(
+            TicketOutboundMessage.next_retry_at.is_(None),
+            TicketOutboundMessage.next_retry_at <= now,
+        ),
+        or_(
+            TicketOutboundMessage.locked_at.is_(None),
+            TicketOutboundMessage.locked_at < lock_deadline,
+        ),
     ]
-
-    if db.bind and db.bind.dialect.name.startswith('postgresql'):
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
         rows = db.execute(
             select(TicketOutboundMessage.id)
             .where(*pending_filters)
@@ -328,17 +479,37 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
         db.execute(
             update(TicketOutboundMessage)
             .where(TicketOutboundMessage.id.in_(claimed_ids))
-            .values(status=MessageStatus.processing, locked_at=now, locked_by=worker_id)
+            .values(
+                status=MessageStatus.processing,
+                locked_at=now,
+                locked_by=worker_id,
+            )
         )
         db.commit()
     else:
-        candidate_ids = [row[0] for row in db.query(TicketOutboundMessage.id).filter(*pending_filters).order_by(TicketOutboundMessage.created_at.asc()).limit(limit).all()]
+        candidate_ids = [
+            row[0]
+            for row in (
+                db.query(TicketOutboundMessage.id)
+                .filter(*pending_filters)
+                .order_by(TicketOutboundMessage.created_at.asc())
+                .limit(limit)
+                .all()
+            )
+        ]
         claimed_ids: list[int] = []
         for message_id in candidate_ids:
             updated = db.execute(
                 update(TicketOutboundMessage)
-                .where(TicketOutboundMessage.id == message_id, *pending_filters)
-                .values(status=MessageStatus.processing, locked_at=now, locked_by=worker_id)
+                .where(
+                    TicketOutboundMessage.id == message_id,
+                    *pending_filters,
+                )
+                .values(
+                    status=MessageStatus.processing,
+                    locked_at=now,
+                    locked_by=worker_id,
+                )
             )
             if updated.rowcount == 1:
                 claimed_ids.append(message_id)
@@ -346,13 +517,18 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
             db.rollback()
             return []
         db.commit()
-
     return (
         db.query(TicketOutboundMessage)
         .options(
-            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.customer),
-            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.external_channel_link),
-            joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment),
+            joinedload(TicketOutboundMessage.ticket).joinedload(
+                Ticket.customer
+            ),
+            joinedload(TicketOutboundMessage.ticket).joinedload(
+                Ticket.external_channel_link
+            ),
+            joinedload(TicketOutboundMessage.attachment_links).joinedload(
+                TicketOutboundAttachment.attachment
+            ),
         )
         .filter(TicketOutboundMessage.id.in_(claimed_ids))
         .order_by(TicketOutboundMessage.created_at.asc())
@@ -360,86 +536,190 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
     )
 
 
-def _enforce_customer_visible_policy(db: Session, message: TicketOutboundMessage, ticket: Ticket | None) -> bool:
+def _enforce_customer_visible_policy(
+    db: Session,
+    message: TicketOutboundMessage,
+    ticket: Ticket | None,
+) -> bool:
     decision = evaluate_customer_visible_policy(message.body)
     reason = format_policy_reasons(decision)
     if not decision.allowed:
-        _mark_dead(message, reason, failure_code='customer_visible_policy_blocked')
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Customer-visible content policy blocked outbound message', payload={'message_id': message.id, 'policy_level': decision.level, 'reasons': decision.reasons})
+        _mark_dead(
+            message,
+            reason,
+            failure_code="customer_visible_policy_blocked",
+        )
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_failed,
+            note="Customer-visible content policy blocked outbound message",
+            payload={
+                "message_id": message.id,
+                "policy_level": decision.level,
+                "reasons": decision.reasons,
+            },
+        )
         return False
-    if _normalize_customer_visible_origin(message.origin, created_by=message.created_by) in AI_ORIGINS and message.runtime_signature:
+    origin = _normalize_customer_visible_origin(
+        message.origin,
+        created_by=message.created_by,
+    )
+    if origin in AI_ORIGINS and message.runtime_signature:
         if decision.normalized_body != message.body:
-            _mark_dead(message, 'Signed AI outbound body changed after runtime signature', failure_code='runtime_signed_body_mutation')
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Signed AI outbound body mutation blocked', payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons})
+            _mark_dead(
+                message,
+                "Signed AI outbound body changed after runtime signature",
+                failure_code="runtime_signed_body_mutation",
+            )
+            log_event(
+                db,
+                ticket_id=message.ticket_id,
+                actor_id=message.created_by,
+                event_type=EventType.outbound_failed,
+                note="Signed AI outbound body mutation blocked",
+                payload={
+                    "message_id": message.id,
+                    "safety_level": decision.level,
+                    "reasons": decision.reasons,
+                },
+            )
             return False
         return True
     message.body = decision.normalized_body
     return True
 
 
-def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, ticket: Ticket | None, idempotency_key: str) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
+def _dispatch_whatsapp_message(
+    db: Session,
+    message: TicketOutboundMessage,
+    ticket: Ticket | None,
+    idempotency_key: str,
+) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     try:
-        if settings.whatsapp_dispatch_mode == 'native_sidecar':
-            return dispatch_whatsapp_native_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
-        if settings.whatsapp_dispatch_mode == 'cloud_api_future':
-            return MessageStatus.failed, 'whatsapp_cloud_api_not_implemented', None, {
-                'channel': SourceChannel.whatsapp.value,
-                'adapter': 'whatsapp_cloud_api_future',
-                'idempotency_key': idempotency_key,
-                'failure_code': 'whatsapp_cloud_api_not_implemented',
-                'error': 'WhatsApp Cloud API dispatch mode is reserved but not implemented',
-                'retryable': False,
-            }
-        if settings.whatsapp_dispatch_mode == 'external_channel_bridge':
-            return MessageStatus.failed, 'legacy_external_channel_bridge_retired', None, {
-                'channel': SourceChannel.whatsapp.value,
-                'adapter': 'legacy_external_channel_bridge_retired',
-                'idempotency_key': idempotency_key,
-                'failure_code': 'legacy_external_channel_bridge_retired',
-                'error': 'ExternalChannel bridge dispatch has been retired; use WHATSAPP_DISPATCH_MODE=native_sidecar',
-                'retryable': False,
-            }
-        if settings.whatsapp_dispatch_mode != 'disabled':
-            return MessageStatus.failed, 'unsupported_whatsapp_dispatch_mode', None, {
-                'channel': SourceChannel.whatsapp.value,
-                'adapter': 'unsupported_whatsapp_dispatch_mode',
-                'idempotency_key': idempotency_key,
-                'failure_code': 'unsupported_whatsapp_dispatch_mode',
-                'error': f'Unsupported WHATSAPP_DISPATCH_MODE: {settings.whatsapp_dispatch_mode}',
-                'retryable': False,
-            }
-        return MessageStatus.failed, 'whatsapp_dispatch_disabled', None, {
-            'channel': SourceChannel.whatsapp.value,
-            'adapter': 'whatsapp_dispatch_disabled',
-            'idempotency_key': idempotency_key,
-            'failure_code': 'whatsapp_dispatch_disabled',
-            'error': 'WHATSAPP_DISPATCH_MODE=disabled blocks WhatsApp dispatch',
-            'retryable': False,
-        }
+        if settings.whatsapp_dispatch_mode == "native_sidecar":
+            return dispatch_whatsapp_native_outbound(
+                db,
+                message=message,
+                ticket=ticket,
+                idempotency_key=idempotency_key,
+            )
+        if settings.whatsapp_dispatch_mode == "cloud_api_future":
+            return (
+                MessageStatus.failed,
+                "whatsapp_cloud_api_not_implemented",
+                None,
+                {
+                    "channel": SourceChannel.whatsapp.value,
+                    "adapter": "whatsapp_cloud_api_future",
+                    "idempotency_key": idempotency_key,
+                    "failure_code": "whatsapp_cloud_api_not_implemented",
+                    "error": (
+                        "WhatsApp Cloud API dispatch mode is reserved but "
+                        "not implemented"
+                    ),
+                    "retryable": False,
+                },
+            )
+        if settings.whatsapp_dispatch_mode == "external_channel_bridge":
+            return (
+                MessageStatus.failed,
+                "legacy_external_channel_bridge_retired",
+                None,
+                {
+                    "channel": SourceChannel.whatsapp.value,
+                    "adapter": "legacy_external_channel_bridge_retired",
+                    "idempotency_key": idempotency_key,
+                    "failure_code": "legacy_external_channel_bridge_retired",
+                    "error": (
+                        "ExternalChannel bridge dispatch has been retired; "
+                        "use WHATSAPP_DISPATCH_MODE=native_sidecar"
+                    ),
+                    "retryable": False,
+                },
+            )
+        if settings.whatsapp_dispatch_mode != "disabled":
+            return (
+                MessageStatus.failed,
+                "unsupported_whatsapp_dispatch_mode",
+                None,
+                {
+                    "channel": SourceChannel.whatsapp.value,
+                    "adapter": "unsupported_whatsapp_dispatch_mode",
+                    "idempotency_key": idempotency_key,
+                    "failure_code": "unsupported_whatsapp_dispatch_mode",
+                    "error": (
+                        "Unsupported WHATSAPP_DISPATCH_MODE: "
+                        f"{settings.whatsapp_dispatch_mode}"
+                    ),
+                    "retryable": False,
+                },
+            )
+        return (
+            MessageStatus.failed,
+            "whatsapp_dispatch_disabled",
+            None,
+            {
+                "channel": SourceChannel.whatsapp.value,
+                "adapter": "whatsapp_dispatch_disabled",
+                "idempotency_key": idempotency_key,
+                "failure_code": "whatsapp_dispatch_disabled",
+                "error": (
+                    "WHATSAPP_DISPATCH_MODE=disabled blocks WhatsApp "
+                    "dispatch"
+                ),
+                "retryable": False,
+            },
+        )
     except ValueError as exc:
         error_code = str(exc)
-        return MessageStatus.failed, error_code, None, {
-            'channel': SourceChannel.whatsapp.value,
-            'adapter': 'whatsapp_route_resolution',
-            'idempotency_key': idempotency_key,
-            'error': error_code,
-        }
+        return (
+            MessageStatus.failed,
+            error_code,
+            None,
+            {
+                "channel": SourceChannel.whatsapp.value,
+                "adapter": "whatsapp_route_resolution",
+                "idempotency_key": idempotency_key,
+                "error": error_code,
+            },
+        )
 
 
-def _dispatch_email_message(db: Session, message: TicketOutboundMessage, ticket: Ticket | None, idempotency_key: str) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
+def _dispatch_email_message(
+    db: Session,
+    message: TicketOutboundMessage,
+    ticket: Ticket | None,
+    idempotency_key: str,
+) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     try:
-        ensure_outbound_mailbox_identity(message, ticket=ticket, include_message_id=True)
+        ensure_outbound_mailbox_identity(
+            message,
+            ticket=ticket,
+            include_message_id=True,
+        )
         db.flush()
-        return dispatch_email_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
+        return dispatch_email_outbound(
+            db,
+            message=message,
+            ticket=ticket,
+            idempotency_key=idempotency_key,
+        )
     except ValueError as exc:
         error_code = str(exc)
-        return MessageStatus.failed, error_code, None, {
-            'channel': SourceChannel.email.value,
-            'adapter': 'smtp',
-            'idempotency_key': idempotency_key,
-            'failure_code': error_code,
-            'error': error_code,
-        }
+        return (
+            MessageStatus.failed,
+            error_code,
+            None,
+            {
+                "channel": SourceChannel.email.value,
+                "adapter": "smtp",
+                "idempotency_key": idempotency_key,
+                "failure_code": error_code,
+                "error": error_code,
+            },
+        )
 
 
 def _handle_dispatch_result(
@@ -452,65 +732,207 @@ def _handle_dispatch_result(
     sent_at,
     route_context: dict[str, Any],
 ) -> TicketOutboundMessage:
-    session_key = route_context.get('session_key')
+    session_key = route_context.get("session_key")
     if status_value == MessageStatus.sent:
         _mark_sent(message, provider_status, sent_at)
-        if ticket is not None and getattr(ticket, 'conversation_state', None) is not None:
+        if (
+            ticket is not None
+            and getattr(ticket, "conversation_state", None) is not None
+        ):
             ticket.conversation_state = ConversationState.waiting_customer
         if session_key:
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.external_channel_reply_sent, note='Legacy same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': route_context.get('idempotency_key')})
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
+            log_event(
+                db,
+                ticket_id=message.ticket_id,
+                actor_id=message.created_by,
+                event_type=EventType.external_channel_reply_sent,
+                note="Legacy same-route reply sent",
+                payload={
+                    "message_id": message.id,
+                    "session_key": session_key,
+                    "provider_status": provider_status,
+                    "idempotency_key": route_context.get(
+                        "idempotency_key"
+                    ),
+                },
+            )
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_sent,
+            note="Queued outbound message sent",
+            payload={
+                "message_id": message.id,
+                "provider_status": provider_status,
+                "route": route_context,
+            },
+        )
         return message
 
-    route_error = route_context.get('error')
-    reason = route_error if isinstance(route_error, str) and route_error else (provider_status or 'Dispatch failed')
-    route_failure_code = route_context.get('failure_code')
-    if route_context.get('retryable') is False:
-        _mark_dead(message, reason, failure_code=route_failure_code if isinstance(route_failure_code, str) else 'non_retryable_dispatch_error')
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Queued outbound message failed dispatch with non-retryable error', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
+    route_error = route_context.get("error")
+    reason = (
+        route_error
+        if isinstance(route_error, str) and route_error
+        else (provider_status or "Dispatch failed")
+    )
+    route_failure_code = route_context.get("failure_code")
+    if route_context.get("retryable") is False:
+        _mark_dead(
+            message,
+            reason,
+            failure_code=(
+                route_failure_code
+                if isinstance(route_failure_code, str)
+                else "non_retryable_dispatch_error"
+            ),
+        )
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_dead,
+            note=(
+                "Queued outbound message failed dispatch with "
+                "non-retryable error"
+            ),
+            payload={
+                "message_id": message.id,
+                "error": message.failure_reason,
+                "retry_count": message.retry_count,
+                "route": route_context,
+            },
+        )
         return message
-    _mark_retry(message, reason, failure_code=route_failure_code if isinstance(route_failure_code, str) else None)
-    event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
-    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
+    _mark_retry(
+        message,
+        reason,
+        failure_code=(
+            route_failure_code
+            if isinstance(route_failure_code, str)
+            else None
+        ),
+    )
+    event_type = (
+        EventType.outbound_dead
+        if message.status == MessageStatus.dead
+        else EventType.outbound_retry_scheduled
+    )
+    log_event(
+        db,
+        ticket_id=message.ticket_id,
+        actor_id=message.created_by,
+        event_type=event_type,
+        note="Queued outbound message failed dispatch",
+        payload={
+            "message_id": message.id,
+            "error": message.failure_reason,
+            "retry_count": message.retry_count,
+            "route": route_context,
+        },
+    )
     return message
 
 
-def process_outbound_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
+def process_outbound_message(
+    db: Session,
+    message: TicketOutboundMessage,
+) -> TicketOutboundMessage:
     if message.status == MessageStatus.sent:
         return message
     if not is_external_outbound_message(message):
-        _mark_dead(message, 'Non-external outbound row is not eligible for provider dispatch', failure_code='non_external_outbound_not_dispatchable')
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
+        _mark_dead(
+            message,
+            "Non-external outbound row is not eligible for provider dispatch",
+            failure_code="non_external_outbound_not_dispatchable",
+        )
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_dead,
+            note=(
+                "Non-external outbound row was blocked from provider "
+                "dispatch"
+            ),
+            payload={
+                "message_id": message.id,
+                "channel": (
+                    message.channel.value
+                    if hasattr(message.channel, "value")
+                    else str(message.channel)
+                ),
+                "provider_status": message.provider_status,
+            },
+        )
         return message
     try:
         ticket_for_origin = message.ticket
-        has_origin_contract = bool(message.origin or message.runtime_contract_version or message.created_by is not None)
-        if not has_origin_contract and not settings.allow_legacy_originless_outbound:
+        has_origin_contract = bool(
+            message.origin
+            or message.runtime_contract_version
+            or message.created_by is not None
+        )
+        if (
+            not has_origin_contract
+            and not settings.allow_legacy_originless_outbound
+        ):
             raise ValueError("missing_customer_visible_origin_contract")
         if has_origin_contract:
             _enforce_customer_visible_origin(
                 body=message.body,
-                origin=_normalize_customer_visible_origin(message.origin, created_by=message.created_by),
+                origin=_normalize_customer_visible_origin(
+                    message.origin,
+                    created_by=message.created_by,
+                ),
                 ticket=ticket_for_origin,
                 created_by=message.created_by,
                 runtime_trace_id=message.runtime_trace_id,
                 runtime_contract_version=message.runtime_contract_version,
                 runtime_signature=message.runtime_signature,
-                runtime_contract_payload_json=message.runtime_contract_payload_json,
-                runtime_contract_payload_sha256=message.runtime_contract_payload_sha256,
+                runtime_contract_payload_json=(
+                    message.runtime_contract_payload_json
+                ),
+                runtime_contract_payload_sha256=(
+                    message.runtime_contract_payload_sha256
+                ),
                 runtime_reply_type=message.runtime_reply_type,
                 safety_status=message.safety_status,
             )
     except ValueError as exc:
         reason = str(exc)
         _mark_origin_blocked(message, reason)
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Customer-visible outbound origin contract blocked dispatch', payload={'message_id': message.id, 'origin': message.origin, 'failure_code': reason, 'required_contract': AI_REPLY_CONTRACT})
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_dead,
+            note="Customer-visible outbound origin contract blocked dispatch",
+            payload={
+                "message_id": message.id,
+                "origin": message.origin,
+                "failure_code": reason,
+                "required_contract": AI_REPLY_CONTRACT,
+            },
+        )
         return message
     blocked = _external_dispatch_block_reason()
     if blocked:
         failure_code, reason = blocked
         _mark_dead(message, reason, failure_code=failure_code)
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='External outbound dispatch blocked by runtime kill switch', payload={'message_id': message.id, 'failure_code': failure_code, 'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch})
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_dead,
+            note="External outbound dispatch blocked by runtime kill switch",
+            payload={
+                "message_id": message.id,
+                "failure_code": failure_code,
+                "outbound_provider": settings.outbound_provider,
+                "enable_outbound_dispatch": settings.enable_outbound_dispatch,
+            },
+        )
         return message
     idempotency_key = _ensure_provider_idempotency_key(message)
     ticket = message.ticket
@@ -518,65 +940,136 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         return message
 
     if message.channel == SourceChannel.whatsapp:
-        status_value, provider_status, sent_at, route_context = _dispatch_whatsapp_message(db, message, ticket, idempotency_key)
-        return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
+        status_value, provider_status, sent_at, route_context = (
+            _dispatch_whatsapp_message(
+                db,
+                message,
+                ticket,
+                idempotency_key,
+            )
+        )
+        return _handle_dispatch_result(
+            db,
+            message=message,
+            ticket=ticket,
+            status_value=status_value,
+            provider_status=provider_status,
+            sent_at=sent_at,
+            route_context=route_context,
+        )
 
     if message.channel == SourceChannel.email:
-        status_value, provider_status, sent_at, route_context = _dispatch_email_message(db, message, ticket, idempotency_key)
-        return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
+        status_value, provider_status, sent_at, route_context = (
+            _dispatch_email_message(
+                db,
+                message,
+                ticket,
+                idempotency_key,
+            )
+        )
+        return _handle_dispatch_result(
+            db,
+            message=message,
+            ticket=ticket,
+            status_value=status_value,
+            provider_status=provider_status,
+            sent_at=sent_at,
+            route_context=route_context,
+        )
 
     target = None
     session_key = None
     link = None
     if ticket is not None:
-        target = ticket.source_chat_id or ticket.preferred_reply_contact or (ticket.customer.phone if ticket.customer else None)
+        target = (
+            ticket.source_chat_id
+            or ticket.preferred_reply_contact
+            or (ticket.customer.phone if ticket.customer else None)
+        )
         if ticket.external_channel_link is not None:
             link = ticket.external_channel_link
             session_key = link.session_key
             target = link.recipient or target
 
     if not target and not session_key:
-        _mark_retry(message, 'No target address available')
-        event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message could not resolve target', payload={'message_id': message.id, 'idempotency_key': idempotency_key, 'error': message.failure_reason, 'retry_count': message.retry_count})
+        _mark_retry(message, "No target address available")
+        event_type = (
+            EventType.outbound_dead
+            if message.status == MessageStatus.dead
+            else EventType.outbound_retry_scheduled
+        )
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=event_type,
+            note="Queued outbound message could not resolve target",
+            payload={
+                "message_id": message.id,
+                "idempotency_key": idempotency_key,
+                "error": message.failure_reason,
+                "retry_count": message.retry_count,
+            },
+        )
         return message
 
-    channel_value = link.channel if link is not None and link.channel else message.channel.value
-    resolved_channel_account = _resolve_first_send_channel_account(db, ticket, link)
-    account_id = link.account_id if link is not None and link.account_id else (resolved_channel_account.account_id if resolved_channel_account else None)
+    channel_value = (
+        link.channel
+        if link is not None and link.channel
+        else message.channel.value
+    )
+    resolved_channel_account = _resolve_first_send_channel_account(
+        db,
+        ticket,
+        link,
+    )
+    account_id = (
+        link.account_id
+        if link is not None and link.account_id
+        else (
+            resolved_channel_account.account_id
+            if resolved_channel_account
+            else None
+        )
+    )
     thread_id = link.thread_id if link is not None else None
-
     route_context = {
-        'channel': channel_value,
-        'account_id': account_id,
-        'thread_id': thread_id,
-        'session_key': session_key,
-        'target': target,
-        'idempotency_key': idempotency_key,
-        'source': 'ticket_or_market_or_fallback',
-        'adapter': 'unsupported_external_channel',
+        "channel": channel_value,
+        "account_id": account_id,
+        "thread_id": thread_id,
+        "session_key": session_key,
+        "target": target,
+        "idempotency_key": idempotency_key,
+        "source": "ticket_or_market_or_fallback",
+        "adapter": "unsupported_external_channel",
+        "failure_code": "unsupported_external_channel",
+        "error": (
+            "No native dispatcher is configured for channel "
+            f"{channel_value}"
+        ),
+        "retryable": False,
     }
-    route_context.update({
-        'failure_code': 'unsupported_external_channel',
-        'error': f'No native dispatcher is configured for channel {channel_value}',
-        'retryable': False,
-    })
-    status_value, provider_status, sent_at = MessageStatus.failed, 'unsupported_external_channel', None
-    return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
+    return _handle_dispatch_result(
+        db,
+        message=message,
+        ticket=ticket,
+        status_value=MessageStatus.failed,
+        provider_status="unsupported_external_channel",
+        sent_at=None,
+        route_context=route_context,
+    )
 
 
-def dispatch_pending_messages(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[TicketOutboundMessage]:
-    blocked = _external_dispatch_block_reason()
-    if blocked:
-        failure_code, reason = blocked
-        LOGGER.warning('external_outbound_dispatch_blocked_by_runtime_gate', extra={'event_payload': {'failure_code': failure_code, 'reason': reason, 'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch}})
-        return []
-    claimed = claim_pending_messages(db, limit=limit, worker_id=worker_id)
-    processed: list[TicketOutboundMessage] = []
-    for message in claimed:
-        process_outbound_message(db, message)
-        processed.append(message)
-        # Commit after each external dispatch attempt to reduce the window where a sent provider message
-        # could be retried after a process crash before a batch-level commit.
-        db.commit()
-    return processed
+# Compatibility name remains a thin delegate only. The transaction-boundary
+# module is the sole owner of claim/lease/process/commit loops.
+def dispatch_pending_messages(
+    db: Session,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+) -> list[TicketOutboundMessage]:
+    from .outbound_dispatch_transaction_boundary import (
+        dispatch_pending_messages as canonical_dispatch,
+    )
+
+    return canonical_dispatch(db, limit=limit, worker_id=worker_id)

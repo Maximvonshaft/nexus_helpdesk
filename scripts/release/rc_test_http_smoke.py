@@ -156,16 +156,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise RuntimeError("visitor message was not persisted")
 
-    _, admin_conversations = _request(
+    _, support_conversations = _request(
         base_url,
-        "/api/webchat/admin/conversations?limit=50",
+        "/api/support/conversations?view=all&channel=all&limit=100",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    if not isinstance(admin_conversations, list) or not any(
-        isinstance(item, dict) and item.get("conversation_id") == conversation_id
-        for item in admin_conversations
+    items = (
+        support_conversations.get("items")
+        if isinstance(support_conversations, dict)
+        else None
+    )
+    if not isinstance(items, list) or not any(
+        isinstance(item, dict)
+        and str(item.get("session_key") or "").endswith(f":{conversation_id}")
+        for item in items
     ):
-        raise RuntimeError("operator API cannot read the synthetic conversation")
+        raise RuntimeError(
+            "canonical operator API cannot read the synthetic conversation"
+        )
 
     summary = {
         "schema": "nexus.osr.rc-test-http-smoke.v2",

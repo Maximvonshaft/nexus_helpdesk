@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any, Iterable
 
-_PATCHED = False
+from sqlalchemy import text, update
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -11,14 +13,113 @@ def _exception_reason(exc: Exception) -> str:
     return f"Unhandled background job exception: {type(exc).__name__}"
 
 
-def _recover_unhandled_background_job_exception(db: Any, *, job_id: int, exc: Exception):
+def _is_sqlalchemy_session(db: Any) -> bool:
+    return hasattr(db, "execute") and getattr(db, "bind", None) is not None
+
+
+def _claim_token(worker_id: str | None) -> str:
+    prefix = (worker_id or "job-worker").strip() or "job-worker"
+    return f"{prefix[:80]}:{uuid.uuid4().hex}"
+
+
+def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
+    """Renew only the attempt that still owns the processing row."""
+    if not _is_sqlalchemy_session(db):
+        return True
+
     from . import background_jobs
 
-    job = db.query(background_jobs.BackgroundJob).filter(background_jobs.BackgroundJob.id == job_id).first()
+    now = background_jobs.utc_now()
+    result = db.execute(
+        update(background_jobs.BackgroundJob)
+        .where(
+            background_jobs.BackgroundJob.id == job_id,
+            background_jobs.BackgroundJob.status == background_jobs.JobStatus.processing,
+            background_jobs.BackgroundJob.locked_by == lease_token,
+        )
+        .values(locked_at=now, updated_at=now)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        LOGGER.warning(
+            "background_job_lease_refresh_rejected",
+            extra={"event_payload": {"job_id": job_id}},
+        )
+        return False
+    db.commit()
+    return True
+
+
+def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
+    """Read the durable owner without flushing a possibly terminal ORM object."""
+    if not _is_sqlalchemy_session(db):
+        return True
+
+    from . import background_jobs
+
+    # Read through an independent connection. The worker Session may already
+    # hold uncommitted terminal ORM changes (including clearing ``locked_by``),
+    # while the committed row must still prove that this attempt owns the lease.
+    # An independent connection also observes a concurrent lease transfer and
+    # therefore preserves fencing across PostgreSQL and SQLite test databases.
+    bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
+    if bind is None:
+        return False
+    engine = getattr(bind, "engine", bind)
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT locked_by, status "
+                "FROM background_jobs WHERE id = :job_id"
+            ),
+            {"job_id": job_id},
+        ).first()
+    if row is None:
+        return False
+    locked_by = row[0]
+    status = row[1]
+    status_value = status.value if hasattr(status, "value") else str(status)
+    return (
+        locked_by == lease_token
+        and status_value == background_jobs.JobStatus.processing.value
+    )
+
+
+def _recover_unhandled_background_job_exception(
+    db: Any,
+    *,
+    job_id: int,
+    lease_token: str,
+    exc: Exception,
+):
+    from . import background_jobs
+
+    if not _owns_job_lease(db, job_id=job_id, lease_token=lease_token):
+        LOGGER.warning(
+            "background_job_stale_exception_result_rejected",
+            extra={
+                "event_payload": {
+                    "job_id": job_id,
+                    "error_type": type(exc).__name__,
+                }
+            },
+        )
+        return None
+
+    job = (
+        db.query(background_jobs.BackgroundJob)
+        .filter(background_jobs.BackgroundJob.id == job_id)
+        .first()
+    )
     if job is None:
         LOGGER.warning(
             "background_job_exception_recovery_missing_job",
-            extra={"event_payload": {"job_id": job_id, "error_type": type(exc).__name__}},
+            extra={
+                "event_payload": {
+                    "job_id": job_id,
+                    "error_type": type(exc).__name__,
+                }
+            },
         )
         return None
 
@@ -32,14 +133,24 @@ def _recover_unhandled_background_job_exception(db: Any, *, job_id: int, exc: Ex
                 "queue_name": getattr(job, "queue_name", None),
                 "error_type": type(exc).__name__,
                 "attempt_count": getattr(job, "attempt_count", None),
-                "next_status": job.status.value if hasattr(job.status, "value") else str(job.status),
+                "next_status": (
+                    job.status.value
+                    if hasattr(job.status, "value")
+                    else str(job.status)
+                ),
             }
         },
     )
     return job
 
 
-def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *, sync_only: bool = False) -> list[Any]:
+def _process_claimed_jobs_with_attempt_boundary(
+    db: Any,
+    jobs: Iterable[Any],
+    *,
+    lease_token: str,
+    sync_only: bool = False,
+) -> list[Any]:
     from . import background_jobs
 
     processed: list[Any] = []
@@ -47,12 +158,30 @@ def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *,
         if sync_only and job.job_type != background_jobs.EXTERNAL_CHANNEL_SYNC_JOB:
             continue
         job_id = job.id
+        if not _refresh_job_lease(db, job_id=job_id, lease_token=lease_token):
+            continue
         try:
             background_jobs.process_background_job(db, job)
+            if not _owns_job_lease(
+                db,
+                job_id=job_id,
+                lease_token=lease_token,
+            ):
+                db.rollback()
+                LOGGER.warning(
+                    "background_job_stale_completion_rejected",
+                    extra={"event_payload": {"job_id": job_id}},
+                )
+                continue
             db.commit()
         except Exception as exc:
             db.rollback()
-            recovered = _recover_unhandled_background_job_exception(db, job_id=job_id, exc=exc)
+            recovered = _recover_unhandled_background_job_exception(
+                db,
+                job_id=job_id,
+                lease_token=lease_token,
+                exc=exc,
+            )
             if recovered is not None:
                 db.commit()
                 processed.append(recovered)
@@ -61,63 +190,93 @@ def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *,
     return processed
 
 
-def _dispatch_pending_background_jobs_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None) -> list[Any]:
+def dispatch_pending_background_jobs(
+    db: Any,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+) -> list[Any]:
+    """Dispatch only the queues owned by the canonical background Worker."""
     from . import background_jobs
 
-    if background_jobs.settings.external_channel_sync_enabled:
-        background_jobs.enqueue_stale_external_channel_sync_jobs(db, limit=background_jobs.settings.external_channel_sync_batch_size)
-        db.commit()
     if background_jobs.settings.email_mailbox_sync_enabled:
         from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
+
         enqueue_due_email_mailbox_sync_jobs(
             db,
-            interval_seconds=background_jobs.settings.email_mailbox_sync_interval_seconds,
+            interval_seconds=(
+                background_jobs.settings.email_mailbox_sync_interval_seconds
+            ),
             limit=background_jobs.settings.email_mailbox_sync_batch_size,
         )
         db.commit()
+    lease_token = _claim_token(worker_id)
     claimed = background_jobs.claim_pending_jobs(
         db,
         limit=limit,
-        worker_id=worker_id,
+        worker_id=lease_token,
         job_types=[
             background_jobs.AUTO_REPLY_JOB,
             background_jobs.ATTACHMENT_PERSIST_JOB,
-            background_jobs.WEBCHAT_AI_REPLY_JOB,
-            background_jobs.WEBCHAT_HANDOFF_SNAPSHOT_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
             background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,
             background_jobs.EMAIL_MAILBOX_SYNC_JOB,
         ],
     )
-    return _process_claimed_jobs_with_attempt_boundary(db, claimed)
+    return _process_claimed_jobs_with_attempt_boundary(
+        db,
+        claimed,
+        lease_token=lease_token,
+    )
 
 
-def _dispatch_pending_sync_jobs_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None) -> list[Any]:
+def dispatch_pending_sync_jobs(
+    db: Any,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+) -> list[Any]:
     from . import background_jobs
 
     if background_jobs.settings.external_channel_sync_enabled:
-        background_jobs.enqueue_stale_external_channel_sync_jobs(db, limit=background_jobs.settings.external_channel_sync_batch_size)
+        background_jobs.enqueue_stale_external_channel_sync_jobs(
+            db,
+            limit=background_jobs.settings.external_channel_sync_batch_size,
+        )
         db.commit()
-    claimed = background_jobs.claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[background_jobs.EXTERNAL_CHANNEL_SYNC_JOB])
-    return _process_claimed_jobs_with_attempt_boundary(db, claimed, sync_only=True)
+    lease_token = _claim_token(worker_id)
+    claimed = background_jobs.claim_pending_jobs(
+        db,
+        limit=limit,
+        worker_id=lease_token,
+        job_types=[background_jobs.EXTERNAL_CHANNEL_SYNC_JOB],
+    )
+    return _process_claimed_jobs_with_attempt_boundary(
+        db,
+        claimed,
+        lease_token=lease_token,
+        sync_only=True,
+    )
 
 
-def _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None) -> list[Any]:
+def dispatch_pending_webchat_ai_reply_jobs(
+    db: Any,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+) -> list[Any]:
     from . import background_jobs
 
-    claimed = background_jobs.claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[background_jobs.WEBCHAT_AI_REPLY_JOB])
-    return _process_claimed_jobs_with_attempt_boundary(db, claimed)
-
-
-def apply_background_job_transaction_boundary_patch() -> None:
-    global _PATCHED
-    if _PATCHED:
-        return
-
-    from . import background_jobs
-
-    background_jobs.dispatch_pending_background_jobs = _dispatch_pending_background_jobs_with_attempt_boundary
-    background_jobs.dispatch_pending_sync_jobs = _dispatch_pending_sync_jobs_with_attempt_boundary
-    background_jobs.dispatch_pending_webchat_ai_reply_jobs = _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary
-    _PATCHED = True
+    lease_token = _claim_token(worker_id)
+    claimed = background_jobs.claim_pending_jobs(
+        db,
+        limit=limit,
+        worker_id=lease_token,
+        job_types=[background_jobs.WEBCHAT_AI_REPLY_JOB],
+    )
+    return _process_claimed_jobs_with_attempt_boundary(
+        db,
+        claimed,
+        lease_token=lease_token,
+    )

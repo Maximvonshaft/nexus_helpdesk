@@ -16,7 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.api.webchat import _hash_token, _validate_public_conversation_token  # noqa: E402
+from app.api.webchat_public import (  # noqa: E402
+    hash_webchat_visitor_token,
+    validate_webchat_visitor_token,
+)
 from app.services.webchat_performance import list_public_messages_throttled  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 
@@ -68,7 +71,7 @@ class FakeConversation:
         self.status = "open"
         self.last_seen_at = last_seen_at
         self.updated_at = last_seen_at
-        self.visitor_token_hash = _hash_token("good-token")
+        self.visitor_token_hash = hash_webchat_visitor_token("good-token")
         self.visitor_token_expires_at = utc_now() + timedelta(days=1)
 
 
@@ -101,6 +104,14 @@ class FakeDB:
 
     def flush(self):
         self.flush_count += 1
+
+
+@pytest.fixture(autouse=True)
+def fake_sql_predicates(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.webchat_performance.or_",
+        lambda *_clauses: FakeColumn(),
+    )
 
 
 def test_repeated_polls_do_not_touch_last_seen_within_interval(monkeypatch):
@@ -178,6 +189,6 @@ def test_token_mismatch_still_fails():
     conversation = FakeConversation(last_seen_at=utc_now())
 
     with pytest.raises(HTTPException) as exc:
-        _validate_public_conversation_token(conversation, "wrong-token")
+        validate_webchat_visitor_token(conversation, "wrong-token")
 
     assert exc.value.status_code == 403

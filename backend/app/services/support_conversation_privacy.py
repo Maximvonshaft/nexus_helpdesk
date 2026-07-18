@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .nexus_osr.audit_sanitizer import sanitize_audit_payload
 from .tracking_fact_schema import safe_tracking_reference
 
 _EMAIL_RE = re.compile(r"^([^@\s])[^@\s]*@([^@\s]+)$", re.IGNORECASE)
@@ -32,19 +31,6 @@ def mask_support_contact(value: Any) -> str | None:
     if len(digits) >= 4:
         return f"phone ending {digits[-2:]}"
     return "contact configured"
-
-
-def safe_support_message_preview(value: Any, *, limit: int = 160) -> str | None:
-    text = " ".join(str(value or "").strip().split())
-    if not text:
-        return None
-    sanitized = sanitize_audit_payload({"customer_claim_summary": text})
-    if not isinstance(sanitized, dict):
-        return "[redacted]"
-    preview = sanitized.get("customer_claim_summary")
-    if not isinstance(preview, str):
-        return "[redacted]"
-    return preview[: max(1, min(int(limit), 240))]
 
 
 def safe_support_tracking_reference(value: Any) -> str | None:

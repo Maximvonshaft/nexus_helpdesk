@@ -11,8 +11,9 @@ const workspacePage = read('src/features/operator-workspace/OperatorWorkspacePag
 const workspaceQueue = read('src/features/operator-workspace/OperatorWorkspaceQueue.tsx')
 const workspaceCase = read('src/features/operator-workspace/OperatorWorkspaceCase.tsx')
 const workspaceConversation = read('src/features/operator-workspace/OperatorWorkspaceConversation.tsx')
+const workspaceActions = read('src/features/operator-workspace/OperatorWorkspaceActions.tsx')
 const workspaceState = read('src/features/operator-workspace/operatorWorkspaceState.ts')
-const workspace = [workspacePage, workspaceQueue, workspaceCase, workspaceConversation, workspaceState].join('\n')
+const workspace = [workspacePage, workspaceQueue, workspaceCase, workspaceConversation, workspaceActions, workspaceState].join('\n')
 const workspaceApi = read('src/lib/operatorWorkspaceApi.ts')
 const workspacePresentation = read('src/lib/operatorWorkspacePresentation.ts')
 const operationalPresentation = read('src/domain/operationalPresentation.ts')
@@ -40,11 +41,11 @@ test('source state and ownership never claim business success', () => {
 test('controlled actions distinguish request acceptance from verified outcome', () => {
   assert.match(workspacePresentation, /outcomePresentation/)
   for (const state of ['queued', 'submitted', 'operational_completed', 'business_result_confirmed']) assert.match(operationalPresentation, new RegExp(state))
-  assert.match(workspacePage, /处理编号/)
-  assert.match(workspacePage, /可以申请取消|当前不可取消/)
-  assert.match(workspacePage, /修改运单、电话或原因后需重新检查/)
+  assert.match(workspaceActions, /处理编号/)
+  assert.match(workspaceActions, /可以申请取消|当前不可取消/)
+  assert.match(workspaceActions, /修改运单、电话或原因后需重新检查/)
   assert.match(operationalPresentation, /请求已排队/)
-  assert.doesNotMatch(workspacePage, /Job #|技术追踪标识|预检不是取消完成/)
+  assert.doesNotMatch(workspaceActions, /Job #|技术追踪标识|预检不是取消完成/)
 })
 
 test('runtime header cannot show normal while loading, unavailable, or not ok', () => {

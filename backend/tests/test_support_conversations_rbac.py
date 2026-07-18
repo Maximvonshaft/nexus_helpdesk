@@ -147,7 +147,7 @@ def _conversation(
     return ticket, conversation
 
 
-def test_agent_support_scope_blocks_other_team_list_detail_metrics_and_state(api_context):
+def test_agent_support_scope_blocks_other_team_list_resolve_metrics_and_state(api_context):
     db, client, state = api_context
     team_a = _team(db, code="AA")
     team_b = _team(db, code="BB")
@@ -161,13 +161,14 @@ def test_agent_support_scope_blocks_other_team_list_detail_metrics_and_state(api
     assert listing.status_code == 200
     assert [item["session_key"] for item in listing.json()["items"]] == [f"webchat:{own_conversation.public_id}"]
 
-    own_detail = client.get("/api/support/conversations/detail", params={"session_key": f"webchat:{own_conversation.public_id}"})
-    assert own_detail.status_code == 200
-    assert own_detail.json()["ticket"]["id"] == own_ticket.id
+    own_resolution = client.get("/api/support/conversations/resolve", params={"session_key": f"webchat:{own_conversation.public_id}"})
+    assert own_resolution.status_code == 200
+    assert own_resolution.json()["ticket"]["id"] == own_ticket.id
+    assert own_resolution.json()["conversation"]["pii_minimized"] is True
 
-    hidden_detail = client.get("/api/support/conversations/detail", params={"session_key": f"webchat:{hidden_conversation.public_id}"})
-    assert hidden_detail.status_code == 404
-    assert hidden_detail.json()["detail"] == "support_conversation_not_found"
+    hidden_resolution = client.get("/api/support/conversations/resolve", params={"session_key": f"webchat:{hidden_conversation.public_id}"})
+    assert hidden_resolution.status_code == 404
+    assert hidden_resolution.json()["detail"] == "support_conversation_not_found"
 
     metrics = client.get("/api/support/conversations/metrics")
     assert metrics.status_code == 200
@@ -217,6 +218,7 @@ def test_admin_retains_explicit_global_support_view(api_context):
         f"webchat:{second.public_id}",
     }
 
+
 def test_tenant_bound_admin_support_scope_is_not_global(api_context):
     db, client, state = api_context
     tenant_a = _tenant(db, key="tenant-a")
@@ -235,19 +237,19 @@ def test_tenant_bound_admin_support_scope_is_not_global(api_context):
         f"webchat:{conversation_a.public_id}"
     ]
 
-    own_detail = client.get(
-        "/api/support/conversations/detail",
+    own_resolution = client.get(
+        "/api/support/conversations/resolve",
         params={"session_key": f"webchat:{conversation_a.public_id}"},
     )
-    assert own_detail.status_code == 200
-    assert own_detail.json()["ticket"]["id"] == ticket_a.id
+    assert own_resolution.status_code == 200
+    assert own_resolution.json()["ticket"]["id"] == ticket_a.id
 
-    hidden_detail = client.get(
-        "/api/support/conversations/detail",
+    hidden_resolution = client.get(
+        "/api/support/conversations/resolve",
         params={"session_key": f"webchat:{conversation_b.public_id}"},
     )
-    assert hidden_detail.status_code == 404
-    assert hidden_detail.json()["detail"] == "support_conversation_not_found"
+    assert hidden_resolution.status_code == 404
+    assert hidden_resolution.json()["detail"] == "support_conversation_not_found"
 
     metrics = client.get("/api/support/conversations/metrics")
     assert metrics.status_code == 200
