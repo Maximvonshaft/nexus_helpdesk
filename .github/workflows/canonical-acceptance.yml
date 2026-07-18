@@ -33,9 +33,10 @@ jobs:
           from pathlib import Path
           path = Path("scripts/maintenance/backend_convergence_patch.py")
           source = path.read_text(encoding="utf-8")
+
           start = source.index("# Worker business-health timestamps")
           end = source.index("# Healthy single-writer local storage")
-          corrected = '''# Worker business-health timestamps are normalized at the authority boundary.
+          queue_patch = '''# Worker business-health timestamps are normalized at the authority boundary.
           replace_once(
               "backend/app/services/queue_health.py",
               "from ..utils.time import utc_now\\n",
@@ -48,7 +49,19 @@ jobs:
           )
 
           '''
-          path.write_text(source[:start] + corrected + source[end:], encoding="utf-8")
+          source = source[:start] + queue_patch + source[end:]
+
+          start = source.index("# Healthy single-writer local storage")
+          end = source.index("# Dedicated WebChat AI queue")
+          storage_patch = '''# Healthy single-writer local storage is a measured NO_CHANGE state.
+          replace_once(
+              "scripts/qualification/infrastructure_decision.py",
+              '''    if storage is None:\n        object_reasons.append("storage_baseline_missing")\n    if storage_backend == "s3" and storage_status == "ok":\n        object_decision = "NO_CHANGE"\n        object_reasons.append("object_storage_already_authoritative")\n    elif storage is not None and (\n        multi_writer_required is True\n        or rpo_rto_met is False\n        or capacity_breached is True\n    ):\n        object_decision = "CONSIDER_ADR"\n        object_reasons.append("local_storage_boundary_confirmed")\n    else:\n        object_decision = "CONDITIONAL_HOLD"\n        if not object_reasons:\n            object_reasons.append("pilot_local_storage_boundary_not_exceeded")\n''',
+              '''    if storage is None:\n        object_reasons.append("storage_baseline_missing")\n    if storage_backend == "s3" and storage_status == "ok":\n        object_decision = "NO_CHANGE"\n        object_reasons.append("object_storage_already_authoritative")\n    elif storage is not None and (\n        multi_writer_required is True\n        or rpo_rto_met is False\n        or capacity_breached is True\n    ):\n        object_decision = "CONSIDER_ADR"\n        object_reasons.append("local_storage_boundary_confirmed")\n    elif storage is not None:\n        object_decision = "NO_CHANGE"\n        object_reasons.append("pilot_local_storage_boundary_not_exceeded")\n    else:\n        object_decision = "BLOCKED"\n''',
+          )
+
+          '''
+          path.write_text(source[:start] + storage_patch + source[end:], encoding="utf-8")
           PY
           python scripts/maintenance/backend_convergence_patch.py 2>&1 | tee /tmp/backend-convergence-patch.log
       - name: Upload patch diagnostics
