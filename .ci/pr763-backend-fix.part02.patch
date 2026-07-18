@@ -1,0 +1,180 @@
++    assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' not in script
++    assert 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' not in script
+ 
+ 
+ def test_api_model_uses_field_serializer_not_json_encoders():
+diff --git a/backend/tests/test_round27_frontend_hardening.py b/backend/tests/test_round27_frontend_hardening.py
+index 0ea0801..032c4b5 100644
+--- a/backend/tests/test_round27_frontend_hardening.py
++++ b/backend/tests/test_round27_frontend_hardening.py
+@@ -1,3 +1,4 @@
++import re
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+@@ -126,13 +127,11 @@ def test_webchat_governance_hardening_invariants():
+     main = (ROOT / "app" / "main.py").read_text()
+ 
+     assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT" in public_api
+-    assert (
+-        "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production"
+-        in settings
+-    )
++    assert '"WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in "' in settings
++    assert '"the production Web process"' in settings
+     assert "_RATE_BUCKETS" not in service
+     assert "_enforce_rate_limit" not in service
+-    assert "app.mount('/static/webchat'" in main
++    assert re.search(r'app\.mount\(\s*[\"\']/static/webchat[\"\']', main)
+     assert "NEXUSDESK ROUND B WEBCHAT STATIC HOTFIX" not in main
+     assert "visitor_token: state.visitorToken" not in widget
+     assert "X-Webchat-Visitor-Token" in widget
+diff --git a/backend/tests/test_storage_readiness.py b/backend/tests/test_storage_readiness.py
+index 34539f7..55d6922 100644
+--- a/backend/tests/test_storage_readiness.py
++++ b/backend/tests/test_storage_readiness.py
+@@ -1,5 +1,8 @@
+ from __future__ import annotations
+ 
++import json
++from datetime import datetime, timezone
++
+ from types import SimpleNamespace
+ 
+ from app.services.storage_readiness import check_storage_readiness
+@@ -15,6 +18,22 @@ def _codes(issues) -> set[str]:
+     return {issue.code for issue in issues}
+ 
+ 
++def _write_marker(path):
++    path.write_text(
++        json.dumps(
++            {
++                "schema": "nexus.local-storage-backup.v1",
++                "completed_at": datetime.now(timezone.utc).isoformat(),
++                "file_count": 0,
++                "total_bytes": 0,
++                "manifest_sha256": "0" * 64,
++                "source_matches_backup": True,
++            }
++        ),
++        encoding="utf-8",
++    )
++
++
+ def test_s3_storage_readiness_is_ok(tmp_path, monkeypatch):
+     monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
+     result = check_storage_readiness(_settings(tmp_path, backend="s3"))
+@@ -38,7 +57,8 @@ def test_local_storage_readiness_warns_when_backup_is_not_configured(tmp_path, m
+     assert result.status == "warning"
+     assert _codes(result.warnings) == {
+         "local_storage_backend_active",
+-        "local_storage_backup_not_configured",
++        "local_storage_backup_path_not_configured",
++        "local_storage_backup_marker_not_configured",
+     }
+     assert not result.errors
+ 
+@@ -55,7 +75,10 @@ def test_local_storage_readiness_allows_existing_backup_path_with_warning(tmp_pa
+ 
+     assert result.ok is True
+     assert result.status == "warning"
+-    assert _codes(result.warnings) == {"local_storage_backend_active"}
++    assert _codes(result.warnings) == {
++        "local_storage_backend_active",
++        "local_storage_backup_marker_not_configured",
++    }
+     assert not result.errors
+ 
+ 
+@@ -65,8 +88,10 @@ def test_local_storage_readiness_is_ok_when_backup_is_verified_and_acknowledged(
+     monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
+     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_REQUIRED", "true")
+     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_PATH", str(backup_path))
++    marker_path = tmp_path / "backup-marker.json"
++    _write_marker(marker_path)
+     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_ACKNOWLEDGED", "true")
+-    monkeypatch.delenv("LOCAL_STORAGE_BACKUP_MARKER_PATH", raising=False)
++    monkeypatch.setenv("LOCAL_STORAGE_BACKUP_MARKER_PATH", str(marker_path))
+ 
+     result = check_storage_readiness(_settings(tmp_path, backend="local"))
+ 
+@@ -76,7 +101,7 @@ def test_local_storage_readiness_is_ok_when_backup_is_verified_and_acknowledged(
+     assert not result.errors
+ 
+ 
+-def test_local_storage_readiness_warns_when_backup_path_is_upload_root(tmp_path, monkeypatch):
++def test_local_storage_readiness_errors_when_backup_path_is_upload_root(tmp_path, monkeypatch):
+     settings = _settings(tmp_path, backend="local")
+     monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
+     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_REQUIRED", "true")
+@@ -85,10 +110,9 @@ def test_local_storage_readiness_warns_when_backup_path_is_upload_root(tmp_path,
+ 
+     result = check_storage_readiness(settings)
+ 
+-    assert result.ok is True
+-    assert result.status == "warning"
+-    assert "local_storage_backup_path_same_as_upload_root" in _codes(result.warnings)
+-    assert not result.errors
++    assert result.ok is False
++    assert result.status == "error"
++    assert "local_storage_backup_path_same_as_upload_root" in _codes(result.errors)
+ 
+ 
+ def test_local_storage_readiness_errors_when_remote_storage_is_required(tmp_path, monkeypatch):
+diff --git a/backend/tests/test_webchat_ws_static_contracts.py b/backend/tests/test_webchat_ws_static_contracts.py
+index 13d0973..82cc48e 100644
+--- a/backend/tests/test_webchat_ws_static_contracts.py
++++ b/backend/tests/test_webchat_ws_static_contracts.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import os
++import re
+ from pathlib import Path
+ 
+ import pytest
+@@ -153,8 +154,11 @@ def test_webchat_static_assets_force_cache_revalidation():
+     main = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
+     demo = (ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html").read_text(encoding="utf-8")
+ 
+-    assert "request.url.path.startswith('/webchat/')" in main
+-    assert "request.url.path.startswith('/static/webchat/')" in main
++    assert 'request.url.path.startswith("/webchat/")' in main
++    assert re.search(
++        r'request\.url\.path\.startswith\(\s*"/static/webchat/"\s*\)',
++        main,
++    )
+     assert "no-cache, max-age=0, must-revalidate" in main
+     assert "/webchat/widget.js?v=webchat-session-recovery-v1" in demo
+     assert "nexus-widget-consolidated-20260706" not in demo
+diff --git a/backend/tests/test_worker_queue_ownership.py b/backend/tests/test_worker_queue_ownership.py
+index 3a0d829..22d3213 100644
+--- a/backend/tests/test_worker_queue_ownership.py
++++ b/backend/tests/test_worker_queue_ownership.py
+@@ -44,7 +44,7 @@ def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
+     runner = WORKER_RUNNER.read_text(encoding="utf-8")
+     assert "dispatch_pending_webchat_ai_reply_jobs" in runner
+     assert "dispatch_pending_webchat_handoff_snapshot_jobs" in runner
+-    assert 'if queue in {"all", "webchat-ai"}' in runner
++    assert 'if queue == "webchat-ai"' in runner
+     assert 'if queue in {"all", "handoff-snapshot"}' in runner
+ 
+ 
+diff --git a/backend/tests/test_worker_webchat_ai_reconciler_watchdog.py b/backend/tests/test_worker_webchat_ai_reconciler_watchdog.py
+index b4d2947..597a211 100644
+--- a/backend/tests/test_worker_webchat_ai_reconciler_watchdog.py
++++ b/backend/tests/test_worker_webchat_ai_reconciler_watchdog.py
+@@ -73,22 +73,51 @@ def test_webchat_ai_reconciler_watchdog_exception_rolls_back_and_does_not_raise(
+     assert fake_db.closed is True
+ 
+ 
+-def test_webchat_ai_reconciler_watchdog_only_worker_main_by_default(monkeypatch):
++def test_webchat_ai_reconciler_runs_from_dedicated_queue_when_enabled(monkeypatch):
+     run_worker = _load_run_worker_module()
++    calls = []
++
++    class FakeContext:
++        def __enter__(self):
++            return object()
++
