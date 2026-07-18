@@ -189,6 +189,7 @@ def dispatch_pending_background_jobs(
     limit: int | None = None,
     worker_id: str | None = None,
 ) -> list[Any]:
+    """Dispatch only the queues owned by the canonical background Worker."""
     from . import background_jobs
 
     if background_jobs.settings.external_channel_sync_enabled:
@@ -216,8 +217,6 @@ def dispatch_pending_background_jobs(
         job_types=[
             background_jobs.AUTO_REPLY_JOB,
             background_jobs.ATTACHMENT_PERSIST_JOB,
-            background_jobs.WEBCHAT_AI_REPLY_JOB,
-            background_jobs.WEBCHAT_HANDOFF_SNAPSHOT_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
             background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,
