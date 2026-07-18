@@ -317,7 +317,7 @@ def run_queue_once(worker_id: str, queue: str) -> int:
         processed += _run_background(worker_id)
     if queue in {"all", "handoff-snapshot"}:
         processed += _run_handoff_snapshot(worker_id)
-    if queue in {"all", "webchat-ai"}:
+    if queue == "webchat-ai":
         processed += _run_webchat_ai(worker_id)
     _record_queue_depth_snapshot_if_due(worker_id, queue=queue)
     if processed > 0 or queue != "webchat-ai":

@@ -16,13 +16,14 @@ Never place a credential, token hash, private endpoint inventory, customer ident
 
 ## Canonical secret boundary
 
-The controlled topology mounts the live-voice credential only into `app-controlled`:
+The default controlled topology keeps `WEBCHAT_VOICE_ENABLED=false` and carries no live-voice credential. After separate production authorization, use a bounded deployment override that mounts the credential only into `app-controlled`:
 
 ```text
-LIVE_VOICE_TOKEN_HOST_PATH -> /run/nexus/live_voice_token:ro
+LIVE_VOICE_UPSTREAM_TOKEN_HOST_PATH -> /run/nexus/live_voice_token:ro
+LIVE_VOICE_UPSTREAM_TOKEN_FILE=/run/nexus/live_voice_token
 ```
 
-The AI, outbound, background, handoff and migration services must not receive this credential.
+The AI, outbound, background, handoff and migration services must not receive this credential, and the credential override must not be merged into the disabled base topology.
 
 The credential file must:
 

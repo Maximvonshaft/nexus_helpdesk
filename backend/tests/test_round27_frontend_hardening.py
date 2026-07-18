@@ -126,13 +126,12 @@ def test_webchat_governance_hardening_invariants():
     main = (ROOT / "app" / "main.py").read_text()
 
     assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT" in public_api
-    assert (
-        "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production"
-        in settings
-    )
+    assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in " in settings
+    assert '"production"' in settings
     assert "_RATE_BUCKETS" not in service
     assert "_enforce_rate_limit" not in service
-    assert "app.mount('/static/webchat'" in main
+    assert '"/static/webchat"' in main
+    assert "StaticFiles(directory=str(webchat_static_dir)" in main
     assert "NEXUSDESK ROUND B WEBCHAT STATIC HOTFIX" not in main
     assert "visitor_token: state.visitorToken" not in widget
     assert "X-Webchat-Visitor-Token" in widget

@@ -325,7 +325,7 @@ def test_settings_rejects_legacy_frontend_fallback_in_production(monkeypatch):
 
     monkeypatch.setattr(Path, 'exists', fake_exists)
 
-    with pytest.raises(RuntimeError, match='frontend_dist/index.html must exist in production'):
+    with pytest.raises(RuntimeError, match='frontend_dist/index.html must exist in the production Web process'):
         Settings()
 
 
@@ -338,6 +338,8 @@ def test_worker_skips_outbound_dispatch_when_disabled(monkeypatch):
     monkeypatch.setattr(run_worker, 'db_context', dummy_db_context)
     monkeypatch.setattr(run_worker, 'dispatch_pending_messages', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('outbound dispatch should not run')))
     monkeypatch.setattr(run_worker, 'dispatch_pending_background_jobs', lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, '_run_webchat_ai', lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, '_record_queue_depth_snapshot_if_due', lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, 'record_queue_snapshot', lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, 'record_worker_poll', lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, 'record_worker_result', lambda *args, **kwargs: None)
@@ -584,11 +586,11 @@ def test_build_source_release_creates_clean_reproducible_package(tmp_path):
     with zipfile.ZipFile(out) as zf:
         names = set(zf.namelist())
 
-    assert 'helpdesk_suite_lite/backend/helpdesk.db' not in names
-    assert 'helpdesk_suite_lite/backend/requirements.txt' in names
-    assert 'helpdesk_suite_lite/deploy/docker-compose.server.yml' in names
-    assert 'helpdesk_suite_lite/webapp/package-lock.json' in names
-    assert 'helpdesk_suite_lite/Dockerfile' in names
+    assert 'nexus/backend/helpdesk.db' not in names
+    assert 'nexus/backend/requirements.txt' in names
+    assert 'nexus/deploy/docker-compose.server.yml' in names
+    assert 'nexus/webapp/package-lock.json' in names
+    assert 'nexus/Dockerfile' in names
     assert all('__pycache__/' not in name for name in names)
     assert all(not name.endswith('.pyc') for name in names)
 
@@ -599,10 +601,13 @@ def test_requirements_include_prometheus_client():
 
 
 def test_compose_image_tags_are_aligned_to_current_release():
-    compose = (ROOT.parent / 'deploy' / 'docker-compose.server.yml').read_text()
-    assert '${IMAGE_TAG:-nexusdesk/helpdesk:server}' in compose
-    assert 'docker-compose.cloud.yml' not in compose
-    assert 'round26' not in compose
+    alias = (ROOT.parent / 'deploy' / 'docker-compose.server.yml').read_text()
+    canonical = (ROOT.parent / 'deploy' / 'docker-compose.controlled.yml').read_text()
+    assert 'include:' in alias
+    assert 'docker-compose.controlled.yml' in alias
+    assert 'CONTROLLED_IMAGE' in canonical
+    assert 'docker-compose.cloud.yml' not in alias
+    assert 'round26' not in alias
 
 
 def make_market(db_session, code='CH', name='Switzerland', country_code='CH'):
@@ -683,10 +688,12 @@ def test_security_headers_drop_inline_scripts_and_deny_framing():
     assert 'camera=()' in response.headers['permissions-policy']
 
 
-def test_source_release_script_defaults_to_current_release_and_includes_report():
+def test_source_release_script_defaults_to_current_canonical_release():
     script = (ROOT / 'scripts' / 'build_source_release.sh').read_text()
-    assert 'helpdesk_suite_lite_round20B_source_release.zip' in script or 'helpdesk_suite_lite_round27_source_release.zip' in script
-    assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' in script or 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' in script
+    assert 'nexus_canonical_source_release.zip' in script
+    assert 'PKGROOT="$TMPDIR/nexus"' in script
+    assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' not in script
+    assert 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' not in script
 
 
 def test_api_model_uses_field_serializer_not_json_encoders():

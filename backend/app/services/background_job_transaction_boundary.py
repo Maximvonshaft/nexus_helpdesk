@@ -137,6 +137,72 @@ def _recover_unhandled_background_job_exception(
     return job
 
 
+
+def _terminal_job_values(job: Any) -> dict[str, Any]:
+    """Capture the bounded mutable state produced by one job attempt."""
+    return {
+        "status": job.status,
+        "attempt_count": job.attempt_count,
+        "next_run_at": job.next_run_at,
+        "locked_at": job.locked_at,
+        "locked_by": job.locked_by,
+        "last_error": job.last_error,
+        "updated_at": job.updated_at,
+        "payload_json": job.payload_json,
+    }
+
+
+def _finalize_claimed_job(
+    db: Any,
+    *,
+    job: Any,
+    job_id: int,
+    lease_token: str,
+):
+    """Commit an attempt only while its durable processing lease is still owned.
+
+    Handlers mutate the ORM job into a terminal/retry state. For a real
+    SQLAlchemy session we expire that dirty object, flush the handler's other
+    writes, then apply the job transition with a conditional UPDATE against the
+    original processing lease. This prevents a stale worker from committing
+    either a success or retry transition after lease transfer.
+    """
+    if not _is_sqlalchemy_session(db):
+        if not _owns_job_lease(db, job_id=job_id, lease_token=lease_token):
+            return None
+        db.commit()
+        return job
+
+    from . import background_jobs
+
+    values = _terminal_job_values(job)
+    # Discard the job object's terminal mutations before flushing other handler
+    # writes. The terminal state is applied by the conditional lease update
+    # below, while the original ORM identity remains attached for callers.
+    db.expire(job)
+    db.flush()
+    result = db.execute(
+        update(background_jobs.BackgroundJob)
+        .where(
+            background_jobs.BackgroundJob.id == job_id,
+            background_jobs.BackgroundJob.status == background_jobs.JobStatus.processing,
+            background_jobs.BackgroundJob.locked_by == lease_token,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        LOGGER.warning(
+            "background_job_stale_completion_rejected",
+            extra={"event_payload": {"job_id": job_id}},
+        )
+        return None
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 def _process_claimed_jobs_with_attempt_boundary(
     db: Any,
     jobs: Iterable[Any],
@@ -155,18 +221,14 @@ def _process_claimed_jobs_with_attempt_boundary(
             continue
         try:
             background_jobs.process_background_job(db, job)
-            if not _owns_job_lease(
+            finalized = _finalize_claimed_job(
                 db,
+                job=job,
                 job_id=job_id,
                 lease_token=lease_token,
-            ):
-                db.rollback()
-                LOGGER.warning(
-                    "background_job_stale_completion_rejected",
-                    extra={"event_payload": {"job_id": job_id}},
-                )
+            )
+            if finalized is None:
                 continue
-            db.commit()
         except Exception as exc:
             db.rollback()
             recovered = _recover_unhandled_background_job_exception(
@@ -179,7 +241,7 @@ def _process_claimed_jobs_with_attempt_boundary(
                 db.commit()
                 processed.append(recovered)
             continue
-        processed.append(job)
+        processed.append(finalized)
     return processed
 
 

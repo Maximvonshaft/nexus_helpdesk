@@ -583,6 +583,8 @@ def process_webchat_ai_reply_job(
             reason_text=runtime_handoff_reason,
             recommended_agent_action=runtime_recommended_agent_action,
             trigger_message_id=visitor_message.id,
+            ai_turn_id=ai_turn_id,
+            preserve_ai_turn_id=ai_turn_id,
             requested_by_actor_type="ai_runtime",
         )
 

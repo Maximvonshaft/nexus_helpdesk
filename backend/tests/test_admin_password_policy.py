@@ -29,13 +29,13 @@ def test_admin_password_policy_rejects_weak_passwords(password: str) -> None:
         validate_admin_password_policy(password)
 
 
-def test_main_binds_admin_password_policy_to_admin_routes() -> None:
-    from app.main import admin_api
+def test_admin_api_compatibility_helper_delegates_to_canonical_policy() -> None:
+    from app.api import admin
 
     with pytest.raises(HTTPException) as exc:
-        admin_api._validate_password_length("password1234")
+        admin._validate_password_length("password1234")
 
     assert exc.value.status_code == 400
     assert "too common" in str(exc.value.detail).lower()
 
-    admin_api._validate_password_length("StrongPass!2026")
+    admin._validate_password_length("StrongPass!2026")

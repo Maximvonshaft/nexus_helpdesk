@@ -59,7 +59,7 @@ def test_healthy_baseline_produces_no_change():
     assert result["status"] == "evidence_complete"
     assert result["decisions"]["pgbouncer"]["decision"] == "NO_CHANGE"
     assert result["decisions"]["redis"]["decision"] == "NO_CHANGE"
-    assert result["decisions"]["object_storage"]["decision"] == "CONDITIONAL_HOLD"
+    assert result["decisions"]["object_storage"]["decision"] == "NO_CHANGE"
     assert result["decisions"]["additional_workers"]["decision"] == "NO_CHANGE"
 
 

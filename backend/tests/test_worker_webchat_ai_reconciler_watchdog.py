@@ -32,6 +32,14 @@ class FakeDB:
         self.closed = True
 
 
+class _NullContext:
+    def __enter__(self):
+        return object()
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 def test_webchat_ai_reconciler_watchdog_success_commits_and_closes(monkeypatch):
     run_worker = _load_run_worker_module()
     fake_db = FakeDB()
@@ -73,22 +81,31 @@ def test_webchat_ai_reconciler_watchdog_exception_rolls_back_and_does_not_raise(
     assert fake_db.closed is True
 
 
-def test_webchat_ai_reconciler_watchdog_only_worker_main_by_default(monkeypatch):
+def test_webchat_ai_reconciler_runs_only_from_webchat_ai_queue(monkeypatch):
     run_worker = _load_run_worker_module()
+    calls = []
+    monkeypatch.setattr(run_worker, "_run_outbound", lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, "_run_background", lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, "_run_handoff_snapshot", lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, "_run_webchat_ai", lambda worker_id: calls.append(worker_id) or 0)
+    monkeypatch.setattr(run_worker, "_record_queue_depth_snapshot_if_due", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "record_worker_poll", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "log_event", lambda *args, **kwargs: None)
 
-    monkeypatch.setattr(run_worker.settings, "webchat_ai_reconciler_enabled", True, raising=False)
-
-    assert run_worker._should_run_webchat_ai_reconciler("worker-main") is True
-    assert run_worker._should_run_webchat_ai_reconciler("worker-external_channel-sync") is False
-    assert run_worker._should_run_webchat_ai_reconciler("worker-anything-else") is False
+    run_worker.run_queue_once("worker-main", "background")
+    assert calls == []
+    run_worker.run_queue_once("worker-webchat-ai", "webchat-ai")
+    assert calls == ["worker-webchat-ai"]
 
 
 def test_webchat_ai_reconciler_watchdog_can_be_disabled(monkeypatch):
     run_worker = _load_run_worker_module()
-
     monkeypatch.setattr(run_worker.settings, "webchat_ai_reconciler_enabled", False, raising=False)
-
-    assert run_worker._should_run_webchat_ai_reconciler("worker-main") is False
+    monkeypatch.setattr(run_worker, "dispatch_pending_webchat_ai_reply_jobs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, "db_context", lambda: _NullContext())
+    monkeypatch.setattr(run_worker, "record_worker_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "_run_webchat_ai_reconciler_watchdog", lambda worker_id: (_ for _ in ()).throw(AssertionError("watchdog must remain disabled")))
+    assert run_worker._run_webchat_ai("worker-webchat-ai") == 0
 
 
 def test_webchat_ai_reconciler_interval_is_clamped(monkeypatch):
@@ -103,14 +120,12 @@ def test_run_worker_main_uses_args_worker_id_without_locals_hack(monkeypatch):
     calls = []
 
     class Args:
-        worker_id = "worker-main"
+        worker_id = "worker-webchat-ai"
+        queue = "webchat-ai"
         once = True
 
     monkeypatch.setattr(run_worker.argparse.ArgumentParser, "parse_args", lambda self: Args())
-    monkeypatch.setattr(run_worker, "_webchat_ai_reconciler_interval_seconds", lambda: 30)
-    monkeypatch.setattr(run_worker, "_should_run_webchat_ai_reconciler", lambda worker_id: worker_id == "worker-main")
-    monkeypatch.setattr(run_worker, "_run_webchat_ai_reconciler_watchdog", lambda worker_id: calls.append(worker_id))
-    monkeypatch.setattr(run_worker, "run_once", lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, "run_queue_once", lambda worker_id, queue: calls.append((worker_id, queue)) or 0)
 
     assert run_worker.main() == 0
-    assert calls == ["worker-main"]
+    assert calls == [("worker-webchat-ai", "webchat-ai")]

@@ -81,7 +81,7 @@ Prepare `deploy/.env.controlled.local-postgres` from
 `deploy/.env.controlled.local-postgres.example`.
 The local overlay initializes one migration role and five long-running service
 roles through `deploy/postgres/init-controlled-roles.sh`. It does not duplicate
-App or Worker services.
+App or Worker services. The canonical long-running services are `app-controlled`, `worker-outbound-controlled`, `worker-background-controlled`, `worker-webchat-ai-controlled` and `worker-handoff-snapshot-controlled`.
 
 Do not copy `.env.prod*` or `.env.candidate.example`; those paths are bounded
 retirement tombstones.
@@ -126,6 +126,8 @@ Local database example uses the same preflight with:
 --env-file deploy/.env.controlled.local-postgres
 --expected-database-host postgres-controlled
 ```
+
+Before any controlled deployment is accepted, verify the metrics boundary: authenticated `/metrics` returns 200 and unauthenticated `/metrics` returns 401.
 
 The v2 preflight rejects:
 

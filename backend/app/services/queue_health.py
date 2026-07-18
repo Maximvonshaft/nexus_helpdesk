@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func
@@ -32,7 +32,19 @@ def _bounded_seconds(name: str, default: int, *, minimum: int, maximum: int) -> 
 def _age_ms(value, *, now) -> int | None:
     if value is None:
         return None
-    return max(0, int((now - value).total_seconds() * 1000))
+    # SQLite returns UTC timestamps without tzinfo while PostgreSQL returns
+    # aware values. Normalize both before calculating queue age.
+    normalized_value = (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
+    normalized_now = (
+        now.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None
+        else now.astimezone(timezone.utc)
+    )
+    return max(0, int((normalized_now - normalized_value).total_seconds() * 1000))
 
 
 def collect_queue_health(db: Session) -> dict[str, Any]:

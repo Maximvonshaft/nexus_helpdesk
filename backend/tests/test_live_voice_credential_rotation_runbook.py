@@ -26,11 +26,13 @@ def test_rotation_runbook_is_fail_closed_and_secret_safe():
     assert "curl -H 'Authorization" not in text
 
 
-def test_controlled_topology_limits_live_voice_token_to_application():
+def test_controlled_topology_excludes_live_voice_credentials_by_default():
     text = COMPOSE.read_text(encoding="utf-8")
-    assert text.count("LIVE_VOICE_TOKEN_HOST_PATH") == 1
-    app_start = text.index("  app-controlled:\n")
-    outbound_start = text.index("  worker-outbound-controlled:\n")
-    app_block = text[app_start:outbound_start]
-    assert "LIVE_VOICE_TOKEN_HOST_PATH" in app_block
-    assert "/run/nexus/live_voice_token:ro" in app_block
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "LIVE_VOICE_UPSTREAM_TOKEN_HOST_PATH" not in text
+    assert "LIVE_VOICE_UPSTREAM_TOKEN_FILE" not in text
+    assert "/run/nexus/live_voice_token" not in text
+    assert "use a bounded deployment override" in runbook
+    assert "only into `app-controlled`" in runbook
+    assert "must not be merged into the disabled base topology" in runbook

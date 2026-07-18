@@ -121,10 +121,19 @@ def evaluate(
     ):
         object_decision = "CONSIDER_ADR"
         object_reasons.append("local_storage_boundary_confirmed")
+    elif (
+        storage_backend == "local"
+        and storage_status == "ok"
+        and multi_writer_required is False
+        and rpo_rto_met is True
+        and capacity_breached is False
+    ):
+        object_decision = "NO_CHANGE"
+        object_reasons.append("pilot_local_storage_boundary_not_exceeded")
     else:
         object_decision = "CONDITIONAL_HOLD"
-        if not object_reasons:
-            object_reasons.append("pilot_local_storage_boundary_not_exceeded")
+        if storage is not None and not object_reasons:
+            object_reasons.append("storage_boundary_evidence_incomplete")
     decisions["object_storage"] = {
         "decision": object_decision,
         "reason_codes": sorted(set(object_reasons)),

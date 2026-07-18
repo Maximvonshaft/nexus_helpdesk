@@ -424,6 +424,7 @@ def request_webchat_handoff(
     recommended_agent_action: str | None = None,
     trigger_message_id: int | None = None,
     ai_turn_id: int | None = None,
+    preserve_ai_turn_id: int | None = None,
     requested_by_actor_type: str = "system",
     requested_by_user_id: int | None = None,
     note: str | None = None,
@@ -504,6 +505,7 @@ def request_webchat_handoff(
         conversation=conversation,
         actor_id=requested_by_user_id,
         reason_code="handoff_requested",
+        exclude_turn_id=preserve_ai_turn_id,
     )
     create_webchat_handoff_task(
         db,

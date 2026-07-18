@@ -3,7 +3,11 @@
 This is the sole operational sequence for accepting PR #763 or a later
 canonical candidate. `scripts/verify_repository.py` is the only final verifier.
 The qualification scripts it invokes are bounded subroutines, not alternative
-release authorities.
+release authorities. The exact sequence includes:
+
+- `scripts/qualification/exact_head_acceptance.py`;
+- `scripts/qualification/postgres_acceptance.py`;
+- `scripts/qualification/infrastructure_decision.py`.
 
 ## Safety boundary
 
@@ -320,7 +324,7 @@ packet.
 
 ## 8. Acceptance packet rules
 
-`acceptance-manifest.json` binds every required artifact by:
+`acceptance-manifest.json` uses schema `nexus.exact-head-acceptance-manifest.v1` and binds every required artifact by:
 
 - exact relative path;
 - expected Schema;

@@ -129,6 +129,8 @@ async def test_persisted_full_percent_without_explicit_mode_is_control(monkeypat
 
 @pytest.mark.asyncio
 async def test_full_canary_executes_once_and_returns_authoritative_result(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=100))
     adapter = _register_adapter()
@@ -214,6 +216,8 @@ async def test_kill_switch_precedes_invalid_lower_configuration(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shadow_executes_but_never_returns_candidate_authority(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
     db = _mock_db(_rule(canary_percent=100))
     adapter = _register_adapter()
@@ -271,6 +275,8 @@ async def test_malformed_fallback_configuration_fails_closed():
 
 @pytest.mark.asyncio
 async def test_unknown_output_contract_never_reaches_registered_adapter(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     rule = _rule(canary_percent=100)
     rule["output_contract"] = "nexus.unknown.contract"
@@ -287,6 +293,8 @@ async def test_unknown_output_contract_never_reaches_registered_adapter(monkeypa
 
 @pytest.mark.asyncio
 async def test_parse_reject_returns_no_customer_reply(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=100))
     adapter = _register_adapter(

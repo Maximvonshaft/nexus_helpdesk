@@ -109,7 +109,7 @@ def test_local_postgres_overlay_bootstraps_only_database_authority():
     compose = _read(LOCAL_DB)
     bootstrap = _read(ROOT / "deploy" / "postgres" / "init-controlled-roles.sh")
 
-    assert "postgres:16.14-alpine3.22@sha256:" in compose
+    assert "pgvector/pgvector:0.8.5-pg16@sha256:" in compose
     assert "init-controlled-roles.sh" in compose
     assert "controlled-postgres-data" in compose
     assert "NEXUS_DB_MIGRATION_USER" in bootstrap

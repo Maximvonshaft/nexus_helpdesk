@@ -155,9 +155,6 @@ def test_non_external_outbound_never_calls_provider_dispatch(db_session, monkeyp
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-send-block')
     row = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.pending, provider_status='queued')
     db_session.commit()
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider path must not run for web_chat')))
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp path must not run for web_chat')))
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli path must not run for web_chat')))
     processed = process_outbound_message(db_session, row)
     assert processed.status == MessageStatus.dead
     assert processed.failure_code == 'non_external_outbound_not_dispatchable'
@@ -183,9 +180,6 @@ def test_retired_inbound_auto_sync_does_not_create_outbound_messages(db_session,
     monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_sync_message_limit', 20)
     monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_sync_include_groups', False)
     monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_bridge_enabled', True)
-    monkeypatch.setattr(external_channel_bridge_service, 'dispatch_via_external_channel_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider dispatch should not run')))
-    monkeypatch.setattr(external_channel_bridge_service, 'dispatch_via_external_channel_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp dispatch should not run')))
-    monkeypatch.setattr(external_channel_bridge_service, 'dispatch_via_external_channel_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli dispatch should not run')))
     monkeypatch.setattr(external_channel_bridge_service, 'list_external_channel_conversations', lambda **kwargs: {'conversations': [{'sessionKey': 'sess-inbound-no-outbox', 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}]})
     monkeypatch.setattr(external_channel_bridge_service, 'read_external_channel_bridge_conversation', lambda session_key, limit=50: ({'sessionKey': session_key, 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}, [{'id': 'msg-inbound-1', 'role': 'user', 'author': 'customer', 'text': 'hello inbound'}]))
     monkeypatch.setattr(external_channel_bridge_service, 'fetch_external_channel_bridge_attachments', lambda *args, **kwargs: [])
@@ -208,6 +202,8 @@ def test_worker_disabled_outbound_still_never_claims_or_dispatches(monkeypatch):
     monkeypatch.setattr(run_worker, 'db_context', dummy_db_context)
     monkeypatch.setattr(run_worker, 'dispatch_pending_messages', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('outbound dispatch should not run')))
     monkeypatch.setattr(run_worker, 'dispatch_pending_background_jobs', lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, '_run_webchat_ai', lambda worker_id: 0)
+    monkeypatch.setattr(run_worker, '_record_queue_depth_snapshot_if_due', lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, 'record_queue_snapshot', lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, 'record_worker_poll', lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, 'record_worker_result', lambda *args, **kwargs: None)

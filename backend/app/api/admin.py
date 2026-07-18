@@ -15,6 +15,7 @@ from ..schemas import UserUpdate, PasswordResetRequest, ExternalChannelUnresolve
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
+from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
 from ..services.permissions import (
     ALL_CAPABILITIES,
     CAP_USER_MANAGE,
@@ -62,8 +63,11 @@ def _is_last_active_admin(db: Session, user_id: int) -> bool:
 
 
 def _validate_password_length(password: str) -> None:
-    if len(password) < 6:
-        raise HTTPException(status_code=400, detail='Password must be at least 6 characters')
+    """Compatibility helper delegating to the single password-policy authority."""
+    try:
+        validate_admin_password_policy(password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _ensure_user_uniqueness(db: Session, *, username: str, email: str | None, exclude_user_id: int | None = None) -> None:

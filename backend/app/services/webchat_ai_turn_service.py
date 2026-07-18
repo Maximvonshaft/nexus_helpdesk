@@ -556,6 +556,7 @@ def cancel_open_ai_turns_for_handoff(
     conversation: WebchatConversation,
     actor_id: int | None = None,
     reason_code: str = "handoff_ai_suspended",
+    exclude_turn_id: int | None = None,
 ) -> int:
     """Fail closed for queued/in-flight AI turns when a human handoff owns the session."""
 
@@ -568,6 +569,8 @@ def cancel_open_ai_turns_for_handoff(
     )
     cancelled = 0
     for turn in turns:
+        if exclude_turn_id is not None and turn.id == exclude_turn_id:
+            continue
         turn.status = "cancelled"
         turn.status_reason = reason_code
         turn.is_public_reply_allowed = False
@@ -593,8 +596,11 @@ def cancel_open_ai_turns_for_handoff(
         )
         record_webchat_ai_turn_metric("cancelled", _turn_duration_ms(turn))
         cancelled += 1
-    conversation.next_ai_turn_id = None
-    if cancelled or conversation.active_ai_turn_id:
+    if conversation.next_ai_turn_id != exclude_turn_id:
+        conversation.next_ai_turn_id = None
+    if conversation.active_ai_turn_id != exclude_turn_id and (
+        cancelled or conversation.active_ai_turn_id
+    ):
         _clear_active_snapshot(conversation)
     db.flush()
     return cancelled

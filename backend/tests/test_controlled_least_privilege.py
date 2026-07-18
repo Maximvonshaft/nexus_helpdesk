@@ -324,7 +324,8 @@ def test_background_worker_claims_only_its_owned_queue_types():
 
 def test_worker_runner_keeps_processed_counts_separate_from_queue_depth():
     runner = WORKER_RUNNER.read_text(encoding="utf-8")
-    assert 'if queue in {"all", "webchat-ai"}' in runner
+    assert 'if queue == "webchat-ai"' in runner
+    assert 'if queue in {"all", "webchat-ai"}' not in runner
     assert 'if queue in {"all", "handoff-snapshot"}' in runner
     assert "collect_queue_health" in runner
     assert "_record_queue_depth_snapshot_if_due" in runner
@@ -349,6 +350,6 @@ def test_process_role_authority_is_explicit_in_settings():
 
 def test_external_database_network_remains_reachable():
     text = COMPOSE.read_text(encoding="utf-8")
-    network = text.split("networks:", 1)[1].split("volumes:", 1)[0]
+    network = text.rsplit("\nnetworks:\n", 1)[1].split("\nvolumes:\n", 1)[0]
     assert "driver: bridge" in network
     assert "internal: true" not in network

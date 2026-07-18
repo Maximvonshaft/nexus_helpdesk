@@ -28,16 +28,19 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
     assert "prometheus-multiproc:/var/run/nexus-prometheus" in compose
     assert "find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete" in compose
     assert "--config /app/backend/gunicorn.conf.py" in compose
-    assert compose.count("prometheus-multiproc:/var/run/nexus-prometheus") == 1
+    assert compose.count("prometheus-multiproc:/var/run/nexus-prometheus") == 6
+    assert compose.count("\n  prometheus-multiproc:\n") == 1
     assert compose.count("PROMETHEUS_MULTIPROC_DIR:") == 2
     assert 'METRICS_ENABLED: "true"' in compose
-    assert "METRICS_TOKEN: ${METRICS_TOKEN:?set a dedicated metrics token}" in compose
-    assert compose.count("METRICS_ENABLED:") == 1
+    assert "METRICS_TOKEN: ${METRICS_TOKEN:?set dedicated metrics token}" in compose
+    assert compose.count("METRICS_ENABLED:") == 6
+    assert compose.count('METRICS_ENABLED: "true"') == 1
+    assert compose.count('METRICS_ENABLED: "false"') == 5
     assert sum(
         line.lstrip().startswith("METRICS_TOKEN:")
         for line in compose.splitlines()
     ) == 1
-    assert "METRICS_TOKEN=<dedicated-server-metrics-token-at-least-32-characters>" in env_example
+    assert "METRICS_TOKEN=<dedicated-metrics-token-at-least-32-characters>" in env_example
     assert "METRICS_ENABLED=" not in env_example
     assert "unauthenticated `/metrics` returns 401" in runbook
     assert "worker-handoff-snapshot-controlled" in runbook
