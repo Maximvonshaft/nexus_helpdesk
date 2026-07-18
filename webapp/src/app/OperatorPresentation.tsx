@@ -76,7 +76,12 @@ export function OperatorPageBoundary({
 
 export function OperatorLoadingState({ label, minHeight = 150 }: { label: string; minHeight?: number | string }) {
   return (
-    <Stack role="status" aria-live="polite" alignItems="center" justifyContent="center" spacing={1.5} sx={{ minHeight, p: 3 }}>
+    <Stack
+      role="status"
+      aria-live="polite"
+      spacing={1.5}
+      sx={{ alignItems: 'center', justifyContent: 'center', minHeight, p: 3 }}
+    >
       <CircularProgress size={28} />
       <Typography variant="subtitle2">{label}</Typography>
     </Stack>
@@ -103,7 +108,11 @@ export function OperatorEmptyState({
   minHeight?: number | string
 }) {
   return (
-    <Stack role="status" alignItems="center" justifyContent="center" spacing={0.75} sx={{ minHeight, p: 3, textAlign: 'center' }}>
+    <Stack
+      role="status"
+      spacing={0.75}
+      sx={{ alignItems: 'center', justifyContent: 'center', minHeight, p: 3, textAlign: 'center' }}
+    >
       <Typography variant="subtitle2">{title}</Typography>
       {description ? <Typography variant="body2" color="text.secondary">{description}</Typography> : null}
       {action ? <Box sx={{ pt: 0.75 }}>{action}</Box> : null}
@@ -177,7 +186,7 @@ export function OperatorSectionHeading({
   id?: string
 }) {
   return (
-    <Stack direction="row" spacing={2} alignItems="flex-start" justifyContent="space-between">
+    <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
       <Typography id={id} component="h2" variant="h3">{title}</Typography>
       {action}
     </Stack>
@@ -192,7 +201,7 @@ export function OperatorStatusLine({
   compact?: boolean
 }) {
   return (
-    <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: 'flex-start', minWidth: 0 }}>
       <Box
         aria-hidden="true"
         sx={{
@@ -209,7 +218,7 @@ export function OperatorStatusLine({
           {presentation.label}
         </Typography>
         {!compact && presentation.detail ? (
-          <Typography variant="caption" color="text.secondary" display="block">{presentation.detail}</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{presentation.detail}</Typography>
         ) : null}
       </Box>
     </Stack>
