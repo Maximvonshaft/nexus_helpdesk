@@ -12,9 +12,9 @@ from app.enums import JobStatus
 from app.models import BackgroundJob
 from app.services import background_jobs
 from app.services.background_job_transaction_boundary import (
-    _dispatch_pending_background_jobs_with_attempt_boundary,
-    _dispatch_pending_sync_jobs_with_attempt_boundary,
-    _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary,
+    dispatch_pending_background_jobs,
+    dispatch_pending_sync_jobs,
+    dispatch_pending_webchat_ai_reply_jobs,
 )
 from app.utils.time import utc_now
 
@@ -78,6 +78,7 @@ def test_worker_runtime_selects_boundaries_without_package_monkey_patch():
     assert "apply_outbound_dispatch_transaction_boundary_patch" not in services_init
     assert "background_job_transaction_boundary" in runner
     assert "outbound_dispatch_transaction_boundary" in runner
+    assert "_dispatch_pending_" not in runner
     assert (
         "from app.services.background_jobs import dispatch_pending_background_jobs"
         not in runner
@@ -111,7 +112,7 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
 
     monkeypatch.setattr(background_jobs, "process_background_job", fake_process)
 
-    processed = _dispatch_pending_background_jobs_with_attempt_boundary(
+    processed = dispatch_pending_background_jobs(
         db,
         worker_id="worker-test",
     )
@@ -148,7 +149,7 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
         lambda db, job: (_ for _ in ()).throw(RuntimeError("last retry failed")),
     )
 
-    processed = _dispatch_pending_background_jobs_with_attempt_boundary(
+    processed = dispatch_pending_background_jobs(
         db,
         worker_id="worker-test",
     )
@@ -181,7 +182,7 @@ def test_dispatch_pending_sync_jobs_uses_same_attempt_boundary(monkeypatch):
 
     monkeypatch.setattr(background_jobs, "process_background_job", fake_process)
 
-    processed = _dispatch_pending_sync_jobs_with_attempt_boundary(
+    processed = dispatch_pending_sync_jobs(
         db,
         worker_id="worker-test",
     )
@@ -208,7 +209,7 @@ def test_dispatch_pending_webchat_ai_jobs_uses_attempt_boundary(monkeypatch):
         lambda db, job: (_ for _ in ()).throw(RuntimeError("webchat job failed")),
     )
 
-    processed = _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary(
+    processed = dispatch_pending_webchat_ai_reply_jobs(
         db,
         worker_id="worker-webchat-ai-test",
     )
@@ -242,7 +243,7 @@ def test_attempt_boundary_recovers_commit_failure(monkeypatch):
 
     monkeypatch.setattr(background_jobs, "process_background_job", fake_process)
 
-    processed = _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary(
+    processed = dispatch_pending_webchat_ai_reply_jobs(
         db,
         worker_id="worker-webchat-ai-test",
     )
