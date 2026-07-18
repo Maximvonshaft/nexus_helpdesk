@@ -29,6 +29,27 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/maintenance/backend_convergence_patch.py")
+          source = path.read_text(encoding="utf-8")
+          start = source.index("# Worker business-health timestamps")
+          end = source.index("# Healthy single-writer local storage")
+          corrected = '''# Worker business-health timestamps are normalized at the authority boundary.
+          replace_once(
+              "backend/app/services/queue_health.py",
+              "from ..utils.time import utc_now\\n",
+              "from ..utils.time import ensure_utc, utc_now\\n",
+          )
+          replace_once(
+              "backend/app/services/queue_health.py",
+              "def _age_ms(value, *, now) -> int | None:\\n    if value is None:\\n        return None\\n    return max(0, int((now - value).total_seconds() * 1000))\\n",
+              "def _age_ms(value, *, now) -> int | None:\\n    if value is None:\\n        return None\\n    return max(0, int((ensure_utc(now) - ensure_utc(value)).total_seconds() * 1000))\\n",
+          )
+
+          '''
+          path.write_text(source[:start] + corrected + source[end:], encoding="utf-8")
+          PY
           python scripts/maintenance/backend_convergence_patch.py 2>&1 | tee /tmp/backend-convergence-patch.log
       - name: Upload patch diagnostics
         if: always()
@@ -42,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          git checkout HEAD^ -- .github/workflows/canonical-acceptance.yml
+          git checkout 285d7e214f0869577cec429806dd3c348bfdab8b -- .github/workflows/canonical-acceptance.yml
           rm -f .github/workflows/backend-convergence-maintenance.yml
           rm -f scripts/maintenance/backend_convergence_patch.py
           rmdir scripts/maintenance 2>/dev/null || true
