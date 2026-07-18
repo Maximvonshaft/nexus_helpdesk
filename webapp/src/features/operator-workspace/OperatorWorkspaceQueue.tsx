@@ -68,12 +68,12 @@ function QueueRow({ item, active, currentUserId, onSelect }: { item: UnifiedOper
       }}
     >
       <Stack spacing={0.75}>
-        <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
           {priority.tone === 'danger' || priority.tone === 'warning' ? <Chip color={operatorToneColor(priority.tone)} label={priority.label} size="small" /> : null}
         </Stack>
         <Typography variant="caption" color="text.secondary">{source.label} · {item.country_code} · {item.channel_key}{item.reopened ? ' · 已重新打开' : ''}</Typography>
-        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap><OperatorStatusLine presentation={owner} compact /><OperatorStatusLine presentation={sla} compact /></Stack>
+        <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap' }}><OperatorStatusLine presentation={owner} compact /><OperatorStatusLine presentation={sla} compact /></Stack>
         {item.source_type === 'dispatch' ? <Typography variant="caption" color="text.secondary">{retry.label}</Typography> : null}
         <Typography variant="caption" color="text.secondary">{sourceStatus.label}</Typography>
         <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(item.updated_at)}</Typography>
