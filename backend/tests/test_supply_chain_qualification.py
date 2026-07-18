@@ -38,6 +38,7 @@ def test_current_supply_chain_inputs_are_immutable():
     for required in (
         "Dockerfile",
         "backend/requirements.txt",
+        "backend/tests/test_exact_head_acceptance.py",
         "deploy/docker-compose.controlled.yml",
         "deploy/docker-compose.controlled-postgres.yml",
         "deploy/docker-compose.server.yml",
@@ -49,7 +50,14 @@ def test_current_supply_chain_inputs_are_immutable():
         "scripts/deploy/validate_controlled_server_preflight.py",
         "scripts/deploy/safe_update_server.sh",
         "scripts/deploy/rollback_release.sh",
+        "scripts/verify_repository.py",
         "scripts/qualification/deployment_authority.py",
+        "scripts/qualification/service_authority.py",
+        "scripts/qualification/route_authority.py",
+        "scripts/qualification/exact_head_acceptance.py",
+        "scripts/qualification/postgres_acceptance.py",
+        "scripts/qualification/local_storage_backup.py",
+        "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md",
     ):
         assert required in inputs
 
@@ -203,26 +211,37 @@ def test_exact_head_acceptance_runbook_is_single_fail_closed_sequence():
     ).read_text(encoding="utf-8")
     required = (
         "scripts/verify_repository.py",
+        "--expected-sha",
         "--release-evidence-dir",
-        "npm ci --ignore-scripts",
-        "python -m alembic upgrade head",
-        "python -m alembic downgrade -1",
-        "test_support_conversations_postgres.py",
-        "test_postgres_worker_recovery.py",
-        "scripts/qualification/database_capacity.py",
-        "scripts/qualification/local_storage_backup.py",
+        "--acceptance-evidence-dir",
+        "--acceptance-database-url",
+        "--acceptance-upload-source",
+        "--acceptance-upload-backup",
+        "scripts/qualification/exact_head_acceptance.py",
+        "scripts/qualification/postgres_acceptance.py",
         "scripts/qualification/infrastructure_decision.py",
-        "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR",
-        "Provider, WebChat AI, voice, outbound",
-        "No production restore is part of this runbook",
-        "Any Head or tree change invalidates all prior evidence",
+        "nexus.exact-head-acceptance-manifest.v1",
+        "worker-fault-injection.json",
+        "recovery-rehearsal.json",
+        "controlled-deployment.json",
+        "independent-review.json",
+        "repository-protection.json",
+        "Any source SHA, tree SHA or immutable-input change invalidates all evidence",
+        "production_authorized=false",
+        "provider_enablement_authorized=false",
+        "outbound_enablement_authorized=false",
     )
     for marker in required:
         assert marker in runbook, marker
-    assert ".github/workflows" not in runbook
-    assert "production_authorized=true" not in runbook
-    assert "PROVIDER_RUNTIME_ENABLED=true" not in runbook
-    assert "ENABLE_OUTBOUND_DISPATCH=true" not in runbook
+    for forbidden in (
+        ".github/workflows",
+        "PROVIDER_RUNTIME_ENABLED=true",
+        "ENABLE_OUTBOUND_DISPATCH=true",
+        "--static-only \\",
+        "--focused-backend \\",
+        "--skip-browser \\",
+    ):
+        assert forbidden not in runbook
 
 
 def test_dockerfile_comments_do_not_create_mutable_instruction_findings(tmp_path):
