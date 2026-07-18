@@ -192,12 +192,6 @@ def dispatch_pending_background_jobs(
     """Dispatch only the queues owned by the canonical background Worker."""
     from . import background_jobs
 
-    if background_jobs.settings.external_channel_sync_enabled:
-        background_jobs.enqueue_stale_external_channel_sync_jobs(
-            db,
-            limit=background_jobs.settings.external_channel_sync_batch_size,
-        )
-        db.commit()
     if background_jobs.settings.email_mailbox_sync_enabled:
         from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
 
