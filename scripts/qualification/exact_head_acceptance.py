@@ -13,7 +13,7 @@ import argparse
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +22,7 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 IMMUTABLE_IMAGE = re.compile(r"^[a-z0-9._/-]+(?:\:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$")
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+PASS_STATUSES = {"pass", "ok", "evidence_complete", "approved"}
 
 REQUIRED_ARTIFACTS: dict[str, tuple[str, str]] = {
     "supply_chain": ("supply-chain.json", "nexus.supply-chain-qualification.v1"),
@@ -85,14 +86,6 @@ def _load_json(path: Path, *, label: str, findings: list[str]) -> dict[str, Any]
     return payload
 
 
-def _bool(payload: dict[str, Any], key: str, findings: list[str], label: str) -> bool | None:
-    value = payload.get(key)
-    if not isinstance(value, bool):
-        findings.append(f"artifact_boolean_missing:{label}:{key}")
-        return None
-    return value
-
-
 def _number(payload: dict[str, Any], key: str, findings: list[str], label: str) -> float | None:
     value = payload.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -102,7 +95,7 @@ def _number(payload: dict[str, Any], key: str, findings: list[str], label: str) 
 
 
 def _status_pass(payload: dict[str, Any], label: str, findings: list[str]) -> None:
-    if payload.get("status") not in {"pass", "ok", "evidence_complete", "approved"}:
+    if payload.get("status") not in PASS_STATUSES:
         findings.append(f"artifact_status_not_pass:{label}:{payload.get('status')}")
 
 
@@ -305,7 +298,8 @@ def _check_rollback(payload: dict[str, Any], findings: list[str]) -> None:
 def _check_baseline(payload: dict[str, Any], label: str, findings: list[str]) -> None:
     _status_pass(payload, label, findings)
     _common_sanitization(payload, label, findings)
-    if payload.get("sample_count", 0) <= 0:
+    sample_count = _number(payload, "sample_count", findings, label)
+    if sample_count is not None and sample_count <= 0:
         findings.append(f"baseline_empty:{label}")
 
 
@@ -385,6 +379,63 @@ CHECKS: dict[str, Callable[[dict[str, Any], list[str]], None]] = {
 }
 
 
+def _manifest_status(label: str, payload: dict[str, Any]) -> str:
+    if label == "upload_backup":
+        return "pass" if payload.get("source_matches_backup") is True else "fail"
+    return str(payload.get("status") or "")
+
+
+def assemble_acceptance_manifest(
+    evidence_dir: Path,
+    *,
+    source_sha: str,
+    tree_sha: str,
+    manifest_name: str = "acceptance-manifest.json",
+) -> dict[str, Any]:
+    directory = evidence_dir.expanduser().resolve()
+    if _inside_repository(directory) or not directory.is_dir() or directory.is_symlink():
+        raise ValueError("acceptance_evidence_directory_invalid")
+    if not SHA40.fullmatch(source_sha) or not SHA40.fullmatch(tree_sha):
+        raise ValueError("acceptance_identity_invalid")
+    findings: list[str] = []
+    artifacts: dict[str, dict[str, str]] = {}
+    for label, (name, schema) in REQUIRED_ARTIFACTS.items():
+        path = directory / name
+        payload = _load_json(path, label=label, findings=findings)
+        if payload is None:
+            continue
+        status = _manifest_status(label, payload)
+        if payload.get("schema") != schema:
+            findings.append(f"acceptance_artifact_schema_mismatch:{label}")
+        if status not in PASS_STATUSES:
+            findings.append(f"acceptance_artifact_status_not_pass:{label}:{status}")
+        artifacts[label] = {
+            "path": name,
+            "sha256": _sha256(path),
+            "schema": schema,
+            "status": status,
+        }
+    if findings:
+        raise ValueError("acceptance_manifest_assembly_failed:" + "|".join(findings[:50]))
+    manifest = {
+        "schema": "nexus.exact-head-acceptance-manifest.v1",
+        "source_sha": source_sha,
+        "tree_sha": tree_sha,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sanitized": True,
+        "contains_customer_data": False,
+        "contains_secrets": False,
+        "artifacts": artifacts,
+    }
+    target = directory / manifest_name
+    if target.is_symlink():
+        raise ValueError("acceptance_manifest_symlink_forbidden")
+    temporary = directory / f".{manifest_name}.tmp"
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(target)
+    return manifest
+
+
 def qualify_acceptance_packet(
     evidence_dir: Path,
     *,
@@ -423,7 +474,9 @@ def qualify_acceptance_packet(
     if manifest.get("tree_sha") != expected_tree_sha:
         findings.append("acceptance_manifest_tree_sha_mismatch")
     try:
-        datetime.fromisoformat(str(manifest.get("generated_at") or "").replace("Z", "+00:00"))
+        timestamp = datetime.fromisoformat(str(manifest.get("generated_at") or "").replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            raise ValueError("timezone required")
     except ValueError:
         findings.append("acceptance_manifest_timestamp_invalid")
     if manifest.get("sanitized") is not True:
@@ -449,7 +502,11 @@ def qualify_acceptance_packet(
         if candidate.is_absolute() or ".." in candidate.parts:
             findings.append(f"acceptance_artifact_path_invalid:{label}")
             continue
-        path = (directory / candidate).resolve()
+        unresolved = directory / candidate
+        if unresolved.is_symlink():
+            findings.append(f"artifact_symlink_forbidden:{label}")
+            continue
+        path = unresolved.resolve()
         try:
             path.relative_to(directory)
         except ValueError:
@@ -466,7 +523,7 @@ def qualify_acceptance_packet(
             findings.append(f"acceptance_artifact_hash_mismatch:{label}")
         if row.get("schema") != expected_schema or payload.get("schema") != expected_schema:
             findings.append(f"acceptance_artifact_schema_mismatch:{label}")
-        if row.get("status") not in {"pass", "ok", "evidence_complete", "approved"}:
+        if row.get("status") not in PASS_STATUSES:
             findings.append(f"acceptance_artifact_manifest_status_invalid:{label}")
         for key, expected in (("source_sha", expected_source_sha), ("tree_sha", expected_tree_sha)):
             value = payload.get(key)
@@ -505,9 +562,17 @@ def main() -> int:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--tree-sha", required=True)
     parser.add_argument("--manifest-name", default="acceptance-manifest.json")
+    parser.add_argument("--assemble-manifest", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
+    if args.assemble_manifest:
+        assemble_acceptance_manifest(
+            args.evidence_dir,
+            source_sha=args.source_sha,
+            tree_sha=args.tree_sha,
+            manifest_name=args.manifest_name,
+        )
     payload = qualify_acceptance_packet(
         args.evidence_dir,
         expected_source_sha=args.source_sha,
