@@ -30,6 +30,11 @@ IMAGE_DIGEST_RE = re.compile(
     r"^[a-z0-9._/-]+(?:\:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$"
 )
 EVIDENCE_DIR_ENV = "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR"
+EVIDENCE_TOOL_INPUTS = (
+    "scripts/qualification/supply_chain.py",
+    "scripts/release/assemble_supply_chain_evidence.py",
+    "scripts/verify_repository.py",
+)
 
 
 def _git(*args: str) -> str:
@@ -97,8 +102,9 @@ def _resolve_output_dir(explicit: Path | None) -> Path:
 
 
 def _candidate_inputs() -> list[Path]:
-    inputs = [ROOT / relative for relative in SUPPLY_CHAIN_INPUTS]
-    inputs.append(ROOT / "scripts" / "verify_repository.py")
+    ordered = (*SUPPLY_CHAIN_INPUTS, *EVIDENCE_TOOL_INPUTS)
+    unique = tuple(dict.fromkeys(ordered))
+    inputs = [ROOT / relative for relative in unique]
     missing = [
         str(path.relative_to(ROOT))
         for path in inputs
