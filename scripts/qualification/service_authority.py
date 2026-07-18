@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Validate the one-authority/one-private-core service architecture.
 
-This is a read-only qualification tool. It consumes the canonical manifest and
-rejects independently callable private implementations, business-bearing shims,
-and import-time mutation of another module.
+This read-only qualification consumes the canonical manifest and rejects
+independently callable private implementations, business-bearing shims,
+role-name authorization in declared authorities, and import-time mutation of
+another module.
 """
 
 from __future__ import annotations
@@ -53,9 +54,6 @@ def _imported_modules(path: Path) -> tuple[set[str], dict[str, str]]:
                 if alias.name == "*":
                     continue
                 candidate = f"{base}.{alias.name}" if base else alias.name
-                # ``from . import module as alias`` imports a module. For normal
-                # symbol imports the candidate will not match a manifest module
-                # and is therefore harmless.
                 modules.add(candidate)
                 module_aliases[alias.asname or alias.name] = candidate
     return modules, module_aliases
@@ -69,8 +67,7 @@ def _root_name(node: ast.AST) -> str | None:
 
 
 def _module_mutations(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     _, aliases = _imported_modules(path)
     findings: list[str] = []
 
@@ -93,11 +90,25 @@ def _module_mutations(path: Path) -> list[str]:
             inspect_target(node.target, node.lineno)
         elif isinstance(node, ast.AugAssign):
             inspect_target(node.target, node.lineno)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "setattr":
-            if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in aliases:
-                findings.append(
-                    f"{path.relative_to(ROOT)}:{node.lineno}:setattr_on_imported_module:{node.args[0].id}"
-                )
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "setattr"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in aliases
+        ):
+            findings.append(
+                f"{path.relative_to(ROOT)}:{node.lineno}:setattr_on_imported_module:{node.args[0].id}"
+            )
+    return findings
+
+
+def _role_authorization_findings(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    findings: list[str] = []
+    if "UserRole" in source:
+        findings.append(f"role_name_authorization_in_authority:{path.relative_to(ROOT)}")
     return findings
 
 
@@ -108,7 +119,9 @@ def _shim_findings(path: Path, expected_authority: str) -> list[str]:
     expected_module = _module_name(ROOT / expected_authority)
     imported, _ = _imported_modules(path)
     if expected_module not in imported:
-        findings.append(f"shim_does_not_import_authority:{path.relative_to(ROOT)}:{expected_authority}")
+        findings.append(
+            f"shim_does_not_import_authority:{path.relative_to(ROOT)}:{expected_authority}"
+        )
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name != "__getattr__":
             findings.append(f"shim_owns_function:{path.relative_to(ROOT)}:{node.name}")
@@ -117,6 +130,7 @@ def _shim_findings(path: Path, expected_authority: str) -> list[str]:
     if len(source.splitlines()) > 24:
         findings.append(f"shim_unbounded:{path.relative_to(ROOT)}:{len(source.splitlines())}")
     findings.extend(_module_mutations(path))
+    findings.extend(_role_authorization_findings(path))
     return findings
 
 
@@ -159,19 +173,30 @@ def qualification_payload() -> dict[str, Any]:
             findings.append(f"public_authority_missing_or_duplicate:{public}")
         public_paths.add(public)
         public_file = ROOT / public
+        public_imports: set[str] = set()
         if not public_file.is_file():
             findings.append(f"public_authority_missing:{public}")
-        elif _module_mutations(public_file):
+        else:
+            public_imports, _ = _imported_modules(public_file)
             findings.extend(_module_mutations(public_file))
+            findings.extend(_role_authorization_findings(public_file))
 
         if private is not None:
             private = str(private)
             if private in private_paths or private in public_paths:
                 findings.append(f"private_implementation_duplicate:{private}")
             private_paths.add(private)
-            private_to_public[_module_name(ROOT / private)] = public
-            if not (ROOT / private).is_file():
+            private_module = _module_name(ROOT / private)
+            private_to_public[private_module] = public
+            private_file = ROOT / private
+            if not private_file.is_file():
                 findings.append(f"private_implementation_missing:{private}")
+            else:
+                findings.extend(_role_authorization_findings(private_file))
+            if public_file.is_file() and private_module not in public_imports:
+                findings.append(
+                    f"public_authority_does_not_import_private_implementation:{public}:{private}"
+                )
 
         if not isinstance(shims, list):
             findings.append(f"compatibility_shims_invalid:{responsibility}")
@@ -198,15 +223,18 @@ def qualification_payload() -> dict[str, Any]:
                     f"private_implementation_imported_outside_authority:{private_module}:{importer}:{allowed_public}"
                 )
 
+    expected_constraints = {
+        "private_implementation_imported_only_by_public_authority": True,
+        "compatibility_shim_contains_business_logic": False,
+        "runtime_module_monkey_patch": False,
+        "role_name_authorization_outside_permissions": False,
+    }
     constraints = manifest.get("constraints") or {}
-    for required in (
-        "private_implementation_imported_only_by_public_authority",
-        "compatibility_shim_contains_business_logic",
-        "runtime_module_monkey_patch",
-        "role_name_authorization_outside_permissions",
-    ):
-        if required not in constraints:
-            findings.append(f"manifest_constraint_missing:{required}")
+    for key, expected in expected_constraints.items():
+        if constraints.get(key) is not expected:
+            findings.append(
+                f"manifest_constraint_invalid:{key}:{constraints.get(key)}:expected={expected}"
+            )
 
     return {
         "schema": "nexus.service-authority-qualification.v1",
