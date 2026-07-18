@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import date
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 PROJECT = BACKEND.parent
 APP = BACKEND / "app"
 MANIFEST_PATH = PROJECT / "config" / "architecture" / "service-authority.v1.json"
+LIFECYCLE_PATH = PROJECT / "config" / "architecture" / "compatibility-lifecycle.v1.json"
 IGNORED_GENERATED_ROOTS = {".git", ".venv", "node_modules", "vendor"}
 
 
 def _manifest() -> dict:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
+def _lifecycle() -> dict:
+    return json.loads(LIFECYCLE_PATH.read_text(encoding="utf-8"))
 
 
 def _project_path(relative: str) -> Path:
@@ -153,6 +159,36 @@ def test_manifest_authorities_use_capabilities_not_role_name_branches() -> None:
     assert "ROLE_CAPABILITIES" in permissions
     assert "has_global_case_visibility" in permissions
     assert "ensure_ticket_visible(user, ticket, db)" in permissions
+
+
+def test_compatibility_lifecycle_assets_are_bounded() -> None:
+    lifecycle = _lifecycle()
+    assert lifecycle["schema"] == "nexus.compatibility-lifecycle.v1"
+    paths = [row["path"] for row in lifecycle["assets"]]
+    assert len(paths) == len(set(paths))
+    for row in lifecycle["assets"]:
+        assert row["owner"], row
+        assert _project_path(row["path"]).exists(), row
+        if row["kind"] in {"compose-alias", "environment-tombstone"}:
+            assert row["replacement"], row
+            assert row["remove_after"], row
+            assert date.fromisoformat(row["remove_after"]) > date(2026, 7, 18), row
+
+    for relative in ("deploy/docker-compose.server.yml", "deploy/docker-compose.candidate.yml"):
+        source = _source(relative)
+        assert "services:" not in source, relative
+        assert "include:" in source, relative
+
+    for relative in (
+        "deploy/.env.prod.example",
+        "deploy/.env.prod.local-postgres.example",
+        "deploy/.env.prod.external-postgres.example",
+    ):
+        source = _source(relative)
+        assert "RETIRED COMPATIBILITY PATH" in source, relative
+        assert "NEXUS_ENV_TEMPLATE_RETIRED=true" in source, relative
+        assert "SECRET_KEY=" not in source, relative
+        assert "DATABASE_URL=" not in source, relative
 
 
 def test_fastapi_method_and_normalized_path_are_unique() -> None:
