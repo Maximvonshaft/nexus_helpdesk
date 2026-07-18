@@ -1,0 +1,1 @@
+Temporary patch transport is being moved to a bounded GitHub issue because opaque encoded payloads are prohibited. This file is removed by the finalizer.
