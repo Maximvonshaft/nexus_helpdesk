@@ -6,12 +6,18 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
-from deployment_authority import deployment_authority_findings
-
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.qualification.deployment_authority import (  # noqa: E402
+    deployment_authority_findings,
+)
+
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 EXACT_REQUIREMENT_RE = re.compile(
     r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s;]+(?:\s*;.*)?$"
