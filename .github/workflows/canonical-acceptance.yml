@@ -26,7 +26,18 @@ jobs:
           fetch-depth: 0
           ref: fix/722-authority-convergence
       - name: Apply exact fail-closed patch
-        run: python scripts/maintenance/backend_convergence_patch.py
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/maintenance/backend_convergence_patch.py 2>&1 | tee /tmp/backend-convergence-patch.log
+      - name: Upload patch diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-convergence-patch-${{ github.sha }}
+          path: /tmp/backend-convergence-patch.log
+          if-no-files-found: error
+          retention-days: 7
       - name: Restore canonical workflow and remove maintenance assets
         shell: bash
         run: |
