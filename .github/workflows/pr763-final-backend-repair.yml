@@ -98,7 +98,8 @@ jobs:
             backend/tests/test_webchat_handoff_snapshot_service.py \
             backend/tests/test_webchat_ws_static_contracts.py \
             backend/tests/test_worker_queue_isolation.py \
-            backend/tests/test_worker_webchat_ai_reconciler_watchdog.py
+            backend/tests/test_worker_webchat_ai_reconciler_watchdog.py \
+            2>&1 | tee /tmp/pr763-original-failure-domains.log
       - name: Push validated isolated candidate
         shell: bash
         run: git push origin HEAD:repair/763-final-backend-5ef0
@@ -107,13 +108,15 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          cp /tmp/pr763-final-backend-repair.log /tmp/pr763-final-backend-repair-failure.log 2>/dev/null || true
           git fetch origin repair/763-final-backend-5ef0
           git reset --hard origin/repair/763-final-backend-5ef0
           mkdir -p .ci
           {
             printf 'run_id=%s\nstatus=failed\nhead=%s\n\n' "$GITHUB_RUN_ID" "$GITHUB_SHA"
-            cat /tmp/pr763-final-backend-repair-failure.log 2>/dev/null || true
+            printf '%s\n' '=== PATCH STAGE ==='
+            cat /tmp/pr763-final-backend-repair.log 2>/dev/null || true
+            printf '%s\n' '=== PYTEST TAIL ==='
+            tail -n 400 /tmp/pr763-original-failure-domains.log 2>/dev/null || true
           } > .ci/pr763-final-backend-repair-failure.txt
           git config user.name nexus-final-repair
           git config user.email nexus-final-repair@users.noreply.github.com
