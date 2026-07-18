@@ -7,9 +7,7 @@ from uuid import uuid4
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHash, VerifyMismatchError
-from fastapi import HTTPException, status
 
-from .services.password_policy import PasswordPolicyError, validate_admin_password_policy
 from .settings import get_settings
 
 settings = get_settings()
@@ -20,15 +18,8 @@ PASSWORD_HASHER = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
-    """Validate and hash a user password through one policy authority."""
+    """Hash user credentials; request-specific policy is enforced at API boundaries."""
 
-    try:
-        validate_admin_password_policy(password)
-    except PasswordPolicyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
     return PASSWORD_HASHER.hash(password)
 
 
@@ -40,8 +31,6 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def hash_secret(secret: str) -> str:
-    """Hash non-password credentials without applying the user password policy."""
-
     return PASSWORD_HASHER.hash(secret)
 
 
