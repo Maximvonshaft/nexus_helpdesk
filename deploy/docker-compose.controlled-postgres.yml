@@ -4,7 +4,7 @@
 
 services:
   postgres-controlled:
-    image: docker.io/library/postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+    image: docker.io/pgvector/pgvector:0.8.5-pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-nexusdesk}
