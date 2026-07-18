@@ -22,6 +22,7 @@ const workspaceCommonPath = path.join(srcRoot, 'features', 'operator-workspace',
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.css'])
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts'])
+const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', 'playwright-report', 'test-results', '.git'])
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g
 const EXPORTED_PRIMITIVE_RE = /export\s+(?:const|function|class)\s+(AppShell|AppNavigation|Button|ButtonLink|Badge|Card|Field|Input|Select|Textarea|ConfirmDialog|EmptyState|ErrorSummary|TechnicalDetails|PageHeader|StatusIndicator|Count)\b/g
 const RETIRED_LOCAL_HELPER_RE = /\bfunction\s+(EmptyState|ErrorNotice|ErrorSummary|LoadingState|FactGrid|statusColor|muiStatusColor|errorCopy|scrollBehavior)\b/g
@@ -77,6 +78,7 @@ function walk(directory) {
   if (!fs.existsSync(directory)) return []
   const files = []
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue
     const absolute = path.join(directory, entry.name)
     if (entry.isDirectory()) files.push(...walk(absolute))
     else files.push(absolute)
