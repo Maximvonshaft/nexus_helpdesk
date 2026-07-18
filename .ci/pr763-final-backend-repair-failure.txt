@@ -1,7 +1,8 @@
-run_id=29656101866
+run_id=29656206349
 status=failed
-head=80115b38520474d26e97f164d79d45b7eab65d80
+head=6ccb751f0924104943fee04932bb162557265306
 
+=== PATCH STAGE ===
  8000 .ci/pr763-final-backend.patch.b64.00
  8000 .ci/pr763-final-backend.patch.b64.01
  8000 .ci/pr763-final-backend.patch.b64.02
@@ -16,3 +17,75 @@ head=80115b38520474d26e97f164d79d45b7eab65d80
  1892 .ci/pr763-final-backend.patch.b64.07
 57892 total
 43419 /tmp/pr763-final-backend.patch
+=== PYTEST TAIL ===
+........................................................................ [ 35%]
+........................................................................ [ 70%]
+..........................F..................................            [100%]
+=================================== FAILURES ===================================
+_________ test_request_handoff_creates_traceable_queue_and_suspends_ai _________
+
+db_session = <sqlalchemy.orm.session.Session object at 0x7f2edb66d2d0>
+
+    def test_request_handoff_creates_traceable_queue_and_suspends_ai(db_session):
+        ticket, conversation, message = make_webchat(db_session)
+        turn, job = attach_open_ai_turn(db_session, conversation, ticket, message)
+    
+        request = request_webchat_handoff(
+            db_session,
+            conversation=conversation,
+            ticket=ticket,
+            source="ai_auto",
+            trigger_type="ai_result_handoff_required",
+            reason_code="manual_review_required",
+            recommended_agent_action="Review and reply.",
+            trigger_message_id=message.id,
+            ai_turn_id=turn.id,
+        )
+        db_session.commit()
+    
+        assert request.status == "requested"
+        assert conversation.current_handoff_request_id == request.id
+        assert conversation.handoff_status == "requested"
+        assert conversation.ai_suspended is True
+        assert ticket.conversation_state == ConversationState.human_review_required
+>       assert turn.status == "cancelled"
+E       AssertionError: assert 'queued' == 'cancelled'
+E         
+E         - cancelled
+E         + queued
+
+backend/tests/test_webchat_handoff_control.py:494: AssertionError
+=============================== warnings summary ===============================
+../../../../../opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/tests/test_email_outbound_runtime.py: 11 warnings
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_email_outbound_runtime.py:44: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_outbound_message_semantics.py::test_webchat_local_messages_do_not_count_as_external_pending
+backend/tests/test_outbound_message_semantics.py::test_whatsapp_and_telegram_pending_count_as_external_pending
+backend/tests/test_outbound_message_semantics.py::test_outbound_ui_labels_are_semantic_not_raw_provider_statuses
+backend/tests/test_outbound_message_semantics.py::test_claim_pending_messages_ignores_local_webchat_pending_rows
+backend/tests/test_outbound_message_semantics.py::test_non_external_outbound_never_calls_provider_dispatch
+backend/tests/test_outbound_message_semantics.py::test_requeue_dead_outbound_rejects_local_webchat_message
+backend/tests/test_outbound_message_semantics.py::test_retired_inbound_auto_sync_does_not_create_outbound_messages
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_outbound_message_semantics.py:42: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_round24_hardening.py: 17 warnings
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_round24_hardening.py:69: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_webchat_handoff_control.py: 19 warnings
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_webchat_handoff_control.py:57: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_webchat_handoff_control.py::test_request_handoff_creates_traceable_queue_and_suspends_ai - AssertionError: assert 'queued' == 'cancelled'
+  
+  - cancelled
+  + queued
+1 failed, 204 passed, 55 warnings in 74.23s (0:01:14)
