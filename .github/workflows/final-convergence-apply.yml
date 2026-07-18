@@ -1,4 +1,5 @@
 name: Final convergence apply
+# Second push intentionally retriggers an already-present workflow.
 
 on:
   push:
