@@ -1,13 +1,6 @@
 name: Canonical Acceptance
 
-on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+on: {pull_request: {branches: [main]}, push: {branches: [main]}, workflow_dispatch: {}}
 
 concurrency:
   group: canonical-acceptance-${{ github.event.pull_request.number || github.ref }}
@@ -155,7 +148,19 @@ jobs:
       - name: Compile production Python
         run: python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
       - name: Run complete backend regression
-        run: python -m pytest -q backend/tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-backend
+          python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-backend/pytest.log
+      - name: Upload backend evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          path: /tmp/nexus-backend
+          if-no-files-found: warn
+          retention-days: 30
 
   frontend-browser:
     name: frontend-browser
@@ -169,7 +174,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Node
-        uses: actions/setup-node@1e60f620b9541d3264a57c8b8a792c1c8b4a9f65
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -237,9 +242,17 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install exact Python dependencies
         run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Rehearse Alembic with visible diagnostics
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-postgres
+          cd backend
+          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-postgres/alembic-upgrade.log
+          python -m alembic downgrade -1 2>&1 | tee /tmp/nexus-postgres/alembic-downgrade.log
+          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-postgres/alembic-reupgrade.log
       - name: Run disposable PostgreSQL acceptance
         run: |
-          mkdir -p /tmp/nexus-postgres
           python scripts/qualification/postgres_acceptance.py \
             --evidence-dir /tmp/nexus-postgres \
             --source-sha "${{ needs.candidate-identity.outputs.source_sha }}" \
@@ -280,10 +293,12 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Build exact-Head image
+        shell: bash
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
         run: |
           set -Eeuo pipefail
+          mkdir -p /tmp/nexus-image
           build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           docker build --pull=false \
             --build-arg GIT_SHA="$SOURCE_SHA" \
@@ -291,9 +306,9 @@ jobs:
             --build-arg IMAGE_TAG="nexus-ci:$SOURCE_SHA" \
             --build-arg APP_VERSION="pr-$SOURCE_SHA" \
             --build-arg FRONTEND_BUILD_SHA="$SOURCE_SHA" \
-            --tag "nexus-ci:$SOURCE_SHA" .
+            --tag "nexus-ci:$SOURCE_SHA" . 2>&1 | tee /tmp/nexus-image/build.log
           test "$(docker image inspect "nexus-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
-          docker image inspect "nexus-ci:$SOURCE_SHA" > /tmp/image-inspect.json
+          docker image inspect "nexus-ci:$SOURCE_SHA" > /tmp/nexus-image/image-inspect.json
       - name: Migrate disposable image database
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
@@ -335,24 +350,20 @@ jobs:
             -e OPERATIONS_DISPATCH_MODE=disabled \
             "nexus-ci:$SOURCE_SHA"
           for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:8080/healthz > /tmp/healthz.json; then
+            if curl --fail --silent http://127.0.0.1:8080/healthz > /tmp/nexus-image/healthz.json; then
               break
             fi
             sleep 2
           done
-          curl --fail --silent http://127.0.0.1:8080/healthz | tee /tmp/healthz.json
-          curl --fail --silent http://127.0.0.1:8080/readyz | tee /tmp/readyz.json
-          docker logs nexus-ci-candidate > /tmp/candidate.log 2>&1
+          curl --fail --silent http://127.0.0.1:8080/healthz | tee /tmp/nexus-image/healthz.json
+          curl --fail --silent http://127.0.0.1:8080/readyz | tee /tmp/nexus-image/readyz.json
+          docker logs nexus-ci-candidate > /tmp/nexus-image/candidate.log 2>&1
       - name: Upload image and deployment evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: image-smoke-${{ needs.candidate-identity.outputs.source_sha }}
-          path: |
-            /tmp/image-inspect.json
-            /tmp/healthz.json
-            /tmp/readyz.json
-            /tmp/candidate.log
+          path: /tmp/nexus-image
           if-no-files-found: warn
           retention-days: 30
       - name: Remove isolated candidate
