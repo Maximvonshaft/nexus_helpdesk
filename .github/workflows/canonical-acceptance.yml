@@ -13,6 +13,7 @@ env:
   CI: "true"
   PYTHON_VERSION: "3.11"
   NODE_VERSION: "22"
+  PYTHONPATH: backend
   APP_ENV: test
   AUTO_INIT_DB: "false"
   SEED_DEMO_DATA: "false"
@@ -52,6 +53,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Prove exact identity and current-main relation
         id: identity
@@ -102,6 +104,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -136,6 +139,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -172,6 +176,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -181,10 +186,14 @@ jobs:
           cache-dependency-path: webapp/package-lock.json
       - name: Install exact frontend dependencies
         working-directory: webapp
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify architecture, lint, types, units and build
         working-directory: webapp
-        run: npm run verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-frontend
+          npm run verify 2>&1 | tee /tmp/nexus-frontend/verify.log
       - name: Install Playwright Chromium
         working-directory: webapp
         run: npx playwright install --with-deps chromium
@@ -199,6 +208,7 @@ jobs:
         with:
           name: browser-evidence-${{ needs.candidate-identity.outputs.source_sha }}
           path: |
+            /tmp/nexus-frontend
             webapp/playwright-report
             webapp/test-results
             frontend_dist
@@ -212,7 +222,7 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
-        image: docker.io/library/postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+        image: pgvector/pgvector:0.8.5-pg16-bookworm
         env:
           POSTGRES_DB: nexus_ci_acceptance
           POSTGRES_USER: nexus_ci
@@ -233,6 +243,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -274,7 +285,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: docker.io/library/postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+        image: pgvector/pgvector:0.8.5-pg16-bookworm
         env:
           POSTGRES_DB: nexus_image_acceptance
           POSTGRES_USER: nexus_image
@@ -291,6 +302,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Build exact-Head image
         shell: bash
