@@ -16,6 +16,7 @@ WORKFLOW_DIR = ROOT / ".github/workflows"
 
 RETIRED_PATHS = (
     "frontend",
+    "artifacts/supply-chain",
     "webapp/src/features/support-console",
     "webapp/src/shared/ui",
     "webapp/src/shared/api",
@@ -26,6 +27,7 @@ RETIRED_PATHS = (
     "webapp/src/styles/components.css",
     "webapp/src/styles/auth.css",
     "webapp/src/app/app-shell.css",
+    "webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx",
     "webapp/src/features/operator-workspace/operator-workspace.css",
     "webapp/src/features/operator-workspace/operator-workspace-refinements.css",
     "webapp/src/features/admin-routes/admin-routes.css",
@@ -66,16 +68,13 @@ REQUIRED_CANONICAL_PATHS = (
     "backend/app/services/background_job_transaction_boundary.py",
     "backend/app/services/outbound_dispatch_transaction_boundary.py",
     "backend/app/services/queue_health.py",
-    "backend/app/services/canonical_route_projection.py",
-    "backend/app/services/canonical_ticket_service.py",
-    "backend/app/services/canonical_control_tower_service.py",
-    "backend/app/services/canonical_qa_training_service.py",
-    "backend/app/services/canonical_operator_work_queue.py",
-    "backend/app/services/canonical_webchat_handoff_service.py",
-    "backend/app/api/canonical_osr_admin.py",
-    "backend/app/api/canonical_integration.py",
+    "backend/app/services/release_readiness.py",
+    "backend/app/services/storage_readiness.py",
     "scripts/qualification/database_capacity.py",
+    "scripts/qualification/infrastructure_decision.py",
+    "scripts/qualification/local_storage_backup.py",
     "scripts/qualification/supply_chain.py",
+    "scripts/release/assemble_supply_chain_evidence.py",
     "deploy/docker-compose.controlled.yml",
 )
 
@@ -89,12 +88,6 @@ PUBLIC_COMPATIBILITY = {
     "backend/app/api/integration.py": "canonical_integration",
 }
 
-FORBIDDEN_WORKSPACE_MARKERS = (
-    "function AppNavigation",
-    "operator-app-header",
-    "/webchat?tab=",
-)
-
 IDENTITY_FILES = (
     "backend/requirements.txt",
     "webapp/package.json",
@@ -102,8 +95,52 @@ IDENTITY_FILES = (
     "Dockerfile",
     "deploy/docker-compose.server.yml",
     "deploy/docker-compose.controlled.yml",
+    "scripts/verify_repository.py",
     "scripts/qualification/database_capacity.py",
+    "scripts/qualification/infrastructure_decision.py",
+    "scripts/qualification/local_storage_backup.py",
     "scripts/qualification/supply_chain.py",
+    "scripts/release/assemble_supply_chain_evidence.py",
+)
+
+FOCUSED_BACKEND_TESTS = (
+    "backend/tests/test_canonical_service_authorities.py",
+    "backend/tests/test_canonical_control_tower_authority.py",
+    "backend/tests/test_runtime_permission_projection.py",
+    "backend/tests/test_scope_permissions.py",
+    "backend/tests/test_canonical_route_projection.py",
+    "backend/tests/test_canonical_policy_projection_behavior.py",
+    "backend/tests/test_canonical_policy_projection_contract.py",
+    "backend/tests/test_operator_queue_current_scopes.py",
+    "backend/tests/test_webchat_country_authority.py",
+    "backend/tests/test_webchat_country_migration_contract.py",
+    "backend/tests/test_webchat_public_tenant_binding.py",
+    "backend/tests/test_channel_control.py",
+    "backend/tests/test_knowledge_items.py",
+    "backend/tests/test_outbound_semantics_single_source.py",
+    "backend/tests/test_webchat_tracking_fact_mvp.py",
+    "backend/tests/test_support_conversation_authority_contract.py",
+    "backend/tests/test_support_conversation_privacy.py",
+    "backend/tests/test_support_conversations_api.py",
+    "backend/tests/test_support_conversations_rbac.py",
+    "backend/tests/test_support_sensitive_access.py",
+    "backend/tests/test_provider_runtime_traffic_selection.py",
+    "backend/tests/test_provider_runtime_router.py",
+    "backend/tests/test_provider_runtime_dispatcher_authority.py",
+    "backend/tests/test_provider_runtime_bounded_audit_boundary.py",
+    "backend/tests/test_webchat_polling_write_throttle.py",
+    "backend/tests/test_background_job_transaction_boundary.py",
+    "backend/tests/test_outbound_dispatch_transaction_boundary.py",
+    "backend/tests/test_database_connection_budget.py",
+    "backend/tests/test_database_pool_snapshot.py",
+    "backend/tests/test_controlled_database_roles.py",
+    "backend/tests/test_controlled_least_privilege.py",
+    "backend/tests/test_supply_chain_qualification.py",
+    "backend/tests/test_local_storage_backup_qualification.py",
+    "backend/tests/test_queue_business_health.py",
+    "backend/tests/test_release_readiness.py",
+    "backend/tests/test_infrastructure_decision.py",
+    "backend/tests/test_live_voice_credential_rotation_runbook.py",
 )
 
 
@@ -128,21 +165,18 @@ def _sha256(path: Path) -> str:
 
 
 def repository_identity() -> dict[str, Any]:
-    head = _git("rev-parse", "HEAD")
-    tree = _git("rev-parse", "HEAD^{tree}")
     status = _git("status", "--porcelain")
-    hashes = {
-        relative: _sha256(ROOT / relative)
-        for relative in IDENTITY_FILES
-        if (ROOT / relative).is_file()
-    }
     return {
         "schema": "nexus.candidate-identity.v1",
-        "source_sha": head,
-        "tree_sha": tree,
+        "source_sha": _git("rev-parse", "HEAD"),
+        "tree_sha": _git("rev-parse", "HEAD^{tree}"),
         "clean": not bool(status),
         "dirty_paths": status.splitlines()[:50],
-        "file_sha256": hashes,
+        "file_sha256": {
+            relative: _sha256(ROOT / relative)
+            for relative in IDENTITY_FILES
+            if (ROOT / relative).is_file()
+        },
     }
 
 
@@ -158,20 +192,26 @@ def _require_markers(
     content = path.read_text(encoding="utf-8")
     for marker in markers:
         if marker not in content:
-            failures.append(f"canonical contract marker missing in {relative}: {marker}")
+            failures.append(
+                f"canonical contract marker missing in {relative}: {marker}"
+            )
 
 
 def static_failures() -> list[str]:
     failures: list[str] = []
 
-    workflow_files = {
-        path.relative_to(ROOT).as_posix()
-        for path in WORKFLOW_DIR.rglob("*")
-        if path.is_file()
-    } if WORKFLOW_DIR.is_dir() else set()
+    workflow_files = (
+        {
+            path.relative_to(ROOT).as_posix()
+            for path in WORKFLOW_DIR.rglob("*")
+            if path.is_file()
+        }
+        if WORKFLOW_DIR.is_dir()
+        else set()
+    )
     if workflow_files:
         failures.append(
-            "GitHub Actions are retired and the workflows directory must contain no files: "
+            "GitHub Actions are retired and .github/workflows must contain no files: "
             f"actual={sorted(workflow_files)}"
         )
 
@@ -195,60 +235,40 @@ def static_failures() -> list[str]:
             continue
         content = path.read_text(encoding="utf-8")
         if canonical not in content:
-            failures.append(f"compatibility path does not delegate to {canonical}: {relative}")
+            failures.append(
+                f"compatibility path does not delegate to {canonical}: {relative}"
+            )
         if "UserRole" in content:
             failures.append(f"compatibility path owns role authorization: {relative}")
         functions = set(re.findall(r"^def\s+(\w+)", content, re.MULTILINE))
         if functions - {"__getattr__"}:
-            failures.append(f"compatibility path owns business functions: {relative}")
+            failures.append(
+                f"compatibility path owns business functions: {relative}"
+            )
         if len(content.splitlines()) > 20:
-            failures.append(f"compatibility path grew into a second implementation: {relative}")
+            failures.append(
+                f"compatibility path grew into a second implementation: {relative}"
+            )
 
     workspace = ROOT / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx"
     if workspace.is_file():
         content = workspace.read_text(encoding="utf-8")
-        for marker in FORBIDDEN_WORKSPACE_MARKERS:
+        for marker in ("function AppNavigation", "operator-app-header", "/webchat?tab="):
             if marker in content:
-                failures.append(f"workspace owns retired shell/navigation marker: {marker}")
+                failures.append(
+                    f"workspace owns retired shell/navigation marker: {marker}"
+                )
 
-    workspace_actions = ROOT / "webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx"
-    if not workspace_actions.is_file():
-        failures.append("canonical authority missing: webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx")
-    else:
-        actions_content = workspace_actions.read_text(encoding="utf-8")
-        required_cancel_markers = (
+    _require_markers(
+        failures,
+        "webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx",
+        (
             "type CancelPreviewBinding",
             "cancelPreviewFingerprint(",
             "cancelPreview.fingerprint !== currentCancelFingerprint",
             "invalidateCancelPreview()",
-        )
-        for marker in required_cancel_markers:
-            if marker not in actions_content:
-                failures.append(f"cancel preview binding contract missing: {marker}")
-
-    permissions = ROOT / "backend/app/services/permissions.py"
-    if permissions.is_file():
-        content = permissions.read_text(encoding="utf-8")
-        if re.search(r"\bif\s+[^\n]*\.role\b", content):
-            failures.append("runtime permission authority still branches on role names")
-        if "ROLE_CAPABILITIES" not in content or "has_global_case_visibility" not in content:
-            failures.append("central capability policy projection is incomplete")
-
-    runtime_api = ROOT / "backend/app/api/admin_provider_runtime.py"
-    if runtime_api.is_file():
-        content = runtime_api.read_text(encoding="utf-8")
-        if content.count("ensure_can_read_runtime(current_user, db)") < 2:
-            failures.append("runtime read endpoints do not use the read-only capability authority")
-        if "ensure_can_manage_runtime(current_user, db)" not in content:
-            failures.append("runtime mutation endpoint lost manage authority")
-
-    control_tower = ROOT / "webapp/src/features/control-tower/ControlTowerPage.tsx"
-    if control_tower.is_file():
-        content = control_tower.read_text(encoding="utf-8")
-        for legacy in ("/accounts", "/outbound-email", "/ai-control"):
-            if legacy in content:
-                failures.append(f"frontend still guesses legacy control-tower href: {legacy}")
-
+        ),
+    )
     _require_markers(
         failures,
         "backend/app/services/provider_runtime/traffic_selection.py",
@@ -269,12 +289,6 @@ def static_failures() -> list[str]:
             "ProviderTrafficPath.SHADOW_ONLY",
         ),
     )
-    router_path = ROOT / "backend/app/services/provider_runtime/router.py"
-    if router_path.is_file():
-        router_content = router_path.read_text(encoding="utf-8")
-        if "def stable_canary_bucket" in router_content or "hashlib.sha256" in router_content:
-            failures.append("Provider router owns a duplicate traffic selector")
-
     _require_markers(
         failures,
         "backend/app/db.py",
@@ -283,15 +297,10 @@ def static_failures() -> list[str]:
             "DB_MAX_OVERFLOW",
             "DB_POOL_TIMEOUT_SECONDS",
             "database_pool_configuration",
+            "database_pool_snapshot",
             "pool_use_lifo",
         ),
     )
-    db_path = ROOT / "backend/app/db.py"
-    if db_path.is_file():
-        db_content = db_path.read_text(encoding="utf-8")
-        if '"pool_size": 10' in db_content or '"max_overflow": 20' in db_content:
-            failures.append("PostgreSQL pool budget is hard-coded to the retired 10+20 values")
-
     _require_markers(
         failures,
         "backend/app/services/background_job_transaction_boundary.py",
@@ -325,14 +334,14 @@ def static_failures() -> list[str]:
     )
     _require_markers(
         failures,
-        "backend/app/api/admin_queue.py",
+        "backend/app/services/release_readiness.py",
         (
-            "@router.get('/queues/health')",
-            "ensure_can_read_runtime(current_user, db)",
-            "collect_queue_health(db)",
+            "nexus.release-readiness.v1",
+            "production_authorized",
+            "provider_enablement_authorized",
+            "outbound_enablement_authorized",
         ),
     )
-
     _require_markers(
         failures,
         "scripts/qualification/database_capacity.py",
@@ -348,14 +357,19 @@ def static_failures() -> list[str]:
         "scripts/qualification/supply_chain.py",
         (
             "nexus.supply-chain-qualification.v1",
-            "dockerfile_base_not_pinned",
-            "\"sbom\": ROOT / \"artifacts\" / \"supply-chain\" / \"sbom.spdx.json\"",
-            "\"provenance\": ROOT / \"artifacts\" / \"supply-chain\" / \"provenance.json\"",
-            "\"signature_bundle\": ROOT / \"artifacts\" / \"supply-chain\" / \"cosign.bundle.json\"",
-            "findings.append(f\"release_evidence_missing:{name}\")",
+            "EVIDENCE_DIR_ENV",
+            "release_evidence_inside_candidate_tree",
+            "candidate_tree_mutated",
+            "--evidence-dir",
         ),
     )
-
+    supply_chain = ROOT / "scripts/qualification/supply_chain.py"
+    if supply_chain.is_file():
+        content = supply_chain.read_text(encoding="utf-8")
+        if 'ROOT / "artifacts" / "supply-chain"' in content:
+            failures.append(
+                "release evidence path is inside the candidate repository"
+            )
     _require_markers(
         failures,
         "deploy/docker-compose.controlled.yml",
@@ -372,35 +386,63 @@ def static_failures() -> list[str]:
         ),
     )
 
-    dockerfile_path = ROOT / "Dockerfile"
-    if dockerfile_path.is_file():
-        dockerfile_content = dockerfile_path.read_text(encoding="utf-8")
-        effective_dockerfile_content = "\n".join(
+    permissions = ROOT / "backend/app/services/permissions.py"
+    if permissions.is_file():
+        content = permissions.read_text(encoding="utf-8")
+        if re.search(r"\bif\s+[^\n]*\.role\b", content):
+            failures.append("runtime permission authority still branches on role names")
+        if (
+            "ROLE_CAPABILITIES" not in content
+            or "has_global_case_visibility" not in content
+        ):
+            failures.append("central capability policy projection is incomplete")
+
+    router = ROOT / "backend/app/services/provider_runtime/router.py"
+    if router.is_file():
+        content = router.read_text(encoding="utf-8")
+        if "def stable_canary_bucket" in content or "hashlib.sha256" in content:
+            failures.append("Provider router owns a duplicate traffic selector")
+
+    db_path = ROOT / "backend/app/db.py"
+    if db_path.is_file():
+        content = db_path.read_text(encoding="utf-8")
+        if '"pool_size": 10' in content or '"max_overflow": 20' in content:
+            failures.append(
+                "PostgreSQL pool budget is hard-coded to retired 10+20 values"
+            )
+
+    dockerfile = ROOT / "Dockerfile"
+    if dockerfile.is_file():
+        content = "\n".join(
             line
-            for line in dockerfile_content.splitlines()
+            for line in dockerfile.read_text(encoding="utf-8").splitlines()
             if not line.lstrip().startswith("#")
         )
         from_lines = [
             line.strip()
-            for line in effective_dockerfile_content.splitlines()
+            for line in content.splitlines()
             if line.strip().upper().startswith("FROM ")
         ]
         if any("@sha256:" not in line.split()[1] for line in from_lines):
             failures.append("Dockerfile contains an unpinned base image")
-        if re.search(r"\bapk\s+upgrade\b", effective_dockerfile_content):
+        if re.search(r"\bapk\s+upgrade\b", content):
             failures.append("Dockerfile reintroduced mutable apk upgrade")
 
-    requirements_path = ROOT / "backend/requirements.txt"
-    if requirements_path.is_file():
+    requirements = ROOT / "backend/requirements.txt"
+    if requirements.is_file():
         for number, line in enumerate(
-            requirements_path.read_text(encoding="utf-8").splitlines(),
+            requirements.read_text(encoding="utf-8").splitlines(),
             1,
         ):
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or stripped.startswith("--"):
                 continue
-            if "==" not in stripped or any(marker in stripped for marker in (">=", "<=", "~=", "!=")):
-                failures.append(f"Python requirement is not exact at line {number}")
+            if "==" not in stripped or any(
+                marker in stripped for marker in (">=", "<=", "~=", "!=")
+            ):
+                failures.append(
+                    f"Python requirement is not exact at line {number}"
+                )
 
     return failures
 
@@ -422,12 +464,36 @@ def _write_evidence(path: Path | None, payload: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify the single canonical Nexus implementation with GitHub Actions retired."
+        description=(
+            "Verify the single canonical Nexus implementation with GitHub Actions "
+            "retired and candidate identity unchanged."
+        )
     )
-    parser.add_argument("--static-only", action="store_true", help="Run repository structure checks only.")
-    parser.add_argument("--skip-browser", action="store_true", help="Skip Playwright browser journeys.")
-    parser.add_argument("--focused-backend", action="store_true", help="Run the focused backend acceptance suite instead of every backend test.")
-    parser.add_argument("--evidence-out", type=Path, help="Write the same-identity verification result as JSON.")
+    parser.add_argument(
+        "--static-only",
+        action="store_true",
+        help="Run repository structure and immutable-input checks only.",
+    )
+    parser.add_argument(
+        "--skip-browser",
+        action="store_true",
+        help="Skip Playwright browser journeys.",
+    )
+    parser.add_argument(
+        "--focused-backend",
+        action="store_true",
+        help="Run the production-readiness focused backend suite.",
+    )
+    parser.add_argument(
+        "--release-evidence-dir",
+        type=Path,
+        help="External directory containing SBOM, provenance and signature bundle.",
+    )
+    parser.add_argument(
+        "--evidence-out",
+        type=Path,
+        help="Write same-identity verification result as JSON.",
+    )
     args = parser.parse_args()
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -465,50 +531,40 @@ def main() -> int:
         _write_evidence(args.evidence_out, payload)
         return 1
 
-    run([sys.executable, "scripts/qualification/supply_chain.py"])
+    supply_chain_command = [
+        sys.executable,
+        "scripts/qualification/supply_chain.py",
+    ]
+    if args.release_evidence_dir:
+        supply_chain_command.extend(
+            [
+                "--release",
+                "--evidence-dir",
+                str(args.release_evidence_dir.resolve()),
+            ]
+        )
+    run(supply_chain_command)
 
     if not args.static_only:
         run(["npm", "ci", "--ignore-scripts"], cwd=ROOT / "webapp")
         run(["npm", "run", "verify"], cwd=ROOT / "webapp")
-        run([sys.executable, "-m", "compileall", "backend/app", "backend/scripts", "scripts/qualification"])
-
-        if args.focused_backend:
-            backend_tests = [
-                "backend/tests/test_canonical_service_authorities.py",
-                "backend/tests/test_canonical_control_tower_authority.py",
-                "backend/tests/test_runtime_permission_projection.py",
-                "backend/tests/test_scope_permissions.py",
-                "backend/tests/test_canonical_route_projection.py",
-                "backend/tests/test_canonical_policy_projection_behavior.py",
-                "backend/tests/test_canonical_policy_projection_contract.py",
-                "backend/tests/test_operator_queue_current_scopes.py",
-                "backend/tests/test_webchat_country_authority.py",
-                "backend/tests/test_webchat_country_migration_contract.py",
-                "backend/tests/test_webchat_public_tenant_binding.py",
-                "backend/tests/test_channel_control.py",
-                "backend/tests/test_knowledge_items.py",
-                "backend/tests/test_outbound_semantics_single_source.py",
-                "backend/tests/test_webchat_tracking_fact_mvp.py",
-                "backend/tests/test_support_conversation_authority_contract.py",
-                "backend/tests/test_support_conversation_privacy.py",
-                "backend/tests/test_support_conversations_api.py",
-                "backend/tests/test_support_conversations_rbac.py",
-                "backend/tests/test_support_sensitive_access.py",
-                "backend/tests/test_provider_runtime_traffic_selection.py",
-                "backend/tests/test_provider_runtime_router.py",
-                "backend/tests/test_provider_runtime_dispatcher_authority.py",
-                "backend/tests/test_provider_runtime_bounded_audit_boundary.py",
-                "backend/tests/test_webchat_polling_write_throttle.py",
-                "backend/tests/test_background_job_transaction_boundary.py",
-                "backend/tests/test_outbound_dispatch_transaction_boundary.py",
-                "backend/tests/test_database_connection_budget.py",
-                "backend/tests/test_supply_chain_qualification.py",
-                "backend/tests/test_queue_business_health.py",
+        run(
+            [
+                sys.executable,
+                "-m",
+                "compileall",
+                "backend/app",
+                "backend/scripts",
+                "scripts/qualification",
+                "scripts/release",
             ]
-        else:
-            backend_tests = ["backend/tests"]
+        )
+        backend_tests = (
+            list(FOCUSED_BACKEND_TESTS)
+            if args.focused_backend
+            else ["backend/tests"]
+        )
         run([sys.executable, "-m", "pytest", "-q", *backend_tests])
-
         if not args.skip_browser:
             run(["npm", "run", "e2e"], cwd=ROOT / "webapp")
 
@@ -527,6 +583,7 @@ def main() -> int:
         "static_only": args.static_only,
         "focused_backend": args.focused_backend,
         "browser_executed": not args.static_only and not args.skip_browser,
+        "release_evidence_checked": bool(args.release_evidence_dir),
         "same_identity": identity_equal,
         "candidate_start": start_identity,
         "candidate_end": end_identity,
