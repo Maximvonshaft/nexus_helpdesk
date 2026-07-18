@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from app.enums import MessageStatus
 from app.services import message_dispatch
 from app.services.outbound_dispatch_transaction_boundary import (
-    _dispatch_pending_messages_with_attempt_boundary,
+    dispatch_pending_messages,
     reclaim_stale_processing_messages,
 )
 from app.utils.time import utc_now
@@ -147,7 +147,7 @@ def test_dispatch_pending_messages_recovers_one_failed_attempt_and_continues(mon
 
     monkeypatch.setattr(message_dispatch, "process_outbound_message", fake_process)
 
-    processed = _dispatch_pending_messages_with_attempt_boundary(
+    processed = dispatch_pending_messages(
         db,
         worker_id="worker-test",
     )
@@ -189,7 +189,7 @@ def test_dispatch_pending_messages_marks_dead_when_recovered_attempt_exhausts_re
         lambda db, limit=None: 0,
     )
 
-    processed = _dispatch_pending_messages_with_attempt_boundary(
+    processed = dispatch_pending_messages(
         db,
         worker_id="worker-test",
     )
