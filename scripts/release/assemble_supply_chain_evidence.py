@@ -15,12 +15,20 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-IMAGE_DIGEST_RE = re.compile(r"^[a-z0-9._/-]+(?:\:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$")
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.qualification.supply_chain import SUPPLY_CHAIN_INPUTS  # noqa: E402
+
+IMAGE_DIGEST_RE = re.compile(
+    r"^[a-z0-9._/-]+(?:\:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$"
+)
 EVIDENCE_DIR_ENV = "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR"
 
 
@@ -88,6 +96,19 @@ def _resolve_output_dir(explicit: Path | None) -> Path:
     return output_dir
 
 
+def _candidate_inputs() -> list[Path]:
+    inputs = [ROOT / relative for relative in SUPPLY_CHAIN_INPUTS]
+    inputs.append(ROOT / "scripts" / "verify_repository.py")
+    missing = [
+        str(path.relative_to(ROOT))
+        for path in inputs
+        if not path.is_file()
+    ]
+    if missing:
+        raise ValueError(f"provenance_input_missing:{','.join(missing)}")
+    return inputs
+
+
 def build_provenance(
     *,
     image: str,
@@ -101,18 +122,7 @@ def build_provenance(
     dirty = _git("status", "--porcelain")
     if dirty:
         raise ValueError("candidate_worktree_not_clean")
-    inputs = [
-        ROOT / "Dockerfile",
-        ROOT / "backend" / "requirements.txt",
-        ROOT / "webapp" / "package.json",
-        ROOT / "webapp" / "package-lock.json",
-        ROOT / "deploy" / "docker-compose.controlled.yml",
-        ROOT / "deploy" / ".env.controlled.example",
-        ROOT / "scripts" / "verify_repository.py",
-    ]
-    missing = [str(path.relative_to(ROOT)) for path in inputs if not path.is_file()]
-    if missing:
-        raise ValueError(f"provenance_input_missing:{','.join(missing)}")
+    inputs = _candidate_inputs()
     epoch = _source_epoch()
     return {
         "_type": "https://in-toto.io/Statement/v1",
@@ -232,6 +242,7 @@ def assemble(
         "tree_sha": _git("rev-parse", "HEAD^{tree}"),
         "evidence_dir": str(resolved_output),
         "candidate_tree_mutated": False,
+        "candidate_input_count": len(_candidate_inputs()),
         "artifacts": {
             "sbom": {
                 "path": str(sbom_target),
