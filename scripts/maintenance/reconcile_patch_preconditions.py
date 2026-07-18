@@ -17,7 +17,7 @@ def replace_section(start_marker: str, end_marker: str, replacement: str) -> Non
 replace_section(
     "# Worker business-health timestamps",
     "# Healthy single-writer local storage",
-    r'''# Worker business-health timestamps are normalized at the authority boundary.
+    r"""# Worker business-health timestamps are normalized at the authority boundary.
 replace_once(
     "backend/app/services/queue_health.py",
     "from ..utils.time import utc_now\n",
@@ -29,13 +29,13 @@ replace_once(
     "def _age_ms(value, *, now) -> int | None:\n    if value is None:\n        return None\n    return max(0, int((ensure_utc(now) - ensure_utc(value)).total_seconds() * 1000))\n",
 )
 
-''',
+""",
 )
 
 replace_section(
     "# Healthy single-writer local storage",
     "# Dedicated WebChat AI queue",
-    r'''# Healthy single-writer local storage is a measured NO_CHANGE state.
+    r"""# Healthy single-writer local storage is a measured NO_CHANGE state.
 replace_once(
     "scripts/qualification/infrastructure_decision.py",
     '''    if storage is None:
@@ -73,6 +73,9 @@ replace_once(
     else:
         object_decision = "BLOCKED"
 ''',
+)
+
+""",
 )
 
 path.write_text(source, encoding="utf-8")
