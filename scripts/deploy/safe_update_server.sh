@@ -9,7 +9,7 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/deploy_backups/$STAMP}"
 BACKUP_PARENT="$(dirname "$BACKUP_DIR")"
 
-if [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; then
+if [[ -e "$BACKUP_DIR" || -L "$BACKUP_DIR" ]]; then
   echo "refusing existing backup target: $BACKUP_DIR" >&2
   exit 2
 fi
@@ -22,20 +22,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Preserve both historical production-local inputs and the new controlled
+# inputs. This script only creates a verified backup; it never checks out,
+# overwrites, deploys, restarts or changes containers.
 files=(
   Dockerfile
   deploy/.env.prod
+  deploy/.env.controlled
+  deploy/.env.controlled.local-postgres
   deploy/docker-compose.server.yml
+  deploy/docker-compose.controlled.yml
+  deploy/docker-compose.controlled-postgres.yml
   deploy/nginx/default.conf
   backend/.env
 )
 
 for relative_path in "${files[@]}"; do
-  if [ -L "$relative_path" ]; then
+  if [[ -L "$relative_path" ]]; then
     echo "refusing symlinked protected file: $relative_path" >&2
     exit 3
   fi
-  if [ -e "$relative_path" ] && [ ! -f "$relative_path" ]; then
+  if [[ -e "$relative_path" && ! -f "$relative_path" ]]; then
     echo "refusing non-regular protected file: $relative_path" >&2
     exit 3
   fi
@@ -47,7 +54,7 @@ chmod 600 "$manifest"
 copied=0
 
 for relative_path in "${files[@]}"; do
-  if [ ! -f "$relative_path" ]; then
+  if [[ ! -f "$relative_path" ]]; then
     echo "Missing optional protected file: $relative_path"
     continue
   fi
@@ -63,7 +70,7 @@ for relative_path in "${files[@]}"; do
   copied=$((copied + 1))
 done
 
-if [ "$copied" -eq 0 ]; then
+if [[ "$copied" -eq 0 ]]; then
   echo "no protected files were available to back up" >&2
   exit 4
 fi
@@ -76,7 +83,7 @@ find "$STAGING_DIR" -type f -exec chmod 600 {} +
 )
 
 mv -T -n -- "$STAGING_DIR" "$BACKUP_DIR"
-if [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+if [[ -e "$STAGING_DIR" || -L "$STAGING_DIR" ]]; then
   echo "backup target appeared during publication; verified bundle was not published" >&2
   exit 5
 fi
@@ -93,10 +100,8 @@ if ! git status --short; then
 fi
 printf '\nNext steps:\n'
 printf '%s\n' \
-  '1. Confirm deploy/.env.prod is preserved.' \
-  '2. Pull or checkout the approved commit.' \
-  '3. Run the production preflight.' \
-  '4. Back up PostgreSQL.' \
-  '5. Run migrations.' \
-  '6. Build and start the candidate stack.' \
-  '7. Run health, readiness, runtime warmup, and public smoke checks.'
+  '1. Keep the production-local deploy/.env.prod and docker-compose.server.yml backup unchanged.' \
+  '2. Prepare a separate deploy/.env.controlled or deploy/.env.controlled.local-postgres.' \
+  '3. Run the canonical static verifier and controlled preflight.' \
+  '4. Back up PostgreSQL and uploads separately.' \
+  '5. Only after explicit authorization, use deploy/nexus-prod-compose.sh with an explicit database topology.'
