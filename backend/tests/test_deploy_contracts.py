@@ -2,16 +2,27 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
+CONTROLLED = ROOT / "deploy" / "docker-compose.controlled.yml"
+LOCAL_DB = ROOT / "deploy" / "docker-compose.controlled-postgres.yml"
+SERVER_ALIAS = ROOT / "deploy" / "docker-compose.server.yml"
+CANDIDATE_ALIAS = ROOT / "deploy" / "docker-compose.candidate.yml"
+CONTROLLED_ENV = ROOT / "deploy" / ".env.controlled.example"
+LOCAL_ENV = ROOT / "deploy" / ".env.controlled.local-postgres.example"
+PROD_TOMBSTONES = (
+    ROOT / "deploy" / ".env.prod.example",
+    ROOT / "deploy" / ".env.prod.local-postgres.example",
+    ROOT / "deploy" / ".env.prod.external-postgres.example",
+    ROOT / "deploy" / ".env.candidate.example",
+)
 
 
-def _read(path: str) -> str:
-    return (ROOT / path).read_text(encoding="utf-8")
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def _env(path: str) -> dict[str, str]:
+def _env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw in _read(path).splitlines():
         line = raw.strip()
@@ -22,91 +33,126 @@ def _env(path: str) -> dict[str, str]:
     return values
 
 
-def _has_postgres_service(compose_text: str) -> bool:
-    return bool(re.search(r"^\s{2}postgres:\s*$", compose_text, flags=re.MULTILINE))
+def test_server_and_candidate_filenames_are_thin_canonical_aliases():
+    server = _read(SERVER_ALIAS)
+    candidate = _read(CANDIDATE_ALIAS)
+
+    assert "services:" not in server
+    assert "services:" not in candidate
+    assert "./docker-compose.controlled.yml" in server
+    assert "./docker-compose.controlled-postgres.yml" in server
+    assert "./.env.controlled.local-postgres" in server
+    assert "./docker-compose.controlled.yml" in candidate
+    assert "./.env.controlled" in candidate
+    for forbidden in (
+        "app-candidate",
+        "worker-outbound-candidate",
+        "whatsapp-sidecar-candidate",
+        "legacy-worker",
+        "runtime-warmer",
+        "/run/secrets",
+        "ai_runtime_token",
+        "live_voice_token",
+    ):
+        assert forbidden not in server
+        assert forbidden not in candidate
 
 
-def _db_host(env_values: dict[str, str]) -> str:
-    return urlparse(env_values["DATABASE_URL"]).hostname or ""
+def test_canonical_app_worker_topology_exists_in_one_file_only():
+    controlled = _read(CONTROLLED)
+    local_db = _read(LOCAL_DB)
+
+    for service in (
+        "app-controlled:",
+        "worker-outbound-controlled:",
+        "worker-background-controlled:",
+        "worker-webchat-ai-controlled:",
+        "worker-handoff-snapshot-controlled:",
+    ):
+        assert service in controlled
+        assert service not in local_db
+    assert "postgres-controlled:" not in controlled
+    assert "postgres-controlled:" in local_db
+    assert "migrate-controlled:" in local_db
+    assert "condition: service_healthy" in local_db
 
 
-def test_server_compose_includes_local_postgres_service():
-    compose = _read("deploy/docker-compose.server.yml")
-    assert _has_postgres_service(compose)
-    assert "EXTERNAL_CHANNEL_TRANSPORT: disabled" in compose
-    assert "EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled" in compose
-    assert "${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro" in compose
+def test_external_and_local_controlled_envs_use_distinct_service_identities():
+    expected_users = {
+        "DATABASE_URL_MIGRATION": "nexus_migration",
+        "DATABASE_URL_APP": "nexus_app",
+        "DATABASE_URL_OUTBOUND": "nexus_outbound",
+        "DATABASE_URL_BACKGROUND": "nexus_background",
+        "DATABASE_URL_WEBCHAT_AI": "nexus_webchat_ai",
+        "DATABASE_URL_HANDOFF": "nexus_handoff",
+    }
+    for path, expected_host in (
+        (CONTROLLED_ENV, "10.2.64.2"),
+        (LOCAL_ENV, "postgres-controlled"),
+    ):
+        text = _read(path)
+        found_users: set[str] = set()
+        for key, expected_user in expected_users.items():
+            match = re.search(
+                rf"(?m)^{key}=postgresql\+psycopg://([^:]+):[^@]+@([^:/]+):5432/nexusdesk$",
+                text,
+            )
+            assert match, (path, key)
+            assert match.group(1) == expected_user
+            assert match.group(2) == expected_host
+            found_users.add(match.group(1))
+        assert len(found_users) == len(expected_users)
+        assert not re.search(r"(?m)^DATABASE_URL=", text)
 
 
-def test_local_postgres_env_contract():
-    env = _env("deploy/.env.prod.local-postgres.example")
-    assert _db_host(env) == "postgres"
-    assert env["APP_ENV"] == "production"
-    assert env["AUTO_INIT_DB"] == "false"
-    assert env["SEED_DEMO_DATA"] == "false"
-    assert env["OUTBOUND_PROVIDER"] == "disabled"
-    assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
-    assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
+def test_local_postgres_overlay_bootstraps_only_database_authority():
+    compose = _read(LOCAL_DB)
+    bootstrap = _read(ROOT / "deploy" / "postgres" / "init-controlled-roles.sh")
+
+    assert "postgres:16.14-alpine3.22@sha256:" in compose
+    assert "init-controlled-roles.sh" in compose
+    assert "controlled-postgres-data" in compose
+    assert "NEXUS_DB_MIGRATION_USER" in bootstrap
+    assert "ALTER DEFAULT PRIVILEGES" in bootstrap
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES" in bootstrap
+    assert "GRANT USAGE, SELECT ON SEQUENCES" in bootstrap
+    assert "DROP DATABASE" not in bootstrap
+    assert "DROP ROLE" not in bootstrap
 
 
-def test_external_postgres_env_contract():
-    env = _env("deploy/.env.prod.external-postgres.example")
-    assert _db_host(env) != "postgres"
-    assert env["APP_ENV"] == "production"
-    assert env["AUTO_INIT_DB"] == "false"
-    assert env["SEED_DEMO_DATA"] == "false"
-    assert env["OUTBOUND_PROVIDER"] == "disabled"
-    assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
-    assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
+def test_retired_env_paths_are_bounded_tombstones():
+    for path in PROD_TOMBSTONES:
+        text = _read(path)
+        env = _env(path)
+        assert env["NEXUS_ENV_TEMPLATE_RETIRED"] == "true"
+        assert "DATABASE_URL=" not in text
+        assert "SECRET_KEY=" not in text
+        assert "TOKEN_FILE=" not in text
+        assert len(text.splitlines()) <= 20
 
 
-def test_default_env_template_keeps_outbound_disabled():
-    env = _env("deploy/.env.prod.example")
-    assert env["OUTBOUND_PROVIDER"] == "disabled"
-    assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
-    assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
-    assert env["EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED"] == "false"
+def test_controlled_profile_keeps_external_effects_and_credentials_absent():
+    compose = _read(CONTROLLED)
+    env = _read(CONTROLLED_ENV)
 
-
-def test_private_ai_runtime_uses_app_readable_runtime_secret_mount():
-    env = _env("deploy/.env.prod.example")
-    server_compose = _read("deploy/docker-compose.server.yml")
-    candidate_compose = _read("deploy/docker-compose.candidate.yml")
-    server_expected_mount = "${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro"
-    server_voice_mount = "${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/live_voice_token:/run/nexus/live_voice_token:ro"
-    candidate_expected_mount = "/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro"
-    candidate_voice_mount = "/opt/nexus_helpdesk/deploy/runtime_secrets/live_voice_token:/run/nexus/live_voice_token:ro"
-
-    assert env["PRIVATE_AI_RUNTIME_TOKEN_FILE"] == "/run/nexus/ai_runtime_token"
-    assert env["LIVE_VOICE_UPSTREAM_TOKEN_FILE"] == "/run/nexus/live_voice_token"
-    assert env["KNOWLEDGE_EMBEDDING_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
-    assert env["PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS"] == "20"
-    assert env["PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS"] == "3500"
-    assert env["PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL"] == "false"
-    assert env["WEBCHAT_AI_TURN_DEBOUNCE_SECONDS"] == "0.05"
-    assert env["WEBCHAT_AI_WORKER_POLL_SECONDS"] == "0.10"
-    assert env["WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS"] == "0.02"
-    assert env["WEBCHAT_WS_REPLAY_POLL_MS"] == "100"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_KEEP_ALIVE"] == "24h"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_SHORT"] == "80"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_SERVICE"] == "192"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_PREDICT_STANDARD"] == "320"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_SHORT"] == "2048"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_SERVICE"] == "4096"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_STANDARD"] == "4096"
-    assert env["PRIVATE_AI_RUNTIME_OLLAMA_NUM_CTX_REPAIR"] == "4096"
-    assert env["PROVIDER_RUNTIME_TIMEOUT_MS"] == "30000"
-    assert env["NEXUSDESK_RUNTIME_SECRETS_DIR"] == "/opt/nexus_helpdesk/deploy/runtime_secrets"
-    assert server_expected_mount in server_compose
-    assert server_voice_mount in server_compose
-    assert candidate_expected_mount in candidate_compose
-    assert candidate_voice_mount in candidate_compose
-
-
-def test_controlled_compose_keeps_live_voice_token_separate_from_ai_runtime_token():
-    env = _env("deploy/.env.controlled.example")
-    compose = _read("deploy/docker-compose.controlled.yml")
-
-    assert env["LIVE_VOICE_TOKEN_HOST_PATH"].endswith("/live_voice_token")
-    assert env["LIVE_VOICE_UPSTREAM_TOKEN_FILE"] == "/run/nexus/live_voice_token"
-    assert "${LIVE_VOICE_TOKEN_HOST_PATH:?set live voice token host path}:/run/nexus/live_voice_token:ro" in compose
+    for marker in (
+        "PROVIDER_RUNTIME_ENABLED=false",
+        "PROVIDER_RUNTIME_TRAFFIC_MODE=control",
+        "PROVIDER_RUNTIME_KILL_SWITCH=true",
+        "PROVIDER_RUNTIME_CANARY_PERCENT=0",
+        "ENABLE_OUTBOUND_DISPATCH=false",
+        "OUTBOUND_PROVIDER=disabled",
+        "WHATSAPP_NATIVE_ENABLED=false",
+        "WHATSAPP_DISPATCH_MODE=disabled",
+        "WEBCHAT_VOICE_ENABLED=false",
+    ):
+        assert marker in env
+    for forbidden in (
+        "env_file:",
+        "/run/secrets",
+        "ai_runtime_token",
+        "live_voice_token",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
+        "--queue all",
+    ):
+        assert forbidden not in compose
