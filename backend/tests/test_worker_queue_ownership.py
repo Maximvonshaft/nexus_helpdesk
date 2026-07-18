@@ -37,6 +37,7 @@ def test_background_worker_claims_only_background_owned_job_types():
     assert "WEBCHAT_AI_REPLY_JOB" not in function
     assert "WEBCHAT_HANDOFF_SNAPSHOT_JOB" not in function
     assert "EXTERNAL_CHANNEL_SYNC_JOB" not in function
+    assert "enqueue_stale_external_channel_sync_jobs" not in function
 
 
 def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
@@ -45,6 +46,33 @@ def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
     assert "dispatch_pending_webchat_handoff_snapshot_jobs" in runner
     assert 'if queue in {"all", "webchat-ai"}' in runner
     assert 'if queue in {"all", "handoff-snapshot"}' in runner
+
+
+def test_processed_counts_never_write_the_queue_depth_gauge():
+    for function_name in (
+        "_run_outbound",
+        "_run_background",
+        "_run_handoff_snapshot",
+        "_run_webchat_ai",
+        "_run_webchat_ai_reconciler_watchdog",
+    ):
+        function = _function_source(WORKER_RUNNER, function_name)
+        assert "record_queue_snapshot" not in function, function_name
+        assert "record_worker_result" in function, function_name
+
+
+def test_real_queue_depth_is_sampled_once_by_background_worker():
+    function = _function_source(
+        WORKER_RUNNER,
+        "_record_queue_depth_snapshot_if_due",
+    )
+    assert 'if queue != "background"' in function
+    assert "collect_queue_health" in function
+    assert "record_queue_snapshot" in function
+    assert "background_jobs" in function
+    assert "outbound" in function
+    assert "stale_processing" in function
+    assert "_QUEUE_DEPTH_LABELS - current_labels" in function
 
 
 def test_controlled_services_use_one_queue_per_worker():
