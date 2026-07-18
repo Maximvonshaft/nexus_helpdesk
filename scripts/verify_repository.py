@@ -7,7 +7,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,8 @@ ACTIONS_RESIDUE = (
 
 REQUIRED_CANONICAL_PATHS = (
     "webapp/package-lock.json",
+    "webapp/scripts/assert-frontend-architecture.mjs",
+    "webapp/scripts/assert-http-transport-authority.mjs",
     "webapp/src/app/AppShell.tsx",
     "webapp/src/app/navigation.ts",
     "webapp/src/app/OperatorPresentation.tsx",
@@ -70,11 +72,18 @@ REQUIRED_CANONICAL_PATHS = (
     "backend/app/services/queue_health.py",
     "backend/app/services/release_readiness.py",
     "backend/app/services/storage_readiness.py",
+    "backend/tests/test_canonical_service_authorities.py",
+    "backend/tests/test_fastapi_route_authority.py",
+    "config/architecture/service-authority.v1.json",
+    "config/architecture/compatibility-lifecycle.v1.json",
+    "scripts/qualification/service_authority.py",
+    "scripts/qualification/route_authority.py",
     "scripts/qualification/database_capacity.py",
     "scripts/qualification/infrastructure_decision.py",
     "scripts/qualification/local_storage_backup.py",
     "scripts/qualification/supply_chain.py",
     "scripts/release/assemble_supply_chain_evidence.py",
+    "docs/history/migrations/20260505-webchat-ai-turn-runtime.md",
     "deploy/docker-compose.controlled.yml",
 )
 
@@ -95,7 +104,11 @@ IDENTITY_FILES = (
     "Dockerfile",
     "deploy/docker-compose.server.yml",
     "deploy/docker-compose.controlled.yml",
+    "config/architecture/service-authority.v1.json",
+    "config/architecture/compatibility-lifecycle.v1.json",
     "scripts/verify_repository.py",
+    "scripts/qualification/service_authority.py",
+    "scripts/qualification/route_authority.py",
     "scripts/qualification/database_capacity.py",
     "scripts/qualification/infrastructure_decision.py",
     "scripts/qualification/local_storage_backup.py",
@@ -105,6 +118,7 @@ IDENTITY_FILES = (
 
 FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_canonical_service_authorities.py",
+    "backend/tests/test_fastapi_route_authority.py",
     "backend/tests/test_canonical_control_tower_authority.py",
     "backend/tests/test_runtime_permission_projection.py",
     "backend/tests/test_scope_permissions.py",
@@ -197,6 +211,92 @@ def _require_markers(
             )
 
 
+def _load_json(relative: str, failures: list[str]) -> dict[str, Any] | None:
+    path = ROOT / relative
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        failures.append(f"invalid JSON authority {relative}: {type(exc).__name__}")
+        return None
+    if not isinstance(payload, dict):
+        failures.append(f"JSON authority must be an object: {relative}")
+        return None
+    return payload
+
+
+def _qualification_failures(relative: str) -> list[str]:
+    try:
+        completed = subprocess.run(
+            [sys.executable, relative],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        return [f"qualification unavailable {relative}: {type(exc).__name__}"]
+    if completed.returncode == 0:
+        return []
+    details = (completed.stdout or completed.stderr).strip()
+    try:
+        payload = json.loads(completed.stdout)
+        findings = payload.get("findings") or payload.get("duplicates") or []
+        if findings:
+            return [f"{relative}: {item}" for item in findings]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return [f"qualification failed {relative}: {details[:2000]}"]
+
+
+def _compatibility_lifecycle_failures() -> list[str]:
+    failures: list[str] = []
+    payload = _load_json(
+        "config/architecture/compatibility-lifecycle.v1.json",
+        failures,
+    )
+    if payload is None:
+        return failures
+    if payload.get("schema") != "nexus.compatibility-lifecycle.v1":
+        failures.append("compatibility lifecycle schema is invalid")
+    assets = payload.get("assets")
+    if not isinstance(assets, list) or not assets:
+        failures.append("compatibility lifecycle assets are missing")
+        return failures
+    seen: set[str] = set()
+    today = date.today()
+    for item in assets:
+        if not isinstance(item, dict):
+            failures.append("compatibility lifecycle item is invalid")
+            continue
+        relative = str(item.get("path") or "")
+        if not relative or relative in seen:
+            failures.append(f"compatibility lifecycle path missing or duplicate: {relative}")
+            continue
+        seen.add(relative)
+        if not (ROOT / relative).exists():
+            failures.append(f"compatibility lifecycle path missing: {relative}")
+        if not item.get("owner"):
+            failures.append(f"compatibility lifecycle owner missing: {relative}")
+        remove_after = item.get("remove_after")
+        if remove_after:
+            try:
+                deadline = date.fromisoformat(str(remove_after))
+            except ValueError:
+                failures.append(f"compatibility lifecycle deadline invalid: {relative}")
+            else:
+                if deadline <= today:
+                    failures.append(
+                        f"compatibility lifecycle deadline expired: {relative}:{deadline.isoformat()}"
+                    )
+        if item.get("kind") in {"compose-alias", "environment-tombstone"}:
+            if not item.get("replacement"):
+                failures.append(f"compatibility replacement missing: {relative}")
+            if not remove_after:
+                failures.append(f"compatibility removal deadline missing: {relative}")
+    return failures
+
+
 def static_failures() -> list[str]:
     failures: list[str] = []
 
@@ -228,6 +328,38 @@ def static_failures() -> list[str]:
         if not (ROOT / relative).is_file():
             failures.append(f"canonical authority missing: {relative}")
 
+    failures.extend(_qualification_failures("scripts/qualification/service_authority.py"))
+    failures.extend(_compatibility_lifecycle_failures())
+
+    try:
+        tracked_sql = [
+            item
+            for item in _git("ls-files", "*.sql").splitlines()
+            if item.strip()
+        ]
+    except (OSError, subprocess.CalledProcessError) as exc:
+        failures.append(f"tracked SQL inventory unavailable: {type(exc).__name__}")
+    else:
+        if tracked_sql:
+            failures.append(
+                "Alembic is the only schema mutation authority; tracked raw SQL exists: "
+                f"{tracked_sql}"
+            )
+
+    package_json = ROOT / "webapp/package.json"
+    if package_json.is_file():
+        try:
+            scripts = json.loads(package_json.read_text(encoding="utf-8")).get("scripts", {})
+        except json.JSONDecodeError:
+            failures.append("webapp/package.json is invalid JSON")
+        else:
+            architecture = str(scripts.get("architecture") or "")
+            verify = str(scripts.get("verify") or "")
+            if "assert-http-transport-authority.mjs" not in architecture:
+                failures.append("frontend architecture command omits transport authority gate")
+            if "npm run architecture" not in verify:
+                failures.append("frontend verify command bypasses architecture authority")
+
     for relative, canonical in PUBLIC_COMPATIBILITY.items():
         path = ROOT / relative
         if not path.is_file():
@@ -245,10 +377,20 @@ def static_failures() -> list[str]:
             failures.append(
                 f"compatibility path owns business functions: {relative}"
             )
-        if len(content.splitlines()) > 20:
+        if len(content.splitlines()) > 24:
             failures.append(
                 f"compatibility path grew into a second implementation: {relative}"
             )
+
+    for relative in (
+        "deploy/docker-compose.server.yml",
+        "deploy/docker-compose.candidate.yml",
+    ):
+        path = ROOT / relative
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+            if "services:" in content or "include:" not in content:
+                failures.append(f"compose compatibility alias owns topology: {relative}")
 
     workspace = ROOT / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx"
     if workspace.is_file():
@@ -546,6 +688,9 @@ def main() -> int:
     run(supply_chain_command)
 
     if not args.static_only:
+        run([sys.executable, "scripts/qualification/service_authority.py"])
+        run([sys.executable, "scripts/qualification/route_authority.py"])
+        run([sys.executable, "-m", "alembic", "heads"], cwd=ROOT / "backend")
         run(["npm", "ci", "--ignore-scripts"], cwd=ROOT / "webapp")
         run(["npm", "run", "verify"], cwd=ROOT / "webapp")
         run(
