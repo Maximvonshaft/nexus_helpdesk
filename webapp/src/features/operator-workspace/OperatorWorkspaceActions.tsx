@@ -210,7 +210,7 @@ export function OperatorWorkspaceActions({
         {(handoff?.can_accept || handoff?.can_force_takeover || handoff?.can_decline || handoff?.can_release || handoff?.can_resume_ai) ? (
           <Box>
             <Typography component="h3" variant="subtitle1">接手任务</Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', mt: 1 }}>
               {handoff?.can_accept || handoff?.can_force_takeover ? (
                 <Button
                   variant="contained"
@@ -276,7 +276,7 @@ export function OperatorWorkspaceActions({
                   {candidates.map((candidate) => {
                     const candidateWaybill = stringValue(candidate.waybillCode)
                     return (
-                      <Stack key={candidateWaybill} direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ py: 1 }}>
+                      <Stack key={candidateWaybill} direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
                         <Typography component="code" variant="body2">{sanitizeDisplayText(candidateWaybill)}</Typography>
                         <Button size="small" color="inherit" variant="outlined" onClick={() => { setWaybill(candidateWaybill); setAction('work_order'); invalidateCancelPreview() }}>填入催派</Button>
                       </Stack>
@@ -289,7 +289,7 @@ export function OperatorWorkspaceActions({
               <Alert severity={cancelPreview.result.cancelAllowed ? 'info' : 'warning'} variant="outlined" role="status">
                 <AlertTitle>{cancelPreview.result.cancelAllowed ? '可以申请取消' : '当前不可取消'}</AlertTitle>
                 {sanitizeDisplayText(cancelPreview.result.currentStatusLabel || cancelPreview.result.reasonLabel || '未返回原因')}
-                <Typography variant="caption" display="block" sx={{ mt: 0.75 }}>修改运单、电话或原因后需重新检查。</Typography>
+                <Typography variant="caption" sx={{ display: 'block', mt: 0.75 }}>修改运单、电话或原因后需重新检查。</Typography>
               </Alert>
             ) : null}
             {resultPresentation ? (
@@ -305,7 +305,7 @@ export function OperatorWorkspaceActions({
                 ) : null}
               </Alert>
             ) : null}
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
               {action === 'cancel' ? (
                 <>
                   <Button
