@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github/workflows"
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 RETIRED_PATHS = (
     "frontend",
@@ -74,6 +76,7 @@ REQUIRED_CANONICAL_PATHS = (
     "backend/app/services/storage_readiness.py",
     "backend/tests/test_canonical_service_authorities.py",
     "backend/tests/test_fastapi_route_authority.py",
+    "backend/tests/test_exact_head_acceptance.py",
     "config/architecture/service-authority.v1.json",
     "config/architecture/compatibility-lifecycle.v1.json",
     "scripts/qualification/service_authority.py",
@@ -82,9 +85,13 @@ REQUIRED_CANONICAL_PATHS = (
     "scripts/qualification/infrastructure_decision.py",
     "scripts/qualification/local_storage_backup.py",
     "scripts/qualification/supply_chain.py",
+    "scripts/qualification/exact_head_acceptance.py",
+    "scripts/qualification/postgres_acceptance.py",
     "scripts/release/assemble_supply_chain_evidence.py",
     "docs/history/migrations/20260505-webchat-ai-turn-runtime.md",
+    "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md",
     "deploy/docker-compose.controlled.yml",
+    "deploy/docker-compose.controlled-postgres.yml",
 )
 
 PUBLIC_COMPATIBILITY = {
@@ -103,7 +110,9 @@ IDENTITY_FILES = (
     "webapp/package-lock.json",
     "Dockerfile",
     "deploy/docker-compose.server.yml",
+    "deploy/docker-compose.candidate.yml",
     "deploy/docker-compose.controlled.yml",
+    "deploy/docker-compose.controlled-postgres.yml",
     "config/architecture/service-authority.v1.json",
     "config/architecture/compatibility-lifecycle.v1.json",
     "scripts/verify_repository.py",
@@ -113,12 +122,16 @@ IDENTITY_FILES = (
     "scripts/qualification/infrastructure_decision.py",
     "scripts/qualification/local_storage_backup.py",
     "scripts/qualification/supply_chain.py",
+    "scripts/qualification/exact_head_acceptance.py",
+    "scripts/qualification/postgres_acceptance.py",
     "scripts/release/assemble_supply_chain_evidence.py",
+    "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md",
 )
 
 FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_canonical_service_authorities.py",
     "backend/tests/test_fastapi_route_authority.py",
+    "backend/tests/test_exact_head_acceptance.py",
     "backend/tests/test_canonical_control_tower_authority.py",
     "backend/tests/test_runtime_permission_projection.py",
     "backend/tests/test_scope_permissions.py",
@@ -156,6 +169,21 @@ FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_infrastructure_decision.py",
     "backend/tests/test_live_voice_credential_rotation_runbook.py",
 )
+
+
+class VerificationCommandError(RuntimeError):
+    def __init__(self, stage: str, return_code: int) -> None:
+        self.stage = stage
+        self.return_code = return_code
+        super().__init__(f"{stage} failed with return code {return_code}")
+
+
+def _inside_repository(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def _git(*args: str) -> str:
@@ -206,9 +234,7 @@ def _require_markers(
     content = path.read_text(encoding="utf-8")
     for marker in markers:
         if marker not in content:
-            failures.append(
-                f"canonical contract marker missing in {relative}: {marker}"
-            )
+            failures.append(f"canonical contract marker missing in {relative}: {marker}")
 
 
 def _load_json(relative: str, failures: list[str]) -> dict[str, Any] | None:
@@ -251,10 +277,7 @@ def _qualification_failures(relative: str) -> list[str]:
 
 def _compatibility_lifecycle_failures() -> list[str]:
     failures: list[str] = []
-    payload = _load_json(
-        "config/architecture/compatibility-lifecycle.v1.json",
-        failures,
-    )
+    payload = _load_json("config/architecture/compatibility-lifecycle.v1.json", failures)
     if payload is None:
         return failures
     if payload.get("schema") != "nexus.compatibility-lifecycle.v1":
@@ -332,11 +355,7 @@ def static_failures() -> list[str]:
     failures.extend(_compatibility_lifecycle_failures())
 
     try:
-        tracked_sql = [
-            item
-            for item in _git("ls-files", "*.sql").splitlines()
-            if item.strip()
-        ]
+        tracked_sql = [item for item in _git("ls-files", "*.sql").splitlines() if item.strip()]
     except (OSError, subprocess.CalledProcessError) as exc:
         failures.append(f"tracked SQL inventory unavailable: {type(exc).__name__}")
     else:
@@ -367,25 +386,16 @@ def static_failures() -> list[str]:
             continue
         content = path.read_text(encoding="utf-8")
         if canonical not in content:
-            failures.append(
-                f"compatibility path does not delegate to {canonical}: {relative}"
-            )
+            failures.append(f"compatibility path does not delegate to {canonical}: {relative}")
         if "UserRole" in content:
             failures.append(f"compatibility path owns role authorization: {relative}")
         functions = set(re.findall(r"^def\s+(\w+)", content, re.MULTILINE))
         if functions - {"__getattr__"}:
-            failures.append(
-                f"compatibility path owns business functions: {relative}"
-            )
+            failures.append(f"compatibility path owns business functions: {relative}")
         if len(content.splitlines()) > 24:
-            failures.append(
-                f"compatibility path grew into a second implementation: {relative}"
-            )
+            failures.append(f"compatibility path grew into a second implementation: {relative}")
 
-    for relative in (
-        "deploy/docker-compose.server.yml",
-        "deploy/docker-compose.candidate.yml",
-    ):
+    for relative in ("deploy/docker-compose.server.yml", "deploy/docker-compose.candidate.yml"):
         path = ROOT / relative
         if path.is_file():
             content = path.read_text(encoding="utf-8")
@@ -397,9 +407,7 @@ def static_failures() -> list[str]:
         content = workspace.read_text(encoding="utf-8")
         for marker in ("function AppNavigation", "operator-app-header", "/webchat?tab="):
             if marker in content:
-                failures.append(
-                    f"workspace owns retired shell/navigation marker: {marker}"
-                )
+                failures.append(f"workspace owns retired shell/navigation marker: {marker}")
 
     _require_markers(
         failures,
@@ -505,13 +513,29 @@ def static_failures() -> list[str]:
             "--evidence-dir",
         ),
     )
-    supply_chain = ROOT / "scripts/qualification/supply_chain.py"
-    if supply_chain.is_file():
-        content = supply_chain.read_text(encoding="utf-8")
-        if 'ROOT / "artifacts" / "supply-chain"' in content:
-            failures.append(
-                "release evidence path is inside the candidate repository"
-            )
+    _require_markers(
+        failures,
+        "scripts/qualification/exact_head_acceptance.py",
+        (
+            "nexus.exact-head-acceptance-manifest.v1",
+            "REQUIRED_ARTIFACTS",
+            "assemble_acceptance_manifest",
+            "qualify_acceptance_packet",
+            "review_has_unresolved_findings",
+            "repository_protection_missing",
+        ),
+    )
+    _require_markers(
+        failures,
+        "scripts/qualification/postgres_acceptance.py",
+        (
+            "disposable_database_name_marker_required",
+            "alembic_downgrade",
+            "postgres_privacy_and_worker_tests",
+            "database_url_included",
+            "production_authorized",
+        ),
+    )
     _require_markers(
         failures,
         "deploy/docker-compose.controlled.yml",
@@ -528,15 +552,18 @@ def static_failures() -> list[str]:
         ),
     )
 
+    supply_chain = ROOT / "scripts/qualification/supply_chain.py"
+    if supply_chain.is_file():
+        content = supply_chain.read_text(encoding="utf-8")
+        if 'ROOT / "artifacts" / "supply-chain"' in content:
+            failures.append("release evidence path is inside the candidate repository")
+
     permissions = ROOT / "backend/app/services/permissions.py"
     if permissions.is_file():
         content = permissions.read_text(encoding="utf-8")
         if re.search(r"\bif\s+[^\n]*\.role\b", content):
             failures.append("runtime permission authority still branches on role names")
-        if (
-            "ROLE_CAPABILITIES" not in content
-            or "has_global_case_visibility" not in content
-        ):
+        if "ROLE_CAPABILITIES" not in content or "has_global_case_visibility" not in content:
             failures.append("central capability policy projection is incomplete")
 
     router = ROOT / "backend/app/services/provider_runtime/router.py"
@@ -549,59 +576,93 @@ def static_failures() -> list[str]:
     if db_path.is_file():
         content = db_path.read_text(encoding="utf-8")
         if '"pool_size": 10' in content or '"max_overflow": 20' in content:
-            failures.append(
-                "PostgreSQL pool budget is hard-coded to retired 10+20 values"
-            )
+            failures.append("PostgreSQL pool budget is hard-coded to retired 10+20 values")
 
     dockerfile = ROOT / "Dockerfile"
     if dockerfile.is_file():
-        content = "\n".join(
+        effective = "\n".join(
             line
             for line in dockerfile.read_text(encoding="utf-8").splitlines()
             if not line.lstrip().startswith("#")
         )
         from_lines = [
             line.strip()
-            for line in content.splitlines()
+            for line in effective.splitlines()
             if line.strip().upper().startswith("FROM ")
         ]
         if any("@sha256:" not in line.split()[1] for line in from_lines):
             failures.append("Dockerfile contains an unpinned base image")
-        if re.search(r"\bapk\s+upgrade\b", content):
+        if re.search(r"\bapk\s+upgrade\b", effective):
             failures.append("Dockerfile reintroduced mutable apk upgrade")
 
     requirements = ROOT / "backend/requirements.txt"
     if requirements.is_file():
-        for number, line in enumerate(
-            requirements.read_text(encoding="utf-8").splitlines(),
-            1,
-        ):
+        for number, line in enumerate(requirements.read_text(encoding="utf-8").splitlines(), 1):
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or stripped.startswith("--"):
                 continue
-            if "==" not in stripped or any(
-                marker in stripped for marker in (">=", "<=", "~=", "!=")
-            ):
-                failures.append(
-                    f"Python requirement is not exact at line {number}"
-                )
+            if "==" not in stripped or any(marker in stripped for marker in (">=", "<=", "~=", "!=")):
+                failures.append(f"Python requirement is not exact at line {number}")
 
     return failures
 
 
-def run(command: list[str], *, cwd: Path | None = None) -> None:
-    print(f"+ {' '.join(command)}", flush=True)
-    subprocess.run(command, cwd=cwd or ROOT, check=True)
+def run(
+    stage: str,
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    display: list[str] | None = None,
+) -> None:
+    print(f"+ {' '.join(display or command)}", flush=True)
+    completed = subprocess.run(command, cwd=cwd or ROOT, env=env, check=False)
+    if completed.returncode != 0:
+        raise VerificationCommandError(stage, completed.returncode)
 
 
 def _write_evidence(path: Path | None, payload: dict[str, Any]) -> None:
     if path is None:
         return
+    path = path.expanduser().resolve()
+    if _inside_repository(path):
+        raise ValueError("verification evidence output must remain outside candidate tree")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _prepare_acceptance_directory(path: Path) -> Path:
+    directory = path.expanduser().resolve()
+    if _inside_repository(directory) or directory.is_symlink():
+        raise ValueError("acceptance evidence directory must be outside candidate tree")
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _argument_failures(args: argparse.Namespace) -> list[str]:
+    failures: list[str] = []
+    acceptance = args.acceptance_evidence_dir is not None
+    if args.expected_sha and not SHA40.fullmatch(args.expected_sha):
+        failures.append("expected SHA must be exactly 40 lowercase hex characters")
+    if acceptance:
+        if args.static_only:
+            failures.append("final acceptance cannot use --static-only")
+        if args.focused_backend:
+            failures.append("final acceptance cannot use --focused-backend")
+        if args.skip_browser:
+            failures.append("final acceptance cannot use --skip-browser")
+        if not args.expected_sha:
+            failures.append("final acceptance requires --expected-sha")
+        if args.release_evidence_dir is None:
+            failures.append("final acceptance requires --release-evidence-dir")
+        if not args.acceptance_database_url:
+            failures.append("final acceptance requires --acceptance-database-url or DATABASE_URL")
+        if args.acceptance_upload_source is None or args.acceptance_upload_backup is None:
+            failures.append("final acceptance requires upload source and backup paths")
+    return failures
 
 
 def main() -> int:
@@ -611,41 +672,45 @@ def main() -> int:
             "retired and candidate identity unchanged."
         )
     )
-    parser.add_argument(
-        "--static-only",
-        action="store_true",
-        help="Run repository structure and immutable-input checks only.",
-    )
-    parser.add_argument(
-        "--skip-browser",
-        action="store_true",
-        help="Skip Playwright browser journeys.",
-    )
-    parser.add_argument(
-        "--focused-backend",
-        action="store_true",
-        help="Run the production-readiness focused backend suite.",
-    )
-    parser.add_argument(
-        "--release-evidence-dir",
-        type=Path,
-        help="External directory containing SBOM, provenance and signature bundle.",
-    )
-    parser.add_argument(
-        "--evidence-out",
-        type=Path,
-        help="Write same-identity verification result as JSON.",
-    )
+    parser.add_argument("--static-only", action="store_true")
+    parser.add_argument("--skip-browser", action="store_true")
+    parser.add_argument("--focused-backend", action="store_true")
+    parser.add_argument("--release-evidence-dir", type=Path)
+    parser.add_argument("--evidence-out", type=Path)
+    parser.add_argument("--expected-sha")
+    parser.add_argument("--acceptance-evidence-dir", type=Path)
+    parser.add_argument("--acceptance-database-url", default=os.getenv("DATABASE_URL", ""))
+    parser.add_argument("--acceptance-upload-source", type=Path)
+    parser.add_argument("--acceptance-upload-backup", type=Path)
+    parser.add_argument("--acceptance-manifest-name", default="acceptance-manifest.json")
+    parser.add_argument("--allow-remote-acceptance-database", action="store_true")
     args = parser.parse_args()
 
     started_at = datetime.now(timezone.utc).isoformat()
-    try:
-        start_identity = repository_identity()
-    except (OSError, subprocess.CalledProcessError) as exc:
+    argument_failures = _argument_failures(args)
+    if argument_failures:
         payload = {
             "schema": "nexus.canonical-verification.v1",
             "status": "fail",
-            "reason": "candidate_identity_unavailable",
+            "stage": "arguments",
+            "started_at": started_at,
+            "failures": argument_failures,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        _write_evidence(args.evidence_out, payload)
+        return 1
+
+    acceptance_dir: Path | None = None
+    try:
+        if args.acceptance_evidence_dir is not None:
+            acceptance_dir = _prepare_acceptance_directory(args.acceptance_evidence_dir)
+        start_identity = repository_identity()
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        payload = {
+            "schema": "nexus.canonical-verification.v1",
+            "status": "fail",
+            "stage": "candidate_identity",
+            "started_at": started_at,
             "error_type": type(exc).__name__,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -655,6 +720,10 @@ def main() -> int:
     failures = static_failures()
     if not start_identity["clean"]:
         failures.append("candidate working tree is not clean before verification")
+    if args.expected_sha and start_identity["source_sha"] != args.expected_sha:
+        failures.append(
+            f"candidate source SHA mismatch: expected={args.expected_sha} actual={start_identity['source_sha']}"
+        )
 
     static_payload = {
         "static_ok": not failures,
@@ -673,47 +742,151 @@ def main() -> int:
         _write_evidence(args.evidence_out, payload)
         return 1
 
-    supply_chain_command = [
-        sys.executable,
-        "scripts/qualification/supply_chain.py",
-    ]
-    if args.release_evidence_dir:
-        supply_chain_command.extend(
-            [
-                "--release",
-                "--evidence-dir",
-                str(args.release_evidence_dir.resolve()),
-            ]
-        )
-    run(supply_chain_command)
+    try:
+        supply_chain_command = [sys.executable, "scripts/qualification/supply_chain.py"]
+        if args.release_evidence_dir:
+            supply_chain_command.extend(
+                ["--release", "--evidence-dir", str(args.release_evidence_dir.resolve())]
+            )
+        if acceptance_dir is not None:
+            supply_chain_command.extend(["--output", str(acceptance_dir / "supply-chain.json")])
+        run("supply_chain", supply_chain_command)
 
-    if not args.static_only:
-        run([sys.executable, "scripts/qualification/service_authority.py"])
-        run([sys.executable, "scripts/qualification/route_authority.py"])
-        run([sys.executable, "-m", "alembic", "heads"], cwd=ROOT / "backend")
-        run(["npm", "ci", "--ignore-scripts"], cwd=ROOT / "webapp")
-        run(["npm", "run", "verify"], cwd=ROOT / "webapp")
-        run(
-            [
+        if not args.static_only:
+            run("service_authority", [sys.executable, "scripts/qualification/service_authority.py"])
+            run("route_authority", [sys.executable, "scripts/qualification/route_authority.py"])
+            run("alembic_heads", [sys.executable, "-m", "alembic", "heads"], cwd=ROOT / "backend")
+            run("frontend_install", ["npm", "ci", "--ignore-scripts"], cwd=ROOT / "webapp")
+            run("frontend_verify", ["npm", "run", "verify"], cwd=ROOT / "webapp")
+            run(
+                "python_compile",
+                [
+                    sys.executable,
+                    "-m",
+                    "compileall",
+                    "backend/app",
+                    "backend/scripts",
+                    "scripts/qualification",
+                    "scripts/release",
+                ],
+            )
+            backend_tests = list(FOCUSED_BACKEND_TESTS) if args.focused_backend else ["backend/tests"]
+            run("backend_tests", [sys.executable, "-m", "pytest", "-q", *backend_tests])
+            if not args.skip_browser:
+                run("browser_tests", ["npm", "run", "e2e"], cwd=ROOT / "webapp")
+
+        acceptance_qualification_path: str | None = None
+        if acceptance_dir is not None:
+            postgres_env = os.environ.copy()
+            postgres_env["DATABASE_URL"] = args.acceptance_database_url
+            postgres_command = [
                 sys.executable,
-                "-m",
-                "compileall",
-                "backend/app",
-                "backend/scripts",
-                "scripts/qualification",
-                "scripts/release",
+                "scripts/qualification/postgres_acceptance.py",
+                "--evidence-dir",
+                str(acceptance_dir),
+                "--source-sha",
+                start_identity["source_sha"],
+                "--tree-sha",
+                start_identity["tree_sha"],
+                "--output",
+                str(acceptance_dir / "postgres-acceptance-run.json"),
             ]
-        )
-        backend_tests = (
-            list(FOCUSED_BACKEND_TESTS)
-            if args.focused_backend
-            else ["backend/tests"]
-        )
-        run([sys.executable, "-m", "pytest", "-q", *backend_tests])
-        if not args.skip_browser:
-            run(["npm", "run", "e2e"], cwd=ROOT / "webapp")
+            if args.allow_remote_acceptance_database:
+                postgres_command.append("--allow-remote-database")
+            run(
+                "postgres_acceptance",
+                postgres_command,
+                env=postgres_env,
+                display=[
+                    sys.executable,
+                    "scripts/qualification/postgres_acceptance.py",
+                    "--database-url",
+                    "<redacted-disposable-postgresql-url>",
+                    "--evidence-dir",
+                    str(acceptance_dir),
+                ],
+            )
+            run(
+                "upload_backup",
+                [
+                    sys.executable,
+                    "scripts/qualification/local_storage_backup.py",
+                    "--source",
+                    str(args.acceptance_upload_source.resolve()),
+                    "--backup",
+                    str(args.acceptance_upload_backup.resolve()),
+                    "--output",
+                    str(acceptance_dir / "upload-backup.json"),
+                ],
+            )
+            run(
+                "infrastructure_decisions",
+                [
+                    sys.executable,
+                    "scripts/qualification/infrastructure_decision.py",
+                    "--database",
+                    str(acceptance_dir / "database-capacity.json"),
+                    "--queue",
+                    str(acceptance_dir / "queue-baseline.json"),
+                    "--realtime",
+                    str(acceptance_dir / "realtime-baseline.json"),
+                    "--storage",
+                    str(acceptance_dir / "storage-baseline.json"),
+                    "--output",
+                    str(acceptance_dir / "infrastructure-decisions.json"),
+                ],
+            )
+            acceptance_output = acceptance_dir / "acceptance-qualification.json"
+            run(
+                "exact_head_acceptance",
+                [
+                    sys.executable,
+                    "scripts/qualification/exact_head_acceptance.py",
+                    "--evidence-dir",
+                    str(acceptance_dir),
+                    "--source-sha",
+                    start_identity["source_sha"],
+                    "--tree-sha",
+                    start_identity["tree_sha"],
+                    "--manifest-name",
+                    args.acceptance_manifest_name,
+                    "--assemble-manifest",
+                    "--output",
+                    str(acceptance_output),
+                ],
+            )
+            acceptance_qualification_path = str(acceptance_output)
+    except VerificationCommandError as exc:
+        payload = {
+            "schema": "nexus.canonical-verification.v1",
+            "status": "fail",
+            "stage": exc.stage,
+            "return_code": exc.return_code,
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "candidate_start": start_identity,
+            "acceptance_mode": acceptance_dir is not None,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        _write_evidence(args.evidence_out, payload)
+        return 1
 
-    end_identity = repository_identity()
+    try:
+        end_identity = repository_identity()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        payload = {
+            "schema": "nexus.canonical-verification.v1",
+            "status": "fail",
+            "stage": "final_identity",
+            "error_type": type(exc).__name__,
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "candidate_start": start_identity,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        _write_evidence(args.evidence_out, payload)
+        return 1
+
     identity_equal = (
         start_identity["source_sha"] == end_identity["source_sha"]
         and start_identity["tree_sha"] == end_identity["tree_sha"]
@@ -729,9 +902,15 @@ def main() -> int:
         "focused_backend": args.focused_backend,
         "browser_executed": not args.static_only and not args.skip_browser,
         "release_evidence_checked": bool(args.release_evidence_dir),
+        "acceptance_mode": acceptance_dir is not None,
+        "acceptance_evidence_checked": acceptance_dir is not None,
+        "acceptance_qualification_path": acceptance_qualification_path,
         "same_identity": identity_equal,
         "candidate_start": start_identity,
         "candidate_end": end_identity,
+        "production_authorized": False,
+        "provider_enablement_authorized": False,
+        "outbound_enablement_authorized": False,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     _write_evidence(args.evidence_out, payload)
