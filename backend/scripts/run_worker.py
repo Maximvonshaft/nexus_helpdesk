@@ -10,8 +10,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import SessionLocal, db_context  # noqa: E402
-from app.services.background_jobs import dispatch_pending_background_jobs, dispatch_pending_webchat_ai_reply_jobs  # noqa: E402
-from app.services.message_dispatch import dispatch_pending_messages  # noqa: E402
+from app.services.background_job_transaction_boundary import (  # noqa: E402
+    _dispatch_pending_background_jobs_with_attempt_boundary as dispatch_pending_background_jobs,
+    _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary as dispatch_pending_webchat_ai_reply_jobs,
+)
+from app.services.outbound_dispatch_transaction_boundary import (  # noqa: E402
+    _dispatch_pending_messages_with_attempt_boundary as dispatch_pending_messages,
+)
 from app.services.observability import configure_logging, log_event, record_queue_snapshot, record_worker_poll, record_worker_result  # noqa: E402
 from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
 from app.services.webchat_handoff_snapshot_worker import dispatch_pending_webchat_handoff_snapshot_jobs  # noqa: E402
