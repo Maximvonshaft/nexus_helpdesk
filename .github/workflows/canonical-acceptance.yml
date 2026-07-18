@@ -18,37 +18,79 @@ jobs:
     name: backend-convergence-maintenance
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
-      - name: Checkout implementation branch
+      - name: Checkout exact event Head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-          ref: fix/722-authority-convergence
-      - name: Apply exact fail-closed patch
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Prove immutable repair input
         shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          set -o pipefail
-          python scripts/maintenance/reconcile_patch_preconditions.py
-          python scripts/maintenance/backend_convergence_patch.py 2>&1 | tee /tmp/backend-convergence-patch.log
-      - name: Upload patch diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          name: backend-convergence-patch-${{ github.sha }}
-          path: /tmp/backend-convergence-patch.log
-          if-no-files-found: warn
-          retention-days: 7
-      - name: Restore canonical workflow and remove maintenance assets
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install exact backend dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Apply idempotent convergence patch
+        run: python scripts/maintenance/backend_convergence_patch_v2.py
+      - name: Restore read-only canonical gate and remove maintenance assets
         shell: bash
         run: |
           set -Eeuo pipefail
-          git checkout 285d7e214f0869577cec429806dd3c348bfdab8b -- .github/workflows/canonical-acceptance.yml
+          git checkout 9afde7975c226e3b9bd18a7ac5f9193a23553cbb -- .github/workflows/canonical-acceptance.yml
           rm -f .github/workflows/backend-convergence-maintenance.yml
-          rm -rf scripts/maintenance
+          rm -f scripts/maintenance/backend_convergence_patch.py
+          rm -f scripts/maintenance/backend_convergence_patch_v2.py
+          rmdir scripts/maintenance 2>/dev/null || true
           git config user.name "nexus-convergence-bot"
           git config user.email "nexus-convergence-bot@users.noreply.github.com"
           git add -A
           git diff --cached --check
           git commit -m "fix(backend): close canonical regression and worker fencing gaps"
+      - name: Run focused backend convergence regression
+        shell: bash
+        env:
+          PYTHONPATH: backend
+          APP_ENV: test
+        run: |
+          set -Eeuo pipefail
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
+          python -m pytest -q \
+            backend/tests/test_admin_password_policy.py \
+            backend/tests/test_canonical_metrics_registry.py \
+            backend/tests/test_controlled_least_privilege.py \
+            backend/tests/test_deploy_contracts.py \
+            backend/tests/test_email_outbound_runtime.py \
+            backend/tests/test_infrastructure_decision.py \
+            backend/tests/test_live_voice_credential_rotation_runbook.py \
+            backend/tests/test_outbound_message_semantics.py \
+            backend/tests/test_production_dispatch_gates.py \
+            backend/tests/test_queue_business_health.py \
+            backend/tests/test_round24_hardening.py \
+            backend/tests/test_round27_frontend_hardening.py \
+            backend/tests/test_storage_readiness.py \
+            backend/tests/test_supply_chain_qualification.py \
+            backend/tests/test_webchat_ai_turn_runtime.py \
+            backend/tests/test_webchat_ws_static_contracts.py \
+            backend/tests/test_worker_queue_isolation.py \
+            backend/tests/test_worker_webchat_ai_reconciler_watchdog.py
+          python scripts/verify_repository.py --static-only --expected-sha "$(git rev-parse HEAD)"
+      - name: Push only if branch is unchanged
+        shell: bash
+        env:
+          TRIGGER_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          remote_head="$(git ls-remote origin refs/heads/fix/722-authority-convergence | awk '{print $1}')"
+          test "$remote_head" = "$TRIGGER_HEAD"
           git push origin HEAD:refs/heads/fix/722-authority-convergence
