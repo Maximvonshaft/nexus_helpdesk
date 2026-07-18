@@ -42,7 +42,20 @@ SUPPLY_CHAIN_INPUTS = (
     "scripts/deploy/rollback_release.sh",
     "scripts/deploy/check_deploy_contract.sh",
     "scripts/validate_pr27_closure.sh",
+    "scripts/verify_repository.py",
     "scripts/qualification/deployment_authority.py",
+    "scripts/qualification/service_authority.py",
+    "scripts/qualification/route_authority.py",
+    "scripts/qualification/database_capacity.py",
+    "scripts/qualification/infrastructure_decision.py",
+    "scripts/qualification/local_storage_backup.py",
+    "scripts/qualification/exact_head_acceptance.py",
+    "scripts/qualification/postgres_acceptance.py",
+    "scripts/release/assemble_supply_chain_evidence.py",
+    "config/architecture/service-authority.v1.json",
+    "config/architecture/compatibility-lifecycle.v1.json",
+    "backend/tests/test_exact_head_acceptance.py",
+    "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md",
 )
 
 COMPOSE_INPUTS = (
@@ -116,6 +129,9 @@ def _load_json(
     label: str,
     findings: list[str],
 ) -> dict[str, Any] | None:
+    if path.is_symlink():
+        findings.append(f"release_evidence_symlink_forbidden:{label}")
+        return None
     if not path.is_file() or path.stat().st_size == 0:
         findings.append(f"release_evidence_missing:{label}")
         return None
@@ -142,7 +158,7 @@ def _evidence_directory(explicit: Path | None) -> Path | None:
 
 def _inside_candidate_tree(path: Path) -> bool:
     try:
-        path.relative_to(ROOT.resolve())
+        path.resolve().relative_to(ROOT.resolve())
     except ValueError:
         return False
     return True
@@ -189,6 +205,8 @@ def collect_supply_chain_state(
             findings.append("release_evidence_dir_missing")
         elif _inside_candidate_tree(directory):
             findings.append("release_evidence_inside_candidate_tree")
+        elif not directory.is_dir() or directory.is_symlink():
+            findings.append("release_evidence_dir_invalid")
         else:
             required = {
                 "sbom": directory / "sbom.spdx.json",
@@ -216,7 +234,7 @@ def collect_supply_chain_state(
             if signature is not None and not signature:
                 findings.append("release_evidence_empty_signature_bundle")
             for name, path in required.items():
-                if path.is_file() and path.stat().st_size > 0:
+                if path.is_file() and not path.is_symlink() and path.stat().st_size > 0:
                     evidence[name] = {
                         "path": str(path),
                         "sha256": _sha256(path),
@@ -243,8 +261,11 @@ def main() -> int:
     )
     rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rendered, encoding="utf-8")
+        output = args.output.expanduser().resolve()
+        if _inside_candidate_tree(output):
+            raise SystemExit("supply-chain output must remain outside candidate tree")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
     print(rendered, end="")
     return 0 if payload["status"] == "pass" else 1
 
