@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -127,23 +128,16 @@ def _webchat_ai_reconciler_interval_seconds() -> int:
 
 
 def _queue_depth_snapshot_interval_seconds() -> int:
+    raw = os.getenv("QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS", "15").strip()
     try:
-        return max(
-            5,
-            min(
-                300,
-                int(
-                    getattr(
-                        settings,
-                        "queue_metrics_snapshot_interval_seconds",
-                        15,
-                    )
-                    or 15
-                ),
-            ),
+        value = int(raw)
+    except ValueError:
+        LOGGER.warning(
+            "queue_depth_snapshot_interval_invalid",
+            extra={"event_payload": {"fallback_seconds": 15}},
         )
-    except (TypeError, ValueError):
         return 15
+    return max(5, min(300, value))
 
 
 def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> int:
@@ -253,8 +247,8 @@ def _record_queue_depth_snapshot_if_due(
     """Publish real database queue counts from one designated Worker only."""
     global _LAST_QUEUE_DEPTH_SNAPSHOT_AT, _QUEUE_DEPTH_LABELS
 
-    # The controlled and server topologies always have one dedicated background
-    # Worker. Sampling from every Worker would multiply a multiprocess Gauge.
+    # The controlled topology always has one dedicated background Worker.
+    # Sampling from every Worker would multiply a multiprocess Gauge.
     if queue != "background":
         return
     now = time.monotonic()
