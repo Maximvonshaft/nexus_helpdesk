@@ -1,0 +1,48 @@
+name: Final convergence apply payload
+
+on:
+  push:
+    branches: [fix/722-final-production-convergence]
+  workflow_dispatch: {}
+
+concurrency:
+  group: final-convergence-apply
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: fix/722-final-production-convergence
+      - name: Apply exact final convergence patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f scripts/maintenance/final-convergence.patch.xz.b64
+          base64 --decode scripts/maintenance/final-convergence.patch.xz.b64 | xz --decompress > /tmp/final-convergence.patch
+          if git apply --check /tmp/final-convergence.patch; then
+            git apply --index /tmp/final-convergence.patch
+          else
+            git apply --3way --index /tmp/final-convergence.patch
+          fi
+          git rm scripts/maintenance/final-convergence.patch.xz.b64 scripts/maintenance/final-convergence-apply.yml
+          git diff --cached --check
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release scripts/security
+          test -z "$(git status --porcelain --untracked-files=no | grep '^??' || true)"
+      - name: Commit immutable candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "[P0][#722] Complete final production convergence"
+          git push origin HEAD:fix/722-final-production-convergence
