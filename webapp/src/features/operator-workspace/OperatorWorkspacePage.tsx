@@ -97,7 +97,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const canReadQueue = hasWorkspaceCapability(capabilities, 'operator_queue.read')
   const requestedConversation = useQuery({
     queryKey: ['operatorWorkspaceSessionDeepLink', scope, requestedSessionKey],
-    queryFn: () => supportApi.supportConversationDetail(requestedSessionKey || ''),
+    queryFn: () => supportApi.resolveSupportConversation(requestedSessionKey || ''),
     enabled: Boolean(session.data && canReadQueue && requestedSessionKey),
     retry: false,
   })
