@@ -19,6 +19,7 @@ const knowledgePath = path.join(srcRoot, 'features', 'knowledge', 'KnowledgePage
 const knowledgeRoutePath = path.join(srcRoot, 'routes', 'knowledge.tsx')
 const workspacePath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
 const workspaceCommonPath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspaceCommon.tsx')
+const canonicalWorkflowPath = path.join(repositoryRoot, '.github', 'workflows', 'canonical-acceptance.yml')
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.css'])
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts'])
@@ -166,11 +167,15 @@ function readJson(file, label, failures) {
   }
 }
 
-function assertActionsRetired(failures) {
-  const workflowDir = path.join(repositoryRoot, '.github', 'workflows')
-  if (!fs.existsSync(workflowDir)) return
-  const workflowFiles = walk(workflowDir).filter((file) => fs.statSync(file).isFile()).map(relative)
-  failures.push(`GitHub Actions are retired; .github/workflows must be absent: ${workflowFiles.join(', ') || 'empty directory exists'}`)
+function assertCanonicalActions(failures) {
+  const workflowDir = path.dirname(canonicalWorkflowPath)
+  const workflowFiles = fs.existsSync(workflowDir)
+    ? walk(workflowDir).filter((file) => fs.statSync(file).isFile()).map(relative).sort()
+    : []
+  const expected = [relative(canonicalWorkflowPath)]
+  if (workflowFiles.length !== 1 || workflowFiles[0] !== expected[0]) {
+    failures.push(`exactly one canonical GitHub Actions workflow is required: expected=${expected.join(', ')} actual=${workflowFiles.join(', ') || 'none'}`)
+  }
 }
 
 function assertNoParallelImplementation(files, failures) {
@@ -411,7 +416,7 @@ const failures = []
 for (const forbidden of FORBIDDEN_PATHS) {
   if (fs.existsSync(forbidden)) failures.push(`retired path exists: ${relative(forbidden)}`)
 }
-assertActionsRetired(failures)
+assertCanonicalActions(failures)
 
 const muiAuthority = readJson(muiAuthorityPath, 'MUI visual authority contract', failures)
 if (muiAuthority) {
@@ -445,7 +450,7 @@ console.log(JSON.stringify({
   production_files: files.length,
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
-  github_actions: 'retired',
+  github_actions: relative(canonicalWorkflowPath),
   http_transport_authority: 'webapp/src/lib/apiClient.ts',
   ui_authority: '@mui/material@9.2.0',
   theme_authority: 'webapp/src/theme/nexusTheme.ts',
