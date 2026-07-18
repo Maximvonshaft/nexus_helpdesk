@@ -126,17 +126,11 @@ services:
       NEXUS_PROCESS_ROLE: web
       DATABASE_URL: ${DATABASE_URL_APP:?set Web PostgreSQL URL}
       SECRET_KEY: ${SECRET_KEY:?set Web JWT secret}
-      RUNTIME_CONTRACT_SIGNING_SECRET: ${RUNTIME_CONTRACT_SIGNING_SECRET:?set AI contract secret}
       METRICS_ENABLED: "true"
       METRICS_TOKEN: ${METRICS_TOKEN:?set dedicated metrics token}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set controlled Web origin}
       WEBCHAT_ALLOWED_ORIGINS: ${WEBCHAT_ALLOWED_ORIGINS:?set controlled WebChat origin}
       TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-127.0.0.1}
-      PRIVATE_AI_RUNTIME_BASE_URL: ${PRIVATE_AI_RUNTIME_BASE_URL:-}
-      PRIVATE_AI_RUNTIME_RAG_BASE_URL: ${PRIVATE_AI_RUNTIME_RAG_BASE_URL:-}
-      LIVE_VOICE_UPSTREAM_WS_URL: ${LIVE_VOICE_UPSTREAM_WS_URL:-}
-      LIVE_VOICE_UPSTREAM_HEALTH_URL: ${LIVE_VOICE_UPSTREAM_HEALTH_URL:-}
-      LIVE_VOICE_UPSTREAM_TOKEN_FILE: /run/nexus/live_voice_token
       LOCAL_STORAGE_BACKUP_REQUIRED: "true"
       LOCAL_STORAGE_BACKUP_PATH: /var/backups/nexusdesk/uploads
       LOCAL_STORAGE_BACKUP_MARKER_PATH: /var/backups/nexusdesk/uploads/.nexus-backup-verified.json
@@ -147,7 +141,6 @@ services:
       DB_POOL_SIZE: ${DB_POOL_SIZE_WEB:-5}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEB:-5}
     volumes:
-      - ${LIVE_VOICE_TOKEN_HOST_PATH:?set live voice token path}:/run/nexus/live_voice_token:ro
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:rw
       - ${NEXUS_UPLOAD_BACKUP_HOST_PATH:?set upload backup path}:/var/backups/nexusdesk/uploads:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
@@ -187,7 +180,6 @@ services:
       <<: *controlled_environment
       NEXUS_PROCESS_ROLE: worker-outbound
       DATABASE_URL: ${DATABASE_URL_OUTBOUND:?set Outbound Worker PostgreSQL URL}
-      RUNTIME_CONTRACT_SIGNING_SECRET: ${RUNTIME_CONTRACT_SIGNING_SECRET:?set AI contract secret}
       METRICS_ENABLED: "false"
       DB_POOL_SIZE: ${DB_POOL_SIZE_OUTBOUND:-2}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_OUTBOUND:-2}
@@ -227,15 +219,10 @@ services:
       <<: *controlled_environment
       NEXUS_PROCESS_ROLE: worker-webchat-ai
       DATABASE_URL: ${DATABASE_URL_WEBCHAT_AI:?set WebChat AI Worker PostgreSQL URL}
-      RUNTIME_CONTRACT_SIGNING_SECRET: ${RUNTIME_CONTRACT_SIGNING_SECRET:?set AI contract secret}
       METRICS_ENABLED: "false"
-      PRIVATE_AI_RUNTIME_BASE_URL: ${PRIVATE_AI_RUNTIME_BASE_URL:-}
-      PRIVATE_AI_RUNTIME_RAG_BASE_URL: ${PRIVATE_AI_RUNTIME_RAG_BASE_URL:-}
-      PRIVATE_AI_RUNTIME_TOKEN_FILE: /run/nexus/ai_runtime_token
       DB_POOL_SIZE: ${DB_POOL_SIZE_WEBCHAT_AI:-2}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEBCHAT_AI:-1}
     volumes:
-      - ${AI_RUNTIME_TOKEN_HOST_PATH:?set AI runtime token path}:/run/nexus/ai_runtime_token:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
     command: python scripts/run_worker.py --worker-id worker-webchat-ai-controlled --queue webchat-ai
     healthcheck: *worker_healthcheck
