@@ -6,14 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import stat
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
-MAX_SECRET_FILE_BYTES = 64 * 1024
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DIGEST_IMAGE = re.compile(
@@ -25,6 +23,15 @@ _APP_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,79}$")
 _COMPOSE_PROJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 _ATTESTATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 
+DATABASE_ROLE_KEYS = {
+    "migration": "DATABASE_URL_MIGRATION",
+    "app": "DATABASE_URL_APP",
+    "outbound": "DATABASE_URL_OUTBOUND",
+    "background": "DATABASE_URL_BACKGROUND",
+    "webchat_ai": "DATABASE_URL_WEBCHAT_AI",
+    "handoff": "DATABASE_URL_HANDOFF",
+}
+
 SAFE_CONTROLS = {
     "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
     "AUTO_INIT_DB": "false",
@@ -35,6 +42,8 @@ SAFE_CONTROLS = {
     "UPLOAD_ROOT": "/app/backend/uploads",
     "LOCAL_STORAGE_BACKUP_REQUIRED": "true",
     "LOCAL_STORAGE_BACKUP_PATH": "/var/backups/nexusdesk/uploads",
+    "LOCAL_STORAGE_BACKUP_MARKER_PATH": "/var/backups/nexusdesk/uploads/.nexus-backup-verified.json",
+    "LOCAL_STORAGE_BACKUP_ENFORCE_FRESHNESS": "true",
     "LOCAL_STORAGE_BACKUP_ACKNOWLEDGED": "true",
     "REQUIRE_REMOTE_STORAGE_IN_PRODUCTION": "false",
     "WEBCHAT_ALLOW_NO_ORIGIN": "false",
@@ -43,11 +52,16 @@ SAFE_CONTROLS = {
     "WEBCHAT_AI_AUTO_REPLY_MODE": "off",
     "WEBCHAT_AI_RECONCILER_ENABLED": "false",
     "WEBCHAT_VOICE_ENABLED": "false",
+    "WEBCHAT_WS_ENABLED": "false",
+    "WEBCHAT_WS_PUBLIC_ENABLED": "false",
+    "WEBCHAT_WS_ADMIN_ENABLED": "false",
+    "WEBCHAT_WS_BROKER": "database",
     "PROVIDER_RUNTIME_ENABLED": "false",
     "PROVIDER_RUNTIME_TRAFFIC_MODE": "control",
     "PROVIDER_RUNTIME_KILL_SWITCH": "true",
     "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
     "PRIVATE_AI_RUNTIME_ENABLED": "false",
+    "KNOWLEDGE_EMBEDDINGS_ENABLED": "false",
     "ENABLE_OUTBOUND_DISPATCH": "false",
     "OUTBOUND_PROVIDER": "disabled",
     "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED": "false",
@@ -64,12 +78,8 @@ SAFE_CONTROLS = {
     "SPEEDAF_VOICE_CALLBACK_ENABLED": "false",
     "OPERATIONS_DISPATCH_MODE": "disabled",
     "OPERATIONS_DISPATCH_ADAPTER": "disabled",
-    "KNOWLEDGE_EMBEDDINGS_ENABLED": "false",
 }
 
-# Retired transport controls are assembled so this preflight does not become a
-# new classified compatibility reference. Omitted values rely on fail-closed
-# application defaults; present values must still remain disabled.
 _RETIRED_PREFIX = "EXTERNAL_" + "CHANNEL_"
 OPTIONAL_DISABLED_CONTROLS = {
     _RETIRED_PREFIX + "DEPLOYMENT_MODE": "disabled",
@@ -79,6 +89,20 @@ OPTIONAL_DISABLED_CONTROLS = {
     _RETIRED_PREFIX + "EVENT_DRIVER_ENABLED": "false",
     _RETIRED_PREFIX + "BRIDGE_ENABLED": "false",
     _RETIRED_PREFIX + "CLI_FALLBACK_ENABLED": "false",
+}
+
+FORBIDDEN_DISABLED_CAPABILITY_KEYS = {
+    "DATABASE_URL",
+    "NEXUS_RUNTIME_SECRETS_HOST_PATH",
+    "AI_RUNTIME_TOKEN_HOST_PATH",
+    "LIVE_VOICE_TOKEN_HOST_PATH",
+    "RUNTIME_CONTRACT_SIGNING_SECRET",
+    "PRIVATE_AI_RUNTIME_TOKEN_FILE",
+    "LIVE_VOICE_UPSTREAM_TOKEN_FILE",
+    "WHATSAPP_SIDECAR_TOKEN",
+    "WHATSAPP_CONNECTOR_HMAC_SECRET",
+    "KNOWLEDGE_EMBEDDING_API_KEY",
+    "KNOWLEDGE_EMBEDDING_API_KEY_FILE",
 }
 
 
@@ -131,6 +155,8 @@ def _validate_compose(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     if re.search(r"(?m)^\s*build\s*:", text):
         raise PreflightError("compose_build_forbidden")
+    if re.search(r"(?m)^\s*env_file\s*:", text):
+        raise PreflightError("compose_shared_env_file_forbidden")
     if "${CONTROLLED_IMAGE:?" not in text:
         raise PreflightError("compose_digest_variable_missing")
     for forbidden in (
@@ -139,6 +165,14 @@ def _validate_compose(path: Path) -> None:
         "whatsapp-sidecar",
         "node:22-bookworm-slim",
         ":latest",
+        "NEXUS_RUNTIME_SECRETS_HOST_PATH",
+        "/run/secrets",
+        "AI_RUNTIME_TOKEN_HOST_PATH",
+        "LIVE_VOICE_TOKEN_HOST_PATH",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
+        "PRIVATE_AI_RUNTIME_TOKEN_FILE",
+        "LIVE_VOICE_UPSTREAM_TOKEN_FILE",
+        "--queue all",
     ):
         if forbidden in text:
             raise PreflightError(f"compose_forbidden:{forbidden}")
@@ -153,6 +187,12 @@ def _validate_compose(path: Path) -> None:
     for service in required_services:
         if service not in text:
             raise PreflightError(f"compose_service_missing:{service[:-1]}")
+    for key in DATABASE_ROLE_KEYS.values():
+        if f"${{{key}:?" not in text:
+            raise PreflightError(f"compose_database_role_missing:{key}")
+    for queue in ("outbound", "background", "webchat-ai", "handoff-snapshot"):
+        if f"--queue {queue}" not in text:
+            raise PreflightError(f"compose_worker_queue_missing:{queue}")
 
 
 def _placeholder(value: str) -> bool:
@@ -169,6 +209,7 @@ def _placeholder(value: str) -> bool:
         "replace-me",
         "example-secret",
         "server-secret",
+        "secret-value",
     }
 
 
@@ -233,6 +274,62 @@ def _manifest_identity(manifest: dict) -> tuple[dict, dict]:
     if attestation.get("registry_provenance_pushed") is not True:
         raise PreflightError("manifest_attestation_not_pushed")
     return candidate, safety
+
+
+def _parse_database_url(
+    value: str,
+    *,
+    key: str,
+    expected_database_host: str | None,
+    expected_database_port: int,
+) -> dict[str, object]:
+    normalized = value.replace("postgresql+psycopg://", "postgresql://", 1)
+    try:
+        parsed = urlsplit(normalized)
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise PreflightError(f"database_url_invalid:{key}") from exc
+    if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
+        raise PreflightError(f"database_url_invalid:{key}")
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    database_name = parsed.path.lstrip("/")
+    if not username or not password or _placeholder(password):
+        raise PreflightError(f"database_credentials_invalid:{key}")
+    if expected_database_host and parsed.hostname != expected_database_host:
+        raise PreflightError(f"database_host_mismatch:{key}")
+    if parsed_port != expected_database_port:
+        raise PreflightError(f"database_port_mismatch:{key}")
+    if database_name != "nexusdesk":
+        raise PreflightError(f"database_name_mismatch:{key}")
+    return {
+        "username": username,
+        "host": parsed.hostname,
+        "port": parsed_port,
+        "database": database_name,
+    }
+
+
+def _validate_database_roles(
+    values: dict[str, str],
+    *,
+    expected_database_host: str | None,
+    expected_database_port: int,
+) -> dict[str, dict[str, object]]:
+    if "DATABASE_URL" in values:
+        raise PreflightError("generic_database_url_forbidden")
+    roles: dict[str, dict[str, object]] = {}
+    for role, key in DATABASE_ROLE_KEYS.items():
+        roles[role] = _parse_database_url(
+            values.get(key, ""),
+            key=key,
+            expected_database_host=expected_database_host,
+            expected_database_port=expected_database_port,
+        )
+    usernames = [str(item["username"]) for item in roles.values()]
+    if len(set(usernames)) != len(usernames):
+        raise PreflightError("database_role_usernames_must_be_distinct")
+    return roles
 
 
 def validate(
@@ -312,8 +409,11 @@ def validate(
     if values.get("READINESS_REQUIRE_RELEASE_METADATA", "").lower() != "true":
         raise PreflightError("readiness_metadata_gate_required")
     _require_secret(values, "SECRET_KEY", minimum_length=32)
-    _require_secret(values, "RUNTIME_CONTRACT_SIGNING_SECRET", minimum_length=32)
+    _require_secret(values, "METRICS_TOKEN", minimum_length=32)
 
+    for key in FORBIDDEN_DISABLED_CAPABILITY_KEYS:
+        if key in values:
+            raise PreflightError(f"disabled_capability_credential_forbidden:{key}")
     for key, expected in SAFE_CONTROLS.items():
         if values.get(key, "").lower() != expected:
             raise PreflightError(f"unsafe_control:{key}")
@@ -321,23 +421,11 @@ def validate(
         if key in values and values[key].lower() != expected:
             raise PreflightError(f"unsafe_optional_control:{key}")
 
-    database_url = values.get("DATABASE_URL", "")
-    normalized = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    try:
-        parsed = urlsplit(normalized)
-        parsed_port = parsed.port
-    except ValueError as exc:
-        raise PreflightError("database_url_invalid") from exc
-    if parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname:
-        raise PreflightError("database_url_invalid")
-    if not parsed.username or not parsed.password or _placeholder(parsed.password):
-        raise PreflightError("database_credentials_invalid")
-    if expected_database_host and parsed.hostname != expected_database_host:
-        raise PreflightError("database_host_mismatch")
-    if parsed_port != expected_database_port:
-        raise PreflightError("database_port_mismatch")
-    if parsed.path.lstrip("/") != "nexusdesk":
-        raise PreflightError("database_name_mismatch")
+    database_roles = _validate_database_roles(
+        values,
+        expected_database_host=expected_database_host,
+        expected_database_port=expected_database_port,
+    )
 
     if expected_domain:
         expected_origin = f"https://{expected_domain}"
@@ -351,10 +439,8 @@ def validate(
                 raise PreflightError(f"domain_origin_missing:{key}")
 
     path_keys = {
-        "NEXUS_RUNTIME_SECRETS_HOST_PATH": "directory",
         "NEXUS_UPLOADS_HOST_PATH": "directory",
         "NEXUS_UPLOAD_BACKUP_HOST_PATH": "directory",
-        "AI_RUNTIME_TOKEN_HOST_PATH": "secret_file",
     }
     checked_paths: dict[str, str] = {}
     declared_paths: dict[str, Path] = {}
@@ -365,24 +451,14 @@ def validate(
         path = Path(raw)
         declared_paths[key] = path
         checked_paths[key] = kind
-        if not check_host_paths:
-            continue
-        if kind == "directory" and (not path.is_dir() or path.is_symlink()):
+        if check_host_paths and (not path.is_dir() or path.is_symlink()):
             raise PreflightError(f"host_directory_missing:{key}")
-        if kind == "secret_file" and (not path.is_file() or path.is_symlink()):
-            raise PreflightError(f"host_file_missing:{key}")
-        if kind == "secret_file":
-            size = path.stat().st_size
-            if not 1 <= size <= MAX_SECRET_FILE_BYTES:
-                raise PreflightError(f"host_secret_size_invalid:{key}")
-            mode = stat.S_IMODE(path.stat().st_mode)
-            if mode & 0o077:
-                raise PreflightError(f"host_secret_permissions_unsafe:{key}")
     if declared_paths["NEXUS_UPLOADS_HOST_PATH"] == declared_paths["NEXUS_UPLOAD_BACKUP_HOST_PATH"]:
         raise PreflightError("upload_and_backup_paths_must_differ")
 
+    app_database = database_roles["app"]
     return {
-        "schema": "nexus.osr.controlled-server-preflight.v1",
+        "schema": "nexus.osr.controlled-server-preflight.v2",
         "status": "pass",
         "source_sha": source,
         "frontend_build_sha": frontend,
@@ -390,13 +466,17 @@ def validate(
         "build_time": build_time,
         "app_version": app_version,
         "registry_reference": image,
-        "database_host": parsed.hostname,
-        "database_port": parsed_port,
-        "database_name": parsed.path.lstrip("/"),
+        "database_host": app_database["host"],
+        "database_port": app_database["port"],
+        "database_name": app_database["database"],
+        "database_roles": database_roles,
+        "database_passwords_included": False,
         "expected_domain": expected_domain,
         "controlled_app_port": app_port,
         "host_paths_checked": check_host_paths,
         "declared_host_paths": checked_paths,
+        "shared_env_file_injected": False,
+        "disabled_capability_credentials_injected": False,
         "external_effects_enabled": False,
         "production_ready": False,
         "full_osr_automation": "NO_GO",
