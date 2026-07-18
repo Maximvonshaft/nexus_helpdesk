@@ -1,0 +1,53 @@
+# Canonical local-PostgreSQL overlay for docker-compose.controlled.yml.
+# It adds only the database service and its one-time role bootstrap. App and
+# Worker services remain owned exclusively by docker-compose.controlled.yml.
+
+services:
+  postgres-controlled:
+    image: docker.io/library/postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexusdesk}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?set local PostgreSQL bootstrap user}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set local PostgreSQL bootstrap password}
+      NEXUS_DB_MIGRATION_USER: ${NEXUS_DB_MIGRATION_USER:?set migration role user}
+      NEXUS_DB_MIGRATION_PASSWORD: ${NEXUS_DB_MIGRATION_PASSWORD:?set migration role password}
+      NEXUS_DB_APP_USER: ${NEXUS_DB_APP_USER:?set Web role user}
+      NEXUS_DB_APP_PASSWORD: ${NEXUS_DB_APP_PASSWORD:?set Web role password}
+      NEXUS_DB_OUTBOUND_USER: ${NEXUS_DB_OUTBOUND_USER:?set Outbound role user}
+      NEXUS_DB_OUTBOUND_PASSWORD: ${NEXUS_DB_OUTBOUND_PASSWORD:?set Outbound role password}
+      NEXUS_DB_BACKGROUND_USER: ${NEXUS_DB_BACKGROUND_USER:?set Background role user}
+      NEXUS_DB_BACKGROUND_PASSWORD: ${NEXUS_DB_BACKGROUND_PASSWORD:?set Background role password}
+      NEXUS_DB_WEBCHAT_AI_USER: ${NEXUS_DB_WEBCHAT_AI_USER:?set WebChat AI role user}
+      NEXUS_DB_WEBCHAT_AI_PASSWORD: ${NEXUS_DB_WEBCHAT_AI_PASSWORD:?set WebChat AI role password}
+      NEXUS_DB_HANDOFF_USER: ${NEXUS_DB_HANDOFF_USER:?set Handoff role user}
+      NEXUS_DB_HANDOFF_PASSWORD: ${NEXUS_DB_HANDOFF_PASSWORD:?set Handoff role password}
+    volumes:
+      - controlled-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-controlled-roles.sh:/docker-entrypoint-initdb.d/10-nexus-controlled-roles.sh:ro
+    networks:
+      - controlled
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" &&
+          psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -XAt -c
+          "SELECT 1 FROM pg_roles WHERE rolname = '$${NEXUS_DB_MIGRATION_USER}'" | grep -qx 1
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  migrate-controlled:
+    depends_on:
+      postgres-controlled:
+        condition: service_healthy
+
+volumes:
+  controlled-postgres-data:
