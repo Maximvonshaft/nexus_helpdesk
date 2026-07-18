@@ -35,12 +35,10 @@ function ActionRow({ item }: { item: ControlTowerAction }) {
       component="article"
       direction={{ xs: 'column', sm: 'row' }}
       spacing={2}
-      alignItems={{ xs: 'stretch', sm: 'center' }}
-      justifyContent="space-between"
-      sx={{ py: 1.5 }}
+      sx={{ alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between', py: 1.5 }}
     >
       <Box sx={{ minWidth: 0 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <Typography variant="subtitle2">{sanitizeDisplayText(item.label)}</Typography>
           <OperatorStatusLine
             compact
@@ -98,9 +96,7 @@ export function ControlTowerPage() {
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
-        alignItems={{ xs: 'stretch', sm: 'flex-start' }}
-        justifyContent="space-between"
-        sx={{ mb: 2.5 }}
+        sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between', mb: 2.5 }}
       >
         <Typography component="h1" variant="h1">运营监控</Typography>
         {tower.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
@@ -124,7 +120,7 @@ export function ControlTowerPage() {
 
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.4fr) minmax(300px, 0.8fr)' } }}>
             <Paper component="section" variant="outlined" aria-labelledby="control-actions-title" sx={{ minWidth: 0, p: 2 }}>
-              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
                 <Typography id="control-actions-title" component="h2" variant="h3">需要处理</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                   {tower.data.manager_actions.reduce((sum, item) => sum + item.count, 0)} 项
