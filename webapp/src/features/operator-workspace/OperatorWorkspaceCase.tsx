@@ -31,7 +31,11 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
   return (
     <Box component="header" sx={{ pb: 2.5 }}>
       <Typography variant="overline" color="text.secondary">{source.label} · {item.country_code} · {item.channel_key}</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'flex-start' }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between' }}
+      >
         <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
         <Stack spacing={0.75} sx={{ minWidth: { sm: 220 } }}>
           <OperatorStatusLine presentation={status} />
@@ -74,7 +78,7 @@ function CaseSpine({ item, memory }: { item: UnifiedOperatorQueueItem; memory: S
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(7, minmax(0, 1fr))' } }}>
         {stages.map(([label, value, available], index) => (
           <Box key={label} sx={{ borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 }, borderColor: 'divider', borderRight: { xl: index === stages.length - 1 ? 0 : 1 }, minWidth: 0, p: 1.5 }}>
-            <Stack direction="row" spacing={0.75} alignItems="center"><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography variant="caption" color="text.secondary" sx={{ fontWeight: 650 }}>{label}</Typography></Stack>
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography variant="caption" color="text.secondary" sx={{ fontWeight: 650 }}>{label}</Typography></Stack>
             <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{value}</Typography>
           </Box>
         ))}
@@ -95,7 +99,7 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
           const presentation = evidencePresentation(entry)
           return (
             <Box component="article" key={`${entry.kind}-${entry.source_id || index}`} sx={{ py: 1.75 }}>
-              <Stack direction="row" spacing={2} justifyContent="space-between" alignItems="flex-start">
+              <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <OperatorStatusLine presentation={presentation} />
                 {entry.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(entry.created_at)}</Typography> : null}
               </Stack>
