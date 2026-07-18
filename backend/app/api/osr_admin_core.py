@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..enums import UserRole
 from ..schemas_osr_admin import (
     CaseContextSafeUpdate,
     EscalationPolicyCreate,
@@ -48,11 +47,13 @@ from .deps import get_current_user
 def _safe_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     safe: list[dict[str, Any]] = []
     for item in errors[:50]:
-        safe.append({
-            "type": str(item.get("type") or "validation_error")[:120],
-            "loc": [str(part)[:120] for part in item.get("loc") or []],
-            "msg": str(item.get("msg") or "Invalid request")[:240],
-        })
+        safe.append(
+            {
+                "type": str(item.get("type") or "validation_error")[:120],
+                "loc": [str(part)[:120] for part in item.get("loc") or []],
+                "msg": str(item.get("msg") or "Invalid request")[:240],
+            }
+        )
     return safe
 
 
@@ -74,12 +75,16 @@ class RedactedValidationRoute(APIRoute):
         return custom_route_handler
 
 
-router = APIRouter(prefix="/api/admin/osr", tags=["admin-osr"], route_class=RedactedValidationRoute)
+router = APIRouter(
+    prefix="/api/admin/osr",
+    tags=["admin-osr"],
+    route_class=RedactedValidationRoute,
+)
 
 
 def _ensure_osr_admin(current_user: Any, db: Session) -> None:
-    if getattr(current_user, "role", None) != UserRole.admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="osr_admin_required")
+    """Use the runtime-management capability as the only OSR admin authority."""
+
     ensure_can_manage_runtime(current_user, db)
 
 
@@ -110,10 +115,16 @@ def _safe_write(
         return result
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict_code) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=conflict_code,
+        ) from exc
     except SQLAlchemyError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="osr_admin_write_failed") from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="osr_admin_write_failed",
+        ) from exc
 
 
 @router.get("/human-hours-policies")
@@ -131,7 +142,12 @@ def list_human_hours_policies(
     return list_policy_records(
         db,
         "human_hours",
-        filters={"country_code": country_code, "channel": channel, "queue_key": queue_key, "enabled": enabled},
+        filters={
+            "country_code": country_code,
+            "channel": channel,
+            "queue_key": queue_key,
+            "enabled": enabled,
+        },
         limit=limit,
         offset=offset,
     )
@@ -144,7 +160,10 @@ def create_human_hours_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return _safe_write(db, lambda: create_policy_record(db, "human_hours", _create_payload(payload)))
+    return _safe_write(
+        db,
+        lambda: create_policy_record(db, "human_hours", _create_payload(payload)),
+    )
 
 
 @router.get("/human-hours-policies/{record_id}")
@@ -165,7 +184,15 @@ def update_human_hours_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return _safe_write(db, lambda: update_policy_record(db, "human_hours", record_id, _update_payload(payload)))
+    return _safe_write(
+        db,
+        lambda: update_policy_record(
+            db,
+            "human_hours",
+            record_id,
+            _update_payload(payload),
+        ),
+    )
 
 
 @router.delete("/human-hours-policies/{record_id}")
@@ -176,7 +203,10 @@ def delete_human_hours_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    result = _safe_write(db, lambda: delete_policy_record(db, "human_hours", record_id))
+    result = _safe_write(
+        db,
+        lambda: delete_policy_record(db, "human_hours", record_id),
+    )
     response.status_code = status.HTTP_200_OK
     return result
 
@@ -196,7 +226,12 @@ def list_escalation_policies(
     return list_policy_records(
         db,
         "escalation",
-        filters={"risk_key": risk_key, "country_code": country_code, "channel": channel, "enabled": enabled},
+        filters={
+            "risk_key": risk_key,
+            "country_code": country_code,
+            "channel": channel,
+            "enabled": enabled,
+        },
         limit=limit,
         offset=offset,
     )
@@ -209,7 +244,10 @@ def create_escalation_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return _safe_write(db, lambda: create_policy_record(db, "escalation", _create_payload(payload)))
+    return _safe_write(
+        db,
+        lambda: create_policy_record(db, "escalation", _create_payload(payload)),
+    )
 
 
 @router.get("/escalation-policies/{record_id}")
@@ -230,7 +268,15 @@ def update_escalation_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return _safe_write(db, lambda: update_policy_record(db, "escalation", record_id, _update_payload(payload)))
+    return _safe_write(
+        db,
+        lambda: update_policy_record(
+            db,
+            "escalation",
+            record_id,
+            _update_payload(payload),
+        ),
+    )
 
 
 @router.delete("/escalation-policies/{record_id}")
@@ -241,7 +287,10 @@ def delete_escalation_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    result = _safe_write(db, lambda: delete_policy_record(db, "escalation", record_id))
+    result = _safe_write(
+        db,
+        lambda: delete_policy_record(db, "escalation", record_id),
+    )
     response.status_code = status.HTTP_200_OK
     return result
 
@@ -261,7 +310,12 @@ def list_tool_execution_policies(
     return list_policy_records(
         db,
         "tool_execution",
-        filters={"tool_name": tool_name, "country_code": country_code, "channel": channel, "enabled": enabled},
+        filters={
+            "tool_name": tool_name,
+            "country_code": country_code,
+            "channel": channel,
+            "enabled": enabled,
+        },
         limit=limit,
         offset=offset,
     )
@@ -274,7 +328,10 @@ def create_tool_execution_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return _safe_write(db, lambda: create_policy_record(db, "tool_execution", _create_payload(payload)))
+    return _safe_write(
+        db,
+        lambda: create_policy_record(db, "tool_execution", _create_payload(payload)),
+    )
 
 
 @router.get("/tool-execution-policies/{record_id}")
@@ -295,7 +352,15 @@ def update_tool_execution_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return _safe_write(db, lambda: update_policy_record(db, "tool_execution", record_id, _update_payload(payload)))
+    return _safe_write(
+        db,
+        lambda: update_policy_record(
+            db,
+            "tool_execution",
+            record_id,
+            _update_payload(payload),
+        ),
+    )
 
 
 @router.delete("/tool-execution-policies/{record_id}")
@@ -306,7 +371,10 @@ def delete_tool_execution_policy(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    result = _safe_write(db, lambda: delete_policy_record(db, "tool_execution", record_id))
+    result = _safe_write(
+        db,
+        lambda: delete_policy_record(db, "tool_execution", record_id),
+    )
     response.status_code = status.HTTP_200_OK
     return result
 
@@ -326,7 +394,12 @@ def list_whatsapp_routing_rules(
     return list_policy_records(
         db,
         "whatsapp_routing",
-        filters={"country_code": country_code, "issue_type": issue_type, "channel": channel, "enabled": enabled},
+        filters={
+            "country_code": country_code,
+            "issue_type": issue_type,
+            "channel": channel,
+            "enabled": enabled,
+        },
         limit=limit,
         offset=offset,
     )
@@ -341,7 +414,11 @@ def create_whatsapp_routing_rule(
     _ensure_osr_admin(current_user, db)
     return _safe_write(
         db,
-        lambda: create_policy_record(db, "whatsapp_routing", _create_payload(payload)),
+        lambda: create_policy_record(
+            db,
+            "whatsapp_routing",
+            _create_payload(payload),
+        ),
         conflict_code="whatsapp_routing_rule_conflict",
     )
 
@@ -366,7 +443,12 @@ def update_whatsapp_routing_rule(
     _ensure_osr_admin(current_user, db)
     return _safe_write(
         db,
-        lambda: update_policy_record(db, "whatsapp_routing", record_id, _update_payload(payload)),
+        lambda: update_policy_record(
+            db,
+            "whatsapp_routing",
+            record_id,
+            _update_payload(payload),
+        ),
         conflict_code="whatsapp_routing_rule_conflict",
     )
 
@@ -379,7 +461,10 @@ def delete_whatsapp_routing_rule(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    result = _safe_write(db, lambda: delete_policy_record(db, "whatsapp_routing", record_id))
+    result = _safe_write(
+        db,
+        lambda: delete_policy_record(db, "whatsapp_routing", record_id),
+    )
     response.status_code = status.HTTP_200_OK
     return result
 
@@ -393,7 +478,12 @@ def preview_human_hours(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return preview_human_hours_policy(db, country_code=country_code, channel=channel, queue_key=queue_key)
+    return preview_human_hours_policy(
+        db,
+        country_code=country_code,
+        channel=channel,
+        queue_key=queue_key,
+    )
 
 
 @router.get("/policy-preview/escalation")
@@ -445,7 +535,12 @@ def preview_whatsapp_routing(
     current_user=Depends(get_current_user),
 ):
     _ensure_osr_admin(current_user, db)
-    return preview_whatsapp_routing_rule(db, country_code=country_code, issue_type=issue_type, channel=channel)
+    return preview_whatsapp_routing_rule(
+        db,
+        country_code=country_code,
+        issue_type=issue_type,
+        channel=channel,
+    )
 
 
 @router.get("/runtime-decision-audits")
@@ -550,7 +645,10 @@ def get_osr_debug_snapshot(
 ):
     _ensure_osr_admin(current_user, db)
     if conversation_id is None and ticket_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="debug_snapshot_identifier_required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="debug_snapshot_identifier_required",
+        )
     return build_osr_debug_snapshot(
         db,
         tenant_id=tenant_id,
