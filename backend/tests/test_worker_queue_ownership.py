@@ -44,7 +44,7 @@ def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
     runner = WORKER_RUNNER.read_text(encoding="utf-8")
     assert "dispatch_pending_webchat_ai_reply_jobs" in runner
     assert "dispatch_pending_webchat_handoff_snapshot_jobs" in runner
-    assert 'if queue in {"all", "webchat-ai"}' in runner
+    assert 'if queue == "webchat-ai"' in runner
     assert 'if queue in {"all", "handoff-snapshot"}' in runner
 
 

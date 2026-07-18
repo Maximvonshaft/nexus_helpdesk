@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+
 from types import SimpleNamespace
 
 from app.services.storage_readiness import check_storage_readiness
@@ -13,6 +16,22 @@ def _settings(tmp_path, *, backend: str = "local", app_env: str = "production"):
 
 def _codes(issues) -> set[str]:
     return {issue.code for issue in issues}
+
+
+def _write_marker(path):
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "nexus.local-storage-backup.v1",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "file_count": 0,
+                "total_bytes": 0,
+                "manifest_sha256": "0" * 64,
+                "source_matches_backup": True,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_s3_storage_readiness_is_ok(tmp_path, monkeypatch):
@@ -38,7 +57,8 @@ def test_local_storage_readiness_warns_when_backup_is_not_configured(tmp_path, m
     assert result.status == "warning"
     assert _codes(result.warnings) == {
         "local_storage_backend_active",
-        "local_storage_backup_not_configured",
+        "local_storage_backup_path_not_configured",
+        "local_storage_backup_marker_not_configured",
     }
     assert not result.errors
 
@@ -55,7 +75,10 @@ def test_local_storage_readiness_allows_existing_backup_path_with_warning(tmp_pa
 
     assert result.ok is True
     assert result.status == "warning"
-    assert _codes(result.warnings) == {"local_storage_backend_active"}
+    assert _codes(result.warnings) == {
+        "local_storage_backend_active",
+        "local_storage_backup_marker_not_configured",
+    }
     assert not result.errors
 
 
@@ -65,8 +88,10 @@ def test_local_storage_readiness_is_ok_when_backup_is_verified_and_acknowledged(
     monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_REQUIRED", "true")
     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_PATH", str(backup_path))
+    marker_path = tmp_path / "backup-marker.json"
+    _write_marker(marker_path)
     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_ACKNOWLEDGED", "true")
-    monkeypatch.delenv("LOCAL_STORAGE_BACKUP_MARKER_PATH", raising=False)
+    monkeypatch.setenv("LOCAL_STORAGE_BACKUP_MARKER_PATH", str(marker_path))
 
     result = check_storage_readiness(_settings(tmp_path, backend="local"))
 
@@ -76,7 +101,7 @@ def test_local_storage_readiness_is_ok_when_backup_is_verified_and_acknowledged(
     assert not result.errors
 
 
-def test_local_storage_readiness_warns_when_backup_path_is_upload_root(tmp_path, monkeypatch):
+def test_local_storage_readiness_errors_when_backup_path_is_upload_root(tmp_path, monkeypatch):
     settings = _settings(tmp_path, backend="local")
     monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
     monkeypatch.setenv("LOCAL_STORAGE_BACKUP_REQUIRED", "true")
@@ -85,10 +110,9 @@ def test_local_storage_readiness_warns_when_backup_path_is_upload_root(tmp_path,
 
     result = check_storage_readiness(settings)
 
-    assert result.ok is True
-    assert result.status == "warning"
-    assert "local_storage_backup_path_same_as_upload_root" in _codes(result.warnings)
-    assert not result.errors
+    assert result.ok is False
+    assert result.status == "error"
+    assert "local_storage_backup_path_same_as_upload_root" in _codes(result.errors)
 
 
 def test_local_storage_readiness_errors_when_remote_storage_is_required(tmp_path, monkeypatch):

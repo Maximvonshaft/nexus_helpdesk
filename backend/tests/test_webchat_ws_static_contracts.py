@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -153,8 +154,11 @@ def test_webchat_static_assets_force_cache_revalidation():
     main = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
     demo = (ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html").read_text(encoding="utf-8")
 
-    assert "request.url.path.startswith('/webchat/')" in main
-    assert "request.url.path.startswith('/static/webchat/')" in main
+    assert 'request.url.path.startswith("/webchat/")' in main
+    assert re.search(
+        r'request\.url\.path\.startswith\(\s*"/static/webchat/"\s*\)',
+        main,
+    )
     assert "no-cache, max-age=0, must-revalidate" in main
     assert "/webchat/widget.js?v=webchat-session-recovery-v1" in demo
     assert "nexus-widget-consolidated-20260706" not in demo

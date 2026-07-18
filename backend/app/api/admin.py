@@ -37,6 +37,7 @@ from ..unit_of_work import managed_session
 from ..services.external_channel_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_external_channel_events_once, count_stale_external_channel_links, link_ticket_to_external_channel_session, list_stale_external_channel_links, replay_unresolved_external_channel_event as replay_unresolved_external_channel_event_payload, sync_external_channel_conversation
 from ..services.external_channel_runtime_service import probe_external_channel_connectivity
 from ..services.outbound_email_account_service import count_active_successful_tested_accounts
+from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
 from .deps import get_current_user
 from .admin_outbound_email import router as outbound_email_router
 
@@ -62,8 +63,10 @@ def _is_last_active_admin(db: Session, user_id: int) -> bool:
 
 
 def _validate_password_length(password: str) -> None:
-    if len(password) < 6:
-        raise HTTPException(status_code=400, detail='Password must be at least 6 characters')
+    try:
+        validate_admin_password_policy(password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _ensure_user_uniqueness(db: Session, *, username: str, email: str | None, exclude_user_id: int | None = None) -> None:

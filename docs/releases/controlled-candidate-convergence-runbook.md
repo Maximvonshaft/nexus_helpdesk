@@ -197,3 +197,10 @@ Cleanup is a later, separately authorized action. Retain the accepted Digest,
 previous rollback Digest, database and uploads backups, candidate manifest,
 verification, preflight, recovery and acceptance evidence. Never use an
 unbounded Docker prune.
+
+## Metrics access contract
+
+- The application is the sole metrics authority in the controlled topology.
+- An authenticated request using the dedicated `METRICS_TOKEN` may read `/metrics`; an unauthenticated `/metrics` returns 401.
+- Worker metrics are aggregated through the shared multiprocess registry; no second metrics service or Pushgateway is introduced.
+- The dedicated handoff snapshot process retains the stable identity `worker-handoff-snapshot-controlled` in acceptance evidence.

@@ -170,7 +170,7 @@ def evaluate(
         "schema": "nexus.infrastructure-decision.v1",
         "status": "evidence_complete"
         if all(
-            item["decision"] in {"NO_CHANGE", "CONSIDER_ADR"}
+            item["decision"] in {"NO_CHANGE", "CONSIDER_ADR", "CONDITIONAL_HOLD"}
             for item in decisions.values()
         )
         else "evidence_incomplete",

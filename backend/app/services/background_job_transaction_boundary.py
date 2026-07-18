@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from contextlib import nullcontext
 from typing import Any, Iterable
 
-from sqlalchemy import update
+from sqlalchemy import text, update
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,23 +57,31 @@ def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
 
     from . import background_jobs
 
-    no_autoflush = getattr(db, "no_autoflush", nullcontext())
-    with no_autoflush:
-        row = (
-            db.query(
-                background_jobs.BackgroundJob.locked_by,
-                background_jobs.BackgroundJob.status,
-            )
-            .filter(background_jobs.BackgroundJob.id == job_id)
-            .first()
-        )
+    # Read through an independent connection. The worker Session may already
+    # hold uncommitted terminal ORM changes (including clearing ``locked_by``),
+    # while the committed row must still prove that this attempt owns the lease.
+    # An independent connection also observes a concurrent lease transfer and
+    # therefore preserves fencing across PostgreSQL and SQLite test databases.
+    bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
+    if bind is None:
+        return False
+    engine = getattr(bind, "engine", bind)
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT locked_by, status "
+                "FROM background_jobs WHERE id = :job_id"
+            ),
+            {"job_id": job_id},
+        ).first()
     if row is None:
         return False
     locked_by = row[0]
     status = row[1]
+    status_value = status.value if hasattr(status, "value") else str(status)
     return (
         locked_by == lease_token
-        and status == background_jobs.JobStatus.processing
+        and status_value == background_jobs.JobStatus.processing.value
     )
 
 

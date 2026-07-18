@@ -26,6 +26,7 @@ def isolated_provider_registry(monkeypatch):
     monkeypatch.setattr(provider_runtime_module, "_BOOTSTRAPPED", True)
     monkeypatch.setattr(ProviderRegistry, "_factories", {})
     for name in (
+        "PROVIDER_RUNTIME_ENABLED",
         "PROVIDER_RUNTIME_TRAFFIC_MODE",
         "PROVIDER_RUNTIME_CANARY_PERCENT",
         "PROVIDER_RUNTIME_KILL_SWITCH",

@@ -30,7 +30,7 @@ def test_admin_password_policy_rejects_weak_passwords(password: str) -> None:
 
 
 def test_main_binds_admin_password_policy_to_admin_routes() -> None:
-    from app.main import admin_api
+    from app.api import admin as admin_api
 
     with pytest.raises(HTTPException) as exc:
         admin_api._validate_password_length("password1234")

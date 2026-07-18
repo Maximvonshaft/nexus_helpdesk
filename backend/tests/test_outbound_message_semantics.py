@@ -22,6 +22,7 @@ from app.auth_service import hash_password  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import Team, Ticket, TicketOutboundMessage, User  # noqa: E402
+from app.services import message_dispatch  # noqa: E402
 from app.services.message_dispatch import claim_pending_messages, process_outbound_message, requeue_dead_outbound_message  # noqa: E402
 from app.services.outbound_semantics import count_outbound_semantics, outbound_ui_label  # noqa: E402
 from app.services.timeline_service import serialize_outbound  # noqa: E402
@@ -155,9 +156,8 @@ def test_non_external_outbound_never_calls_provider_dispatch(db_session, monkeyp
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-send-block')
     row = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.pending, provider_status='queued')
     db_session.commit()
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider path must not run for web_chat')))
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp path must not run for web_chat')))
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli path must not run for web_chat')))
+    monkeypatch.setattr(message_dispatch, '_dispatch_whatsapp_message', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider path must not run for web_chat')))
+    monkeypatch.setattr(message_dispatch, '_dispatch_email_message', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider path must not run for web_chat')))
     processed = process_outbound_message(db_session, row)
     assert processed.status == MessageStatus.dead
     assert processed.failure_code == 'non_external_outbound_not_dispatchable'
