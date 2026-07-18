@@ -1,0 +1,9 @@
+{
+  "schema": "nexus.final-convergence-patch-transport.v1",
+  "repository": "Maximvonshaft/nexus_helpdesk",
+  "base_main_sha": "7260652e380e9b19818c079c4d3846a653354d24",
+  "parts": 6,
+  "transport": "temporary-github-issue-comments",
+  "payload": "plain-unified-diff",
+  "final_tree_must_remove_staging_assets": true
+}
