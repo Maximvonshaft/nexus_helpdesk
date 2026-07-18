@@ -1,187 +1,199 @@
-# Controlled Candidate Convergence and Swiss Cutover
+# Controlled Candidate Convergence
 
-## Scope
+## Status and authority
 
-This runbook publishes one exact Nexus binary and prepares a controlled replacement of the current Swiss candidate deployment at `mcs.speedaf.com`.
+This runbook describes a controlled candidate only. It does not authorize
+Provider traffic, WebChat AI, voice, real outbound, WhatsApp, SpeedAF writes,
+Operations Dispatch, a production deployment or cleanup of the previous system.
 
-It does **not** authorize production Provider traffic, real outbound, WhatsApp, SpeedAF writes, Operations Dispatch, production automation, or Issue #533 GO.
+The sole implementation and verification authorities are:
 
-## Observed topology
+- PR `#763` / `fix/722-authority-convergence`;
+- `docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md`;
+- `scripts/verify_repository.py`;
+- `scripts/deploy/validate_controlled_server_preflight.py`;
+- `deploy/docker-compose.controlled.yml`;
+- optional local PostgreSQL overlay:
+  `deploy/docker-compose.controlled-postgres.yml`.
 
-- Swiss application host: `ch-ai-runtime`, Tailscale `100.65.151.82`, GCE private `10.172.0.2`.
-- Current application project: `nexusdesk_swiss_candidate`.
-- Current application container: `nexusdesk_swiss_candidate-app-candidate-1`.
-- Current source: `bcec9cba93103b4fa71e523d0b3ca7c0a8f8c1e4`.
-- Current image ID: `sha256:604a170fbffd57966c165bd76e3b65c5fa1b17cec9784859528e0363361c365a`.
-- Current migration: `20260707_0052`.
-- PostgreSQL: `10.2.64.2:5432/nexusdesk`.
-- Runtime secret directory: `/run/secrets`.
-- Uploads: `/opt/nexus_helpdesk/data/uploads`.
-- Upload backup mount: `/var/backups/nexusdesk/uploads`.
-- AI token: `/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token`.
-- GPU AI gateway: `http://100.91.119.72:8060` through Tailscale.
-- Current Nginx upstream: `127.0.0.1:18094`.
-- Controlled candidate upstream: `127.0.0.1:18095`.
+There is no GitHub Actions publication path and no candidate-specific App,
+Worker, WhatsApp sidecar or runtime-warmer topology.
 
-The old environment currently enables Provider, outbound, WhatsApp, and SpeedAF write controls. The first controlled cutover must override all of them to disabled before any new container starts.
+## 1. Freeze one exact candidate
 
-## GitHub publication
-
-Run `.github/workflows/controlled-candidate-convergence.yml` manually from exact `main`.
-
-The workflow:
-
-1. executes the existing isolated RC chain and builds the application image once;
-2. scans and licenses that same local image;
-3. captures the image-embedded source, frontend, build-time and app-version identity;
-4. pushes that exact image to GHCR;
-5. pulls it back by registry digest and proves the image ID and embedded identity are unchanged;
-6. runs disposable PostgreSQL recovery qualification on the same source SHA;
-7. attaches provenance to the registry digest;
-8. emits `controlled-candidate-<sha>` evidence with `nexus.osr.controlled-candidate-manifest.v1`.
-
-Do not deploy a mutable tag. The only acceptable application reference is:
+Record and keep unchanged:
 
 ```text
-ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<approved-registry-digest>
+source_sha
+source_tree_sha
+frontend_build_sha
+migration_revision
+immutable_image_digest
+build_time
+app_version
 ```
 
-The server environment must copy `candidate.build_time` and `candidate.app_version` from the accepted manifest. Do not invent or replace those values at deployment time.
+Any Head, tree, lockfile, migration, image Digest or deployment-input change
+invalidates previous evidence.
 
-## Swiss replacement sequence
+## 2. Generate external supply-chain evidence
 
-The operator command set is instantiated only after the GitHub workflow returns an accepted source SHA, registry digest, migration revision, build metadata, and manifest.
-
-### 1. Pre-cutover backup
-
-Create a root-only release backup directory. Capture:
-
-- PostgreSQL custom-format dump and `pg_restore --list` verification;
-- uploads archive;
-- current Docker inspect metadata;
-- current Compose files;
-- current Nginx configuration;
-- old source/image/migration identity.
-
-No old container is removed before all backup checks pass.
-
-### 2. Build the controlled server environment
-
-Read the existing container environment locally on the server without printing it. Preserve secret-bearing values, then overwrite release identity and every external-effect control with the fail-closed profile in `deploy/.env.controlled.example`.
-
-Required Swiss values:
-
-```text
-ALLOWED_ORIGINS=https://mcs.speedaf.com
-WEBCHAT_ALLOWED_ORIGINS=https://mcs.speedaf.com
-DATABASE_URL=<preserved secret URL to 10.2.64.2:5432/nexusdesk>
-METRICS_TOKEN=<new dedicated server-only token with at least 32 characters>
-NEXUS_RUNTIME_SECRETS_HOST_PATH=/run/secrets
-NEXUS_UPLOADS_HOST_PATH=/opt/nexus_helpdesk/data/uploads
-NEXUS_UPLOAD_BACKUP_HOST_PATH=/var/backups/nexusdesk/uploads
-AI_RUNTIME_TOKEN_HOST_PATH=/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token
-PRIVATE_AI_RUNTIME_BASE_URL=http://100.91.119.72:8060
-PRIVATE_AI_RUNTIME_RAG_BASE_URL=http://100.91.119.72:8060
-CONTROLLED_APP_PORT=18095
-```
-
-The controlled Compose authority forces metrics on and refuses to render without `METRICS_TOKEN`; do not reuse the application signing secret or any Provider credential for this token.
-
-The first cutover keeps AI and every external action disabled. AI gateway coordinates are retained only for a later separately accepted enablement.
-
-### 3. Preflight
-
-Run:
+Build one immutable image and generate its SBOM and signature outside the
+repository. Assemble provenance with:
 
 ```bash
-python3 scripts/deploy/validate_controlled_server_preflight.py \
+python scripts/release/assemble_supply_chain_evidence.py \
+  --image 'ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<digest>' \
+  --sbom-source /secure/evidence/source-sbom.spdx.json \
+  --signature-bundle-source /secure/evidence/source-cosign.bundle.json \
+  --output-dir /secure/evidence/nexus-<source-sha>
+```
+
+Then run the canonical verifier against the same clean Head:
+
+```bash
+python scripts/verify_repository.py \
+  --release-evidence-dir /secure/evidence/nexus-<source-sha> \
+  --evidence-out /secure/evidence/nexus-<source-sha>/repository-verification.json
+```
+
+Generated evidence must not be written into the candidate repository.
+
+## 3. Choose one database topology explicitly
+
+### External PostgreSQL
+
+Prepare `deploy/.env.controlled` from `deploy/.env.controlled.example`.
+It must contain six distinct service URLs:
+
+```text
+DATABASE_URL_MIGRATION
+DATABASE_URL_APP
+DATABASE_URL_OUTBOUND
+DATABASE_URL_BACKGROUND
+DATABASE_URL_WEBCHAT_AI
+DATABASE_URL_HANDOFF
+```
+
+### Local PostgreSQL
+
+Prepare `deploy/.env.controlled.local-postgres` from
+`deploy/.env.controlled.local-postgres.example`.
+The local overlay initializes one migration role and five long-running service
+roles through `deploy/postgres/init-controlled-roles.sh`. It does not duplicate
+App or Worker services.
+
+Do not copy `.env.prod*` or `.env.candidate.example`; those paths are bounded
+retirement tombstones.
+
+## 4. Preserve the current host before cutover
+
+Run the configuration-only backup helper:
+
+```bash
+bash scripts/deploy/safe_update_server.sh
+```
+
+It must preserve existing production-local environment and Compose files as
+well as any prepared controlled files. Separately create and verify:
+
+- PostgreSQL custom-format backup;
+- uploads backup and manifest-equality marker;
+- current image/source/migration identity;
+- current reverse-proxy configuration.
+
+This step does not authorize stopping or replacing the current system.
+
+## 5. Run controlled preflight
+
+External database example:
+
+```bash
+python scripts/deploy/validate_controlled_server_preflight.py \
   --env-file deploy/.env.controlled \
   --compose-file deploy/docker-compose.controlled.yml \
-  --manifest controlled-candidate-manifest.json \
-  --expected-database-host 10.2.64.2 \
+  --manifest /secure/evidence/nexus-<source-sha>/controlled-candidate-manifest.json \
+  --expected-database-host <approved-host> \
   --expected-database-port 5432 \
   --expected-domain mcs.speedaf.com \
   --check-host-paths \
-  --output controlled-server-preflight.json
+  --output /secure/evidence/nexus-<source-sha>/controlled-preflight.json
 ```
 
-Then verify:
+Local database example uses the same preflight with:
+
+```text
+--env-file deploy/.env.controlled.local-postgres
+--expected-database-host postgres-controlled
+```
+
+The v2 preflight rejects:
+
+- mutable images or mismatched candidate identity;
+- one generic database account or duplicate service users;
+- a shared Compose `env_file`;
+- enabled external effects;
+- credentials for disabled Provider/AI/voice/WhatsApp capabilities;
+- shared uploads/backup paths;
+- placeholder Web or Metrics secrets;
+- missing host paths or invalid topology metadata.
+
+## 6. Render, do not deploy
+
+External topology:
 
 ```bash
-docker compose \
-  --env-file deploy/.env.controlled \
-  -f deploy/docker-compose.controlled.yml \
-  config --quiet
+NEXUS_DATABASE_TOPOLOGY=external \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+deploy/nexus-prod-compose.sh config --quiet
 ```
 
-Any mutable image, missing host path, empty or over-permissive token file, missing metrics token, placeholder secret, wrong database port, stale source/build/migration identity, enabled Provider/outbound flag, or Compose build directive is a hard stop.
+Local topology:
 
-### 4. Stop old writers and back up again if traffic changed
+```bash
+NEXUS_DATABASE_TOPOLOGY=local \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled.local-postgres \
+deploy/nexus-prod-compose.sh config --quiet
+```
 
-Immediately before migration:
+Rendering success is not deployment authorization.
 
-1. place Nginx into a controlled maintenance response or stop routing new requests;
-2. stop the old Compose project;
-3. take the final database dump and uploads delta backup;
-4. verify no old worker or sidecar remains running.
+## 7. Controlled acceptance requirements
 
-### 5. Pull, migrate, and start the digest-only candidate
+After a separately authorized controlled deployment, evidence must prove:
 
-Pull the exact digest, run the one-off migration service, then start the app and four workers. The Compose file has no `build:` path and no WhatsApp sidecar.
+- image/source/frontend/migration identity matches the frozen candidate;
+- App and four dedicated Workers are healthy;
+- Queue depth represents database counts, not processed-per-cycle counts;
+- stale processing and dead-letter state are visible;
+- Support authorization and privacy tests pass on PostgreSQL;
+- migration upgrade, rollback and re-upgrade pass;
+- backup restore rehearsal records RPO/RTO;
+- Provider, AI, voice, outbound, WhatsApp and Operations writes remain zero;
+- no secret or customer payload appears in evidence.
 
-Expected readiness:
+## 8. Rollback contract
 
-- source SHA equals the controlled manifest;
-- frontend SHA equals source SHA;
-- build time and app version equal the image-bound manifest fields;
-- migration equals the controlled manifest;
-- `/healthz` and `/readyz` return 200;
-- unauthenticated `/metrics` returns 401;
-- authenticated `/metrics` returns 200 from the existing App endpoint and includes all four controlled worker IDs after their first poll;
-- app and workers are healthy;
-- external-effect controls remain disabled.
+Database restore is qualified through
+`scripts/qualification/recovery/run_recovery_qualification.sh`.
 
-### 6. Nginx cutover
+Image rollback requires:
 
-Only after loopback acceptance, change the existing `mcs.speedaf.com` upstream from `127.0.0.1:18094` to `127.0.0.1:18095`, run `nginx -t`, reload Nginx, and test the public domain.
+```text
+OLD_IMAGE_TAG=<immutable prior digest>
+ROLLBACK_CONTROLLED_ENV_FILE=<prior frozen controlled env file>
+ROLLBACK_DATABASE_TOPOLOGY=external|local
+ROLLBACK_HEALTH_URL=<approved loopback URL>
+ROLLBACK_CONFIRM=I_UNDERSTAND
+```
 
-### 7. Acceptance
+The prior environment file must identify the same image Digest, source SHA,
+frontend SHA and migration revision. The rollback script will not construct a
+release identity by overriding one mutable environment variable.
 
-Required checks:
+## 9. Cleanup
 
-- invalid login rejection;
-- valid operator login;
-- public WebChat initialization and message persistence;
-- operator can read the same conversation;
-- a long conversation returns a bounded latest page and can load older messages without duplicate rows;
-- unauthenticated metrics access is rejected;
-- an authenticated loopback scrape contains `nexusdesk_http_requests_total` plus `worker-outbound-controlled`, `worker-background-controlled`, `worker-webchat-ai-controlled`, and `worker-handoff-snapshot-controlled`;
-- Provider output count remains zero;
-- outbound/WhatsApp/SpeedAF/Dispatch execution remains zero;
-- uploads remain readable;
-- PostgreSQL and Tailscale routes remain available;
-- no secrets appear in logs or evidence.
-
-### 8. Rollback
-
-Rollback consists of:
-
-1. restore Nginx upstream to `127.0.0.1:18094`;
-2. stop the controlled project;
-3. restore the pre-migration database dump when schema rollback is required;
-4. restore uploads when changed;
-5. restart the old `nexusdesk_swiss_candidate` project;
-6. verify old health and public domain.
-
-Do not use the old application against a database that has not been proven backward compatible after migration.
-
-### 9. Cleanup
-
-Only after independent post-deploy acceptance:
-
-- remove exited old containers;
-- remove superseded local candidate directories;
-- remove old unreferenced `nexusdesk/helpdesk:mcs-*` images;
-- retain the accepted digest, previous rollback image, database dumps, upload archives, manifest, preflight, and acceptance evidence.
-
-Use explicit image IDs. Do not run an unbounded `docker system prune`.
+Cleanup is a later, separately authorized action. Retain the accepted Digest,
+previous rollback Digest, database and uploads backups, candidate manifest,
+verification, preflight, recovery and acceptance evidence. Never use an
+unbounded Docker prune.
