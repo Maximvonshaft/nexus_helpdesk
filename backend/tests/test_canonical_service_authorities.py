@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from datetime import date
 from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 BACKEND = Path(__file__).resolve().parents[1]
 PROJECT = BACKEND.parent
@@ -66,6 +71,33 @@ def _attribute_assignment_target(node: ast.AST) -> tuple[str, str] | None:
             if isinstance(candidate, ast.Attribute) and isinstance(candidate.value, ast.Name):
                 return candidate.value.id, candidate.attr
     return None
+
+
+def _json_request(path: str, payload: dict) -> Request:
+    body = json.dumps(payload).encode("utf-8")
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("testclient", 123),
+        "server": ("testserver", 80),
+    }
+    return Request(scope, receive)
 
 
 def test_service_authority_manifest_is_complete_and_paths_exist() -> None:
@@ -189,6 +221,35 @@ def test_compatibility_lifecycle_assets_are_bounded() -> None:
         assert "NEXUS_ENV_TEMPLATE_RETIRED=true" in source, relative
         assert "SECRET_KEY=" not in source, relative
         assert "DATABASE_URL=" not in source, relative
+
+
+def test_admin_password_policy_is_bound_without_runtime_mutation() -> None:
+    from app.api.admin_password_policy import enforce_admin_password_request_policy
+
+    main = (APP / "main.py").read_text(encoding="utf-8")
+    guard = (APP / "api" / "admin_password_policy.py").read_text(encoding="utf-8")
+    auth = (APP / "auth_service.py").read_text(encoding="utf-8")
+    assert "dependencies=[Depends(enforce_admin_password_request_policy)]" in main
+    assert "validate_admin_password_policy" in guard
+    assert "validate_admin_password_policy" not in auth
+    assert "._validate_password_length =" not in main
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            enforce_admin_password_request_policy(
+                _json_request("/api/admin/users", {"password": "pass123"})
+            )
+        )
+    assert exc_info.value.status_code == 400
+
+    asyncio.run(
+        enforce_admin_password_request_policy(
+            _json_request(
+                "/api/admin/users/12/reset-password",
+                {"password": "NexusAdmin-2026-Strong!"},
+            )
+        )
+    )
 
 
 def test_fastapi_method_and_normalized_path_are_unique() -> None:
