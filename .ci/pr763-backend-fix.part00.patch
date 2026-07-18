@@ -1,0 +1,180 @@
+diff --git a/backend/app/api/admin.py b/backend/app/api/admin.py
+index 74b086a..7200db0 100644
+--- a/backend/app/api/admin.py
++++ b/backend/app/api/admin.py
+@@ -37,6 +37,7 @@ from ..unit_of_work import managed_session
+ from ..services.external_channel_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_external_channel_events_once, count_stale_external_channel_links, link_ticket_to_external_channel_session, list_stale_external_channel_links, replay_unresolved_external_channel_event as replay_unresolved_external_channel_event_payload, sync_external_channel_conversation
+ from ..services.external_channel_runtime_service import probe_external_channel_connectivity
+ from ..services.outbound_email_account_service import count_active_successful_tested_accounts
++from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
+ from .deps import get_current_user
+ from .admin_outbound_email import router as outbound_email_router
+ 
+@@ -62,8 +63,10 @@ def _is_last_active_admin(db: Session, user_id: int) -> bool:
+ 
+ 
+ def _validate_password_length(password: str) -> None:
+-    if len(password) < 6:
+-        raise HTTPException(status_code=400, detail='Password must be at least 6 characters')
++    try:
++        validate_admin_password_policy(password)
++    except PasswordPolicyError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
+ 
+ 
+ def _ensure_user_uniqueness(db: Session, *, username: str, email: str | None, exclude_user_id: int | None = None) -> None:
+diff --git a/backend/app/services/background_job_transaction_boundary.py b/backend/app/services/background_job_transaction_boundary.py
+index f99bd27..9e3fd51 100644
+--- a/backend/app/services/background_job_transaction_boundary.py
++++ b/backend/app/services/background_job_transaction_boundary.py
+@@ -2,10 +2,9 @@ from __future__ import annotations
+ 
+ import logging
+ import uuid
+-from contextlib import nullcontext
+ from typing import Any, Iterable
+ 
+-from sqlalchemy import update
++from sqlalchemy import text, update
+ 
+ LOGGER = logging.getLogger(__name__)
+ 
+@@ -58,23 +57,31 @@ def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
+ 
+     from . import background_jobs
+ 
+-    no_autoflush = getattr(db, "no_autoflush", nullcontext())
+-    with no_autoflush:
+-        row = (
+-            db.query(
+-                background_jobs.BackgroundJob.locked_by,
+-                background_jobs.BackgroundJob.status,
+-            )
+-            .filter(background_jobs.BackgroundJob.id == job_id)
+-            .first()
+-        )
++    # Read through an independent connection. The worker Session may already
++    # hold uncommitted terminal ORM changes (including clearing ``locked_by``),
++    # while the committed row must still prove that this attempt owns the lease.
++    # An independent connection also observes a concurrent lease transfer and
++    # therefore preserves fencing across PostgreSQL and SQLite test databases.
++    bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
++    if bind is None:
++        return False
++    engine = getattr(bind, "engine", bind)
++    with engine.connect() as connection:
++        row = connection.execute(
++            text(
++                "SELECT locked_by, status "
++                "FROM background_jobs WHERE id = :job_id"
++            ),
++            {"job_id": job_id},
++        ).first()
+     if row is None:
+         return False
+     locked_by = row[0]
+     status = row[1]
++    status_value = status.value if hasattr(status, "value") else str(status)
+     return (
+         locked_by == lease_token
+-        and status == background_jobs.JobStatus.processing
++        and status_value == background_jobs.JobStatus.processing.value
+     )
+ 
+ 
+diff --git a/backend/app/services/queue_health.py b/backend/app/services/queue_health.py
+index 31cf908..5350c65 100644
+--- a/backend/app/services/queue_health.py
++++ b/backend/app/services/queue_health.py
+@@ -2,7 +2,7 @@ from __future__ import annotations
+ 
+ import os
+ from collections import defaultdict
+-from datetime import timedelta
++from datetime import datetime, timedelta, timezone
+ from typing import Any
+ 
+ from sqlalchemy import func
+@@ -32,7 +32,19 @@ def _bounded_seconds(name: str, default: int, *, minimum: int, maximum: int) ->
+ def _age_ms(value, *, now) -> int | None:
+     if value is None:
+         return None
+-    return max(0, int((now - value).total_seconds() * 1000))
++    if not isinstance(value, datetime):
++        raise TypeError("queue timestamp must be a datetime")
++    normalized_value = (
++        value.replace(tzinfo=timezone.utc)
++        if value.tzinfo is None
++        else value.astimezone(timezone.utc)
++    )
++    normalized_now = (
++        now.replace(tzinfo=timezone.utc)
++        if now.tzinfo is None
++        else now.astimezone(timezone.utc)
++    )
++    return max(0, int((normalized_now - normalized_value).total_seconds() * 1000))
+ 
+ 
+ def collect_queue_health(db: Session) -> dict[str, Any]:
+diff --git a/backend/scripts/run_worker.py b/backend/scripts/run_worker.py
+index eef2818..a228076 100644
+--- a/backend/scripts/run_worker.py
++++ b/backend/scripts/run_worker.py
+@@ -317,7 +317,7 @@ def run_queue_once(worker_id: str, queue: str) -> int:
+         processed += _run_background(worker_id)
+     if queue in {"all", "handoff-snapshot"}:
+         processed += _run_handoff_snapshot(worker_id)
+-    if queue in {"all", "webchat-ai"}:
++    if queue == "webchat-ai":
+         processed += _run_webchat_ai(worker_id)
+     _record_queue_depth_snapshot_if_due(worker_id, queue=queue)
+     if processed > 0 or queue != "webchat-ai":
+diff --git a/backend/tests/test_admin_password_policy.py b/backend/tests/test_admin_password_policy.py
+index 56127a3..4bf49c1 100644
+--- a/backend/tests/test_admin_password_policy.py
++++ b/backend/tests/test_admin_password_policy.py
+@@ -30,7 +30,7 @@ def test_admin_password_policy_rejects_weak_passwords(password: str) -> None:
+ 
+ 
+ def test_main_binds_admin_password_policy_to_admin_routes() -> None:
+-    from app.main import admin_api
++    from app.api import admin as admin_api
+ 
+     with pytest.raises(HTTPException) as exc:
+         admin_api._validate_password_length("password1234")
+diff --git a/backend/tests/test_canonical_metrics_registry.py b/backend/tests/test_canonical_metrics_registry.py
+index 47b6f9e..8b90637 100644
+--- a/backend/tests/test_canonical_metrics_registry.py
++++ b/backend/tests/test_canonical_metrics_registry.py
+@@ -28,16 +28,18 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
+     assert "prometheus-multiproc:/var/run/nexus-prometheus" in compose
+     assert "find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete" in compose
+     assert "--config /app/backend/gunicorn.conf.py" in compose
+-    assert compose.count("prometheus-multiproc:/var/run/nexus-prometheus") == 1
++    assert compose.count("- prometheus-multiproc:/var/run/nexus-prometheus") == 6
++    assert compose.count("\n  prometheus-multiproc:\n") == 1
+     assert compose.count("PROMETHEUS_MULTIPROC_DIR:") == 2
+     assert 'METRICS_ENABLED: "true"' in compose
+-    assert "METRICS_TOKEN: ${METRICS_TOKEN:?set a dedicated metrics token}" in compose
+-    assert compose.count("METRICS_ENABLED:") == 1
++    assert "METRICS_TOKEN: ${METRICS_TOKEN:?set dedicated metrics token}" in compose
++    assert compose.count('METRICS_ENABLED: "true"') == 1
++    assert compose.count('METRICS_ENABLED: "false"') == 5
+     assert sum(
+         line.lstrip().startswith("METRICS_TOKEN:")
+         for line in compose.splitlines()
+     ) == 1
+-    assert "METRICS_TOKEN=<dedicated-server-metrics-token-at-least-32-characters>" in env_example
++    assert "METRICS_TOKEN=<dedicated-metrics-token-at-least-32-characters>" in env_example
+     assert "METRICS_ENABLED=" not in env_example
+     assert "unauthenticated `/metrics` returns 401" in runbook
+     assert "worker-handoff-snapshot-controlled" in runbook
+diff --git a/backend/tests/test_controlled_least_privilege.py b/backend/tests/test_controlled_least_privilege.py
+index 3e045ea..c8d1d8d 100644
+--- a/backend/tests/test_controlled_least_privilege.py
++++ b/backend/tests/test_controlled_least_privilege.py
+@@ -324,7 +324,7 @@ def test_background_worker_claims_only_its_owned_queue_types():
+ 
+ def test_worker_runner_keeps_processed_counts_separate_from_queue_depth():
+     runner = WORKER_RUNNER.read_text(encoding="utf-8")
+-    assert 'if queue in {"all", "webchat-ai"}' in runner
