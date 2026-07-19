@@ -39,38 +39,42 @@ def _module(connection: sa.Connection):
     return module
 
 
-def _rules(connection: sa.Connection) -> dict[int, str]:
+def _rules(connection: sa.Connection) -> dict[str, str]:
     return {
-        int(row.id): str(row.output_contract)
+        str(row.id): str(row.output_contract)
         for row in connection.execute(
             sa.text("SELECT id, output_contract FROM provider_routing_rules ORDER BY id")
         )
     }
 
 
+def _create_rules_table(connection: sa.Connection) -> None:
+    connection.execute(
+        sa.text(
+            """
+            CREATE TABLE provider_routing_rules (
+                id VARCHAR(36) PRIMARY KEY,
+                scenario VARCHAR(160) NOT NULL,
+                output_contract VARCHAR(160) NOT NULL,
+                updated_at DATETIME
+            )
+            """
+        )
+    )
+
+
 def test_upgrade_and_downgrade_restore_only_rows_changed_by_migration() -> None:
     engine = sa.create_engine("sqlite+pysqlite:///:memory:")
     with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                """
-                CREATE TABLE provider_routing_rules (
-                    id INTEGER PRIMARY KEY,
-                    scenario VARCHAR(160) NOT NULL,
-                    output_contract VARCHAR(160) NOT NULL,
-                    updated_at DATETIME
-                )
-                """
-            )
-        )
+        _create_rules_table(connection)
         connection.execute(
             sa.text(
                 """
                 INSERT INTO provider_routing_rules (id, scenario, output_contract)
                 VALUES
-                  (1, 'webchat_runtime_reply', 'nexus_webchat_runtime_reply_v1'),
-                  (2, 'webchat_runtime_reply', 'nexus.webchat_runtime_reply'),
-                  (3, 'another_scenario', 'nexus_webchat_runtime_reply_v1')
+                  ('rule-retired', 'webchat_runtime_reply', 'nexus_webchat_runtime_reply_v1'),
+                  ('rule-canonical', 'webchat_runtime_reply', 'nexus.webchat_runtime_reply'),
+                  ('rule-other', 'another_scenario', 'nexus_webchat_runtime_reply_v1')
                 """
             )
         )
@@ -78,30 +82,30 @@ def test_upgrade_and_downgrade_restore_only_rows_changed_by_migration() -> None:
 
         migration.upgrade()
         assert _rules(connection) == {
-            1: "nexus.webchat_runtime_reply",
-            2: "nexus.webchat_runtime_reply",
-            3: "nexus_webchat_runtime_reply_v1",
+            "rule-canonical": "nexus.webchat_runtime_reply",
+            "rule-other": "nexus_webchat_runtime_reply_v1",
+            "rule-retired": "nexus.webchat_runtime_reply",
         }
         provenance = connection.execute(
             sa.text("SELECT rule_id FROM migration_0062_runtime_contract_rows ORDER BY rule_id")
         ).scalars().all()
-        assert provenance == [1]
+        assert provenance == ["rule-retired"]
 
         connection.execute(
             sa.text(
                 """
                 INSERT INTO provider_routing_rules (id, scenario, output_contract)
-                VALUES (4, 'webchat_runtime_reply', 'nexus.webchat_runtime_reply')
+                VALUES ('rule-post-upgrade', 'webchat_runtime_reply', 'nexus.webchat_runtime_reply')
                 """
             )
         )
         migration.downgrade()
 
         assert _rules(connection) == {
-            1: "nexus_webchat_runtime_reply_v1",
-            2: "nexus.webchat_runtime_reply",
-            3: "nexus_webchat_runtime_reply_v1",
-            4: "nexus.webchat_runtime_reply",
+            "rule-canonical": "nexus.webchat_runtime_reply",
+            "rule-other": "nexus_webchat_runtime_reply_v1",
+            "rule-post-upgrade": "nexus.webchat_runtime_reply",
+            "rule-retired": "nexus_webchat_runtime_reply_v1",
         }
         assert not sa.inspect(connection).has_table("migration_0062_runtime_contract_rows")
 
@@ -109,18 +113,7 @@ def test_upgrade_and_downgrade_restore_only_rows_changed_by_migration() -> None:
 def test_downgrade_without_provenance_fails_closed() -> None:
     engine = sa.create_engine("sqlite+pysqlite:///:memory:")
     with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                """
-                CREATE TABLE provider_routing_rules (
-                    id INTEGER PRIMARY KEY,
-                    scenario VARCHAR(160) NOT NULL,
-                    output_contract VARCHAR(160) NOT NULL,
-                    updated_at DATETIME
-                )
-                """
-            )
-        )
+        _create_rules_table(connection)
         migration = _module(connection)
         with pytest.raises(RuntimeError, match="downgrade_provenance_missing"):
             migration.downgrade()
@@ -129,23 +122,12 @@ def test_downgrade_without_provenance_fails_closed() -> None:
 def test_downgrade_rejects_rows_changed_after_upgrade() -> None:
     engine = sa.create_engine("sqlite+pysqlite:///:memory:")
     with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                """
-                CREATE TABLE provider_routing_rules (
-                    id INTEGER PRIMARY KEY,
-                    scenario VARCHAR(160) NOT NULL,
-                    output_contract VARCHAR(160) NOT NULL,
-                    updated_at DATETIME
-                )
-                """
-            )
-        )
+        _create_rules_table(connection)
         connection.execute(
             sa.text(
                 """
                 INSERT INTO provider_routing_rules (id, scenario, output_contract)
-                VALUES (1, 'webchat_runtime_reply', 'nexus_webchat_runtime_reply_v1')
+                VALUES ('rule-retired', 'webchat_runtime_reply', 'nexus_webchat_runtime_reply_v1')
                 """
             )
         )
@@ -153,7 +135,11 @@ def test_downgrade_rejects_rows_changed_after_upgrade() -> None:
         migration.upgrade()
         connection.execute(
             sa.text(
-                "UPDATE provider_routing_rules SET output_contract='other.contract' WHERE id=1"
+                """
+                UPDATE provider_routing_rules
+                SET output_contract='other.contract'
+                WHERE id='rule-retired'
+                """
             )
         )
         with pytest.raises(RuntimeError, match="downgrade_conflict"):
