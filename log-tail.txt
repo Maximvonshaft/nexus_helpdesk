@@ -1,0 +1,240 @@
+2026-07-19T14:31:36.9464638Z  * [new branch]        fix/webchat-ai-reconciler-watchdog -> origin/fix/webchat-ai-reconciler-watchdog
+2026-07-19T14:31:36.9465933Z  * [new branch]        fix/webchat-audioworklet-684 -> origin/fix/webchat-audioworklet-684
+2026-07-19T14:31:36.9467211Z  * [new branch]        fix/webchat-demo-webcall-entry -> origin/fix/webchat-demo-webcall-entry
+2026-07-19T14:31:36.9468750Z  * [new branch]        fix/webchat-fast-db-schema-stream-facts-parser -> origin/fix/webchat-fast-db-schema-stream-facts-parser
+2026-07-19T14:31:36.9470467Z  * [new branch]        fix/webchat-fast-final-audit-context-stream-idempotency -> origin/fix/webchat-fast-final-audit-context-stream-idempotency
+2026-07-19T14:31:36.9472193Z  * [new branch]        fix/webchat-fast-final-closure-context-stream-widget -> origin/fix/webchat-fast-final-closure-context-stream-widget
+2026-07-19T14:31:36.9473699Z  * [new branch]        fix/webchat-fast-idempotency-guards -> origin/fix/webchat-fast-idempotency-guards
+2026-07-19T14:31:36.9475237Z  * [new branch]        fix/webchat-fast-reply-ci-audit-regressions -> origin/fix/webchat-fast-reply-ci-audit-regressions
+2026-07-19T14:31:36.9476818Z  * [new branch]        fix/webchat-fast-reply-production-closure -> origin/fix/webchat-fast-reply-production-closure
+2026-07-19T14:31:36.9478568Z  * [new branch]        fix/webchat-fast-routing-stats-policy -> origin/fix/webchat-fast-routing-stats-policy
+2026-07-19T14:31:36.9480122Z  * [new branch]        fix/webchat-fast-server-session-continuity -> origin/fix/webchat-fast-server-session-continuity
+2026-07-19T14:31:36.9481533Z  * [new branch]        fix/webchat-fast-session-safety-audit -> origin/fix/webchat-fast-session-safety-audit
+2026-07-19T14:31:36.9483080Z  * [new branch]        fix/webchat-fast-stream-fact-customer-namespace -> origin/fix/webchat-fast-stream-fact-customer-namespace
+2026-07-19T14:31:36.9484567Z  * [new branch]        fix/webchat-fast-tailnet-url-validation -> origin/fix/webchat-fast-tailnet-url-validation
+2026-07-19T14:31:36.9486015Z  * [new branch]        fix/webchat-forensic-priority-fixes -> origin/fix/webchat-forensic-priority-fixes
+2026-07-19T14:31:36.9487425Z  * [new branch]        fix/webchat-handoff-idempotency-races -> origin/fix/webchat-handoff-idempotency-races
+2026-07-19T14:31:36.9488882Z  * [new branch]        fix/webchat-hardening-closure -> origin/fix/webchat-hardening-closure
+2026-07-19T14:31:36.9490300Z  * [new branch]        fix/webchat-idempotency-parser-hardening -> origin/fix/webchat-idempotency-parser-hardening
+2026-07-19T14:31:36.9491789Z  * [new branch]        fix/webchat-mobile-timeout-hotfix-formalize -> origin/fix/webchat-mobile-timeout-hotfix-formalize
+2026-07-19T14:31:36.9493318Z  * [new branch]        fix/webchat-replay-safe-revalidation -> origin/fix/webchat-replay-safe-revalidation
+2026-07-19T14:31:36.9494834Z  * [new branch]        fix/webchat-speedaf-ui-and-release-evidence-closure -> origin/fix/webchat-speedaf-ui-and-release-evidence-closure
+2026-07-19T14:31:36.9496345Z  * [new branch]        fix/webchat-stream-final-parser-gate -> origin/fix/webchat-stream-final-parser-gate
+2026-07-19T14:31:36.9498001Z  * [new branch]        fix/webchat-stream-safety-abort-stability -> origin/fix/webchat-stream-safety-abort-stability
+2026-07-19T14:31:36.9499569Z  * [new branch]        fix/webchat-stream-strict-final-parser-gate -> origin/fix/webchat-stream-strict-final-parser-gate
+2026-07-19T14:31:36.9500993Z  * [new branch]        fix/webchat-stream-test-schema-drift -> origin/fix/webchat-stream-test-schema-drift
+2026-07-19T14:31:36.9502440Z  * [new branch]        fix/webchat-stream-upstream-split-v2-2-4 -> origin/fix/webchat-stream-upstream-split-v2-2-4
+2026-07-19T14:31:36.9503897Z  * [new branch]        fix/webchat-voice-transcript-projection -> origin/fix/webchat-voice-transcript-projection
+2026-07-19T14:31:36.9505326Z  * [new branch]        fix/workspace-poll-draft-retention-663 -> origin/fix/workspace-poll-draft-retention-663
+2026-07-19T14:31:36.9506721Z  * [new branch]        governance/audit-control-plane -> origin/governance/audit-control-plane
+2026-07-19T14:31:36.9508119Z  * [new branch]        governance/branch-pr-controls -> origin/governance/branch-pr-controls
+2026-07-19T14:31:36.9509505Z  * [new branch]        governance/integrate-audit-control-plane -> origin/governance/integrate-audit-control-plane
+2026-07-19T14:31:36.9510966Z  * [new branch]        governance/issue-516-agent-lease-handoff -> origin/governance/issue-516-agent-lease-handoff
+2026-07-19T14:31:36.9512352Z  * [new branch]        governance/issue-first-delivery-index -> origin/governance/issue-first-delivery-index
+2026-07-19T14:31:36.9513801Z  * [new branch]        governance/issue-first-delivery-index-v2 -> origin/governance/issue-first-delivery-index-v2
+2026-07-19T14:31:36.9515220Z  * [new branch]        governance/nexus-osr-project-migration -> origin/governance/nexus-osr-project-migration
+2026-07-19T14:31:36.9516582Z  * [new branch]        governance/osr-issue-only-control -> origin/governance/osr-issue-only-control
+2026-07-19T14:31:36.9518064Z  * [new branch]        governance/pr56-ready-candidate -> origin/governance/pr56-ready-candidate
+2026-07-19T14:31:36.9519402Z  * [new branch]        governance/work-item-lifecycle-source -> origin/governance/work-item-lifecycle-source
+2026-07-19T14:31:36.9520826Z  * [new branch]        hardening/main-production-contracts -> origin/hardening/main-production-contracts
+2026-07-19T14:31:36.9522235Z  * [new branch]        hotfix/txt-upload-utf8-sniff-20260526_141907 -> origin/hotfix/txt-upload-utf8-sniff-20260526_141907
+2026-07-19T14:31:36.9523732Z  * [new branch]        hotfix/webchat-demo-handoff-poll-20260527_194555 -> origin/hotfix/webchat-demo-handoff-poll-20260527_194555
+2026-07-19T14:31:36.9525320Z  * [new branch]        hotfix/webchat-demo-handoff-poll-clean-20260527_195422 -> origin/hotfix/webchat-demo-handoff-poll-clean-20260527_195422
+2026-07-19T14:31:36.9526959Z  * [new branch]        hotfix/webchat-fact-first-orchestrator-20260522T075707Z -> origin/hotfix/webchat-fact-first-orchestrator-20260522T075707Z
+2026-07-19T14:31:36.9528809Z  * [new branch]        hotfix/webchat-handoff-policy-precision-v1 -> origin/hotfix/webchat-handoff-policy-precision-v1
+2026-07-19T14:31:36.9530431Z  * [new branch]        hotfix/webdemo-fast-json-handoff-body-only-20260527_190235 -> origin/hotfix/webdemo-fast-json-handoff-body-only-20260527_190235
+2026-07-19T14:31:36.9532049Z  * [new branch]        integration-task-idempotency-reservation-pr3 -> origin/integration-task-idempotency-reservation-pr3
+2026-07-19T14:31:36.9533588Z  * [new branch]        integration/codex-provider-runtime-clean-on-main -> origin/integration/codex-provider-runtime-clean-on-main
+2026-07-19T14:31:36.9535261Z  * [new branch]        love/implement-webcall-single-mic-hotfix-szpm99 -> origin/love/implement-webcall-single-mic-hotfix-szpm99
+2026-07-19T14:31:36.9537532Z  * [new branch]        love/replace-webcall-queue-filter-with-component -> origin/love/replace-webcall-queue-filter-with-component
+2026-07-19T14:31:36.9539334Z  * [new branch]        main                    -> origin/main
+2026-07-19T14:31:36.9540434Z  * [new branch]        noop-check-existing     -> origin/noop-check-existing
+2026-07-19T14:31:36.9541840Z  * [new branch]        ops/codex-app-server-staging-validation-runbook -> origin/ops/codex-app-server-staging-validation-runbook
+2026-07-19T14:31:36.9543696Z  * [new branch]        ops/openclaw-gateway-staging-validation-gate -> origin/ops/openclaw-gateway-staging-validation-gate
+2026-07-19T14:31:36.9545262Z  * [new branch]        ops/speedaf-readonly-uat-phase1-report-v1 -> origin/ops/speedaf-readonly-uat-phase1-report-v1
+2026-07-19T14:31:36.9546699Z  * [new branch]        ops/speedaf-uat-readonly-probe-v1 -> origin/ops/speedaf-uat-readonly-probe-v1
+2026-07-19T14:31:36.9548267Z  * [new branch]        ops/webchat-fast-release-gate-wrapper -> origin/ops/webchat-fast-release-gate-wrapper
+2026-07-19T14:31:36.9549708Z  * [new branch]        ops/webchat-server-openclaw-probes -> origin/ops/webchat-server-openclaw-probes
+2026-07-19T14:31:36.9551134Z  * [new branch]        osr/686-webchat-edge-credential-runbook -> origin/osr/686-webchat-edge-credential-runbook
+2026-07-19T14:31:36.9552618Z  * [new branch]        perf/codex-appserver-v3-latency-concurrency -> origin/perf/codex-appserver-v3-latency-concurrency
+2026-07-19T14:31:36.9554151Z  * [new branch]        perf/codex-runtime-fast-path-v1 -> origin/perf/codex-runtime-fast-path-v1
+2026-07-19T14:31:36.9555474Z  * [new branch]        perf/core-api-db-webchat-closure -> origin/perf/core-api-db-webchat-closure
+2026-07-19T14:31:36.9556994Z  * [new branch]        perf/fast-reply-stream-worker-ticket-lightweight-v2-2-2 -> origin/perf/fast-reply-stream-worker-ticket-lightweight-v2-2-2
+2026-07-19T14:31:36.9558891Z  * [new branch]        perf/validate-full-chain-performance-patch -> origin/perf/validate-full-chain-performance-patch
+2026-07-19T14:31:36.9560300Z  * [new branch]        perf/webchat-fast-reply-clean -> origin/perf/webchat-fast-reply-clean
+2026-07-19T14:31:36.9623281Z  * [new branch]        perf/webchat-fast-reply-clean-v2 -> origin/perf/webchat-fast-reply-clean-v2
+2026-07-19T14:31:36.9624861Z  * [new branch]        perf/webchat-openclaw-responses-fast-reply -> origin/perf/webchat-openclaw-responses-fast-reply
+2026-07-19T14:31:36.9626402Z  * [new branch]        planning/frontend-agentic-runtime-readiness -> origin/planning/frontend-agentic-runtime-readiness
+2026-07-19T14:31:36.9628267Z  * [new branch]        planning/frontend-agentic-runtime-readiness-ready -> origin/planning/frontend-agentic-runtime-readiness-ready
+2026-07-19T14:31:36.9630076Z  * [new branch]        planning/frontend-execution-construction-blueprint -> origin/planning/frontend-execution-construction-blueprint
+2026-07-19T14:31:36.9631977Z  * [new branch]        platform/runtime-openclaw-observability-clean -> origin/platform/runtime-openclaw-observability-clean
+2026-07-19T14:31:36.9633755Z  * [new branch]        platform/runtime-openclaw-observability-closure -> origin/platform/runtime-openclaw-observability-closure
+2026-07-19T14:31:36.9635598Z  * [new branch]        platform/webchat-fast-runtime-survival -> origin/platform/webchat-fast-runtime-survival
+2026-07-19T14:31:36.9637059Z  * [new branch]        platform/webchat-fast-runtime-survival-main -> origin/platform/webchat-fast-runtime-survival-main
+2026-07-19T14:31:36.9638670Z  * [new branch]        pr58-clean-raw          -> origin/pr58-clean-raw
+2026-07-19T14:31:36.9639812Z  * [new branch]        pr58-clean-work         -> origin/pr58-clean-work
+2026-07-19T14:31:36.9641552Z  * [new branch]        prod/openclaw-fastlane-edge-hardening-clean -> origin/prod/openclaw-fastlane-edge-hardening-clean
+2026-07-19T14:31:36.9643952Z  * [new branch]        prod/openclaw-fastlane-edge-hardening-clean-v2 -> origin/prod/openclaw-fastlane-edge-hardening-clean-v2
+2026-07-19T14:31:36.9645463Z  * [new branch]        production-closure-remediation -> origin/production-closure-remediation
+2026-07-19T14:31:36.9646795Z  * [new branch]        qualification/m12-recovery-532-20260712 -> origin/qualification/m12-recovery-532-20260712
+2026-07-19T14:31:36.9648444Z  * [new branch]        qualification/m12-resilience-531-20260711 -> origin/qualification/m12-resilience-531-20260711
+2026-07-19T14:31:36.9649985Z  * [new branch]        qualification/m12-resilience-531-current-main-20260713 -> origin/qualification/m12-resilience-531-current-main-20260713
+2026-07-19T14:31:36.9651351Z  * [new branch]        rc-708-current-main     -> origin/rc-708-current-main
+2026-07-19T14:31:36.9652598Z  * [new branch]        rc/549-candidate-identity-readiness -> origin/rc/549-candidate-identity-readiness
+2026-07-19T14:31:36.9654140Z  * [new branch]        rebase/pr48-tool-governance-enforcement-on-main -> origin/rebase/pr48-tool-governance-enforcement-on-main
+2026-07-19T14:31:36.9655607Z  * [new branch]        rebase/pr49-webchat-realtime-lite-on-main -> origin/rebase/pr49-webchat-realtime-lite-on-main
+2026-07-19T14:31:36.9657084Z  * [new branch]        rebase/pr50-operator-queue-on-main -> origin/rebase/pr50-operator-queue-on-main
+2026-07-19T14:31:36.9658642Z  * [new branch]        recovery/532-current-main-qualification -> origin/recovery/532-current-main-qualification
+2026-07-19T14:31:36.9660002Z  * [new branch]        release/708-assurance-order -> origin/release/708-assurance-order
+2026-07-19T14:31:36.9661318Z  * [new branch]        release/708-controlled-app-version-scan -> origin/release/708-controlled-app-version-scan
+2026-07-19T14:31:36.9662665Z  * [new branch]        release/708-controlled-network-scan -> origin/release/708-controlled-network-scan
+2026-07-19T14:31:36.9664097Z  * [new branch]        release/708-controlled-rc-failure-evidence -> origin/release/708-controlled-rc-failure-evidence
+2026-07-19T14:31:36.9665527Z  * [new branch]        release/708-image-assurance-diagnostics -> origin/release/708-image-assurance-diagnostics
+2026-07-19T14:31:36.9666939Z  * [new branch]        release/714-attestation-artifact-metadata -> origin/release/714-attestation-artifact-metadata
+2026-07-19T14:31:36.9668755Z  * [new branch]        release/714-candidate-dispatch-bridge -> origin/release/714-candidate-dispatch-bridge
+2026-07-19T14:31:36.9670147Z  * [new branch]        release/714-candidate-run-observability -> origin/release/714-candidate-run-observability
+2026-07-19T14:31:36.9671489Z  * [new branch]        release/714-immutable-candidate -> origin/release/714-immutable-candidate
+2026-07-19T14:31:36.9672791Z  * [new branch]        release/724-attestation-scan-binding -> origin/release/724-attestation-scan-binding
+2026-07-19T14:31:36.9674086Z  * [new branch]        release/724-c6e-candidate-request -> origin/release/724-c6e-candidate-request
+2026-07-19T14:31:36.9675481Z  * [new branch]        release/724-dedicated-candidate-trace -> origin/release/724-dedicated-candidate-trace
+2026-07-19T14:31:36.9676925Z  * [new branch]        release/724-final-bundle-metadata-binding -> origin/release/724-final-bundle-metadata-binding
+2026-07-19T14:31:36.9678674Z  * [new branch]        release/724-personal-repo-attestation -> origin/release/724-personal-repo-attestation
+2026-07-19T14:31:36.9680096Z  * [new branch]        release/attest-user-repo-storage-record -> origin/release/attest-user-repo-storage-record
+2026-07-19T14:31:36.9681466Z  * [new branch]        release/attestation-registry-auth -> origin/release/attestation-registry-auth
+2026-07-19T14:31:36.9682843Z  * [new branch]        release/attestation-registry-login -> origin/release/attestation-registry-login
+2026-07-19T14:31:36.9684152Z  * [new branch]        release/baseline-ci-stabilization -> origin/release/baseline-ci-stabilization
+2026-07-19T14:31:36.9685768Z  * [new branch]        release/final-candidate-artifact-scan -> origin/release/final-candidate-artifact-scan
+2026-07-19T14:31:36.9687302Z  * [new branch]        release/final-candidate-artifact-scanner -> origin/release/final-candidate-artifact-scanner
+2026-07-19T14:31:36.9689019Z  * [new branch]        release/final-candidate-compliance-date-scan -> origin/release/final-candidate-compliance-date-scan
+2026-07-19T14:31:36.9690463Z  * [new branch]        release/final-scan-compliance-date -> origin/release/final-scan-compliance-date
+2026-07-19T14:31:36.9691864Z  * [new branch]        release/rc0-test-deployment-convergence-626 -> origin/release/rc0-test-deployment-convergence-626
+2026-07-19T14:31:36.9693314Z  * [new branch]        release/request-attestation-fixed-candidate -> origin/release/request-attestation-fixed-candidate
+2026-07-19T14:31:36.9694795Z  * [new branch]        release/request-compliance-scan-candidate -> origin/release/request-compliance-scan-candidate
+2026-07-19T14:31:36.9696227Z  * [new branch]        release/request-final-scan-candidate -> origin/release/request-final-scan-candidate
+2026-07-19T14:31:36.9698006Z  * [new branch]        release/webchat-stream-rollout-gate-v2-2-3 -> origin/release/webchat-stream-rollout-gate-v2-2-3
+2026-07-19T14:31:36.9699403Z  * [new branch]        repair/763-actions-green-518793 -> origin/repair/763-actions-green-518793
+2026-07-19T14:31:36.9700592Z  * [new branch]        repair/763-backend-241b -> origin/repair/763-backend-241b
+2026-07-19T14:31:36.9701822Z  * [new branch]        repair/763-backend-final-241b -> origin/repair/763-backend-final-241b
+2026-07-19T14:31:36.9703080Z  * [new branch]        repair/763-backend-final-5ef -> origin/repair/763-backend-final-5ef
+2026-07-19T14:31:36.9704266Z  * [new branch]        repair/763-e2e-7b4912   -> origin/repair/763-e2e-7b4912
+2026-07-19T14:31:36.9705406Z  * [new branch]        repair/763-e2e-98ddb    -> origin/repair/763-e2e-98ddb
+2026-07-19T14:31:36.9706598Z  * [new branch]        repair/763-final-backend-5ef0 -> origin/repair/763-final-backend-5ef0
+2026-07-19T14:31:36.9708004Z  * [new branch]        repair/763-final-d9bf   -> origin/repair/763-final-d9bf
+2026-07-19T14:31:36.9709195Z  * [new branch]        repair/763-lock-e2e-a25a -> origin/repair/763-lock-e2e-a25a
+2026-07-19T14:31:36.9710430Z  * [new branch]        rescue/pr80-rebase-on-webcall-main -> origin/rescue/pr80-rebase-on-webcall-main
+2026-07-19T14:31:36.9711819Z  * [new branch]        round-b-webchat-closure -> origin/round-b-webchat-closure
+2026-07-19T14:31:36.9712997Z  * [new branch]        security-remediation-retry -> origin/security-remediation-retry
+2026-07-19T14:31:36.9714248Z  * [new branch]        security-remediation-status -> origin/security-remediation-status
+2026-07-19T14:31:36.9715559Z  * [new branch]        security-remediation-status-2 -> origin/security-remediation-status-2
+2026-07-19T14:31:36.9716972Z  * [new branch]        security/565-reachable-history-assurance-current -> origin/security/565-reachable-history-assurance-current
+2026-07-19T14:31:36.9718751Z  * [new branch]        stack/571-canonical-policy-projection-on-748 -> origin/stack/571-canonical-policy-projection-on-748
+2026-07-19T14:31:36.9720247Z  * [new branch]        stack/574-actions-convergence-on-748 -> origin/stack/574-actions-convergence-on-748
+2026-07-19T14:31:36.9721601Z  * [new branch]        storage-readiness-backup-gate-pr4 -> origin/storage-readiness-backup-gate-pr4
+2026-07-19T14:31:36.9722930Z  * [new branch]        sync/rc0-final-main-20260712 -> origin/sync/rc0-final-main-20260712
+2026-07-19T14:31:36.9724254Z  * [new branch]        test/fast-lane-proxy-v3-edge-hardening -> origin/test/fast-lane-proxy-v3-edge-hardening
+2026-07-19T14:31:36.9725650Z  * [new branch]        test/pr50-operator-queue-validation -> origin/test/pr50-operator-queue-validation
+2026-07-19T14:31:36.9727043Z  * [new branch]        test/webchat-fast-reply-validation-smoke -> origin/test/webchat-fast-reply-validation-smoke
+2026-07-19T14:31:36.9728724Z  * [new branch]        tmp/549-candidate-readiness-on-22314073 -> origin/tmp/549-candidate-readiness-on-22314073
+2026-07-19T14:31:36.9730278Z  * [new branch]        tmp/549-release-profile-final-on-e857 -> origin/tmp/549-release-profile-final-on-e857
+2026-07-19T14:31:36.9731643Z  * [new branch]        tmp/549-release-profile-red-on-df486 -> origin/tmp/549-release-profile-red-on-df486
+2026-07-19T14:31:36.9732968Z  * [new branch]        tmp/652-root-reports-on-6502ce00 -> origin/tmp/652-root-reports-on-6502ce00
+2026-07-19T14:31:36.9734263Z  * [new branch]        tmp/656-round-b-docs-on-caf554f3 -> origin/tmp/656-round-b-docs-on-caf554f3
+2026-07-19T14:31:36.9735569Z  * [new branch]        tmp/748-convergence-bundle-20260714 -> origin/tmp/748-convergence-bundle-20260714
+2026-07-19T14:31:36.9736848Z  * [new branch]        tmp/754-final-recovery  -> origin/tmp/754-final-recovery
+2026-07-19T14:31:36.9738180Z  * [new branch]        tmp/754-parent-recovery -> origin/tmp/754-parent-recovery
+2026-07-19T14:31:36.9739300Z  * [new branch]        tmp/invalid             -> origin/tmp/invalid
+2026-07-19T14:31:36.9740485Z  * [new branch]        tmp/rebase-pr56-after-pr57 -> origin/tmp/rebase-pr56-after-pr57
+2026-07-19T14:31:36.9741885Z  * [new branch]        tmp/rebase-speedaf-uat-report-sanitizer-v1 -> origin/tmp/rebase-speedaf-uat-report-sanitizer-v1
+2026-07-19T14:31:36.9743267Z  * [new branch]        tmp/tenant-673-authority-fix -> origin/tmp/tenant-673-authority-fix
+2026-07-19T14:31:36.9744528Z  * [new branch]        tmp/trigger-tenant-673-orm-fix -> origin/tmp/trigger-tenant-673-orm-fix
+2026-07-19T14:31:36.9745749Z  * [new branch]        ui-production-clean-head -> origin/ui-production-clean-head
+2026-07-19T14:31:36.9746942Z  * [new branch]        ui-production-closure   -> origin/ui-production-closure
+2026-07-19T14:31:36.9748626Z  * [new branch]        verify/main-voice-projection-20260716 -> origin/verify/main-voice-projection-20260716
+2026-07-19T14:31:36.9750180Z  * [new branch]        verify/osr-565-history-assurance-main-df367f95 -> origin/verify/osr-565-history-assurance-main-df367f95
+2026-07-19T14:31:36.9751515Z  * [new branch]        wc-voice-ui-current     -> origin/wc-voice-ui-current
+2026-07-19T14:31:36.9752677Z  * [new branch]        webcall-singlemic-ci    -> origin/webcall-singlemic-ci
+2026-07-19T14:31:36.9753843Z  * [new branch]        webchat-ai-turn-runtime -> origin/webchat-ai-turn-runtime
+2026-07-19T14:31:36.9755175Z  * [new branch]        webchat-support-hours-policy-pipeline-pr1 -> origin/webchat-support-hours-policy-pipeline-pr1
+2026-07-19T14:31:36.9756800Z  * [new branch]        webchat-support-hours-policy-pipeline-pr1-v2 -> origin/webchat-support-hours-policy-pipeline-pr1-v2
+2026-07-19T14:31:36.9758716Z  * [new branch]        webchat-tracking-dedupe-scope-pr2 -> origin/webchat-tracking-dedupe-scope-pr2
+2026-07-19T14:31:36.9760197Z  * [new branch]        work/744-canonical-operator-console-consolidation -> origin/work/744-canonical-operator-console-consolidation
+2026-07-19T14:31:36.9761635Z  * [new branch]        work/744-codebase-rationalization -> origin/work/744-codebase-rationalization
+2026-07-19T14:31:36.9763016Z  * [new branch]        work/744-rationalization-discovery -> origin/work/744-rationalization-discovery
+2026-07-19T14:31:36.9764422Z  * [new branch]        work/753-canonical-ui-interaction-refinement -> origin/work/753-canonical-ui-interaction-refinement
+2026-07-19T14:31:36.9765903Z  * [new branch]        work/754-remove-ui-duplication-residue -> origin/work/754-remove-ui-duplication-residue
+2026-07-19T14:31:36.9767331Z  * [new branch]        work/757-canonical-performance-convergence -> origin/work/757-canonical-performance-convergence
+2026-07-19T14:31:36.9769079Z  * [new tag]           nexusdesk-prod-openclaw-readonly-20260429_063243 -> nexusdesk-prod-openclaw-readonly-20260429_063243
+2026-07-19T14:31:36.9770473Z  * [new tag]           prod-fastlane-openclaw-ok-20260513 -> prod-fastlane-openclaw-ok-20260513
+2026-07-19T14:31:36.9771912Z  * [new tag]           webcall-prod-pass-20260520T074414Z-7bdd40b40de3 -> webcall-prod-pass-20260520T074414Z-7bdd40b40de3
+2026-07-19T14:31:36.9773451Z  * [new tag]           webchat-ai-bridge-timeout-capped-20260426 -> webchat-ai-bridge-timeout-capped-20260426
+2026-07-19T14:31:36.9774840Z  * [new tag]           webchat-ai-full-loop-working-20260426 -> webchat-ai-full-loop-working-20260426
+2026-07-19T14:31:36.9776169Z  * [new tag]           webchat-ai-public-reply-working-20260426 -> webchat-ai-public-reply-working-20260426
+2026-07-19T14:31:36.9777713Z  * [new tag]           webchat-ai-reply-quality-stable-20260426 -> webchat-ai-reply-quality-stable-20260426
+2026-07-19T14:31:36.9779104Z  * [new tag]           webchat-widget-demo-polish-20260426 -> webchat-widget-demo-polish-20260426
+2026-07-19T14:31:36.9782565Z [command]/usr/bin/git rev-parse --verify --quiet 4af9fb1e592d9bb91123a20597e05f97f22b7f77^{object}
+2026-07-19T14:31:36.9783721Z 4af9fb1e592d9bb91123a20597e05f97f22b7f77
+2026-07-19T14:31:36.9786098Z ##[endgroup]
+2026-07-19T14:31:36.9787450Z ##[group]Determining the checkout info
+2026-07-19T14:31:36.9789107Z ##[endgroup]
+2026-07-19T14:31:36.9790050Z [command]/usr/bin/git sparse-checkout disable
+2026-07-19T14:31:36.9792112Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-07-19T14:31:36.9794610Z ##[group]Checking out the ref
+2026-07-19T14:31:36.9795722Z [command]/usr/bin/git checkout --progress --force 4af9fb1e592d9bb91123a20597e05f97f22b7f77
+2026-07-19T14:31:37.0588993Z Note: switching to '4af9fb1e592d9bb91123a20597e05f97f22b7f77'.
+2026-07-19T14:31:37.0590099Z 
+2026-07-19T14:31:37.0590851Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-07-19T14:31:37.0592632Z changes and commit them, and you can discard any commits you make in this
+2026-07-19T14:31:37.0594253Z state without impacting any branches by switching back to a branch.
+2026-07-19T14:31:37.0595014Z 
+2026-07-19T14:31:37.0596412Z If you want to create a new branch to retain commits you create, you may
+2026-07-19T14:31:37.0598612Z do so (now or later) by using -c with the switch command. Example:
+2026-07-19T14:31:37.0599281Z 
+2026-07-19T14:31:37.0599758Z   git switch -c <new-branch-name>
+2026-07-19T14:31:37.0600342Z 
+2026-07-19T14:31:37.0600952Z Or undo this operation with:
+2026-07-19T14:31:37.0601545Z 
+2026-07-19T14:31:37.0602025Z   git switch -
+2026-07-19T14:31:37.0602562Z 
+2026-07-19T14:31:37.0603213Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-07-19T14:31:37.0604410Z 
+2026-07-19T14:31:37.0605139Z HEAD is now at 4af9fb1e chore: validate and publish final security remediation
+2026-07-19T14:31:37.0608810Z ##[endgroup]
+2026-07-19T14:31:37.0645956Z [command]/usr/bin/git log -1 --format=%H
+2026-07-19T14:31:37.0671414Z 4af9fb1e592d9bb91123a20597e05f97f22b7f77
+2026-07-19T14:31:37.0886837Z ##[group]Run set -Eeuo pipefail
+2026-07-19T14:31:37.0888248Z [36;1mset -Eeuo pipefail[0m
+2026-07-19T14:31:37.0889642Z [36;1mtest "$(git rev-parse HEAD)" = "4af9fb1e592d9bb91123a20597e05f97f22b7f77"[0m
+2026-07-19T14:31:37.0891025Z [36;1mgrep -Fq 'backend/tests/test_webchat_card_evidence_contract.py' .github/workflows/final-security-remediation.yml[0m
+2026-07-19T14:31:37.0892533Z [36;1msed -i '/backend\/tests\/test_webchat_card_evidence_contract.py/d' .github/workflows/final-security-remediation.yml[0m
+2026-07-19T14:31:37.0893841Z [36;1mtest "$(git diff --name-only | wc -l)" = 1[0m
+2026-07-19T14:31:37.0894963Z [36;1mtest "$(git diff --name-only)" = ".github/workflows/final-security-remediation.yml"[0m
+2026-07-19T14:31:37.0896070Z [36;1mgit diff --check[0m
+2026-07-19T14:31:37.0897028Z [36;1mgit config user.name "nexus-security-stage-builder"[0m
+2026-07-19T14:31:37.0898460Z [36;1mgit config user.email "nexus-security-stage-builder@users.noreply.github.com"[0m
+2026-07-19T14:31:37.0899778Z [36;1mgit add .github/workflows/final-security-remediation.yml[0m
+2026-07-19T14:31:37.0900874Z [36;1mgit commit -m "chore: correct final remediation test manifest"[0m
+2026-07-19T14:31:37.0902070Z [36;1mgit push --force origin HEAD:refs/heads/security-remediation-corrected-stage[0m
+2026-07-19T14:31:37.0903452Z [36;1mgit push origin --delete build-security-remediation-corrected-stage >/dev/null 2>&1 || true[0m
+2026-07-19T14:31:37.0964464Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-07-19T14:31:37.0965541Z ##[endgroup]
+2026-07-19T14:31:37.2699811Z [detached HEAD 15573ba6] chore: correct final remediation test manifest
+2026-07-19T14:31:37.2711144Z  1 file changed, 1 deletion(-)
+2026-07-19T14:31:38.6917431Z To https://github.com/Maximvonshaft/nexus_helpdesk
+2026-07-19T14:31:38.6919694Z  ! [remote rejected]   HEAD -> security-remediation-corrected-stage (refusing to allow a GitHub App to create or update workflow `.github/workflows/final-security-remediation.yml` without `workflows` permission)
+2026-07-19T14:31:38.6920798Z error: failed to push some refs to 'https://github.com/Maximvonshaft/nexus_helpdesk'
+2026-07-19T14:31:38.6943828Z ##[error]Process completed with exit code 1.
+2026-07-19T14:31:38.7089425Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-19T14:31:38.7091007Z Post job cleanup.
+2026-07-19T14:31:38.7930631Z [command]/usr/bin/git version
+2026-07-19T14:31:38.7969095Z git version 2.54.0
+2026-07-19T14:31:38.8005498Z Temporarily overriding HOME='/home/runner/work/_temp/f1368f67-3119-4a9c-ab6c-95cb717c6175' before making global git config changes
+2026-07-19T14:31:38.8007212Z Adding repository directory to the temporary git global config as a safe directory
+2026-07-19T14:31:38.8010053Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/nexus_helpdesk/nexus_helpdesk
+2026-07-19T14:31:38.8048552Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-07-19T14:31:38.8110691Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-07-19T14:31:38.8328471Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-07-19T14:31:38.8349648Z http.https://github.com/.extraheader
+2026-07-19T14:31:38.8360834Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-07-19T14:31:38.8391063Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-07-19T14:31:38.8783748Z Cleaning up orphan processes
+2026-07-19T14:31:38.9043073Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
