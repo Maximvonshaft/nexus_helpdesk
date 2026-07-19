@@ -9,11 +9,7 @@
       "replacement": "deploy/nexus-prod-compose.sh with deploy/docker-compose.controlled.yml and deploy/docker-compose.controlled-postgres.yml",
       "introduced_at": "2026-07-18",
       "remove_after": "2026-10-31",
-      "constraints": [
-        "no-services",
-        "no-secrets",
-        "include-only"
-      ]
+      "constraints": ["no-services", "no-secrets", "include-only"]
     },
     {
       "path": "deploy/docker-compose.candidate.yml",
@@ -22,11 +18,7 @@
       "replacement": "deploy/docker-compose.controlled.yml",
       "introduced_at": "2026-07-18",
       "remove_after": "2026-10-31",
-      "constraints": [
-        "no-services",
-        "no-secrets",
-        "include-only"
-      ]
+      "constraints": ["no-services", "no-secrets", "include-only"]
     },
     {
       "path": "deploy/.env.prod.example",
@@ -35,11 +27,7 @@
       "replacement": "deploy/.env.controlled.example",
       "introduced_at": "2026-07-18",
       "remove_after": "2026-10-31",
-      "constraints": [
-        "no-secret-values",
-        "replacement-banner-required",
-        "no-runtime-defaults"
-      ]
+      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
     },
     {
       "path": "deploy/.env.prod.local-postgres.example",
@@ -48,11 +36,7 @@
       "replacement": "deploy/.env.controlled.local-postgres.example",
       "introduced_at": "2026-07-18",
       "remove_after": "2026-10-31",
-      "constraints": [
-        "no-secret-values",
-        "replacement-banner-required",
-        "no-runtime-defaults"
-      ]
+      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
     },
     {
       "path": "deploy/.env.prod.external-postgres.example",
@@ -61,11 +45,7 @@
       "replacement": "deploy/.env.controlled.example",
       "introduced_at": "2026-07-18",
       "remove_after": "2026-10-31",
-      "constraints": [
-        "no-secret-values",
-        "replacement-banner-required",
-        "no-runtime-defaults"
-      ]
+      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
     },
     {
       "path": "backend/app/static/webchat",
@@ -74,10 +54,7 @@
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": null,
-      "constraints": [
-        "not-an-operator-console",
-        "provider-governed-customer-messages"
-      ]
+      "constraints": ["not-an-operator-console", "provider-governed-customer-messages"]
     },
     {
       "path": "connectors/whatsapp-sidecar",
@@ -86,11 +63,7 @@
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": "2026-12-31",
-      "constraints": [
-        "disabled-by-default",
-        "no-provider-authority",
-        "separate-socket-lifecycle"
-      ]
+      "constraints": ["disabled-by-default", "no-provider-authority", "separate-socket-lifecycle"]
     },
     {
       "path": "vendor/chatwoot",
@@ -99,23 +72,16 @@
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": "2026-12-31",
-      "constraints": [
-        "not-runtime-code",
-        "license-and-reference-purpose-must-remain-documented"
-      ]
+      "constraints": ["not-runtime-code", "license-and-reference-purpose-must-remain-documented"]
     },
     {
-      "path": "config/governance/legacy-surface-domains.v1.json",
+      "path": "config/governance/legacy-surface-domains.v2.json",
       "kind": "subordinate-discovery-registry",
       "owner": "architecture-governance",
       "replacement": "config/architecture/compatibility-lifecycle.v1.json",
-      "introduced_at": "2026-07-18",
+      "introduced_at": "2026-07-19",
       "remove_after": null,
-      "constraints": [
-        "subordinate-only",
-        "fail-closed",
-        "no-independent-policy"
-      ]
+      "constraints": ["subordinate-only", "fail-closed", "runtime-head-bound", "no-independent-policy"]
     },
     {
       "path": "backend/app/api/admin_outbound_semantics.py",
@@ -124,13 +90,9 @@
       "replacement": "canonical runtime and queue observability",
       "introduced_at": "2026-07-18",
       "remove_after": null,
-      "constraints": [
-        "get-only-for-legacy-state",
-        "no-runtime-controls",
-        "no-provider-calls"
-      ]
+      "constraints": ["get-only-for-legacy-state", "no-runtime-controls", "no-provider-calls"]
     }
   ],
-  "detailed_registry": "config/governance/legacy-surface-domains.v1.json",
+  "detailed_registry": "config/governance/legacy-surface-domains.v2.json",
   "enforcement_entrypoint": "scripts/ci/check_legacy_surface_registry.py"
 }
