@@ -34,7 +34,7 @@ def upgrade() -> None:
 
     op.create_table(
         _PROVENANCE_TABLE,
-        sa.Column("rule_id", sa.Integer(), primary_key=True, nullable=False),
+        sa.Column("rule_id", sa.String(length=36), primary_key=True, nullable=False),
         sa.Column("previous_output_contract", sa.String(length=160), nullable=False),
     )
     op.execute(
