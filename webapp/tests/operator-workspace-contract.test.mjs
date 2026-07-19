@@ -57,7 +57,7 @@ test('workspace preserves drafts, deep links and mobile reachability', () => {
 })
 
 test('workspace keeps truthful progress, action safety and operator language', () => {
-  for (const label of ['处理进度', '暂无可信结案信息', '已知信息', '接手处理', '转回待处理', '恢复自动回复', '检查是否可取消', '确认申请取消']) {
+  for (const label of ['处理进度', '安全关闭', '关闭条件尚未满足', '已知信息', '接手处理', '转回待处理', '恢复自动回复', '检查是否可取消', '确认申请取消']) {
     assert.match(source, new RegExp(label))
   }
   assert.match(actions, /cancelPreviewFingerprint/)
