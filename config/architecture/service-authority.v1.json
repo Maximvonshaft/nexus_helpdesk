@@ -53,7 +53,7 @@
     {
       "responsibility": "integration-api",
       "public_authority": "backend/app/api/canonical_integration.py",
-      "private_implementation": "backend/app/api/integration_core.py",
+      "private_implementation": "backend/app/api/integration_runtime.py",
       "compatibility_shims": []
     },
     {
