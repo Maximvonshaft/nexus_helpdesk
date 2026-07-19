@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..schemas import TicketStatsRead
-from ..services.canonical_ticket_service import get_ticket_stats
+from ..services.ticket_service import get_ticket_stats
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
