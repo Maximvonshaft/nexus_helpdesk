@@ -1,0 +1,828 @@
+{
+  "schema": "nexus.exact-head-verifier-status.v1",
+  "candidate_sha": "59e989bf37807a871daa71a7aa7a54311ce68d41",
+  "run": {
+    "id": 29689234080,
+    "name": "Exact Head Production Readiness Verifier",
+    "node_id": "WFR_kwLOSBSWgc8AAAAG6Z3CoA",
+    "head_branch": "fix/722-final-production-convergence",
+    "head_sha": "3c5bca850ac0c94d88278d7e2f07b89061b719e7",
+    "path": ".github/workflows/exact-head-verifier.yml",
+    "display_title": "chore: run exact-head production readiness verifier",
+    "run_number": 1,
+    "event": "push",
+    "status": "in_progress",
+    "conclusion": null,
+    "workflow_id": 316186426,
+    "check_suite_id": 80395093193,
+    "check_suite_node_id": "CS_kwDOSBSWgc8AAAASt-vEyQ",
+    "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080",
+    "html_url": "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080",
+    "pull_requests": [
+      {
+        "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/pulls/770",
+        "id": 4083856048,
+        "number": 770,
+        "head": {
+          "ref": "fix/722-final-production-convergence",
+          "sha": "f2ea80d5ac7c51f2eb9caecd34156a3cc2b529a6",
+          "repo": {
+            "id": 1209308801,
+            "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+            "name": "nexus_helpdesk"
+          }
+        },
+        "base": {
+          "ref": "main",
+          "sha": "7260652e380e9b19818c079c4d3846a653354d24",
+          "repo": {
+            "id": 1209308801,
+            "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+            "name": "nexus_helpdesk"
+          }
+        }
+      }
+    ],
+    "created_at": "2026-07-19T13:37:22Z",
+    "updated_at": "2026-07-19T13:37:37Z",
+    "actor": {
+      "login": "Maximvonshaft",
+      "id": 202882752,
+      "node_id": "U_kgDODBe-wA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Maximvonshaft",
+      "html_url": "https://github.com/Maximvonshaft",
+      "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+      "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+      "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+      "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+      "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "run_attempt": 1,
+    "referenced_workflows": [],
+    "run_started_at": "2026-07-19T13:37:22Z",
+    "triggering_actor": {
+      "login": "Maximvonshaft",
+      "id": 202882752,
+      "node_id": "U_kgDODBe-wA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Maximvonshaft",
+      "html_url": "https://github.com/Maximvonshaft",
+      "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+      "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+      "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+      "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+      "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "jobs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080/jobs",
+    "logs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080/logs",
+    "check_suite_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/check-suites/80395093193",
+    "artifacts_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080/artifacts",
+    "cancel_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080/cancel",
+    "rerun_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29689234080/rerun",
+    "previous_attempt_url": null,
+    "workflow_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/workflows/316186426",
+    "head_commit": {
+      "id": "3c5bca850ac0c94d88278d7e2f07b89061b719e7",
+      "tree_id": "831c05fc77c59fc8553b6f43a38a104856eb9c38",
+      "message": "chore: run exact-head production readiness verifier",
+      "timestamp": "2026-07-19T13:37:19Z",
+      "author": {
+        "name": "moyoyo",
+        "email": "temeta@outlook.jp"
+      },
+      "committer": {
+        "name": "moyoyo",
+        "email": "temeta@outlook.jp"
+      }
+    },
+    "repository": {
+      "id": 1209308801,
+      "node_id": "R_kgDOSBSWgQ",
+      "name": "nexus_helpdesk",
+      "full_name": "Maximvonshaft/nexus_helpdesk",
+      "private": false,
+      "owner": {
+        "login": "Maximvonshaft",
+        "id": 202882752,
+        "node_id": "U_kgDODBe-wA",
+        "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Maximvonshaft",
+        "html_url": "https://github.com/Maximvonshaft",
+        "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+        "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+        "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+        "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+        "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "html_url": "https://github.com/Maximvonshaft/nexus_helpdesk",
+      "description": null,
+      "fork": false,
+      "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+      "forks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/forks",
+      "keys_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/keys{/key_id}",
+      "collaborators_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/collaborators{/collaborator}",
+      "teams_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/teams",
+      "hooks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/hooks",
+      "issue_events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/events{/number}",
+      "events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/events",
+      "assignees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/assignees{/user}",
+      "branches_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/branches{/branch}",
+      "tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/tags",
+      "blobs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/blobs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/tags{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/refs{/sha}",
+      "trees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/trees{/sha}",
+      "statuses_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/statuses/{sha}",
+      "languages_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/languages",
+      "stargazers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/stargazers",
+      "contributors_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contributors",
+      "subscribers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscribers",
+      "subscription_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscription",
+      "commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/commits{/sha}",
+      "git_commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/commits{/sha}",
+      "comments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/comments{/number}",
+      "issue_comment_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/comments{/number}",
+      "contents_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contents/{+path}",
+      "compare_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/compare/{base}...{head}",
+      "merges_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/merges",
+      "archive_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/{archive_format}{/ref}",
+      "downloads_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/downloads",
+      "issues_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues{/number}",
+      "pulls_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/pulls{/number}",
+      "milestones_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/milestones{/number}",
+      "notifications_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/notifications{?since,all,participating}",
+      "labels_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/labels{/name}",
+      "releases_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/releases{/id}",
+      "deployments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/deployments"
+    },
+    "head_repository": {
+      "id": 1209308801,
+      "node_id": "R_kgDOSBSWgQ",
+      "name": "nexus_helpdesk",
+      "full_name": "Maximvonshaft/nexus_helpdesk",
+      "private": false,
+      "owner": {
+        "login": "Maximvonshaft",
+        "id": 202882752,
+        "node_id": "U_kgDODBe-wA",
+        "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Maximvonshaft",
+        "html_url": "https://github.com/Maximvonshaft",
+        "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+        "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+        "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+        "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+        "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "html_url": "https://github.com/Maximvonshaft/nexus_helpdesk",
+      "description": null,
+      "fork": false,
+      "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+      "forks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/forks",
+      "keys_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/keys{/key_id}",
+      "collaborators_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/collaborators{/collaborator}",
+      "teams_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/teams",
+      "hooks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/hooks",
+      "issue_events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/events{/number}",
+      "events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/events",
+      "assignees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/assignees{/user}",
+      "branches_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/branches{/branch}",
+      "tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/tags",
+      "blobs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/blobs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/tags{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/refs{/sha}",
+      "trees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/trees{/sha}",
+      "statuses_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/statuses/{sha}",
+      "languages_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/languages",
+      "stargazers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/stargazers",
+      "contributors_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contributors",
+      "subscribers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscribers",
+      "subscription_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscription",
+      "commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/commits{/sha}",
+      "git_commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/commits{/sha}",
+      "comments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/comments{/number}",
+      "issue_comment_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/comments{/number}",
+      "contents_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contents/{+path}",
+      "compare_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/compare/{base}...{head}",
+      "merges_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/merges",
+      "archive_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/{archive_format}{/ref}",
+      "downloads_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/downloads",
+      "issues_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues{/number}",
+      "pulls_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/pulls{/number}",
+      "milestones_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/milestones{/number}",
+      "notifications_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/notifications{?since,all,participating}",
+      "labels_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/labels{/name}",
+      "releases_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/releases{/id}",
+      "deployments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/deployments"
+    }
+  },
+  "jobs": [
+    {
+      "id": 88198903597,
+      "name": "candidate-identity",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-19T13:37:24Z",
+      "completed_at": "2026-07-19T13:37:34Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Checkout verifier staging commit",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Restore and freeze exact candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Upload identity evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Post Checkout verifier staging commit",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        }
+      ]
+    },
+    {
+      "id": 88198920016,
+      "name": "security-supply-chain",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-07-19T13:37:36Z",
+      "completed_at": "2026-07-19T13:41:13Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Checkout frozen candidate with history",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Set up Node",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Initialize CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Install application and security dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Run secret assurance",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Run Python SAST and dependency assurance",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Run frontend dependency assurance and SBOM",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Analyze exact candidate with CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Enforce zero CodeQL findings",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 11
+        },
+        {
+          "name": "Upload security evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Post Analyze exact candidate with CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20
+        },
+        {
+          "name": "Post Initialize CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21
+        },
+        {
+          "name": "Post Set up Node",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 22
+        },
+        {
+          "name": "Post Set up Python",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 23
+        },
+        {
+          "name": "Post Checkout frozen candidate with history",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25
+        }
+      ]
+    },
+    {
+      "id": 88198920019,
+      "name": "image-smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-19T13:37:36Z",
+      "completed_at": "2026-07-19T13:39:45Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Build exact candidate image",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Run Trivy vulnerability inventory",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Generate image CycloneDX SBOM",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Set up Node",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Generate frontend SBOM",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Migrate disposable image database",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Start isolated candidate and prove health",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Run controlled release image assurance",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "Upload image evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Remove isolated candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        },
+        {
+          "name": "Post Set up Node",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22
+        },
+        {
+          "name": "Post Generate image CycloneDX SBOM",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23
+        },
+        {
+          "name": "Post Run Trivy vulnerability inventory",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24
+        },
+        {
+          "name": "Post Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27
+        }
+      ]
+    },
+    {
+      "id": 88198920024,
+      "name": "static-authority",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-19T13:37:36Z",
+      "completed_at": "2026-07-19T13:38:08Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Install exact dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Run canonical static verifier",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Upload static evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Post Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "Post Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        }
+      ]
+    },
+    {
+      "id": 88198920034,
+      "name": "frontend-browser",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-19T13:37:36Z",
+      "completed_at": "2026-07-19T13:39:14Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Set up Node",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Install exact frontend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Verify architecture lint types units and build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Install Playwright Chromium",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Run browser journeys",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Upload frontend evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Post Set up Node",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15
+        },
+        {
+          "name": "Post Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17
+        }
+      ]
+    },
+    {
+      "id": 88198920045,
+      "name": "postgres-acceptance",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-19T13:37:37Z",
+      "completed_at": "2026-07-19T13:38:48Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Install exact dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Rehearse Alembic",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Run disposable PostgreSQL acceptance",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Upload PostgreSQL evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Post Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Post Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17
+        }
+      ]
+    },
+    {
+      "id": 88198920048,
+      "name": "backend-full",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-07-19T13:37:36Z",
+      "completed_at": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Checkout frozen candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Install exact dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Compile production Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Run complete backend regression",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 6
+        },
+        {
+          "name": "Upload backend evidence",
+          "status": "pending",
+          "conclusion": null,
+          "number": 7
+        },
+        {
+          "name": "Post Set up Python",
+          "status": "pending",
+          "conclusion": null,
+          "number": 13
+        },
+        {
+          "name": "Post Checkout frozen candidate",
+          "status": "pending",
+          "conclusion": null,
+          "number": 14
+        }
+      ]
+    }
+  ]
+}
