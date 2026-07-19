@@ -28,7 +28,7 @@ from ..services.operator_queue_scope import (
     serialize_scope_grant,
     upsert_scope_grant,
 )
-from ..services.operator_work_queue import list_unified_operator_queue
+from ..services.canonical_operator_work_queue import list_unified_operator_queue
 from ..services.permissions import ensure_can_manage_runtime, ensure_can_manage_users
 from ..unit_of_work import managed_session
 from .deps import get_current_user
