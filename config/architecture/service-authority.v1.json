@@ -4,7 +4,7 @@
   "authorities": [
     {
       "responsibility": "ticket-domain",
-      "public_authority": "backend/app/services/canonical_ticket_service.py",
+      "public_authority": "backend/app/services/ticket_service.py",
       "private_implementation": "backend/app/services/ticket_service_core.py",
       "compatibility_shims": []
     },
@@ -28,7 +28,7 @@
     },
     {
       "responsibility": "unified-operator-work-queue-read-model",
-      "public_authority": "backend/app/services/canonical_operator_work_queue.py",
+      "public_authority": "backend/app/services/operator_work_queue.py",
       "private_implementation": "backend/app/services/operator_work_queue_core.py",
       "compatibility_shims": []
     },
@@ -40,7 +40,7 @@
     },
     {
       "responsibility": "webchat-handoff",
-      "public_authority": "backend/app/services/canonical_webchat_handoff_service.py",
+      "public_authority": "backend/app/services/webchat_handoff_service.py",
       "private_implementation": "backend/app/services/webchat_handoff_service_core.py",
       "compatibility_shims": []
     },
