@@ -1,17 +1,17 @@
 """Canonical integration API router.
 
-Actor selection and authorization are implemented directly by ``integration_core``
-through effective capabilities. This facade exposes the router without mutating
-another module at import time.
+Actor selection, authorization and idempotency are implemented by the single
+private ``integration_runtime`` module through effective capabilities. This
+public authority exposes the router without a compatibility fallback.
 """
 
-from . import integration_core as _core
+from . import integration_runtime as _runtime
 
-router = _core.router
+router = _runtime.router
 
 
 def __getattr__(name: str):
-    return getattr(_core, name)
+    return getattr(_runtime, name)
 
 
 __all__ = ["router"]
