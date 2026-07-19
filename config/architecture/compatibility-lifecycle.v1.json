@@ -37,15 +37,6 @@
       "introduced_at": "2026-07-19",
       "remove_after": null,
       "constraints": ["subordinate-only", "fail-closed", "runtime-head-bound", "no-independent-policy"]
-    },
-    {
-      "path": "backend/app/api/admin_outbound_semantics.py",
-      "kind": "historical-observability-compatibility",
-      "owner": "channel-platform",
-      "replacement": "canonical runtime and queue observability",
-      "introduced_at": "2026-07-18",
-      "remove_after": null,
-      "constraints": ["get-only-for-legacy-state", "no-runtime-controls", "no-provider-calls"]
     }
   ],
   "detailed_registry": "config/governance/legacy-surface-domains.v2.json",
