@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from urllib.parse import urlparse
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -11,6 +10,7 @@ from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceSession
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from .webchat_runtime_config import get_webchat_runtime_settings
+from .runtime_endpoint_policy import endpoint_shape_mismatch, safe_url_path, same_runtime_origin
 
 
 HUMAN_WEBCALL_RINGING_STATUSES = {"created", "ringing"}
@@ -78,7 +78,7 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
     app_env = (os.environ.get("APP_ENV") or "development").strip().lower()
     inline_token_allowed = app_env in {"development", "test", "local"}
     configured = bool(enabled and base_url and (token_file or (inline_token and inline_token_allowed)))
-    rag_runtime_isolated = bool(rag_base_url and not _same_runtime_origin(base_url, rag_base_url))
+    rag_runtime_isolated = bool(rag_base_url and not same_runtime_origin(base_url, rag_base_url))
     rag_isolation_error = (
         app_env == "production"
         and chat_mode in {"rag", "auto"}
@@ -97,14 +97,14 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         "inline_token_configured": bool(inline_token),
         "configured": configured,
         "chat_mode": chat_mode,
-        "direct_path": _safe_path(direct_path),
-        "rag_path": _safe_path(rag_path),
+        "direct_path": safe_url_path(direct_path),
+        "rag_path": safe_url_path(rag_path),
         "request_shape": request_shape,
         "direct_model": direct_model,
         "rag_model": rag_model,
         "timeout_seconds": os.environ.get("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", "8").strip() or "8",
-        "shape_mismatch": _known_endpoint_shape_mismatch(direct_path, request_shape, endpoint_kind="direct")
-        or (_known_endpoint_shape_mismatch(rag_path, request_shape, endpoint_kind="rag") if chat_mode in {"rag", "auto"} else None),
+        "shape_mismatch": endpoint_shape_mismatch(direct_path, request_shape)
+        or (endpoint_shape_mismatch(rag_path, request_shape) if chat_mode in {"rag", "auto"} else None),
         "rag_isolation_error": rag_isolation_error,
     }
 
@@ -128,7 +128,7 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
     warnings: list[str] = []
     try:
         config = load_webchat_voice_runtime_config()
-        webchat_voice_enabled = config.enabled
+        webchat_voice_enabled = config.human_call_enabled
         provider = config.provider
         recording_enabled = config.recording_enabled
         transcription_enabled = config.transcription_enabled
@@ -141,7 +141,7 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
         provider = "unknown"
         recording_enabled = False
         transcription_enabled = False
-        warnings.append(str(exc))
+        warnings.append(f"human_webcall_config_invalid:{type(exc).__name__}")
 
     try:
         active_session_count = _human_webcall_count(db, {"active"})
@@ -190,7 +190,7 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
         return {
             "ok": False,
             "status": "misconfigured",
-            "config_error": str(exc),
+            "config_error": f"webchat_runtime_config_invalid:{type(exc).__name__}",
             "providers": [],
             "boundary": {
                 "secret_values_exposed": False,
@@ -261,31 +261,3 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             "customer_message_sent": False,
         },
     }
-
-
-def _safe_path(value: str) -> str:
-    return urlparse(value or "").path or "/"
-
-
-def _same_runtime_origin(left: str, right: str) -> bool:
-    left_parsed = urlparse(left or "")
-    right_parsed = urlparse(right or "")
-    return (
-        left_parsed.scheme.lower(),
-        left_parsed.hostname or "",
-        left_parsed.port,
-    ) == (
-        right_parsed.scheme.lower(),
-        right_parsed.hostname or "",
-        right_parsed.port,
-    )
-
-
-def _known_endpoint_shape_mismatch(path: str, request_shape: str, *, endpoint_kind: str) -> str | None:
-    del endpoint_kind
-    normalized_path = _safe_path(path).rstrip("/") or "/"
-    if normalized_path == "/api/chat" and request_shape != "ollama_chat":
-        return "endpoint_request_shape_mismatch"
-    if normalized_path in {"/chat/direct", "/chat/rag"} and request_shape != "question":
-        return "endpoint_request_shape_mismatch"
-    return None

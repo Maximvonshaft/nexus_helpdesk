@@ -23,7 +23,6 @@
     'data-title',
     'data-subtitle',
     'data-button-label',
-    'data-avatar-url',
     'data-accent-color',
     'data-security-note',
     'data-auto-open',

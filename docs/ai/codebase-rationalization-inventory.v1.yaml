@@ -1,12 +1,13 @@
 schema: nexus.osr.codebase-rationalization-inventory.v1
 work_item: 744
-baseline_main_sha: 5f2922e9beba95faedf70023d426012bbde0b4ec
-status: implementation_in_progress_current_head_not_verified
+baseline_main_sha: 7260652e380e9b19818c079c4d3846a653354d24
+status: final_production_convergence_candidate_in_progress
 authority:
   governance_issue: 722
-  canonical_pr: 763
-  canonical_branch: fix/722-authority-convergence
+  canonical_pr: pending_final_convergence_pr
+  canonical_branch: fix/722-final-production-convergence
   absorbed_ui_pr: 762
+  prior_convergence_pr: 763
   absorbed_ui_pr_disposition: close_after_absorption_no_parallel_merge
   rule: >
     This is the sole repository rationalization ledger. It records physical
@@ -23,9 +24,10 @@ verification:
   database_capacity_entrypoint: python scripts/qualification/database_capacity.py
   supply_chain_entrypoint: python scripts/qualification/supply_chain.py
   release_supply_chain_entrypoint: python scripts/qualification/supply_chain.py --release
-  github_actions: retired_and_absent
+  github_actions: .github/workflows/canonical-acceptance.yml
   candidate_mutation_during_verification: forbidden
-  exact_head_status: not_verified_after_current_changes
+  compatibility_discovery: scripts/ci/check_legacy_surface_registry.py
+  exact_head_status: pending_unchanged_head_ci
 canonical_authorities:
   operator_product: webapp
   application_shell: webapp/src/app/AppShell.tsx
@@ -133,7 +135,7 @@ deletion_slices:
       - webapp/src/features/knowledge/KnowledgePage.tsx
   - id: provider_and_support_parallel_authority
     disposition: CONSOLIDATE_IN_PLACE
-    state: implemented_on_current_candidate_pending_exact_head_verification
+    state: implemented_and_regression_gated
     retired_or_tombstoned:
       - /api/webchat/admin/conversations
       - /api/support/conversations/detail
@@ -170,6 +172,36 @@ deletion_slices:
       - immutable image digests
       - exact direct Python dependency versions
       - release SBOM, provenance and signature requirements
+  - id: external_channel_stop_new_writes
+    disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
+    state: runtime_mutations_retired_historical_reads_protected
+    retired_behavior:
+      - legacy link and sync mutation APIs
+      - legacy event consume/replay/drop APIs
+      - legacy sync and attachment background jobs
+      - legacy operator queue projection and mutation
+    replacement:
+      - provider_runtime and native channel authorities
+      - historical read-only compatibility under #572
+  - id: schema_mutation_single_authority
+    disposition: GOVERNED_REPLACE
+    state: runtime_ddl_removed
+    retired_behavior:
+      - request-path SQLite CREATE TABLE fallbacks
+    replacement:
+      - backend/alembic only
+  - id: voice_capability_separation
+    disposition: CONSOLIDATE_IN_PLACE
+    state: explicit_non_overlapping_capabilities
+    replacement:
+      - WEBCHAT_HUMAN_CALL_ENABLED
+      - WEBCHAT_LIVE_AI_VOICE_ENABLED
+  - id: application_configuration_composition
+    disposition: CONSOLIDATE_IN_PLACE
+    state: explicit_router_registration_and_typed_safe_settings_groups
+    replacement:
+      - backend/app/bootstrap/routers.py
+      - backend/app/settings_groups.py
 anti_reintroduction:
   - scripts/verify_repository.py
   - webapp/scripts/assert-frontend-architecture.mjs

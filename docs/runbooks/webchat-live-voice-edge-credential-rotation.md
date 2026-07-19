@@ -37,6 +37,8 @@ The credential file must:
 1. Freeze the exact source SHA, Git tree, image digest and migration head.
 2. Keep these controls fail-closed:
    - `WEBCHAT_VOICE_ENABLED=false`;
+   - `WEBCHAT_HUMAN_CALL_ENABLED=false`;
+   - `WEBCHAT_LIVE_AI_VOICE_ENABLED=false`;
    - `PROVIDER_RUNTIME_ENABLED=false` unless separately authorized;
    - `ENABLE_OUTBOUND_DISPATCH=false`;
    - `OPERATIONS_DISPATCH_MODE=disabled`.

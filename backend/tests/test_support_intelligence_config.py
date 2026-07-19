@@ -1,6 +1,7 @@
+import inspect
 import sys
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -12,55 +13,16 @@ sys.path.insert(0, str(ROOT))
 
 from app import models  # noqa: F401,E402
 from app import models_control_plane  # noqa: F401,E402
-from app.api.support_intelligence import _ensure_can_manage_support_intelligence, _ensure_can_publish_support_intelligence, _ensure_can_read_support_intelligence  # noqa: E402
+from app.api.support_intelligence import (  # noqa: E402
+    _ensure_can_manage_support_intelligence,
+    _ensure_can_publish_support_intelligence,
+    _ensure_can_read_support_intelligence,
+)
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.models import AIConfigResource  # noqa: E402
 from app.models_control_plane import KnowledgeItem, PersonaProfile  # noqa: E402
 from app.services.support_intelligence_service import build_support_intelligence_config  # noqa: E402
-
-
-class FakeBridge:
-    def support_knowledge_config(self, payload):
-        if payload == {"operation": "card-list"}:
-            return {
-                "ok": True,
-                "cards": [
-                    {
-                        "id": "delivered-but-not-received",
-                        "title": "Delivered but not received",
-                        "country": "CH",
-                        "status": "published",
-                        "customer_visible": True,
-                        "ai_enabled": True,
-                        "runtime_scope": "customer_answer",
-                        "owner": "support-ops",
-                        "workspace_path": "knowledge/runtime/customer_kb/shipment-exception-delivered-but-not-received.md",
-                        "customer_answer": "We can help check the delivery proof.",
-                    }
-                ],
-            }
-        if payload == {"operation": "status-dictionary-list"}:
-            return {
-                "ok": True,
-                "entries": [
-                    {
-                        "code": "3750",
-                        "label": "运输中",
-                        "desc": "包裹正在运输途中",
-                        "action": "请耐心等待后续更新",
-                        "status": "published",
-                        "editable": True,
-                    }
-                ],
-                "published_version": 1,
-            }
-        raise AssertionError(payload)
-
-
-class BrokenBridge:
-    def support_knowledge_config(self, payload):
-        raise RuntimeError("runtime_config_source_unavailable")
 
 
 def _session():
@@ -70,7 +32,7 @@ def _session():
     return engine, SessionLocal()
 
 
-def test_support_intelligence_config_merges_runtime_cards_and_config_library():
+def test_support_intelligence_uses_only_canonical_control_plane():
     engine, session = _session()
     try:
         session.add(
@@ -99,47 +61,42 @@ def test_support_intelligence_config_merges_runtime_cards_and_config_library():
         )
         session.add(
             AIConfigResource(
-                resource_key="support.status.dictionary",
-                config_type="status_dictionary",
-                name="Support status dictionary",
+                resource_key="support.rules",
+                config_type="rule",
+                name="Support rules",
                 scope_type="channel",
                 scope_value="whatsapp",
                 is_active=True,
                 published_version=1,
-                published_summary="Status labels",
+                published_summary="Rules",
             )
         )
         session.commit()
 
-        result = build_support_intelligence_config(session, bridge_client=FakeBridge())
+        result = build_support_intelligence_config(session)
 
-        assert result["bridge_status"]["ok"] is True
+        assert "bridge_status" not in result
+        assert "runtime_knowledge_cards" not in result
+        assert "status_dictionary_status" not in result
+        assert result["bundle"]["mode"] == "canonical_control_plane"
+        assert result["runtime_status"]["authority"] == "nexus_control_plane"
+        assert result["runtime_status"]["external_runtime_bridge"] is False
         assert result["config_library"]["counts"]["personas"] == 1
         assert result["config_library"]["counts"]["knowledge_items"] == 1
-        assert result["runtime_knowledge_cards"][0]["enabled"] is True
-        assert result["status_dictionary_entries"][0]["code"] == "3750"
-        assert result["areas"][1]["runtime_effective_count"] == 1
+        assert "bridge_client" not in inspect.signature(build_support_intelligence_config).parameters
     finally:
         session.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
 
 
-def test_support_intelligence_config_marks_runtime_bridge_degraded():
-    engine, session = _session()
-    try:
-        result = build_support_intelligence_config(session, bridge_client=BrokenBridge())
-
-        assert result["bridge_status"]["ok"] is False
-        assert result["runtime_knowledge_cards"] == []
-        assert any("运行知识桥不可用" in item for item in result["gaps"])
-    finally:
-        session.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+def test_status_dictionary_bridge_routes_are_absent():
+    source = (ROOT / "app/api/support_intelligence.py").read_text(encoding="utf-8")
+    assert "status-dictionary" not in source
+    assert "_bridge_status_dictionary" not in source
 
 
-def test_status_dictionary_publish_requires_config_management_capability():
+def test_support_intelligence_capabilities_are_enforced():
     agent = SimpleNamespace(id=1, role=UserRole.agent)
     admin = SimpleNamespace(id=2, role=UserRole.admin)
     manager = SimpleNamespace(id=3, role=UserRole.manager)
@@ -150,12 +107,8 @@ def test_status_dictionary_publish_requires_config_management_capability():
 
     with pytest.raises(HTTPException) as exc_info:
         _ensure_can_manage_support_intelligence(agent, None)
-
     assert getattr(exc_info.value, "status_code", None) == 403
-    assert getattr(exc_info.value, "detail", "") == "support_intelligence_requires_config_management_capability"
 
     with pytest.raises(HTTPException) as publish_exc:
         _ensure_can_publish_support_intelligence(manager, None)
-
     assert getattr(publish_exc.value, "status_code", None) == 403
-    assert getattr(publish_exc.value, "detail", "") == "support_intelligence_requires_runtime_publish_capability"

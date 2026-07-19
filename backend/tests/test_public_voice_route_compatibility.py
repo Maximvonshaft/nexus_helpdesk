@@ -13,7 +13,8 @@ from app.main import app
 
 
 def test_legacy_public_voice_route_hands_off_to_webcall_without_token_leak(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     client = TestClient(app, raise_server_exceptions=False)
 
     response = client.get("/webchat/voice/session-123")

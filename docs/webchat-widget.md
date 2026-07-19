@@ -41,7 +41,6 @@ placed in URLs.
 - `data-assistant-name`: public assistant name.
 - `data-locale`: locale hint.
 - `data-button-label`: floating launcher label.
-- `data-avatar-url`: optional assistant avatar URL.
 - `data-accent-color`: optional brand accent color.
 - `data-security-note`: short safety note below the composer.
 - `data-auto-open`: set to `true` for controlled demos that should open the

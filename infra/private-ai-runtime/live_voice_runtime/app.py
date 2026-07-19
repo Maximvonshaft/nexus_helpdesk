@@ -5,6 +5,7 @@ import hmac
 import json
 import math
 import os
+import tempfile
 import time
 import wave
 from pathlib import Path
@@ -253,7 +254,11 @@ class LiveSession:
         self.silence_frames = 0
 
     async def process_turn(self, turn_id: int, pcm: bytes) -> None:
-        wav_path = INPUT_DIR / f"{self.voice_session_id}_{turn_id}_{int(time.time() * 1000)}.wav"
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix="turn-", suffix=".wav", dir=INPUT_DIR
+        )
+        os.close(descriptor)
+        wav_path = Path(raw_path)
         started = time.monotonic()
         try:
             write_wav_pcm16(wav_path, pcm)

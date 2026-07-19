@@ -97,7 +97,6 @@ _WEBCHAT_AI_TURNS = _counter('nexusdesk_webchat_ai_turn_total', 'WebChat AI turn
 _WEBCHAT_AI_TURN_DURATION = _histogram('nexusdesk_webchat_ai_turn_duration_ms', 'WebChat AI turn duration in milliseconds', ['status'], (50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000))
 _WEBCHAT_AI_STALE_SUPPRESSED = _counter('nexusdesk_webchat_ai_stale_suppressed_total', 'Stale WebChat AI replies suppressed before public delivery', ['reason'])
 _WEBCHAT_AI_TIMEOUTS = _counter('nexusdesk_webchat_ai_timeout_total', 'WebChat AI turn watchdog timeouts', ['reason'])
-_EXTERNAL_CHANNEL_BRIDGE_DURATION = _histogram('nexusdesk_external_channel_bridge_elapsed_ms', 'ExternalChannel bridge call duration in milliseconds', ['operation', 'status'], (50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000))
 _TOOL_CALLS = _counter('nexusdesk_tool_call_total', 'Tool governance audit call count', ['tool_name', 'tool_type', 'status'])
 _TOOL_CALL_DURATION = _histogram('nexusdesk_tool_call_elapsed_ms', 'Tool governance audit call duration in milliseconds', ['tool_name', 'tool_type', 'status'], (10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000))
 _BACKGROUND_JOB_WAIT = _histogram('nexusdesk_background_job_wait_ms', 'Background job wait time before processing in milliseconds', ['job_type'], (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000))
@@ -277,11 +276,6 @@ def record_webchat_websocket_active_connections(*, agents: int = 0, visitors: in
         _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='agent').set(max(int(agents or 0), 0))
         _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='visitor').set(max(int(visitors or 0), 0))
         _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='all').set(max(int(agents or 0), 0) + max(int(visitors or 0), 0))
-
-
-def record_external_channel_bridge_metric(operation: str, status: str, elapsed_ms: int | float | None = None) -> None:
-    if elapsed_ms is not None and _EXTERNAL_CHANNEL_BRIDGE_DURATION:
-        _EXTERNAL_CHANNEL_BRIDGE_DURATION.labels(operation=_label(operation), status=_label(status)).observe(max(float(elapsed_ms), 0.0))
 
 
 def record_tool_call_metric(tool_name: str, tool_type: str, status: str, elapsed_ms: int | float | None = None) -> None:

@@ -71,10 +71,9 @@ def test_sanitize_operator_payload_redacts_sensitive_fields():
 def test_create_operator_task_stores_redacted_payload(db_session):
     row, created = create_operator_task(
         db_session,
-        source_type="external_channel",
-        task_type="bridge_unresolved",
-        source_id="src-1",
-        unresolved_event_id=1,
+        source_type="webchat",
+        task_type="handoff",
+        source_id="wc-redaction-1",
         payload={"session_key": "sess-secret", "recipient": "+411234567", "last_error": "raw secret error"},
     )
 

@@ -148,23 +148,58 @@ def _base_capabilities(role: UserRole) -> set[str]:
     return set(ROLE_CAPABILITIES.get(role, set()))
 
 
-def resolve_capabilities(user, db: Session | None = None) -> set[str]:
+
+
+def resolve_capabilities_from_preloaded(user, overrides) -> set[str]:
+    """Resolve the canonical capability projection without issuing a query.
+
+    Callers that already preloaded ``UserCapabilityOverride`` rows must use this
+    public API instead of reimplementing role-default and override semantics.
+    """
+
     capabilities = _base_capabilities(user.role)
-    if db is None:
-        return capabilities
-    overrides = db.query(UserCapabilityOverride).filter(UserCapabilityOverride.user_id == user.id).all()
     for override in overrides:
         if override.allowed:
             capabilities.add(override.capability)
         else:
             capabilities.discard(override.capability)
-    return capabilities
+    return {capability for capability in capabilities if capability in ALL_CAPABILITIES}
+
+def resolve_capabilities(user, db: Session | None = None) -> set[str]:
+    if db is None:
+        return resolve_capabilities_from_preloaded(user, ())
+    overrides = db.query(UserCapabilityOverride).filter(UserCapabilityOverride.user_id == user.id).all()
+    return resolve_capabilities_from_preloaded(user, overrides)
 
 
 def capability_fingerprint(user, db: Session | None = None) -> str:
-    """Return a bounded identity for the effective server policy projection."""
+    """Return a bounded identity for the complete server policy projection.
 
-    canonical = "\n".join(sorted(resolve_capabilities(user, db)))
+    The fingerprint covers both effective capabilities and every explicit
+    override decision. Unknown forward-compatible capability names are excluded
+    from authorization but still invalidate cursors and cached policy views.
+    """
+
+    overrides = (
+        ()
+        if db is None
+        else db.query(UserCapabilityOverride)
+        .filter(UserCapabilityOverride.user_id == user.id)
+        .all()
+    )
+    effective = resolve_capabilities_from_preloaded(user, overrides)
+    role_value = getattr(user.role, "value", str(user.role))
+    override_projection = sorted(
+        f"{override.capability}={int(bool(override.allowed))}"
+        for override in overrides
+    )
+    canonical = "\n".join(
+        [
+            f"role={role_value}",
+            *(f"effective={capability}" for capability in sorted(effective)),
+            *(f"override={decision}" for decision in override_projection),
+        ]
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 

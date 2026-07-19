@@ -4,11 +4,12 @@
 
 ExternalChannel is not a supported transport authority. Production configuration must keep every ExternalChannel execution switch disabled. The repository may retain historical persistence names and bounded compatibility reads only where they are required to interpret existing data.
 
-The former inventory/checker/workflow system is retired. It referenced deleted GitHub Actions and had become a second governance authority. Current repository governance is owned by:
+The former independent inventory/workflow authority is retired. One parent compatibility lifecycle now owns policy; the retained detailed registry is only its fail-closed discovery subroutine. Current repository governance is owned by:
 
 - `README.md` — product and runtime authority;
 - `config/architecture/service-authority.v1.json` — backend public/core/shim ownership;
-- `config/architecture/compatibility-lifecycle.v1.json` — owner, replacement and removal deadlines;
+- `config/architecture/compatibility-lifecycle.v1.json` — sole policy, owner, replacement and deadline authority;
+- `config/governance/legacy-surface-domains.v1.json` — subordinate marker discovery only;
 - `scripts/verify_repository.py` plus focused backend tests — local verification authority;
 - Alembic — the only executable schema-mutation authority.
 
@@ -39,6 +40,10 @@ A residual is allowed only when all of the following are true:
 5. it does not contain secrets, live credentials, customer payloads or production endpoints.
 
 Historical model/table/enum names are not proof of an active transport. Conversely, disabled configuration is not proof that callers or writes are absent; destructive removal requires runtime and data evidence.
+
+## Stop-new-writes completion
+
+Current application routes and workers no longer create ExternalChannel links, sync cursors, unresolved events, attachment persistence records or legacy background jobs. Historical GET surfaces remain bounded and read-only. Any reintroduction of mutation routes, worker job types or provider calls fails canonical verification.
 
 ## Removal sequence
 

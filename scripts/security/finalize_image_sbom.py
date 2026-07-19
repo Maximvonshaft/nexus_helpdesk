@@ -32,6 +32,7 @@ _ALIASES = {
     "lgplv3": "LGPL-3.0-only",
     "dual license": "BSD-3-Clause OR Apache-2.0",
     "python software foundation license": "PSF-2.0",
+    "python-software-foundation-license": "PSF-2.0",
     "mit license": "MIT",
 }
 

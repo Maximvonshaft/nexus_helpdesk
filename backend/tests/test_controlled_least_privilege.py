@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -304,13 +305,15 @@ def test_ai_worker_cannot_enable_ai_without_real_knowledge_runtime(
 
 def test_background_worker_claims_only_its_owned_queue_types():
     source = BACKGROUND_BOUNDARY.read_text(encoding="utf-8")
-    function = source.split("def dispatch_pending_background_jobs", 1)[1].split(
-        "def dispatch_pending_sync_jobs",
-        1,
-    )[0]
+    tree = ast.parse(source)
+    function = next(
+        ast.get_source_segment(source, node) or ""
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "dispatch_pending_background_jobs"
+    )
     for required in (
         "AUTO_REPLY_JOB",
-        "ATTACHMENT_PERSIST_JOB",
         "SPEEDAF_WORK_ORDER_CREATE_JOB",
         "SPEEDAF_ADDRESS_UPDATE_JOB",
         "SPEEDAF_VOICE_CALLBACK_JOB",

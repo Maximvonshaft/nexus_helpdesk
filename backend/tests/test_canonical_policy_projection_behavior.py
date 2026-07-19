@@ -162,7 +162,7 @@ def test_capability_override_changes_scope_cursor_authority_fingerprint(db_sessi
     db_session.add(
         UserCapabilityOverride(
             user_id=user.id,
-            capability="policy-projection-test.capability",
+            capability="runtime.manage",
             allowed=True,
         )
     )

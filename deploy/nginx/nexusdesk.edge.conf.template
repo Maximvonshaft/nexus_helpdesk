@@ -76,19 +76,6 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/webchat/ws;
     }
-
-    location = /_nexusdesk_operator_auth {
-        internal;
-        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/admin/external_channel/runtime-health;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header Authorization "${NEXUSDESK_INTERNAL_AUTHORIZATION}";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
     location = /research {
         return 404;
     }

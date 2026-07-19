@@ -15,12 +15,10 @@ from ..operator_schemas import (
     UnifiedOperatorQueueResponse,
 )
 from ..operator_models import OperatorQueueScopeGrant
-from ..services.external_channel_bridge import replay_unresolved_external_channel_event
 from ..services.operator_queue import (
     OperatorQueueError,
     list_operator_tasks,
     project_operator_queue,
-    replay_operator_task,
     serialize_operator_task,
     transition_operator_task,
 )
@@ -209,27 +207,5 @@ def drop_operator_task(
         with managed_session(db):
             row = transition_operator_task(db, task_id=task_id, action="drop", actor_id=current_user.id, note=payload.note if payload else None)
         return {"task": serialize_operator_task(row), "replay_result": None}
-    except OperatorQueueError as exc:
-        _raise_operator_queue_error(exc)
-
-
-@router.post("/{task_id}/replay", response_model=OperatorTaskTransitionResponse)
-def replay_operator_task_endpoint(
-    task_id: int,
-    payload: OperatorTaskTransitionRequest | None = None,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    ensure_can_manage_runtime(current_user, db)
-    try:
-        with managed_session(db):
-            row, replay_result = replay_operator_task(
-                db,
-                task_id=task_id,
-                actor_id=current_user.id,
-                note=payload.note if payload else None,
-                replay_func=replay_unresolved_external_channel_event,
-            )
-        return {"task": serialize_operator_task(row), "replay_result": replay_result}
     except OperatorQueueError as exc:
         _raise_operator_queue_error(exc)

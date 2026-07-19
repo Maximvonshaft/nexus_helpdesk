@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import database_pool_snapshot, get_db
 from ..models import User, UserCapabilityOverride
-from ..services.permissions import ALL_CAPABILITIES, _base_capabilities, ensure_can_manage_users
+from ..services.permissions import ensure_can_manage_users, resolve_capabilities_from_preloaded
 from ..services.runtime_permissions import ensure_can_read_runtime
 from .deps import get_current_user
 
@@ -29,16 +29,6 @@ def _serialize_dt(value: Any) -> str | None:
     return value.isoformat() if value else None
 
 
-def _capabilities_from_preloaded(user: User, overrides: list[UserCapabilityOverride]) -> list[str]:
-    capabilities = set(_base_capabilities(user.role))
-    for override in overrides:
-        if override.allowed:
-            capabilities.add(override.capability)
-        else:
-            capabilities.discard(override.capability)
-    return sorted(cap for cap in capabilities if cap in ALL_CAPABILITIES)
-
-
 def _serialize_user_preloaded(user: User, overrides_by_user: dict[int, list[UserCapabilityOverride]]) -> dict[str, Any]:
     return {
         "id": user.id,
@@ -48,7 +38,7 @@ def _serialize_user_preloaded(user: User, overrides_by_user: dict[int, list[User
         "role": _role_value(user.role),
         "team_id": user.team_id,
         "is_active": user.is_active,
-        "capabilities": _capabilities_from_preloaded(user, overrides_by_user.get(user.id, [])),
+        "capabilities": sorted(resolve_capabilities_from_preloaded(user, overrides_by_user.get(user.id, []))),
         "created_at": _serialize_dt(user.created_at),
         "updated_at": _serialize_dt(user.updated_at),
     }

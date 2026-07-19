@@ -64,7 +64,8 @@ def _livekit_wss_source(livekit_url: str | None) -> str | None:
 
 @dataclass(frozen=True)
 class WebchatVoiceRuntimeConfig:
-    enabled: bool
+    human_call_enabled: bool
+    live_ai_voice_enabled: bool
     allowed_path_prefixes: tuple[str, ...]
     connect_src: tuple[str, ...]
     provider: str
@@ -81,13 +82,34 @@ class WebchatVoiceRuntimeConfig:
     live_voice_upstream_health_url: str | None
     live_voice_upstream_token: str | None
 
+    @property
+    def enabled(self) -> bool:
+        """Compatibility aggregate for shared headers only."""
+        return self.human_call_enabled or self.live_ai_voice_enabled
+
 
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
-    enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
+    legacy_enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
+    human_call_explicit = os.getenv("WEBCHAT_HUMAN_CALL_ENABLED")
+    live_ai_explicit = os.getenv("WEBCHAT_LIVE_AI_VOICE_ENABLED")
+    app_env = os.getenv("APP_ENV", "development").strip().lower()
+    if app_env == "production" and legacy_enabled and human_call_explicit is None and live_ai_explicit is None:
+        raise RuntimeError(
+            "WEBCHAT_VOICE_ENABLED is ambiguous in production; set WEBCHAT_HUMAN_CALL_ENABLED and WEBCHAT_LIVE_AI_VOICE_ENABLED explicitly"
+        )
+    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", legacy_enabled)
+    legacy_live_ai_default = bool(
+        legacy_enabled
+        and os.getenv(LIVE_VOICE_UPSTREAM_WS_URL_ENV)
+        and os.getenv(LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV)
+        and (os.getenv(LIVE_VOICE_UPSTREAM_TOKEN_ENV) or os.getenv(LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV))
+    )
+    live_ai_voice_enabled = _env_bool("WEBCHAT_LIVE_AI_VOICE_ENABLED", legacy_live_ai_default)
     provider = (os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock")
-    read_livekit_credentials = bool(enabled and provider == "livekit")
+    read_livekit_credentials = bool(human_call_enabled and provider == "livekit")
     config = WebchatVoiceRuntimeConfig(
-        enabled=enabled,
+        human_call_enabled=human_call_enabled,
+        live_ai_voice_enabled=live_ai_voice_enabled,
         allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat,/api/webchat"))),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
         provider=provider,
@@ -120,7 +142,13 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
     if config.rate_limit_max_requests < 1 or config.rate_limit_max_requests > 60:
         raise RuntimeError("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS must be between 1 and 60")
     if config.enabled and not config.allowed_path_prefixes:
-        raise RuntimeError("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES must be set when WEBCHAT_VOICE_ENABLED=true")
+        raise RuntimeError("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES must be set when any WebChat voice capability is enabled")
+    if config.live_ai_voice_enabled and not config.live_voice_upstream_token:
+        raise RuntimeError("LIVE_VOICE_UPSTREAM_TOKEN must be configured when WEBCHAT_LIVE_AI_VOICE_ENABLED=true")
+    if config.live_ai_voice_enabled and not config.live_voice_upstream_ws_url:
+        raise RuntimeError("LIVE_VOICE_UPSTREAM_WS_URL must be configured when WEBCHAT_LIVE_AI_VOICE_ENABLED=true")
+    if config.live_ai_voice_enabled and not config.live_voice_upstream_health_url:
+        raise RuntimeError("LIVE_VOICE_UPSTREAM_HEALTH_URL must be configured when WEBCHAT_LIVE_AI_VOICE_ENABLED=true")
     for prefix in config.allowed_path_prefixes:
         if not prefix.startswith("/"):
             raise RuntimeError("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES entries must start with /")
@@ -135,7 +163,7 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
     app_env = os.getenv("APP_ENV", "development").strip().lower()
     if app_env == "production" and config.recording_enabled:
         raise RuntimeError("WEBCHAT_VOICE_RECORDING_ENABLED must remain false in production until a consent policy is implemented")
-    if config.enabled and config.provider == "livekit":
+    if config.human_call_enabled and config.provider == "livekit":
         _validate_livekit_runtime_config(config, app_env=app_env)
     if config.live_voice_upstream_ws_url:
         _validate_live_voice_ws_url(config.live_voice_upstream_ws_url, app_env=app_env)

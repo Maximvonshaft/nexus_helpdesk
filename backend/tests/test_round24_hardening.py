@@ -50,8 +50,8 @@ from app.services.lite_service import assign_lite_case, get_lite_case, save_ai_i
 from app.services.ticket_service import add_ai_intake, add_comment, create_ticket  # noqa: E402
 from app.settings import Settings  # noqa: E402
 from app.utils import client_ip as client_ip_utils  # noqa: E402
-from app.services import background_jobs, external_channel_bridge  # noqa: E402
-from app.services.background_jobs import ATTACHMENT_PERSIST_JOB, EXTERNAL_CHANNEL_SYNC_JOB, claim_pending_jobs, dispatch_pending_background_jobs, dispatch_pending_sync_jobs, enqueue_background_job  # noqa: E402
+from app.services import background_jobs  # noqa: E402
+from app.services.background_jobs import claim_pending_jobs, dispatch_pending_background_jobs, enqueue_background_job  # noqa: E402
 from scripts import run_worker  # noqa: E402
 
 
@@ -401,67 +401,6 @@ def test_integration_task_rate_limit_is_audited(db_session):
     logs = db_session.query(IntegrationRequestLog).filter_by(endpoint='integration.task').order_by(IntegrationRequestLog.id.asc()).all()
     assert [log.status_code for log in logs] == [200, 429]
     assert logs[-1].error_code == 'rate_limited'
-def test_claim_pending_jobs_can_filter_job_types(db_session):
-    sync_job = enqueue_background_job(db_session, queue_name='external_channel_sync', job_type=EXTERNAL_CHANNEL_SYNC_JOB, payload={'ticket_id': 1, 'session_key': 's1'})
-    attachment_job = enqueue_background_job(db_session, queue_name='external_channel_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': 1})
-    db_session.commit()
-
-    claimed = claim_pending_jobs(db_session, worker_id='sync-worker', job_types=[EXTERNAL_CHANNEL_SYNC_JOB])
-
-    assert [job.job_type for job in claimed] == [EXTERNAL_CHANNEL_SYNC_JOB]
-    db_session.refresh(sync_job)
-    db_session.refresh(attachment_job)
-    assert sync_job.status == JobStatus.processing
-    assert attachment_job.status == JobStatus.pending
-
-
-def test_dispatch_pending_background_jobs_excludes_sync_jobs(db_session, monkeypatch):
-    team = make_team(db_session)
-    lead = make_user(db_session, 'lead-bg', UserRole.lead, team)
-    ticket = make_ticket(db_session, lead, team=team)
-    link = ExternalChannelConversationLink(ticket_id=ticket.id, session_key='sess-bg', channel='whatsapp', recipient=ticket.preferred_reply_contact)
-    db_session.add(link)
-    db_session.flush()
-    transcript = ExternalChannelTranscriptMessage(
-        conversation_id=link.id,
-        ticket_id=ticket.id,
-        session_key='sess-bg',
-        message_id='msg-bg-1',
-        role='user',
-        author_name='customer',
-        body_text='hello',
-    )
-    db_session.add(transcript)
-    db_session.flush()
-    attachment_ref = ExternalChannelAttachmentReference(
-        ticket_id=ticket.id,
-        conversation_id=link.id,
-        transcript_message_id=transcript.id,
-        remote_attachment_id='att-1',
-        metadata_json={},
-    )
-    db_session.add(attachment_ref)
-    db_session.flush()
-    enqueue_background_job(db_session, queue_name='external_channel_sync', job_type=EXTERNAL_CHANNEL_SYNC_JOB, payload={'ticket_id': ticket.id, 'session_key': 'sess-keep'})
-    attachment_job = enqueue_background_job(db_session, queue_name='external_channel_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': attachment_ref.id})
-    db_session.commit()
-
-    def fake_persist(db, *, attachment_ref):
-        attachment_ref.storage_status = 'captured'
-        return None
-
-    monkeypatch.setattr(sys.modules['app.services.background_jobs'].settings, 'external_channel_sync_enabled', False)
-    monkeypatch.setattr(external_channel_bridge, 'persist_external_channel_attachment_reference', fake_persist, raising=False)
-
-    processed = dispatch_pending_background_jobs(db_session, worker_id='main-worker')
-
-    assert [job.job_type for job in processed] == [ATTACHMENT_PERSIST_JOB]
-    db_session.refresh(attachment_job)
-    assert attachment_job.status == JobStatus.done
-    sync_job = db_session.query(BackgroundJob).filter_by(job_type=EXTERNAL_CHANNEL_SYNC_JOB).one()
-    assert sync_job.status == JobStatus.pending
-
-
 def test_metrics_endpoint_returns_503_when_enabled_without_token(monkeypatch):
     from app import main as app_main
 

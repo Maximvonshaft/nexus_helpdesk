@@ -45,14 +45,12 @@ def tighten_limits(monkeypatch):
     monkeypatch.setattr(rate_limit_service.settings, "admin_action_rate_limit_batch_max", 1)
     monkeypatch.setattr(rate_limit_service.settings, "admin_action_rate_limit_consume_once_max", 1)
     monkeypatch.setattr(admin_api.settings, "admin_action_rate_limit_single_max", 1)
-    monkeypatch.setattr(admin_api.settings, "admin_action_rate_limit_consume_once_max", 1)
     monkeypatch.setattr(admin_queue_api.settings, "admin_action_rate_limit_single_max", 1)
     monkeypatch.setattr(admin_queue_api.settings, "admin_action_rate_limit_batch_max", 1)
 
 
 @pytest.fixture()
-def client(monkeypatch):
-    monkeypatch.setattr(admin_api, "consume_external_channel_events_once", lambda db: 0)
+def client():
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -76,51 +74,47 @@ def _headers(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(user.id)}"}
 
 
-def test_rate_limit_response_contains_request_id_and_audit_log(client, caplog):
-    admin = _make_user("admin-rate")
+def test_rate_limit_response_contains_request_id_and_audit_log(caplog):
     caplog.set_level(logging.WARNING, logger="nexusdesk")
-
-    first = client.post("/api/admin/external_channel/events/consume-once", headers=_headers(admin))
-    second = client.post("/api/admin/external_channel/events/consume-once", headers=_headers(admin))
-
-    assert first.status_code == 200
-    assert second.status_code == 429
-    payload = second.json()
-    assert payload["detail"]["action"] == "external_channel.events.consume_once"
-    assert payload["detail"]["request_id"]
-
+    actor_id = 77
+    action_key = "background_job.requeue"
+    with SessionLocal() as db:
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db, actor_id=actor_id, action_key=action_key, max_requests=1, request_id="req-1"
+        )
+    with SessionLocal() as db:
+        with pytest.raises(HTTPException) as excinfo:
+            rate_limit_service.enforce_admin_action_rate_limit(
+                db, actor_id=actor_id, action_key=action_key, max_requests=1, request_id="req-2"
+            )
+    assert excinfo.value.status_code == 429
+    assert excinfo.value.detail["action"] == action_key
+    assert excinfo.value.detail["request_id"] == "req-2"
     with SessionLocal() as db:
         audit = db.query(AdminAuditLog).filter(AdminAuditLog.action == "admin_action.rate_limited").one()
-        assert audit.actor_id == admin.id
-        assert db.query(AdminActionRateLimitBucket).filter(AdminActionRateLimitBucket.bucket_key == f"{admin.id}:external_channel.events.consume_once").one().request_count == 2
-
+        assert audit.actor_id == actor_id
     assert any(record.message == "admin_action_rate_limited" for record in caplog.records)
 
 
-def test_different_action_keys_are_counted_independently(client):
-    admin = _make_user("admin-actions")
-
-    first = client.post("/api/admin/jobs/requeue-dead", headers=_headers(admin))
-    second = client.post("/api/admin/external_channel/events/consume-once", headers=_headers(admin))
-    third = client.post("/api/admin/jobs/requeue-dead", headers=_headers(admin))
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert third.status_code == 429
-    assert third.json()["detail"]["action"] == "background_job.requeue_dead_batch"
+def test_different_action_keys_are_counted_independently():
+    actor_id = 78
+    with SessionLocal() as db:
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db, actor_id=actor_id, action_key="background_job.requeue", max_requests=1, request_id="a"
+        )
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db, actor_id=actor_id, action_key="background_job.requeue_dead_batch", max_requests=1, request_id="b"
+        )
 
 
-def test_different_users_have_independent_buckets(client):
-    admin_a = _make_user("admin-a")
-    admin_b = _make_user("admin-b")
-
-    first = client.post("/api/admin/external_channel/events/consume-once", headers=_headers(admin_a))
-    second = client.post("/api/admin/external_channel/events/consume-once", headers=_headers(admin_a))
-    third = client.post("/api/admin/external_channel/events/consume-once", headers=_headers(admin_b))
-
-    assert first.status_code == 200
-    assert second.status_code == 429
-    assert third.status_code == 200
+def test_different_users_have_independent_buckets():
+    with SessionLocal() as db:
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db, actor_id=79, action_key="background_job.requeue", max_requests=1, request_id="a"
+        )
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db, actor_id=80, action_key="background_job.requeue", max_requests=1, request_id="b"
+        )
 
 
 def test_requeue_endpoint_is_guarded_by_rate_limit(client):
@@ -180,7 +174,7 @@ def test_rate_limit_window_expiry_resets_bucket(monkeypatch):
 
 def test_first_concurrent_requests_do_not_500_and_limit_stays_stable():
     actor_id = 91
-    action_key = "external_channel.events.consume_once"
+    action_key = "background_job.requeue"
 
     def _attempt(request_suffix: int):
         with SessionLocal() as db:

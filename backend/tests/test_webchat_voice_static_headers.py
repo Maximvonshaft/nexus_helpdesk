@@ -27,6 +27,8 @@ LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV = LIVE_VOICE_UPSTREAM_TOKEN_ENV + "_FILE"
 
 VOICE_ENV_KEYS = [
     "WEBCHAT_VOICE_ENABLED",
+    "WEBCHAT_HUMAN_CALL_ENABLED",
+    "WEBCHAT_LIVE_AI_VOICE_ENABLED",
     "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
     "WEBCHAT_VOICE_CONNECT_SRC",
     "WEBCHAT_VOICE_PROVIDER",
@@ -107,7 +109,9 @@ def test_live_voice_disabled_returns_404_without_exposing_upstream(monkeypatch):
 def test_live_voice_enabled_health_route_is_same_origin_proxy_scope(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="false",
+        WEBCHAT_LIVE_AI_VOICE_ENABLED="true",
         WEBCHAT_VOICE_PROVIDER="mock",
         WEBCHAT_VOICE_CONNECT_SRC="",
         LIVE_VOICE_UPSTREAM_WS_URL="ws://127.0.0.1:1/live/ws",
@@ -126,7 +130,8 @@ def test_live_voice_enabled_health_route_is_same_origin_proxy_scope(monkeypatch)
 def test_voice_enabled_non_voice_path_keeps_microphone_denied(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
     )
 
@@ -155,7 +160,8 @@ def test_voice_disabled_ignores_configured_unreadable_livekit_secret_file(monkey
 def test_mock_provider_ignores_configured_unreadable_livekit_secret_file(monkeypatch, tmp_path):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_PROVIDER="mock",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
         **{LIVEKIT_KEY_FILE_ENV: str(tmp_path), LIVEKIT_SECRET_FILE_ENV: str(tmp_path)},
@@ -170,7 +176,8 @@ def test_mock_provider_ignores_configured_unreadable_livekit_secret_file(monkeyp
 def test_livekit_secret_read_failure_fails_closed_for_non_voice_route(monkeypatch, tmp_path):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_PROVIDER="livekit",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
         **{
@@ -195,7 +202,8 @@ def test_livekit_secret_read_failure_fails_closed_for_non_voice_route(monkeypatc
 def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
     )
 
@@ -219,7 +227,8 @@ def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypat
 def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES="/voice/webchat",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
     )
@@ -236,7 +245,8 @@ def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
 def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
     )
 
@@ -253,7 +263,8 @@ def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(m
 def test_voice_connect_src_rejects_wildcard(monkeypatch):
     for key in VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test *")
 
     from app.webchat_voice_config import load_webchat_voice_runtime_config
@@ -265,7 +276,8 @@ def test_voice_connect_src_rejects_wildcard(monkeypatch):
 def test_voice_enabled_webchat_path_allows_microphone(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
     )
 

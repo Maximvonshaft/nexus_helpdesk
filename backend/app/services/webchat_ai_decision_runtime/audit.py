@@ -57,6 +57,17 @@ def log_ai_decision_audit(
     payload: dict[str, Any] | None = None,
 ) -> None:
     safe_payload = safe_audit_payload(payload or {})
+    safe_payload_json = json.dumps(
+        safe_payload, ensure_ascii=False, sort_keys=True, default=str
+    )
+    payload_summary = {
+        "redacted": True,
+        "sha256": _sha(safe_payload_json),
+        "top_level_type": type(safe_payload).__name__,
+        "top_level_item_count": len(safe_payload)
+        if isinstance(safe_payload, (dict, list))
+        else 1,
+    }
     LOGGER.info(
         event,
         extra={
@@ -68,7 +79,7 @@ def log_ai_decision_audit(
                 "session_id_hash": _sha(session_id or "") if session_id else None,
                 "conversation_id": conversation_id,
                 "ticket_id": ticket_id,
-                "payload": safe_payload,
+                "payload_summary": payload_summary,
             }
         },
     )

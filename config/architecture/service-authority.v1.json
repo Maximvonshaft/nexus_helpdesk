@@ -6,13 +6,17 @@
       "responsibility": "ticket-domain",
       "public_authority": "backend/app/services/canonical_ticket_service.py",
       "private_implementation": "backend/app/services/ticket_service_core.py",
-      "compatibility_shims": ["backend/app/services/ticket_service.py"]
+      "compatibility_shims": [
+        "backend/app/services/ticket_service.py"
+      ]
     },
     {
       "responsibility": "control-tower",
       "public_authority": "backend/app/services/canonical_control_tower_service.py",
       "private_implementation": null,
-      "compatibility_shims": ["backend/app/services/control_tower_service.py"]
+      "compatibility_shims": [
+        "backend/app/services/control_tower_service.py"
+      ]
     },
     {
       "responsibility": "lite-case-state-machine",
@@ -24,13 +28,17 @@
       "responsibility": "qa-training",
       "public_authority": "backend/app/services/canonical_qa_training_service.py",
       "private_implementation": "backend/app/services/qa_training_service_core.py",
-      "compatibility_shims": ["backend/app/services/qa_training_service.py"]
+      "compatibility_shims": [
+        "backend/app/services/qa_training_service.py"
+      ]
     },
     {
       "responsibility": "unified-operator-work-queue-read-model",
       "public_authority": "backend/app/services/canonical_operator_work_queue.py",
       "private_implementation": "backend/app/services/operator_work_queue_core.py",
-      "compatibility_shims": ["backend/app/services/operator_work_queue.py"]
+      "compatibility_shims": [
+        "backend/app/services/operator_work_queue.py"
+      ]
     },
     {
       "responsibility": "durable-operator-task-lifecycle",
@@ -42,19 +50,61 @@
       "responsibility": "webchat-handoff",
       "public_authority": "backend/app/services/canonical_webchat_handoff_service.py",
       "private_implementation": "backend/app/services/webchat_handoff_service_core.py",
-      "compatibility_shims": ["backend/app/services/webchat_handoff_service.py"]
+      "compatibility_shims": [
+        "backend/app/services/webchat_handoff_service.py"
+      ]
     },
     {
       "responsibility": "osr-admin-api",
       "public_authority": "backend/app/api/canonical_osr_admin.py",
       "private_implementation": "backend/app/api/osr_admin_core.py",
-      "compatibility_shims": ["backend/app/api/osr_admin.py"]
+      "compatibility_shims": [
+        "backend/app/api/osr_admin.py"
+      ]
     },
     {
       "responsibility": "integration-api",
       "public_authority": "backend/app/api/canonical_integration.py",
       "private_implementation": "backend/app/api/integration_core.py",
-      "compatibility_shims": ["backend/app/api/integration.py"]
+      "compatibility_shims": [
+        "backend/app/api/integration.py"
+      ]
+    },
+    {
+      "responsibility": "webchat-origin-and-cors-policy",
+      "public_authority": "backend/app/services/webchat_origin_policy.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "tracking-identifier-policy",
+      "public_authority": "backend/app/services/tracking_identifier_policy.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "runtime-endpoint-policy",
+      "public_authority": "backend/app/services/runtime_endpoint_policy.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "ticket-sla-risk-policy",
+      "public_authority": "backend/app/services/ticket_sla_policy.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "human-webcall",
+      "public_authority": "backend/app/api/webchat_voice.py",
+      "private_implementation": "backend/app/services/webchat_voice_service.py",
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "live-ai-voice",
+      "public_authority": "backend/app/api/webchat_live_voice.py",
+      "private_implementation": "backend/app/services/live_voice_orchestration_service.py",
+      "compatibility_shims": []
     }
   ],
   "constraints": {

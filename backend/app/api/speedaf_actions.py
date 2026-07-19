@@ -7,14 +7,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..api.deps import get_current_user
 from ..db import get_db
 from ..enums import EventType
-from ..models import Ticket, TicketEvent
+from ..models import SpeedafAddressUpdateIdempotency, Ticket, TicketEvent
 from ..settings import get_settings
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.background_jobs import enqueue_speedaf_address_update_job, enqueue_speedaf_work_order_create_job
@@ -134,54 +133,33 @@ def _append_event(db: Session, *, ticket_id: int, actor_id: int | None, field_na
     )
 
 
-def _ensure_sqlite_address_table(db: Session) -> None:
-    if db.bind is None or db.bind.dialect.name != "sqlite":
-        return
-    db.execute(text("""
-        CREATE TABLE IF NOT EXISTS speedaf_address_update_idempotency (
-            id INTEGER PRIMARY KEY,
-            dedupe_key VARCHAR(255) NOT NULL UNIQUE,
-            ticket_id INTEGER NOT NULL,
-            waybill_hash VARCHAR(64) NOT NULL,
-            phone_hash VARCHAR(64) NOT NULL,
-            actor_id INTEGER NOT NULL,
-            status VARCHAR(40) NOT NULL,
-            request_id VARCHAR(160),
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL
-        )
-    """))
-    db.flush()
-
-
 def _address_dedupe_key(*, ticket_id: int, waybill_code: str, whatsapp_phone: str) -> str:
     return f"speedaf-update-address:ticket:{ticket_id}:waybill:{_hash_short(waybill_code)}:phone:{_hash_short(whatsapp_phone)}"
 
 
 def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, waybill_code: str, whatsapp_phone: str, actor_id: int, request_id: str | None) -> None:
-    _ensure_sqlite_address_table(db)
     now = utc_now()
     try:
         with db.begin_nested():
-            db.execute(
-                text("""
-                    INSERT INTO speedaf_address_update_idempotency
-                        (dedupe_key, ticket_id, waybill_hash, phone_hash, actor_id, status, request_id, created_at, updated_at)
-                    VALUES
-                        (:dedupe_key, :ticket_id, :waybill_hash, :phone_hash, :actor_id, 'queued', :request_id, :now, :now)
-                """),
-                {
-                    "dedupe_key": dedupe_key,
-                    "ticket_id": ticket_id,
-                    "waybill_hash": _hash_value(waybill_code),
-                    "phone_hash": _hash_value(whatsapp_phone),
-                    "actor_id": actor_id,
-                    "request_id": request_id,
-                    "now": now,
-                },
+            db.add(
+                SpeedafAddressUpdateIdempotency(
+                    dedupe_key=dedupe_key,
+                    ticket_id=ticket_id,
+                    waybill_hash=_hash_value(waybill_code),
+                    phone_hash=_hash_value(whatsapp_phone),
+                    actor_id=actor_id,
+                    status="queued",
+                    request_id=request_id,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="speedaf_address_update_already_requested")
+            db.flush()
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="speedaf_address_update_already_requested",
+        ) from exc
 
 
 @router.post("/{ticket_id}/speedaf/waybills/query", response_model=SpeedafWaybillLookupResponse)

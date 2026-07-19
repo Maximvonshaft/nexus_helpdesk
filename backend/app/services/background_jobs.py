@@ -5,20 +5,19 @@ import json
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import and_, or_, select, text, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
 from ..models import (
     BackgroundJob,
-    ExternalChannelTranscriptMessage,
+    SpeedafAddressUpdateIdempotency,
     TicketEvent,
     TicketOutboundMessage,
 )
 from ..settings import get_settings
 from ..utils.time import utc_now
-from . import external_channel_bridge
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .speedaf.redactor import (
     mask_phone,
@@ -30,8 +29,6 @@ from .speedaf.redactor import (
 
 settings = get_settings()
 AUTO_REPLY_JOB = "auto_reply.send_update"
-EXTERNAL_CHANNEL_SYNC_JOB = "external_channel.sync_session"
-ATTACHMENT_PERSIST_JOB = "external_channel.persist_attachment"
 WEBCHAT_AI_REPLY_JOB = "webchat.ai_reply"
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = "webchat.handoff_snapshot"
 SPEEDAF_WORK_ORDER_CREATE_JOB = "speedaf.work_order.create"
@@ -244,52 +241,6 @@ def enqueue_auto_reply_job(
     )
 
 
-def enqueue_external_channel_sync_job(
-    db: Session,
-    *,
-    ticket_id: int,
-    session_key: str,
-    transcript_limit: int | None = None,
-    dedupe: bool = True,
-) -> BackgroundJob:
-    payload = {
-        "ticket_id": ticket_id,
-        "session_key": session_key,
-        "transcript_limit": (
-            transcript_limit
-            or settings.external_channel_sync_transcript_limit
-        ),
-    }
-    return enqueue_background_job(
-        db,
-        queue_name="legacy_session_sync",
-        job_type=EXTERNAL_CHANNEL_SYNC_JOB,
-        payload=payload,
-        dedupe_key=(
-            f"legacy-session-sync:{session_key}" if dedupe else None
-        ),
-    )
-
-
-def enqueue_attachment_persist_job(
-    db: Session,
-    *,
-    attachment_ref_id: int,
-    dedupe: bool = True,
-) -> BackgroundJob:
-    return enqueue_background_job(
-        db,
-        queue_name="external_channel_attachment",
-        job_type=ATTACHMENT_PERSIST_JOB,
-        payload={"attachment_ref_id": attachment_ref_id},
-        dedupe_key=(
-            f"external_channel-attachment:{attachment_ref_id}"
-            if dedupe
-            else None
-        ),
-    )
-
-
 def enqueue_webchat_ai_reply_job(
     db: Session,
     *,
@@ -401,14 +352,6 @@ def enqueue_speedaf_voice_callback_job(
         payload=payload,
         dedupe_key=dedupe_key,
     )
-
-
-def enqueue_stale_external_channel_sync_jobs(
-    db: Session,
-    *,
-    limit: int | None = None,
-) -> list[BackgroundJob]:
-    return []
 
 
 def claim_pending_jobs(
@@ -614,18 +557,14 @@ def _update_speedaf_address_idempotency_status(
     dedupe_key: str,
     status_value: str,
 ) -> None:
-    db.execute(
-        text(
-            "UPDATE speedaf_address_update_idempotency "
-            "SET status = :status, updated_at = :now "
-            "WHERE dedupe_key = :dedupe_key"
-        ),
-        {
-            "status": status_value,
-            "now": utc_now(),
-            "dedupe_key": dedupe_key,
-        },
-    )
+    row = db.query(SpeedafAddressUpdateIdempotency).filter(
+        SpeedafAddressUpdateIdempotency.dedupe_key == dedupe_key
+    ).one_or_none()
+    if row is None:
+        raise RuntimeError("speedaf_address_update_idempotency_reservation_missing")
+    row.status = status_value
+    row.updated_at = utc_now()
+    db.flush()
 
 
 def _process_speedaf_work_order_create_job(
@@ -985,27 +924,6 @@ def process_background_job(
             )
             _mark_done(job)
             return job
-        if job.job_type == ATTACHMENT_PERSIST_JOB:
-            from ..models import ExternalChannelAttachmentReference
-
-            row = (
-                db.query(ExternalChannelAttachmentReference)
-                .filter(
-                    ExternalChannelAttachmentReference.id
-                    == int(payload["attachment_ref_id"])
-                )
-                .first()
-            )
-            if row is None:
-                _mark_done(job)
-                return job
-            external_channel_bridge.persist_external_channel_attachment_reference(
-                db,
-                attachment_ref=row,
-            )
-            row.updated_at = utc_now()
-            _mark_done(job)
-            return job
         if job.job_type == WEBCHAT_AI_REPLY_JOB:
             from .webchat_ai_orchestration_service import (
                 process_webchat_ai_reply_job,
@@ -1055,10 +973,6 @@ def process_background_job(
             )
             _mark_done(job)
             return job
-        if job.job_type == EXTERNAL_CHANNEL_SYNC_JOB:
-            job.last_error = "legacy ExternalChannel session sync is retired"
-            _mark_done(job)
-            return job
         raise RuntimeError(f"Unsupported job type: {job.job_type}")
     except Exception as exc:
         _mark_retry(job, str(exc))
@@ -1088,19 +1002,6 @@ def dispatch_pending_webchat_ai_reply_jobs(
 ) -> list[BackgroundJob]:
     from .background_job_transaction_boundary import (
         dispatch_pending_webchat_ai_reply_jobs as canonical_dispatch,
-    )
-
-    return canonical_dispatch(db, limit=limit, worker_id=worker_id)
-
-
-def dispatch_pending_sync_jobs(
-    db: Session,
-    *,
-    limit: int | None = None,
-    worker_id: str | None = None,
-) -> list[BackgroundJob]:
-    from .background_job_transaction_boundary import (
-        dispatch_pending_sync_jobs as canonical_dispatch,
     )
 
     return canonical_dispatch(db, limit=limit, worker_id=worker_id)

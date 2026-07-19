@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
@@ -267,6 +267,12 @@ def create_operator_task(
     payload: dict[str, Any] | None = None,
     note: str | None = None,
 ) -> tuple[OperatorTask, bool]:
+    if source_type == "external_channel":
+        raise OperatorQueueError(
+            410,
+            "legacy_operator_task_creation_retired",
+            "creation of legacy ExternalChannel tasks is retired",
+        )
     existing = _find_existing_active_task(
         db,
         source_type=source_type,
@@ -410,50 +416,6 @@ def _log_operator_audit(
     )
 
 
-def project_external_channel_unresolved_events(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
-    rows = (
-        db.query(ExternalChannelUnresolvedEvent)
-        .filter(ExternalChannelUnresolvedEvent.status == "pending")
-        .order_by(ExternalChannelUnresolvedEvent.id.asc())
-        .limit(max(1, min(limit, 500)))
-        .all()
-    )
-    result = ProjectResult()
-    for event in rows:
-        _, created = create_operator_task(
-            db,
-            source_type="external_channel",
-            source_id=str(event.id),
-            unresolved_event_id=event.id,
-            task_type="bridge_unresolved",
-            reason_code=event.event_type or "external_channel_unresolved",
-            priority=50,
-            payload={
-                "source": event.source,
-                "event_type": event.event_type,
-                "session_key": event.session_key,
-                "recipient": event.recipient,
-                "preferred_reply_contact": event.preferred_reply_contact,
-                "last_error": event.last_error,
-            },
-            note=note,
-        )
-        if created:
-            result.created += 1
-        else:
-            result.skipped_existing += 1
-    if result.created or result.skipped_existing:
-        _log_operator_audit(
-            db,
-            actor_id=actor_id,
-            action="project",
-            old_value=None,
-            new_value={"source_type": "external_channel", "created": result.created, "skipped_existing": result.skipped_existing},
-            note=note,
-        )
-    return result
-
-
 def project_webchat_handoff_tasks(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
     rows = (
         db.query(WebchatConversation, Ticket)
@@ -505,13 +467,12 @@ def project_webchat_handoff_tasks(db: Session, *, limit: int = 100, actor_id: in
 
 
 def project_operator_queue(db: Session, *, actor_id: int | None = None, note: str | None = None) -> dict[str, int]:
-    external_channel = project_external_channel_unresolved_events(db, actor_id=actor_id, note=note)
     webchat = project_webchat_handoff_tasks(db, actor_id=actor_id, note=note)
     return {
-        "projected_external_channel_unresolved": external_channel.created,
+        "projected_external_channel_unresolved": 0,
         "projected_webchat_handoff": webchat.created,
-        "created_total": external_channel.created + webchat.created,
-        "skipped_existing": external_channel.skipped_existing + webchat.skipped_existing,
+        "created_total": webchat.created,
+        "skipped_existing": webchat.skipped_existing,
     }
 
 
@@ -593,21 +554,6 @@ def _close_webchat_source(db: Session, row: OperatorTask, *, action: str, actor_
     return {"old": old, "new": new}
 
 
-def _close_external_channel_source(db: Session, row: OperatorTask, *, status: str) -> dict[str, Any]:
-    if not row.unresolved_event_id:
-        return {}
-    event_row = db.query(ExternalChannelUnresolvedEvent).filter(ExternalChannelUnresolvedEvent.id == row.unresolved_event_id).first()
-    old = _unresolved_snapshot(event_row)
-    if event_row is None:
-        return {"old": old, "new": None}
-    event_row.status = status
-    if status in {"resolved", "dropped", "replayed"}:
-        event_row.last_error = None
-    event_row.updated_at = utc_now()
-    new = _unresolved_snapshot(event_row)
-    return {"old": old, "new": new}
-
-
 def transition_operator_task(
     db: Session,
     *,
@@ -620,6 +566,8 @@ def transition_operator_task(
         raise OperatorQueueError(400, "unsupported_operator_task_action", "unsupported operator task action")
     row = _get_task(db, task_id)
     _ensure_task_mutable(row)
+    if row.source_type == "external_channel":
+        raise OperatorQueueError(410, "legacy_operator_task_read_only", "historical ExternalChannel tasks are read-only")
     old_task = _task_snapshot(row)
     now = utc_now()
     source_transition: dict[str, Any] = {}
@@ -632,8 +580,6 @@ def transition_operator_task(
         row.resolved_at = now
         if row.source_type == "webchat":
             source_transition = _close_webchat_source(db, row, action="resolved" if action == "resolve" else "dropped", actor_id=actor_id, note=note)
-        elif row.source_type == "external_channel":
-            source_transition = _close_external_channel_source(db, row, status=row.status)
     row.updated_at = now
     db.flush()
     _log_operator_audit(
@@ -646,81 +592,6 @@ def transition_operator_task(
         note=note,
     )
     return row
-
-
-def replay_operator_task(
-    db: Session,
-    *,
-    task_id: int,
-    actor_id: int | None = None,
-    note: str | None = None,
-    replay_func: Callable[..., bool],
-) -> tuple[OperatorTask, dict[str, Any]]:
-    row = _get_task(db, task_id)
-    _ensure_task_mutable(row)
-    if not row.unresolved_event_id:
-        raise OperatorQueueError(404, "unresolved_event_missing", "unresolved event missing")
-    event_row = db.query(ExternalChannelUnresolvedEvent).filter(ExternalChannelUnresolvedEvent.id == row.unresolved_event_id).first()
-    if event_row is None:
-        raise OperatorQueueError(404, "unresolved_event_missing", "unresolved event missing")
-
-    old_task = _task_snapshot(row)
-    old_source = _unresolved_snapshot(event_row)
-    try:
-        ok = bool(replay_func(db, row=event_row))
-    except Exception as exc:
-        now = utc_now()
-        row.status = "replay_failed"
-        row.resolved_at = now
-        row.updated_at = now
-        event_row.status = "replay_failed"
-        event_row.last_error = type(exc).__name__
-        event_row.updated_at = now
-        db.flush()
-        safe_result = {"ok": False, "status": "replay_failed", "error_code": type(exc).__name__}
-        _log_operator_audit(
-            db,
-            actor_id=actor_id,
-            action="replay_failed",
-            row=row,
-            old_value={"task": old_task, "source": old_source},
-            new_value={"task": _task_snapshot(row), "source": _unresolved_snapshot(event_row), "replay_result": safe_result},
-            note=note,
-        )
-        raise OperatorQueueError(409, "replay_failed", "replay failed") from exc
-
-    now = utc_now()
-    if ok:
-        row.status = "replayed"
-        row.resolved_at = now
-        event_row.status = "replayed"
-        event_row.last_error = None
-        event_action = "replayed"
-        replay_result = {"ok": True, "status": "replayed"}
-    else:
-        row.status = "replay_failed"
-        row.resolved_at = now
-        event_row.status = "replay_failed"
-        event_action = "replay_failed"
-        replay_result = {"ok": False, "status": "replay_failed"}
-    row.updated_at = now
-    event_row.updated_at = now
-    db.flush()
-
-    _log_operator_audit(
-        db,
-        actor_id=actor_id,
-        action=event_action,
-        row=row,
-        old_value={"task": old_task, "source": old_source},
-        new_value={"task": _task_snapshot(row), "source": _unresolved_snapshot(event_row), "replay_result": replay_result},
-        note=note,
-    )
-    if row.webchat_conversation_id and row.ticket_id:
-        _close_webchat_source(db, row, action=event_action, actor_id=actor_id, note=note)
-    if not ok:
-        raise OperatorQueueError(409, "replay_failed", "replay failed")
-    return row, replay_result
 
 
 def create_webchat_handoff_task(

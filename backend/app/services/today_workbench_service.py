@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, or_
@@ -21,6 +21,7 @@ from .permissions import (
     resolve_capabilities,
 )
 from .scope_permissions import has_global_case_visibility
+from .ticket_sla_policy import sla_risk_filter
 
 ACTIVE_TICKET_STATUSES = (
     TicketStatus.new,
@@ -30,7 +31,6 @@ ACTIVE_TICKET_STATUSES = (
     TicketStatus.escalated,
 )
 TERMINAL_TASK_STATUSES = ("resolved", "dropped", "replayed", "replay_failed", "cancelled")
-SLA_RISK_WINDOW = timedelta(minutes=30)
 EMAIL_MARKERS = ("email", "mail", "smtp", "imap", "pop3")
 
 
@@ -51,16 +51,6 @@ def _active_tickets(query):
 
 def _count(query) -> int:
     return int(query.with_entities(func.count(Ticket.id)).scalar() or 0)
-
-
-def _sla_risk_filter(now: datetime):
-    deadline = now + SLA_RISK_WINDOW
-    return or_(
-        Ticket.first_response_due_at <= deadline,
-        Ticket.resolution_due_at <= deadline,
-        Ticket.first_response_breached.is_(True),
-        Ticket.resolution_breached.is_(True),
-    )
 
 
 def _email_case_filter():
@@ -190,7 +180,7 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
     active_count = _count(active)
     my_tickets = _count(_active_tickets(visible).filter(Ticket.assignee_id == current_user.id))
     unassigned = _count(_active_tickets(visible).filter(Ticket.assignee_id.is_(None)))
-    sla_risk = _count(_active_tickets(visible).filter(_sla_risk_filter(now)))
+    sla_risk = _count(_active_tickets(visible).filter(sla_risk_filter(now)))
     overdue = _count(
         _active_tickets(visible).filter(
             or_(

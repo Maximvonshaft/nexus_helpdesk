@@ -562,6 +562,15 @@ class Settings:
         self.webchat_ai_session_summary_messages = int(
             os.getenv("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES", "8")
         )
+        self.webchat_voice_enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
+        self.webchat_human_call_enabled = _env_bool(
+            "WEBCHAT_HUMAN_CALL_ENABLED",
+            self.webchat_voice_enabled,
+        )
+        self.webchat_live_ai_voice_enabled = _env_bool(
+            "WEBCHAT_LIVE_AI_VOICE_ENABLED",
+            False,
+        )
         self.webchat_ws_enabled = _env_bool("WEBCHAT_WS_ENABLED", False)
         self.webchat_ws_public_enabled = _env_bool(
             "WEBCHAT_WS_PUBLIC_ENABLED",
@@ -800,14 +809,9 @@ class Settings:
                 "OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS must be between 1 "
                 "and 168"
             )
-        if self.whatsapp_dispatch_mode not in {
-            "disabled",
-            "native_sidecar",
-            "cloud_api_future",
-        }:
+        if self.whatsapp_dispatch_mode not in {"disabled", "native_sidecar"}:
             raise RuntimeError(
-                "WHATSAPP_DISPATCH_MODE must be disabled, native_sidecar, "
-                "or cloud_api_future"
+                "WHATSAPP_DISPATCH_MODE must be disabled or native_sidecar"
             )
         if not 1 <= self.whatsapp_sidecar_timeout_seconds <= 60:
             raise RuntimeError(
@@ -1032,6 +1036,35 @@ class Settings:
                     "prometheus_client must be installed in production when "
                     "REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION=true"
                 ) from exc
+
+    def capability_groups(self):
+        from .settings_groups import capability_groups
+
+        return capability_groups(self)
+
+    def effective_safe_config(self) -> dict[str, object]:
+        from .settings_groups import effective_safe_config
+
+        return effective_safe_config(self)
+
+    def retired_runtime_requests(self) -> tuple[str, ...]:
+        compatibility = self.capability_groups()["compatibility"]
+        if not compatibility.retired_runtime_requested:
+            return ()
+        names = []
+        if self.external_channel_transport != "disabled":
+            names.append("EXTERNAL_CHANNEL_TRANSPORT")
+        if self.external_channel_deployment_mode != "disabled":
+            names.append("EXTERNAL_CHANNEL_DEPLOYMENT_MODE")
+        if self.external_channel_sync_enabled:
+            names.append("EXTERNAL_CHANNEL_SYNC_ENABLED")
+        if self.external_channel_event_driver_enabled:
+            names.append("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED")
+        if self.external_channel_bridge_enabled:
+            names.append("EXTERNAL_CHANNEL_BRIDGE_ENABLED")
+        if self.external_channel_cli_fallback_enabled:
+            names.append("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED")
+        return tuple(names)
 
     @staticmethod
     def _is_truthy(raw: str | None) -> bool:

@@ -808,6 +808,46 @@ class TicketAIIntake(Base):
     creator: Mapped[Optional["User"]] = relationship()
 
 
+class SpeedafCancelIdempotency(Base):
+    __tablename__ = "speedaf_cancel_idempotency"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="ux_speedaf_cancel_idempotency_dedupe_key"),
+        Index("ix_speedaf_cancel_idempotency_ticket_id", "ticket_id"),
+        Index("ix_speedaf_cancel_idempotency_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    ticket_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    waybill_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    request_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class SpeedafAddressUpdateIdempotency(Base):
+    __tablename__ = "speedaf_address_update_idempotency"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="ux_speedaf_address_update_dedupe_key"),
+        Index("ix_speedaf_address_update_ticket_id", "ticket_id"),
+        Index("ix_speedaf_address_update_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    ticket_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    waybill_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    phone_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    request_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class BackgroundJob(Base):
     __tablename__ = "background_jobs"
     __table_args__ = (

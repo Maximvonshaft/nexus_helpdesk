@@ -26,6 +26,8 @@ env:
   WEBCHAT_AI_ENABLED: "false"
   WEBCHAT_AI_AUTO_REPLY_MODE: off
   WEBCHAT_VOICE_ENABLED: "false"
+  WEBCHAT_HUMAN_CALL_ENABLED: "false"
+  WEBCHAT_LIVE_AI_VOICE_ENABLED: "false"
   ENABLE_OUTBOUND_DISPATCH: "false"
   OUTBOUND_PROVIDER: disabled
   WHATSAPP_NATIVE_ENABLED: "false"
@@ -126,6 +128,98 @@ jobs:
         with:
           name: static-authority-${{ needs.candidate-identity.outputs.source_sha }}
           path: /tmp/nexus-static
+          if-no-files-found: error
+          retention-days: 30
+
+  security-supply-chain:
+    name: security-supply-chain
+    needs: candidate-identity
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout frozen Head with reachable history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            config/security/security-tool-requirements.txt
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Initialize CodeQL for Python and JavaScript
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a
+        with:
+          languages: python,javascript-typescript
+          build-mode: none
+          queries: security-extended
+      - name: Install exact application and security dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python -m pip install --disable-pip-version-check -r config/security/security-tool-requirements.txt
+      - name: Run tracked-tree and reachable-history secret assurance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-security
+          python scripts/security/scan_repository.py \
+            --root . \
+            --output /tmp/nexus-security/repository-secret-scan.json
+          python scripts/security/scan_git_history.py \
+            --root . \
+            --max-blob-bytes 33554432 \
+            --output /tmp/nexus-security/history-secret-scan.json
+      - name: Run Python SAST and dependency assurance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m bandit -r backend/app -ll -ii -f json \
+            -o /tmp/nexus-security/bandit.json
+          python -m pip_audit -r backend/requirements.txt --strict \
+            --format json --output /tmp/nexus-security/python-dependencies.json
+          python -m pip_audit -r backend/requirements.txt --strict \
+            --format cyclonedx-json --output /tmp/nexus-security/python-sbom.cdx.json
+      - name: Run frontend dependency assurance and generate SBOM
+        working-directory: webapp
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --audit-level=high --json > /tmp/nexus-security/frontend-dependencies.json
+          npm sbom --package-lock-only --sbom-format=cyclonedx \
+            > /tmp/nexus-security/frontend-sbom.cdx.json
+      - name: Analyze exact Head with CodeQL
+        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a
+        with:
+          upload: never
+          upload-database: false
+          output: /tmp/nexus-security/codeql
+          category: canonical-security
+      - name: Enforce zero CodeQL findings
+        run: |
+          python scripts/security/assert_sarif_clean.py \
+            --input /tmp/nexus-security/codeql \
+            --exceptions config/security/codeql-exceptions.json \
+            --output /tmp/nexus-security/codeql-summary.json
+      - name: Upload bounded security and supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: security-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          path: /tmp/nexus-security
           if-no-files-found: error
           retention-days: 30
 
@@ -323,6 +417,36 @@ jobs:
             --tag "nexus-ci:$SOURCE_SHA" . 2>&1 | tee /tmp/nexus-image/build.log
           test "$(docker image inspect "nexus-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
           docker image inspect "nexus-ci:$SOURCE_SHA" > /tmp/nexus-image/image-inspect.json
+      - name: Run Trivy vulnerability inventory
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: json
+          output: /tmp/nexus-image/trivy.raw.json
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+      - name: Generate image CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: cyclonedx
+          output: /tmp/nexus-image/image.raw.cdx.json
+          scanners: vuln
+          ignore-unfixed: false
+          exit-code: '0'
+      - name: Set up Node for frontend SBOM
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Generate frontend CycloneDX SBOM
+        working-directory: webapp
+        run: |
+          npm sbom --package-lock-only --sbom-format=cyclonedx \
+            > /tmp/nexus-image/frontend.raw.cdx.json
       - name: Migrate disposable image database
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
@@ -358,6 +482,8 @@ jobs:
             -e PRIVATE_AI_RUNTIME_ENABLED=false \
             -e WEBCHAT_AI_ENABLED=false \
             -e WEBCHAT_VOICE_ENABLED=false \
+            -e WEBCHAT_HUMAN_CALL_ENABLED=false \
+            -e WEBCHAT_LIVE_AI_VOICE_ENABLED=false \
             -e ENABLE_OUTBOUND_DISPATCH=false \
             -e OUTBOUND_PROVIDER=disabled \
             -e WHATSAPP_NATIVE_ENABLED=false \
@@ -374,6 +500,19 @@ jobs:
           curl --fail --silent http://127.0.0.1:8080/healthz | tee /tmp/nexus-image/healthz.json
           curl --fail --silent http://127.0.0.1:8080/readyz | tee /tmp/nexus-image/readyz.json
           docker logs nexus-ci-candidate > /tmp/nexus-image/candidate.log 2>&1
+          jq -n \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson health "$(cat /tmp/nexus-image/healthz.json)" \
+            --argjson ready "$(cat /tmp/nexus-image/readyz.json)" \
+            '{schema:"nexus.runtime-smoke-summary.v1",source_sha:$source_sha,health:$health,ready:$ready,synthetic:true,provider_enabled:false,outbound_enabled:false}' \
+            > /tmp/nexus-image/runtime-smoke-summary.txt
+      - name: Run controlled release-image assurance
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
+          CANDIDATE_IMAGE: nexus-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          RELEASE_IMAGE_DIR: /tmp/nexus-image
+        run: bash scripts/release/run_controlled_image_assurance.sh
       - name: Upload image and deployment evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -392,6 +531,7 @@ jobs:
     needs:
       - candidate-identity
       - static-authority
+      - security-supply-chain
       - backend-full
       - frontend-browser
       - postgres-acceptance
@@ -404,6 +544,7 @@ jobs:
         env:
           CANDIDATE_IDENTITY: ${{ needs.candidate-identity.result }}
           STATIC_AUTHORITY: ${{ needs.static-authority.result }}
+          SECURITY_SUPPLY_CHAIN: ${{ needs.security-supply-chain.result }}
           BACKEND_FULL: ${{ needs.backend-full.result }}
           FRONTEND_BROWSER: ${{ needs.frontend-browser.result }}
           POSTGRES_ACCEPTANCE: ${{ needs.postgres-acceptance.result }}
@@ -413,6 +554,7 @@ jobs:
           printf '%s\n' \
             "candidate-identity=$CANDIDATE_IDENTITY" \
             "static-authority=$STATIC_AUTHORITY" \
+            "security-supply-chain=$SECURITY_SUPPLY_CHAIN" \
             "backend-full=$BACKEND_FULL" \
             "frontend-browser=$FRONTEND_BROWSER" \
             "postgres-acceptance=$POSTGRES_ACCEPTANCE" \
@@ -420,6 +562,7 @@ jobs:
           for result in \
             "$CANDIDATE_IDENTITY" \
             "$STATIC_AUTHORITY" \
+            "$SECURITY_SUPPLY_CHAIN" \
             "$BACKEND_FULL" \
             "$FRONTEND_BROWSER" \
             "$POSTGRES_ACCEPTANCE" \

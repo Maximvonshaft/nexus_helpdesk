@@ -917,7 +917,13 @@ def probe_websocket(url: str, *, timeout_seconds: int, verify_tls: bool) -> dict
         raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
         sock = raw_socket
         if parsed.scheme == "wss":
-            context = ssl.create_default_context() if verify_tls else ssl._create_unverified_context()  # noqa: SLF001
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            if verify_tls:
+                context.load_default_certs()
+            else:
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
             sock = context.wrap_socket(raw_socket, server_hostname=host)
         request = (
             f"GET {path} HTTP/1.1\r\n"

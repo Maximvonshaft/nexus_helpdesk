@@ -24,7 +24,6 @@ from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import (  # noqa: E402
     OperatorQueueError,
     create_operator_task,
-    replay_operator_task,
     transition_operator_task,
 )
 
@@ -69,7 +68,7 @@ def make_unresolved(db, status: str = "pending") -> ExternalChannelUnresolvedEve
     return row
 
 
-def make_task(db, *, status: str = "pending", unresolved_event_id: int | None = None, source_type: str = "external_channel") -> OperatorTask:
+def make_task(db, *, status: str = "pending", unresolved_event_id: int | None = None, source_type: str = "webchat") -> OperatorTask:
     row = OperatorTask(
         source_type=source_type,
         source_id=str(unresolved_event_id or status),
@@ -127,26 +126,6 @@ def test_dropped_task_resolve_returns_409_without_source_change(db_session):
     assert task.status == "dropped"
 
 
-def test_replayed_task_replay_returns_409(db_session):
-    admin = make_admin(db_session)
-    event = make_unresolved(db_session, status="replayed")
-    task = make_task(db_session, status="replayed", unresolved_event_id=event.id)
-
-    with pytest.raises(OperatorQueueError) as exc:
-        replay_operator_task(db_session, task_id=task.id, actor_id=admin.id, replay_func=lambda db, *, row: True)
-
-    assert_terminal_error(exc)
-
-
-def test_replay_failed_task_replay_returns_409(db_session):
-    admin = make_admin(db_session)
-    event = make_unresolved(db_session, status="replay_failed")
-    task = make_task(db_session, status="replay_failed", unresolved_event_id=event.id)
-
-    with pytest.raises(OperatorQueueError) as exc:
-        replay_operator_task(db_session, task_id=task.id, actor_id=admin.id, replay_func=lambda db, *, row: True)
-
-    assert_terminal_error(exc)
 
 
 def test_missing_task_still_returns_404(db_session):
@@ -168,3 +147,18 @@ def test_unsupported_action_still_returns_400(db_session):
 
     assert exc.value.status_code == 400
     assert exc.value.code == "unsupported_operator_task_action"
+
+def test_pending_external_channel_task_is_read_only(db_session):
+    admin = make_admin(db_session)
+    event = make_unresolved(db_session, status="pending")
+    task = make_task(db_session, status="pending", unresolved_event_id=event.id, source_type="external_channel")
+
+    with pytest.raises(OperatorQueueError) as exc:
+        transition_operator_task(db_session, task_id=task.id, action="drop", actor_id=admin.id)
+
+    assert exc.value.status_code == 410
+    assert exc.value.code == "legacy_operator_task_read_only"
+    db_session.refresh(event)
+    db_session.refresh(task)
+    assert event.status == "pending"
+    assert task.status == "pending"

@@ -103,7 +103,7 @@ def create_live_voice_session(
     x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
 ) -> dict[str, object]:
     config = load_webchat_voice_runtime_config()
-    if not config.enabled or not config.live_voice_upstream_token:
+    if not config.live_ai_voice_enabled or not config.live_voice_upstream_token:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="live voice is unavailable")
     with managed_session(db):
         voice_session = create_runtime_voice_session(
@@ -151,7 +151,7 @@ def process_live_voice_turn(
 @router.get("/webchat/live/health")
 async def webchat_live_voice_health() -> Response:
     config = load_webchat_voice_runtime_config()
-    if not config.enabled or not config.live_voice_upstream_health_url:
+    if not config.live_ai_voice_enabled or not config.live_voice_upstream_health_url:
         return _disabled_response()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -171,7 +171,7 @@ async def webchat_live_voice_ws(websocket: WebSocket) -> None:
     import websockets
 
     config = load_webchat_voice_runtime_config()
-    if not config.enabled or not config.live_voice_upstream_ws_url or not config.live_voice_upstream_token:
+    if not config.live_ai_voice_enabled or not config.live_voice_upstream_ws_url or not config.live_voice_upstream_token:
         await websocket.close(code=4403)
         return
     conversation_id = str(websocket.query_params.get("conversation_id") or "").strip()

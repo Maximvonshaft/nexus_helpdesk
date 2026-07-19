@@ -5,7 +5,7 @@ import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import PurePosixPath
-from xml.etree import ElementTree
+from defusedxml import ElementTree
 from xml.parsers import expat
 
 from fastapi import HTTPException

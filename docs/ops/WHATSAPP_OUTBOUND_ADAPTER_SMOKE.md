@@ -9,7 +9,7 @@ Current scope:
 - WhatsApp outbound uses the native sidecar adapter boundary.
 - The adapter validates channel, target, and active WhatsApp account before dispatch.
 - Production remains fail-closed unless runtime flags explicitly enable dispatch.
-- Legacy ExternalChannel bridge dispatch returns a non-retryable retired error and must not be used for smoke evidence.
+- The legacy ExternalChannel bridge module is absent and cannot be used for smoke evidence.
 
 ## Safety Boundary
 

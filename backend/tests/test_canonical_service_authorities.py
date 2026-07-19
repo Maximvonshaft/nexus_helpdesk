@@ -227,9 +227,11 @@ def test_admin_password_policy_is_bound_without_runtime_mutation() -> None:
     from app.api.admin_password_policy import enforce_admin_password_request_policy
 
     main = (APP / "main.py").read_text(encoding="utf-8")
+    routes = (APP / "bootstrap" / "routers.py").read_text(encoding="utf-8")
     guard = (APP / "api" / "admin_password_policy.py").read_text(encoding="utf-8")
     auth = (APP / "auth_service.py").read_text(encoding="utf-8")
-    assert "dependencies=[Depends(enforce_admin_password_request_policy)]" in main
+    assert "dependencies=[Depends(enforce_admin_password_request_policy)]" in routes
+    assert "register_api_routers(app)" in main
     assert "validate_admin_password_policy" in guard
     assert "validate_admin_password_policy" not in auth
     assert "._validate_password_length =" not in main
@@ -254,9 +256,14 @@ def test_admin_password_policy_is_bound_without_runtime_mutation() -> None:
 
 def test_fastapi_method_and_normalized_path_are_unique() -> None:
     from app.main import app
-    from scripts.qualification.route_authority import qualification_payload
+    import importlib.util
 
-    payload = qualification_payload(app)
+    route_module_path = PROJECT / "scripts" / "qualification" / "route_authority.py"
+    spec = importlib.util.spec_from_file_location("route_authority", route_module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = module.qualification_payload(app)
     assert payload["duplicates"] == [], payload["duplicates"]
     assert payload["status"] == "pass"
 

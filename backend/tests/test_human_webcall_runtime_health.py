@@ -31,6 +31,8 @@ def db_session():
 def voice_env(monkeypatch):
     for key in [
         "WEBCHAT_VOICE_ENABLED",
+        "WEBCHAT_HUMAN_CALL_ENABLED",
+        "WEBCHAT_LIVE_AI_VOICE_ENABLED",
         "WEBCHAT_VOICE_PROVIDER",
         "WEBCHAT_VOICE_RECORDING_ENABLED",
         "WEBCHAT_VOICE_TRANSCRIPTION_ENABLED",
@@ -84,7 +86,8 @@ def test_human_webcall_runtime_health_reports_stale_counts_and_disabled_verdict(
 
 
 def test_human_webcall_runtime_health_ready_when_voice_enabled(monkeypatch, db_session):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
 
     status = get_human_webcall_runtime_status(db_session)

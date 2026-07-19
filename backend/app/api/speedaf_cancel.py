@@ -8,14 +8,13 @@ from typing import Any
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth_service import ALGORITHM
 from ..db import get_db
 from ..enums import EventType
-from ..models import Ticket, TicketEvent
+from ..models import SpeedafCancelIdempotency, Ticket, TicketEvent
 from ..settings import get_settings
 from .deps import get_current_user
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
@@ -257,30 +256,6 @@ def _dedupe_key(*, ticket_id: int, waybill_code: str, reason_code: str) -> str:
     return f"speedaf-cancel:ticket:{ticket_id}:waybill:{_hash_short(waybill_code)}:reason:{reason_code}"
 
 
-def _ensure_sqlite_cancel_idempotency_table(db: Session) -> None:
-    if db.bind is None or db.bind.dialect.name != "sqlite":
-        return
-    db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS speedaf_cancel_idempotency (
-                id INTEGER PRIMARY KEY,
-                dedupe_key VARCHAR(255) NOT NULL UNIQUE,
-                ticket_id INTEGER NOT NULL,
-                waybill_hash VARCHAR(64) NOT NULL,
-                reason_code VARCHAR(16) NOT NULL,
-                actor_id INTEGER NOT NULL,
-                status VARCHAR(40) NOT NULL,
-                request_id VARCHAR(160),
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
-            )
-            """
-        )
-    )
-    db.flush()
-
-
 def _reserve_cancel_idempotency(
     db: Session,
     *,
@@ -291,44 +266,39 @@ def _reserve_cancel_idempotency(
     actor_id: int,
     request_id: str | None,
 ) -> None:
-    _ensure_sqlite_cancel_idempotency_table(db)
     now = utc_now()
     try:
         with db.begin_nested():
-            db.execute(
-                text(
-                    """
-                    INSERT INTO speedaf_cancel_idempotency
-                        (dedupe_key, ticket_id, waybill_hash, reason_code, actor_id, status, request_id, created_at, updated_at)
-                    VALUES
-                        (:dedupe_key, :ticket_id, :waybill_hash, :reason_code, :actor_id, 'processing', :request_id, :now, :now)
-                    """
-                ),
-                {
-                    "dedupe_key": dedupe_key,
-                    "ticket_id": ticket_id,
-                    "waybill_hash": _hash_value(waybill_code),
-                    "reason_code": reason_code,
-                    "actor_id": actor_id,
-                    "request_id": request_id,
-                    "now": now,
-                },
+            db.add(
+                SpeedafCancelIdempotency(
+                    dedupe_key=dedupe_key,
+                    ticket_id=ticket_id,
+                    waybill_hash=_hash_value(waybill_code),
+                    reason_code=reason_code,
+                    actor_id=actor_id,
+                    status="processing",
+                    request_id=request_id,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="speedaf_cancel_already_requested")
+            db.flush()
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="speedaf_cancel_already_requested",
+        ) from exc
 
 
 def _update_cancel_idempotency_status(db: Session, *, dedupe_key: str, status_value: str) -> None:
-    db.execute(
-        text(
-            """
-            UPDATE speedaf_cancel_idempotency
-            SET status = :status, updated_at = :now
-            WHERE dedupe_key = :dedupe_key
-            """
-        ),
-        {"status": status_value, "now": utc_now(), "dedupe_key": dedupe_key},
-    )
+    row = db.query(SpeedafCancelIdempotency).filter(
+        SpeedafCancelIdempotency.dedupe_key == dedupe_key
+    ).one_or_none()
+    if row is None:
+        raise RuntimeError("speedaf_cancel_idempotency_reservation_missing")
+    row.status = status_value
+    row.updated_at = utc_now()
+    db.flush()
 
 
 def _append_cancel_event(
