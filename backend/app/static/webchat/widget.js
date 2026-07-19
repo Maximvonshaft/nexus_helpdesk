@@ -79,7 +79,7 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
     + '.nd-webchat-avatar{width:56px;height:56px;border-radius:20px;overflow:hidden;background:#fff;border:1px solid rgba(255,90,0,.20);box-shadow:0 8px 18px rgba(255,90,0,.10)}.nd-webchat-avatar img{width:100%;height:100%;object-fit:cover;display:block}.nd-webchat-title-row{display:flex;align-items:center;gap:8px;min-width:0}.nd-webchat-title-row strong{display:block;font-size:17px;line-height:22px;font-weight:780;min-width:0}.nd-webchat-online{font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:#eafaf3;color:#14805c}.nd-webchat-header-subtitle{display:block;margin-top:4px;font-size:13px;line-height:18px;color:#657085;font-weight:560}\n'
     + '.nd-webchat-close,.nd-webchat-voice{border:0;cursor:pointer}.nd-webchat-close{width:38px;height:38px;border-radius:14px;background:#f2f5f9;position:relative;color:#374155}.nd-webchat-close:before,.nd-webchat-close:after{content:"";position:absolute;left:12px;right:12px;top:18px;height:2px;border-radius:2px;background:currentColor}.nd-webchat-close:before{transform:rotate(45deg)}.nd-webchat-close:after{transform:rotate(-45deg)}\n'
     + '.nd-webchat-voice{display:none;min-width:72px;min-height:54px;margin-left:auto;margin-right:8px;padding:8px 10px;border-radius:14px;background:#f97316;color:#fff;box-shadow:0 10px 24px rgba(249,115,22,.28);font:800 12px/1.05 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;white-space:nowrap}.nd-webchat-voice[data-visible=true]{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.nd-webchat-voice svg{width:18px;height:18px}.nd-webchat-voice.is-live{animation:ndLiveVoicePulse 1.15s infinite}@keyframes ndLiveVoicePulse{0%{box-shadow:0 0 0 0 rgba(249,115,22,.52)}70%{box-shadow:0 0 0 12px rgba(249,115,22,0)}100%{box-shadow:0 0 0 0 rgba(249,115,22,0)}}\n'
-    + '.nd-webchat-voice-panel{display:none;border-bottom:1px solid #eef2f7;background:#fff7ed;padding:12px 16px 14px}.nd-webchat-voice-panel[data-open=true]{display:block}.nd-webchat-voice-row{display:flex;gap:8px;align-items:center}.nd-webchat-voice-select{flex:1;min-width:0;height:38px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;color:#0f172a;padding:0 10px;font-size:13px;outline:none}.nd-webchat-voice-start{height:38px;min-width:76px;border:0;border-radius:12px;background:#f97316;color:#fff;font-weight:800;cursor:pointer}.nd-webchat-voice-start.stop{background:#dc2626}.nd-webchat-voice-status{margin-top:10px;border:1px solid #fed7aa;background:#fffaf6;color:#9a3412;border-radius:13px;padding:9px 10px;font-size:12.5px;line-height:1.45}.nd-webchat-voice-transcript{margin-top:8px;max-height:126px;overflow:auto}.nd-webchat-voice-msg{margin-top:6px;padding:8px 10px;border-radius:12px;font-size:12.5px;line-height:1.42}.nd-webchat-voice-msg.user{background:#eff6ff;color:#1e3a8a}.nd-webchat-voice-msg.ai{background:#fff;color:#7c2d12;border:1px solid #fed7aa}.nd-webchat-voice-foot{margin-top:8px;color:#64748b;font-size:11.5px}\n'
+    + '.nd-webchat-voice-panel{display:none;border-bottom:1px solid #eef2f7;background:#fff7ed;padding:12px 16px 14px}.nd-webchat-voice-panel[data-open=true]{display:block}.nd-webchat-voice-row{display:flex;gap:8px;align-items:center}.nd-webchat-voice-auto{flex:1;min-width:0;color:#64748b;font-size:13px;font-weight:650;line-height:1.35}.nd-webchat-voice-start{height:38px;min-width:76px;border:0;border-radius:12px;background:#f97316;color:#fff;font-weight:800;cursor:pointer}.nd-webchat-voice-start.stop{background:#dc2626}.nd-webchat-voice-status{margin-top:10px;border:1px solid #fed7aa;background:#fffaf6;color:#9a3412;border-radius:13px;padding:9px 10px;font-size:12.5px;line-height:1.45}.nd-webchat-voice-transcript{margin-top:8px;max-height:126px;overflow:auto}.nd-webchat-voice-msg{margin-top:6px;padding:8px 10px;border-radius:12px;font-size:12.5px;line-height:1.42}.nd-webchat-voice-msg.user{background:#eff6ff;color:#1e3a8a}.nd-webchat-voice-msg.ai{background:#fff;color:#7c2d12;border:1px solid #fed7aa}.nd-webchat-voice-foot{margin-top:8px;color:#64748b;font-size:11.5px}\n'
     + '.nd-webchat-messages{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:18px 18px 8px;background:linear-gradient(180deg,#fff,#fbfcfe)}\n'
     + '.nd-webchat-msg{max-width:84%;margin:0 0 12px;padding:13px 14px;border-radius:18px 18px 18px 6px;font-size:14.5px;line-height:1.46;white-space:pre-wrap;overflow-wrap:anywhere}\n'
     + '.nd-webchat-msg.visitor{margin-left:auto;background:' + accentColor + ';color:#fff;border-radius:18px 18px 6px 18px}.nd-webchat-msg.agent,.nd-webchat-msg.system{margin-right:auto;background:#f1f4f8;color:#243044;border:0;border-bottom-left-radius:6px}\n'
@@ -155,12 +155,7 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
   voicePanel.className = 'nd-webchat-voice-panel';
   voicePanel.innerHTML = ''
     + '<div class="nd-webchat-voice-row">'
-    + '<select class="nd-webchat-voice-select" aria-label="Voice language">'
-    + '<option value="de|de_DE-thorsten-medium|1.0">Deutsch</option>'
-    + '<option value="i|if_sara|1.0">Italiano</option>'
-    + '<option value="f|ff_siwis|1.0">Francais</option>'
-    + '<option value="b|bm_george|1.0">English UK</option>'
-    + '</select>'
+    + '<div class="nd-webchat-voice-auto">Language is detected automatically.</div>'
     + '<button class="nd-webchat-voice-start" type="button">Start</button>'
     + '</div>'
     + '<div class="nd-webchat-voice-status">Tap Start and allow microphone access.</div>'
@@ -653,6 +648,7 @@ if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
       addVoiceTranscript('user', payload.text);
       voiceStatus('Thinking...');
     }
+    if (payload.type === 'stt_rejected') voiceStatus("I didn't catch that clearly.");
     if (payload.type === 'ai_answer') {
       addVoiceTranscript('ai', payload.answer);
       voiceStatus('Speaking...');
@@ -725,11 +721,9 @@ return;
     }
 
     var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-    var presetEl = voicePanel.querySelector('.nd-webchat-voice-select');
-    var preset = (presetEl && presetEl.value ? presetEl.value : 'de|de_DE-thorsten-medium|1.0').split('|');
-    var langCode = preset[0] || 'de';
-    var voice = preset[1] || 'de_DE-thorsten-medium';
-    var speed = preset[2] || '1.0';
+    var langCode = 'auto';
+    var voice = 'auto';
+    var speed = '1.0';
     var live = {
       ws: null,
       audioContext: null,

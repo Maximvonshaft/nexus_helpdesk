@@ -1,13 +1,14 @@
 [Unit]
 Description=Nexus Live Voice Media Edge
-After=network-online.target local-voice-api.service local-german-tts-api.service
-Wants=network-online.target local-voice-api.service local-german-tts-api.service
+After=network-online.target nexus-voice-models.service
+Wants=network-online.target nexus-voice-models.service
 
 [Service]
 Type=simple
 User=ecs-user
 WorkingDirectory=/data/ai-runtime/services/nexus_live_voice_media
 Environment=TOKENIZERS_PARALLELISM=false
+Environment=LIVE_VOICE_TTS_MAX_CHARS=180
 Environment=LIVE_VOICE_SHARED_TOKEN_FILE=/run/credentials/nexus-live-voice-media.service/live_voice_token
 EnvironmentFile=/etc/nexus/live_voice_media.env
 LoadCredential=live_voice_token:/etc/nexus/secrets/live_voice_token
@@ -19,8 +20,10 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/data/ai-runtime/services/nexus_live_voice_media
-ReadWritePaths=/data/ai-runtime/services/local_voice_api/output
-ReadWritePaths=/data/ai-runtime/services/local_german_tts_api/output
+ReadWritePaths=/var/lib/nexus/voice-models/output
+MemoryMax=1G
+TasksMax=128
+CPUQuota=200%
 
 [Install]
 WantedBy=multi-user.target

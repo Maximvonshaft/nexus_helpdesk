@@ -1,0 +1,33 @@
+[Unit]
+Description=Nexus Versioned Voice Models (Nemotron ASR and Qwen3 TTS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ecs-user
+WorkingDirectory=/opt/nexus/private-ai-runtime/current/voice_models_runtime
+EnvironmentFile=/etc/nexus/voice_models.env
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=NUMBA_CACHE_DIR=/var/lib/nexus/voice-models/numba
+Environment=MPLCONFIGDIR=/var/lib/nexus/voice-models/matplotlib
+Environment=TRITON_CACHE_DIR=/var/lib/nexus/voice-models/triton
+Environment=XDG_CACHE_HOME=/var/lib/nexus/voice-models/cache
+Environment=HOME=/var/lib/nexus/voice-models/home
+ExecStartPre=/usr/bin/install -d -o ecs-user -g ecs-user /var/lib/nexus/voice-models /var/lib/nexus/voice-models/numba /var/lib/nexus/voice-models/matplotlib /var/lib/nexus/voice-models/triton /var/lib/nexus/voice-models/cache /var/lib/nexus/voice-models/home /var/lib/nexus/voice-models/output
+ExecStart=/opt/nexus/private-ai-runtime/current/voice_models_runtime/.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8010 --workers 1
+Restart=always
+RestartSec=10
+TimeoutStartSec=15min
+MemoryMax=28G
+TasksMax=256
+CPUQuota=400%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nexus/voice-models
+ReadWritePaths=/data/ai-runtime/models
+
+[Install]
+WantedBy=multi-user.target

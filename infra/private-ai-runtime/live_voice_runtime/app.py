@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
-import math
 import os
 import tempfile
 import time
@@ -16,6 +15,8 @@ import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from voice_policy import FALLBACK_REPROMPT_EN, SUPPORTED_TTS_LANGUAGES, normalize_language, split_tts_chunks, transcript_quality_reason
+
 
 WORK_DIR = Path(os.getenv("LIVE_VOICE_WORK_DIR", "/data/ai-runtime/services/nexus_live_voice_media"))
 INPUT_DIR = WORK_DIR / "input"
@@ -23,17 +24,10 @@ INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TOKEN_FILE = Path(os.getenv("LIVE_VOICE_SHARED_TOKEN_FILE", "/run/nexus/live_voice_token"))
 VOICE_URL = os.getenv("LIVE_VOICE_API_URL", "http://127.0.0.1:8010").rstrip("/")
-GERMAN_TTS_URL = os.getenv("LIVE_VOICE_GERMAN_TTS_URL", "http://127.0.0.1:8040").rstrip("/")
 NEXUS_TURN_URL = os.getenv("NEXUS_LIVE_VOICE_TURN_URL", "").strip()
+TTS_MAX_CHARS = max(40, min(int(os.getenv("LIVE_VOICE_TTS_MAX_CHARS", "180")), 300))
 
 SAMPLE_RATE_IN = 16000
-SUPPORTED_TTS = {
-    "de": ("de", "de_DE-thorsten-medium"),
-    "en": ("b", "bm_george"),
-    "fr": ("f", "ff_siwis"),
-    "it": ("i", "if_sara"),
-}
-
 app = FastAPI(title="Nexus Live Voice Media Edge", version="2026-07-16")
 
 
@@ -106,19 +100,6 @@ def stt_sync(wav_path: Path) -> dict:
     return response.json()
 
 
-def normalize_language(value: str | None) -> str:
-    language = str(value or "").strip().lower().replace("_", "-")
-    if language.startswith("de") or language == "d":
-        return "de"
-    if language.startswith("fr") or language == "f":
-        return "fr"
-    if language.startswith("it") or language == "i":
-        return "it"
-    if language.startswith("en") or language in {"a", "b"}:
-        return "en"
-    return language.split("-", 1)[0]
-
-
 def orchestrate_sync(
     *,
     conversation_id: str,
@@ -148,16 +129,15 @@ def orchestrate_sync(
 
 def tts_sync(answer: str, language: str | None, speed: float) -> dict:
     normalized_language = normalize_language(language)
-    voice_config = SUPPORTED_TTS.get(normalized_language)
-    if voice_config is None:
+    if normalized_language not in SUPPORTED_TTS_LANGUAGES:
         raise RuntimeError("tts_language_not_supported")
-    lang_code, voice = voice_config
-    payload = {"text": answer, "lang_code": lang_code, "voice": voice, "speed": speed}
-    endpoint = GERMAN_TTS_URL if normalized_language == "de" else VOICE_URL
-    response = requests.post(f"{endpoint}/tts", json=payload, timeout=300)
+    response = requests.post(
+        f"{VOICE_URL}/tts",
+        json={"text": answer, "language": normalized_language, "speed": speed},
+        timeout=300,
+    )
     response.raise_for_status()
     result = response.json()
-    result["actual_engine"] = "piper-german" if normalized_language == "de" else "kokoro"
     result["language"] = normalized_language
     return result
 
@@ -167,7 +147,7 @@ def health() -> JSONResponse:
     checks: dict[str, object] = {
         "nexus_orchestrator": {"ok": bool(NEXUS_TURN_URL and read_token())},
     }
-    for name, url in (("voice", f"{VOICE_URL}/health"), ("german_tts", f"{GERMAN_TTS_URL}/health")):
+    for name, url in (("voice_models", f"{VOICE_URL}/health"),):
         try:
             response = requests.get(url, timeout=3)
             checks[name] = {"ok": response.ok, "data": response.json() if response.text else None}
@@ -179,7 +159,7 @@ def health() -> JSONResponse:
             "status": "ok" if healthy else "unavailable",
             "service": "nexus-live-voice-media-edge",
             "transport": "websocket-pcm16",
-            "features": ["server-vad", "stt", "nexus-runtime-orchestration", "tts", "echo-safe-turn-taking"],
+            "features": ["server-vad", "stt-quality-gate", "nexus-runtime-orchestration", "chunked-tts", "echo-safe-turn-taking"],
             "checks": checks,
         },
         status_code=200 if healthy else 503,
@@ -253,6 +233,95 @@ class LiveSession:
         self.speech_frames = 0
         self.silence_frames = 0
 
+    async def _stream_tts(
+        self,
+        *,
+        turn_id: int,
+        answer: str,
+        response_language: str,
+        started: float,
+        feedback: bool = False,
+    ) -> None:
+        """Send the first synthesized clause immediately, then preserve PCM order."""
+        normalized_language = normalize_language(response_language)
+        chunks = split_tts_chunks(answer, max_chars=TTS_MAX_CHARS)
+        if normalized_language not in SUPPORTED_TTS_LANGUAGES or not chunks:
+            raise RuntimeError("tts_language_not_supported")
+
+        loop = asyncio.get_running_loop()
+        tts_started = time.monotonic()
+        total_audio_bytes = 0
+        total_duration_seconds = 0.0
+        sample_rate: int | None = None
+        first_audio_ms: int | None = None
+        for index, chunk in enumerate(chunks):
+            chunk_started = time.monotonic()
+            tts = await loop.run_in_executor(None, tts_sync, chunk, normalized_language, self.speed)
+            chunk_elapsed_ms = int((time.monotonic() - chunk_started) * 1000)
+            path = Path(str(tts.get("path") or ""))
+            if not path.is_file():
+                raise RuntimeError("tts_file_not_found")
+            try:
+                chunk_sample_rate, pcm_bytes = wav_file_to_pcm16_bytes(path)
+            finally:
+                path.unlink(missing_ok=True)
+            if sample_rate is None:
+                sample_rate = chunk_sample_rate
+            elif sample_rate != chunk_sample_rate:
+                raise RuntimeError("tts_sample_rate_changed")
+
+            duration_seconds = len(pcm_bytes) / 2 / chunk_sample_rate
+            total_audio_bytes += len(pcm_bytes)
+            total_duration_seconds += duration_seconds
+            self.ignore_audio_until = max(self.ignore_audio_until, loop.time()) + duration_seconds + 0.35
+            chunk_bytes = max(2, int(chunk_sample_rate * 2 * 0.1))
+            if index == 0:
+                first_audio_ms = int((time.monotonic() - tts_started) * 1000)
+                await send_json(
+                    self.ws,
+                    self.send_lock,
+                    {
+                        "type": "tts_start",
+                        "turn_id": turn_id,
+                        "sample_rate": chunk_sample_rate,
+                        "engine": tts.get("engine"),
+                        "language": normalized_language,
+                        "audio_format": "pcm16le",
+                        "chunked": len(chunks) > 1,
+                        "first_audio_ms": first_audio_ms,
+                        "feedback": feedback,
+                    },
+                )
+            await send_json(
+                self.ws,
+                self.send_lock,
+                {
+                    "type": "tts_chunk",
+                    "turn_id": turn_id,
+                    "index": index,
+                    "count": len(chunks),
+                    "text_chars": len(chunk),
+                    "tts_elapsed_ms": chunk_elapsed_ms,
+                },
+            )
+            for offset in range(0, len(pcm_bytes), chunk_bytes):
+                await send_binary(self.ws, self.send_lock, pcm_bytes[offset : offset + chunk_bytes])
+
+        await send_json(
+            self.ws,
+            self.send_lock,
+            {
+                "type": "tts_end",
+                "turn_id": turn_id,
+                "bytes": total_audio_bytes,
+                "chunks": len(chunks),
+                "duration_ms": round(total_duration_seconds * 1000),
+                "tts_elapsed_ms": int((time.monotonic() - tts_started) * 1000),
+                "first_audio_ms": first_audio_ms,
+                "total_elapsed_ms": int((time.monotonic() - started) * 1000),
+            },
+        )
+
     async def process_turn(self, turn_id: int, pcm: bytes) -> None:
         descriptor, raw_path = tempfile.mkstemp(
             prefix="turn-", suffix=".wav", dir=INPUT_DIR
@@ -273,7 +342,8 @@ class LiveSession:
             stt = await loop.run_in_executor(None, stt_sync, wav_path)
             stt_elapsed_ms = int((time.monotonic() - stt_started) * 1000)
             transcript = str(stt.get("text") or "").strip()
-            stt_language = str(stt.get("language") or "").strip() or None
+            stt_language = normalize_language(str(stt.get("language") or "").strip()) or None
+            quality_reason = transcript_quality_reason(transcript, stt_language)
             await send_json(
                 self.ws,
                 self.send_lock,
@@ -285,6 +355,44 @@ class LiveSession:
                     "elapsed_ms": stt_elapsed_ms,
                 },
             )
+            if quality_reason:
+                await send_json(
+                    self.ws,
+                    self.send_lock,
+                    {"type": "stt_rejected", "turn_id": turn_id, "reason": quality_reason},
+                )
+                await send_json(
+                    self.ws,
+                    self.send_lock,
+                    {"type": "ai_answer", "turn_id": turn_id, "answer": FALLBACK_REPROMPT_EN, "language": "en", "fallback": True},
+                )
+                await self._stream_tts(
+                    turn_id=turn_id,
+                    answer=FALLBACK_REPROMPT_EN,
+                    response_language="en",
+                    started=started,
+                    feedback=True,
+                )
+                return
+            if stt_language not in SUPPORTED_TTS_LANGUAGES:
+                await send_json(
+                    self.ws,
+                    self.send_lock,
+                    {"type": "stt_rejected", "turn_id": turn_id, "reason": "language_not_supported"},
+                )
+                await send_json(
+                    self.ws,
+                    self.send_lock,
+                    {"type": "ai_answer", "turn_id": turn_id, "answer": FALLBACK_REPROMPT_EN, "language": "en", "fallback": True},
+                )
+                await self._stream_tts(
+                    turn_id=turn_id,
+                    answer=FALLBACK_REPROMPT_EN,
+                    response_language="en",
+                    started=started,
+                    feedback=True,
+                )
+                return
             if not transcript:
                 await send_json(self.ws, self.send_lock, {"type": "turn_complete", "turn_id": turn_id, "reply": None})
                 return
@@ -325,40 +433,11 @@ class LiveSession:
                 },
             )
 
-            tts_started = time.monotonic()
-            tts = await loop.run_in_executor(None, tts_sync, answer, response_language, self.speed)
-            tts_elapsed_ms = int((time.monotonic() - tts_started) * 1000)
-            path = Path(str(tts.get("path") or ""))
-            if not path.is_file():
-                raise RuntimeError("tts_file_not_found")
-            sample_rate, pcm_bytes = wav_file_to_pcm16_bytes(path)
-            path.unlink(missing_ok=True)
-            duration_seconds = len(pcm_bytes) / 2 / sample_rate
-            self.ignore_audio_until = asyncio.get_running_loop().time() + duration_seconds + 0.35
-            chunk_bytes = max(2, int(sample_rate * 2 * 0.1))
-            await send_json(
-                self.ws,
-                self.send_lock,
-                {
-                    "type": "tts_start",
-                    "turn_id": turn_id,
-                    "sample_rate": sample_rate,
-                    "engine": tts.get("actual_engine"),
-                    "voice": tts.get("voice"),
-                    "language": tts.get("language"),
-                    "audio_format": "pcm16le",
-                    "bytes": len(pcm_bytes),
-                    "chunks": max(1, math.ceil(len(pcm_bytes) / chunk_bytes)),
-                    "duration_ms": round(duration_seconds * 1000),
-                    "tts_elapsed_ms": tts_elapsed_ms,
-                },
-            )
-            for offset in range(0, len(pcm_bytes), chunk_bytes):
-                await send_binary(self.ws, self.send_lock, pcm_bytes[offset : offset + chunk_bytes])
-            await send_json(
-                self.ws,
-                self.send_lock,
-                {"type": "tts_end", "turn_id": turn_id, "total_elapsed_ms": int((time.monotonic() - started) * 1000)},
+            await self._stream_tts(
+                turn_id=turn_id,
+                answer=answer,
+                response_language=response_language,
+                started=started,
             )
         except asyncio.CancelledError:
             await send_json(self.ws, self.send_lock, {"type": "turn_cancelled", "turn_id": turn_id})

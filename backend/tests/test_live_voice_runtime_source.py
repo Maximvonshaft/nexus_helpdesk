@@ -28,9 +28,22 @@ def test_voice_media_edge_uses_runtime_reply_language_for_tts() -> None:
     source = RUNTIME.read_text(encoding="utf-8")
 
     assert 'response_language = str(result.get("language")' in source
-    assert "tts_sync, answer, response_language" in source
+    assert "await self._stream_tts(" in source
+    assert "split_tts_chunks(answer, max_chars=TTS_MAX_CHARS)" in source
     assert "kokoro-fallback" not in source
     assert 'raise RuntimeError("tts_language_not_supported")' in source
+
+
+def test_voice_runtime_has_quality_gate_and_no_runtime_native_build_path() -> None:
+    source = RUNTIME.read_text(encoding="utf-8")
+    service = (ROOT / "infra" / "private-ai-runtime" / "nexus-voice-models.service").read_text(encoding="utf-8")
+
+    assert "transcript_quality_reason(transcript, stt_language)" in source
+    assert '"type": "stt_rejected"' in source
+    assert "FALLBACK_REPROMPT_EN" in source
+    assert "pip install" not in service
+    assert "flash-attn" not in service
+    assert "MemoryMax=28G" in service
 
 
 def test_voice_runtime_prevents_echo_barge_in_and_streams_complete_audio() -> None:
@@ -40,7 +53,7 @@ def test_voice_runtime_prevents_echo_barge_in_and_streams_complete_audio() -> No
     assert "if asyncio.get_running_loop().time() < self.ignore_audio_until" in source
     assert "duration_seconds + 0.35" in source
     assert "for offset in range(0, len(pcm_bytes), chunk_bytes)" in source
-    assert '"duration_ms": round(duration_seconds * 1000)' in source
+    assert '"duration_ms": round(total_duration_seconds * 1000)' in source
     assert "barge_in" not in source
 
 

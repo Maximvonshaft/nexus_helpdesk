@@ -6,7 +6,9 @@ This directory contains the deployment-manifest contract and the reviewed Nexus 
 
 `live_voice_runtime/app.py` is the canonical source for the voice media edge. It owns VAD, STT and TTS only. Every customer-visible reply is created by the Nexus Provider Runtime through the authenticated live-voice turn endpoint, using the same conversation history, tools, knowledge and reply contract as text WebChat. During TTS playback, microphone input is ignored to prevent speaker echo from terminating the response.
 
-Production runs `nexus-live-voice-media.service`. Its non-secret endpoint settings live in `/etc/nexus/live_voice_media.env`; its shared callback credential is loaded by systemd from `/etc/nexus/secrets/live_voice_token`. The retired demo service is not a fallback and must not coexist on port 8060.
+Production runs `nexus-voice-models.service` (Nemotron 3.5 ASR Streaming 0.6B and Qwen3-TTS 1.7B CustomVoice) and `nexus-live-voice-media.service`. Its non-secret endpoint settings live in `/etc/nexus/live_voice_media.env`; its shared callback credential is loaded by systemd from `/etc/nexus/secrets/live_voice_token`. The retired demo service is not a fallback and must not coexist on port 8060.
+
+The model service is an immutable release artifact. Its virtual environment, CUDA extensions and model revisions are prepared by the release build, then only loaded at service start. Production must never run `pip install`, compile FlashAttention, or download model code while the service is active. The unit has explicit memory, task and CPU limits so a failed model initialization cannot take down the host. The media edge automatically rejects script-incoherent ASR output before it reaches the LLM and sends answer text to TTS in bounded clauses, allowing playback to begin after the first clause instead of waiting for a full response.
 
 ## Authority boundaries
 

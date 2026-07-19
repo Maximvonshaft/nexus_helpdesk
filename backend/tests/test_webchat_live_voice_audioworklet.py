@@ -73,6 +73,15 @@ def test_widget_voice_boundary_is_same_origin_and_secret_free() -> None:
     assert "WebSocket" not in worklet
 
 
+def test_widget_uses_automatic_language_detection_without_a_language_picker() -> None:
+    widget = WIDGET.read_text(encoding="utf-8")
+
+    assert "Language is detected automatically." in widget
+    assert "nd-webchat-voice-select" not in widget
+    assert "var langCode = 'auto';" in widget
+    assert "var voice = 'auto';" in widget
+
+
 def test_worklet_is_fixed_rate_pcm16_bounded_and_stoppable() -> None:
     worklet = WORKLET.read_text(encoding="utf-8")
 
