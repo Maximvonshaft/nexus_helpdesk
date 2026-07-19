@@ -1,0 +1,350 @@
+diff --git a/.github/workflows/canonical-acceptance.yml b/.github/workflows/canonical-acceptance.yml
+index 48128df..bf5f35d 100644
+--- a/.github/workflows/canonical-acceptance.yml
++++ b/.github/workflows/canonical-acceptance.yml
+@@ -212,6 +212,7 @@ jobs:
+         run: |
+           python scripts/security/assert_sarif_clean.py \
+             --input /tmp/nexus-security/codeql \
++            --exceptions config/security/codeql-exceptions.json \
+             --output /tmp/nexus-security/codeql-summary.json
+       - name: Upload bounded security and supply-chain evidence
+         if: always()
+diff --git a/backend/app/api/support_intelligence.py b/backend/app/api/support_intelligence.py
+index 7688d0f..bfc2683 100644
+--- a/backend/app/api/support_intelligence.py
++++ b/backend/app/api/support_intelligence.py
+@@ -1,7 +1,6 @@
+ from __future__ import annotations
+ 
+ from fastapi import APIRouter, Depends, HTTPException, status
+-from pydantic import BaseModel, Field
+ from sqlalchemy.orm import Session
+ 
+ from ..db import get_db
+@@ -19,21 +18,6 @@ from .deps import get_current_user
+ router = APIRouter(prefix="/api/support-intelligence", tags=["support-intelligence"])
+ 
+ 
+-class StatusDictionaryEntryRequest(BaseModel):
+-    code: str = Field(..., min_length=1, max_length=32)
+-    label: str = Field("", max_length=240)
+-    desc: str = Field("", max_length=1000)
+-    action: str = Field("", max_length=1000)
+-    language_labels: dict[str, str] = Field(default_factory=dict)
+-    needs_human: bool = False
+-    promise_eta: bool = False
+-
+-
+-class StatusDictionaryWriteRequest(BaseModel):
+-    entry: StatusDictionaryEntryRequest | None = None
+-    entries: list[StatusDictionaryEntryRequest] | None = None
+-
+-
+ def _ensure_capability(user, db: Session, *, allowed: set[str], detail: str) -> None:
+     if resolve_capabilities(user, db) & allowed:
+         return
+@@ -44,7 +28,13 @@ def _ensure_can_read_support_intelligence(user, db: Session) -> None:
+     _ensure_capability(
+         user,
+         db,
+-        allowed={CAP_AI_CONFIG_READ, CAP_AI_CONFIG_MANAGE, CAP_QA_MANAGE, CAP_RUNTIME_MANAGE, CAP_TICKET_READ},
++        allowed={
++            CAP_AI_CONFIG_READ,
++            CAP_AI_CONFIG_MANAGE,
++            CAP_QA_MANAGE,
++            CAP_RUNTIME_MANAGE,
++            CAP_TICKET_READ,
++        },
+         detail="support_intelligence_requires_management_capability",
+     )
+ 
+@@ -71,51 +61,13 @@ def _redact_operator_response(config: dict) -> dict:
+     for source in config.get("runtime_sources", []):
+         if isinstance(source, dict):
+             source.pop("source_path", None)
+-    for card in config.get("runtime_knowledge_cards", []):
+-        if isinstance(card, dict):
+-            card.pop("source_path", None)
+-            card.pop("workspace_path", None)
+-            card.pop("path", None)
+     return config
+ 
+ 
+-def _bridge_status_dictionary(payload: dict) -> dict:
+-    raise HTTPException(status_code=status.HTTP_410_GONE, detail="legacy_status_dictionary_runtime_bridge_retired")
+-
+-
+-def _status_write_payload(request: StatusDictionaryWriteRequest, current_user) -> dict:
+-    entries = []
+-    if request.entry is not None:
+-        entries.append(request.entry.model_dump())
+-    if request.entries:
+-        entries.extend(entry.model_dump() for entry in request.entries)
+-    if not entries:
+-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status_dictionary_entry_required")
+-    return {
+-        "entries": entries,
+-        "operator_id": getattr(current_user, "username", None) or str(getattr(current_user, "id", "")),
+-    }
+-
+-
+ @router.get("/config")
+-def get_support_intelligence_config(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
++def get_support_intelligence_config(
++    db: Session = Depends(get_db),
++    current_user=Depends(get_current_user),
++):
+     _ensure_can_read_support_intelligence(current_user, db)
+     return _redact_operator_response(build_support_intelligence_config(db))
+-
+-
+-@router.get("/status-dictionary")
+-def get_status_dictionary(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+-    _ensure_can_read_support_intelligence(current_user, db)
+-    return _bridge_status_dictionary({"operation": "status-dictionary-list"})
+-
+-
+-@router.post("/status-dictionary/draft")
+-def save_status_dictionary_draft(request: StatusDictionaryWriteRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+-    _ensure_can_manage_support_intelligence(current_user, db)
+-    return _bridge_status_dictionary({"operation": "status-dictionary-save-draft", **_status_write_payload(request, current_user)})
+-
+-
+-@router.post("/status-dictionary/publish")
+-def publish_status_dictionary(request: StatusDictionaryWriteRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+-    _ensure_can_publish_support_intelligence(current_user, db)
+-    return _bridge_status_dictionary({"operation": "status-dictionary-publish", **_status_write_payload(request, current_user)})
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 6c1c840..0cec706 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import html
+ import uuid
+ 
+ from fastapi import FastAPI, Header, HTTPException, Request, status
+@@ -419,14 +420,15 @@ def serve_webchat_voice_placeholder(voice_session_id: str):
+             status_code=status.HTTP_404_NOT_FOUND,
+             detail="WebChat voice session not found",
+         )
++    escaped_session_id = html.escape(safe_session_id, quote=True)
+     return HTMLResponse(
+         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+         "<title>NexusDesk WebCall</title></head><body><main>"
+         "<h1>NexusDesk WebCall</h1>"
+         "<p>Opening the secure WebCall room...</p>"
+-        f"<p><a href='/webcall/{safe_session_id}'>Continue to WebCall</a></p>"
+-        f"<script src='/static/webchat/voice-redirect.js' data-voice-session-id='{safe_session_id}' defer></script>"
++        f"<p><a href='/webcall/{escaped_session_id}'>Continue to WebCall</a></p>"
++        f"<script src='/static/webchat/voice-redirect.js' data-voice-session-id='{escaped_session_id}' defer></script>"
+         "</main></body></html>"
+     )
+ 
+diff --git a/backend/app/services/provider_runtime_status.py b/backend/app/services/provider_runtime_status.py
+index 43ad8f5..ef3d7ee 100644
+--- a/backend/app/services/provider_runtime_status.py
++++ b/backend/app/services/provider_runtime_status.py
+@@ -141,7 +141,7 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
+         provider = "unknown"
+         recording_enabled = False
+         transcription_enabled = False
+-        warnings.append(str(exc))
++        warnings.append(f"human_webcall_config_invalid:{type(exc).__name__}")
+ 
+     try:
+         active_session_count = _human_webcall_count(db, {"active"})
+@@ -190,7 +190,7 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
+         return {
+             "ok": False,
+             "status": "misconfigured",
+-            "config_error": str(exc),
++            "config_error": f"webchat_runtime_config_invalid:{type(exc).__name__}",
+             "providers": [],
+             "boundary": {
+                 "secret_values_exposed": False,
+diff --git a/backend/app/services/support_intelligence_service.py b/backend/app/services/support_intelligence_service.py
+index 1dd914f..372bb69 100644
+--- a/backend/app/services/support_intelligence_service.py
++++ b/backend/app/services/support_intelligence_service.py
+@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
+ from ..models import AIConfigResource
+ from ..models_control_plane import KnowledgeItem, PersonaProfile
+ 
+-
+ SUPPORT_CHANNELS = {"whatsapp", "email", "all", "support", "customer"}
+ 
+ 
+@@ -32,182 +31,21 @@ def _source_item(
+     key: str,
+     category: str,
+     title: str,
+-    source_kind: str,
+     source_label: str,
+-    source_path: str | None = None,
+-    editable: bool,
+-    effective: bool,
+-    status: str | None = None,
+-    notes: str | None = None,
++    configurable_count: int,
++    effective_count: int,
+ ) -> dict[str, Any]:
+     return {
+         "key": key,
+         "category": category,
+         "title": title,
+-        "source_kind": source_kind,
++        "source_kind": "canonical_control_plane",
+         "source_label": source_label,
+-        "source_path": source_path,
+-        "editable": editable,
+-        "effective": effective,
+-        "status": status or ("effective" if effective else "inactive"),
+-        "notes": notes,
+-    }
+-
+-
+-def _runtime_legacy_sources() -> list[dict[str, Any]]:
+-    return [
+-        _source_item(
+-            key="runtime.persona.base",
+-            category="persona",
+-            title="基础身份与语气",
+-            source_kind="runtime_file",
+-            source_label="运行文件",
+-            source_path="AGENTS / SOUL / IDENTITY / USER",
+-            editable=False,
+-            effective=True,
+-            notes="当前客服助手的人格底座仍来自运行文件；后续应导入到配置库并编译进运行包。",
+-        ),
+-        _source_item(
+-            key="runtime.rules.sop",
+-            category="rules",
+-            title="客服处理规则",
+-            source_kind="runtime_file",
+-            source_label="运行文件",
+-            source_path="SUPPORT_SOP",
+-            editable=False,
+-            effective=True,
+-            notes="查件、转人工、失败话术和动作边界当前仍由运行文件约束。",
+-        ),
+-        _source_item(
+-            key="runtime.knowledge.stable",
+-            category="business_knowledge",
+-            title="稳定业务知识",
+-            source_kind="runtime_file",
+-            source_label="运行文件",
+-            source_path="SUPPORT_KB",
+-            editable=False,
+-            effective=True,
+-            notes="稳定业务事实当前仍由运行文件提供。",
+-        ),
+-        _source_item(
+-            key="runtime.status.dictionary",
+-            category="status_dictionary",
+-            title="状态码客户展示字典",
+-            source_kind="config_dictionary",
+-            source_label="状态词典",
+-            source_path=None,
+-            editable=True,
+-            effective=True,
+-            notes="物流状态码到客户可见名称、解释和下一步提示已接入前端配置；发布后用于后续客户回复。",
+-        ),
+-    ]
+-
+-
+-def _fetch_runtime_cards(bridge_client: Any | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+-    if bridge_client is None:
+-        return [], {
+-            "ok": False,
+-            "status": "retired",
+-            "message": "Legacy runtime bridge has been retired; use Nexus config resources.",
+-        }
+-    client = bridge_client
+-    try:
+-        data = client.support_knowledge_config({"operation": "card-list"})
+-        cards = data.get("cards") if isinstance(data, dict) else None
+-        if not isinstance(cards, list):
+-            return [], {"ok": False, "status": "invalid_payload", "message": "运行知识桥返回格式异常"}
+-        return [card for card in cards if isinstance(card, dict)], {
+-            "ok": True,
+-            "status": "connected",
+-            "count": len(cards),
+-        }
+-    except (OSError, RuntimeError) as exc:
+-        return [], {
+-            "ok": False,
+-            "status": "degraded",
+-            "message": str(exc)[:240],
+-        }
+-
+-
+-def _fetch_status_dictionary(bridge_client: Any | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+-    if bridge_client is None:
+-        return [], {
+-            "ok": False,
+-            "status": "retired",
+-            "message": "Legacy runtime status dictionary bridge has been retired.",
+-        }
+-    client = bridge_client
+-    try:
+-        data = client.support_knowledge_config({"operation": "status-dictionary-list"})
+-        entries = data.get("entries") if isinstance(data, dict) else None
+-        if not isinstance(entries, list):
+-            return [], {"ok": False, "status": "invalid_payload", "message": "状态词典返回格式异常"}
+-        return [entry for entry in entries if isinstance(entry, dict)], {
+-            "ok": True,
+-            "status": "connected",
+-            "count": len(entries),
+-            "published_version": data.get("published_version"),
+-            "published_at": data.get("published_at"),
+-            "updated_at": data.get("updated_at"),
+-        }
+-    except (OSError, RuntimeError) as exc:
+-        return [], {
+-            "ok": False,
+-            "status": "degraded",
+-            "message": str(exc)[:240],
+-        }
+-
+-
+-def _status_dictionary_entry_out(entry: dict[str, Any]) -> dict[str, Any]:
+-    return {
+-        "code": str(entry.get("code") or ""),
+-        "label": entry.get("label") or "",
+-        "desc": entry.get("desc") or "",
+-        "action": entry.get("action") or "",
+-        "language_labels": entry.get("language_labels") if isinstance(entry.get("language_labels"), dict) else {},
+-        "needs_human": bool(entry.get("needs_human")),
+-        "promise_eta": bool(entry.get("promise_eta")),
+-        "default_label": entry.get("default_label") or "",
+-        "default_desc": entry.get("default_desc") or "",
+-        "default_action": entry.get("default_action") or "",
+-        "published_label": entry.get("published_label") or "",
+-        "published_desc": entry.get("published_desc") or "",
+-        "published_action": entry.get("published_action") or "",
+-        "draft_label": entry.get("draft_label") or "",
+-        "draft_desc": entry.get("draft_desc") or "",
+-        "draft_action": entry.get("draft_action") or "",
+-        "status": entry.get("status") or "default",
+-        "editable": bool(entry.get("editable", True)),
+-        "published_at": entry.get("published_at"),
+-        "updated_at": entry.get("updated_at"),
+-    }
+-
+-
+-def _runtime_card_out(card: dict[str, Any]) -> dict[str, Any]:
+-    enabled = bool(card.get("customer_visible")) and bool(card.get("ai_enabled"))
+-    status = str(card.get("status") or "draft")
+-    return {
+-        "id": card.get("id") or card.get("workspace_path") or card.get("title"),
+-        "title": card.get("title") or "未命名知识卡片",
+-        "category": "customer_knowledge",
+-        "country": card.get("country") or "Global",
+-        "channel": "whatsapp",
+-        "language": card.get("language") or "auto",
+-        "status": status,
+-        "enabled": enabled and status == "published",
