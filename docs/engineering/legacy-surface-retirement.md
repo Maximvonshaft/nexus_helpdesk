@@ -1,89 +1,55 @@
-# Legacy Surface Retirement
+# Compatibility and retirement authority
 
 ## Purpose
 
-This document defines how Nexus distinguishes obsolete code from compatibility, protected history and current versioned contracts. The sole lifecycle authority is `config/architecture/compatibility-lifecycle.v1.json`. Its `detailed_registry` is a subordinate fail-closed discovery index, not a second policy authority.
+Nexus distinguishes active authority, bounded compatibility, protected migration history and removable residue through one lifecycle authority:
 
-## Current posture
+- policy, owners, replacements and deadlines: `config/architecture/compatibility-lifecycle.v1.json`;
+- subordinate current-tree discovery: `config/governance/legacy-surface-domains.v2.json`;
+- enforcement: `scripts/ci/check_legacy_surface_registry.py`.
 
-The parent lifecycle manifest owns policy, owners, replacements and deadlines. The subordinate discovery registry covers bounded known marker classes. It is not a claim that every unused symbol or duplicate algorithm in the repository has been proven dead. Domain owners must still provide consumer, traffic, data and rollback evidence before deletion.
+The subordinate registry has no stored commit SHA and no delivery status. Every scan derives its source identity from the Git checkout being verified.
 
-## Commands
-
-Validate the subordinate discovery index through the canonical lifecycle authority:
+## Command
 
 ```bash
-python scripts/ci/check_legacy_surface_registry.py \
-  --repo-root . \
-  --registry config/governance/legacy-surface-domains.v1.json
+python scripts/ci/check_legacy_surface_registry.py --repo-root .
 ```
 
-Run focused tests:
+Focused contract tests:
 
 ```bash
 python -m unittest -v \
   scripts.ci.tests.test_check_legacy_surface_registry \
   scripts.ci.tests.test_legacy_surface_version_contract
-python -m py_compile \
-  scripts/ci/check_legacy_surface_registry.py \
-  scripts/ci/tests/test_check_legacy_surface_registry.py \
-  scripts/ci/tests/test_legacy_surface_version_contract.py
 ```
 
-## Result interpretation
+## Result contract
 
-- `ok=true`, `classification_complete=true`: all declared discovery markers have an allowed owner in this registry revision.
-- `ok=false`, `unowned_count>0`: a declared marker exists without an allowed domain owner.
-- `ok=false`, `overlap_count>0`: a marker resolves to multiple owners where the discovery rule requires one.
-- exit `2`: registry, Git index or input evidence is malformed; treat the scan as unavailable.
-- `findings_truncated=true`: the full count is retained but the output list is capped.
+- `ok=true`, `classification_complete=true`: every declared discovery marker has an allowed current owner.
+- `ok=false`, `unowned_count>0`: a declared marker has no allowed owner.
+- `ok=false`, `overlap_count>0`: a marker resolves to an unauthorized or ambiguous owner set.
+- exit `2`: registry, Git index or bounded input evidence is malformed.
+- `source_sha`: current checkout identity calculated at scan time.
 
-Registry path globs are case-insensitive; exact paths remain exact. Optional domain `path_regexes` are compiled during registry validation and should be root-anchored to their intended contract locations. Content-marker reads request at most the configured byte limit plus one sentinel byte.
+Findings contain only path identity, a truncated path fingerprint, rule identity and reason codes. They contain no matched source values or customer/provider data.
 
-The output never includes matched source lines or values. A finding contains a repository path, a truncated SHA-256 path fingerprint, the discovery rule and reason codes.
-
-## Protected classes
+## Protected non-residue
 
 ### Alembic revisions
 
-Files under `backend/alembic/versions/` are migration history. Date, round or `v2` tokens do not make them removable. Squashing requires a separate approved strategy plus empty-database upgrade, restore and rollback evidence under #532.
+`backend/alembic/versions/` is executable schema history required for deterministic empty-database upgrade, restore and rollback. It is not ordinary dead code. Removal or squashing requires an explicit migration strategy and destructive-retirement authorization.
 
-### Versioned contracts
+### Versioned machine contracts
 
-Files such as `*.v1.json`, `*.v2.json` and `*.v10.json` may be current machine contracts. Removal requires a consumer inventory, replacement contract and explicit compatibility decision.
+Files such as `*.v1.json`, `*.v2.json` and `*.v10.json` identify schema versions. A version token is not evidence of a parallel implementation.
 
-### Reachable Git history
+### Public WebChat
 
-Git history is not cleaned as ordinary source and is intentionally outside the tracked-tree registry. No tracked placeholder may masquerade as history evidence. #565 owns secret/exposure assurance, credential rotation and any explicitly authorized rewrite.
+`backend/app/static/webchat/` is the customer-facing channel surface. It is not a second authenticated operator product.
 
-## Domain routing
+## Retirement protocol
 
-- ExternalChannel: #572.
-- Legacy static frontend: #573.
-- Round reports, smoke scripts and workflows: #574.
-- Application/Settings composition: #570.
-- Release identity and legacy worker: #549.
-- Lite API and Knowledge version-naming discovery: #650.
+A compatibility asset may be removed only after current consumer proof, runtime/data evidence where applicable, migration prerequisites, negative and regression tests, release compatibility evidence, rollback instructions and exact-head review. The registry never converts `safe_to_remove` into an automatic destructive action.
 
-## Deletion protocol
-
-A domain owner may delete an asset only after:
-
-1. current-main consumer/reference proof;
-2. runtime/traffic/data evidence where applicable;
-3. migration and observation prerequisites;
-4. focused negative and regression tests;
-5. build/release compatibility evidence;
-6. rollback instructions;
-7. exact-head independent review.
-
-The central registry never turns `safe_to_remove` into automatic deletion.
-
-## Remote Skill Evidence
-
-- `superpowers_using`: ADOPT for skill selection, planning and isolated branch execution.
-- `github_actions_hardening`: ADAPT; no workflow is added, but future integration requirements are recorded.
-- `secpriv`: ADOPT for bounded content reads and redacted evidence.
-- `superpowers_verification`: ADOPT; no completion claim without exact-head test evidence.
-- External scripts executed: none.
-- Production/customer/Provider data accessed: none.
+Completed implementation plans, stale PR pointers, branch names and historical test-round reports do not belong in current authority files and must not be reintroduced.
