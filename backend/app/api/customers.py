@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..schemas import CustomerHistoryItem, CustomerHistoryRead
-from ..services.ticket_service import get_customer_history
+from ..services.canonical_ticket_service import get_customer_history
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
