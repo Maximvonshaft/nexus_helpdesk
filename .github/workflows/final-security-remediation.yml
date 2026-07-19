@@ -1,0 +1,366 @@
+name: Final Security Remediation
+
+on:
+  push:
+    branches:
+      - fix/722-final-production-convergence
+
+concurrency:
+  group: final-security-remediation
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  security-events: write
+
+env:
+  CI: "true"
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+  PYTHONPATH: backend
+  APP_ENV: test
+  AUTO_INIT_DB: "false"
+  SEED_DEMO_DATA: "false"
+  ALLOW_DEV_AUTH: "false"
+  PROVIDER_RUNTIME_ENABLED: "false"
+  PROVIDER_RUNTIME_TRAFFIC_MODE: control
+  PROVIDER_RUNTIME_KILL_SWITCH: "true"
+  PROVIDER_RUNTIME_CANARY_PERCENT: "0"
+  PRIVATE_AI_RUNTIME_ENABLED: "false"
+  WEBCHAT_AI_ENABLED: "false"
+  WEBCHAT_AI_AUTO_REPLY_MODE: off
+  WEBCHAT_VOICE_ENABLED: "false"
+  WEBCHAT_HUMAN_CALL_ENABLED: "false"
+  WEBCHAT_LIVE_AI_VOICE_ENABLED: "false"
+  ENABLE_OUTBOUND_DISPATCH: "false"
+  OUTBOUND_PROVIDER: disabled
+  WHATSAPP_NATIVE_ENABLED: "false"
+  WHATSAPP_DISPATCH_MODE: disabled
+  EMAIL_MAILBOX_SYNC_ENABLED: "false"
+  SPEEDAF_MCP_ENABLED: "false"
+  SPEEDAF_TRACK_QUERY_ENABLED: "false"
+  SPEEDAF_WORK_ORDER_CREATE_ENABLED: "false"
+  SPEEDAF_UPDATE_ADDRESS_ENABLED: "false"
+  SPEEDAF_CANCEL_ENABLED: "false"
+  SPEEDAF_VOICE_CALLBACK_ENABLED: "false"
+  OPERATIONS_DISPATCH_MODE: disabled
+  OPERATIONS_DISPATCH_ADAPTER: disabled
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: docker.io/pgvector/pgvector:0.8.5-pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_DB: nexus_security_remediation
+          POSTGRES_USER: nexus_ci
+          POSTGRES_PASSWORD: nexus_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus_ci -d nexus_security_remediation"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout exact staging head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Reconstruct one exact candidate
+        id: candidate
+        shell: bash
+        env:
+          STAGING_SHA: ${{ github.sha }}
+          ORIGINAL_CANDIDATE: 59e989bf37807a871daa71a7aa7a54311ce68d41
+          PATCH_SHA256: d55f3d6cfc90bb1715d7b627ea7992f346d43f0ed5bcbeed00b00a6e73db395c
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$STAGING_SHA"
+          test "$(git merge-base "$ORIGINAL_CANDIDATE" "$STAGING_SHA")" = "$ORIGINAL_CANDIDATE"
+          mapfile -t changed < <(git diff --name-only "$ORIGINAL_CANDIDATE" "$STAGING_SHA" | sort)
+          expected=(
+            .github/workflows/final-security-remediation.yml
+            scripts/maintenance/codeql-remediation.patch.part00
+            scripts/maintenance/codeql-remediation.patch.part01
+            scripts/maintenance/codeql-remediation.patch.part02
+            scripts/maintenance/codeql-remediation.patch.part03
+            scripts/maintenance/codeql-remediation.patch.part04
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "${#changed[@]}" = "${#expected_sorted[@]}"
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${changed[@]}")
+          cat scripts/maintenance/codeql-remediation.patch.part0{0,1,2,3,4} > /tmp/codeql-remediation.diff
+          printf '%s  %s\n' "$PATCH_SHA256" /tmp/codeql-remediation.diff | sha256sum -c -
+
+          git reset --hard "$ORIGINAL_CANDIDATE"
+          git apply --check /tmp/codeql-remediation.diff
+          git apply /tmp/codeql-remediation.diff
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+          find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+
+          git config user.name "nexus-security-finalizer"
+          git config user.email "nexus-security-finalizer@users.noreply.github.com"
+          git fetch --no-tags origin main
+          git reset --soft origin/main
+          git add -A
+          git commit -m "[P0][#768] Complete production convergence and security closure"
+          source_sha="$(git rev-parse HEAD)"
+          tree_sha="$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain)"
+          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+          printf 'tree_sha=%s\n' "$tree_sha" >> "$GITHUB_OUTPUT"
+          printf 'SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+          printf 'TREE_SHA=%s\n' "$tree_sha" >> "$GITHUB_ENV"
+          printf 'STAGING_SHA=%s\n' "$STAGING_SHA" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            config/security/security-tool-requirements.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a
+        with:
+          languages: python,javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python -m pip install --disable-pip-version-check -r config/security/security-tool-requirements.txt
+          cd webapp
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify static authority and compile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-final/static
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release scripts/security infra/private-ai-runtime/live_voice_runtime
+          node --check backend/app/static/webchat/widget.js
+          node --check backend/app/static/webchat/voice-entry.js
+          python scripts/verify_repository.py --static-only \
+            --expected-sha "$SOURCE_SHA" \
+            --evidence-out /tmp/nexus-final/static/repository-static.json
+          git diff --check HEAD
+          test -z "$(git status --porcelain)"
+
+      - name: Run focused remediation regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m pytest -q \
+            scripts/security/tests/test_assert_sarif_clean.py \
+            backend/tests/test_security_codeql_remediation_contract.py \
+            backend/tests/test_support_intelligence_config.py \
+            backend/tests/test_external_channel_final_retirement.py \
+            backend/tests/test_public_voice_route_compatibility.py \
+            backend/tests/test_human_webcall_runtime_health.py \
+            backend/tests/test_webchat_voice_static_headers.py \
+            backend/tests/test_webchat_action_idempotency.py \
+            backend/tests/test_webchat_card_evidence_contract.py \
+            backend/tests/test_speedaf_track_query.py
+
+      - name: Run complete backend regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-final/backend
+          python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-final/backend/pytest.log
+
+      - name: Verify frontend and browser journeys
+        working-directory: webapp
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-final/frontend
+          npm run verify 2>&1 | tee /tmp/nexus-final/frontend/verify.log
+          npx playwright install --with-deps chromium
+          RC_RUN_BROWSER_SMOKE=true npm run e2e
+
+      - name: Rehearse PostgreSQL and Alembic
+        shell: bash
+        env:
+          DATABASE_URL: postgresql+psycopg://nexus_ci:nexus_ci_only@127.0.0.1:5432/nexus_security_remediation
+          JWT_SECRET_KEY: ci-only-not-a-production-secret-0123456789abcdef
+          AI_REPLY_CONTRACT_SECRET: ci-only-contract-secret-0123456789abcdef
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-final/postgres
+          cd backend
+          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-final/postgres/alembic-upgrade.log
+          python -m alembic downgrade -1 2>&1 | tee /tmp/nexus-final/postgres/alembic-downgrade.log
+          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-final/postgres/alembic-reupgrade.log
+          cd ..
+          python scripts/qualification/postgres_acceptance.py \
+            --evidence-dir /tmp/nexus-final/postgres \
+            --source-sha "$SOURCE_SHA" \
+            --tree-sha "$TREE_SHA" \
+            --output /tmp/nexus-final/postgres/postgres-acceptance-run.json
+
+      - name: Run secret dependency and SAST assurance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-final/security
+          python scripts/security/scan_repository.py --root . --output /tmp/nexus-final/security/repository-secret-scan.json
+          python scripts/security/scan_git_history.py --root . --max-blob-bytes 33554432 --output /tmp/nexus-final/security/history-secret-scan.json
+          python -m bandit -r backend/app -ll -ii -f json -o /tmp/nexus-final/security/bandit.json
+          python -m pip_audit -r backend/requirements.txt --strict --format json --output /tmp/nexus-final/security/python-dependencies.json
+          python -m pip_audit -r backend/requirements.txt --strict --format cyclonedx-json --output /tmp/nexus-final/security/python-sbom.cdx.json
+          cd webapp
+          npm audit --audit-level=high --json > /tmp/nexus-final/security/frontend-dependencies.json
+          npm sbom --package-lock-only --sbom-format=cyclonedx > /tmp/nexus-final/security/frontend-sbom.cdx.json
+
+      - name: Analyze exact candidate with CodeQL
+        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a
+        with:
+          upload: never
+          upload-database: false
+          output: /tmp/nexus-final/security/codeql
+          category: final-security-remediation
+
+      - name: Enforce CodeQL closure
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python scripts/security/assert_sarif_clean.py \
+            --input /tmp/nexus-final/security/codeql \
+            --exceptions config/security/codeql-exceptions.json \
+            --output /tmp/nexus-final/security/codeql-summary.json
+
+      - name: Build and scan exact candidate image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-final/image
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker build --pull=false \
+            --build-arg GIT_SHA="$SOURCE_SHA" \
+            --build-arg BUILD_TIME="$build_time" \
+            --build-arg IMAGE_TAG="nexus-ci:$SOURCE_SHA" \
+            --build-arg APP_VERSION="pr-$SOURCE_SHA" \
+            --build-arg FRONTEND_BUILD_SHA="$SOURCE_SHA" \
+            --tag "nexus-ci:$SOURCE_SHA" . 2>&1 | tee /tmp/nexus-final/image/build.log
+          test "$(docker image inspect "nexus-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
+          docker image inspect "nexus-ci:$SOURCE_SHA" > /tmp/nexus-final/image/image-inspect.json
+
+      - name: Run Trivy vulnerability inventory
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-ci:${{ steps.candidate.outputs.source_sha }}
+          format: json
+          output: /tmp/nexus-final/image/trivy.raw.json
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+
+      - name: Generate image CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-ci:${{ steps.candidate.outputs.source_sha }}
+          format: cyclonedx
+          output: /tmp/nexus-final/image/image.raw.cdx.json
+          scanners: vuln
+          ignore-unfixed: false
+          exit-code: '0'
+
+      - name: Prove image runtime and controlled release assurance
+        shell: bash
+        env:
+          DATABASE_URL: postgresql+psycopg://nexus_ci:nexus_ci_only@127.0.0.1:5432/nexus_security_remediation
+          JWT_SECRET_KEY: ci-only-not-a-production-secret-0123456789abcdef
+          AI_REPLY_CONTRACT_SECRET: ci-only-contract-secret-0123456789abcdef
+          CANDIDATE_IMAGE: nexus-ci:${{ steps.candidate.outputs.source_sha }}
+          RELEASE_IMAGE_DIR: /tmp/nexus-final/image
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --network host \
+            -e PYTHONPATH=/app/backend -e APP_ENV=test -e DATABASE_URL="$DATABASE_URL" \
+            -e JWT_SECRET_KEY="$JWT_SECRET_KEY" -e AI_REPLY_CONTRACT_SECRET="$AI_REPLY_CONTRACT_SECRET" \
+            -e PROVIDER_RUNTIME_ENABLED=false -e PROVIDER_RUNTIME_KILL_SWITCH=true \
+            -e ENABLE_OUTBOUND_DISPATCH=false -e WHATSAPP_NATIVE_ENABLED=false \
+            "$CANDIDATE_IMAGE" python -m alembic upgrade head
+          docker run -d --name nexus-final-candidate --network host \
+            -e PYTHONPATH=/app/backend -e APP_ENV=test -e DATABASE_URL="$DATABASE_URL" \
+            -e JWT_SECRET_KEY="$JWT_SECRET_KEY" -e AI_REPLY_CONTRACT_SECRET="$AI_REPLY_CONTRACT_SECRET" \
+            -e PROVIDER_RUNTIME_ENABLED=false -e PROVIDER_RUNTIME_TRAFFIC_MODE=control \
+            -e PROVIDER_RUNTIME_KILL_SWITCH=true -e PROVIDER_RUNTIME_CANARY_PERCENT=0 \
+            -e PRIVATE_AI_RUNTIME_ENABLED=false -e WEBCHAT_AI_ENABLED=false \
+            -e WEBCHAT_VOICE_ENABLED=false -e WEBCHAT_HUMAN_CALL_ENABLED=false \
+            -e WEBCHAT_LIVE_AI_VOICE_ENABLED=false -e ENABLE_OUTBOUND_DISPATCH=false \
+            -e OUTBOUND_PROVIDER=disabled -e WHATSAPP_NATIVE_ENABLED=false \
+            -e WHATSAPP_DISPATCH_MODE=disabled -e SPEEDAF_MCP_ENABLED=false \
+            -e OPERATIONS_DISPATCH_MODE=disabled "$CANDIDATE_IMAGE"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8080/healthz > /tmp/nexus-final/image/healthz.json; then break; fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:8080/healthz | tee /tmp/nexus-final/image/healthz.json
+          curl --fail --silent http://127.0.0.1:8080/readyz | tee /tmp/nexus-final/image/readyz.json
+          docker logs nexus-final-candidate > /tmp/nexus-final/image/candidate.log 2>&1
+          bash scripts/release/run_controlled_image_assurance.sh
+
+      - name: Upload final remediation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: final-security-remediation-${{ steps.candidate.outputs.source_sha }}
+          path: /tmp/nexus-final
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish fully validated single-commit candidate
+        shell: bash
+        env:
+          BRANCH: fix/722-final-production-convergence
+        run: |
+          set -Eeuo pipefail
+          docker rm -f nexus-final-candidate >/dev/null 2>&1 || true
+          test -z "$(git status --porcelain)"
+          git push --force-with-lease="refs/heads/$BRANCH:$STAGING_SHA" origin "HEAD:refs/heads/$BRANCH"
+          git push origin --delete exact-head-verifier-status >/dev/null 2>&1 || true
+          git push origin --delete exact-candidate-export-status >/dev/null 2>&1 || true
+          git push origin --delete exact-head-verifier-status >/dev/null 2>&1 || true
+          git push origin --delete security-remediation-status >/dev/null 2>&1 || true
+
+      - name: Restore prior candidate and publish failure identity
+        if: failure()
+        shell: bash
+        env:
+          BRANCH: fix/722-final-production-convergence
+          ORIGINAL_CANDIDATE: 59e989bf37807a871daa71a7aa7a54311ce68d41
+          STAGING_SHA: ${{ github.sha }}
+        run: |
+          set +e
+          docker rm -f nexus-final-candidate >/dev/null 2>&1 || true
+          git push --force-with-lease="refs/heads/$BRANCH:$STAGING_SHA" origin "$ORIGINAL_CANDIDATE:refs/heads/$BRANCH"
+          git config user.name "nexus-security-diagnostic"
+          git config user.email "nexus-security-diagnostic@users.noreply.github.com"
+          git checkout --orphan security-remediation-status
+          git rm -rf . >/dev/null 2>&1 || true
+          printf '{"schema":"nexus.security-remediation-status.v1","run_id":%s,"status":"failure","staging_sha":"%s","restored_candidate":"%s"}\n' \
+            "$GITHUB_RUN_ID" "$STAGING_SHA" "$ORIGINAL_CANDIDATE" > remediation-status.json
+          git add remediation-status.json
+          git commit -m "chore: publish security remediation failure identity"
+          git push --force origin HEAD:refs/heads/security-remediation-status
