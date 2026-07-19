@@ -1,244 +1,104 @@
-schema: nexus.osr.codebase-rationalization-inventory.v1
-work_item: 744
-baseline_main_sha: 7260652e380e9b19818c079c4d3846a653354d24
-status: final_production_convergence_candidate_in_progress
-authority:
-  governance_issue: 722
-  canonical_pr: pending_final_convergence_pr
-  canonical_branch: fix/722-final-production-convergence
-  absorbed_ui_pr: 762
-  prior_convergence_pr: 763
-  absorbed_ui_pr_disposition: close_after_absorption_no_parallel_merge
-  rule: >
-    This is the sole repository rationalization ledger. It records physical
-    retirement and delegates product, transport, authorization, Provider,
-    worker, database, supply-chain and visual authority to their canonical
-    implementations. It does not define a second product, validation system,
-    design system, queue, Provider router or GitHub Actions execution chain.
-verification:
-  entrypoint: python scripts/verify_repository.py
-  static_entrypoint: python scripts/verify_repository.py --static-only
-  evidence_entrypoint: python scripts/verify_repository.py --evidence-out <path>
-  frontend_entrypoint: cd webapp && npm run verify
-  browser_entrypoint: cd webapp && npm run e2e
-  database_capacity_entrypoint: python scripts/qualification/database_capacity.py
-  supply_chain_entrypoint: python scripts/qualification/supply_chain.py
-  release_supply_chain_entrypoint: python scripts/qualification/supply_chain.py --release
-  github_actions: .github/workflows/canonical-acceptance.yml
-  candidate_mutation_during_verification: forbidden
-  compatibility_discovery: scripts/ci/check_legacy_surface_registry.py
-  exact_head_status: pending_unchanged_head_ci
+schema: nexus.osr.codebase-rationalization-inventory.v2
+purpose: canonical_repository_authority_and_anti_reintroduction_contract
+mutable_delivery_status_forbidden: true
+mutable_fields_forbidden:
+  - branch
+  - pull_request
+  - commit_sha
+  - workflow_run
+  - delivery_status
+  - candidate_status
+  - production_status
+source_of_delivery_truth:
+  - current GitHub branch and pull-request objects
+  - exact commit checks and workflow artifacts
+  - deployment and runtime evidence bound to immutable identities
+
 canonical_authorities:
   operator_product: webapp
   application_shell: webapp/src/app/AppShell.tsx
   navigation: webapp/src/app/navigation.ts
-  route_boundaries: webapp/src/app/OperatorPresentation.tsx
   http_transport: webapp/src/lib/apiClient.ts
   ui_framework: '@mui/material@9.2.0'
-  icon_framework: '@mui/icons-material@9.2.0'
-  mui_theme: webapp/src/theme/nexusTheme.ts
-  theme_provider: webapp/src/theme/NexusThemeProvider.tsx
+  theme: webapp/src/theme/nexusTheme.ts
   operator_presentation: webapp/src/app/OperatorPresentation.tsx
-  safe_frontend_values: webapp/src/lib/format.ts
-  operational_status: webapp/src/domain/operationalPresentation.ts
-  channel_presentation: webapp/src/lib/supportStatus.ts
-  workspace_actions: webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx
-  workspace_state: webapp/src/features/operator-workspace/operatorWorkspaceState.ts
-  backend_policy: backend/app/services/permissions.py
+  ticket_domain: backend/app/services/canonical_ticket_service.py
+  safe_effective_closure: backend/app/services/ticket_closure_readiness.py
+  ticket_closure_api: backend/app/api/ticket_closure.py
+  permissions: backend/app/services/permissions.py
   visibility_scope: backend/app/services/scope_permissions.py
-  canonical_hrefs: backend/app/services/canonical_route_projection.py
-  support_sensitive_access: backend/app/services/support_sensitive_access.py
   provider_router: backend/app/services/provider_runtime/router.py
   provider_traffic_selection: backend/app/services/provider_runtime/traffic_selection.py
-  provider_customer_authority: backend/app/services/provider_runtime/webchat_runtime_dispatcher.py
-  database_pool: backend/app/db.py
-  database_capacity_qualification: scripts/qualification/database_capacity.py
   background_job_attempt_boundary: backend/app/services/background_job_transaction_boundary.py
   outbound_attempt_boundary: backend/app/services/outbound_dispatch_transaction_boundary.py
   queue_business_health: backend/app/services/queue_health.py
-  supply_chain_qualification: scripts/qualification/supply_chain.py
-  controlled_runtime: deploy/docker-compose.controlled.yml
-deletion_slices:
-  - id: github_actions_full_retirement
-    disposition: SUPERSEDED_DELETE
-    state: deleted_on_canonical_branch
-    paths:
-      - .github/workflows
-      - config/governance/actions-authority.v1.json
-      - config/governance/release-candidate-preconditions.v1.json
-      - scripts/ci/actions_authority_inventory.py
-      - scripts/release/exact_main_candidate_preconditions.py
-      - docs/superpowers/plans/2026-07-14-actions-authority-convergence.md
-    replacement: scripts/verify_repository.py
-  - id: duplicate_frontend_products
-    disposition: SUPERSEDED_DELETE
-    state: deleted_on_canonical_branch
-    paths:
-      - frontend
-      - webapp/src/features/support-console
-      - webapp/src/lib/api.ts
-    replacement:
-      - webapp/src/app/AppShell.tsx
-      - webapp/src/features/operator-workspace
-      - webapp/src/lib/apiClient.ts
-  - id: duplicate_design_system
-    disposition: DUPLICATE_DELETE
-    state: deleted_on_canonical_branch
-    paths:
-      - webapp/src/shared/ui
-      - webapp/src/shared/api
-      - webapp/src/components/ui
-      - webapp/src/styles/tokens.css
-      - webapp/src/styles/components.css
-    replacement:
-      - '@mui/material@9.2.0'
-      - webapp/src/theme/nexusTheme.ts
-      - webapp/src/theme/NexusThemeProvider.tsx
-      - webapp/src/app/OperatorPresentation.tsx
-  - id: duplicate_workspace_presentation
-    disposition: DUPLICATE_DELETE
-    state: deleted_on_canonical_branch
-    paths:
-      - webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx
-      - inline ActionPanel in webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx
-      - route-private FullPageBoundary and WorkspaceLoading implementations
-      - page-private TechnicalDisclosure and StatusCount implementations
-    replacement:
-      - webapp/src/app/OperatorPresentation.tsx
-      - webapp/src/lib/format.ts
-      - webapp/src/features/operator-workspace/OperatorWorkspaceActions.tsx
-      - webapp/src/features/operator-workspace/operatorWorkspaceState.ts
-  - id: unreachable_frontend_modules
-    disposition: DEAD_DELETE
-    state: deleted_on_canonical_branch
-    paths:
-      - webapp/src/components/ui/Card.tsx
-      - webapp/src/components/ui/DataTable.tsx
-      - webapp/src/components/ui/GuidedWorkflow.tsx
-      - webapp/src/components/ui/KeyValue.tsx
-      - webapp/src/components/ui/MetricCard.tsx
-      - webapp/src/components/ui/SegmentedControl.tsx
-      - webapp/src/components/ui/Skeleton.tsx
-      - webapp/src/components/ui/Toast.tsx
-      - webapp/src/hooks/useAutoRefresh.ts
-      - webapp/src/lib/cn.ts
-      - webapp/src/lib/outboundChannels.ts
-      - webapp/src/lib/uxCopy.ts
-      - webapp/src/lib/webchatRealtime.ts
-      - webapp/src/lib/webchatVoiceTypes.ts
-  - id: duplicate_knowledge_surface
-    disposition: DUPLICATE_DELETE
-    state: deleted_on_canonical_branch
-    paths:
-      - webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx
-    replacement:
-      - webapp/src/features/knowledge/KnowledgePage.tsx
-  - id: provider_and_support_parallel_authority
-    disposition: CONSOLIDATE_IN_PLACE
-    state: implemented_and_regression_gated
-    retired_or_tombstoned:
-      - /api/webchat/admin/conversations
-      - /api/support/conversations/detail
-      - standalone /support-memory route
-    replacement:
-      - /api/support/conversations
-      - /api/webchat/admin/tickets/{ticket_id}/thread
-      - backend/app/services/provider_runtime/traffic_selection.py
-      - backend/app/services/provider_runtime/router.py
-  - id: worker_crash_and_stale_attempt_residue
-    disposition: CORRECTNESS_REPLACE
-    state: implemented_on_current_candidate_pending_fault_injection
-    retired_behavior:
-      - outbound processing rows permanently stranded after worker crash
-      - worker-name-only locks without unique attempt identity
-      - stale worker completion accepted after lease transfer
-      - transaction-boundary installation failure silently ignored
-    replacement:
-      - unique claim tokens
-      - conditional lease refresh
-      - durable ownership checks before completion
-      - stale processing recovery to retry/dead state
-  - id: mutable_build_and_connection_defaults
-    disposition: GOVERNED_REPLACE
-    state: implemented_on_current_candidate_pending_runtime_qualification
-    retired_behavior:
-      - PostgreSQL pool_size 10 and max_overflow 20 in every process
-      - unpinned Docker base images
-      - build-time apk upgrade
-      - direct Python dependency version ranges
-    replacement:
-      - role-specific bounded pools
-      - privacy-safe database capacity snapshot
-      - immutable image digests
-      - exact direct Python dependency versions
-      - release SBOM, provenance and signature requirements
-  - id: external_channel_stop_new_writes
-    disposition: LEGACY_ACTIVE_MIGRATE_THEN_DELETE
-    state: runtime_mutations_retired_historical_reads_protected
-    retired_behavior:
-      - legacy link and sync mutation APIs
-      - legacy event consume/replay/drop APIs
-      - legacy sync and attachment background jobs
-      - legacy operator queue projection and mutation
-    replacement:
-      - provider_runtime and native channel authorities
-      - historical read-only compatibility under #572
-  - id: schema_mutation_single_authority
-    disposition: GOVERNED_REPLACE
-    state: runtime_ddl_removed
-    retired_behavior:
-      - request-path SQLite CREATE TABLE fallbacks
-    replacement:
-      - backend/alembic only
-  - id: voice_capability_separation
-    disposition: CONSOLIDATE_IN_PLACE
-    state: explicit_non_overlapping_capabilities
-    replacement:
-      - WEBCHAT_HUMAN_CALL_ENABLED
-      - WEBCHAT_LIVE_AI_VOICE_ENABLED
-  - id: application_configuration_composition
-    disposition: CONSOLIDATE_IN_PLACE
-    state: explicit_router_registration_and_typed_safe_settings_groups
-    replacement:
-      - backend/app/bootstrap/routers.py
-      - backend/app/settings_groups.py
-anti_reintroduction:
-  - scripts/verify_repository.py
-  - webapp/scripts/assert-frontend-architecture.mjs
-  - webapp/tests/canonical-convergence-regression.test.mjs
-  - webapp/tests/frontend-semantic-foundation-contract.test.mjs
-  - webapp/tests/frontend-convergence-residue-contract.test.mjs
-  - webapp/tests/workspace-authority-residue.test.mjs
-  - webapp/tests/operator-workspace-contract.test.mjs
-  - webapp/tests/mui-visual-authority-contract.test.mjs
-  - webapp/tests/ui-visual-inventory-contract.test.mjs
-  - backend/tests/test_provider_runtime_traffic_selection.py
-  - backend/tests/test_provider_runtime_bounded_audit_boundary.py
-  - backend/tests/test_database_connection_budget.py
-  - backend/tests/test_background_job_transaction_boundary.py
-  - backend/tests/test_outbound_dispatch_transaction_boundary.py
-  - backend/tests/test_queue_business_health.py
-  - backend/tests/test_supply_chain_qualification.py
-protected_assets:
-  - id: historical_alembic_revisions
-    owner_issue: 532
-    rule: protected_history_not_mechanical_cleanup
-  - id: public_webchat_widget
+  worker_progress: backend/app/services/worker_progress.py
+  controlled_worker_entrypoint: backend/scripts/run_worker_supervised.py
+  controlled_worker_healthcheck: backend/scripts/check_worker_progress.py
+  schema_migration: backend/alembic
+  compatibility_lifecycle: config/architecture/compatibility-lifecycle.v1.json
+  repository_verification: scripts/verify_repository.py
+  remote_execution: .github/workflows/canonical-acceptance.yml
+
+retired_paths_must_be_absent:
+  - frontend
+  - webapp/src/features/support-console
+  - webapp/src/shared/ui
+  - webapp/src/shared/api
+  - webapp/src/components/ui
+  - webapp/src/lib/api.ts
+  - webapp/src/lib/webchatRealtime.ts
+  - webapp/src/styles/tokens.css
+  - webapp/src/styles/components.css
+  - webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx
+  - backend/app/services/external_channel_bridge.py
+  - backend/app/services/external_channel_runtime_service.py
+  - backend/app/services/outbound_adapters/whatsapp.py
+  - backend/app/services/webchat_ai_decision_runtime/prompt_builder.py
+  - artifacts/supply-chain
+
+single_authority_rules:
+  - one authenticated operator product
+  - one application shell and navigation authority
+  - one generic UI framework and theme
+  - one frontend HTTP transport lifecycle
+  - one public authority per backend responsibility
+  - no role-name authorization outside the capability authority
+  - no runtime schema DDL outside Alembic
+  - no ticket closure from status or technical success alone
+  - no worker health claim without durable progress freshness
+  - one GitHub Actions workflow and one required gate
+  - no verification evidence written into the candidate tree
+
+compatibility_rules:
+  policy: compatibility may delegate or provide bounded read-only history only
+  business_logic_in_shims: forbidden
+  provider_calls_from_compatibility: forbidden
+  legacy_state_creation: forbidden
+  schema_mutation: forbidden
+  removal_deadlines_owned_by: config/architecture/compatibility-lifecycle.v1.json
+
+verification:
+  static: python scripts/verify_repository.py --static-only --expected-sha <exact-sha>
+  complete: python scripts/verify_repository.py --expected-sha <exact-sha>
+  frontend: cd webapp && npm run verify
+  browser: cd webapp && npm run e2e
+  postgres: python scripts/qualification/postgres_acceptance.py
+  release_supply_chain: python scripts/qualification/supply_chain.py --release --evidence-dir <outside-repository>
+  candidate_mutation_during_verification: forbidden
+
+protected_non_duplicates:
+  public_webchat_widget:
     path: backend/app/static/webchat
-    rule: separate_public_customer_surface_not_operator_product
-unverified_requirements:
-  - current exact Head canonical verifier execution
-  - complete frontend and backend regression execution
-  - PostgreSQL Support privacy acceptance
-  - PostgreSQL migration rehearsal
-  - representative database capacity and hot-query evidence
-  - worker crash, lease transfer and external idempotency fault injection
-  - controlled candidate health, business health and rollback evidence
-  - generated SBOM, provenance and signature bundle
-  - independent current-Head review
-safety:
-  deployment_authorized: false
-  production_data_mutation_authorized: false
-  provider_enablement_authorized: false
-  real_customer_outbound_authorized: false
-  production_release_authorized: false
+    reason: separate customer-facing surface, not an operator console
+  alembic_history:
+    path: backend/alembic/versions
+    reason: deterministic upgrade, restore and rollback authority
+  versioned_machine_contracts:
+    reason: schema identity, not parallel implementation
+
+production_authority:
+  granted_by_repository_file: false
+  deployment_requires_exact_action_authorization: true
+  provider_enablement_requires_exact_action_authorization: true
+  destructive_data_retirement_requires_exact_action_authorization: true
