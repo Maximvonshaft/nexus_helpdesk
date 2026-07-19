@@ -21,7 +21,7 @@ from ..services.support_sensitive_access import (
     audit_sensitive_support_read,
     ensure_sensitive_support_capability,
 )
-from ..services.webchat_handoff_service import (
+from ..services.canonical_webchat_handoff_service import (
     accept_handoff_request,
     decline_handoff_request,
     force_takeover_ticket,
