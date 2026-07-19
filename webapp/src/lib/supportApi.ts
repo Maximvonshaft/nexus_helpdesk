@@ -34,6 +34,11 @@ import type {
   SpeedafWaybillLookupResponse,
   SpeedafWorkOrderPayload,
 } from '@/lib/speedafTypes'
+import type {
+  TicketClosureEvidenceRequest,
+  TicketClosureEvidenceResult,
+  TicketClosureReceipt,
+} from '@/lib/ticketClosureTypes'
 import { apiRequest, normalizeApiBaseUrl } from '@/lib/apiClient'
 
 export {
@@ -152,6 +157,16 @@ export const supportApi = {
   confirmSpeedafCancel: (ticketId: number, payload: SpeedafCancelPayload) => apiRequest<SpeedafActionResponse>(`/api/tickets/${ticketId}/speedaf/cancel`, {
     method: 'POST',
     body: JSON.stringify(payload),
+  }),
+
+  ticketClosureReadiness: (ticketId: number, init?: RequestInit) => apiRequest<TicketClosureReceipt>(`/api/tickets/${ticketId}/closure-readiness`, init),
+  recordTicketClosureEvidence: (ticketId: number, payload: TicketClosureEvidenceRequest) => apiRequest<TicketClosureEvidenceResult>(`/api/tickets/${ticketId}/closure-evidence`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  closeTicket: (ticketId: number, note?: string) => apiRequest<unknown>(`/api/tickets/${ticketId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ new_status: 'closed', note: note || null }),
   }),
 
   webchatAcceptHandoff: (requestId: number, note?: string) => apiRequest<WebchatHandoffRequest>(`/api/webchat/admin/handoff/${requestId}/accept`, {
