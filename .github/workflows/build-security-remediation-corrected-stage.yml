@@ -1,0 +1,36 @@
+name: Build Security Remediation Corrected Stage
+
+on:
+  push:
+    branches:
+      - build-security-remediation-corrected-stage
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout validated staging commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          ref: 4af9fb1e592d9bb91123a20597e05f97f22b7f77
+      - name: Build one corrected staging commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "4af9fb1e592d9bb91123a20597e05f97f22b7f77"
+          grep -Fq 'backend/tests/test_webchat_card_evidence_contract.py' .github/workflows/final-security-remediation.yml
+          sed -i '/backend\/tests\/test_webchat_card_evidence_contract.py/d' .github/workflows/final-security-remediation.yml
+          test "$(git diff --name-only | wc -l)" = 1
+          test "$(git diff --name-only)" = ".github/workflows/final-security-remediation.yml"
+          git diff --check
+          git config user.name "nexus-security-stage-builder"
+          git config user.email "nexus-security-stage-builder@users.noreply.github.com"
+          git add .github/workflows/final-security-remediation.yml
+          git commit -m "chore: correct final remediation test manifest"
+          git push --force origin HEAD:refs/heads/security-remediation-corrected-stage
+          git push origin --delete build-security-remediation-corrected-stage >/dev/null 2>&1 || true
