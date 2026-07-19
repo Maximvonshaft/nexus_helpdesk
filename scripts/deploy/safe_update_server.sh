@@ -22,17 +22,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Preserve both historical production-local inputs and the new controlled
-# inputs. This script only creates a verified backup; it never checks out,
-# overwrites, deploys, restarts or changes containers.
+# Preserve the single controlled deployment authority. This script only creates
+# a verified backup; it never checks out, overwrites, deploys, restarts or
+# changes containers.
 files=(
   Dockerfile
-  deploy/.env.prod
   deploy/.env.controlled
   deploy/.env.controlled.local-postgres
-  deploy/docker-compose.server.yml
   deploy/docker-compose.controlled.yml
   deploy/docker-compose.controlled-postgres.yml
+  deploy/nexus-prod-compose.sh
   deploy/nginx/default.conf
   backend/.env
 )
@@ -100,8 +99,8 @@ if ! git status --short; then
 fi
 printf '\nNext steps:\n'
 printf '%s\n' \
-  '1. Keep the production-local deploy/.env.prod and docker-compose.server.yml backup unchanged.' \
-  '2. Prepare a separate deploy/.env.controlled or deploy/.env.controlled.local-postgres.' \
+  '1. Keep the controlled configuration backup unchanged.' \
+  '2. Prepare deploy/.env.controlled or deploy/.env.controlled.local-postgres.' \
   '3. Run the canonical static verifier and controlled preflight.' \
   '4. Back up PostgreSQL and uploads separately.' \
   '5. Only after explicit authorization, use deploy/nexus-prod-compose.sh with an explicit database topology.'

@@ -41,7 +41,7 @@ from ..schemas import (
     TagRead,
     MarketBulletinRead,
 )
-from ..services.canonical_ticket_service import (
+from ..services.ticket_service import (
     add_ai_intake,
     add_attachment,
     add_comment,

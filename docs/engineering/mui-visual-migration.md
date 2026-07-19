@@ -1,162 +1,82 @@
-# Nexus MUI Visual Replacement
+# Nexus visual authority
 
 ## Decision
 
-The repository owner selected Material UI as the replacement visual framework for the Nexus operator frontend.
-
-The decision is not to add MUI beside the current visual system. The decision is to make MUI the only generic visual component authority and delete the replaced custom visual implementation before PR #754 can merge.
-
-Machine authority: `webapp/design/mui-visual-authority.v1.json`.
-
-## Selected stack
+Material UI is the sole generic visual component authority for the authenticated Nexus operator product.
 
 - `@mui/material@9.2.0`
 - `@mui/icons-material@9.2.0`
 - `@emotion/react@11.14.0`
 - `@emotion/styled@11.14.1`
 - `react-is@18.3.1`
-- `package.json` override: `react-is: 18.3.1`
 
-Nexus currently uses React and React DOM `18.3.1`. Material UI v9 supports React 18, but its published package depends on React Is 19; the official MUI installation guidance requires React 18 applications to resolve React Is to the same React version.
-
-## New authority model
-
-### MUI owns generic presentation
-
-Use direct Material UI components for:
-
-- buttons and icon buttons;
-- links that visually behave as actions;
-- text fields, selects, checkboxes, switches and form feedback;
-- chips and badges only where their semantics genuinely fit;
-- alerts and notices;
-- progress, skeleton and loading states;
-- dialogs, drawers, menus, tooltips and popovers;
-- tabs and navigation controls;
-- lists, tables and pagination;
-- typography, dividers, papers and surfaces;
-- responsive layout through Box, Stack, Grid and MUI responsive props.
-
-### Nexus owns only domain composition
-
-Nexus-specific components may remain or be introduced only when they represent business concepts rather than generic UI controls. Examples:
-
-- Case Spine;
-- case identity header;
-- queue task row;
-- evidence item;
-- operational result summary;
-- customer-notification state;
-- closure readiness.
-
-These domain components must compose MUI primitives. They must not recreate Button, Field, Dialog, Badge, Alert, Tabs or layout foundations.
-
-## Theme authority
-
-Create exactly one theme:
+The sole theme and provider are:
 
 - `webapp/src/theme/nexusTheme.ts`
 - `webapp/src/theme/NexusThemeProvider.tsx`
 
-The application root will use MUI `ThemeProvider` and `CssBaseline`.
+`ThemeProvider` and `CssBaseline` are mounted once at the application root. This document is an architecture decision, not a mutable delivery-status ledger. Current build, test, pull-request and deployment state must be read from the exact GitHub object and commit evidence.
 
-The theme owns:
+## Product boundary
 
-- palette;
-- typography;
-- spacing;
-- shape;
-- breakpoints;
-- transitions;
-- z-index;
-- density;
-- component default props;
-- component style overrides;
-- CSS variables.
+The authenticated operator product is `webapp/`. The public customer WebChat widget under `backend/app/static/webchat/` is a separate channel surface and is not a second operator product.
 
-Do not create a second theme, nested route themes or feature-private palettes.
+The operator product has exactly one application shell, navigation authority, route hierarchy, MUI theme, presentation helper authority and frontend HTTP transport.
 
-## What will be deleted
+## Retired visual authorities
 
-After all consumers migrate, delete the current generic visual components:
+The following paths must remain physically absent:
 
-- `Button.tsx`;
-- `ButtonLink.tsx`;
-- `Badge.tsx`;
-- `Field.tsx`;
-- `EmptyState.tsx`;
-- `ErrorSummary.tsx`;
-- `TechnicalDetails.tsx`;
-- `ConfirmDialog.tsx`;
-- `PageHeader.tsx`.
+- `frontend/`;
+- `webapp/src/features/support-console/`;
+- `webapp/src/shared/ui/`;
+- `webapp/src/shared/api/`;
+- `webapp/src/components/ui/`;
+- `webapp/src/styles/tokens.css`;
+- `webapp/src/styles/components.css`;
+- route-private visual stylesheets;
+- `webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx`;
+- V2, redesign, new-workspace or parallel shell routes.
 
-Delete Radix Dialog after the MUI Dialog migration.
+Only two source stylesheets are allowed:
 
-Delete route and shared CSS after equivalent MUI rendering is complete:
+- `webapp/src/styles.css` for document and browser foundations;
+- `webapp/src/a11y.css` for the screen-reader utility.
 
-- token and shared component CSS;
-- login CSS;
-- application shell CSS;
-- Workspace CSS and its refinement patch;
-- admin-route CSS;
-- Knowledge CSS;
-- Runtime audit CSS.
+Colors, spacing, typography, shape, elevation, focus, motion and component overrides belong in `nexusTheme.ts`.
 
-`styles.css` and `a11y.css` may survive only as a minimal, audited browser/accessibility layer for responsibilities that MUI and semantic HTML do not own. The target is no route-private visual CSS.
+## Canonical composition
 
-## Migration sequence
+- Application shell: `webapp/src/app/AppShell.tsx`
+- Navigation: `webapp/src/app/navigation.ts`
+- Operator presentation: `webapp/src/app/OperatorPresentation.tsx`
+- Workspace orchestration: `webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx`
+- Knowledge: `webapp/src/features/knowledge/KnowledgePage.tsx`
+- HTTP transport: `webapp/src/lib/apiClient.ts`
 
-1. Install and pin the exact MUI/Emotion/React Is package set and regenerate `package-lock.json`.
-2. Add the single theme provider and CssBaseline at the current root.
-3. Migrate login and AppShell to prove typography, navigation, forms and responsive behavior.
-4. Migrate the canonical Workspace in one coherent slice while preserving all functional behavior.
-5. Migrate Knowledge, Channels, Runtime and Control Tower.
-6. Replace all custom generic component imports with direct MUI imports.
-7. Delete the generic visual component files, Radix dependency and route CSS.
-8. Remove dead class names and imports.
-9. Run local architecture, lint, typecheck, tests, build and browser verification.
-10. Merge only when the final exact Head contains one visual system.
+Business vocabulary remains owned by domain mapping modules. Generic rendering remains owned by MUI and the single Nexus theme.
 
-## Temporary coexistence boundary
+## Permanent enforcement
 
-MUI and the old visual layer may coexist only inside the unmerged migration branch while route migration is actively taking place.
+`webapp/scripts/assert-frontend-architecture.mjs` rejects retired paths, unreachable production modules, another shell or navigation, another UI framework, another theme/provider/baseline owner, route-private generic presentation helpers, raw visual authorities outside the theme, extra source CSS, V2 routes, unused runtime dependencies and a second GitHub Actions workflow.
 
-Forbidden:
+`webapp/scripts/assert-http-transport-authority.mjs` rejects any second ownership of fetch lifecycle, API base URL, authentication headers, token storage or global 401 handling.
 
-- partial merge to `main`;
-- old/new runtime switches;
-- V2 routes;
-- a second AppShell;
-- a second component directory;
-- two production themes;
-- leaving old generic controls for later cleanup;
-- adding Tailwind, shadcn, Ant Design, Chakra, Mantine or another framework.
+## Verification
 
-## Styling rule
+Use one unchanged exact commit:
 
-The owner direction is not to hand-build a replacement CSS framework.
+```bash
+cd webapp
+npm ci --ignore-scripts --no-audit --no-fund
+npm run verify
+npm run e2e
+```
 
-Allowed custom styling is limited to:
+Repository-wide verification remains:
 
-- the single MUI theme configuration;
-- component-specific `sx` or MUI `styled` usage where a Nexus domain layout requires it;
-- minimal global accessibility/browser rules that MUI cannot express;
-- business-specific visual composition such as the Case Spine.
+```bash
+python scripts/verify_repository.py --expected-sha <exact-sha>
+```
 
-Do not hand-build generic buttons, fields, dialogs, status pills, cards, tables, menus, tabs or notifications.
-
-## Acceptance
-
-PR #754 may merge only when:
-
-- every active route renders through MUI;
-- the MUI theme is the only visual token authority;
-- old generic UI component files are deleted;
-- old route visual CSS is deleted;
-- Radix Dialog is removed;
-- no second UI framework is present;
-- no old/new switch or V2 route exists;
-- functional behavior is unchanged;
-- keyboard, focus, zoom, reduced motion and WCAG AA remain valid;
-- 375, 768, 1024 and 1440 browser evidence is recorded;
-- one unchanged exact Head passes repository-local verification.
+No unexecuted check, historical pull request or document statement is acceptance evidence.

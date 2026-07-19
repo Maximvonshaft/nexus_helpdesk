@@ -13,7 +13,7 @@ from ..db import get_db
 from ..enums import SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ..models import Customer, IntegrationClient, Market, Team, Ticket, User
 from ..schemas import CustomerInput, TicketCreate
-from ..services.canonical_ticket_service import create_ticket
+from ..services.ticket_service import create_ticket
 from ..services.integration_auth import (
     AuthenticatedIntegrationClient,
     authenticate_integration_client,

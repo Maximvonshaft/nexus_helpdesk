@@ -6,42 +6,28 @@ from __future__ import annotations
 from pathlib import Path
 
 RETIRED_DEPLOY_PATHS = (
+    "deploy/docker-compose.server.yml",
+    "deploy/docker-compose.candidate.yml",
+    "deploy/.env.prod.example",
+    "deploy/.env.prod.local-postgres.example",
+    "deploy/.env.prod.external-postgres.example",
+    "deploy/.env.candidate.example",
     "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh",
     "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md",
     "backend/tests/test_candidate_compose_contract.py",
 )
 
-TOMBSTONE_ENV_PATHS = (
-    "deploy/.env.prod.example",
-    "deploy/.env.prod.local-postgres.example",
-    "deploy/.env.prod.external-postgres.example",
-    "deploy/.env.candidate.example",
-)
-
 
 def deployment_authority_findings(root: Path) -> list[str]:
     findings: list[str] = []
-    controlled = root / "deploy" / "docker-compose.controlled.yml"
-    local_db = root / "deploy" / "docker-compose.controlled-postgres.yml"
-    server_alias = root / "deploy" / "docker-compose.server.yml"
-    candidate_alias = root / "deploy" / "docker-compose.candidate.yml"
-    rollback = root / "scripts" / "deploy" / "rollback_release.sh"
-    wrapper = root / "deploy" / "nexus-prod-compose.sh"
+    controlled = root / "deploy/docker-compose.controlled.yml"
+    local_db = root / "deploy/docker-compose.controlled-postgres.yml"
+    rollback = root / "scripts/deploy/rollback_release.sh"
+    wrapper = root / "deploy/nexus-prod-compose.sh"
 
     for relative in RETIRED_DEPLOY_PATHS:
         if (root / relative).exists():
             findings.append(f"retired_deploy_path_exists:{relative}")
-
-    for relative in TOMBSTONE_ENV_PATHS:
-        path = root / relative
-        if not path.is_file():
-            findings.append(f"retired_env_tombstone_missing:{relative}")
-            continue
-        text = path.read_text(encoding="utf-8")
-        if "NEXUS_ENV_TEMPLATE_RETIRED=true" not in text:
-            findings.append(f"retired_env_not_tombstoned:{relative}")
-        if len(text.splitlines()) > 20:
-            findings.append(f"retired_env_tombstone_unbounded:{relative}")
 
     if controlled.is_file():
         text = controlled.read_text(encoding="utf-8")
@@ -51,9 +37,19 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "ai_runtime_token",
             "live_voice_token",
             "--queue all",
+            "/proc/1/cmdline",
+            "controlled-worker-ok",
         ):
             if forbidden in text:
                 findings.append(f"controlled_compose_forbidden:{forbidden}")
+        for required in (
+            "run_worker_supervised.py",
+            "scripts/check_worker_progress.py",
+            "NEXUS_WORKER_ID",
+            "NEXUS_WORKER_QUEUE",
+        ):
+            if required not in text:
+                findings.append(f"controlled_compose_required_missing:{required}")
 
     if local_db.is_file():
         text = local_db.read_text(encoding="utf-8")
@@ -71,18 +67,6 @@ def deployment_authority_findings(root: Path) -> list[str]:
                     f"controlled_postgres_duplicates_service:{forbidden}"
                 )
 
-    if server_alias.is_file():
-        content = server_alias.read_text(encoding="utf-8")
-        if "services:" in content or "docker-compose.controlled.yml" not in content:
-            findings.append("server_compose_not_thin_controlled_alias")
-        if "docker-compose.controlled-postgres.yml" not in content:
-            findings.append("server_compose_local_overlay_missing")
-
-    if candidate_alias.is_file():
-        content = candidate_alias.read_text(encoding="utf-8")
-        if "services:" in content or "docker-compose.controlled.yml" not in content:
-            findings.append("candidate_compose_not_thin_controlled_alias")
-
     if wrapper.is_file():
         text = wrapper.read_text(encoding="utf-8")
         for marker in (
@@ -93,6 +77,14 @@ def deployment_authority_findings(root: Path) -> list[str]:
         ):
             if marker not in text:
                 findings.append(f"production_wrapper_contract_missing:{marker}")
+        for forbidden in (
+            "docker-compose.server.yml",
+            "docker-compose.candidate.yml",
+            ".env.prod",
+            ".env.candidate",
+        ):
+            if forbidden in text:
+                findings.append(f"production_wrapper_legacy_reference:{forbidden}")
 
     if rollback.is_file():
         text = rollback.read_text(encoding="utf-8")
@@ -108,7 +100,9 @@ def deployment_authority_findings(root: Path) -> list[str]:
         for forbidden in (
             "COMPOSE_FILE=",
             "runtime-warmer",
-            "IMAGE_TAG=\"$OLD_IMAGE_TAG\" docker compose",
+            'IMAGE_TAG="$OLD_IMAGE_TAG" docker compose',
+            "docker-compose.server.yml",
+            "docker-compose.candidate.yml",
         ):
             if forbidden in text:
                 findings.append(f"rollback_legacy_path_present:{forbidden}")

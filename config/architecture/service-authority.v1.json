@@ -1,22 +1,18 @@
 {
   "schema": "nexus.service-authority.v1",
-  "rule": "Each responsibility has exactly one public authority, at most one private implementation module, and zero independently callable parallel implementations.",
+  "rule": "Each responsibility has exactly one public authority, at most one private implementation module, and zero independently callable parallel implementations or compatibility shims.",
   "authorities": [
     {
       "responsibility": "ticket-domain",
-      "public_authority": "backend/app/services/canonical_ticket_service.py",
+      "public_authority": "backend/app/services/ticket_service.py",
       "private_implementation": "backend/app/services/ticket_service_core.py",
-      "compatibility_shims": [
-        "backend/app/services/ticket_service.py"
-      ]
+      "compatibility_shims": []
     },
     {
       "responsibility": "control-tower",
       "public_authority": "backend/app/services/canonical_control_tower_service.py",
       "private_implementation": null,
-      "compatibility_shims": [
-        "backend/app/services/control_tower_service.py"
-      ]
+      "compatibility_shims": []
     },
     {
       "responsibility": "lite-case-state-machine",
@@ -28,17 +24,13 @@
       "responsibility": "qa-training",
       "public_authority": "backend/app/services/canonical_qa_training_service.py",
       "private_implementation": "backend/app/services/qa_training_service_core.py",
-      "compatibility_shims": [
-        "backend/app/services/qa_training_service.py"
-      ]
+      "compatibility_shims": []
     },
     {
       "responsibility": "unified-operator-work-queue-read-model",
-      "public_authority": "backend/app/services/canonical_operator_work_queue.py",
+      "public_authority": "backend/app/services/operator_work_queue.py",
       "private_implementation": "backend/app/services/operator_work_queue_core.py",
-      "compatibility_shims": [
-        "backend/app/services/operator_work_queue.py"
-      ]
+      "compatibility_shims": []
     },
     {
       "responsibility": "durable-operator-task-lifecycle",
@@ -48,27 +40,21 @@
     },
     {
       "responsibility": "webchat-handoff",
-      "public_authority": "backend/app/services/canonical_webchat_handoff_service.py",
+      "public_authority": "backend/app/services/webchat_handoff_service.py",
       "private_implementation": "backend/app/services/webchat_handoff_service_core.py",
-      "compatibility_shims": [
-        "backend/app/services/webchat_handoff_service.py"
-      ]
+      "compatibility_shims": []
     },
     {
       "responsibility": "osr-admin-api",
       "public_authority": "backend/app/api/canonical_osr_admin.py",
       "private_implementation": "backend/app/api/osr_admin_core.py",
-      "compatibility_shims": [
-        "backend/app/api/osr_admin.py"
-      ]
+      "compatibility_shims": []
     },
     {
       "responsibility": "integration-api",
       "public_authority": "backend/app/api/canonical_integration.py",
-      "private_implementation": "backend/app/api/integration_core.py",
-      "compatibility_shims": [
-        "backend/app/api/integration.py"
-      ]
+      "private_implementation": "backend/app/api/integration_runtime.py",
+      "compatibility_shims": []
     },
     {
       "responsibility": "webchat-origin-and-cors-policy",

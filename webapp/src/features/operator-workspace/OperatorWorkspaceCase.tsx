@@ -20,6 +20,7 @@ import {
 } from '@/lib/operatorWorkspacePresentation'
 import type { SupportMemoryLedger } from '@/lib/types'
 import { formatDateTime, sanitizeDisplayText, stringValue } from '@/lib/format'
+import { OperatorWorkspaceClosure } from './OperatorWorkspaceClosure'
 import { OperatorWorkspaceConversation } from './OperatorWorkspaceConversation'
 
 function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; currentUserId?: number }) {
@@ -70,7 +71,7 @@ function CaseSpine({ item, memory }: { item: UnifiedOperatorQueueItem; memory: S
     ['下一步', nextAction ? sanitizeDisplayText(nextAction) : '未提供', Boolean(nextAction)],
     ['操作结果', result ? sanitizeDisplayText(result.label || result.kind) : '未提供', Boolean(result)],
     ['客户通知', notification ? sanitizeDisplayText(notification.label || notification.kind) : '未提供', Boolean(notification)],
-    ['结案状态', '暂无可信结案信息', false],
+    ['结案状态', item.source_status === 'closed' ? '已安全关闭' : '待服务器核验', item.source_status === 'closed'],
   ] as const
   return (
     <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label="处理进度">
@@ -181,6 +182,13 @@ export function WorkspaceCasePane({
             {preserveMissingSelection ? <Alert severity="warning" variant="outlined" sx={{ mb: 2.5 }}><AlertTitle>任务已离开待处理列表</AlertTitle>回复草稿已保留，操作已暂停。</Alert> : null}
             {sourceRecord && !thread ? <SourceSummary data={sourceRecord} item={item} /> : null}
             <EvidencePanel memory={memory} />
+            <Box component="section" aria-label="安全关闭" sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: 'divider' }}>
+              <OperatorWorkspaceClosure
+                ticketId={item.ticket_id}
+                sourceStatus={item.source_status}
+                onRefresh={onRefresh}
+              />
+            </Box>
           </Box>
           <OperatorWorkspaceConversation
             item={item}

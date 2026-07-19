@@ -3,81 +3,13 @@
   "policy": "This is the sole compatibility lifecycle authority. Compatibility assets may redirect, document, or provide bounded historical reads, but may not create new legacy state, enqueue legacy work, send provider traffic, mutate schema, own secrets, or define a parallel product.",
   "assets": [
     {
-      "path": "deploy/docker-compose.server.yml",
-      "kind": "compose-alias",
-      "owner": "release-engineering",
-      "replacement": "deploy/nexus-prod-compose.sh with deploy/docker-compose.controlled.yml and deploy/docker-compose.controlled-postgres.yml",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": [
-        "no-services",
-        "no-secrets",
-        "include-only"
-      ]
-    },
-    {
-      "path": "deploy/docker-compose.candidate.yml",
-      "kind": "compose-alias",
-      "owner": "release-engineering",
-      "replacement": "deploy/docker-compose.controlled.yml",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": [
-        "no-services",
-        "no-secrets",
-        "include-only"
-      ]
-    },
-    {
-      "path": "deploy/.env.prod.example",
-      "kind": "environment-tombstone",
-      "owner": "release-engineering",
-      "replacement": "deploy/.env.controlled.example",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": [
-        "no-secret-values",
-        "replacement-banner-required",
-        "no-runtime-defaults"
-      ]
-    },
-    {
-      "path": "deploy/.env.prod.local-postgres.example",
-      "kind": "environment-tombstone",
-      "owner": "release-engineering",
-      "replacement": "deploy/.env.controlled.local-postgres.example",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": [
-        "no-secret-values",
-        "replacement-banner-required",
-        "no-runtime-defaults"
-      ]
-    },
-    {
-      "path": "deploy/.env.prod.external-postgres.example",
-      "kind": "environment-tombstone",
-      "owner": "release-engineering",
-      "replacement": "deploy/.env.controlled.example",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": [
-        "no-secret-values",
-        "replacement-banner-required",
-        "no-runtime-defaults"
-      ]
-    },
-    {
       "path": "backend/app/static/webchat",
       "kind": "separate-public-product-surface",
       "owner": "customer-channel-platform",
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": null,
-      "constraints": [
-        "not-an-operator-console",
-        "provider-governed-customer-messages"
-      ]
+      "constraints": ["not-an-operator-console", "provider-governed-customer-messages"]
     },
     {
       "path": "connectors/whatsapp-sidecar",
@@ -86,11 +18,7 @@
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": "2026-12-31",
-      "constraints": [
-        "disabled-by-default",
-        "no-provider-authority",
-        "separate-socket-lifecycle"
-      ]
+      "constraints": ["disabled-by-default", "no-provider-authority", "separate-socket-lifecycle"]
     },
     {
       "path": "vendor/chatwoot",
@@ -99,38 +27,18 @@
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": "2026-12-31",
-      "constraints": [
-        "not-runtime-code",
-        "license-and-reference-purpose-must-remain-documented"
-      ]
+      "constraints": ["not-runtime-code", "license-and-reference-purpose-must-remain-documented"]
     },
     {
-      "path": "config/governance/legacy-surface-domains.v1.json",
+      "path": "config/governance/legacy-surface-domains.v2.json",
       "kind": "subordinate-discovery-registry",
       "owner": "architecture-governance",
       "replacement": "config/architecture/compatibility-lifecycle.v1.json",
-      "introduced_at": "2026-07-18",
+      "introduced_at": "2026-07-19",
       "remove_after": null,
-      "constraints": [
-        "subordinate-only",
-        "fail-closed",
-        "no-independent-policy"
-      ]
-    },
-    {
-      "path": "backend/app/api/admin_outbound_semantics.py",
-      "kind": "historical-observability-compatibility",
-      "owner": "channel-platform",
-      "replacement": "canonical runtime and queue observability",
-      "introduced_at": "2026-07-18",
-      "remove_after": null,
-      "constraints": [
-        "get-only-for-legacy-state",
-        "no-runtime-controls",
-        "no-provider-calls"
-      ]
+      "constraints": ["subordinate-only", "fail-closed", "runtime-head-bound", "no-independent-policy"]
     }
   ],
-  "detailed_registry": "config/governance/legacy-surface-domains.v1.json",
+  "detailed_registry": "config/governance/legacy-surface-domains.v2.json",
   "enforcement_entrypoint": "scripts/ci/check_legacy_surface_registry.py"
 }

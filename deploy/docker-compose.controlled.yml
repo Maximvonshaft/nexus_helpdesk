@@ -60,6 +60,8 @@ x-controlled-app: &controlled_app
     SPEEDAF_VOICE_CALLBACK_ENABLED: "false"
     OPERATIONS_DISPATCH_MODE: disabled
     OPERATIONS_DISPATCH_ADAPTER: disabled
+    WORKER_PROGRESS_MAX_SUCCESS_AGE_SECONDS: ${WORKER_PROGRESS_MAX_SUCCESS_AGE_SECONDS:-90}
+    WORKER_PROGRESS_MAX_CYCLE_AGE_SECONDS: ${WORKER_PROGRESS_MAX_CYCLE_AGE_SECONDS:-300}
   networks:
     - controlled
   read_only: true
@@ -74,21 +76,13 @@ x-controlled-app: &controlled_app
 
 x-worker-healthcheck: &worker_healthcheck
   test:
-    - CMD-SHELL
-    - >-
-      PROMETHEUS_MULTIPROC_DIR= python -c "from pathlib import Path;
-      cmd=Path('/proc/1/cmdline').read_text(errors='replace');
-      assert 'scripts/run_worker.py' in cmd, cmd;
-      from sqlalchemy import text;
-      from app.db import SessionLocal;
-      db=SessionLocal();
-      db.execute(text('select 1'));
-      db.close();
-      print('controlled-worker-ok')"
+    - CMD
+    - python
+    - scripts/check_worker_progress.py
   interval: 20s
   timeout: 8s
   retries: 6
-  start_period: 20s
+  start_period: 30s
 
 services:
   migrate-controlled:
@@ -174,6 +168,8 @@ services:
     environment:
       <<: *controlled_environment
       NEXUS_PROCESS_ROLE: worker-outbound
+      NEXUS_WORKER_ID: worker-outbound-controlled
+      NEXUS_WORKER_QUEUE: outbound
       DATABASE_URL: ${DATABASE_URL_OUTBOUND:?set Outbound Worker PostgreSQL URL}
       METRICS_ENABLED: "false"
       DB_POOL_SIZE: ${DB_POOL_SIZE_OUTBOUND:-2}
@@ -181,7 +177,7 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker.py --worker-id worker-outbound-controlled --queue outbound
+    command: python scripts/run_worker_supervised.py --worker-id worker-outbound-controlled --queue outbound
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -193,6 +189,8 @@ services:
     environment:
       <<: *controlled_environment
       NEXUS_PROCESS_ROLE: worker-background
+      NEXUS_WORKER_ID: worker-background-controlled
+      NEXUS_WORKER_QUEUE: background
       DATABASE_URL: ${DATABASE_URL_BACKGROUND:?set Background Worker PostgreSQL URL}
       METRICS_ENABLED: "false"
       QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS: ${QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS:-15}
@@ -201,7 +199,7 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:rw
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker.py --worker-id worker-background-controlled --queue background
+    command: python scripts/run_worker_supervised.py --worker-id worker-background-controlled --queue background
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -213,13 +211,15 @@ services:
     environment:
       <<: *controlled_environment
       NEXUS_PROCESS_ROLE: worker-webchat-ai
+      NEXUS_WORKER_ID: worker-webchat-ai-controlled
+      NEXUS_WORKER_QUEUE: webchat-ai
       DATABASE_URL: ${DATABASE_URL_WEBCHAT_AI:?set WebChat AI Worker PostgreSQL URL}
       METRICS_ENABLED: "false"
       DB_POOL_SIZE: ${DB_POOL_SIZE_WEBCHAT_AI:-2}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEBCHAT_AI:-1}
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker.py --worker-id worker-webchat-ai-controlled --queue webchat-ai
+    command: python scripts/run_worker_supervised.py --worker-id worker-webchat-ai-controlled --queue webchat-ai
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -231,13 +231,15 @@ services:
     environment:
       <<: *controlled_environment
       NEXUS_PROCESS_ROLE: worker-handoff-snapshot
+      NEXUS_WORKER_ID: worker-handoff-snapshot-controlled
+      NEXUS_WORKER_QUEUE: handoff-snapshot
       DATABASE_URL: ${DATABASE_URL_HANDOFF:?set Handoff Worker PostgreSQL URL}
       METRICS_ENABLED: "false"
       DB_POOL_SIZE: ${DB_POOL_SIZE_HANDOFF:-2}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_HANDOFF:-1}
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot-controlled --queue handoff-snapshot
+    command: python scripts/run_worker_supervised.py --worker-id worker-handoff-snapshot-controlled --queue handoff-snapshot
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:

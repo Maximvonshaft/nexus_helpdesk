@@ -1,11 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-# Generate non-secret release metadata for docker compose builds.
+# Generate non-secret release metadata for controlled deployments.
 # Usage:
 #   scripts/export_release_metadata.sh deploy/.release.env
 #   set -a; . deploy/.release.env; set +a
-#   docker compose --env-file deploy/.env.prod --env-file deploy/.release.env -f deploy/docker-compose.server.yml build
+#   NEXUS_DATABASE_TOPOLOGY=external NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+#     deploy/nexus-prod-compose.sh config
 
 OUT_FILE="${1:-}"
 

@@ -3,23 +3,22 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI
 
 from ..api.admin import router as admin_router
-from ..api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from ..api.admin_password_policy import enforce_admin_password_request_policy
 from ..api.admin_perf import router as admin_perf_router
 from ..api.admin_provider_runtime import router as admin_provider_runtime_router
 from ..api.admin_queue import router as admin_queue_router
 from ..api.admin_whatsapp_native import router as admin_whatsapp_native_router
 from ..api.auth import router as auth_router
+from ..api.canonical_integration import router as integration_router
+from ..api.canonical_osr_admin import router as osr_admin_router
 from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
 from ..api.email import router as email_router
 from ..api.files import router as files_router
-from ..api.integration import router as integration_router
 from ..api.knowledge_items import router as knowledge_items_router
 from ..api.lite import router as lite_router
 from ..api.lookups import router as lookups_router
 from ..api.operator_queue import router as operator_queue_router
-from ..api.osr_admin import router as osr_admin_router
 from ..api.outbound_channels import router as outbound_channels_router
 from ..api.persona_profiles import router as persona_profiles_router
 from ..api.speedaf_actions import router as speedaf_actions_router
@@ -27,6 +26,7 @@ from ..api.speedaf_cancel import router as speedaf_cancel_router
 from ..api.stats import router as stats_router
 from ..api.support_conversations import router as support_conversations_router
 from ..api.support_intelligence import router as support_intelligence_router
+from ..api.ticket_closure import router as ticket_closure_router
 from ..api.ticket_perf import router as ticket_perf_router
 from ..api.tickets import router as tickets_router
 from ..api.webchat import router as webchat_router
@@ -41,7 +41,6 @@ def register_api_routers(app: FastAPI) -> None:
     """Register every supported API router exactly once in deterministic order."""
 
     for router in (
-        admin_outbound_semantics_router,
         admin_perf_router,
         admin_provider_runtime_router,
         admin_whatsapp_native_router,
@@ -69,6 +68,7 @@ def register_api_routers(app: FastAPI) -> None:
         persona_profiles_router,
         stats_router,
         tickets_router,
+        ticket_closure_router,
         speedaf_actions_router,
         speedaf_cancel_router,
         support_conversations_router,
