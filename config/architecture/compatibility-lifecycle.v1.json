@@ -3,51 +3,6 @@
   "policy": "This is the sole compatibility lifecycle authority. Compatibility assets may redirect, document, or provide bounded historical reads, but may not create new legacy state, enqueue legacy work, send provider traffic, mutate schema, own secrets, or define a parallel product.",
   "assets": [
     {
-      "path": "deploy/docker-compose.server.yml",
-      "kind": "compose-alias",
-      "owner": "release-engineering",
-      "replacement": "deploy/nexus-prod-compose.sh with deploy/docker-compose.controlled.yml and deploy/docker-compose.controlled-postgres.yml",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": ["no-services", "no-secrets", "include-only"]
-    },
-    {
-      "path": "deploy/docker-compose.candidate.yml",
-      "kind": "compose-alias",
-      "owner": "release-engineering",
-      "replacement": "deploy/docker-compose.controlled.yml",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": ["no-services", "no-secrets", "include-only"]
-    },
-    {
-      "path": "deploy/.env.prod.example",
-      "kind": "environment-tombstone",
-      "owner": "release-engineering",
-      "replacement": "deploy/.env.controlled.example",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
-    },
-    {
-      "path": "deploy/.env.prod.local-postgres.example",
-      "kind": "environment-tombstone",
-      "owner": "release-engineering",
-      "replacement": "deploy/.env.controlled.local-postgres.example",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
-    },
-    {
-      "path": "deploy/.env.prod.external-postgres.example",
-      "kind": "environment-tombstone",
-      "owner": "release-engineering",
-      "replacement": "deploy/.env.controlled.example",
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-10-31",
-      "constraints": ["no-secret-values", "replacement-banner-required", "no-runtime-defaults"]
-    },
-    {
       "path": "backend/app/static/webchat",
       "kind": "separate-public-product-surface",
       "owner": "customer-channel-platform",
