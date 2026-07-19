@@ -66,8 +66,8 @@ def test_filters_do_not_break_pagination(db_session):
     for idx in range(5):
         create_operator_task(
             db_session,
-            source_type="external_channel" if idx % 2 else "webchat",
-            task_type="bridge_unresolved" if idx % 2 else "handoff",
+            source_type="control_tower" if idx % 2 else "webchat",
+            task_type="control_tower_action" if idx % 2 else "handoff",
             source_id=f"src-{idx}",
             priority=40 + idx,
         )

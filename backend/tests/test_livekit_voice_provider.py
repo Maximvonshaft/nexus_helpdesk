@@ -48,7 +48,8 @@ class FakeAccessToken:
 
 
 def test_livekit_runtime_config_requires_livekit_env(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
     monkeypatch.delenv("LIVEKIT_URL", raising=False)
     monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
@@ -59,7 +60,8 @@ def test_livekit_runtime_config_requires_livekit_env(monkeypatch):
 
 
 def test_livekit_runtime_config_requires_wss_connect_src(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
     monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
     monkeypatch.setenv("LIVEKIT_API_KEY", "unit_key")
@@ -71,7 +73,8 @@ def test_livekit_runtime_config_requires_wss_connect_src(monkeypatch):
 
 
 def test_livekit_runtime_config_accepts_required_settings(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
     monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
     monkeypatch.setenv("LIVEKIT_API_KEY", "unit_key")

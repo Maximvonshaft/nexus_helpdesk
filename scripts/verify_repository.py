@@ -39,6 +39,11 @@ RETIRED_PATHS = (
     "webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx",
     "webapp/src/features/runtime/runtime-evidence-audit.css",
     "webapp/src/lib/cn.ts",
+    "backend/app/services/outbound_adapters/whatsapp.py",
+    "backend/app/services/webchat_ai_decision_runtime/prompt_builder.py",
+    "backend/app/services/external_channel_runtime_service.py",
+    "backend/app/services/external_channel_bridge.py",
+    "nexus-pr763-backend-source.tar.gz",
 )
 
 ACTIONS_RESIDUE = (
@@ -82,6 +87,8 @@ REQUIRED_CANONICAL_PATHS = (
     "backend/tests/test_exact_head_acceptance.py",
     "config/architecture/service-authority.v1.json",
     "config/architecture/compatibility-lifecycle.v1.json",
+    "config/governance/legacy-surface-domains.v1.json",
+    "scripts/ci/check_legacy_surface_registry.py",
     "scripts/qualification/service_authority.py",
     "scripts/qualification/route_authority.py",
     "scripts/qualification/database_capacity.py",
@@ -119,6 +126,11 @@ IDENTITY_FILES = (
     "deploy/docker-compose.controlled-postgres.yml",
     "config/architecture/service-authority.v1.json",
     "config/architecture/compatibility-lifecycle.v1.json",
+    "config/governance/legacy-surface-domains.v1.json",
+    "config/security/secret-scan-allowlist.json",
+    "scripts/ci/check_legacy_surface_registry.py",
+    "scripts/security/scan_repository.py",
+    "scripts/security/scan_git_history.py",
     "scripts/verify_repository.py",
     "scripts/qualification/service_authority.py",
     "scripts/qualification/route_authority.py",
@@ -172,6 +184,7 @@ FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_release_readiness.py",
     "backend/tests/test_infrastructure_decision.py",
     "backend/tests/test_live_voice_credential_rotation_runbook.py",
+    "backend/tests/test_external_channel_final_retirement.py",
 )
 
 MARKER_CONTRACTS = {
@@ -408,6 +421,15 @@ def _compatibility_lifecycle_failures() -> list[str]:
         return failures
     if payload.get("schema") != "nexus.compatibility-lifecycle.v1":
         failures.append("compatibility lifecycle schema is invalid")
+    detailed_registry = str(payload.get("detailed_registry") or "")
+    enforcement_entrypoint = str(payload.get("enforcement_entrypoint") or "")
+    if detailed_registry != "config/governance/legacy-surface-domains.v1.json":
+        failures.append("compatibility lifecycle detailed registry is not canonical")
+    if enforcement_entrypoint != "scripts/ci/check_legacy_surface_registry.py":
+        failures.append("compatibility lifecycle enforcement entrypoint is not canonical")
+    for relative in (detailed_registry, enforcement_entrypoint):
+        if relative and not (ROOT / relative).is_file():
+            failures.append(f"compatibility lifecycle subordinate authority missing: {relative}")
     assets = payload.get("assets")
     if not isinstance(assets, list) or not assets:
         return [*failures, "compatibility lifecycle assets are missing"]
@@ -463,6 +485,7 @@ def static_failures() -> list[str]:
 
     failures.extend(_qualification_failures("scripts/qualification/service_authority.py"))
     failures.extend(_compatibility_lifecycle_failures())
+    failures.extend(_qualification_failures("scripts/ci/check_legacy_surface_registry.py"))
 
     try:
         tracked_sql = [item for item in _git("ls-files", "*.sql").splitlines() if item.strip()]
@@ -475,6 +498,79 @@ def static_failures() -> list[str]:
                 f"{tracked_sql}"
             )
 
+    ddl_offenders: list[str] = []
+    ddl_pattern = re.compile(r"\b(?:CREATE|ALTER|DROP)\s+TABLE\b", re.IGNORECASE)
+    for path in sorted((ROOT / "backend/app").rglob("*.py")):
+        if ddl_pattern.search(path.read_text(encoding="utf-8")):
+            ddl_offenders.append(path.relative_to(ROOT).as_posix())
+    if ddl_offenders:
+        failures.append(
+            "Alembic is the only schema mutation authority; runtime DDL exists: "
+            f"{ddl_offenders}"
+        )
+
+    external_forbidden: dict[str, tuple[str, ...]] = {
+        "backend/app/api/admin.py": (
+            "@router.post('/external_channel/link'",
+            "external_channel/sync/enqueue",
+            "consume_external_channel_events_once",
+            "replay_unresolved_external_channel_event_payload",
+        ),
+        "backend/app/services/background_jobs.py": (
+            "EXTERNAL_CHANNEL_SYNC_JOB",
+            "ATTACHMENT_PERSIST_JOB",
+            "enqueue_external_channel_sync_job",
+        ),
+        "backend/app/services/background_job_transaction_boundary.py": (
+            "dispatch_pending_sync_jobs",
+            "EXTERNAL_CHANNEL_SYNC_JOB",
+            "ATTACHMENT_PERSIST_JOB",
+        ),
+        "backend/app/services/operator_queue.py": (
+            "replay_unresolved_external_channel_event_payload",
+            "db.add(ExternalChannel",
+        ),
+    }
+    for relative, markers in external_forbidden.items():
+        path = ROOT / relative
+        if not path.is_file():
+            failures.append(f"ExternalChannel retirement authority missing: {relative}")
+            continue
+        content = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker in content:
+                failures.append(f"ExternalChannel mutation residue in {relative}: {marker}")
+
+    retired_deployment_surfaces = (
+        "backend/.env.example",
+        "deploy/.env.controlled.example",
+        "deploy/.env.controlled.local-postgres.example",
+        "deploy/.env.rc-test.example",
+        "deploy/docker-compose.controlled.yml",
+        "deploy/nginx/nexusdesk.edge.conf.template",
+        "deploy/nginx/nexusdesk.edge.env.example",
+        "scripts/deploy/preflight.sh",
+        "scripts/probe_nexus_runtime.sh",
+        "backend/scripts/validate_production_readiness.py",
+    )
+    retired_deployment_markers = (
+        "EXTERNAL_CHANNEL_",
+        "/api/admin/external_channel/",
+        "NEXUSDESK_INTERNAL_AUTHORIZATION",
+        "_nexusdesk_operator_auth",
+    )
+    for relative in retired_deployment_surfaces:
+        candidate = ROOT / relative
+        if not candidate.is_file():
+            failures.append(f"deployment authority missing: {relative}")
+            continue
+        content = candidate.read_text(encoding="utf-8")
+        for marker_value in retired_deployment_markers:
+            if marker_value in content:
+                failures.append(
+                    f"retired ExternalChannel deployment residue in {relative}: {marker_value}"
+                )
+
     package_json = ROOT / "webapp/package.json"
     if package_json.is_file():
         try:
@@ -486,6 +582,11 @@ def static_failures() -> list[str]:
                 failures.append("frontend architecture command omits transport authority gate")
             if "npm run architecture" not in str(scripts.get("verify") or ""):
                 failures.append("frontend verify command bypasses architecture authority")
+            package = json.loads(package_json.read_text(encoding="utf-8"))
+            for section in ("dependencies", "devDependencies", "overrides"):
+                for name, version in (package.get(section) or {}).items():
+                    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", str(version)):
+                        failures.append(f"frontend direct dependency is not exact: {section}:{name}:{version}")
 
     for relative, canonical in PUBLIC_COMPATIBILITY.items():
         path = ROOT / relative

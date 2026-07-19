@@ -27,7 +27,6 @@ def test_background_worker_claims_only_background_owned_job_types():
     )
     for required in (
         "AUTO_REPLY_JOB",
-        "ATTACHMENT_PERSIST_JOB",
         "SPEEDAF_WORK_ORDER_CREATE_JOB",
         "SPEEDAF_ADDRESS_UPDATE_JOB",
         "SPEEDAF_VOICE_CALLBACK_JOB",

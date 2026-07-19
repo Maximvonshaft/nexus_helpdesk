@@ -22,5 +22,6 @@ prometheus-client==0.21.1
 cryptography==48.0.1
 jsonschema==4.21.1
 pypdf==6.13.3
+defusedxml==0.7.1
 
 pytest-asyncio==1.4.0

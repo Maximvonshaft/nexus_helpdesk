@@ -44,7 +44,8 @@ def ensure_schema():
 
 @pytest.fixture(autouse=True)
 def voice_env(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice,/webcall")
     monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")

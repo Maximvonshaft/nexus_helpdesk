@@ -1,8 +1,8 @@
 {
   "schema": "nexus.legacy-surface.registry.v1",
-  "registry_version": "2026-07-13.1",
-  "audited_main_sha": "e96dac837b4f02a297602259953d7c274b9c2063",
-  "coverage": "bounded_known_legacy_markers_and_protected_history",
+  "registry_version": "2026-07-18.1",
+  "audited_main_sha": "7260652e380e9b19818c079c4d3846a653354d24",
+  "coverage": "subordinate_fail_closed_discovery_under_compatibility_lifecycle",
   "enforcement": "fail_closed",
   "finding_limit": 100,
   "max_text_bytes": 262144,
@@ -21,13 +21,14 @@
     {
       "id": "external_channel_compatibility",
       "owner_issue": 572,
-      "disposition": "active_compatibility",
+      "disposition": "data_migration_dependency",
       "deletion_authorized": false,
-      "rationale": "Retired transport compatibility remains governed by the domain inventory and staged caller/data migration.",
+      "rationale": "ExternalChannel transport and mutations are retired. Historical model names and bounded read-only compatibility remain until observation, export, restore and destructive migration evidence are complete.",
       "prerequisites": [
-        "caller_migration",
-        "traffic_evidence",
+        "zero_new_writes",
+        "zero_runtime_callers",
         "observation_window",
+        "historical_export",
         "recovery_rehearsal_for_destructive_schema_change"
       ],
       "selectors": {
@@ -41,8 +42,8 @@
         "content_rules": []
       },
       "authoritative_refs": [
-        "issue:#572",
-        "pr:#597"
+        "config:compatibility-lifecycle.v1",
+        "issue:#572"
       ]
     },
     {

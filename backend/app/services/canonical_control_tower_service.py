@@ -46,6 +46,7 @@ from .permissions import (
     resolve_capabilities,
 )
 from .scope_permissions import has_global_case_visibility
+from .ticket_sla_policy import sla_risk_filter
 
 ACTIVE_TICKET_STATUSES = (
     TicketStatus.new,
@@ -57,7 +58,6 @@ ACTIVE_TICKET_STATUSES = (
 TERMINAL_TASK_STATUSES = ("resolved", "dropped", "replayed", "replay_failed", "cancelled")
 ACTIVE_VOICE_STATUSES = ("created", "ringing", "accepted", "active")
 HEALTHY_ACCOUNT_STATUSES = ("healthy", "ok", "ready")
-SLA_RISK_WINDOW = timedelta(minutes=30)
 
 CONTROL_TOWER_CAPABILITIES = {
     CAP_TICKET_ASSIGN,
@@ -112,16 +112,6 @@ def _active_tickets(query):
 
 def _count(query, column) -> int:
     return int(query.with_entities(func.count(column)).scalar() or 0)
-
-
-def _sla_risk_filter(now: datetime):
-    deadline = now + SLA_RISK_WINDOW
-    return or_(
-        Ticket.first_response_due_at <= deadline,
-        Ticket.resolution_due_at <= deadline,
-        Ticket.first_response_breached.is_(True),
-        Ticket.resolution_breached.is_(True),
-    )
 
 
 def _tone(value: int, *, danger: int, warning: int = 1) -> str:
@@ -209,7 +199,7 @@ def _dead_runtime_count(db: Session) -> int:
 
 
 def _team_workload(db: Session, user: User, now: datetime) -> list[dict[str, Any]]:
-    sla_risk = _sla_risk_filter(now)
+    sla_risk = sla_risk_filter(now)
     rows = (
         _active_tickets(_visible_ticket_query(db, user))
         .outerjoin(Team, Team.id == Ticket.team_id)
@@ -327,7 +317,7 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
     active = _active_tickets(visible)
     active_count = _count(active, Ticket.id)
     unassigned = _count(_active_tickets(visible).filter(Ticket.assignee_id.is_(None)), Ticket.id)
-    sla_risk = _count(_active_tickets(visible).filter(_sla_risk_filter(now)), Ticket.id)
+    sla_risk = _count(_active_tickets(visible).filter(sla_risk_filter(now)), Ticket.id)
     overdue = _count(
         _active_tickets(visible).filter(
             or_(Ticket.first_response_breached.is_(True), Ticket.resolution_breached.is_(True), Ticket.first_response_due_at < now, Ticket.resolution_due_at < now)

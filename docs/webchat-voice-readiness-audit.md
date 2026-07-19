@@ -15,7 +15,7 @@ The readiness gate introduces a path-scoped exception model:
 - All normal pages continue to deny microphone access.
 - Camera remains denied.
 - Geolocation remains denied.
-- Voice headers are only applied when `WEBCHAT_VOICE_ENABLED=true` and the request path matches `WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES`.
+- Voice headers are applied only when `WEBCHAT_HUMAN_CALL_ENABLED=true` or `WEBCHAT_LIVE_AI_VOICE_ENABLED=true`, and the request path matches `WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES`.
 - Additional realtime connection targets must be explicitly configured in `WEBCHAT_VOICE_CONNECT_SRC`.
 - Wildcard connect sources are rejected.
 
@@ -23,7 +23,9 @@ The readiness gate introduces a path-scoped exception model:
 
 | Setting | Default | Purpose |
 |---|---:|---|
-| `WEBCHAT_VOICE_ENABLED` | `false` | Global feature flag for voice readiness headers and placeholder page. |
+| `WEBCHAT_HUMAN_CALL_ENABLED` | `false` | Enables the human WebCall session and LiveKit capability. |
+| `WEBCHAT_LIVE_AI_VOICE_ENABLED` | `false` | Enables the separate live-AI voice upstream capability. |
+| `WEBCHAT_VOICE_ENABLED` | `false` | Compatibility aggregate only; production must use both explicit flags. |
 | `WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES` | `/webchat/voice` | Comma-separated path prefixes allowed to receive voice-specific headers. |
 | `WEBCHAT_VOICE_CONNECT_SRC` | empty | Space/comma-separated HTTPS/WSS connect-src entries for future voice transport. |
 | `WEBCHAT_VOICE_PROVIDER` | `mock` | Provider placeholder. Only `mock` and `livekit` are valid. |
@@ -92,6 +94,8 @@ Rollback is feature-flag first:
 
 ```text
 WEBCHAT_VOICE_ENABLED=false
+WEBCHAT_HUMAN_CALL_ENABLED=false
+WEBCHAT_LIVE_AI_VOICE_ENABLED=false
 ```
 
 With the feature disabled, voice paths keep the default strict microphone-denied headers and the placeholder route returns disabled/not-found behavior.

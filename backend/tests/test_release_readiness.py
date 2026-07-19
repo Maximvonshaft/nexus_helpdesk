@@ -14,6 +14,8 @@ def _controlled_env(monkeypatch):
     monkeypatch.setenv("OUTBOUND_PROVIDER", "disabled")
     monkeypatch.setenv("WEBCHAT_AI_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_LIVE_AI_VOICE_ENABLED", "false")
     monkeypatch.setenv("OPERATIONS_DISPATCH_MODE", "disabled")
 
 

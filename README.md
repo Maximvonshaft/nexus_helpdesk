@@ -103,7 +103,16 @@ EXTERNAL_CHANNEL_BRIDGE_ENABLED=false
 EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false
 ```
 
-Persisted `ExternalChannel*` database/schema names may remain only as bounded compatibility contracts. They do not authorize a live bridge, CLI or second transport.
+Persisted `ExternalChannel*` database/schema names may remain only as bounded historical-read and data-migration contracts. Application routes and workers must create no new ExternalChannel links, cursors, unresolved events, attachment records or legacy jobs. They do not authorize a live bridge, CLI or second transport.
+
+## Voice capability authority
+
+Voice is split into two explicit, non-overlapping capabilities:
+
+- Human WebCall: `WEBCHAT_HUMAN_CALL_ENABLED`, owned by `api/webchat_voice.py` and `webchat_voice_service.py`.
+- Live AI voice: `WEBCHAT_LIVE_AI_VOICE_ENABLED`, owned by `api/webchat_live_voice.py` and `live_voice_orchestration_service.py`.
+
+`WEBCHAT_VOICE_ENABLED` is compatibility-only. Production must set both explicit flags and cannot use the aggregate flag as an ambiguous activation authority.
 
 ## Frontend build
 
@@ -119,11 +128,11 @@ npm run verify
 npm run e2e
 ```
 
-## Repository verification without GitHub Actions
+## Canonical repository verification
 
-GitHub Actions are disabled and `.github/workflows` is intentionally absent. Do not restore workflows as part of feature or cleanup work.
+Remote execution is owned by exactly one immutable, read-only workflow: `.github/workflows/canonical-acceptance.yml`. It checks the exact event Head and delegates verification policy to repository-owned scripts. No feature may add a second workflow or bypass the required gate.
 
-Run the complete repository verification locally:
+Run the same repository verification locally:
 
 ```bash
 python scripts/verify_repository.py
@@ -143,7 +152,7 @@ The verifier rejects:
 - duplicate FastAPI method + normalized-path registrations;
 - executable raw SQL migration paths outside Alembic;
 - retired paths and unreachable frontend modules;
-- reintroduced GitHub Actions or Actions-only governance files;
+- a second GitHub Actions workflow or Actions-only governance authority;
 - loss of Runtime read/manage separation;
 - loss of cancel-preview input binding;
 - noncanonical Control Tower links.
@@ -169,6 +178,7 @@ Production requires:
 - `AUTO_INIT_DB=false`;
 - `SEED_DEMO_DATA=false`;
 - no dev authentication or legacy token transport;
+- explicit `WEBCHAT_HUMAN_CALL_ENABLED` and `WEBCHAT_LIVE_AI_VOICE_ENABLED`;
 - generated `frontend_dist` present;
 - explicit Provider routing, fallback and kill-switch configuration;
 - `/healthz` and `/readyz` passing.

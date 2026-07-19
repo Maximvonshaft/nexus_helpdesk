@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeChunk, KnowledgeItem
 from ..utils.time import utc_now
+from .runtime_endpoint_policy import require_http_endpoint
 
 
 SYNC_SCHEMA = "nexus.ai_runtime_rag_sync.v1"
@@ -318,13 +319,15 @@ def _read_token(*, token_file: str | None, inline_token: str | None) -> str | No
 
 
 def _post_json(endpoint: str, payload: dict[str, Any], token: str, *, timeout_seconds: int) -> dict[str, Any]:
+    endpoint = require_http_endpoint(endpoint, label="Private AI RAG endpoint")
     request = urllib.request.Request(
         endpoint,
         data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:
+    # Endpoint is restricted to absolute HTTP(S) without embedded credentials.
+    with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:  # nosec B310
         decoded = json.loads(response.read().decode("utf-8", errors="replace"))
     if not isinstance(decoded, dict):
         raise ValueError("ai_runtime_rag_sync_response_not_object")

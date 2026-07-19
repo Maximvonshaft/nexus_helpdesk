@@ -21,7 +21,7 @@ from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.models import AdminAuditLog, ExternalChannelUnresolvedEvent, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
-from app.services.operator_queue import OperatorQueueError, project_operator_queue, replay_operator_task, transition_operator_task  # noqa: E402
+from app.services.operator_queue import OperatorQueueError, project_operator_queue, transition_operator_task  # noqa: E402
 
 
 @pytest.fixture()
@@ -62,44 +62,3 @@ def make_unresolved(db):
     db.add(row)
     db.flush()
     return row
-
-
-def test_assign_resolve_drop_and_replay_write_admin_audit(db_session):
-    admin = make_user(db_session)
-    row = OperatorTask(source_type="webchat", source_id="wc-1", task_type="handoff", status="pending", priority=40)
-    db_session.add(row)
-    event = make_unresolved(db_session)
-    db_session.commit()
-    project_operator_queue(db_session, actor_id=admin.id, note="project audit")
-    external_channel_task = db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).one()
-
-    transition_operator_task(db_session, task_id=row.id, action="assign", actor_id=admin.id, note="assign audit")
-    transition_operator_task(db_session, task_id=row.id, action="resolve", actor_id=admin.id, note="resolve audit")
-    replay_operator_task(db_session, task_id=external_channel_task.id, actor_id=admin.id, note="replay audit", replay_func=lambda db, *, row: True)
-
-    event2 = make_unresolved(db_session)
-    db_session.commit()
-    project_operator_queue(db_session, actor_id=admin.id)
-    dropped = db_session.query(OperatorTask).filter_by(unresolved_event_id=event2.id).one()
-    transition_operator_task(db_session, task_id=dropped.id, action="drop", actor_id=admin.id, note="drop audit")
-
-    actions = {row.action for row in db_session.query(AdminAuditLog).all()}
-    assert "operator_queue.project" in actions
-    assert "operator_queue.assign" in actions
-    assert "operator_queue.resolve" in actions
-    assert "operator_queue.drop" in actions
-    assert "operator_queue.replayed" in actions
-
-
-def test_replay_failed_writes_admin_audit(db_session):
-    admin = make_user(db_session)
-    make_unresolved(db_session)
-    db_session.commit()
-    project_operator_queue(db_session, actor_id=admin.id)
-    task = db_session.query(OperatorTask).filter_by(source_type="external_channel").one()
-
-    with pytest.raises(OperatorQueueError):
-        replay_operator_task(db_session, task_id=task.id, actor_id=admin.id, note="failure audit", replay_func=lambda db, *, row: False)
-
-    audit = db_session.query(AdminAuditLog).filter_by(action="operator_queue.replay_failed").one()
-    assert "failure audit" in (audit.new_value_json or "")

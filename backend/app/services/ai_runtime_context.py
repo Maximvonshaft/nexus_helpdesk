@@ -13,6 +13,7 @@ from .effective_country import effective_country_payload, resolve_effective_coun
 from .knowledge_grounding_service import select_grounding_candidate
 from .knowledge_retrieval_service import KnowledgeChunkHit, retrieve_published_chunks
 from .tracking_fact_schema import safe_tracking_reference
+from .tracking_identifier_policy import looks_like_tracking_identifier
 
 MAX_PERSONA_SUMMARY_CHARS = 1200
 MAX_PERSONA_JSON_CHARS = 1600
@@ -42,19 +43,6 @@ TRACKING_NO_EVIDENCE_EXPANSION_TERMS = [
     "CH tracking number format",
 ]
 _TRACKING_REFERENCE_RE = re.compile(r"\b(?=[A-Z0-9-]{8,35}\b)(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]*[A-Z0-9]\b", re.I)
-
-
-def _looks_like_tracking_identifier(token: str) -> bool:
-    normalized = (token or "").strip().upper()
-    if not normalized:
-        return False
-    digit_count = sum(1 for char in normalized if char.isdigit())
-    letter_count = sum(1 for char in normalized if char.isalpha())
-    if digit_count == len(normalized):
-        return False
-    if normalized.startswith("CH") and len(normalized) >= 10 and digit_count >= 6:
-        return True
-    return len(normalized) >= 12 and digit_count >= 6 and letter_count >= 1
 
 _SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.I),
@@ -348,7 +336,7 @@ def _runtime_retrieval_query(*, body: str, tracking_number: str | None, tracking
         token = token_match.group(0)
         token_is_digit_only = token.isdigit()
         token_is_reference_only = text.strip() == token
-        token_looks_like_tracking = _looks_like_tracking_identifier(token)
+        token_looks_like_tracking = looks_like_tracking_identifier(token)
         has_tracking_identifier = has_tracking_identifier or (
             token_is_reference_only
             or has_tracking_language

@@ -7,7 +7,8 @@ from typing import Any
 from app.db import SessionLocal
 
 from .ai_runtime.schemas import RuntimeAIProviderRequest, RuntimeAIProviderResult
-from .ai_runtime_context import TRACKING_CONTEXT_RE, _looks_like_tracking_identifier, build_webchat_runtime_context
+from .ai_runtime_context import TRACKING_CONTEXT_RE, build_webchat_runtime_context
+from .tracking_identifier_policy import looks_like_tracking_identifier
 from .customer_language import detect_customer_language
 from .domain_intelligence.webchat_shadow_bridge import build_webchat_domain_shadow_trace
 from .knowledge_prompt_service import summarize_rag_trace
@@ -1180,7 +1181,7 @@ def _tracking_number_for_policy(*, body: str | None, tracking_fact_metadata: dic
         if not cleaned:
             return None
         body_text = str(body or "").strip()
-        if body_text == cleaned or TRACKING_CONTEXT_RE.search(body_text) or _looks_like_tracking_identifier(cleaned):
+        if body_text == cleaned or TRACKING_CONTEXT_RE.search(body_text) or looks_like_tracking_identifier(cleaned):
             return cleaned
         return None
 

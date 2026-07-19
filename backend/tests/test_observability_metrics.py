@@ -17,7 +17,6 @@ from app.services.observability import (  # noqa: E402
     normalize_metric_path,
     record_db_query,
     record_frontend_api_latency,
-    record_external_channel_bridge_metric,
     record_web_vital,
     render_prometheus_metrics,
 )
@@ -41,13 +40,11 @@ def test_http_client_access_logs_do_not_emit_credential_query_urls() -> None:
 
 def test_metric_helpers_render_without_high_cardinality_values() -> None:
     record_db_query(2, 'SELECT * FROM tickets WHERE id = %s', slow_threshold_ms=500, request_id='rid-test')
-    record_external_channel_bridge_metric('conversation_get', 'success', 12)
     record_frontend_api_latency('/api/tickets/123', 'GET', '200', 18)
     record_web_vital('LCP', 'good', 1.2)
 
     rendered = render_prometheus_metrics()
     assert 'nexusdesk_db_query_duration_ms' in rendered
-    assert 'nexusdesk_external_channel_bridge_elapsed_ms' in rendered
     assert 'nexusdesk_frontend_api_latency_ms' in rendered
     assert 'nexusdesk_web_vitals_value' in rendered
     assert 'SELECT * FROM tickets' not in rendered

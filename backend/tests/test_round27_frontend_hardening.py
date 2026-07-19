@@ -171,9 +171,9 @@ def test_deployment_templates_prevent_parallel_topology_drift():
     assert "event-daemon" not in controlled
     assert "--queue all" not in controlled
     assert "env_file:" not in controlled
-    assert "EXTERNAL_CHANNEL_TRANSPORT=disabled" in external_env
+    assert "EXTERNAL_CHANNEL_TRANSPORT=disabled" not in external_env
     assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false" in external_env
-    assert "EXTERNAL_CHANNEL_TRANSPORT=disabled" in local_env
+    assert "EXTERNAL_CHANNEL_TRANSPORT=disabled" not in local_env
     assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false" in local_env
 
 

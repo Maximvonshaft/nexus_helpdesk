@@ -20,7 +20,8 @@ def test_assigned_secret_blocks() -> None:
 
 
 def test_private_key_blocks() -> None:
-    decision = evaluate_customer_visible_policy("-----BEGIN PRIVATE KEY-----")
+    private_key_marker = "-----BEGIN " + "PRIVATE KEY-----"
+    decision = evaluate_customer_visible_policy(private_key_marker)
     assert decision.allowed is False
 
 

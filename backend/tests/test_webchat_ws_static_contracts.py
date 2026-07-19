@@ -101,7 +101,10 @@ def test_webchat_ws_runtime_dependency_and_route_registry_contract(monkeypatch):
     assert getattr(route, "endpoint", None) is ws_module.webchat_ws
 
     main_source = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
-    assert "app.include_router(webchat_ws_router)" in main_source
+    router_source = (ROOT / "backend" / "app" / "bootstrap" / "routers.py").read_text(encoding="utf-8")
+    assert "from ..api.webchat_ws import router as webchat_ws_router" in router_source
+    assert "webchat_ws_router," in router_source
+    assert "register_api_routers(app)" in main_source
 
 
 def test_static_widget_uses_ws_without_url_token_transport():

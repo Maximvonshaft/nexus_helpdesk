@@ -55,7 +55,9 @@ Server-only runtime values should be set in deployment environment files, not co
 Required non-secret values:
 
 ```env
-WEBCHAT_VOICE_ENABLED=true
+WEBCHAT_HUMAN_CALL_ENABLED=true
+WEBCHAT_LIVE_AI_VOICE_ENABLED=false
+WEBCHAT_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=livekit
 LIVEKIT_URL=wss://voice.leakle.com
 WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webchat,/webchat/voice,/webcall,/webchat-voice
@@ -156,6 +158,8 @@ Disable WebCall:
 
 ```env
 WEBCHAT_VOICE_ENABLED=false
+WEBCHAT_HUMAN_CALL_ENABLED=false
+WEBCHAT_LIVE_AI_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=mock
 WEBCHAT_VOICE_RECORDING_ENABLED=false
 WEBCHAT_VOICE_TRANSCRIPTION_ENABLED=false

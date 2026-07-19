@@ -2,15 +2,15 @@
 
 ## Purpose
 
-This document defines how Nexus distinguishes obsolete code from compatibility, protected history and current versioned contracts. The machine-readable authority is `config/governance/legacy-surface-domains.v1.json`.
+This document defines how Nexus distinguishes obsolete code from compatibility, protected history and current versioned contracts. The sole lifecycle authority is `config/architecture/compatibility-lifecycle.v1.json`. Its `detailed_registry` is a subordinate fail-closed discovery index, not a second policy authority.
 
 ## Current posture
 
-The registry covers bounded known marker classes. It is not a claim that every unused symbol or duplicate algorithm in the repository has been proven dead. Domain owners must still provide consumer, traffic, data and rollback evidence before deletion.
+The parent lifecycle manifest owns policy, owners, replacements and deadlines. The subordinate discovery registry covers bounded known marker classes. It is not a claim that every unused symbol or duplicate algorithm in the repository has been proven dead. Domain owners must still provide consumer, traffic, data and rollback evidence before deletion.
 
 ## Commands
 
-Validate the registry and scan the tracked tree:
+Validate the subordinate discovery index through the canonical lifecycle authority:
 
 ```bash
 python scripts/ci/check_legacy_surface_registry.py \

@@ -68,7 +68,7 @@ def make_webchat_conversation(db, *, public_id: str, visitor_token: str) -> Webc
     db.add(customer)
     db.flush()
     ticket = Ticket(
-        ticket_no="WC-ISOLATION-1",
+        ticket_no=f"WC-{public_id}",
         title="WebChat isolation ticket",
         description="Event write isolation fixture",
         customer_id=customer.id,
@@ -123,14 +123,46 @@ def test_operator_assign_survives_safe_event_writer_failure(db_session, monkeypa
     assert "raw secret token should not leak" not in rendered_logs
 
 
-def test_operator_resolve_and_drop_main_state_still_success_without_event_dependency(db_session):
+def test_operator_resolve_and_drop_main_state_survive_event_writer_failure(db_session, monkeypatch):
     admin = make_admin(db_session)
-    resolve_task, _ = create_operator_task(db_session, source_type="external_channel", source_id="u1", unresolved_event_id=1, task_type="bridge_unresolved")
-    drop_task, _ = create_operator_task(db_session, source_type="external_channel", source_id="u2", unresolved_event_id=2, task_type="bridge_unresolved")
+    resolve_conversation = make_webchat_conversation(
+        db_session,
+        public_id="wc-resolve-isolation",
+        visitor_token="visitor-token-resolve-isolation",
+    )
+    drop_conversation = make_webchat_conversation(
+        db_session,
+        public_id="wc-drop-isolation",
+        visitor_token="visitor-token-drop-isolation",
+    )
+    resolve_task, _ = create_operator_task(
+        db_session,
+        source_type="webchat",
+        source_id=resolve_conversation.public_id,
+        ticket_id=resolve_conversation.ticket_id,
+        webchat_conversation_id=resolve_conversation.id,
+        task_type="handoff",
+    )
+    drop_task, _ = create_operator_task(
+        db_session,
+        source_type="webchat",
+        source_id=drop_conversation.public_id,
+        ticket_id=drop_conversation.ticket_id,
+        webchat_conversation_id=drop_conversation.id,
+        task_type="handoff",
+    )
     db_session.commit()
 
-    resolved = transition_operator_task(db_session, task_id=resolve_task.id, action="resolve", actor_id=admin.id)
-    dropped = transition_operator_task(db_session, task_id=drop_task.id, action="drop", actor_id=admin.id)
+    def boom(*args, **kwargs):
+        raise RuntimeError("event writer unavailable")
+
+    monkeypatch.setattr("app.services.operator_queue.safe_write_webchat_event", boom)
+    resolved = transition_operator_task(
+        db_session, task_id=resolve_task.id, action="resolve", actor_id=admin.id
+    )
+    dropped = transition_operator_task(
+        db_session, task_id=drop_task.id, action="drop", actor_id=admin.id
+    )
 
     assert resolved.status == "resolved"
     assert dropped.status == "dropped"

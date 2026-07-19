@@ -605,40 +605,6 @@ def _dispatch_whatsapp_message(
                 ticket=ticket,
                 idempotency_key=idempotency_key,
             )
-        if settings.whatsapp_dispatch_mode == "cloud_api_future":
-            return (
-                MessageStatus.failed,
-                "whatsapp_cloud_api_not_implemented",
-                None,
-                {
-                    "channel": SourceChannel.whatsapp.value,
-                    "adapter": "whatsapp_cloud_api_future",
-                    "idempotency_key": idempotency_key,
-                    "failure_code": "whatsapp_cloud_api_not_implemented",
-                    "error": (
-                        "WhatsApp Cloud API dispatch mode is reserved but "
-                        "not implemented"
-                    ),
-                    "retryable": False,
-                },
-            )
-        if settings.whatsapp_dispatch_mode == "external_channel_bridge":
-            return (
-                MessageStatus.failed,
-                "legacy_external_channel_bridge_retired",
-                None,
-                {
-                    "channel": SourceChannel.whatsapp.value,
-                    "adapter": "legacy_external_channel_bridge_retired",
-                    "idempotency_key": idempotency_key,
-                    "failure_code": "legacy_external_channel_bridge_retired",
-                    "error": (
-                        "ExternalChannel bridge dispatch has been retired; "
-                        "use WHATSAPP_DISPATCH_MODE=native_sidecar"
-                    ),
-                    "retryable": False,
-                },
-            )
         if settings.whatsapp_dispatch_mode != "disabled":
             return (
                 MessageStatus.failed,

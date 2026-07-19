@@ -96,42 +96,21 @@ def make_conversation(db, ticket: Ticket) -> WebchatConversation:
     return row
 
 
-def test_integrity_error_for_same_unresolved_event_returns_existing_not_500(db_session, monkeypatch):
+def test_new_external_channel_operator_task_is_rejected(db_session):
     event = make_unresolved(db_session)
-    existing = OperatorTask(
-        source_type="external_channel",
-        source_id=str(event.id),
-        unresolved_event_id=event.id,
-        task_type="bridge_unresolved",
-        status="pending",
-        priority=50,
-    )
-    db_session.add(existing)
-    db_session.flush()
 
-    calls = {"count": 0}
+    with pytest.raises(operator_queue.OperatorQueueError) as exc:
+        create_operator_task(
+            db_session,
+            source_type="external_channel",
+            source_id=str(event.id),
+            unresolved_event_id=event.id,
+            task_type="bridge_unresolved",
+        )
 
-    def fake_find_existing(*args, **kwargs):
-        calls["count"] += 1
-        return None if calls["count"] == 1 else existing
-
-    monkeypatch.setattr(operator_queue, "_find_existing_active_task", fake_find_existing)
-
-    def raise_unique_violation():
-        raise IntegrityError("insert into operator_tasks", {}, Exception("unique active task violation"))
-
-    monkeypatch.setattr(db_session, "flush", raise_unique_violation)
-
-    row, created = create_operator_task(
-        db_session,
-        source_type="external_channel",
-        source_id=str(event.id),
-        unresolved_event_id=event.id,
-        task_type="bridge_unresolved",
-    )
-
-    assert created is False
-    assert row.id == existing.id
+    assert exc.value.status_code == 410
+    assert exc.value.code == "legacy_operator_task_creation_retired"
+    assert db_session.query(OperatorTask).count() == 0
 
 
 def test_integrity_error_for_same_webchat_handoff_returns_existing_not_500(db_session, monkeypatch):
@@ -239,7 +218,7 @@ def test_project_operator_queue_skipped_existing_counts_are_correct(db_session):
     assert summary["created_total"] == 0
     assert summary["projected_external_channel_unresolved"] == 0
     assert summary["projected_webchat_handoff"] == 0
-    assert summary["skipped_existing"] == 2
+    assert summary["skipped_existing"] == 1
     assert db_session.query(OperatorTask).count() == 2
 
 
@@ -252,7 +231,7 @@ def test_get_operator_queue_projection_does_not_duplicate_active_tasks(db_sessio
     first = project_operator_queue(db_session, actor_id=admin.id)
     second = project_operator_queue(db_session, actor_id=admin.id)
 
-    assert first["created_total"] == 2
+    assert first["created_total"] == 1
     assert second["created_total"] == 0
-    assert second["skipped_existing"] == 2
-    assert db_session.query(OperatorTask).count() == 2
+    assert second["skipped_existing"] == 1
+    assert db_session.query(OperatorTask).count() == 1

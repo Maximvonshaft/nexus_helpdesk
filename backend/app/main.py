@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
@@ -10,39 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
-from .api.admin_perf import router as admin_perf_router
-from .api.admin_provider_runtime import router as admin_provider_runtime_router
-from .api.admin_whatsapp_native import router as admin_whatsapp_native_router
-from .api.admin import router as admin_router
-from .api.admin_password_policy import enforce_admin_password_request_policy
-from .api.admin_queue import router as admin_queue_router
-from .api.auth import router as auth_router
-from .api.channel_control import router as channel_control_router
-from .api.customers import router as customers_router
-from .api.email import router as email_router
-from .api.files import router as files_router
-from .api.integration import router as integration_router
-from .api.knowledge_items import router as knowledge_items_router
-from .api.lookups import router as lookups_router
-from .api.lite import router as lite_router
-from .api.operator_queue import router as operator_queue_router
-from .api.osr_admin import router as osr_admin_router
-from .api.outbound_channels import router as outbound_channels_router
-from .api.persona_profiles import router as persona_profiles_router
-from .api.speedaf_actions import router as speedaf_actions_router
-from .api.speedaf_cancel import router as speedaf_cancel_router
-from .api.stats import router as stats_router
-from .api.support_conversations import router as support_conversations_router
-from .api.support_intelligence import router as support_intelligence_router
-from .api.ticket_perf import router as ticket_perf_router
-from .api.tickets import router as tickets_router
-from .api.webchat import router as webchat_router
-from .api.webchat_events import router as webchat_events_router
-from .api.webchat_live_voice import router as webchat_live_voice_router
-from .api.webchat_ws import router as webchat_ws_router
-from .api.webchat_voice import router as webchat_voice_router
-from .api.whatsapp_native_integration import router as whatsapp_native_integration_router
+from .bootstrap import register_api_routers
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.ai_reply_contract import runtime_contract_secret_ready
 from .services.observability import (
@@ -432,48 +400,13 @@ def readyz():
         )
 
 
-app.include_router(admin_outbound_semantics_router)
-app.include_router(admin_perf_router)
-app.include_router(admin_provider_runtime_router)
-app.include_router(admin_whatsapp_native_router)
-app.include_router(ticket_perf_router)
-app.include_router(
-    admin_router,
-    dependencies=[Depends(enforce_admin_password_request_policy)],
-)
-app.include_router(admin_queue_router)
-app.include_router(osr_admin_router)
-app.include_router(operator_queue_router)
-app.include_router(outbound_channels_router)
-app.include_router(auth_router)
-app.include_router(channel_control_router)
-app.include_router(files_router)
-app.include_router(integration_router)
-app.include_router(knowledge_items_router)
-app.include_router(lookups_router)
-app.include_router(lite_router)
-app.include_router(customers_router)
-app.include_router(email_router)
-app.include_router(persona_profiles_router)
-app.include_router(stats_router)
-app.include_router(tickets_router)
-app.include_router(speedaf_actions_router)
-app.include_router(speedaf_cancel_router)
-app.include_router(support_conversations_router)
-app.include_router(support_intelligence_router)
-app.include_router(webchat_events_router)
-app.include_router(webchat_live_voice_router)
-app.include_router(webchat_ws_router)
-app.include_router(webchat_voice_router)
-app.include_router(whatsapp_native_integration_router)
-app.include_router(webchat_router)
-
+register_api_routers(app)
 
 @app.get("/webchat/voice/{voice_session_id}", response_class=HTMLResponse)
 def serve_webchat_voice_placeholder(voice_session_id: str):
     config = load_webchat_voice_runtime_config()
     route_path = f"/webchat/voice/{voice_session_id}"
-    if not config.enabled or not is_webchat_voice_path(route_path, config):
+    if not config.human_call_enabled or not is_webchat_voice_path(route_path, config):
         return JSONResponse(
             status_code=404,
             content={"detail": "WebChat voice is disabled"},
