@@ -1,8 +1,15 @@
-"""Compatibility import for the canonical unified operator queue."""
+"""Unified operator queue public authority.
 
-from . import canonical_operator_work_queue as _canonical
-from .canonical_operator_work_queue import *  # noqa: F401,F403
+The private core owns capability-derived visibility. This module exposes the
+queue without import-time mutation or a compatibility layer.
+"""
+
+from . import operator_work_queue_core as _core
+from .operator_work_queue_core import list_unified_operator_queue
 
 
 def __getattr__(name: str):
-    return getattr(_canonical, name)
+    return getattr(_core, name)
+
+
+__all__ = ["list_unified_operator_queue"]
