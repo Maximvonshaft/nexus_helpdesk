@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI
 
 from ..api.admin import router as admin_router
-from ..api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from ..api.admin_password_policy import enforce_admin_password_request_policy
 from ..api.admin_perf import router as admin_perf_router
 from ..api.admin_provider_runtime import router as admin_provider_runtime_router
@@ -42,7 +41,6 @@ def register_api_routers(app: FastAPI) -> None:
     """Register every supported API router exactly once in deterministic order."""
 
     for router in (
-        admin_outbound_semantics_router,
         admin_perf_router,
         admin_provider_runtime_router,
         admin_whatsapp_native_router,
