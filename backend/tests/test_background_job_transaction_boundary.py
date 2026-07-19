@@ -14,7 +14,6 @@ from app.models import BackgroundJob
 from app.services import background_jobs
 from app.services.background_job_transaction_boundary import (
     dispatch_pending_background_jobs,
-    dispatch_pending_sync_jobs,
     dispatch_pending_webchat_ai_reply_jobs,
 )
 from app.utils.time import utc_now
@@ -132,7 +131,6 @@ def test_worker_runtime_selects_boundaries_without_package_monkey_patch():
         names=(
             "dispatch_pending_background_jobs",
             "dispatch_pending_webchat_ai_reply_jobs",
-            "dispatch_pending_sync_jobs",
         ),
         authority_module="background_job_transaction_boundary",
     )
@@ -218,36 +216,6 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
     assert row.attempt_count == 3
     assert row.next_run_at is None
 
-
-def test_dispatch_pending_sync_jobs_uses_same_attempt_boundary(monkeypatch):
-    row = _job(9, job_type=background_jobs.EXTERNAL_CHANNEL_SYNC_JOB)
-    db = _FakeDB([row])
-
-    monkeypatch.setattr(background_jobs.settings, "external_channel_sync_enabled", False)
-    monkeypatch.setattr(background_jobs.settings, "email_mailbox_sync_enabled", False)
-    monkeypatch.setattr(
-        background_jobs,
-        "claim_pending_jobs",
-        lambda db, limit=None, worker_id=None, job_types=None: [row],
-    )
-
-    def fake_process(db_arg, job):
-        job.status = JobStatus.done
-        job.locked_at = None
-        job.locked_by = None
-        return job
-
-    monkeypatch.setattr(background_jobs, "process_background_job", fake_process)
-
-    processed = dispatch_pending_sync_jobs(
-        db,
-        worker_id="worker-test",
-    )
-
-    assert [item.id for item in processed] == [9]
-    assert db.rollbacks == 0
-    assert db.commits == 1
-    assert row.status == JobStatus.done
 
 
 def test_dispatch_pending_webchat_ai_jobs_uses_attempt_boundary(monkeypatch):

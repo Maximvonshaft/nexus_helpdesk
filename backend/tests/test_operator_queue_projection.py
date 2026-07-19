@@ -98,24 +98,27 @@ def make_unresolved(db):
     return row
 
 
-def test_project_is_idempotent_for_external_channel_and_webchat(db_session):
+def test_project_is_idempotent_for_webchat_and_never_projects_external_channel(db_session):
     admin = make_user(db_session)
     ticket = make_ticket(db_session)
     conversation = make_webchat(db_session, ticket)
     event = make_unresolved(db_session)
     db_session.commit()
 
-    first = project_operator_queue(db_session, actor_id=admin.id, note="first")
-    second = project_operator_queue(db_session, actor_id=admin.id, note="second")
+    first = project_operator_queue(db_session, actor_id=admin.id)
+    second = project_operator_queue(db_session, actor_id=admin.id)
 
-    assert first["created_total"] == 2
-    assert second["created_total"] == 0
-    assert second["skipped_existing"] == 2
+    assert first["projected_external_channel_unresolved"] == 0
+    assert second["projected_external_channel_unresolved"] == 0
+    assert first["projected_webchat_handoff"] == 1
+    assert second["projected_webchat_handoff"] == 0
+    assert db_session.query(OperatorTask).filter_by(source_type="external_channel").count() == 0
     assert db_session.query(OperatorTask).filter_by(webchat_conversation_id=conversation.id).count() == 1
-    assert db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).count() == 1
+    db_session.refresh(event)
+    assert event.status == "pending"
 
 
-def test_source_closure_prevents_reprojection(db_session):
+def test_webchat_source_closure_prevents_reprojection_without_mutating_legacy_event(db_session):
     admin = make_user(db_session)
     ticket = make_ticket(db_session)
     conversation = make_webchat(db_session, ticket)
@@ -124,10 +127,7 @@ def test_source_closure_prevents_reprojection(db_session):
 
     project_operator_queue(db_session, actor_id=admin.id)
     webchat_task = db_session.query(OperatorTask).filter_by(webchat_conversation_id=conversation.id).one()
-    external_channel_task = db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).one()
-
     transition_operator_task(db_session, task_id=webchat_task.id, action="resolve", actor_id=admin.id, note="done")
-    transition_operator_task(db_session, task_id=external_channel_task.id, action="drop", actor_id=admin.id, note="done")
     db_session.commit()
 
     again = project_operator_queue(db_session, actor_id=admin.id)
@@ -136,5 +136,5 @@ def test_source_closure_prevents_reprojection(db_session):
 
     assert again["created_total"] == 0
     assert ticket.required_action is None
-    assert event.status == "dropped"
-    assert db_session.query(OperatorTask).count() == 2
+    assert event.status == "pending"
+    assert db_session.query(OperatorTask).count() == 1

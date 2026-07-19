@@ -13,7 +13,8 @@ from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
-os.environ.setdefault("WEBCHAT_VOICE_ENABLED", "true")
+os.environ.setdefault("WEBCHAT_VOICE_ENABLED", "false")
+os.environ.setdefault("WEBCHAT_HUMAN_CALL_ENABLED", "true")
 os.environ.setdefault("WEBCHAT_VOICE_PROVIDER", "mock")
 os.environ.setdefault("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat,/webchat/voice,/webcall,/webchat-voice")
 
@@ -39,7 +40,8 @@ from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent,
 def db_session(tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_OUTBOUND_DISPATCH", "true")
     monkeypatch.setenv("OUTBOUND_PROVIDER", "native")
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     get_settings.cache_clear()
 

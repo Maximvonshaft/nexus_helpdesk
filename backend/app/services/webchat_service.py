@@ -615,7 +615,7 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
             extra={
                 "event_payload": {
                     "conversation_id": conversation.id,
-                    "message_id": payload.message_id,
+                    "message_id": card_message.id,
                     "reason": "retired_card_action",
                 }
             },
@@ -624,13 +624,13 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     try:
         card_payload = WebChatCardPayload.model_validate(raw_card_payload)
     except Exception as exc:
-        WEBCHAT_LOGGER.warning("webchat_card_action_rejected", extra={"event_payload": {"conversation_id": conversation.id, "message_id": payload.message_id, "reason": "invalid_stored_card_payload"}})
+        WEBCHAT_LOGGER.warning("webchat_card_action_rejected", extra={"event_payload": {"conversation_id": conversation.id, "message_id": card_message.id, "reason": "invalid_stored_card_payload"}})
         raise HTTPException(status_code=400, detail="invalid stored card payload") from exc
     if card_payload.card_id != payload.card_id:
         raise HTTPException(status_code=400, detail="card_id does not match message payload")
     selected = next((item for item in card_payload.actions if item.id == payload.action_id), None)
     if selected is None:
-        WEBCHAT_LOGGER.warning("webchat_card_action_rejected", extra={"event_payload": {"conversation_id": conversation.id, "message_id": payload.message_id, "action_id": payload.action_id, "reason": "unknown_action_id"}})
+        WEBCHAT_LOGGER.warning("webchat_card_action_rejected", extra={"event_payload": {"conversation_id": conversation.id, "message_id": card_message.id, "reason": "unknown_action_id"}})
         raise HTTPException(status_code=400, detail="action_id is not allowed for this card")
     if selected.action_type != payload.action_type:
         raise HTTPException(status_code=400, detail="action_type does not match card action")
@@ -722,7 +722,7 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     conversation.last_seen_at = utc_now()
     ticket.updated_at = utc_now()
     db.flush()
-    WEBCHAT_LOGGER.info("webchat_card_action_submitted", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "action_id": action.id, "action_type": payload.action_type}})
+    WEBCHAT_LOGGER.info("webchat_card_action_submitted", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "action_id": action.id}})
     db.refresh(action_message)
     return {"ok": True, "action_id": action.id, "status": action.status, "message": _message_read(action_message), "handoff_triggered": handoff_triggered}
 

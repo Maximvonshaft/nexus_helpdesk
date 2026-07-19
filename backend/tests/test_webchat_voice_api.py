@@ -59,7 +59,8 @@ def ensure_schema():
 
 @pytest.fixture(autouse=True)
 def voice_env(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test")
@@ -1029,6 +1030,7 @@ def test_admin_voice_end_requires_auth():
 
 def test_voice_feature_disabled_rejects_public_create(monkeypatch):
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "false")
     client = TestClient(app)
     conversation_id, visitor_token, _ticket_id = _create_webchat_conversation(client)
 

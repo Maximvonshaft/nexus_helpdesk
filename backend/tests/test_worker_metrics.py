@@ -42,4 +42,4 @@ def test_job_wait_ms_uses_created_at_without_payload_body() -> None:
 def test_worker_and_outbound_metric_helpers_accept_low_cardinality_labels() -> None:
     record_worker_job_metric("unit.test", "success", duration_ms=10, wait_ms=5, retry_count=0)
     record_oldest_pending_job_age("unit.test", 100)
-    record_outbound_latency("whatsapp", "external_channel_bridge", "success", queued_to_sent_ms=20, provider_dispatch_ms=10)
+    record_outbound_latency("whatsapp", "native_sidecar", "success", queued_to_sent_ms=20, provider_dispatch_ms=10)

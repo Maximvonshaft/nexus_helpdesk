@@ -20,8 +20,9 @@
   var welcome = script.getAttribute('data-welcome') || '';
   var buttonLabel = script.getAttribute('data-button-label') || 'Chat with us';
   var closeLabel = script.getAttribute('data-close-label') || 'Close chat';
-  var avatarUrl = script.getAttribute('data-avatar-url') || new URL('/webchat/demo/assets/speedaf-ai-bot-avatar.png', scriptUrl.origin).toString();
-  var accentColor = script.getAttribute('data-accent-color') || '#ff5a00';
+  var avatarUrl = new URL('/webchat/demo/assets/speedaf-ai-bot-avatar.png', scriptUrl.origin).toString();
+  var requestedAccentColor = script.getAttribute('data-accent-color') || '';
+  var accentColor = /^#[0-9a-f]{6}$/i.test(requestedAccentColor) ? requestedAccentColor : '#ff5a00';
   var securityNote = script.getAttribute('data-security-note') || 'Do not share passwords or payment codes.';
   var autoOpen = script.getAttribute('data-auto-open') === 'true';
   var liveVoiceMode = (script.getAttribute('data-live-voice-mode') || 'off').toLowerCase();

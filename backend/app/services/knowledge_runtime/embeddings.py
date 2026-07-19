@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
+from ..runtime_endpoint_policy import require_http_endpoint
 
 
 DIMENSION_REQUEST_CAPABILITY_ENV = "KNOWLEDGE_EMBEDDING_DIMENSION_REQUEST_SUPPORTED"
@@ -43,7 +44,7 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     ) -> None:
         if not dimension_request_supported:
             raise ValueError("embedding_provider_dimension_request_unsupported")
-        self.base_url = base_url.rstrip("/")
+        self.base_url = require_http_endpoint(base_url.rstrip("/"), label="Embedding provider endpoint")
         self.api_key = api_key
         self.model = model
         self.dim = dim
@@ -70,7 +71,8 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310 - URL is operator-configured provider endpoint.
+            # Constructor restricts the endpoint to absolute HTTP(S) without embedded credentials.
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise RuntimeError(f"embedding_provider_http_{exc.code}") from exc

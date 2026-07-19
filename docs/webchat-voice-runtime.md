@@ -29,7 +29,7 @@ This phase does not implement:
 
 ## Public customer flow
 
-When `WEBCHAT_VOICE_ENABLED=true`, `/webchat/voice-entry.js` displays a small orange voice button on the demo/customer page.
+When `WEBCHAT_HUMAN_CALL_ENABLED=true`, `WEBCHAT_LIVE_AI_VOICE_ENABLED=false`, and the compatibility aggregate `WEBCHAT_VOICE_ENABLED=false`, `/webchat/voice-entry.js` displays the human WebCall button on the demo/customer page.
 
 On click:
 

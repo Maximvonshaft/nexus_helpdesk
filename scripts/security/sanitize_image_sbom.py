@@ -22,6 +22,7 @@ _LICENSE_ALIASES = {
     "bsd license": "BSD-3-Clause",
     "bsd-3-clause license": "BSD-3-Clause",
     "python software foundation license": "PSF-2.0",
+    "python-software-foundation-license": "PSF-2.0",
     "psf license": "PSF-2.0",
     "mozilla public license 2.0": "MPL-2.0",
 }

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.tracking_fact_schema import hash_tracking_number
+from app.services.tracking_identifier_policy import looks_like_tracking_identifier
 from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, assert_customer_visible_reply_is_safe
 
 from .schemas import AIDecision
@@ -73,26 +74,17 @@ def _raw_tracking_exposed(text: str, tracking_number: str | None = None) -> bool
         return True
     for match in _TRACKING_RE.finditer(text or ""):
         token = re.sub(r"[^A-Z0-9]", "", match.group(1).upper())
-        if _looks_like_tracking_identifier(token, context=_tracking_context_window(text or "", match.start(), match.end())):
+        if looks_like_tracking_identifier(
+            token,
+            context=_tracking_context_window(text or "", match.start(), match.end()),
+            require_context_for_generic=True,
+        ):
             return True
     return False
 
 
 def _tracking_context_window(text: str, start: int, end: int) -> str:
     return text[max(0, start - 48): min(len(text), end + 48)]
-
-
-def _looks_like_tracking_identifier(value: Any, *, context: str | None = None) -> bool:
-    token = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
-    if len(token) < 10:
-        return False
-    digits = sum(ch.isdigit() for ch in token)
-    letters = sum(ch.isalpha() for ch in token)
-    if not digits or not letters:
-        return False
-    if token.startswith("CH") and digits >= 6:
-        return True
-    return len(token) >= 12 and digits >= 6 and bool(_TRACKING_CONTEXT_RE.search(context or ""))
 
 
 def _raw_phone_or_secret_exposed(text: str) -> bool:

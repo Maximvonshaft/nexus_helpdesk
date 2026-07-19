@@ -94,3 +94,4 @@ deploy/.env.*
 !deploy/.env.*.example
 
 .venv/
+deploy_backups/

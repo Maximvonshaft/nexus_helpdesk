@@ -82,7 +82,9 @@ def _create_voice_session(client: TestClient, name: str = "Voice P0 Visitor") ->
 
 
 def setup_module() -> None:
-    os.environ["WEBCHAT_VOICE_ENABLED"] = "true"
+    os.environ["WEBCHAT_VOICE_ENABLED"] = "false"
+    os.environ["WEBCHAT_HUMAN_CALL_ENABLED"] = "true"
+    os.environ["WEBCHAT_LIVE_AI_VOICE_ENABLED"] = "false"
     os.environ["WEBCHAT_VOICE_PROVIDER"] = "mock"
     os.environ["WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES"] = "/webchat/voice,/webcall"
     os.environ["WEBCHAT_VOICE_CONNECT_SRC"] = "wss://voice.example.test"

@@ -18,6 +18,8 @@ from ...customer_language import detect_customer_language, normalize_customer_la
 from ..output_contracts import OutputContracts
 from ..registry import ProviderAdapter
 from ..schemas import ProviderCapabilities, ProviderRequest, ProviderResult
+from ...tracking_identifier_policy import looks_like_tracking_identifier, tracking_context_present
+from ...runtime_endpoint_policy import endpoint_shape_mismatch, safe_url_path, same_runtime_origin, require_http_endpoint
 
 
 _PROVIDER_NAME = "private_ai_runtime"
@@ -73,22 +75,9 @@ def _tracking_token_indicates_logistics(text: str) -> bool:
     stripped = text.strip()
     if stripped == token:
         return True
-    if _TRACKING_CONTEXT_RE.search(text):
+    if tracking_context_present(text):
         return True
-    return _looks_like_tracking_identifier(token)
-
-
-def _looks_like_tracking_identifier(token: str) -> bool:
-    normalized = (token or "").strip().upper()
-    if not normalized:
-        return False
-    digit_count = sum(1 for char in normalized if char.isdigit())
-    letter_count = sum(1 for char in normalized if char.isalpha())
-    if digit_count == len(normalized):
-        return False
-    if normalized.startswith("CH") and len(normalized) >= 10 and digit_count >= 6:
-        return True
-    return len(normalized) >= 12 and digit_count >= 6 and letter_count >= 1
+    return looks_like_tracking_identifier(token)
 
 
 class PrivateAIRuntimeAdapter(ProviderAdapter):
@@ -151,35 +140,35 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             return self._failure(
                 "private_ai_runtime_timeout",
                 started,
-                {"endpoint_path": _safe_url_path(endpoint), "model": model, "request_shape": self.request_shape, "prompt_chars": len(prompt), "timeout_seconds": self.timeout_seconds},
+                {"endpoint_path": safe_url_path(endpoint), "model": model, "request_shape": self.request_shape, "prompt_chars": len(prompt), "timeout_seconds": self.timeout_seconds},
                 retryable=True,
             )
         except urllib.error.HTTPError as exc:
             return self._failure(
                 f"private_ai_runtime_http_{exc.code}",
                 started,
-                {"endpoint_path": _safe_url_path(endpoint), "model": model, "http_status": exc.code, "retryable_http": exc.code in _RETRYABLE_HTTP},
+                {"endpoint_path": safe_url_path(endpoint), "model": model, "http_status": exc.code, "retryable_http": exc.code in _RETRYABLE_HTTP},
                 retryable=exc.code in _RETRYABLE_HTTP,
             )
         except urllib.error.URLError as exc:
             return self._failure(
                 "private_ai_runtime_url_error",
                 started,
-                {"endpoint_path": _safe_url_path(endpoint), "model": model, "reason": str(exc.reason)[:160]},
+                {"endpoint_path": safe_url_path(endpoint), "model": model, "reason": str(exc.reason)[:160]},
                 retryable=True,
             )
         except OSError as exc:
             return self._failure(
                 "private_ai_runtime_network_error",
                 started,
-                {"endpoint_path": _safe_url_path(endpoint), "model": model, "reason": exc.__class__.__name__},
+                {"endpoint_path": safe_url_path(endpoint), "model": model, "reason": exc.__class__.__name__},
                 retryable=True,
             )
         except ValueError as exc:
             return self._failure(
                 "private_ai_runtime_bad_response",
                 started,
-                {"endpoint_path": _safe_url_path(endpoint), "model": model, "reason": str(exc)[:120]},
+                {"endpoint_path": safe_url_path(endpoint), "model": model, "reason": str(exc)[:120]},
                 retryable=True,
             )
 
@@ -205,7 +194,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 return self._failure(
                     "private_ai_runtime_bad_json_retry_failed",
                     started,
-                    {"endpoint_path": _safe_url_path(endpoint), "model": model, "reason": retry_exc.__class__.__name__, "initial_reason": str(exc)[:120]},
+                    {"endpoint_path": safe_url_path(endpoint), "model": model, "reason": retry_exc.__class__.__name__, "initial_reason": str(exc)[:120]},
                     retryable=True,
                 )
             repair_applied = True
@@ -226,12 +215,12 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 return self._failure(
                     "private_ai_runtime_empty_reply_retry_failed",
                     started,
-                    {"endpoint_path": _safe_url_path(endpoint), "model": model, "reason": retry_exc.__class__.__name__},
+                    {"endpoint_path": safe_url_path(endpoint), "model": model, "reason": retry_exc.__class__.__name__},
                     retryable=True,
                 )
             repair_applied = True
             if not normalized.get("customer_reply"):
-                return self._failure("private_ai_runtime_empty_reply", started, {"endpoint_path": _safe_url_path(endpoint), "model": model}, retryable=True)
+                return self._failure("private_ai_runtime_empty_reply", started, {"endpoint_path": safe_url_path(endpoint), "model": model}, retryable=True)
 
         violation = _runtime_output_contract_violation(normalized, request=request)
         if violation:
@@ -261,11 +250,11 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         return self._failure(
                             "private_ai_runtime_contract_repair_failed",
                             started,
-                            {"endpoint_path": _safe_url_path(endpoint), "model": repair_model, "violation": violation, "reason": exc.__class__.__name__},
+                            {"endpoint_path": safe_url_path(endpoint), "model": repair_model, "violation": violation, "reason": exc.__class__.__name__},
                             retryable=True,
                         )
                 if not repaired.get("customer_reply"):
-                    return self._failure("private_ai_runtime_contract_repair_empty", started, {"endpoint_path": _safe_url_path(endpoint), "model": repair_model, "violation": violation}, retryable=True)
+                    return self._failure("private_ai_runtime_contract_repair_empty", started, {"endpoint_path": safe_url_path(endpoint), "model": repair_model, "violation": violation}, retryable=True)
                 attempted_violations = {violation}
                 repair_attempt = 2
                 remaining_violation = _runtime_output_contract_violation(repaired, request=request)
@@ -295,14 +284,14 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         return self._failure(
                             "private_ai_runtime_contract_repair_failed",
                             started,
-                            {"endpoint_path": _safe_url_path(endpoint), "model": next_repair_model, "violation": remaining_violation, "repair_attempt": repair_attempt, "reason": exc.__class__.__name__},
+                            {"endpoint_path": safe_url_path(endpoint), "model": next_repair_model, "violation": remaining_violation, "repair_attempt": repair_attempt, "reason": exc.__class__.__name__},
                             retryable=True,
                         )
                     if not next_repaired.get("customer_reply"):
                         return self._failure(
                             "private_ai_runtime_contract_repair_empty",
                             started,
-                            {"endpoint_path": _safe_url_path(endpoint), "model": next_repair_model, "violation": remaining_violation, "repair_attempt": repair_attempt},
+                            {"endpoint_path": safe_url_path(endpoint), "model": next_repair_model, "violation": remaining_violation, "repair_attempt": repair_attempt},
                             retryable=True,
                         )
                     repaired = next_repaired
@@ -318,7 +307,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         return self._failure(
                             f"private_ai_runtime_{remaining_violation}",
                             started,
-                            {"endpoint_path": _safe_url_path(endpoint), "model": model, "initial_violation": violation, "final_violation": remaining_violation, "repair_attempts": repair_attempt - 1},
+                            {"endpoint_path": safe_url_path(endpoint), "model": model, "initial_violation": violation, "final_violation": remaining_violation, "repair_attempts": repair_attempt - 1},
                             retryable=True,
                         )
                 normalized = repaired
@@ -335,7 +324,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             elapsed_ms=_elapsed_ms(started),
             raw_payload_safe_summary={
                 "provider": self.name,
-                "endpoint_path": _safe_url_path(endpoint),
+                "endpoint_path": safe_url_path(endpoint),
                 "chat_mode": mode,
                 "request_shape": self.request_shape,
                 "model": model,
@@ -383,17 +372,17 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             return "private_ai_runtime_direct_model_policy_invalid"
         if self.request_shape not in {"system_input", "messages", "ollama_chat", "question"}:
             return "private_ai_runtime_request_shape_invalid"
-        direct_shape_error = _known_endpoint_shape_mismatch(self.direct_path, self.request_shape, endpoint_kind="direct")
+        direct_shape_error = endpoint_shape_mismatch(self.direct_path, self.request_shape, code_prefix="private_ai_runtime_" + "direct" + "_")
         if direct_shape_error:
             return direct_shape_error
         if self.chat_mode in {"rag", "auto"}:
-            rag_shape_error = _known_endpoint_shape_mismatch(self.rag_path, self.request_shape, endpoint_kind="rag")
+            rag_shape_error = endpoint_shape_mismatch(self.rag_path, self.request_shape, code_prefix="private_ai_runtime_" + "rag" + "_")
             if rag_shape_error:
                 return rag_shape_error
             if (
                 (os.getenv("APP_ENV") or "").strip().lower() == "production"
                 and self.rag_model != self.direct_model
-                and _same_runtime_origin(self.base_url, self.rag_base_url)
+                and same_runtime_origin(self.base_url, self.rag_base_url)
                 and not self.allow_shared_rag_model
             ):
                 return "private_ai_runtime_rag_model_requires_isolated_runtime"
@@ -427,6 +416,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
         return urljoin(f"{base_url}/", path.lstrip("/"))
 
     def _post_json(self, endpoint: str, payload: dict[str, Any], token: str) -> dict[str, Any]:
+        endpoint = require_http_endpoint(endpoint, label="Private AI runtime endpoint")
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
             endpoint,
@@ -437,7 +427,8 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             },
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=float(self.timeout_seconds)) as response:
+        # Endpoint is restricted to absolute HTTP(S) without embedded credentials.
+        with urllib.request.urlopen(request, timeout=float(self.timeout_seconds)) as response:  # nosec B310
             raw = response.read().decode("utf-8", errors="replace")
         decoded = json.loads(raw)
         if not isinstance(decoded, dict):
@@ -3021,33 +3012,6 @@ def _nanoseconds_to_ms(value: Any) -> int | None:
         return None
     return int(round(number / 1_000_000))
 
-
-def _safe_url_path(value: str) -> str:
-    parsed = urlparse(value or "")
-    return parsed.path or "/"
-
-
-def _same_runtime_origin(left: str, right: str) -> bool:
-    left_parsed = urlparse(left or "")
-    right_parsed = urlparse(right or "")
-    return (
-        left_parsed.scheme.lower(),
-        left_parsed.hostname or "",
-        left_parsed.port,
-    ) == (
-        right_parsed.scheme.lower(),
-        right_parsed.hostname or "",
-        right_parsed.port,
-    )
-
-
-def _known_endpoint_shape_mismatch(path: str, request_shape: str, *, endpoint_kind: str) -> str | None:
-    normalized_path = _safe_url_path(path).rstrip("/") or "/"
-    if normalized_path == "/api/chat" and request_shape != "ollama_chat":
-        return f"private_ai_runtime_{endpoint_kind}_endpoint_request_shape_mismatch"
-    if normalized_path in {"/chat/direct", "/chat/rag"} and request_shape != "question":
-        return f"private_ai_runtime_{endpoint_kind}_endpoint_request_shape_mismatch"
-    return None
 
 
 def _elapsed_ms(started: float) -> int:

@@ -367,7 +367,7 @@ def _issue_token(session: WebchatVoiceSession, participant_type: str, suffix: st
 
 def create_public_voice_session(db: Session, *, conversation_public_id: str, visitor_token: str | None, request: Request, locale: str | None = None, recording_consent: bool = False) -> dict[str, Any]:
     config = load_webchat_voice_runtime_config()
-    if not config.enabled:
+    if not config.human_call_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WebChat voice is disabled")
     conversation = _load_public_conversation(db, conversation_public_id)
     _validate_public_conversation_token(conversation, visitor_token)

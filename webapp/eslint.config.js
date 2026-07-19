@@ -29,4 +29,15 @@ export default tseslint.config(
       'react-hooks/preserve-manual-memoization': 'off',
     },
   },
+  {
+    files: [
+      'src/app/OperatorPresentation.tsx',
+      'src/features/operator-workspace/OperatorWorkspaceQueue.tsx',
+    ],
+    rules: {
+      // These two canonical modules intentionally export reusable presentation
+      // helpers/constants alongside components; architecture checks enforce one owner.
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 )

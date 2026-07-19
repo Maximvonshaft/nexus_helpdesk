@@ -485,9 +485,11 @@ def test_webchat_debug_sanitizer_blocks_hostile_provider_tool_and_contact_payloa
 def test_route_mount_and_webchat_debug_composition_are_present():
     root = Path(__file__).resolve().parents[1]
     main_source = (root / "app" / "main.py").read_text(encoding="utf-8")
+    router_source = (root / "app" / "bootstrap" / "routers.py").read_text(encoding="utf-8")
     debug_source = (root / "app" / "services" / "webchat_debug_bundle_service.py").read_text(encoding="utf-8")
-    assert "from .api.osr_admin import router as osr_admin_router" in main_source
-    assert "app.include_router(osr_admin_router)" in main_source
+    assert "from ..api.osr_admin import router as osr_admin_router" in router_source
+    assert "osr_admin_router," in router_source
+    assert "register_api_routers(app)" in main_source
     assert "'X-Nexus-Tenant'" in main_source or '"X-Nexus-Tenant"' in main_source
     assert "build_osr_debug_snapshot" in debug_source
     assert "tenant_id=conversation.tenant_key or \"default\"" in debug_source

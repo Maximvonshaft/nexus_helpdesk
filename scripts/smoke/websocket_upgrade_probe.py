@@ -54,12 +54,19 @@ def _secure_ssl_context(context: ssl.SSLContext | None = None) -> ssl.SSLContext
     except AttributeError as exc:
         raise RuntimeError("TLS 1.2 support is required for HTTPS websocket probes") from exc
 
-    secure_context = context or ssl.create_default_context()
-    try:
-        if secure_context.minimum_version < tls_v1_2:
-            secure_context.minimum_version = tls_v1_2
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise RuntimeError("unable to enforce TLS 1.2 minimum for HTTPS websocket probe") from exc
+    if context is None:
+        secure_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        secure_context.check_hostname = True
+        secure_context.verify_mode = ssl.CERT_REQUIRED
+        secure_context.load_default_certs()
+        secure_context.minimum_version = tls_v1_2
+    else:
+        secure_context = context
+        try:
+            if secure_context.minimum_version < tls_v1_2:
+                secure_context.minimum_version = tls_v1_2
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError("unable to enforce TLS 1.2 minimum for HTTPS websocket probe") from exc
     if secure_context.minimum_version < tls_v1_2:
         raise RuntimeError("HTTPS websocket probe TLS minimum is below TLS 1.2")
     return secure_context

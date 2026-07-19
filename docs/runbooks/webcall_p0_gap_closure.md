@@ -30,12 +30,14 @@ npm --prefix webapp test
 
 ## Deployment stance
 
-Deploy code first with `WEBCHAT_VOICE_ENABLED=false`. Enable LiveKit only after staging canary and manual two-browser audio proof pass.
+Deploy code first with `WEBCHAT_VOICE_ENABLED=false`, `WEBCHAT_HUMAN_CALL_ENABLED=false`, and `WEBCHAT_LIVE_AI_VOICE_ENABLED=false`. Enable the human WebCall capability only after staging canary and manual two-browser audio proof pass.
 
 ## Rollback
 
 ```env
 WEBCHAT_VOICE_ENABLED=false
+WEBCHAT_HUMAN_CALL_ENABLED=false
+WEBCHAT_LIVE_AI_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=mock
 WEBCHAT_VOICE_RECORDING_ENABLED=false
 WEBCHAT_VOICE_TRANSCRIPTION_ENABLED=false

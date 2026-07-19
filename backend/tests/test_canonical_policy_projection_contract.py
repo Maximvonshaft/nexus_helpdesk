@@ -37,7 +37,9 @@ def test_scope_version_uses_server_policy_fingerprint_not_role_strings() -> None
     assert "role:" not in source
     assert "capability_fingerprint" in source
     assert "def capability_fingerprint" in permissions
-    assert "sorted(resolve_capabilities(user, db))" in permissions
+    assert "resolve_capabilities(user, db)" in permissions
+    assert "UserCapabilityOverride.user_id == user.id" in permissions
+    assert "override.capability" in permissions
 
 
 def test_normal_workspace_scope_has_no_environment_or_manual_authority() -> None:

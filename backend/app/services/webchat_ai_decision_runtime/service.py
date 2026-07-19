@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.services.knowledge_prompt_service import summarize_rag_trace
 from app.services.tracking_fact_schema import hash_tracking_number
+from app.services.tracking_identifier_policy import looks_like_tracking_identifier
 from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, assert_customer_visible_reply_is_safe
 
 from .audit import log_ai_decision_audit
@@ -58,22 +59,9 @@ def _safe_tracking_control_value(value: Any, *, fallback_tracking_number: str | 
     compact = "".join(ch for ch in cleaned.upper() if ch.isalnum())
     if " " in cleaned.strip() and not compact.startswith(("CH", "SP", "SF")):
         return _clip(fallback_tracking_number, 120)
-    if not _looks_like_tracking_identifier(cleaned):
+    if not looks_like_tracking_identifier(cleaned):
         return _clip(fallback_tracking_number, 120)
     return cleaned
-
-
-def _looks_like_tracking_identifier(value: Any) -> bool:
-    token = "".join(ch for ch in str(value or "").strip().upper() if ch.isalnum())
-    if len(token) < 10:
-        return False
-    digits = sum(ch.isdigit() for ch in token)
-    letters = sum(ch.isalpha() for ch in token)
-    if not digits or not letters:
-        return False
-    if token.startswith("CH") and digits >= 6:
-        return True
-    return len(token) >= 12 and digits >= 6
 
 
 def _polish_tracking_reference(reply: str, *, suffix: str) -> str:

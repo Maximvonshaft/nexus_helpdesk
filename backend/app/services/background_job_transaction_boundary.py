@@ -149,14 +149,11 @@ def _process_claimed_jobs_with_attempt_boundary(
     jobs: Iterable[Any],
     *,
     lease_token: str,
-    sync_only: bool = False,
 ) -> list[Any]:
     from . import background_jobs
 
     processed: list[Any] = []
     for job in jobs:
-        if sync_only and job.job_type != background_jobs.EXTERNAL_CHANNEL_SYNC_JOB:
-            continue
         job_id = job.id
         if not _refresh_job_lease(db, job_id=job_id, lease_token=lease_token):
             continue
@@ -217,7 +214,6 @@ def dispatch_pending_background_jobs(
         worker_id=lease_token,
         job_types=[
             background_jobs.AUTO_REPLY_JOB,
-            background_jobs.ATTACHMENT_PERSIST_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
             background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,
@@ -228,35 +224,6 @@ def dispatch_pending_background_jobs(
         db,
         claimed,
         lease_token=lease_token,
-    )
-
-
-def dispatch_pending_sync_jobs(
-    db: Any,
-    *,
-    limit: int | None = None,
-    worker_id: str | None = None,
-) -> list[Any]:
-    from . import background_jobs
-
-    if background_jobs.settings.external_channel_sync_enabled:
-        background_jobs.enqueue_stale_external_channel_sync_jobs(
-            db,
-            limit=background_jobs.settings.external_channel_sync_batch_size,
-        )
-        db.commit()
-    lease_token = _claim_token(worker_id)
-    claimed = background_jobs.claim_pending_jobs(
-        db,
-        limit=limit,
-        worker_id=lease_token,
-        job_types=[background_jobs.EXTERNAL_CHANNEL_SYNC_JOB],
-    )
-    return _process_claimed_jobs_with_attempt_boundary(
-        db,
-        claimed,
-        lease_token=lease_token,
-        sync_only=True,
     )
 
 

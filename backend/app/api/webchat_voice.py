@@ -246,7 +246,9 @@ def end_ticket_voice_session(
 def voice_runtime_config() -> dict:
     config = load_webchat_voice_runtime_config()
     return {
-        "enabled": config.enabled,
+        "enabled": config.human_call_enabled,
+        "human_call_enabled": config.human_call_enabled,
+        "live_ai_voice_enabled": config.live_ai_voice_enabled,
         "provider": config.provider,
         "livekit_url": config.livekit_url if config.provider == "livekit" else None,
         "recording_enabled": config.recording_enabled,

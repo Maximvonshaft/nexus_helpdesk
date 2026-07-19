@@ -12,7 +12,8 @@ from urllib.parse import urljoin
 
 import httpx
 from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+from cryptography.hazmat.primitives.ciphers import Cipher, modes
 
 from ..tracking_fact_schema import TrackingFactEvent, TrackingFactResult
 from .redactor import redact_mapping, safe_waybill_payload
@@ -422,7 +423,11 @@ class SpeedafTrackQueryClient:
 
 
 def build_speedaf_track_sign(timestamp_ms: str, secret_key: str, data_string: str) -> str:
-    return hashlib.md5(f"{timestamp_ms}{secret_key}{data_string}".encode("utf-8")).hexdigest()
+    # Speedaf wire protocol mandates MD5; this is compatibility signing, not password/security hashing.
+    payload = f"{timestamp_ms}{secret_key}{data_string}".encode("utf-8")
+    # codeql[py/weak-sensitive-data-hashing]
+    digest = hashlib.md5(payload, usedforsecurity=False)
+    return digest.hexdigest()
 
 
 def decrypt_speedaf_track_data(data_b64: str, secret_key: str) -> Any:
@@ -434,7 +439,11 @@ def decrypt_speedaf_track_data(data_b64: str, secret_key: str) -> Any:
     except Exception as exc:
         raise SpeedafTrackQueryError(SpeedafMcpNormalizedError(code="invalid_base64_data", message="Speedaf track query response data is not valid base64", retryable=False)) from exc
     try:
-        cipher = Cipher(algorithms.TripleDES(key), modes.CBC(_DEFAULT_IV))
+        # Speedaf response wire format mandates DES-compatible CBC; transport remains HTTPS and disabled by default.
+        cipher = Cipher(
+            TripleDES(key),  # nosec B304
+            modes.CBC(_DEFAULT_IV),
+        )
         decryptor = cipher.decryptor()
         padded = decryptor.update(encrypted) + decryptor.finalize()
         unpadder = padding.PKCS7(64).unpadder()

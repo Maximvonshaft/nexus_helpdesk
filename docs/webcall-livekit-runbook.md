@@ -15,7 +15,9 @@ This runbook does **not** authorize AI voice, recording, realtime transcription,
 ## Required environment
 
 ```env
-WEBCHAT_VOICE_ENABLED=true
+WEBCHAT_HUMAN_CALL_ENABLED=true
+WEBCHAT_LIVE_AI_VOICE_ENABLED=false
+WEBCHAT_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=livekit
 LIVEKIT_URL=wss://voice.your-domain.com
 LIVEKIT_API_KEY=replace_me
@@ -202,6 +204,8 @@ Feature-flag rollback:
 
 ```env
 WEBCHAT_VOICE_ENABLED=false
+WEBCHAT_HUMAN_CALL_ENABLED=false
+WEBCHAT_LIVE_AI_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=mock
 WEBCHAT_VOICE_RECORDING_ENABLED=false
 WEBCHAT_VOICE_TRANSCRIPTION_ENABLED=false

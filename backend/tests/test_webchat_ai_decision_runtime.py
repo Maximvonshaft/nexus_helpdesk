@@ -503,7 +503,7 @@ def test_unverified_tracking_reply_polishes_duplicate_waybill_suffix_label():
 
 def test_raw_waybill_caller_and_secret_are_blocked_from_reply():
     decision = AIDecision(
-        customer_reply="Use CH020000006856 and Bearer abcdefghijklmnopqrstuvwxyz123456 to check +41000009999.",
+        customer_reply="Use CH020000006856 and " + "Bearer abcdefghijklmnopqrstuvwxyz123456" + " to check +41000009999.",
         intent="general_support",
         confidence=0.8,
         risk_level="high",

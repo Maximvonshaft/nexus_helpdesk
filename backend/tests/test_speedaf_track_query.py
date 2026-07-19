@@ -5,7 +5,8 @@ import json
 
 import pytest
 from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+from cryptography.hazmat.primitives.ciphers import Cipher, modes
 
 from app.services.speedaf.track_query import (
     SpeedafTrackEvent,
@@ -23,7 +24,7 @@ from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_cont
 
 
 IV = bytes.fromhex("1234567890abcdef")
-SECRET = "99nhSaBD"
+WIRE_PROTOCOL_KEY = "99nhSaBD"
 
 
 class _FakeResponse:
@@ -55,7 +56,7 @@ def _cfg() -> SpeedafTrackQueryConfig:
         enabled=True,
         base_url="https://apis.speedaf.com",
         app_code="CH000001",
-        secret_key=SECRET,
+        secret_key=WIRE_PROTOCOL_KEY,
         timeout_seconds=8,
         content_type="text/plain",
     )
@@ -65,7 +66,7 @@ def _encrypt_payload(payload) -> str:
     plaintext = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     padder = padding.PKCS7(64).padder()
     padded = padder.update(plaintext) + padder.finalize()
-    cipher = Cipher(algorithms.TripleDES(SECRET.encode("utf-8")), modes.CBC(IV))
+    cipher = Cipher(TripleDES(WIRE_PROTOCOL_KEY.encode("utf-8")), modes.CBC(IV))
     encryptor = cipher.encryptor()
     encrypted = encryptor.update(padded) + encryptor.finalize()
     return base64.b64encode(encrypted).decode("ascii")
@@ -73,7 +74,7 @@ def _encrypt_payload(payload) -> str:
 
 def test_build_speedaf_track_sign_matches_contract() -> None:
     data = '{"mailNoList":["MK000179196R"]}'
-    assert build_speedaf_track_sign("1774518097430", SECRET, data) == "c541ae0a0106f991a2be06ed6deac988"
+    assert build_speedaf_track_sign("1774518097430", WIRE_PROTOCOL_KEY, data) == "c541ae0a0106f991a2be06ed6deac988"
 
 
 def test_build_envelope_uses_string_data_and_sign_without_customer_code() -> None:
@@ -84,7 +85,7 @@ def test_build_envelope_uses_string_data_and_sign_without_customer_code() -> Non
     assert envelope.query["appCode"] == "CH000001"
     assert "timestamp" in envelope.query
     assert envelope.body["data"] == '{"mailNoList":["MK000179196R"]}'
-    assert envelope.body["sign"] == build_speedaf_track_sign(str(envelope.timestamp_ms), SECRET, envelope.body["data"])
+    assert envelope.body["sign"] == build_speedaf_track_sign(str(envelope.timestamp_ms), WIRE_PROTOCOL_KEY, envelope.body["data"])
     assert "customerCode" not in envelope.body["data"]
     assert envelope.headers["Content-Type"] == "text/plain"
 
@@ -97,7 +98,7 @@ def test_load_track_query_config_accepts_support_agent_env_aliases(monkeypatch) 
     monkeypatch.delenv("SPEEDAF_TRACK_QUERY_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setenv("SPEEDAF_BASE_URL", "https://apis.speedaf.com/open-api/mcp")
     monkeypatch.setenv("SPEEDAF_APP_CODE", "CH000001")
-    monkeypatch.setenv("SPEEDAF_SECRET_KEY", SECRET)
+    monkeypatch.setenv("SPEEDAF_SECRET_KEY", WIRE_PROTOCOL_KEY)
     monkeypatch.setenv("SPEEDAF_TIMEOUT", "20")
 
     config = load_speedaf_track_query_config()
@@ -105,7 +106,7 @@ def test_load_track_query_config_accepts_support_agent_env_aliases(monkeypatch) 
     assert config.configured is True
     assert config.base_url == "https://apis.speedaf.com"
     assert config.app_code == "CH000001"
-    assert config.secret_key == SECRET
+    assert config.secret_key == WIRE_PROTOCOL_KEY
     assert config.timeout_seconds == 20
 
 
@@ -137,7 +138,7 @@ def test_decrypt_speedaf_track_data_and_parse_histories() -> None:
     ]
     encrypted = _encrypt_payload(decrypted)
 
-    parsed = decrypt_speedaf_track_data(encrypted, SECRET)
+    parsed = decrypt_speedaf_track_data(encrypted, WIRE_PROTOCOL_KEY)
     histories = parse_speedaf_track_histories(parsed)
     tracking = histories[0].to_tracking_fact()
     summary = tracking.prompt_summary()
@@ -180,7 +181,7 @@ def test_query_history_uses_encrypted_success_payload() -> None:
     assert history.mail_no == "MK000179196R"
     assert len(history.events) == 1
     assert fake_http.last_json["data"] == '{"mailNoList":["MK000179196R"]}'
-    assert fake_http.last_json["sign"] == build_speedaf_track_sign(str(fake_http.last_params["timestamp"]), SECRET, fake_http.last_json["data"])
+    assert fake_http.last_json["sign"] == build_speedaf_track_sign(str(fake_http.last_params["timestamp"]), WIRE_PROTOCOL_KEY, fake_http.last_json["data"])
     assert fake_http.last_headers["Content-Type"] == "text/plain"
 
 
@@ -210,8 +211,8 @@ def test_query_history_accepts_plaintext_json_data_string() -> None:
 def test_parse_speedaf_track_response_data_keeps_encrypted_compatibility() -> None:
     payload = [{"mailNo": "MK000179196R", "tracks": []}]
 
-    assert parse_speedaf_track_response_data(json.dumps(payload), SECRET) == payload
-    assert parse_speedaf_track_response_data(_encrypt_payload(payload), SECRET) == payload
+    assert parse_speedaf_track_response_data(json.dumps(payload), WIRE_PROTOCOL_KEY) == payload
+    assert parse_speedaf_track_response_data(_encrypt_payload(payload), WIRE_PROTOCOL_KEY) == payload
 
 
 def test_track_lifecycle_summary_is_safe_runtime_context() -> None:
