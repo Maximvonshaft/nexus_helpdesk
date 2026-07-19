@@ -1,0 +1,437 @@
+{
+  "schema": "nexus.security-remediation-live-status.v2",
+  "run": {
+    "id": 29690738274,
+    "name": "Final Security Remediation",
+    "node_id": "WFR_kwLOSBSWgc8AAAAG6bS2Yg",
+    "head_branch": "fix/722-final-production-convergence",
+    "head_sha": "4af9fb1e592d9bb91123a20597e05f97f22b7f77",
+    "path": ".github/workflows/final-security-remediation.yml",
+    "display_title": "chore: validate and publish final security remediation",
+    "run_number": 1,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "failure",
+    "workflow_id": 316203366,
+    "check_suite_id": 80399017755,
+    "check_suite_node_id": "CS_kwDOSBSWgc8AAAASuCenGw",
+    "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274",
+    "html_url": "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274",
+    "pull_requests": [
+      {
+        "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/pulls/770",
+        "id": 4083856048,
+        "number": 770,
+        "head": {
+          "ref": "fix/722-final-production-convergence",
+          "sha": "59e989bf37807a871daa71a7aa7a54311ce68d41",
+          "repo": {
+            "id": 1209308801,
+            "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+            "name": "nexus_helpdesk"
+          }
+        },
+        "base": {
+          "ref": "main",
+          "sha": "7260652e380e9b19818c079c4d3846a653354d24",
+          "repo": {
+            "id": 1209308801,
+            "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+            "name": "nexus_helpdesk"
+          }
+        }
+      }
+    ],
+    "created_at": "2026-07-19T14:23:36Z",
+    "updated_at": "2026-07-19T14:25:00Z",
+    "actor": {
+      "login": "Maximvonshaft",
+      "id": 202882752,
+      "node_id": "U_kgDODBe-wA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Maximvonshaft",
+      "html_url": "https://github.com/Maximvonshaft",
+      "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+      "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+      "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+      "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+      "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "run_attempt": 1,
+    "referenced_workflows": [],
+    "run_started_at": "2026-07-19T14:23:36Z",
+    "triggering_actor": {
+      "login": "Maximvonshaft",
+      "id": 202882752,
+      "node_id": "U_kgDODBe-wA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Maximvonshaft",
+      "html_url": "https://github.com/Maximvonshaft",
+      "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+      "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+      "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+      "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+      "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "jobs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274/jobs",
+    "logs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274/logs",
+    "check_suite_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/check-suites/80399017755",
+    "artifacts_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274/artifacts",
+    "cancel_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274/cancel",
+    "rerun_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/runs/29690738274/rerun",
+    "previous_attempt_url": null,
+    "workflow_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/actions/workflows/316203366",
+    "head_commit": {
+      "id": "4af9fb1e592d9bb91123a20597e05f97f22b7f77",
+      "tree_id": "75bb05bfc183f49dcbdfc7b13f9df45e020fac38",
+      "message": "chore: validate and publish final security remediation",
+      "timestamp": "2026-07-19T14:23:34Z",
+      "author": {
+        "name": "moyoyo",
+        "email": "temeta@outlook.jp"
+      },
+      "committer": {
+        "name": "moyoyo",
+        "email": "temeta@outlook.jp"
+      }
+    },
+    "repository": {
+      "id": 1209308801,
+      "node_id": "R_kgDOSBSWgQ",
+      "name": "nexus_helpdesk",
+      "full_name": "Maximvonshaft/nexus_helpdesk",
+      "private": false,
+      "owner": {
+        "login": "Maximvonshaft",
+        "id": 202882752,
+        "node_id": "U_kgDODBe-wA",
+        "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Maximvonshaft",
+        "html_url": "https://github.com/Maximvonshaft",
+        "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+        "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+        "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+        "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+        "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "html_url": "https://github.com/Maximvonshaft/nexus_helpdesk",
+      "description": null,
+      "fork": false,
+      "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+      "forks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/forks",
+      "keys_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/keys{/key_id}",
+      "collaborators_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/collaborators{/collaborator}",
+      "teams_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/teams",
+      "hooks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/hooks",
+      "issue_events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/events{/number}",
+      "events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/events",
+      "assignees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/assignees{/user}",
+      "branches_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/branches{/branch}",
+      "tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/tags",
+      "blobs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/blobs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/tags{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/refs{/sha}",
+      "trees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/trees{/sha}",
+      "statuses_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/statuses/{sha}",
+      "languages_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/languages",
+      "stargazers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/stargazers",
+      "contributors_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contributors",
+      "subscribers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscribers",
+      "subscription_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscription",
+      "commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/commits{/sha}",
+      "git_commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/commits{/sha}",
+      "comments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/comments{/number}",
+      "issue_comment_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/comments{/number}",
+      "contents_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contents/{+path}",
+      "compare_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/compare/{base}...{head}",
+      "merges_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/merges",
+      "archive_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/{archive_format}{/ref}",
+      "downloads_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/downloads",
+      "issues_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues{/number}",
+      "pulls_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/pulls{/number}",
+      "milestones_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/milestones{/number}",
+      "notifications_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/notifications{?since,all,participating}",
+      "labels_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/labels{/name}",
+      "releases_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/releases{/id}",
+      "deployments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/deployments"
+    },
+    "head_repository": {
+      "id": 1209308801,
+      "node_id": "R_kgDOSBSWgQ",
+      "name": "nexus_helpdesk",
+      "full_name": "Maximvonshaft/nexus_helpdesk",
+      "private": false,
+      "owner": {
+        "login": "Maximvonshaft",
+        "id": 202882752,
+        "node_id": "U_kgDODBe-wA",
+        "avatar_url": "https://avatars.githubusercontent.com/u/202882752?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Maximvonshaft",
+        "html_url": "https://github.com/Maximvonshaft",
+        "followers_url": "https://api.github.com/users/Maximvonshaft/followers",
+        "following_url": "https://api.github.com/users/Maximvonshaft/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Maximvonshaft/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Maximvonshaft/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Maximvonshaft/subscriptions",
+        "organizations_url": "https://api.github.com/users/Maximvonshaft/orgs",
+        "repos_url": "https://api.github.com/users/Maximvonshaft/repos",
+        "events_url": "https://api.github.com/users/Maximvonshaft/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Maximvonshaft/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "html_url": "https://github.com/Maximvonshaft/nexus_helpdesk",
+      "description": null,
+      "fork": false,
+      "url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk",
+      "forks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/forks",
+      "keys_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/keys{/key_id}",
+      "collaborators_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/collaborators{/collaborator}",
+      "teams_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/teams",
+      "hooks_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/hooks",
+      "issue_events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/events{/number}",
+      "events_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/events",
+      "assignees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/assignees{/user}",
+      "branches_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/branches{/branch}",
+      "tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/tags",
+      "blobs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/blobs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/tags{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/refs{/sha}",
+      "trees_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/trees{/sha}",
+      "statuses_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/statuses/{sha}",
+      "languages_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/languages",
+      "stargazers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/stargazers",
+      "contributors_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contributors",
+      "subscribers_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscribers",
+      "subscription_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/subscription",
+      "commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/commits{/sha}",
+      "git_commits_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/git/commits{/sha}",
+      "comments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/comments{/number}",
+      "issue_comment_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues/comments{/number}",
+      "contents_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/contents/{+path}",
+      "compare_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/compare/{base}...{head}",
+      "merges_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/merges",
+      "archive_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/{archive_format}{/ref}",
+      "downloads_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/downloads",
+      "issues_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/issues{/number}",
+      "pulls_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/pulls{/number}",
+      "milestones_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/milestones{/number}",
+      "notifications_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/notifications{?since,all,participating}",
+      "labels_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/labels{/name}",
+      "releases_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/releases{/id}",
+      "deployments_url": "https://api.github.com/repos/Maximvonshaft/nexus_helpdesk/deployments"
+    }
+  },
+  "jobs": [
+    {
+      "id": 88202878675,
+      "name": "validate-and-publish",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-07-19T14:23:39Z",
+      "completed_at": "2026-07-19T14:24:59Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Checkout exact staging head",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Reconstruct one exact candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Set up Python",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Set up Node",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Initialize CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Install exact dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Verify static authority and compile",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Run focused remediation regressions",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 10
+        },
+        {
+          "name": "Run complete backend regression",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11
+        },
+        {
+          "name": "Verify frontend and browser journeys",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12
+        },
+        {
+          "name": "Rehearse PostgreSQL and Alembic",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13
+        },
+        {
+          "name": "Run secret dependency and SAST assurance",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 14
+        },
+        {
+          "name": "Analyze exact candidate with CodeQL",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15
+        },
+        {
+          "name": "Enforce CodeQL closure",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 16
+        },
+        {
+          "name": "Build and scan exact candidate image",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 17
+        },
+        {
+          "name": "Run Trivy vulnerability inventory",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 18
+        },
+        {
+          "name": "Generate image CycloneDX SBOM",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 19
+        },
+        {
+          "name": "Prove image runtime and controlled release assurance",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 20
+        },
+        {
+          "name": "Upload final remediation evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21
+        },
+        {
+          "name": "Publish fully validated single-commit candidate",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 22
+        },
+        {
+          "name": "Restore prior candidate and publish failure identity",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23
+        },
+        {
+          "name": "Post Initialize CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 42
+        },
+        {
+          "name": "Post Set up Node",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 43
+        },
+        {
+          "name": "Post Set up Python",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 44
+        },
+        {
+          "name": "Post Checkout exact staging head",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 45
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 46
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 47
+        }
+      ]
+    }
+  ]
+}
