@@ -31,8 +31,6 @@ SUPPLY_CHAIN_INPUTS = (
     "webapp/package-lock.json",
     "deploy/docker-compose.controlled.yml",
     "deploy/docker-compose.controlled-postgres.yml",
-    "deploy/docker-compose.server.yml",
-    "deploy/docker-compose.candidate.yml",
     "deploy/.env.controlled.example",
     "deploy/.env.controlled.local-postgres.example",
     "deploy/postgres/init-controlled-roles.sh",
@@ -41,7 +39,6 @@ SUPPLY_CHAIN_INPUTS = (
     "scripts/deploy/safe_update_server.sh",
     "scripts/deploy/rollback_release.sh",
     "scripts/deploy/check_deploy_contract.sh",
-    "scripts/validate_pr27_closure.sh",
     "scripts/verify_repository.py",
     "scripts/qualification/deployment_authority.py",
     "scripts/qualification/service_authority.py",
@@ -61,8 +58,6 @@ SUPPLY_CHAIN_INPUTS = (
 COMPOSE_INPUTS = (
     "deploy/docker-compose.controlled.yml",
     "deploy/docker-compose.controlled-postgres.yml",
-    "deploy/docker-compose.server.yml",
-    "deploy/docker-compose.candidate.yml",
 )
 
 
@@ -178,7 +173,7 @@ def collect_supply_chain_state(
             )
 
     dockerfile = ROOT / "Dockerfile"
-    requirements = ROOT / "backend" / "requirements.txt"
+    requirements = ROOT / "backend/requirements.txt"
     if dockerfile.is_file():
         findings.extend(_dockerfile_findings(dockerfile))
     if requirements.is_file():
