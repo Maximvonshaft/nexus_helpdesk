@@ -1,0 +1,154 @@
+name: Security Remediation Object Builder
+
+on:
+  push:
+    branches:
+      - security-remediation-object-builder
+
+permissions:
+  contents: write
+
+env:
+  ORIGINAL_CANDIDATE: 59e989bf37807a871daa71a7aa7a54311ce68d41
+  ORIGINAL_TREE: 5bfc39001203f0468b269cadc2c6d159aedb9587
+  EXPECTED_TREE: 3b3c8840b0eecc9f57481ef3f9e74f719b2a1fdd
+  MAIN_PARENT: 7260652e380e9b19818c079c4d3846a653354d24
+  PATCH_SHA256: d55f3d6cfc90bb1715d7b627ea7992f346d43f0ed5bcbeed00b00a6e73db395c
+
+jobs:
+  build-object:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout object-builder staging commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Reconstruct exact validated tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat scripts/maintenance/codeql-remediation.patch.part0{0,1,2,3,4} > /tmp/codeql-remediation.diff
+          printf '%s  %s\n' "$PATCH_SHA256" /tmp/codeql-remediation.diff | sha256sum -c -
+          git reset --hard "$ORIGINAL_CANDIDATE"
+          git apply --check /tmp/codeql-remediation.diff
+          git apply /tmp/codeql-remediation.diff
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+          find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+          git config user.name "nexus-security-object-builder"
+          git config user.email "nexus-security-object-builder@users.noreply.github.com"
+          git fetch --no-tags origin main
+          git reset --soft origin/main
+          git add -A
+          git commit -m "[P0][#768] Complete production convergence and security closure"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain)"
+
+      - name: Create remote tree and commit objects without updating a ref
+        id: remote
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mapfile -t changed < <(git diff --name-only "$ORIGINAL_CANDIDATE" HEAD | sort)
+          expected=(
+            .github/workflows/canonical-acceptance.yml
+            backend/app/api/support_intelligence.py
+            backend/app/main.py
+            backend/app/services/provider_runtime_status.py
+            backend/app/services/support_intelligence_service.py
+            backend/app/services/webchat_ai_decision_runtime/audit.py
+            backend/app/services/webchat_service.py
+            backend/app/static/webchat/demo/index.html
+            backend/app/static/webchat/voice-entry.js
+            backend/app/static/webchat/widget.js
+            backend/scripts/create_integration_client.py
+            backend/scripts/validate_production_readiness.py
+            backend/tests/test_security_codeql_remediation_contract.py
+            backend/tests/test_support_intelligence_config.py
+            config/security/codeql-exceptions.json
+            docs/webchat-widget.md
+            infra/private-ai-runtime/live_voice_runtime/app.py
+            scripts/security/assert_sarif_clean.py
+            scripts/security/tests/test_assert_sarif_clean.py
+            scripts/verify_repository.py
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "${#changed[@]}" = 20
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${changed[@]}")
+          : > /tmp/tree-entries.ndjson
+          for path in "${changed[@]}"; do
+            test -f "$path"
+            mode="$(git ls-tree HEAD -- "$path" | awk '{print $1}')"
+            test "$mode" = 100644 -o "$mode" = 100755
+            jq -n --rawfile content "$path" '{content:$content,encoding:"utf-8"}' > /tmp/blob-request.json
+            blob_sha="$(curl -fsSL \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -X POST \
+              --data-binary @/tmp/blob-request.json \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/blobs" | jq -r '.sha')"
+            test -n "$blob_sha"
+            jq -n --arg path "$path" --arg mode "$mode" --arg sha "$blob_sha" '{path:$path,mode:$mode,type:"blob",sha:$sha}' >> /tmp/tree-entries.ndjson
+          done
+          jq -s --arg base_tree "$ORIGINAL_TREE" '{base_tree:$base_tree,tree:.}' /tmp/tree-entries.ndjson > /tmp/tree-request.json
+          remote_tree="$(curl -fsSL \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -X POST \
+            --data-binary @/tmp/tree-request.json \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/trees" | jq -r '.sha')"
+          test "$remote_tree" = "$EXPECTED_TREE"
+          jq -n \
+            --arg message "[P0][#768] Complete production convergence and security closure" \
+            --arg tree "$remote_tree" \
+            --arg parent "$MAIN_PARENT" \
+            '{message:$message,tree:$tree,parents:[$parent]}' > /tmp/commit-request.json
+          remote_commit="$(curl -fsSL \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -X POST \
+            --data-binary @/tmp/commit-request.json \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/commits" | jq -r '.sha')"
+          test -n "$remote_commit"
+          curl -fsSL \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/commits/$remote_commit" > /tmp/remote-commit.json
+          test "$(jq -r '.tree.sha' /tmp/remote-commit.json)" = "$EXPECTED_TREE"
+          test "$(jq -r '.parents | length' /tmp/remote-commit.json)" = 1
+          test "$(jq -r '.parents[0].sha' /tmp/remote-commit.json)" = "$MAIN_PARENT"
+          printf 'remote_commit=%s\n' "$remote_commit" >> "$GITHUB_OUTPUT"
+          printf 'remote_tree=%s\n' "$remote_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Publish bounded object identity
+        shell: bash
+        env:
+          REMOTE_COMMIT: ${{ steps.remote.outputs.remote_commit }}
+          REMOTE_TREE: ${{ steps.remote.outputs.remote_tree }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "nexus-security-object-status"
+          git config user.email "nexus-security-object-status@users.noreply.github.com"
+          git checkout --orphan security-remediation-object-status
+          git rm -rf . >/dev/null 2>&1 || true
+          jq -n \
+            --arg schema "nexus.security-remediation-object-status.v1" \
+            --arg commit "$REMOTE_COMMIT" \
+            --arg tree "$REMOTE_TREE" \
+            --arg parent "$MAIN_PARENT" \
+            --arg patch_sha256 "$PATCH_SHA256" \
+            --arg backend_frontend_validation_run "29691198350" \
+            --arg tail_validation_run "29691636842" \
+            '{schema:$schema,status:"success",commit_sha:$commit,tree_sha:$tree,parent_sha:$parent,patch_sha256:$patch_sha256,backend_frontend_validation_run:($backend_frontend_validation_run|tonumber),tail_validation_run:($tail_validation_run|tonumber),ref_updated:false}' > object-status.json
+          git add object-status.json
+          git commit -m "chore: publish validated candidate object identity"
+          git push --force origin HEAD:refs/heads/security-remediation-object-status
+          git push origin --delete security-remediation-object-builder >/dev/null 2>&1 || true
