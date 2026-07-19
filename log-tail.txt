@@ -1,0 +1,260 @@
+2026-07-19T14:59:09.7444453Z  * [new branch]        release/attestation-registry-login -> origin/release/attestation-registry-login
+2026-07-19T14:59:09.7446744Z  * [new branch]        release/baseline-ci-stabilization -> origin/release/baseline-ci-stabilization
+2026-07-19T14:59:09.7448681Z  * [new branch]        release/final-candidate-artifact-scan -> origin/release/final-candidate-artifact-scan
+2026-07-19T14:59:09.7450763Z  * [new branch]        release/final-candidate-artifact-scanner -> origin/release/final-candidate-artifact-scanner
+2026-07-19T14:59:09.7453030Z  * [new branch]        release/final-candidate-compliance-date-scan -> origin/release/final-candidate-compliance-date-scan
+2026-07-19T14:59:09.7455384Z  * [new branch]        release/final-scan-compliance-date -> origin/release/final-scan-compliance-date
+2026-07-19T14:59:09.7457517Z  * [new branch]        release/rc0-test-deployment-convergence-626 -> origin/release/rc0-test-deployment-convergence-626
+2026-07-19T14:59:09.7459806Z  * [new branch]        release/request-attestation-fixed-candidate -> origin/release/request-attestation-fixed-candidate
+2026-07-19T14:59:09.7462050Z  * [new branch]        release/request-compliance-scan-candidate -> origin/release/request-compliance-scan-candidate
+2026-07-19T14:59:09.7464129Z  * [new branch]        release/request-final-scan-candidate -> origin/release/request-final-scan-candidate
+2026-07-19T14:59:09.7466360Z  * [new branch]        release/webchat-stream-rollout-gate-v2-2-3 -> origin/release/webchat-stream-rollout-gate-v2-2-3
+2026-07-19T14:59:09.7468308Z  * [new branch]        repair/763-actions-green-518793 -> origin/repair/763-actions-green-518793
+2026-07-19T14:59:09.7469810Z  * [new branch]        repair/763-backend-241b -> origin/repair/763-backend-241b
+2026-07-19T14:59:09.7471253Z  * [new branch]        repair/763-backend-final-241b -> origin/repair/763-backend-final-241b
+2026-07-19T14:59:09.7472815Z  * [new branch]        repair/763-backend-final-5ef -> origin/repair/763-backend-final-5ef
+2026-07-19T14:59:09.7474423Z  * [new branch]        repair/763-e2e-7b4912   -> origin/repair/763-e2e-7b4912
+2026-07-19T14:59:09.7475804Z  * [new branch]        repair/763-e2e-98ddb    -> origin/repair/763-e2e-98ddb
+2026-07-19T14:59:09.7477207Z  * [new branch]        repair/763-final-backend-5ef0 -> origin/repair/763-final-backend-5ef0
+2026-07-19T14:59:09.7478623Z  * [new branch]        repair/763-final-d9bf   -> origin/repair/763-final-d9bf
+2026-07-19T14:59:09.7479931Z  * [new branch]        repair/763-lock-e2e-a25a -> origin/repair/763-lock-e2e-a25a
+2026-07-19T14:59:09.7481522Z  * [new branch]        rescue/pr80-rebase-on-webcall-main -> origin/rescue/pr80-rebase-on-webcall-main
+2026-07-19T14:59:09.7483148Z  * [new branch]        round-b-webchat-closure -> origin/round-b-webchat-closure
+2026-07-19T14:59:09.7484819Z  * [new branch]        security-remediation-object-builder -> origin/security-remediation-object-builder
+2026-07-19T14:59:09.7486901Z  * [new branch]        security-remediation-retry -> origin/security-remediation-retry
+2026-07-19T14:59:09.7488480Z  * [new branch]        security-remediation-status -> origin/security-remediation-status
+2026-07-19T14:59:09.7490143Z  * [new branch]        security-remediation-status-2 -> origin/security-remediation-status-2
+2026-07-19T14:59:09.7491884Z  * [new branch]        security-remediation-tail-status -> origin/security-remediation-tail-status
+2026-07-19T14:59:09.7493814Z  * [new branch]        security-remediation-tail-validation -> origin/security-remediation-tail-validation
+2026-07-19T14:59:09.7496042Z  * [new branch]        security-remediation-validation -> origin/security-remediation-validation
+2026-07-19T14:59:09.7498185Z  * [new branch]        security-remediation-validation-status -> origin/security-remediation-validation-status
+2026-07-19T14:59:09.7500547Z  * [new branch]        security/565-reachable-history-assurance-current -> origin/security/565-reachable-history-assurance-current
+2026-07-19T14:59:09.7502950Z  * [new branch]        stack/571-canonical-policy-projection-on-748 -> origin/stack/571-canonical-policy-projection-on-748
+2026-07-19T14:59:09.7505071Z  * [new branch]        stack/574-actions-convergence-on-748 -> origin/stack/574-actions-convergence-on-748
+2026-07-19T14:59:09.7507126Z  * [new branch]        storage-readiness-backup-gate-pr4 -> origin/storage-readiness-backup-gate-pr4
+2026-07-19T14:59:09.7508830Z  * [new branch]        sync/rc0-final-main-20260712 -> origin/sync/rc0-final-main-20260712
+2026-07-19T14:59:09.7510383Z  * [new branch]        tail-validation-live-status -> origin/tail-validation-live-status
+2026-07-19T14:59:09.7512217Z  * [new branch]        test/fast-lane-proxy-v3-edge-hardening -> origin/test/fast-lane-proxy-v3-edge-hardening
+2026-07-19T14:59:09.7514212Z  * [new branch]        test/pr50-operator-queue-validation -> origin/test/pr50-operator-queue-validation
+2026-07-19T14:59:09.7516364Z  * [new branch]        test/webchat-fast-reply-validation-smoke -> origin/test/webchat-fast-reply-validation-smoke
+2026-07-19T14:59:09.7518489Z  * [new branch]        tmp/549-candidate-readiness-on-22314073 -> origin/tmp/549-candidate-readiness-on-22314073
+2026-07-19T14:59:09.7520498Z  * [new branch]        tmp/549-release-profile-final-on-e857 -> origin/tmp/549-release-profile-final-on-e857
+2026-07-19T14:59:09.7522448Z  * [new branch]        tmp/549-release-profile-red-on-df486 -> origin/tmp/549-release-profile-red-on-df486
+2026-07-19T14:59:09.7524252Z  * [new branch]        tmp/652-root-reports-on-6502ce00 -> origin/tmp/652-root-reports-on-6502ce00
+2026-07-19T14:59:09.7526275Z  * [new branch]        tmp/656-round-b-docs-on-caf554f3 -> origin/tmp/656-round-b-docs-on-caf554f3
+2026-07-19T14:59:09.7528083Z  * [new branch]        tmp/748-convergence-bundle-20260714 -> origin/tmp/748-convergence-bundle-20260714
+2026-07-19T14:59:09.7529658Z  * [new branch]        tmp/754-final-recovery  -> origin/tmp/754-final-recovery
+2026-07-19T14:59:09.7530969Z  * [new branch]        tmp/754-parent-recovery -> origin/tmp/754-parent-recovery
+2026-07-19T14:59:09.7532363Z  * [new branch]        tmp/invalid             -> origin/tmp/invalid
+2026-07-19T14:59:09.7533647Z  * [new branch]        tmp/rebase-pr56-after-pr57 -> origin/tmp/rebase-pr56-after-pr57
+2026-07-19T14:59:09.7535871Z  * [new branch]        tmp/rebase-speedaf-uat-report-sanitizer-v1 -> origin/tmp/rebase-speedaf-uat-report-sanitizer-v1
+2026-07-19T14:59:09.7537817Z  * [new branch]        tmp/tenant-673-authority-fix -> origin/tmp/tenant-673-authority-fix
+2026-07-19T14:59:09.7539431Z  * [new branch]        tmp/trigger-tenant-673-orm-fix -> origin/tmp/trigger-tenant-673-orm-fix
+2026-07-19T14:59:09.7540980Z  * [new branch]        ui-production-clean-head -> origin/ui-production-clean-head
+2026-07-19T14:59:09.7542373Z  * [new branch]        ui-production-closure   -> origin/ui-production-closure
+2026-07-19T14:59:09.7543722Z  * [new branch]        validation-live-status  -> origin/validation-live-status
+2026-07-19T14:59:09.7545694Z  * [new branch]        verify/main-voice-projection-20260716 -> origin/verify/main-voice-projection-20260716
+2026-07-19T14:59:09.7547937Z  * [new branch]        verify/osr-565-history-assurance-main-df367f95 -> origin/verify/osr-565-history-assurance-main-df367f95
+2026-07-19T14:59:09.7549740Z  * [new branch]        wc-voice-ui-current     -> origin/wc-voice-ui-current
+2026-07-19T14:59:09.7551015Z  * [new branch]        webcall-singlemic-ci    -> origin/webcall-singlemic-ci
+2026-07-19T14:59:09.7552343Z  * [new branch]        webchat-ai-turn-runtime -> origin/webchat-ai-turn-runtime
+2026-07-19T14:59:09.7554156Z  * [new branch]        webchat-support-hours-policy-pipeline-pr1 -> origin/webchat-support-hours-policy-pipeline-pr1
+2026-07-19T14:59:09.7556929Z  * [new branch]        webchat-support-hours-policy-pipeline-pr1-v2 -> origin/webchat-support-hours-policy-pipeline-pr1-v2
+2026-07-19T14:59:09.7559194Z  * [new branch]        webchat-tracking-dedupe-scope-pr2 -> origin/webchat-tracking-dedupe-scope-pr2
+2026-07-19T14:59:09.7561454Z  * [new branch]        work/744-canonical-operator-console-consolidation -> origin/work/744-canonical-operator-console-consolidation
+2026-07-19T14:59:09.7563662Z  * [new branch]        work/744-codebase-rationalization -> origin/work/744-codebase-rationalization
+2026-07-19T14:59:09.7565643Z  * [new branch]        work/744-rationalization-discovery -> origin/work/744-rationalization-discovery
+2026-07-19T14:59:09.7567712Z  * [new branch]        work/753-canonical-ui-interaction-refinement -> origin/work/753-canonical-ui-interaction-refinement
+2026-07-19T14:59:09.7569878Z  * [new branch]        work/754-remove-ui-duplication-residue -> origin/work/754-remove-ui-duplication-residue
+2026-07-19T14:59:09.7572001Z  * [new branch]        work/757-canonical-performance-convergence -> origin/work/757-canonical-performance-convergence
+2026-07-19T14:59:09.7574277Z  * [new tag]           nexusdesk-prod-openclaw-readonly-20260429_063243 -> nexusdesk-prod-openclaw-readonly-20260429_063243
+2026-07-19T14:59:09.7576734Z  * [new tag]           prod-fastlane-openclaw-ok-20260513 -> prod-fastlane-openclaw-ok-20260513
+2026-07-19T14:59:09.7578779Z  * [new tag]           webcall-prod-pass-20260520T074414Z-7bdd40b40de3 -> webcall-prod-pass-20260520T074414Z-7bdd40b40de3
+2026-07-19T14:59:09.7580936Z  * [new tag]           webchat-ai-bridge-timeout-capped-20260426 -> webchat-ai-bridge-timeout-capped-20260426
+2026-07-19T14:59:09.7582871Z  * [new tag]           webchat-ai-full-loop-working-20260426 -> webchat-ai-full-loop-working-20260426
+2026-07-19T14:59:09.7584774Z  * [new tag]           webchat-ai-public-reply-working-20260426 -> webchat-ai-public-reply-working-20260426
+2026-07-19T14:59:09.7587058Z  * [new tag]           webchat-ai-reply-quality-stable-20260426 -> webchat-ai-reply-quality-stable-20260426
+2026-07-19T14:59:09.7588937Z  * [new tag]           webchat-widget-demo-polish-20260426 -> webchat-widget-demo-polish-20260426
+2026-07-19T14:59:09.7592085Z [command]/usr/bin/git rev-parse --verify --quiet 0950532ecbe90647591b3c5c9d3bb07e51c54017^{object}
+2026-07-19T14:59:09.7593590Z 0950532ecbe90647591b3c5c9d3bb07e51c54017
+2026-07-19T14:59:09.7595613Z ##[endgroup]
+2026-07-19T14:59:09.7596537Z ##[group]Determining the checkout info
+2026-07-19T14:59:09.7597566Z ##[endgroup]
+2026-07-19T14:59:09.7598152Z [command]/usr/bin/git sparse-checkout disable
+2026-07-19T14:59:09.7599958Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-07-19T14:59:09.7602098Z ##[group]Checking out the ref
+2026-07-19T14:59:09.7603180Z [command]/usr/bin/git checkout --progress --force 0950532ecbe90647591b3c5c9d3bb07e51c54017
+2026-07-19T14:59:09.8339322Z Note: switching to '0950532ecbe90647591b3c5c9d3bb07e51c54017'.
+2026-07-19T14:59:09.8340070Z 
+2026-07-19T14:59:09.8340517Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-07-19T14:59:09.8341555Z changes and commit them, and you can discard any commits you make in this
+2026-07-19T14:59:09.8342497Z state without impacting any branches by switching back to a branch.
+2026-07-19T14:59:09.8343035Z 
+2026-07-19T14:59:09.8343394Z If you want to create a new branch to retain commits you create, you may
+2026-07-19T14:59:09.8344245Z do so (now or later) by using -c with the switch command. Example:
+2026-07-19T14:59:09.8344756Z 
+2026-07-19T14:59:09.8344976Z   git switch -c <new-branch-name>
+2026-07-19T14:59:09.8345627Z 
+2026-07-19T14:59:09.8345845Z Or undo this operation with:
+2026-07-19T14:59:09.8346178Z 
+2026-07-19T14:59:09.8346361Z   git switch -
+2026-07-19T14:59:09.8346633Z 
+2026-07-19T14:59:09.8347083Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-07-19T14:59:09.8347692Z 
+2026-07-19T14:59:09.8348132Z HEAD is now at 0950532e chore: build validated security remediation git object
+2026-07-19T14:59:09.8358545Z ##[endgroup]
+2026-07-19T14:59:09.8423011Z [command]/usr/bin/git log -1 --format=%H
+2026-07-19T14:59:09.8454038Z 0950532ecbe90647591b3c5c9d3bb07e51c54017
+2026-07-19T14:59:09.8660649Z ##[group]Run set -Eeuo pipefail
+2026-07-19T14:59:09.8661105Z [36;1mset -Eeuo pipefail[0m
+2026-07-19T14:59:09.8661713Z [36;1mcat scripts/maintenance/codeql-remediation.patch.part0{0,1,2,3,4} > /tmp/codeql-remediation.diff[0m
+2026-07-19T14:59:09.8662431Z [36;1mprintf '%s  %s\n' "$PATCH_SHA256" /tmp/codeql-remediation.diff | sha256sum -c -[0m
+2026-07-19T14:59:09.8662916Z [36;1mgit reset --hard "$ORIGINAL_CANDIDATE"[0m
+2026-07-19T14:59:09.8663309Z [36;1mgit apply --check /tmp/codeql-remediation.diff[0m
+2026-07-19T14:59:09.8663707Z [36;1mgit apply /tmp/codeql-remediation.diff[0m
+2026-07-19T14:59:09.8664131Z [36;1mfind . -type d -name __pycache__ -prune -exec rm -rf {} +[0m
+2026-07-19T14:59:09.8664614Z [36;1mfind . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete[0m
+2026-07-19T14:59:09.8665080Z [36;1mgit config user.name "nexus-security-object-builder"[0m
+2026-07-19T14:59:09.8666029Z [36;1mgit config user.email "nexus-security-object-builder@users.noreply.github.com"[0m
+2026-07-19T14:59:09.8666553Z [36;1mgit fetch --no-tags origin main[0m
+2026-07-19T14:59:09.8666876Z [36;1mgit reset --soft origin/main[0m
+2026-07-19T14:59:09.8667191Z [36;1mgit add -A[0m
+2026-07-19T14:59:09.8667587Z [36;1mgit commit -m "[P0][#768] Complete production convergence and security closure"[0m
+2026-07-19T14:59:09.8668127Z [36;1mtest "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"[0m
+2026-07-19T14:59:09.8668533Z [36;1mtest -z "$(git status --porcelain)"[0m
+2026-07-19T14:59:09.8766601Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-07-19T14:59:09.8767019Z env:
+2026-07-19T14:59:09.8767347Z   ORIGINAL_CANDIDATE: 59e989bf37807a871daa71a7aa7a54311ce68d41
+2026-07-19T14:59:09.8767780Z   ORIGINAL_TREE: 5bfc39001203f0468b269cadc2c6d159aedb9587
+2026-07-19T14:59:09.8768193Z   EXPECTED_TREE: 3b3c8840b0eecc9f57481ef3f9e74f719b2a1fdd
+2026-07-19T14:59:09.8768581Z   MAIN_PARENT: 7260652e380e9b19818c079c4d3846a653354d24
+2026-07-19T14:59:09.8769093Z   PATCH_SHA256: d55f3d6cfc90bb1715d7b627ea7992f346d43f0ed5bcbeed00b00a6e73db395c
+2026-07-19T14:59:09.8769543Z ##[endgroup]
+2026-07-19T14:59:09.9005020Z /tmp/codeql-remediation.diff: OK
+2026-07-19T14:59:10.0480390Z HEAD is now at 59e989bf [P0][#768] Complete final production convergence
+2026-07-19T14:59:10.4198277Z From https://github.com/Maximvonshaft/nexus_helpdesk
+2026-07-19T14:59:10.4198785Z  * branch              main       -> FETCH_HEAD
+2026-07-19T14:59:10.4772893Z [detached HEAD dab2c090] [P0][#768] Complete production convergence and security closure
+2026-07-19T14:59:10.4773905Z  145 files changed, 2709 insertions(+), 3430 deletions(-)
+2026-07-19T14:59:10.4774598Z  create mode 100644 backend/app/bootstrap/__init__.py
+2026-07-19T14:59:10.4775562Z  create mode 100644 backend/app/bootstrap/routers.py
+2026-07-19T14:59:10.4776311Z  delete mode 100644 backend/app/services/external_channel_bridge.py
+2026-07-19T14:59:10.4776897Z  delete mode 100644 backend/app/services/external_channel_runtime_service.py
+2026-07-19T14:59:10.4777548Z  delete mode 100644 backend/app/services/outbound_adapters/whatsapp.py
+2026-07-19T14:59:10.4778094Z  create mode 100644 backend/app/services/runtime_endpoint_policy.py
+2026-07-19T14:59:10.4778637Z  create mode 100644 backend/app/services/ticket_sla_policy.py
+2026-07-19T14:59:10.4779152Z  create mode 100644 backend/app/services/tracking_identifier_policy.py
+2026-07-19T14:59:10.4779776Z  delete mode 100644 backend/app/services/webchat_ai_decision_runtime/prompt_builder.py
+2026-07-19T14:59:10.4780405Z  create mode 100644 backend/app/services/webchat_origin_policy.py
+2026-07-19T14:59:10.4780903Z  create mode 100644 backend/app/settings_groups.py
+2026-07-19T14:59:10.4781493Z  create mode 100644 backend/tests/test_application_composition_and_settings_groups.py
+2026-07-19T14:59:10.4782145Z  create mode 100644 backend/tests/test_external_channel_final_retirement.py
+2026-07-19T14:59:10.4782707Z  delete mode 100644 backend/tests/test_operator_queue_replay.py
+2026-07-19T14:59:10.4783773Z  create mode 100644 backend/tests/test_security_codeql_remediation_contract.py
+2026-07-19T14:59:10.4784396Z  delete mode 100644 backend/tests/test_whatsapp_outbound_adapter.py
+2026-07-19T14:59:10.4784911Z  create mode 100644 config/security/codeql-exceptions.json
+2026-07-19T14:59:10.4785769Z  create mode 100644 config/security/security-tool-requirements.txt
+2026-07-19T14:59:10.4786287Z  create mode 100755 scripts/security/assert_sarif_clean.py
+2026-07-19T14:59:10.4786787Z  create mode 100644 scripts/security/tests/test_assert_sarif_clean.py
+2026-07-19T14:59:10.4932010Z ##[group]Run set -Eeuo pipefail
+2026-07-19T14:59:10.4932414Z [36;1mset -Eeuo pipefail[0m
+2026-07-19T14:59:10.4932830Z [36;1mmapfile -t changed < <(git diff --name-only "$ORIGINAL_CANDIDATE" HEAD | sort)[0m
+2026-07-19T14:59:10.4933250Z [36;1mexpected=([0m
+2026-07-19T14:59:10.4933519Z [36;1m  .github/workflows/canonical-acceptance.yml[0m
+2026-07-19T14:59:10.4933910Z [36;1m  backend/app/api/support_intelligence.py[0m
+2026-07-19T14:59:10.4934272Z [36;1m  backend/app/main.py[0m
+2026-07-19T14:59:10.4934575Z [36;1m  backend/app/services/provider_runtime_status.py[0m
+2026-07-19T14:59:10.4934992Z [36;1m  backend/app/services/support_intelligence_service.py[0m
+2026-07-19T14:59:10.4935800Z [36;1m  backend/app/services/webchat_ai_decision_runtime/audit.py[0m
+2026-07-19T14:59:10.4936192Z [36;1m  backend/app/services/webchat_service.py[0m
+2026-07-19T14:59:10.4936538Z [36;1m  backend/app/static/webchat/demo/index.html[0m
+2026-07-19T14:59:10.4936921Z [36;1m  backend/app/static/webchat/voice-entry.js[0m
+2026-07-19T14:59:10.4937250Z [36;1m  backend/app/static/webchat/widget.js[0m
+2026-07-19T14:59:10.4937583Z [36;1m  backend/scripts/create_integration_client.py[0m
+2026-07-19T14:59:10.4937945Z [36;1m  backend/scripts/validate_production_readiness.py[0m
+2026-07-19T14:59:10.4938355Z [36;1m  backend/tests/test_security_codeql_remediation_contract.py[0m
+2026-07-19T14:59:10.4938774Z [36;1m  backend/tests/test_support_intelligence_config.py[0m
+2026-07-19T14:59:10.4939132Z [36;1m  config/security/codeql-exceptions.json[0m
+2026-07-19T14:59:10.4939442Z [36;1m  docs/webchat-widget.md[0m
+2026-07-19T14:59:10.4939971Z [36;1m  infra/private-ai-runtime/live_voice_runtime/app.py[0m
+2026-07-19T14:59:10.4940337Z [36;1m  scripts/security/assert_sarif_clean.py[0m
+2026-07-19T14:59:10.4940691Z [36;1m  scripts/security/tests/test_assert_sarif_clean.py[0m
+2026-07-19T14:59:10.4941032Z [36;1m  scripts/verify_repository.py[0m
+2026-07-19T14:59:10.4941293Z [36;1m)[0m
+2026-07-19T14:59:10.4941617Z [36;1mmapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)[0m
+2026-07-19T14:59:10.4942031Z [36;1mtest "${#changed[@]}" = 20[0m
+2026-07-19T14:59:10.4942476Z [36;1mdiff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${changed[@]}")[0m
+2026-07-19T14:59:10.4942907Z [36;1m: > /tmp/tree-entries.ndjson[0m
+2026-07-19T14:59:10.4943189Z [36;1mfor path in "${changed[@]}"; do[0m
+2026-07-19T14:59:10.4943460Z [36;1m  test -f "$path"[0m
+2026-07-19T14:59:10.4943767Z [36;1m  mode="$(git ls-tree HEAD -- "$path" | awk '{print $1}')"[0m
+2026-07-19T14:59:10.4944131Z [36;1m  test "$mode" = 100644 -o "$mode" = 100755[0m
+2026-07-19T14:59:10.4944632Z [36;1m  jq -n --rawfile content "$path" '{content:$content,encoding:"utf-8"}' > /tmp/blob-request.json[0m
+2026-07-19T14:59:10.4945356Z [36;1m  blob_sha="$(curl -fsSL \[0m
+2026-07-19T14:59:10.4946049Z [36;1m    -H "Authorization: ***" \[0m
+2026-07-19T14:59:10.4946386Z [36;1m    -H "Accept: application/vnd.github+json" \[0m
+2026-07-19T14:59:10.4946748Z [36;1m    -H "X-GitHub-Api-Version: 2022-11-28" \[0m
+2026-07-19T14:59:10.4947048Z [36;1m    -X POST \[0m
+2026-07-19T14:59:10.4947314Z [36;1m    --data-binary @/tmp/blob-request.json \[0m
+2026-07-19T14:59:10.4947730Z [36;1m    "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/blobs" | jq -r '.sha')"[0m
+2026-07-19T14:59:10.4948124Z [36;1m  test -n "$blob_sha"[0m
+2026-07-19T14:59:10.4948688Z [36;1m  jq -n --arg path "$path" --arg mode "$mode" --arg sha "$blob_sha" '{path:$path,mode:$mode,type:"blob",sha:$sha}' >> /tmp/tree-entries.ndjson[0m
+2026-07-19T14:59:10.4949261Z [36;1mdone[0m
+2026-07-19T14:59:10.4949741Z [36;1mjq -s --arg base_tree "$ORIGINAL_TREE" '{base_tree:$base_tree,tree:.}' /tmp/tree-entries.ndjson > /tmp/tree-request.json[0m
+2026-07-19T14:59:10.4950279Z [36;1mremote_tree="$(curl -fsSL \[0m
+2026-07-19T14:59:10.4950607Z [36;1m  -H "Authorization: ***" \[0m
+2026-07-19T14:59:10.4950911Z [36;1m  -H "Accept: application/vnd.github+json" \[0m
+2026-07-19T14:59:10.4951447Z [36;1m  -H "X-GitHub-Api-Version: 2022-11-28" \[0m
+2026-07-19T14:59:10.4951756Z [36;1m  -X POST \[0m
+2026-07-19T14:59:10.4952009Z [36;1m  --data-binary @/tmp/tree-request.json \[0m
+2026-07-19T14:59:10.4952421Z [36;1m  "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/trees" | jq -r '.sha')"[0m
+2026-07-19T14:59:10.4952834Z [36;1mtest "$remote_tree" = "$EXPECTED_TREE"[0m
+2026-07-19T14:59:10.4953117Z [36;1mjq -n \[0m
+2026-07-19T14:59:10.4953468Z [36;1m  --arg message "[P0][#768] Complete production convergence and security closure" \[0m
+2026-07-19T14:59:10.4953895Z [36;1m  --arg tree "$remote_tree" \[0m
+2026-07-19T14:59:10.4954180Z [36;1m  --arg parent "$MAIN_PARENT" \[0m
+2026-07-19T14:59:10.4954585Z [36;1m  '{message:$message,tree:$tree,parents:[$parent]}' > /tmp/commit-request.json[0m
+2026-07-19T14:59:10.4955001Z [36;1mremote_commit="$(curl -fsSL \[0m
+2026-07-19T14:59:10.4955681Z [36;1m  -H "Authorization: ***" \[0m
+2026-07-19T14:59:10.4956008Z [36;1m  -H "Accept: application/vnd.github+json" \[0m
+2026-07-19T14:59:10.4956344Z [36;1m  -H "X-GitHub-Api-Version: 2022-11-28" \[0m
+2026-07-19T14:59:10.4956632Z [36;1m  -X POST \[0m
+2026-07-19T14:59:10.4956884Z [36;1m  --data-binary @/tmp/commit-request.json \[0m
+2026-07-19T14:59:10.4957305Z [36;1m  "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/commits" | jq -r '.sha')"[0m
+2026-07-19T14:59:10.4957702Z [36;1mtest -n "$remote_commit"[0m
+2026-07-19T14:59:10.4957954Z [36;1mcurl -fsSL \[0m
+2026-07-19T14:59:10.4958214Z [36;1m  -H "Authorization: ***" \[0m
+2026-07-19T14:59:10.4958512Z [36;1m  -H "Accept: application/vnd.github+json" \[0m
+2026-07-19T14:59:10.4959022Z [36;1m  -H "X-GitHub-Api-Version: 2022-11-28" \[0m
+2026-07-19T14:59:10.4959523Z [36;1m  "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/commits/$remote_commit" > /tmp/remote-commit.json[0m
+2026-07-19T14:59:10.4960113Z [36;1mtest "$(jq -r '.tree.sha' /tmp/remote-commit.json)" = "$EXPECTED_TREE"[0m
+2026-07-19T14:59:10.4960576Z [36;1mtest "$(jq -r '.parents | length' /tmp/remote-commit.json)" = 1[0m
+2026-07-19T14:59:10.4961040Z [36;1mtest "$(jq -r '.parents[0].sha' /tmp/remote-commit.json)" = "$MAIN_PARENT"[0m
+2026-07-19T14:59:10.4961522Z [36;1mprintf 'remote_commit=%s\n' "$remote_commit" >> "$GITHUB_OUTPUT"[0m
+2026-07-19T14:59:10.4961973Z [36;1mprintf 'remote_tree=%s\n' "$remote_tree" >> "$GITHUB_OUTPUT"[0m
+2026-07-19T14:59:10.5024278Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-07-19T14:59:10.5024646Z env:
+2026-07-19T14:59:10.5024928Z   ORIGINAL_CANDIDATE: 59e989bf37807a871daa71a7aa7a54311ce68d41
+2026-07-19T14:59:10.5025599Z   ORIGINAL_TREE: 5bfc39001203f0468b269cadc2c6d159aedb9587
+2026-07-19T14:59:10.5025989Z   EXPECTED_TREE: 3b3c8840b0eecc9f57481ef3f9e74f719b2a1fdd
+2026-07-19T14:59:10.5026338Z   MAIN_PARENT: 7260652e380e9b19818c079c4d3846a653354d24
+2026-07-19T14:59:10.5026782Z   PATCH_SHA256: d55f3d6cfc90bb1715d7b627ea7992f346d43f0ed5bcbeed00b00a6e73db395c
+2026-07-19T14:59:10.5029551Z   TOKEN: ***
+2026-07-19T14:59:10.5029768Z ##[endgroup]
+2026-07-19T14:59:18.5100602Z curl: (22) The requested URL returned error: 403
+2026-07-19T14:59:18.5142616Z ##[error]Process completed with exit code 22.
+2026-07-19T14:59:18.5285863Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-19T14:59:18.5287453Z Post job cleanup.
+2026-07-19T14:59:18.6227221Z [command]/usr/bin/git version
+2026-07-19T14:59:18.6272835Z git version 2.54.0
+2026-07-19T14:59:18.6316080Z Temporarily overriding HOME='/home/runner/work/_temp/f86f1d60-ebb4-409e-b2f7-f2dd566094eb' before making global git config changes
+2026-07-19T14:59:18.6317705Z Adding repository directory to the temporary git global config as a safe directory
+2026-07-19T14:59:18.6322781Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/nexus_helpdesk/nexus_helpdesk
+2026-07-19T14:59:18.6368735Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-07-19T14:59:18.6416455Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-07-19T14:59:18.6693289Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-07-19T14:59:18.6722693Z http.https://github.com/.extraheader
+2026-07-19T14:59:18.6740024Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-07-19T14:59:18.6773984Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-07-19T14:59:18.7272399Z Cleaning up orphan processes
+2026-07-19T14:59:18.7591099Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
