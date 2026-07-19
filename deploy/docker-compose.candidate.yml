@@ -1,9 +1,0 @@
-# Compatibility filename only.
-#
-# Candidate and controlled deployments now use the same App/Worker topology.
-# This file contains no services, sidecars, secrets or transport implementation
-# of its own. Requires Docker Compose 2.20+ for top-level include.
-
-include:
-  - path: ./docker-compose.controlled.yml
-    env_file: ./.env.controlled
