@@ -22,9 +22,14 @@ canonical_authorities:
   ui_framework: '@mui/material@9.2.0'
   theme: webapp/src/theme/nexusTheme.ts
   operator_presentation: webapp/src/app/OperatorPresentation.tsx
-  ticket_domain: backend/app/services/canonical_ticket_service.py
+  ticket_domain: backend/app/services/ticket_service.py
+  ticket_private_core: backend/app/services/ticket_service_core.py
   safe_effective_closure: backend/app/services/ticket_closure_readiness.py
   ticket_closure_api: backend/app/api/ticket_closure.py
+  unified_operator_queue: backend/app/services/operator_work_queue.py
+  webchat_handoff: backend/app/services/webchat_handoff_service.py
+  integration_api: backend/app/api/canonical_integration.py
+  integration_private_runtime: backend/app/api/integration_runtime.py
   permissions: backend/app/services/permissions.py
   visibility_scope: backend/app/services/scope_permissions.py
   provider_router: backend/app/services/provider_runtime/router.py
@@ -51,6 +56,14 @@ retired_paths_must_be_absent:
   - webapp/src/styles/tokens.css
   - webapp/src/styles/components.css
   - webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx
+  - backend/app/services/canonical_ticket_service.py
+  - backend/app/services/canonical_operator_work_queue.py
+  - backend/app/services/canonical_webchat_handoff_service.py
+  - backend/app/services/control_tower_service.py
+  - backend/app/services/qa_training_service.py
+  - backend/app/api/integration.py
+  - backend/app/api/integration_core.py
+  - backend/app/api/osr_admin.py
   - backend/app/services/external_channel_bridge.py
   - backend/app/services/external_channel_runtime_service.py
   - backend/app/services/outbound_adapters/whatsapp.py
@@ -63,6 +76,7 @@ single_authority_rules:
   - one generic UI framework and theme
   - one frontend HTTP transport lifecycle
   - one public authority per backend responsibility
+  - no compatibility forwarding module for canonical services or routers
   - no role-name authorization outside the capability authority
   - no runtime schema DDL outside Alembic
   - no ticket closure from status or technical success alone
@@ -71,7 +85,7 @@ single_authority_rules:
   - no verification evidence written into the candidate tree
 
 compatibility_rules:
-  policy: compatibility may delegate or provide bounded read-only history only
+  policy: compatibility may provide bounded read-only history only
   business_logic_in_shims: forbidden
   provider_calls_from_compatibility: forbidden
   legacy_state_creation: forbidden
