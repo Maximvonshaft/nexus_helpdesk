@@ -1,0 +1,19 @@
+17:2026-07-19T14:59:05.8040309Z Version: 20260714.240.1
+51:2026-07-19T14:59:06.5094385Z   EXPECTED_TREE: 3b3c8840b0eecc9f57481ef3f9e74f719b2a1fdd
+216:2026-07-19T14:59:09.6322378Z  * [new branch]        chore/reconcile-production-support-hours-policy-20260521T142220Z -> origin/chore/reconcile-production-support-hours-policy-20260521T142220Z
+244:2026-07-19T14:59:09.6384038Z  * [new branch]        codex/codex-direct-latency-telemetry -> origin/codex/codex-direct-latency-telemetry
+262:2026-07-19T14:59:09.6422483Z  * [new branch]        codex/email-provider-retry-controls -> origin/codex/email-provider-retry-controls
+270:2026-07-19T14:59:09.6440334Z  * [new branch]        codex/fix-low-signal-no-evidence-handoff -> origin/codex/fix-low-signal-no-evidence-handoff
+611:2026-07-19T14:59:09.7303509Z  * [new branch]        hotfix/webchat-demo-handoff-poll-clean-20260527_195422 -> origin/hotfix/webchat-demo-handoff-poll-clean-20260527_195422
+660:2026-07-19T14:59:09.7417609Z  * [new branch]        release/708-controlled-rc-failure-evidence -> origin/release/708-controlled-rc-failure-evidence
+779:2026-07-19T14:59:09.8454038Z 0950532ecbe90647591b3c5c9d3bb07e51c54017
+795:2026-07-19T14:59:09.8668127Z [36;1mtest "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"[0m
+801:2026-07-19T14:59:09.8768193Z   EXPECTED_TREE: 3b3c8840b0eecc9f57481ef3f9e74f719b2a1fdd
+852:2026-07-19T14:59:10.4940337Z [36;1m  scripts/security/assert_sarif_clean.py[0m
+883:2026-07-19T14:59:10.4952834Z [36;1mtest "$remote_tree" = "$EXPECTED_TREE"[0m
+886:2026-07-19T14:59:10.4953895Z [36;1m  --arg tree "$remote_tree" \[0m
+902:2026-07-19T14:59:10.4960113Z [36;1mtest "$(jq -r '.tree.sha' /tmp/remote-commit.json)" = "$EXPECTED_TREE"[0m
+906:2026-07-19T14:59:10.4961973Z [36;1mprintf 'remote_tree=%s\n' "$remote_tree" >> "$GITHUB_OUTPUT"[0m
+911:2026-07-19T14:59:10.5025989Z   EXPECTED_TREE: 3b3c8840b0eecc9f57481ef3f9e74f719b2a1fdd
+916:2026-07-19T14:59:18.5100602Z curl: (22) The requested URL returned error: 403
+917:2026-07-19T14:59:18.5142616Z ##[error]Process completed with exit code 22.
