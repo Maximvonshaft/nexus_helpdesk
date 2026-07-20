@@ -40,51 +40,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify exact patch
+      - name: Reconstruct and verify exact patch
         shell: bash
         run: |
-          set -uo pipefail
-          mkdir -p /tmp/backend-closure-diagnostics
-          wc -c .github/final-backend-fixes.patch.gz.b64 > /tmp/backend-closure-diagnostics/source-size.txt
-          sha256sum .github/final-backend-fixes.patch.gz.b64 > /tmp/backend-closure-diagnostics/source-sha256.txt
-          if ! base64 --decode .github/final-backend-fixes.patch.gz.b64 > /tmp/final-backend-fixes.patch.gz 2>/tmp/backend-closure-diagnostics/base64-error.txt; then
-            echo base64_decode_failed > /tmp/backend-closure-diagnostics/phase.txt
-            exit 1
-          fi
-          sha256sum /tmp/final-backend-fixes.patch.gz > /tmp/backend-closure-diagnostics/gzip-sha256.txt
-          if ! echo '7e47a52e31657cca89df8120ad2d44299dcfcf0052105ea14484c3bb02bc9dfb  /tmp/final-backend-fixes.patch.gz' | sha256sum --check --strict > /tmp/backend-closure-diagnostics/gzip-sha-check.txt 2>&1; then
-            echo gzip_sha_failed > /tmp/backend-closure-diagnostics/phase.txt
-            exit 1
-          fi
-          if ! gzip -dc /tmp/final-backend-fixes.patch.gz > /tmp/final-backend-fixes.patch 2>/tmp/backend-closure-diagnostics/gzip-error.txt; then
-            echo gzip_decode_failed > /tmp/backend-closure-diagnostics/phase.txt
-            exit 1
-          fi
-          sha256sum /tmp/final-backend-fixes.patch > /tmp/backend-closure-diagnostics/patch-sha256.txt
-          if ! echo 'cbcace79812e4f8da1cac6d69fbab6e485e99a6944c2167ebc35630c87ff60c3  /tmp/final-backend-fixes.patch' | sha256sum --check --strict > /tmp/backend-closure-diagnostics/patch-sha-check.txt 2>&1; then
-            echo patch_sha_failed > /tmp/backend-closure-diagnostics/phase.txt
-            exit 1
-          fi
-          if ! git apply --check /tmp/final-backend-fixes.patch > /tmp/backend-closure-diagnostics/apply-check.txt 2>&1; then
-            echo git_apply_check_failed > /tmp/backend-closure-diagnostics/phase.txt
-            exit 1
-          fi
-          echo verified > /tmp/backend-closure-diagnostics/phase.txt
-
-      - name: Upload verification diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: backend-closure-diagnostics-${{ github.sha }}
-          path: /tmp/backend-closure-diagnostics
-          if-no-files-found: error
-          retention-days: 1
+          set -euo pipefail
+          cat .github/final-backend-fixes.patch.gz.b64.part* > /tmp/final-backend-fixes.patch.gz.b64
+          echo 'a5a72b545531fc985138fc7c554c50456eca1ce07fd0b6ec378cb6a9852435ce  /tmp/final-backend-fixes.patch.gz.b64' | sha256sum --check --strict
+          base64 --decode /tmp/final-backend-fixes.patch.gz.b64 > /tmp/final-backend-fixes.patch.gz
+          echo '7e47a52e31657cca89df8120ad2d44299dcfcf0052105ea14484c3bb02bc9dfb  /tmp/final-backend-fixes.patch.gz' | sha256sum --check --strict
+          gzip -dc /tmp/final-backend-fixes.patch.gz > /tmp/final-backend-fixes.patch
+          echo 'cbcace79812e4f8da1cac6d69fbab6e485e99a6944c2167ebc35630c87ff60c3  /tmp/final-backend-fixes.patch' | sha256sum --check --strict
+          git apply --check /tmp/final-backend-fixes.patch
 
       - name: Apply atomically and remove delivery tooling
         shell: bash
         run: |
           set -euo pipefail
           git apply --index /tmp/final-backend-fixes.patch
+          rm -f .github/final-backend-fixes.patch.gz.b64.part*
           rm -f .github/final-backend-fixes.patch.gz.b64
           rm -f .github/final-backend-fixes.trigger
           rm -f .github/workflows/_apply-final-backend-fixes.yml
