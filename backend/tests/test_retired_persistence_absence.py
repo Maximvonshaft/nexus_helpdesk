@@ -20,7 +20,7 @@ def test_runtime_metadata_has_no_retired_tables_or_columns():
 
 
 def test_application_has_no_retired_routes_or_runtime_modules():
-    paths = {route.path for route in app.routes}
+    paths = {getattr(route, "path", "") for route in app.routes if getattr(route, "path", None)}
     assert all("external_channel" not in path for path in paths)
     runtime_root = ROOT / "backend/app"
     offenders = []

@@ -28,6 +28,7 @@ from ..services.observability import (
     record_webchat_websocket_fallback_polling,
 )
 from ..services.webchat_handoff_service import force_takeover_ticket, list_handoff_queue
+from ..services.webchat_origin_policy import validate_websocket_origin
 from ..services.webchat_realtime_event_service import (
     list_admin_queue_event_envelopes,
     list_conversation_event_envelopes,
@@ -390,6 +391,11 @@ async def _handle_command(websocket: WebSocket, db: Session, state: ConnectionSt
 
 @router.websocket("/api/webchat/ws")
 async def webchat_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> None:
+    try:
+        validate_websocket_origin(websocket, get_settings())
+    except HTTPException:
+        await websocket.close(code=4403, reason="webchat_origin_forbidden")
+        return
     await websocket.accept()
     settings = get_settings()
     state = ConnectionState()

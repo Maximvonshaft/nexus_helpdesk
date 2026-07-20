@@ -13,8 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "safe_update_server.sh"
 PROTECTED_FILES = {
     "Dockerfile": "FROM scratch\n",
-    "deploy/.env.prod": "SECRET_VALUE=top-secret\n",
-    "deploy/docker-compose.server.yml": "services: {}\n",
+    "deploy/.env.controlled": "SECRET_VALUE=top-secret\n",
+    "deploy/docker-compose.controlled.yml": "services: {}\n",
     "deploy/nginx/default.conf": "server { listen 80; }\n",
     "backend/.env": "ANOTHER_SECRET=do-not-log\n",
 }
@@ -185,7 +185,7 @@ printf 'attacker-owned\n' > "$destination/existing.txt"
 
 def test_symlinked_protected_source_fails_closed(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path)
-    protected = repo / "deploy" / ".env.prod"
+    protected = repo / "deploy" / ".env.controlled"
     protected.unlink()
     outside = tmp_path / "outside-secret"
     outside.write_text("OUTSIDE_SECRET=value\n", encoding="utf-8")
@@ -195,7 +195,7 @@ def test_symlinked_protected_source_fails_closed(tmp_path: Path) -> None:
     completed = _run(repo, backup_dir)
 
     assert completed.returncode == 3
-    assert "refusing symlinked protected file: deploy/.env.prod" in completed.stderr
+    assert "refusing symlinked protected file: deploy/.env.controlled" in completed.stderr
     assert not backup_dir.exists()
     assert "OUTSIDE_SECRET" not in completed.stdout + completed.stderr
     assert not list(backup_dir.parent.glob(f"{backup_dir.name}.tmp.*"))
@@ -211,19 +211,19 @@ def test_missing_optional_files_are_reported_without_fake_manifest_entries(
 
     assert completed.returncode == 0, completed.stderr
     assert "protected_files=1" in completed.stdout
-    assert "Missing optional protected file: deploy/.env.prod" in completed.stdout
+    assert "Missing optional protected file: deploy/.env.controlled" in completed.stdout
     assert "Missing optional protected file: backend/.env" in completed.stdout
     manifest_lines = (backup_dir / "SHA256SUMS").read_text(
         encoding="utf-8"
     ).splitlines()
     assert len(manifest_lines) == 1
     assert manifest_lines[0].endswith("  Dockerfile")
-    assert not (backup_dir / "deploy" / ".env.prod").exists()
+    assert not (backup_dir / "deploy" / ".env.controlled").exists()
 
 
 @pytest.mark.parametrize(
     "relative_path",
-    ["Dockerfile", "deploy/.env.prod", "backend/.env"],
+    ["Dockerfile", "deploy/.env.controlled", "backend/.env"],
 )
 def test_non_regular_protected_source_fails_closed(
     tmp_path: Path,

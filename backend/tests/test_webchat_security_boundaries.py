@@ -17,9 +17,11 @@ def test_server_owns_webchat_origin_policy() -> None:
     websocket_api = _read("backend/app/api/webchat_ws.py")
     settings = _read("backend/app/settings.py")
 
-    assert "evaluate_webchat_origin" in origin
+    assert "validate_public_origin" in origin
+    assert "public_cors_headers" in origin
     assert "webchat_origin_policy" in public_api
-    assert "webchat_origin_policy" in websocket_api
+    assert "validate_websocket_origin" in origin
+    assert "validate_websocket_origin" in websocket_api
     assert "WEBCHAT_ALLOW_NO_ORIGIN" in settings
     assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT" in settings
 
@@ -45,9 +47,10 @@ def test_public_webchat_payload_does_not_expose_internal_identifiers() -> None:
 
 
 def test_public_webchat_rejects_unbounded_message_content() -> None:
-    schemas = _read("backend/app/webchat_schemas.py")
-    assert "max_length" in schemas
-    assert "WebchatMessageCreate" in schemas
+    public_api = _read("backend/app/api/webchat_public.py")
+    assert "class WebchatSendRequest" in public_api
+    assert "body: str = Field(min_length=1, max_length=2000)" in public_api
+    assert "model_config = ConfigDict(extra=\"forbid\")" in public_api
 
 
 def test_websocket_has_bounded_connection_and_heartbeat_contracts() -> None:

@@ -6,11 +6,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_control_tower_has_one_business_implementation():
     compatibility = ROOT / "app/services/control_tower_service.py"
     canonical = ROOT / "app/services/canonical_control_tower_service.py"
-    compatibility_source = compatibility.read_text(encoding="utf-8")
-    canonical_source = canonical.read_text(encoding="utf-8")
 
-    assert "from .canonical_control_tower_service import" in compatibility_source
-    assert "UserRole" not in compatibility_source
+    assert not compatibility.exists()
+    canonical_source = canonical.read_text(encoding="utf-8")
     assert "UserRole" not in canonical_source
     assert "has_global_case_visibility" in canonical_source
 

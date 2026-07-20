@@ -41,8 +41,6 @@ def test_current_supply_chain_inputs_are_immutable():
         "backend/tests/test_exact_head_acceptance.py",
         "deploy/docker-compose.controlled.yml",
         "deploy/docker-compose.controlled-postgres.yml",
-        "deploy/docker-compose.server.yml",
-        "deploy/docker-compose.candidate.yml",
         "deploy/.env.controlled.example",
         "deploy/.env.controlled.local-postgres.example",
         "deploy/postgres/init-controlled-roles.sh",
@@ -73,9 +71,9 @@ def test_deployment_authority_is_part_of_static_supply_chain_gate():
     assert "deployment_authority_findings(ROOT)" in source
     for marker in (
         "RETIRED_DEPLOY_PATHS",
-        "TOMBSTONE_ENV_PATHS",
-        "server_compose_not_thin_controlled_alias",
-        "candidate_compose_not_thin_controlled_alias",
+        "retired_deploy_path_exists",
+        "production_wrapper_legacy_reference",
+        "rollback_legacy_path_present",
         "rollback_controlled_contract_missing",
         "controlled_postgres_duplicates_service",
     ):
