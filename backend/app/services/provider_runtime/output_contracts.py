@@ -8,7 +8,8 @@ import jsonschema
 
 from ..webchat_ai_decision_runtime.schemas import AIDecision
 
-WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus.agent_turn.v1"
+AGENT_TURN_OUTPUT_CONTRACT = "nexus.agent_turn.v1"
+WEBCHAT_RUNTIME_OUTPUT_CONTRACT = AGENT_TURN_OUTPUT_CONTRACT
 _SECRET_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
@@ -31,7 +32,7 @@ _INTERNAL_MARKERS = (
 class OutputContracts:
     @staticmethod
     def get_schema(contract_name: str) -> dict[str, Any]:
-        if contract_name in {WEBCHAT_RUNTIME_OUTPUT_CONTRACT, "nexus.webchat_runtime_reply"}:
+        if contract_name == AGENT_TURN_OUTPUT_CONTRACT:
             return AIDecision.model_json_schema()
         if contract_name == "nexus.ai_reply.v3":
             return {
@@ -103,12 +104,7 @@ class OutputContracts:
         return {}
 
     @staticmethod
-    def validate_and_parse(
-        contract_name: str,
-        raw_output: str,
-        *_legacy_args: Any,
-        **_legacy_kwargs: Any,
-    ) -> dict[str, Any]:
+    def validate_and_parse(contract_name: str, raw_output: str) -> dict[str, Any]:
         try:
             parsed = json.loads(raw_output)
         except json.JSONDecodeError as exc:
@@ -116,7 +112,7 @@ class OutputContracts:
         if not isinstance(parsed, dict):
             raise ValueError("Output must be a JSON object")
 
-        if contract_name in {WEBCHAT_RUNTIME_OUTPUT_CONTRACT, "nexus.webchat_runtime_reply"}:
+        if contract_name == AGENT_TURN_OUTPUT_CONTRACT:
             decision = AIDecision.model_validate(parsed)
             if decision.customer_reply:
                 OutputContracts.check_customer_visible_security(decision.customer_reply)
@@ -139,14 +135,6 @@ class OutputContracts:
         if any(marker.lower() in lowered for marker in _INTERNAL_MARKERS):
             raise ValueError("Customer reply contains internal runtime or reasoning content")
         if any(pattern.search(reply) for pattern in _SECRET_PATTERNS):
-            raise ValueError("Potential secret leakage detected")
-
-    @staticmethod
-    def check_security_rules(*, raw_output: str, parsed: dict[str, Any], **_: Any) -> None:
-        reply = parsed.get("customer_reply")
-        if isinstance(reply, str) and reply.strip():
-            OutputContracts.check_customer_visible_security(reply)
-        if any(pattern.search(raw_output) for pattern in _SECRET_PATTERNS):
             raise ValueError("Potential secret leakage detected")
 
     @staticmethod
