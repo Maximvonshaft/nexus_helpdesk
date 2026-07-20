@@ -10,9 +10,12 @@ from ..models import Team, User
 from ..models_identity import UserSecurityState
 from ..services.audit_service import log_admin_audit
 from ..services.permissions import ROLE_CAPABILITIES, ensure_can_manage_users
-from ..services.user_security_service import ensure_security_state, revoke_all_sessions
+from ..services.user_security_service import (
+    ensure_security_state,
+    require_password_change_and_revoke,
+    revoke_all_sessions,
+)
 from ..unit_of_work import managed_session
-from ..utils.time import utc_now
 from .deps import get_current_user
 
 router = APIRouter(prefix='/api/admin', tags=['identity-administration'])
@@ -158,15 +161,12 @@ def require_password_change(
     ensure_can_manage_users(current_user, db)
     target = _user_or_404(db, user_id)
     with managed_session(db):
-        state = ensure_security_state(db, target.id)
+        previous = ensure_security_state(db, target.id)
         before = {
-            'must_change_password': state.must_change_password,
-            'session_version': state.session_version,
+            'must_change_password': previous.must_change_password,
+            'session_version': previous.session_version,
         }
-        state.must_change_password = True
-        state.session_version = max(1, int(state.session_version)) + 1
-        state.updated_at = utc_now()
-        db.flush()
+        state = require_password_change_and_revoke(db, target.id)
         log_admin_audit(
             db,
             actor_id=current_user.id,
