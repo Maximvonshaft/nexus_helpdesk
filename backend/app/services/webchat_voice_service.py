@@ -40,6 +40,7 @@ from .permissions import (
 )
 from .speedaf.redactor import safe_waybill_payload
 from .audit_service import log_admin_audit, log_event
+from .conversation_operator_service import ensure_conversation_visible
 from .voice_provider import VoiceProvider, VoiceProviderError
 from .webchat_rate_limit import enforce_webchat_rate_limit
 
@@ -117,7 +118,7 @@ def _participant_identity(session: WebchatVoiceSession, participant_type: str, s
     return f"{participant_type}_{session.public_id}_{suffix}"[:160]
 
 
-def _write_voice_event(db: Session, *, conversation_id: int, ticket_id: int, event_type: str, payload: dict[str, Any] | None = None) -> WebchatEvent:
+def _write_voice_event(db: Session, *, conversation_id: int, ticket_id: int | None, event_type: str, payload: dict[str, Any] | None = None) -> WebchatEvent:
     row = WebchatEvent(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type, payload_json=json.dumps(payload or {}, ensure_ascii=False))
     db.add(row)
     return row
@@ -147,14 +148,14 @@ def _emit_voice_observability(session: WebchatVoiceSession, event_type: str) -> 
     )
 
 
-def _serialize_incoming_session(session: WebchatVoiceSession, ticket: Ticket, conversation: WebchatConversation) -> dict[str, Any]:
+def _serialize_incoming_session(session: WebchatVoiceSession, ticket: Ticket | None, conversation: WebchatConversation) -> dict[str, Any]:
     payload = _serialize_session(session)
     visitor_label = conversation.visitor_name or conversation.visitor_email or conversation.visitor_phone or "Anonymous visitor"
     payload.update(
         {
-            "ticket_id": ticket.id,
-            "ticket_no": getattr(ticket, "ticket_no", None),
-            "ticket_title": getattr(ticket, "title", None),
+            "ticket_id": ticket.id if ticket is not None else None,
+            "ticket_no": getattr(ticket, "ticket_no", None) if ticket is not None else None,
+            "ticket_title": getattr(ticket, "title", None) if ticket is not None else None,
             "conversation_id": conversation.public_id,
             "visitor_label": visitor_label,
             "origin": conversation.origin,
@@ -355,6 +356,22 @@ def _ensure_ticket_visible_for_session(db: Session, current_user: User, session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
     ensure_ticket_visible(current_user, ticket, db)
     return ticket
+
+
+def _ensure_voice_session_visible(
+    db: Session,
+    current_user: User,
+    session: WebchatVoiceSession,
+    conversation: WebchatConversation,
+) -> Ticket | None:
+    if session.ticket_id is not None:
+        ticket = db.query(Ticket).filter(Ticket.id == session.ticket_id).first()
+        if ticket is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
+        ensure_ticket_visible(current_user, ticket, db)
+        return ticket
+    ensure_conversation_visible(db, conversation=conversation, user=current_user)
+    return None
 
 
 def _issue_token(session: WebchatVoiceSession, participant_type: str, suffix: str) -> tuple[str, int, str]:
@@ -699,7 +716,7 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
     _cleanup_expired_ringing_sessions(db)
     query = (
         db.query(WebchatVoiceSession, Ticket, WebchatConversation)
-        .join(Ticket, Ticket.id == WebchatVoiceSession.ticket_id)
+        .outerjoin(Ticket, Ticket.id == WebchatVoiceSession.ticket_id)
         .join(WebchatConversation, WebchatConversation.id == WebchatVoiceSession.conversation_id)
         .filter(WebchatVoiceSession.mode != "internal_ai_demo")
     )
@@ -715,7 +732,7 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
     items: list[dict[str, Any]] = []
     for session, ticket, conversation in query.limit(safe_limit * 4).all():
         try:
-            ensure_ticket_visible(current_user, ticket, db)
+            _ensure_voice_session_visible(db, current_user, session, conversation)
         except HTTPException as exc:
             if exc.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
                 continue

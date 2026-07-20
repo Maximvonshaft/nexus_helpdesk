@@ -24,6 +24,9 @@ _TICKET_OPTIONAL_TABLES = (
     "webchat_card_actions",
     "webchat_ai_debug_runs",
     "webchat_ai_test_findings",
+    "webchat_voice_sessions",
+    "webchat_voice_transcript_segments",
+    "webchat_voice_session_actions",
 )
 
 

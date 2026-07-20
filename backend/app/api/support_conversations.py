@@ -29,7 +29,8 @@ from ..services.support_conversation_privacy import (
     mask_support_display_name,
     safe_support_tracking_reference,
 )
-from ..services.support_conversation_scope import apply_support_ticket_scope
+from ..services.conversation_operator_service import ensure_conversation_visible, reply_to_conversation
+from ..services.support_conversation_scope import apply_support_conversation_scope, apply_support_ticket_scope
 from ..services.webchat_ai_turn_service import AI_TURN_TYPING_STATUSES, ai_snapshot
 from ..services.webchat_service import admin_reply
 from ..unit_of_work import managed_session
@@ -62,10 +63,10 @@ def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
-def _channel(conversation: WebchatConversation, ticket: Ticket) -> str:
+def _channel(conversation: WebchatConversation, ticket: Ticket | None) -> str:
     source_channel = (
         _enum_value(ticket.source_channel).lower()
-        if ticket.source_channel
+        if ticket is not None and ticket.source_channel
         else ""
     )
     channel_key = (conversation.channel_key or "").lower()
@@ -116,7 +117,7 @@ def _channel_predicate(channel: str):
     raise ValueError("unsupported_support_channel")
 
 
-def _session_key(conversation: WebchatConversation, ticket: Ticket) -> str:
+def _session_key(conversation: WebchatConversation, ticket: Ticket | None) -> str:
     return f"{_channel(conversation, ticket)}:{conversation.public_id}"
 
 
@@ -134,7 +135,7 @@ def _load_conversation(
     session_key: str,
     *,
     current_user,
-) -> tuple[WebchatConversation, Ticket]:
+) -> tuple[WebchatConversation, Ticket | None]:
     key = (session_key or "").strip()
     if not key:
         raise HTTPException(
@@ -146,18 +147,30 @@ def _load_conversation(
         public_id = requested_channel
         requested_channel = ""
 
-    query = (
+    ticket_query = (
         db.query(WebchatConversation, Ticket)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(WebchatConversation.public_id == public_id)
     )
-    row = apply_support_ticket_scope(query, current_user, db).first()
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="support_conversation_not_found",
+    row = apply_support_ticket_scope(ticket_query, current_user, db).first()
+    if row is not None:
+        conversation, ticket = row
+    else:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(
+                WebchatConversation.public_id == public_id,
+                WebchatConversation.ticket_id.is_(None),
+            )
+            .first()
         )
-    conversation, ticket = row
+        if conversation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="support_conversation_not_found",
+            )
+        ensure_conversation_visible(db, conversation=conversation, user=current_user)
+        ticket = None
     if (
         requested_channel
         and requested_channel.lower() != _channel(conversation, ticket)
@@ -326,7 +339,7 @@ def _runtime_latency_summary(
 def _conversation_out(
     *,
     conversation: WebchatConversation,
-    ticket: Ticket,
+    ticket: Ticket | None,
     last_message: WebchatMessage | None,
     current_user,
     capabilities: set[str],
@@ -337,7 +350,7 @@ def _conversation_out(
     raw_display_name = (
         conversation.visitor_name
         or conversation.visitor_ref
-        or ticket.ticket_no
+        or (ticket.ticket_no if ticket is not None else None)
     )
     raw_contact = (
         conversation.visitor_phone
@@ -348,17 +361,21 @@ def _conversation_out(
         "conversation_id": conversation.public_id,
         "channel": channel,
         "source": conversation.origin or channel,
-        "ticket_id": ticket.id,
-        "ticket_no": ticket.ticket_no,
-        "title": ticket.title,
-        "status": _enum_value(ticket.status),
-        "conversation_state": _enum_value(ticket.conversation_state),
+        "ticket_id": ticket.id if ticket is not None else None,
+        "ticket_no": ticket.ticket_no if ticket is not None else None,
+        "title": ticket.title if ticket is not None else None,
+        "status": _enum_value(ticket.status) if ticket is not None else conversation.status,
+        "conversation_state": (
+            _enum_value(ticket.conversation_state)
+            if ticket is not None
+            else None
+        ),
         "display_name": mask_support_display_name(
             raw_display_name,
-            fallback=ticket.ticket_no,
+            fallback=ticket.ticket_no if ticket is not None else "Conversation",
         ),
         "customer_contact": mask_support_contact(raw_contact),
-        "updated_at": _iso(conversation.updated_at or ticket.updated_at),
+        "updated_at": _iso(conversation.updated_at or (ticket.updated_at if ticket is not None else None)),
         "last_seen_at": _iso(conversation.last_seen_at),
         "latest_author": (
             _author(last_message.direction)
@@ -366,12 +383,11 @@ def _conversation_out(
             else None
         ),
         "needs_human": bool(
-            ticket.conversation_state
-            == ConversationState.human_review_required
-            or ticket.required_action
+            (ticket is not None and ticket.conversation_state == ConversationState.human_review_required)
+            or (ticket.required_action if ticket is not None else None)
             or handoff_status in {"requested", "accepted"}
         ),
-        "required_action": ticket.required_action,
+        "required_action": ticket.required_action if ticket is not None else None,
         "handoff_status": handoff_status,
         "handoff_request_id": getattr(
             conversation,
@@ -383,14 +399,13 @@ def _conversation_out(
         "ai_suspended": bool(
             getattr(conversation, "ai_suspended", False)
         ),
-        "tracking_number_present": bool(ticket.tracking_number),
+        "tracking_number_present": bool(ticket and ticket.tracking_number),
         "tracking_reference": safe_support_tracking_reference(
-            ticket.tracking_number
+            ticket.tracking_number if ticket is not None else None
         ),
         "pii_minimized": True,
         "can_force_takeover": bool(
-            ticket.id
-            and CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities
+            CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities
         ),
         "can_accept": bool(
             handoff_status == "requested"
@@ -406,8 +421,7 @@ def _conversation_out(
             and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
         ),
         "can_reply": bool(
-            ticket.id
-            and CAP_OUTBOUND_SEND in capabilities
+            CAP_OUTBOUND_SEND in capabilities
             and not _ai_blocks_manual_reply(conversation)
             and (
                 handoff_status == "none"
@@ -447,7 +461,7 @@ def list_support_conversations(
     latest_message_ids = _latest_message_subquery(db)
     query = (
         db.query(WebchatConversation, Ticket, WebchatMessage)
-        .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
+        .outerjoin(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .outerjoin(
             latest_message_ids,
             latest_message_ids.c.conversation_id
@@ -459,7 +473,7 @@ def list_support_conversations(
             == latest_message_ids.c.last_message_id,
         )
     )
-    query = apply_support_ticket_scope(query, current_user, db)
+    query = apply_support_conversation_scope(query, current_user, db)
 
     if view == "closed":
         query = query.filter(
@@ -484,13 +498,10 @@ def list_support_conversations(
 
     if view == "needs_human":
         query = query.filter(
-            (
-                Ticket.conversation_state
-                == ConversationState.human_review_required
-            )
-            | Ticket.required_action.isnot(None)
-            | WebchatConversation.handoff_status.in_(
-                ["requested", "accepted"]
+            or_(
+                Ticket.conversation_state == ConversationState.human_review_required,
+                Ticket.required_action.isnot(None),
+                WebchatConversation.handoff_status.in_(["requested", "accepted"]),
             )
         )
     elif view == "ai_active":
@@ -512,8 +523,11 @@ def list_support_conversations(
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(
-            Ticket.ticket_no.ilike(like)
-            | Ticket.title.ilike(like)
+            or_(
+                Ticket.ticket_no.ilike(like),
+                Ticket.title.ilike(like),
+                WebchatConversation.public_id.ilike(like),
+            )
         )
 
     rows = (
@@ -562,7 +576,7 @@ def resolve_support_conversation(
         "conversation": {
             "session_key": _session_key(conversation, ticket),
             "conversation_id": conversation.public_id,
-            "ticket_id": ticket.id,
+            "ticket_id": ticket.id if ticket is not None else None,
             "handoff_request_id": getattr(
                 conversation,
                 "current_handoff_request_id",
@@ -572,12 +586,16 @@ def resolve_support_conversation(
             "source": conversation.origin or channel,
             "pii_minimized": True,
         },
-        "ticket": {
-            "id": ticket.id,
-            "ticket_no": ticket.ticket_no,
-            "status": _enum_value(ticket.status),
-            "priority": _enum_value(ticket.priority),
-        },
+        "ticket": (
+            {
+                "id": ticket.id,
+                "ticket_no": ticket.ticket_no,
+                "status": _enum_value(ticket.status),
+                "priority": _enum_value(ticket.priority),
+            }
+            if ticket is not None
+            else None
+        ),
         "source": "nexus_support_conversation_resolver",
     }
 
@@ -595,14 +613,22 @@ def reply_support_conversation(
             payload.session_key,
             current_user=current_user,
         )
-        result = admin_reply(
-            db,
-            ticket.id,
-            current_user,
-            body=payload.body,
-            evidence_reference_id=payload.evidence_reference_id,
-            conversation_public_id=conversation.public_id,
-        )
+        if ticket is not None:
+            result = admin_reply(
+                db,
+                ticket.id,
+                current_user,
+                body=payload.body,
+                evidence_reference_id=payload.evidence_reference_id,
+                conversation_public_id=conversation.public_id,
+            )
+        else:
+            result = reply_to_conversation(
+                db,
+                conversation=conversation,
+                user=current_user,
+                body=payload.body,
+            )
     result["session_key"] = _session_key(conversation, ticket)
     result["channel"] = _channel(conversation, ticket)
     message = (

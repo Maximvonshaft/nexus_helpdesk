@@ -12,7 +12,6 @@ from sqlalchemy.orm import sessionmaker
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/nexus_conversation_routing_tests.db")
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
-os.environ.setdefault("TENANT_RUNTIME_AUTHORITY_MODE", "observe")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

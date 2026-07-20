@@ -177,7 +177,7 @@ def _write_handoff_event(
     db: Session,
     *,
     conversation: WebchatConversation,
-    ticket: Ticket,
+    ticket: Ticket | None,
     request_row: WebchatHandoffRequest,
     event_type: str,
     actor_id: int | None = None,
@@ -194,18 +194,19 @@ def _write_handoff_event(
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
-        ticket_id=ticket.id,
+        ticket_id=ticket.id if ticket is not None else None,
         event_type=event_type,
         payload=base_payload,
     )
-    _write_ticket_event(
-        db,
-        ticket_id=ticket.id,
-        actor_id=actor_id,
-        event_type=EventType.conversation_state_changed,
-        note=event_type.replace(".", " "),
-        payload={"public_conversation_id": conversation.public_id, **base_payload},
-    )
+    if ticket is not None:
+        _write_ticket_event(
+            db,
+            ticket_id=ticket.id,
+            actor_id=actor_id,
+            event_type=EventType.conversation_state_changed,
+            note=event_type.replace(".", " "),
+            payload={"public_conversation_id": conversation.public_id, **base_payload},
+        )
 
 
 def _sync_conversation_snapshot(
@@ -416,7 +417,7 @@ def request_webchat_handoff(
     db: Session,
     *,
     conversation: WebchatConversation,
-    ticket: Ticket,
+    ticket: Ticket | None,
     source: str,
     trigger_type: str,
     reason_code: str | None = None,
@@ -456,7 +457,7 @@ def request_webchat_handoff(
     else:
         request_row = WebchatHandoffRequest(
             conversation_id=conversation.id,
-            ticket_id=ticket.id,
+            ticket_id=ticket.id if ticket is not None else None,
             source=_clip(source, 40) or "ai_auto",
             trigger_type=_clip(trigger_type, 80) or "handoff_required",
             status="requested",
@@ -475,20 +476,21 @@ def request_webchat_handoff(
         db.flush()
         created = True
 
-    ticket.required_action = (
-        _clip(recommended_agent_action, MAX_ACTION_CHARS)
-        or ticket.required_action
-        or reason
-    )
-    ticket.conversation_state = ConversationState.human_review_required
-    if ticket.status in {
-        TicketStatus.new,
-        TicketStatus.resolved,
-        TicketStatus.closed,
-        TicketStatus.canceled,
-    }:
-        ticket.status = TicketStatus.pending_assignment
-    ticket.updated_at = now
+    if ticket is not None:
+        ticket.required_action = (
+            _clip(recommended_agent_action, MAX_ACTION_CHARS)
+            or ticket.required_action
+            or reason
+        )
+        ticket.conversation_state = ConversationState.human_review_required
+        if ticket.status in {
+            TicketStatus.new,
+            TicketStatus.resolved,
+            TicketStatus.closed,
+            TicketStatus.canceled,
+        }:
+            ticket.status = TicketStatus.pending_assignment
+        ticket.updated_at = now
     _sync_conversation_snapshot(
         conversation=conversation,
         request_row=request_row,
@@ -515,8 +517,12 @@ def request_webchat_handoff(
             "trigger_type": request_row.trigger_type,
             "reason_code": request_row.reason_code,
             "recommended_agent_action": request_row.recommended_agent_action,
-            "ticket_no": ticket.ticket_no,
-            "conversation_state": _status_value(ticket.conversation_state),
+            "ticket_no": ticket.ticket_no if ticket is not None else None,
+            "conversation_state": (
+                _status_value(ticket.conversation_state)
+                if ticket is not None
+                else None
+            ),
             "visitor_name": conversation.visitor_name,
             "origin": conversation.origin,
         },
@@ -543,7 +549,7 @@ def request_webchat_handoff(
             target_id=request_row.id,
             new_value={
                 "conversation_id": conversation.id,
-                "ticket_id": ticket.id,
+                "ticket_id": ticket.id if ticket is not None else None,
                 "source": request_row.source,
                 "reason": reason,
             },

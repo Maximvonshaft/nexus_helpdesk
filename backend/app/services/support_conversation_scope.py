@@ -3,11 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, false, or_
+from sqlalchemy import and_, exists, false, or_
 from sqlalchemy.orm import Query, Session
 
 from ..models import Ticket
-from .permissions import CAP_AUDIT_READ, CAP_TICKET_ASSIGN, CAP_USER_MANAGE, resolve_capabilities
+from ..models_agent_routing import ConversationControl
+from ..operator_models import OperatorQueueScopeGrant
+from ..webchat_models import WebchatConversation
+from .permissions import CAP_AUDIT_READ, CAP_TICKET_ASSIGN, CAP_USER_MANAGE, has_global_case_visibility, resolve_capabilities
 from .tenant_authority import resolve_actor_tenant_id
 
 _GLOBAL_SUPPORT_CAPABILITIES = {CAP_AUDIT_READ, CAP_USER_MANAGE}
@@ -59,6 +62,43 @@ def apply_support_ticket_scope(query: Query, current_user: Any, db: Session) -> 
         )
     )
 
+
+
+def apply_support_conversation_scope(
+    query: Query,
+    current_user: Any,
+    db: Session,
+) -> Query:
+    """Apply one SQL-level scope across ticket-backed and ticketless conversations."""
+
+    actor_tenant_id = resolve_actor_tenant_id(db, current_user)
+    capabilities = resolve_capabilities(current_user, db)
+    ticket_scope = support_ticket_scope_predicate(
+        current_user,
+        actor_tenant_id=actor_tenant_id,
+        capabilities=capabilities,
+    )
+    if has_global_case_visibility(current_user, db):
+        ticketless_scope = Ticket.id.is_(None)
+    else:
+        user_id = getattr(current_user, "id", None)
+        if user_id is None:
+            ticketless_scope = false()
+        else:
+            ticketless_scope = and_(
+                Ticket.id.is_(None),
+                exists().where(
+                    and_(
+                        ConversationControl.conversation_id == WebchatConversation.id,
+                        OperatorQueueScopeGrant.user_id == user_id,
+                        OperatorQueueScopeGrant.enabled.is_(True),
+                        OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
+                        OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
+                        OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
+                    )
+                ),
+            )
+    return query.filter(or_(ticket_scope, ticketless_scope))
 
 def ensure_support_ticket_visible(db: Session, current_user: Any, ticket_id: int) -> None:
     visible = apply_support_ticket_scope(
