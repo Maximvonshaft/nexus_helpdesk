@@ -135,7 +135,6 @@ def _ticketless_payload(
     conversation: WebchatConversation,
     current_user: User,
 ) -> dict:
-    # Local import preserves the existing WebChat-service initialization order.
     from .agent_availability_service import queue_position
 
     payload = _core.serialize_handoff_request(
@@ -176,6 +175,94 @@ def _ticketless_payload(
     return payload
 
 
+def _ticketless_ai_active_items(
+    db: Session,
+    *,
+    current_user: User,
+    limit: int,
+) -> list[dict]:
+    capabilities = resolve_capabilities(current_user, db)
+    rows = (
+        db.query(WebchatConversation, ConversationControl)
+        .join(
+            ConversationControl,
+            ConversationControl.conversation_id == WebchatConversation.id,
+        )
+        .join(
+            OperatorQueueScopeGrant,
+            and_(
+                OperatorQueueScopeGrant.user_id == current_user.id,
+                OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
+                OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
+                OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
+                OperatorQueueScopeGrant.enabled.is_(True),
+            ),
+        )
+        .filter(
+            WebchatConversation.ticket_id.is_(None),
+            WebchatConversation.status == "open",
+            WebchatConversation.ai_suspended.is_(False),
+            WebchatConversation.active_ai_status.in_(_core.AI_ACTIVE_STATUSES),
+            ConversationControl.country_code.is_not(None),
+        )
+        .order_by(
+            WebchatConversation.active_ai_updated_at.desc(),
+            WebchatConversation.updated_at.desc(),
+        )
+        .limit(max(1, min(limit, 100)))
+        .all()
+    )
+    items: list[dict] = []
+    for conversation, _control in rows:
+        items.append(
+            {
+                "id": None,
+                "conversation_id": conversation.public_id,
+                "webchat_conversation_id": conversation.id,
+                "ticket_id": None,
+                "ticket_no": None,
+                "title": "WebChat conversation",
+                "status": "ai_active",
+                "source": "ai_active",
+                "trigger_type": "monitor_ai",
+                "reason_code": conversation.active_ai_status,
+                "reason_text": "AI is currently handling this conversation",
+                "recommended_agent_action": "Force takeover if the AI conversation needs human intervention.",
+                "assigned_agent_id": conversation.active_agent_id,
+                "declined_by_me": False,
+                "waiting_seconds": 0,
+                "requested_at": None,
+                "handoff_status": conversation.handoff_status,
+                "active_agent_id": conversation.active_agent_id,
+                "ai_suspended": bool(conversation.ai_suspended),
+                "ai_status": conversation.active_ai_status,
+                "ai_turn_id": conversation.active_ai_turn_id,
+                "takeover_mode": conversation.takeover_mode,
+                "visitor_name": conversation.visitor_name,
+                "visitor_email": conversation.visitor_email,
+                "visitor_phone": conversation.visitor_phone,
+                "origin": conversation.origin,
+                "last_message": _core._serialize_last_message(
+                    _core._last_message(db, conversation.id)
+                ),
+                "can_accept": False,
+                "can_decline": False,
+                "can_force_takeover": CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER
+                in capabilities,
+                "can_release": False,
+                "can_resume_ai": False,
+                "can_reply": False,
+                **_core.webchat_read_state_payload(
+                    db,
+                    conversation_id=conversation.id,
+                    user_id=current_user.id,
+                ),
+                **_core.ai_snapshot(conversation),
+            }
+        )
+    return items
+
+
 def _ticketless_queue_items(
     db: Session,
     *,
@@ -184,6 +271,12 @@ def _ticketless_queue_items(
     include_declined: bool,
     limit: int,
 ) -> list[dict]:
+    if view == "ai_active":
+        return _ticketless_ai_active_items(
+            db,
+            current_user=current_user,
+            limit=limit,
+        )
     query = (
         db.query(WebchatHandoffRequest, WebchatConversation, ConversationControl)
         .join(
@@ -341,7 +434,6 @@ def accept_handoff_request(
             detail="handoff_not_waiting",
         )
 
-    # Local import avoids a WebChat-service initialization cycle.
     from .agent_routing_service import assign_handoff_to_agent
 
     assign_handoff_to_agent(
@@ -499,10 +591,26 @@ def release_handoff_request(
         )
 
     now = utc_now()
+    released_agent_id = request_row.assigned_agent_id
     old_value = {
         "status": request_row.status,
-        "assigned_agent_id": request_row.assigned_agent_id,
+        "assigned_agent_id": released_agent_id,
     }
+    if released_agent_id is not None and not _declined_by_current_user(
+        db,
+        request_id=request_row.id,
+        user_id=released_agent_id,
+    ):
+        db.add(
+            WebchatHandoffDecision(
+                request_id=request_row.id,
+                actor_id=released_agent_id,
+                decision="declined",
+                reason_code="released_by_agent",
+                note=_core._clip(note, _core.MAX_NOTE_CHARS),
+                created_at=now,
+            )
+        )
     request_row.status = "requested"
     request_row.assigned_agent_id = None
     request_row.accepted_by_user_id = None
@@ -546,12 +654,19 @@ def release_handoff_request(
         new_value={"status": request_row.status, "assigned_agent_id": None},
     )
     db.flush()
-    return _ticketless_payload(
+    payload = _ticketless_payload(
         db,
         request_row=request_row,
         conversation=conversation,
         current_user=current_user,
     )
+    if released_agent_id is not None:
+        released_agent = db.get(User, released_agent_id)
+        if released_agent is not None:
+            from .agent_routing_service import fill_agent_capacity
+
+            fill_agent_capacity(db, user=released_agent)
+    return payload
 
 
 def resume_ai_for_handoff(
@@ -653,7 +768,6 @@ def resume_ai_for_handoff(
     if previous_agent_id is not None:
         previous_agent = db.get(User, previous_agent_id)
         if previous_agent is not None:
-            # Local import preserves service initialization order.
             from .agent_routing_service import fill_agent_capacity
 
             fill_agent_capacity(db, user=previous_agent)
