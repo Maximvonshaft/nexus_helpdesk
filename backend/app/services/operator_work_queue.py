@@ -129,17 +129,10 @@ def _ticketless_handoff_items(
             "country_code": country,
             "channel_key": channel,
             "state": "terminal" if terminal else "active",
-            "source_status": (
-                handoff.status
-                if handoff.status in _core._HANDOFF_STATUSES
-                else "unknown"
-            ),
+            "source_status": handoff.status if handoff.status in _core._HANDOFF_STATUSES else "unknown",
             "reopened": False,
             "priority": "medium",
-            "owner": _core._owner(
-                None,
-                assigned_user_id=handoff.assigned_agent_id,
-            ),
+            "owner": _core._owner(None, assigned_user_id=handoff.assigned_agent_id),
             "sla": _core._sla(
                 None,
                 terminal=terminal,
@@ -151,9 +144,7 @@ def _ticketless_handoff_items(
             "updated_at": _core._iso(handoff.updated_at),
             "source_links": {
                 "ticket": None,
-                "conversation": (
-                    f"/api/operator/conversations/{conversation.public_id}/thread"
-                ),
+                "conversation": f"/api/operator/conversations/{conversation.public_id}/thread",
                 "handoff": "/api/webchat/admin/handoff/queue",
                 "dispatch": None,
             },
@@ -311,7 +302,10 @@ def list_unified_operator_queue(
     }
 
 
-decode_unified_operator_queue_cursor = _core.decode_unified_operator_queue_cursor
+def decode_unified_operator_queue_cursor(value: str) -> dict[str, Any]:
+    """Decode a public cursor through the signed private implementation."""
+
+    return _core._decode_cursor(value)
 
 
 def __getattr__(name: str):
