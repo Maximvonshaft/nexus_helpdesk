@@ -9,6 +9,7 @@ import {
   OperatorPageBoundary,
   RouteLoadingState,
 } from '@/app/OperatorPresentation'
+import { usePasswordRecoveryGuard } from '@/app/usePasswordRecoveryGuard'
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
@@ -26,12 +27,13 @@ function AuthorizedWorkspaceRoutePage() {
   const logout = useLogout()
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
+  const passwordRecoveryRequired = usePasswordRecoveryGuard(session.data?.must_change_password, 'workspace')
   const [requestedScopeKey, setRequestedScopeKey] = useState<string | null>(null)
 
   const scopes = useQuery({
     queryKey: ['operatorWorkspaceAuthorizedScopes'],
     queryFn: ({ signal }) => operatorWorkspaceApi.currentScopes({ signal }),
-    enabled: Boolean(session.data),
+    enabled: Boolean(session.data) && !passwordRecoveryRequired,
     retry: false,
     staleTime: 30_000,
   })
@@ -67,6 +69,14 @@ function AuthorizedWorkspaceRoutePage() {
           <Typography variant="subtitle1">无法读取账号</Typography>
           <Typography variant="body2">请重新登录。</Typography>
         </Alert>
+      </OperatorPageBoundary>
+    )
+  }
+
+  if (passwordRecoveryRequired) {
+    return (
+      <OperatorPageBoundary busy>
+        <OperatorLoadingState label="正在进入凭据恢复…" minHeight={0} />
       </OperatorPageBoundary>
     )
   }
