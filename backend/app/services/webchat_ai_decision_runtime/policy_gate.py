@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..provider_runtime.output_contracts import OutputContracts
+from ..customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
 from .schemas import AIDecision
 from .tool_registry import ToolContract, get_tool_contract
 
@@ -40,7 +40,7 @@ def validate_ai_decision(
     granted_permissions: set[str] | frozenset[str] | None = None,
     **_legacy: Any,
 ) -> PolicyGateResult:
-    """Validate generic Agent output and tool authority.
+    """Validate generic Agent output and Tool authority.
 
     Domain truth is owned by Skills and Tool observations. This gate only
     enforces platform concerns that apply uniformly to every Agent.
@@ -53,13 +53,12 @@ def validate_ai_decision(
     permissions = set(granted_permissions or set())
 
     if decision.customer_reply:
-        try:
-            OutputContracts.check_customer_visible_security(decision.customer_reply)
-        except ValueError as exc:
+        customer_policy = evaluate_customer_visible_policy(decision.customer_reply)
+        if not customer_policy.allowed:
             violations.append(
                 PolicyViolation(
                     code="unsafe_customer_reply",
-                    message=str(exc),
+                    message=format_policy_reasons(customer_policy),
                     risk_level="high",
                 )
             )
@@ -71,7 +70,7 @@ def validate_ai_decision(
             violations.append(
                 PolicyViolation(
                     code="unknown_tool_blocked",
-                    message="The Agent requested an unregistered tool.",
+                    message="The Agent requested an unregistered Tool.",
                     tool_name=call.tool_name,
                     risk_level="high",
                 )
@@ -109,7 +108,7 @@ def _validate_contract_authority(
         violations.append(
             PolicyViolation(
                 code="tool_disabled",
-                message="The requested tool is disabled.",
+                message="The requested Tool is disabled.",
                 tool_name=contract.name,
                 risk_level=contract.risk_level,
             )
@@ -118,7 +117,7 @@ def _validate_contract_authority(
         violations.append(
             PolicyViolation(
                 code="tool_permission_denied",
-                message="The runtime does not have the required tool permission.",
+                message="The runtime does not have the required Tool permission.",
                 tool_name=contract.name,
                 risk_level=contract.risk_level,
             )
@@ -137,7 +136,7 @@ def _validate_contract_authority(
             violations.append(
                 PolicyViolation(
                     code="high_risk_write_tool_blocked",
-                    message="High-risk write execution is not enabled for this tool.",
+                    message="High-risk write execution is not enabled for this Tool.",
                     tool_name=contract.name,
                     risk_level="high",
                 )
