@@ -1,21 +1,20 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import app.services.agent_runtime.service as agent_service
 from app.services.ai_runtime.schemas import RuntimeAIProviderRequest
-from app.services.provider_runtime.router import _bounded_error_code, _bounded_summary
+from app.services.provider_runtime.router import (
+    _bounded_provider_error_code,
+    _bounded_provider_summary,
+)
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
-import app.services.provider_runtime.webchat_runtime_dispatcher as dispatcher
 
 
-class _DummySession:
-    def close(self) -> None:
-        return None
-
-
-class _AuditSession(_DummySession):
+class _AuditSession:
     def __init__(self, row=None, *, fail: bool = False):
         self.row = row
         self.fail = fail
@@ -31,13 +30,19 @@ class _AuditSession(_DummySession):
         result.first.return_value = self.row
         return result
 
-    def rollback(self):
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
         self.rollbacks += 1
+
+    def close(self) -> None:
+        return None
 
 
 def _provider_request() -> ProviderRequest:
     return ProviderRequest(
-        request_id="request-1",
+        request_id="request-1:round:0",
         tenant_id="tenant-1",
         tenant_key="tenant-1",
         channel_key="webchat",
@@ -49,14 +54,14 @@ def _provider_request() -> ProviderRequest:
     )
 
 
-def test_provider_error_codes_are_bounded_safe_tokens():
-    assert _bounded_error_code("private_ai_runtime_timeout") == "private_ai_runtime_timeout"
-    assert _bounded_error_code("customer supplied arbitrary text") == "provider_call_failed"
-    assert _bounded_error_code(None) == "provider_call_failed"
+def test_provider_error_codes_are_bounded_categories():
+    assert _bounded_provider_error_code("private_ai_runtime_timeout") == "provider_timeout"
+    assert _bounded_provider_error_code("customer supplied arbitrary text") == "provider_call_failed"
+    assert _bounded_provider_error_code(None) == "provider_call_failed"
 
 
 def test_provider_summary_keeps_only_bounded_structural_diagnostics():
-    summary = _bounded_summary(
+    summary = _bounded_provider_summary(
         {
             "provider": "private_ai_runtime",
             "endpoint_path": "/api/chat",
@@ -81,17 +86,17 @@ def test_provider_summary_keeps_only_bounded_structural_diagnostics():
     assert "secret" not in str(summary)
 
 
-def test_authoritative_audit_requires_exact_request_and_provider():
+def test_authoritative_audit_requires_exact_round_request_and_provider():
     db = _AuditSession(row=(1,))
     request = _provider_request()
 
-    assert dispatcher._authoritative_provider_audit_exists(
+    assert agent_service._authoritative_provider_audit_exists(
         db,
         request=request,
         provider="private_ai_runtime",
     ) is True
     assert db.last_params == {
-        "request_id": "request-1",
+        "request_id": "request-1:round:0",
         "tenant_id": "tenant-1",
         "channel_key": "webchat",
         "session_id": "session-1",
@@ -102,7 +107,7 @@ def test_authoritative_audit_requires_exact_request_and_provider():
 def test_authoritative_audit_query_failure_is_fail_closed():
     db = _AuditSession(fail=True)
 
-    assert dispatcher._authoritative_provider_audit_exists(
+    assert agent_service._authoritative_provider_audit_exists(
         db,
         request=_provider_request(),
         provider="private_ai_runtime",
@@ -111,8 +116,7 @@ def test_authoritative_audit_query_failure_is_fail_closed():
 
 
 @pytest.mark.asyncio
-async def test_successful_provider_result_without_durable_audit_cannot_reply(monkeypatch):
-    monkeypatch.setattr(dispatcher, "SessionLocal", lambda: _DummySession())
+async def test_successful_provider_result_without_durable_audit_becomes_visible_fallback(monkeypatch):
     route = AsyncMock(
         return_value=ProviderResult(
             ok=True,
@@ -128,22 +132,31 @@ async def test_successful_provider_result_without_durable_audit_cannot_reply(mon
             raw_payload_safe_summary={"traffic": {"path": "canary_authoritative"}},
         )
     )
-    monkeypatch.setattr(dispatcher.ProviderRuntimeRouter, "route", route)
-    monkeypatch.setattr(dispatcher, "_authoritative_provider_audit_exists", lambda *args, **kwargs: False)
+    monkeypatch.setattr(agent_service.ProviderRuntimeRouter, "route", route)
+    monkeypatch.setattr(
+        agent_service,
+        "_authoritative_provider_audit_exists",
+        lambda *args, **kwargs: False,
+    )
 
-    result = await dispatcher.dispatch_webchat_runtime_reply(
+    result = await agent_service._run_agent_with_db(
+        _AuditSession(),
         request=RuntimeAIProviderRequest(
             tenant_key="tenant-1",
             channel_key="webchat",
             session_id="session-1",
             request_id="request-1",
             body="hello",
-        )
+            language="en",
+            metadata={"agent_allowed_tools": []},
+        ),
+        started=time.monotonic(),
     )
 
-    assert result.ok is False
+    assert result.ok is True
     assert result.ai_generated is False
-    assert result.reply is None
+    assert result.reply
     assert result.error_code == "provider_runtime_audit_unavailable"
-    assert result.raw_payload_safe_summary["authoritative_audit"] == "unavailable"
+    assert result.raw_payload_safe_summary["error_code"] == "provider_runtime_audit_unavailable"
+    assert result.raw_payload_safe_summary["rounds"][0]["error_code"] == "provider_runtime_audit_unavailable"
     route.assert_awaited_once()
