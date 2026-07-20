@@ -23,16 +23,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
-class AccountSecurityRead(BaseModel):
+class UserSecurityStateRead(BaseModel):
     user_id: int
     session_version: int
     must_change_password: bool
     password_changed_at: datetime | None = None
     last_login_at: datetime | None = None
     updated_at: datetime | None = None
-
-
-UserSecurityStateRead = AccountSecurityRead
 
 
 class RoleProfileRead(BaseModel):
