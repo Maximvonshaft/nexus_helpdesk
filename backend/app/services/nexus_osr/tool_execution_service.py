@@ -14,7 +14,8 @@ from ...models_agent_routing import ConversationControl
 from ...tool_models import ToolCallLog
 from ...utils.time import utc_now
 from ...webchat_models import WebchatConversation
-from ..agent_routing_service import availability_summary, request_handoff
+from ..agent_availability_service import availability_summary
+from ..agent_routing_service import request_handoff
 from ..webchat_ai_decision_runtime.policy_gate import PolicyGateResult, validate_ai_decision
 from ..webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionToolCall
 from ..webchat_ai_decision_runtime.tool_registry import canonical_tool_name
@@ -379,9 +380,7 @@ def _production_handlers(
                 "status": request_row.status,
                 "assigned_agent_id": request_row.assigned_agent_id,
             },
-            customer_visible_summary=(
-                "A human support handoff has been requested."
-            ),
+            customer_visible_summary="A human support handoff has been requested.",
             case_context=next_context,
         )
 
