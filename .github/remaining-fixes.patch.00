@@ -1,0 +1,317 @@
+diff --git a/backend/app/services/agent_routing_service.py b/backend/app/services/agent_routing_service.py
+index 841213a..dc018a6 100644
+--- a/backend/app/services/agent_routing_service.py
++++ b/backend/app/services/agent_routing_service.py
+@@ -640,7 +640,12 @@ def serialize_handoff(
+         "assigned_agent_id": request_row.assigned_agent_id,
+         "waiting_seconds": max(
+             0,
+-            int((utc_now() - request_row.requested_at).total_seconds()),
++            int(
++                (
++                    (ensure_utc(utc_now()) or utc_now())
++                    - (ensure_utc(request_row.requested_at) or request_row.requested_at)
++                ).total_seconds()
++            ),
+         )
+         if request_row.requested_at
+         else 0,
+diff --git a/backend/app/services/conversation_ai_service.py b/backend/app/services/conversation_ai_service.py
+index 6d42673..4e6d216 100644
+--- a/backend/app/services/conversation_ai_service.py
++++ b/backend/app/services/conversation_ai_service.py
+@@ -13,6 +13,10 @@ from .ai_runtime_context import build_webchat_runtime_context
+ from .customer_language import resolve_conversation_language
+ from .customer_visible_policy import evaluate_customer_visible_policy
+ from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
++from .webchat_ai_turn_service import (
++    sanitized_ai_turn_runtime_trace,
++    suppress_stale_reply_if_needed,
++)
+ from .webchat_runtime_ai_service import generate_webchat_runtime_reply
+ 
+ 
+@@ -172,21 +176,40 @@ def process_ticketless_ai_reply(
+         language=language,
+         runtime_context=runtime_context,
+     )
++    safe_runtime_trace = sanitized_ai_turn_runtime_trace(result.runtime_trace)
+     if not result.ok or not result.ai_generated or not result.reply:
+         return {
+             "status": "failed_no_public_reply",
+             "reason": result.error_code or "ai_runtime_no_reply",
+             "reply_source": result.reply_source,
+-            "runtime_trace": result.runtime_trace,
++            "runtime_trace": safe_runtime_trace,
+             "bridge_elapsed_ms": result.elapsed_ms,
+         }
++
++    # Runtime generation can take long enough for a human to accept the handoff
++    # or for a newer customer message to supersede this turn. Refresh the
++    # server-owned conversation state before writing any public AI message.
++    if suppress_stale_reply_if_needed(
++        db,
++        conversation=conversation,
++        turn=turn,
++        reason="conversation_state_changed_during_ticketless_runtime",
++    ):
++        return {
++            "status": "superseded",
++            "reason": "conversation_state_changed_during_ticketless_runtime",
++            "reply_source": "suppressed",
++            "runtime_trace": safe_runtime_trace,
++            "bridge_elapsed_ms": result.elapsed_ms,
++        }
++
+     policy = evaluate_customer_visible_policy(result.reply)
+     if not policy.allowed or not policy.normalized_body.strip():
+         return {
+             "status": "failed_no_public_reply",
+             "reason": "customer_visible_policy_blocked",
+             "reply_source": result.reply_source,
+-            "runtime_trace": result.runtime_trace,
++            "runtime_trace": safe_runtime_trace,
+             "bridge_elapsed_ms": result.elapsed_ms,
+         }
+ 
+@@ -201,9 +224,14 @@ def process_ticketless_ai_reply(
+             {
+                 "generated_by": "webchat_ai",
+                 "reply_source": result.reply_source,
+-                "runtime_trace": result.runtime_trace,
++                "runtime_trace": safe_runtime_trace,
++                "rag_trace": result.rag_trace,
+                 "tool_calls": result.tool_calls or [],
++                "fact_evidence_present": bool(tracking_summary),
++                "runtime_handoff_required": bool(result.handoff_required),
++                "language": language,
+                 "ticketless_conversation": True,
++                **tracking_metadata,
+             },
+             ensure_ascii=False,
+             default=str,
+@@ -255,5 +283,6 @@ def process_ticketless_ai_reply(
+         "fallback_reason": None,
+         "fact_evidence_present": bool(tracking_summary),
+         "bridge_elapsed_ms": result.elapsed_ms,
+-        "runtime_trace": result.runtime_trace,
++        "runtime_trace": safe_runtime_trace,
++        "runtime_handoff_required": bool(result.handoff_required),
+     }
+diff --git a/backend/app/services/nexus_osr/controlled_action_executor.py b/backend/app/services/nexus_osr/controlled_action_executor.py
+index 44b3078..525e0ba 100644
+--- a/backend/app/services/nexus_osr/controlled_action_executor.py
++++ b/backend/app/services/nexus_osr/controlled_action_executor.py
+@@ -98,7 +98,10 @@ class ControlledActionExecutor:
+                 error_code="high_risk_write_tool_blocked",
+                 error_message="High-risk write tools require explicit test or operator configuration before execution.",
+             )
+-        if policy_decision.requires_customer_confirmation:
++        if (
++            policy_decision.requires_customer_confirmation
++            and not bool(request.audit_context.get("customer_confirmation_granted"))
++        ):
+             return ActionExecutionResult(
+                 ok=False,
+                 tool_name=request.action.tool_name,
+@@ -107,7 +110,10 @@ class ControlledActionExecutor:
+                 error_code="customer_confirmation_required",
+                 error_message="Customer confirmation is required before this action can execute.",
+             )
+-        if policy_decision.requires_human_confirmation:
++        if (
++            policy_decision.requires_human_confirmation
++            and not bool(request.audit_context.get("human_confirmation_granted"))
++        ):
+             return ActionExecutionResult(
+                 ok=False,
+                 tool_name=request.action.tool_name,
+diff --git a/backend/app/services/nexus_osr/runtime_bridge.py b/backend/app/services/nexus_osr/runtime_bridge.py
+index 2137df8..e259839 100644
+--- a/backend/app/services/nexus_osr/runtime_bridge.py
++++ b/backend/app/services/nexus_osr/runtime_bridge.py
+@@ -6,6 +6,7 @@ from typing import Any, Iterable
+ from sqlalchemy.orm import Session
+ 
+ from ...models import Ticket
++from ...models_agent_routing import ConversationControl
+ from ...webchat_models import WebchatConversation, WebchatMessage
+ from ..knowledge_retrieval_service import KnowledgeChunkHit
+ from ..tracking_fact_schema import TrackingFactResult
+@@ -24,10 +25,25 @@ from .runtime_decision_contract import (
+ from .tool_execution_facade import OSRToolExecutionFacade, OSRToolExecutionFacadeResult, OSRToolExecutionMode, osr_tool_execution_mode_from_env
+ 
+ 
++def _conversation_country_code(
++    db: Session,
++    *,
++    conversation: WebchatConversation,
++    ticket: Ticket | None,
++) -> str | None:
++    if ticket is not None:
++        return getattr(ticket, "country_code", None)
++    return (
++        db.query(ConversationControl.country_code)
++        .filter(ConversationControl.conversation_id == conversation.id)
++        .scalar()
++    )
++
++
+ def build_case_context_from_webchat(
+     db: Session,
+     *,
+-    ticket: Ticket,
++    ticket: Ticket | None,
+     conversation: WebchatConversation,
+     visitor_message: WebchatMessage | None = None,
+     tracking_fact: TrackingFactResult | None = None,
+@@ -35,19 +51,34 @@ def build_case_context_from_webchat(
+ ) -> CaseContext:
+     """Load/update a persistent Case Context from current WebChat runtime facts."""
+ 
+-    existing = load_case_context(db, conversation_id=conversation.id, ticket_id=ticket.id)
++    ticket_id = getattr(ticket, "id", None)
++    country_code = _conversation_country_code(
++        db,
++        conversation=conversation,
++        ticket=ticket,
++    )
++    existing = load_case_context(
++        db,
++        conversation_id=conversation.id,
++        ticket_id=ticket_id,
++        tenant_id=getattr(conversation, "tenant_key", None) or "default",
++    )
+     context = existing or CaseContext(
+         conversation_id=conversation.id,
+-        ticket_id=ticket.id,
++        ticket_id=ticket_id,
+         channel=getattr(conversation, "channel_key", None) or "webchat",
+-        country_code=getattr(ticket, "country_code", None),
+-        issue_type=issue_type or getattr(conversation, "last_intent", None) or getattr(ticket, "case_type", None),
++        country_code=country_code,
++        issue_type=(
++            issue_type
++            or getattr(conversation, "last_intent", None)
++            or getattr(ticket, "case_type", None)
++        ),
+     )
+     if visitor_message is not None:
+         context = context.with_inbound_message(
+             getattr(visitor_message, "body_text", None) or getattr(visitor_message, "body", None) or "",
+             channel=getattr(conversation, "channel_key", None) or context.channel,
+-            country_code=getattr(ticket, "country_code", None) or context.country_code,
++            country_code=country_code or context.country_code,
+         )
+     if tracking_fact is not None:
+         context = context.with_mcp_fact(tracking_fact.metadata_payload())
+@@ -161,7 +192,7 @@ def build_runtime_decision_from_existing_runtime(
+ def audit_existing_webchat_runtime_decision(
+     db: Session,
+     *,
+-    ticket: Ticket,
++    ticket: Ticket | None,
+     conversation: WebchatConversation,
+     decision: RuntimeDecision,
+     case_context: CaseContext | None = None,
+@@ -174,9 +205,13 @@ def audit_existing_webchat_runtime_decision(
+         case_context=case_context,
+         tenant_id=getattr(conversation, "tenant_key", None) or "default",
+         channel=getattr(conversation, "channel_key", None),
+-        country_code=getattr(ticket, "country_code", None),
++        country_code=_conversation_country_code(
++            db,
++            conversation=conversation,
++            ticket=ticket,
++        ),
+         conversation_id=conversation.id,
+-        ticket_id=ticket.id,
++        ticket_id=getattr(ticket, "id", None),
+     )
+ 
+ 
+diff --git a/backend/app/services/nexus_osr/tool_execution_service.py b/backend/app/services/nexus_osr/tool_execution_service.py
+index 2d9542a..026c965 100644
+--- a/backend/app/services/nexus_osr/tool_execution_service.py
++++ b/backend/app/services/nexus_osr/tool_execution_service.py
+@@ -47,6 +47,8 @@ from .runtime_decision_contract import (
+ class GovernedToolExecutionOptions:
+     allow_high_risk_write_execution: bool = False
+     allowed_high_risk_write_tools: frozenset[str] = frozenset()
++    customer_confirmation_granted: bool = False
++    human_confirmation_granted: bool = False
+ 
+ 
+ def runtime_tool_actions_from_tool_calls(
+@@ -188,7 +190,15 @@ def execute_controlled_tool_calls(
+                 country_code=country_code,
+                 case_context=case_context,
+                 idempotency_key=idempotency_key,
+-                audit_context={"tenant_id": tenant_id},
++                audit_context={
++                    "tenant_id": tenant_id,
++                    "customer_confirmation_granted": bool(
++                        options.customer_confirmation_granted
++                    ),
++                    "human_confirmation_granted": bool(
++                        options.human_confirmation_granted
++                    ),
++                },
+             )
+         )
+         elapsed_ms = int((time.monotonic() - started) * 1000)
+diff --git a/backend/app/services/webchat_ai_orchestration_service.py b/backend/app/services/webchat_ai_orchestration_service.py
+index 6f20562..b7f0ddf 100644
+--- a/backend/app/services/webchat_ai_orchestration_service.py
++++ b/backend/app/services/webchat_ai_orchestration_service.py
+@@ -113,7 +113,7 @@ def _audit_runtime_turn_non_blocking(
+     turn: WebchatAITurn | None,
+     result: dict[str, Any],
+ ) -> dict[str, Any] | None:
+-    if turn is None or ticket is None:
++    if turn is None:
+         return None
+     try:
+         with db.begin_nested():
+@@ -131,7 +131,7 @@ def _audit_runtime_turn_non_blocking(
+             extra={
+                 "event_payload": {
+                     "conversation_id": conversation.id,
+-                    "ticket_id": ticket.id,
++                    "ticket_id": getattr(ticket, "id", None),
+                     "visitor_message_id": visitor_message.id,
+                     "ai_turn_id": turn.id,
+                     "error_type": type(exc).__name__,
+diff --git a/backend/app/services/webchat_debug_bundle_service.py b/backend/app/services/webchat_debug_bundle_service.py
+index 0a16ae6..2093d15 100644
+--- a/backend/app/services/webchat_debug_bundle_service.py
++++ b/backend/app/services/webchat_debug_bundle_service.py
+@@ -278,8 +278,8 @@ def _safe_request_id(turn: WebchatAITurn, conversation: WebchatConversation) ->
+ 
+ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str, Any], WebchatAIDebugRun]:
+     conversation = db.get(WebchatConversation, turn.conversation_id)
+-    ticket = db.get(Ticket, turn.ticket_id)
+-    if conversation is None or ticket is None:
++    ticket = db.get(Ticket, turn.ticket_id) if turn.ticket_id is not None else None
++    if conversation is None:
+         raise ValueError("webchat_debug_context_missing")
+     visitor_message = db.get(WebchatMessage, turn.latest_visitor_message_id or turn.trigger_message_id)
+     reply_message = db.get(WebchatMessage, turn.reply_message_id) if turn.reply_message_id else None
+@@ -287,9 +287,15 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
+     runtime_trace = _runtime_trace(turn, reply_message)
+     rag_trace = metadata.get("rag_trace") if isinstance(metadata.get("rag_trace"), dict) else None
+     trace_fields = runtime_trace.get("runtime_trace_context_fields") if isinstance(runtime_trace.get("runtime_trace_context_fields"), dict) else {}
++    event_query = db.query(WebchatEvent).filter(
++        WebchatEvent.conversation_id == turn.conversation_id,
++    )
++    if turn.ticket_id is None:
++        event_query = event_query.filter(WebchatEvent.ticket_id.is_(None))
++    else:
++        event_query = event_query.filter(WebchatEvent.ticket_id == turn.ticket_id)
+     events = (
+-        db.query(WebchatEvent)
+-        .filter(WebchatEvent.conversation_id == turn.conversation_id, WebchatEvent.ticket_id == turn.ticket_id)
++        event_query
+         .order_by(WebchatEvent.id.asc())
+         .limit(300)
+         .all()
