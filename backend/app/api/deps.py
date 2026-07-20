@@ -1,4 +1,4 @@
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -11,14 +11,22 @@ from ..settings import get_settings
 
 bearer = HTTPBearer(auto_error=False)
 
+PASSWORD_ROTATION_ALLOWED_PATHS = frozenset({
+    "/api/auth/me",
+    "/api/auth/change-password",
+    "/api/auth/logout-all",
+})
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     x_user_id: int | None = Header(default=None, alias="X-User-Id"),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     settings = get_settings()
     user = None
+    security_state = None
     if credentials:
         claims = decode_access_token_claims(credentials.credentials)
         if claims:
@@ -34,9 +42,22 @@ def get_current_user(
 
     if user is None and settings.allow_dev_auth and x_user_id:
         user = db.query(User).filter(User.id == x_user_id, User.is_active.is_(True)).first()
+        if user is not None:
+            security_state = get_security_state(db, user.id)
 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    request_path = request.url.path if request is not None else ""
+    if (
+        security_state is not None
+        and security_state.must_change_password
+        and request_path not in PASSWORD_ROTATION_ALLOWED_PATHS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password change required",
+        )
     return user
 
 
