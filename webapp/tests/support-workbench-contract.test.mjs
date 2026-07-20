@@ -75,7 +75,7 @@ test('workspace is the sole queue, conversation and governed-action surface', ()
 test('knowledge is one capability-aware implementation', () => {
   const page = read('src/features/knowledge/KnowledgePage.tsx')
   const route = read('src/routes/knowledge.tsx')
-  assert.match(page, /KnowledgePage\(\{ canManage \}\/)/
+  assert.match(page, /KnowledgePage\(\{ canManage \}/)
   assert.match(route, /LazyKnowledgePage canManage/)
   assert.equal(exists('src/features/knowledge/KnowledgeReadOnlyPage.tsx'), false)
   for (const text of ['知识与流程', '标准答案与处理步骤', '搜索测试', '发布状态']) assert.match(page, new RegExp(text))
