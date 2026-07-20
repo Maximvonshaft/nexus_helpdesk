@@ -1,0 +1,282 @@
+PR #774 isolated backend diagnostic
+Exact source: c23c4f07ba46c69243ecdf4ee91f28af0547253f
+
+Failed node IDs:
+FAILED backend/tests/test_canonical_actions_image_contract.py::test_canonical_workflow_is_single_and_checkout_credentials_are_not_persisted - AssertionError: assert ['.github/workflows/_temporary-pr774-backend-diagnostic.yml', '.github/workflows/canonical-acceptance.yml'] == ['.github/workflows/canonical-acceptance.yml']
+FAILED backend/tests/test_canonical_service_authorities.py::test_authority_modules_do_not_monkey_patch_imported_modules - AssertionError: ['backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers', 'backend/app/services/nexus_osr/tool_execution_service.py:131 _core._availability_customer_summary']
+FAILED backend/tests/test_conversation_first_agent_routing.py::test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation - fastapi.exceptions.HTTPException: 403: webchat_handoff_resume_ai_requires_capability
+
+Failure excerpt:
+=================================== FAILURES ===================================
+_ test_canonical_workflow_is_single_and_checkout_credentials_are_not_persisted _
+
+    def test_canonical_workflow_is_single_and_checkout_credentials_are_not_persisted():
+        workflow_files = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / ".github" / "workflows").iterdir()
+            if path.is_file()
+        )
+>       assert workflow_files == [".github/workflows/canonical-acceptance.yml"]
+E       AssertionError: assert ['.github/workflows/_temporary-pr774-backend-diagnostic.yml', '.github/workflows/canonical-acceptance.yml'] == ['.github/workflows/canonical-acceptance.yml']
+E         
+E         At index 0 diff: '.github/workflows/_temporary-pr774-backend-diagnostic.yml' != '.github/workflows/canonical-acceptance.yml'
+E         Left contains one more item: '.github/workflows/canonical-acceptance.yml'
+E         
+E         Full diff:
+E           [
+E         +     '.github/workflows/_temporary-pr774-backend-diagnostic.yml',
+E               '.github/workflows/canonical-acceptance.yml',
+E           ]
+
+backend/tests/test_canonical_actions_image_contract.py:15: AssertionError
+_________ test_authority_modules_do_not_monkey_patch_imported_modules __________
+
+    def test_authority_modules_do_not_monkey_patch_imported_modules() -> None:
+        offenders: list[str] = []
+        for path in APP.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            imported_aliases = _module_aliases(tree)
+            for node in tree.body:
+                target = _attribute_assignment_target(node)
+                if target and target[0] in imported_aliases:
+                    offenders.append(
+                        f"{path.relative_to(PROJECT)}:{getattr(node, 'lineno', '?')} {target[0]}.{target[1]}"
+                    )
+                if (
+                    isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "setattr"
+                    and node.value.args
+                    and isinstance(node.value.args[0], ast.Name)
+                    and node.value.args[0].id in imported_aliases
+                ):
+                    offenders.append(
+                        f"{path.relative_to(PROJECT)}:{getattr(node, 'lineno', '?')} setattr({node.value.args[0].id}, ...)"
+                    )
+>       assert offenders == [], offenders
+E       AssertionError: ['backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers', 'backend/app/services/nexus_osr/tool_execution_service.py:131 _core._availability_customer_summary']
+E       assert ['backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers', 'backend/app/services/nexus_osr/tool_execution_service.py:131 _core._availability_customer_summary'] == []
+E         
+E         Left contains 2 more items, first extra item: 'backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers'
+E         
+E         Full diff:
+E         - []
+E         + [
+E         +     'backend/app/services/nexus_osr/tool_execution_service.py:130 '
+E         +     '_core._production_handlers',
+E         +     'backend/app/services/nexus_osr/tool_execution_service.py:131 '
+E         +     '_core._availability_customer_summary',
+E         + ]
+
+backend/tests/test_canonical_service_authorities.py:182: AssertionError
+____ test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation ____
+
+db_session = <sqlalchemy.orm.session.Session object at 0x7fd1aa7ab850>
+
+    def test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation(db_session):
+        agent = _agent(db_session, suffix="resume")
+        first = _conversation(db_session, suffix="resume-first")
+        second = _conversation(db_session, suffix="resume-second")
+        set_agent_state(
+            db_session,
+            user=agent,
+            presence_status="online",
+            max_concurrent_conversations=1,
+        )
+        first_request = request_handoff(
+            db_session,
+            conversation=first,
+            source="ai_runtime",
+            trigger_type="runtime_handoff",
+            reason_code="needs_human",
+        )
+        second_request = request_handoff(
+            db_session,
+            conversation=second,
+            source="ai_runtime",
+            trigger_type="runtime_handoff",
+            reason_code="needs_human",
+        )
+    
+>       resumed = resume_ai_for_handoff(
+            db_session,
+            request_id=first_request.id,
+            current_user=agent,
+            note="Customer chose to continue with AI.",
+        )
+
+backend/tests/test_conversation_first_agent_routing.py:281: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+backend/app/services/webchat_handoff_service.py:558: in resume_ai_for_handoff
+    _require_capability(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <sqlalchemy.orm.session.Session object at 0x7fd1aa7ab850>
+current_user = <app.models.User object at 0x7fd1aa80d150>
+capability = 'webchat.handoff.resume_ai'
+detail = 'webchat_handoff_resume_ai_requires_capability'
+
+    def _require_capability(
+        db: Session,
+        *,
+        current_user: User,
+        capability: str,
+        detail: str,
+    ) -> set[str]:
+        capabilities = resolve_capabilities(current_user, db)
+        if capability not in capabilities:
+>           raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=detail,
+            )
+E           fastapi.exceptions.HTTPException: 403: webchat_handoff_resume_ai_requires_capability
+
+backend/app/services/webchat_handoff_service.py:54: HTTPException
+=============================== warnings summary ===============================
+../../../../../opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/tests/test_admin_action_rate_limit.py::test_rate_limit_response_contains_request_id_and_audit_log
+backend/tests/test_admin_action_rate_limit.py::test_different_action_keys_are_counted_independently
+backend/tests/test_admin_action_rate_limit.py::test_different_users_have_independent_buckets
+backend/tests/test_admin_action_rate_limit.py::test_requeue_endpoint_is_guarded_by_rate_limit
+backend/tests/test_admin_action_rate_limit.py::test_rate_limit_window_expiry_resets_bucket
+backend/tests/test_admin_action_rate_limit.py::test_first_concurrent_requests_do_not_500_and_limit_stays_stable
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_action_rate_limit.py:37: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_identity_request_policy.py::test_user_create_inherits_actor_tenant_and_final_admin_cannot_drop_manage
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_identity_request_policy.py:50: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_issued_credential_scope.py::test_generic_insert_is_not_an_interactive_account_creation
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_issued_credential_scope.py:66: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_issued_credential_scope.py::test_admin_user_creation_forces_rotation_until_password_is_changed
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_issued_credential_scope.py:141: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_outbound_email_api.py::test_admin_can_create_list_disable_and_secrets_are_masked
+backend/tests/test_admin_outbound_email_api.py::test_update_password_rotates_secret_and_writes_redacted_audit
+backend/tests/test_admin_outbound_email_api.py::test_admin_can_configure_inbound_imap_and_rotate_redacted_secret
+backend/tests/test_admin_outbound_email_api.py::test_inbound_imap_requires_complete_config_when_enabled
+backend/tests/test_admin_outbound_email_api.py::test_test_send_updates_health_and_writes_redacted_audit
+backend/tests/test_admin_outbound_email_api.py::test_agent_cannot_manage_outbound_email_accounts
+backend/tests/test_admin_outbound_email_api.py::test_duplicate_route_and_inactive_market_are_rejected
+backend/tests/test_admin_outbound_email_api.py::test_audit_payloads_are_valid_json_when_present
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_outbound_email_api.py:49: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_tenant_control_plane.py::test_admin_control_plane_is_tenant_scoped_for_users_audit_and_email
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_tenant_control_plane.py:58: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_users_pagination.py::test_admin_users_default_limit_cursor_and_no_overlap
+backend/tests/test_admin_users_pagination.py::test_admin_users_limit_cap_and_capability_override_preload
+backend/tests/test_admin_users_pagination.py::test_admin_users_legacy_is_bounded_and_inactive_contract
+backend/tests/test_admin_users_pagination.py::test_admin_users_agent_forbidden
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_users_pagination.py:36: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_admin_whatsapp_native_api.py::test_admin_can_start_login_and_health_status_is_updated
+backend/tests/test_admin_whatsapp_native_api.py::test_admin_can_fetch_whatsapp_native_status
+backend/tests/test_admin_whatsapp_native_api.py::test_non_whatsapp_account_is_not_accepted
+backend/tests/test_admin_whatsapp_native_api.py::test_agent_cannot_manage_whatsapp_native_session
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_admin_whatsapp_native_api.py:39: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_ai_customer_visible_contracts.py: 19 warnings
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_ai_customer_visible_contracts.py:46: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_background_job_dedupe_idempotency.py::test_same_active_dedupe_key_returns_single_job
+backend/tests/test_background_job_dedupe_idempotency.py::test_terminal_job_does_not_block_new_active_job
+backend/tests/test_background_job_dedupe_idempotency.py::test_integrity_error_recovery_keeps_outer_transaction_intact
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_background_job_dedupe_idempotency.py:35: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_bulletin_center_contract.py::test_bulletin_center_impact_preview_and_audited_writes
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_bulletin_center_contract.py:203: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_canonical_policy_projection_behavior.py: 11 warnings
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_canonical_policy_projection_behavior.py:52: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_channel_control.py::test_agent_cannot_create_or_update_channel_control_task
+backend/tests/test_channel_control.py::test_admin_can_create_and_list_tasks
+backend/tests/test_channel_control.py::test_invalid_provider_and_inactive_market_are_rejected
+backend/tests/test_channel_control.py::test_update_task_fields_before_terminal_state
+backend/tests/test_channel_control.py::test_status_flow_start_complete_and_terminal_immutable
+backend/tests/test_channel_control.py::test_fail_then_complete_task
+backend/tests/test_channel_control.py::test_cancel_task_is_terminal
+backend/tests/test_channel_control.py::test_invalid_status_filter_rejected
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_channel_control.py:45: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_channel_workbench_backend_contracts.py::test_email_mailbox_queue_projection_uses_real_mailbox_rows
+backend/tests/test_channel_workbench_backend_contracts.py::test_email_draft_send_and_timeline_audit_contract
+backend/tests/test_channel_workbench_backend_contracts.py::test_email_inbound_ingest_sync_merges_thread_and_writes_timeline_audit
+backend/tests/test_channel_workbench_backend_contracts.py::test_email_dead_outbound_timeline_and_requeue_contract
+backend/tests/test_channel_workbench_backend_contracts.py::test_email_delivery_receipt_updates_outbound_timeline_and_audit
+backend/tests/test_channel_workbench_backend_contracts.py::test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_contract
+backend/tests/test_channel_workbench_backend_contracts.py::test_webcall_accept_end_writes_timeline_voice_evidence
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_channel_workbench_backend_contracts.py:58: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_control_plane_foundation.py::test_basic_persona_profile_insert_query_and_nullable_fks
+backend/tests/test_control_plane_foundation.py::test_persona_profile_key_is_unique
+backend/tests/test_control_plane_foundation.py::test_persona_profile_version_uniqueness
+backend/tests/test_control_plane_foundation.py::test_persona_profile_review_version_uniqueness
+backend/tests/test_control_plane_foundation.py::test_basic_knowledge_item_insert_query_and_nullable_fks
+backend/tests/test_control_plane_foundation.py::test_knowledge_item_key_is_unique
+backend/tests/test_control_plane_foundation.py::test_knowledge_item_version_uniqueness
+backend/tests/test_control_plane_foundation.py::test_basic_channel_onboarding_task_insert_query_and_nullable_fks
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_control_plane_foundation.py:45: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_control_tower_contract.py::test_control_tower_manager_contract_uses_real_operational_counts
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_control_tower_contract.py:238: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_control_tower_contract.py::test_control_tower_requires_management_capability
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_control_tower_contract.py:313: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+backend/tests/test_conversation_first_agent_routing.py::test_public_webchat_initialization_does_not_create_ticket
+backend/tests/test_conversation_first_agent_routing.py::test_capacity_one_assigns_fifo_and_close_releases_next_slot
+backend/tests/test_conversation_first_agent_routing.py::test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation
+  /home/runner/work/nexus_helpdesk/nexus_helpdesk/backend/tests/test_conversation_first_agent_routing.py:79: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: webchat_ai_turns, webchat_messages; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(engine)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_canonical_actions_image_contract.py::test_canonical_workflow_is_single_and_checkout_credentials_are_not_persisted - AssertionError: assert ['.github/workflows/_temporary-pr774-backend-diagnostic.yml', '.github/workflows/canonical-acceptance.yml'] == ['.github/workflows/canonical-acceptance.yml']
+  
+  At index 0 diff: '.github/workflows/_temporary-pr774-backend-diagnostic.yml' != '.github/workflows/canonical-acceptance.yml'
+  Left contains one more item: '.github/workflows/canonical-acceptance.yml'
+  
+  Full diff:
+    [
+  +     '.github/workflows/_temporary-pr774-backend-diagnostic.yml',
+        '.github/workflows/canonical-acceptance.yml',
+    ]
+FAILED backend/tests/test_canonical_service_authorities.py::test_authority_modules_do_not_monkey_patch_imported_modules - AssertionError: ['backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers', 'backend/app/services/nexus_osr/tool_execution_service.py:131 _core._availability_customer_summary']
+assert ['backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers', 'backend/app/services/nexus_osr/tool_execution_service.py:131 _core._availability_customer_summary'] == []
+  
+  Left contains 2 more items, first extra item: 'backend/app/services/nexus_osr/tool_execution_service.py:130 _core._production_handlers'
+  
+  Full diff:
+  - []
+  + [
+  +     'backend/app/services/nexus_osr/tool_execution_service.py:130 '
+  +     '_core._production_handlers',
+  +     'backend/app/services/nexus_osr/tool_execution_service.py:131 '
+  +     '_core._availability_customer_summary',
+  + ]
+FAILED backend/tests/test_conversation_first_agent_routing.py::test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation - fastapi.exceptions.HTTPException: 403: webchat_handoff_resume_ai_requires_capability
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 3 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+====== 3 failed, 212 passed, 4 skipped, 89 warnings in 249.63s (0:04:09) =======
