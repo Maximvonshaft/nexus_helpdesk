@@ -19,6 +19,7 @@ from ..services.conversation_operator_service import (
     read_conversation_thread,
     reply_to_conversation,
 )
+from ..services.operator_queue_scope import authorize_operator_scope
 from ..services.permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_capability,
@@ -105,24 +106,43 @@ def heartbeat_agent_state(
 
 @router.get("/availability")
 def get_operator_availability(
-    tenant_key: str = Query(min_length=1, max_length=120),
-    country_code: str | None = Query(default=None, min_length=2, max_length=16),
-    channel_key: str = Query(min_length=1, max_length=120),
+    tenant_key: str = Query(min_length=1, max_length=80),
+    country_code: str = Query(min_length=2, max_length=16),
+    channel_key: str = Query(min_length=1, max_length=40),
     handoff_request_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
+    tenant, country, channel, _grant = authorize_operator_scope(
+        db,
+        current_user=current_user,
+        tenant_key=tenant_key,
+        country_code=country_code,
+        channel_key=channel_key,
+    )
     request_row = (
         db.get(WebchatHandoffRequest, handoff_request_id)
         if handoff_request_id is not None
         else None
     )
+    if request_row is not None:
+        control = (
+            db.query(ConversationControl)
+            .filter(ConversationControl.conversation_id == request_row.conversation_id)
+            .first()
+        )
+        if control is None or (
+            control.tenant_key,
+            control.country_code,
+            control.channel_key,
+        ) != (tenant, country, channel):
+            raise HTTPException(status_code=404, detail="handoff_not_found_in_scope")
     return availability_summary(
         db,
-        tenant_key=tenant_key.strip(),
-        country_code=(country_code or "").strip().upper() or None,
-        channel_key=channel_key.strip(),
+        tenant_key=tenant,
+        country_code=country,
+        channel_key=channel,
         request_row=request_row,
     )
 
