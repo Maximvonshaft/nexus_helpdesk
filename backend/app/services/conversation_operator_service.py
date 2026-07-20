@@ -16,7 +16,15 @@ from ..webchat_models import (
     WebchatHandoffRequest,
     WebchatMessage,
 )
-from .permissions import has_global_case_visibility
+from .permissions import (
+    CAP_OUTBOUND_SEND,
+    CAP_WEBCHAT_HANDOFF_ACCEPT,
+    CAP_WEBCHAT_HANDOFF_DECLINE,
+    CAP_WEBCHAT_HANDOFF_RELEASE,
+    CAP_WEBCHAT_HANDOFF_RESUME_AI,
+    ensure_can_send_outbound,
+    resolve_capabilities,
+)
 from .webchat_ai_turn_service import ai_snapshot
 
 
@@ -45,8 +53,6 @@ def ensure_conversation_visible(
     user: User,
 ) -> ConversationControl:
     control = _control(db, conversation=conversation)
-    if has_global_case_visibility(user, db):
-        return control
     if not control.country_code:
         raise HTTPException(status_code=403, detail="conversation_scope_unavailable")
     grant = (
@@ -101,7 +107,9 @@ def _handoff_payload(
     handoff: WebchatHandoffRequest,
     conversation: WebchatConversation,
     user: User,
+    capabilities: set[str],
 ) -> dict[str, Any]:
+    assigned_to_current_user = handoff.assigned_agent_id == user.id
     return {
         "id": handoff.id,
         "conversation_id": conversation.public_id,
@@ -124,13 +132,19 @@ def _handoff_payload(
         if handoff.accepted_at
         else None,
         "closed_at": handoff.closed_at.isoformat() if handoff.closed_at else None,
-        "can_accept": handoff.status == "requested",
-        "can_decline": False,
+        "can_accept": handoff.status == "requested"
+        and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities,
+        "can_decline": handoff.status == "requested"
+        and CAP_WEBCHAT_HANDOFF_DECLINE in capabilities,
         "can_force_takeover": False,
-        "can_release": False,
-        "can_resume_ai": False,
+        "can_release": handoff.status == "accepted"
+        and assigned_to_current_user
+        and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities,
+        "can_resume_ai": handoff.status in {"requested", "accepted"}
+        and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,
         "can_reply": handoff.status == "accepted"
-        and handoff.assigned_agent_id == user.id,
+        and assigned_to_current_user
+        and CAP_OUTBOUND_SEND in capabilities,
     }
 
 
@@ -147,6 +161,7 @@ def read_conversation_thread(
         conversation=conversation,
         user=user,
     )
+    capabilities = resolve_capabilities(user, db)
     safe_limit = max(1, min(int(message_limit or 100), MAX_THREAD_MESSAGES))
     query = db.query(WebchatMessage).filter(
         WebchatMessage.conversation_id == conversation.id
@@ -195,6 +210,7 @@ def read_conversation_thread(
                 handoff=handoff,
                 conversation=conversation,
                 user=user,
+                capabilities=capabilities,
             )
             if handoff is not None
             else None
@@ -215,6 +231,7 @@ def reply_to_conversation(
     user: User,
     body: str,
 ) -> dict[str, Any]:
+    ensure_can_send_outbound(user, db)
     ensure_conversation_visible(db, conversation=conversation, user=user)
     if conversation.ticket_id is not None:
         raise HTTPException(
