@@ -1,21 +1,23 @@
 """Public governed tool-execution authority.
 
-The established executor remains in the private core. This module binds the
-production handlers and adds conversation-aware support availability without
-forking the executor, policy, audit, or idempotency paths.
+The private core remains the only executor, policy, audit, idempotency and
+handler-registry implementation. This module supplies bounded conversation
+context and customer-visible projection without mutating the imported core.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import replace
+from typing import Any, Iterable
 
 from sqlalchemy.orm import Session
 
 from ...models import Customer, Ticket
-from ...models_agent_routing import ConversationControl
 from ...webchat_models import WebchatConversation, WebchatHandoffRequest
-from ..agent_availability_service import availability_summary
+from ..agent_availability_service import bind_availability_request
+from ..webchat_ai_decision_runtime.schemas import AIDecision
 from . import tool_execution_service_core as _core
+from .case_context import CaseContext
 from .controlled_action_executor import (
     ActionExecutionRequest,
     ActionExecutionResult,
@@ -24,7 +26,39 @@ from .controlled_action_executor import (
 from .tool_execution_service_core import *  # noqa: F401,F403
 
 
-_ORIGINAL_PRODUCTION_HANDLERS = _core._production_handlers
+GovernedToolExecutionOptions = _core.GovernedToolExecutionOptions
+runtime_tool_actions_from_tool_calls = _core.runtime_tool_actions_from_tool_calls
+
+
+def _current_conversation(
+    db: Session,
+    *,
+    conversation: WebchatConversation | None,
+    case_context: CaseContext | None,
+) -> WebchatConversation | None:
+    if conversation is not None:
+        return conversation
+    value = getattr(case_context, "conversation_id", None)
+    if value is not None and str(value).isdigit():
+        return db.get(WebchatConversation, int(value))
+    return None
+
+
+def _current_request(
+    db: Session,
+    *,
+    conversation: WebchatConversation | None,
+    case_context: CaseContext | None,
+) -> WebchatHandoffRequest | None:
+    current = _current_conversation(
+        db,
+        conversation=conversation,
+        case_context=case_context,
+    )
+    if current is None or current.current_handoff_request_id is None:
+        return None
+    row = db.get(WebchatHandoffRequest, current.current_handoff_request_id)
+    return row if row is not None and row.conversation_id == current.id else None
 
 
 def _availability_customer_summary(summary: dict[str, Any]) -> str:
@@ -57,6 +91,17 @@ def _availability_customer_summary(summary: dict[str, Any]) -> str:
     )
 
 
+def _project_availability_result(
+    result: ActionExecutionResult,
+) -> ActionExecutionResult:
+    if result.tool_name != "support.availability" or not result.ok:
+        return result
+    return replace(
+        result,
+        customer_visible_summary=_availability_customer_summary(result.summary),
+    )
+
+
 def _production_handlers(
     db: Session,
     *,
@@ -64,71 +109,65 @@ def _production_handlers(
     ticket: Ticket | None,
     customer: Customer | None,
 ) -> dict[str, ActionHandler]:
-    handlers = _ORIGINAL_PRODUCTION_HANDLERS(
+    handlers = _core._production_handlers(
         db,
         conversation=conversation,
         ticket=ticket,
         customer=customer,
     )
+    original = handlers.get("support.availability")
+    if original is None:
+        return handlers
 
     def support_availability(
         request: ActionExecutionRequest,
     ) -> ActionExecutionResult:
-        current = _core._resolve_conversation(
+        request_row = _current_request(
             db,
             conversation=conversation,
             case_context=request.case_context,
         )
-        if current is None:
-            return ActionExecutionResult(
-                False,
-                request.action.tool_name,
-                "failed",
-                error_code="conversation_required",
-            )
-        control = (
-            db.query(ConversationControl)
-            .filter(ConversationControl.conversation_id == current.id)
-            .first()
-        )
-        if control is None:
-            return ActionExecutionResult(
-                False,
-                request.action.tool_name,
-                "failed",
-                error_code="conversation_control_required",
-            )
-        request_row = (
-            db.get(WebchatHandoffRequest, current.current_handoff_request_id)
-            if current.current_handoff_request_id is not None
-            else None
-        )
-        if request_row is not None and request_row.conversation_id != current.id:
-            request_row = None
-        summary = availability_summary(
-            db,
-            tenant_key=control.tenant_key,
-            country_code=control.country_code,
-            channel_key=control.channel_key,
-            request_row=request_row,
-        )
-        return ActionExecutionResult(
-            ok=True,
-            tool_name=request.action.tool_name,
-            status="executed",
-            summary=summary,
-            customer_visible_summary=_availability_customer_summary(summary),
-            case_context=request.case_context,
-        )
+        with bind_availability_request(request_row):
+            return _project_availability_result(original(request))
 
     handlers["support.availability"] = support_availability
     return handlers
 
 
-# The core executor resolves these globals when an action executes. Rebinding
-# preserves one execution pipeline while making availability conversation-aware.
-_core._production_handlers = _production_handlers
-_core._availability_customer_summary = _availability_customer_summary
+def execute_controlled_tool_calls(
+    db: Session,
+    *,
+    tool_calls: Iterable[Any],
+    case_context: CaseContext,
+    channel: str | None = None,
+    country_code: str | None = None,
+    tenant_id: str = "default",
+    conversation: WebchatConversation | None = None,
+    ticket: Ticket | None = None,
+    customer: Customer | None = None,
+    ai_decision: AIDecision | None = None,
+    options: GovernedToolExecutionOptions | None = None,
+) -> list[ActionExecutionResult]:
+    request_row = _current_request(
+        db,
+        conversation=conversation,
+        case_context=case_context,
+    )
+    with bind_availability_request(request_row):
+        results = _core.execute_controlled_tool_calls(
+            db,
+            tool_calls=tool_calls,
+            case_context=case_context,
+            channel=channel,
+            country_code=country_code,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            ticket=ticket,
+            customer=customer,
+            ai_decision=ai_decision,
+            options=options,
+        )
+    return [_project_availability_result(item) for item in results]
 
 
 def __getattr__(name: str):
