@@ -40,6 +40,7 @@ jobs:
           git rev-parse HEAD > /tmp/generic-agent-full-start-sha
           python scripts/_generic_agent_full_regression_fix.py
           python scripts/_generic_agent_authority_fix.py
+          python scripts/_generic_agent_execution_args_fix.py
           python -m compileall -q backend/app
           python scripts/ci/check_agent_runtime_residue.py
       - name: Run complete backend regression
@@ -66,6 +67,7 @@ jobs:
           test "$(git rev-parse origin/refactor/generic-agent-runtime-final-b7e41d)" = "$start_sha"
           git rm -f scripts/_generic_agent_full_regression_fix.py
           git rm -f scripts/_generic_agent_authority_fix.py
+          git rm -f scripts/_generic_agent_execution_args_fix.py
           git rm -f .github/workflows/_temporary-generic-agent-full-regression.yml
           git add -A
           test -z "$(find .github/workflows -maxdepth 1 -type f -name '_temporary-*' -print)"
