@@ -28,6 +28,10 @@ export interface AdminUserPage {
 }
 export interface CredentialPolicy {
   user_id: number
+  username: string
+  display_name: string
+  role: string
+  is_active: boolean
   must_change_password: boolean
   password_changed_at?: string | null
   last_login_at?: string | null
