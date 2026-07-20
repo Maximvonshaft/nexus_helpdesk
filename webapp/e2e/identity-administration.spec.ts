@@ -203,9 +203,9 @@ test('operator rotates a password and receives durable success', async ({ page }
   await page.goto('/account')
 
   await expect(page.getByRole('heading', { level: 1, name: '账号与安全' })).toBeVisible()
-  await page.getByLabel('当前密码').fill('Current-Password-123!')
-  await page.getByLabel('新密码', { exact: true }).fill('Replacement-Password-456!')
-  await page.getByLabel('确认新密码').fill('Replacement-Password-456!')
+  await page.getByRole('textbox', { name: /^当前密码/ }).fill('Current-Password-123!')
+  await page.getByRole('textbox', { name: /^新密码/ }).fill('Replacement-Password-456!')
+  await page.getByRole('textbox', { name: /^确认新密码/ }).fill('Replacement-Password-456!')
   await page.getByRole('button', { name: '更新密码' }).click()
 
   await expect(page.getByText('密码已修改，旧会话已撤销。')).toBeVisible()
