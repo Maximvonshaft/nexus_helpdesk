@@ -12,13 +12,12 @@ from ..settings import get_settings
 bearer = HTTPBearer(auto_error=False)
 
 
-def get_authenticated_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-    x_user_id: int | None = Header(default=None, alias="X-User-Id"),
-    db: Session = Depends(get_db),
-):
-    """Authenticate a fresh active identity, including password-recovery access."""
-
+def _resolve_authenticated_user(
+    *,
+    credentials: HTTPAuthorizationCredentials | None,
+    x_user_id: int | None,
+    db: Session,
+) -> User:
     settings = get_settings()
     user = load_authenticated_user_for_token(db, credentials.credentials) if credentials else None
 
@@ -30,12 +29,37 @@ def get_authenticated_user(
     return user
 
 
-def get_current_user(
-    current_user: User = Depends(get_authenticated_user),
+def get_authenticated_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    x_user_id: int | None = Header(default=None, alias="X-User-Id"),
     db: Session = Depends(get_db),
 ):
-    """Authorize normal application access after credential policy checks."""
+    """Authenticate a fresh active identity, including password-recovery access."""
 
+    return _resolve_authenticated_user(
+        credentials=credentials,
+        x_user_id=x_user_id,
+        db=db,
+    )
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    x_user_id: int | None = Header(default=None, alias="X-User-Id"),
+    db: Session = Depends(get_db),
+):
+    """Authorize normal application access after credential policy checks.
+
+    The signature intentionally preserves the repository's canonical direct-call
+    contract for tests and internal adapters while recovery endpoints depend on
+    ``get_authenticated_user`` explicitly.
+    """
+
+    current_user = _resolve_authenticated_user(
+        credentials=credentials,
+        x_user_id=x_user_id,
+        db=db,
+    )
     if password_change_required(db, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
