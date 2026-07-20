@@ -69,7 +69,7 @@ export function TeamGovernance({
   const saveTeam = useMutation({
     mutationFn: () => {
       const marketId = draft.marketId.trim() ? Number(draft.marketId) : null
-      if (draft.marketId.trim() && (!Number.isInteger(marketId) || Number(marketId) <= 0)) {
+      if (marketId !== null && (!Number.isInteger(marketId) || marketId <= 0)) {
         throw new Error('市场编号必须为正整数')
       }
       const payload = {
