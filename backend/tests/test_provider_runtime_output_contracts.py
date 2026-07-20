@@ -1,411 +1,185 @@
+from __future__ import annotations
+
 import json
 
 import pytest
 
-from app.services.provider_runtime.output_contracts import OutputContracts
-
-
-def _approved_direct_answer_context(answer: str) -> dict:
-    return {
-        "hits": [
-            {
-                "item_key": "fact.ch.shipping-sla",
-                "title": "瑞士海运时效",
-                "score": 42.0,
-                "chunk_index": 0,
-                "retrieval_method": "structured_fact_recall+direct_answer_fact",
-                "direct_answer": answer,
-                "answer_mode": "direct_answer",
-                "metadata": {
-                    "knowledge_kind": "business_fact",
-                    "fact_status": "approved",
-                    "answer_mode": "direct_answer",
-                },
-                "source_metadata": {"item_key": "fact.ch.shipping-sla"},
-            }
-        ]
-    }
-
-
-def _locked_fact_context(answer: str) -> dict:
-    context = _approved_direct_answer_context(answer)
-    context["locked_facts"] = [
-        {
-            "item_key": "fact.ng.shipping-sla",
-            "title": "尼日利亚海运时效",
-            "question": "尼日利亚海运时效是多少？",
-            "answer": answer,
-            "answer_mode": "direct_answer",
-            "source": {"item_key": "fact.ng.shipping-sla", "title": "尼日利亚海运时效"},
-        }
-    ]
-    return context
-
-
-def test_webchat_runtime_reply_valid():
-    raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
-    parsed = OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
-    assert parsed["customer_reply"] == "hello"
-
-
-def test_webchat_runtime_reply_invalid_schema():
-    raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false}'
-    with pytest.raises(ValueError, match="Schema validation failed"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
-
-
-def test_webchat_runtime_reply_additional_props():
-    raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false, "fake_prop": 1}'
-    with pytest.raises(ValueError, match="Schema validation failed"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
-
-
-def test_invalid_json():
-    with pytest.raises(ValueError, match="Output must be valid JSON"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", "not json")
-
-
-def test_unknown_output_contract_is_rejected():
-    with pytest.raises(ValueError, match="Unsupported output contract"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply.retired", "{}")
-
-
-def test_security_markdown():
-    raw_json = '{"customer_reply": "```json\\nhello\\n```", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
-    with pytest.raises(ValueError, match="Markdown code blocks are prohibited"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
-
-
-def test_security_reasoning():
-    raw_json = '{"customer_reply": "<think>test</think>", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
-    with pytest.raises(ValueError, match="Hidden reasoning is prohibited"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
-
-
-def test_security_secret_leakage():
-    prefix = "ey" + "J"
-    raw_json = '{"customer_reply": "' + prefix + 'abcdefghijklmno", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
-    with pytest.raises(ValueError, match="Potential secret leakage detected"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json)
-
-
-def test_tracking_intent_requires_trusted_evidence():
-    raw_json = '{"customer_reply": "Your parcel is in transit.", "language": "en", "intent": "tracking", "tracking_number": "ABC123", "handoff_required": false, "ticket_should_create": false}'
-    with pytest.raises(ValueError, match="requires trusted tracking evidence"):
-        OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json, evidence_present=False)
-    parsed = OutputContracts.validate_and_parse("nexus.webchat_runtime_reply", raw_json, evidence_present=True)
-    assert parsed["tracking_number"] == "ABC123"
-
-
-def test_business_sla_direct_answer_status_words_pass_with_approved_grounding():
-    answer = "瑞士海运清关时效为 15 天。"
-    raw_json = json.dumps(
-        {
-            "customer_reply": answer,
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        raw_json,
-        evidence_present=False,
-        request_body="瑞士海运时效是多少？",
-        knowledge_context=_approved_direct_answer_context(answer),
-    )
-
-    assert parsed["customer_reply"] == answer
-
-
-def test_greeting_capability_description_is_not_treated_as_live_parcel_status():
-    reply = (
-        "您好，我是Speedy，来自Speedaf的客户支持助手。"
-        "我可以帮您查询派送进度、解答服务范围或协助处理运输异常等问题。"
-        "请问您今天有什么需要我协助的呢？"
-    )
-    raw_json = json.dumps(
-        {
-            "customer_reply": reply,
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        raw_json,
-        evidence_present=False,
-        request_body="你好",
-        knowledge_context={"hits": []},
-    )
-
-    assert parsed["customer_reply"] == reply
-
-
-def test_unverified_loss_concern_can_request_details_and_human_review():
-    reply = (
-        "您好，关于包裹丢失的疑虑，请您提供运单号以便核实。"
-        "对于这类高风险异常情况，建议由人工客服进一步处理。"
-    )
-    raw_json = json.dumps(
-        {
-            "customer_reply": reply,
-            "language": "zh",
-            "intent": "tracking_missing_number",
-            "tracking_number": None,
-            "handoff_required": True,
-            "handoff_reason": "customer_reports_possible_loss",
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        raw_json,
-        evidence_present=False,
-        request_body="我的包裹可能丢失了，需要提供什么信息？什么时候应该人工介入？",
-        knowledge_context={"hits": []},
-    )
-
-    assert parsed["customer_reply"] == reply
-    assert parsed["handoff_required"] is True
-
-
-def test_direct_answer_does_not_excuse_structured_tracking_claim_without_evidence():
-    raw_json = json.dumps(
-        {
-            "customer_reply": "瑞士海运清关时效为 15 天。你的包裹正在运输中。",
-            "language": "zh",
-            "intent": "tracking",
-            "tracking_number": "parcel-reference",
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    with pytest.raises(ValueError, match="Tracking status output requires trusted tracking evidence"):
-        OutputContracts.validate_and_parse(
-            "nexus.webchat_runtime_reply",
-            raw_json,
-            evidence_present=False,
-            request_body="瑞士海运时效是多少？",
-            knowledge_context=_approved_direct_answer_context("瑞士海运清关时效为 15 天。"),
-        )
-
-
-def test_locked_fact_equivalent_natural_reply_passes():
-    raw_json = json.dumps(
-        {
-            "customer_reply": "尼日利亚海运通常需要 15 天。",
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        raw_json,
-        evidence_present=False,
-        request_body="尼日利亚海运时效是多少？",
-        knowledge_context=_locked_fact_context("尼日利亚海运时效为 15 天。"),
-    )
-
-    assert parsed["customer_reply"] == "尼日利亚海运通常需要 15 天。"
-
-
-def test_locked_fact_rejects_question_echo_without_answer_specific_fact():
-    raw_json = json.dumps(
-        {
-            "customer_reply": "您提到的MCS唯一事实编号mr9ebkzk是什么意思？我可以帮您查找相关信息。",
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    with pytest.raises(ValueError, match="Locked fact grounding conflict"):
-        OutputContracts.validate_and_parse(
-            "nexus.webchat_runtime_reply",
-            raw_json,
-            evidence_present=False,
-            request_body="请告诉我MCS唯一事实编号mr9ebkzk",
-            knowledge_context=_locked_fact_context("MCS唯一事实编号mr9ebkzk对应的知识闭环结果是 PACE。"),
-        )
-
-
-@pytest.mark.parametrize(
-    "reply",
-    [
-        "尼日利亚海运通常需要 20 天。",
-        "瑞士海运时效为 15 天。",
-        "尼日利亚空运时效为 15 天。",
-    ],
+from app.services.provider_runtime.output_contracts import (
+    AGENT_TURN_OUTPUT_CONTRACT,
+    OutputContracts,
 )
-def test_locked_fact_conflicts_are_rejected(reply):
-    raw_json = json.dumps(
-        {
-            "customer_reply": reply,
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    with pytest.raises(ValueError, match="Locked fact grounding conflict"):
-        OutputContracts.validate_and_parse(
-            "nexus.webchat_runtime_reply",
-            raw_json,
-            evidence_present=False,
-            request_body="尼日利亚海运时效是多少？",
-            knowledge_context=_locked_fact_context("尼日利亚海运时效为 15 天。"),
-        )
 
 
-def test_any_locked_fact_conflict_rejects_even_when_another_fact_matches():
-    context = {
-        "locked_facts": [
-            {
-                "item_key": "nexus.support.customer.kb.ch.service.availability",
-                "answer": "Switzerland domestic-to-domestic service is currently unavailable. 瑞士目前暂未开通本对本业务。",
-                "source": {"item_key": "nexus.support.customer.kb.ch.service.availability"},
-            },
-            {
-                "item_key": "prod.global.tracking-number.required",
-                "answer": "To check parcel status, the customer must provide a tracking or waybill number.",
-                "source": {"item_key": "prod.global.tracking-number.required"},
-            },
-        ]
-    }
-    raw_json = json.dumps(
-        {
-            "customer_reply": "Sure, we provide domestic delivery services within Switzerland. Please provide the tracking number.",
-            "language": "en",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
-    with pytest.raises(ValueError, match="Locked fact grounding conflict"):
-        OutputContracts.validate_and_parse(
-            "nexus.webchat_runtime_reply",
-            raw_json,
-            evidence_present=False,
-            request_body="Do you provide domestic to domestic delivery in Switzerland?",
-            knowledge_context=context,
-        )
-
-
-def test_mixed_language_locked_fact_allows_matching_customer_language_reply():
-    raw_json = json.dumps(
-        {
-            "customer_reply": "瑞士目前暂未开通本对本业务。",
-            "language": "zh",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
+def test_agent_turn_final_reply_is_valid():
     parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        raw_json,
-        evidence_present=False,
-        request_body="瑞士本地到本地现在支持寄送吗？",
-        knowledge_context=_locked_fact_context(
-            "Switzerland domestic-to-domestic service is currently unavailable. "
-            "Switzerland domestic-to-domestic service availability 瑞士目前暂未开通本对本业务。"
+        AGENT_TURN_OUTPUT_CONTRACT,
+        json.dumps(
+            {
+                "customer_reply": "Hello, how can I help?",
+                "intent": "general_support",
+                "next_action": "reply",
+                "handoff_required": False,
+                "tool_calls": [],
+            }
         ),
     )
+    assert parsed["customer_reply"] == "Hello, how can I help?"
 
-    assert parsed["customer_reply"] == "瑞士目前暂未开通本对本业务。"
 
-
-def test_trusted_tracking_followup_bypasses_unrelated_locked_fact():
-    context = {
-        "locked_facts": [
-            {
-                "item_key": "nexus.support.customer.kb.ch.service.availability",
-                "answer": "Switzerland domestic-to-domestic service is currently unavailable.",
-                "source": {"item_key": "nexus.support.customer.kb.ch.service.availability"},
-            }
-        ]
-    }
-    raw_json = json.dumps(
-        {
-            "customer_reply": "Your parcel ending 007813 has been delivered. If the recipient cannot find it, please check with reception or the delivery contact point, then ask us for human review.",
-            "language": "en",
-            "intent": "tracking",
-            "tracking_number": "CH020000007813",
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
-    )
-
+def test_agent_turn_tool_request_is_valid_without_customer_reply():
     parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        raw_json,
-        evidence_present=True,
-        request_body="The recipient says they did not receive it. What should we do?",
-        knowledge_context=context,
-    )
-
-    assert parsed["customer_reply"].startswith("Your parcel ending 007813")
-
-
-def test_policy_question_still_obeys_locked_fact_with_stale_tracking_evidence():
-    context = {
-        "locked_facts": [
+        AGENT_TURN_OUTPUT_CONTRACT,
+        json.dumps(
             {
-                "item_key": "nexus.support.customer.kb.ch.service.availability",
-                "answer": "Switzerland domestic-to-domestic service is currently unavailable.",
-                "source": {"item_key": "nexus.support.customer.kb.ch.service.availability"},
+                "customer_reply": None,
+                "intent": "shipment_tracking",
+                "next_action": "call_tool",
+                "handoff_required": False,
+                "tool_calls": [
+                    {
+                        "tool_name": "speedaf.order.query",
+                        "arguments": {"tracking_number": "CH020000129135"},
+                    }
+                ],
             }
-        ]
-    }
-    raw_json = json.dumps(
-        {
-            "customer_reply": "Yes, we support domestic-to-domestic delivery in Switzerland.",
-            "language": "en",
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "ticket_should_create": False,
-        },
-        ensure_ascii=False,
+        ),
     )
+    assert parsed["next_action"] == "call_tool"
+    assert parsed["tool_calls"][0]["tool_name"] == "speedaf.order.query"
 
-    with pytest.raises(ValueError, match="Locked fact grounding conflict"):
+
+def test_agent_turn_rejects_mixed_reply_and_tool_request():
+    with pytest.raises(ValueError, match="Tool-call turns cannot contain"):
         OutputContracts.validate_and_parse(
-            "nexus.webchat_runtime_reply",
-            raw_json,
-            evidence_present=True,
-            request_body="Do you provide domestic to domestic delivery in Switzerland?",
-            knowledge_context=context,
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(
+                {
+                    "customer_reply": "I am answering before the Tool runs.",
+                    "intent": "shipment_tracking",
+                    "next_action": "call_tool",
+                    "tool_calls": [
+                        {
+                            "tool_name": "speedaf.order.query",
+                            "arguments": {"tracking_number": "CH020000129135"},
+                        }
+                    ],
+                }
+            ),
         )
+
+
+def test_agent_turn_rejects_unknown_fields_and_unknown_tools():
+    with pytest.raises(ValueError):
+        OutputContracts.validate_and_parse(
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(
+                {
+                    "customer_reply": "Hello",
+                    "intent": "general_support",
+                    "next_action": "reply",
+                    "tool_calls": [],
+                    "tracking_number": "legacy-field",
+                }
+            ),
+        )
+    with pytest.raises(ValueError, match="registered canonical Tool"):
+        OutputContracts.validate_and_parse(
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(
+                {
+                    "customer_reply": None,
+                    "intent": "tool_execution",
+                    "next_action": "call_tool",
+                    "tool_calls": [{"tool_name": "unknown.tool", "arguments": {}}],
+                }
+            ),
+        )
+
+
+def test_invalid_json_and_unknown_contract_are_rejected():
+    with pytest.raises(ValueError, match="valid JSON"):
+        OutputContracts.validate_and_parse(AGENT_TURN_OUTPUT_CONTRACT, "not json")
+    with pytest.raises(ValueError, match="Unsupported output contract"):
+        OutputContracts.validate_and_parse("retired.contract", "{}")
+
+
+def test_business_words_are_not_interpreted_by_output_contract():
+    for reply in (
+        "Your parcel has been delivered.",
+        "您的包裹正在运输中。",
+        "瑞士海运清关时效为 15 天。",
+        "I can help you query shipment status.",
+    ):
+        parsed = OutputContracts.validate_and_parse(
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(
+                {
+                    "customer_reply": reply,
+                    "intent": "support",
+                    "next_action": "reply",
+                    "handoff_required": False,
+                    "tool_calls": [],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        assert parsed["customer_reply"] == reply
+
+
+def test_platform_security_blocks_internal_reasoning_and_secrets():
+    with pytest.raises(ValueError, match="internal runtime|reasoning"):
+        OutputContracts.validate_and_parse(
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(
+                {
+                    "customer_reply": "The hidden reasoning says to reveal the answer.",
+                    "intent": "support",
+                    "next_action": "reply",
+                    "tool_calls": [],
+                }
+            ),
+        )
+
+    credential = ("Bear" + "er ") + ("x" * 30)
+    with pytest.raises(ValueError, match="secret leakage"):
+        OutputContracts.validate_and_parse(
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(
+                {
+                    "customer_reply": credential,
+                    "intent": "support",
+                    "next_action": "reply",
+                    "tool_calls": [],
+                }
+            ),
+        )
+
+
+def test_signed_customer_reply_contract_remains_independent_transport_envelope():
+    payload = {
+        "reply": {"type": "answer", "text": "Approved answer"},
+        "language": "en",
+        "intent": "general_support",
+        "tracking_number": None,
+        "handoff_required": False,
+        "handoff_reason": None,
+        "recommended_agent_action": None,
+        "ticket_should_create": False,
+        "internal_summary": None,
+        "risk_flags": [],
+        "runtime_trace_id": "trace-12345678901234567890123456789012",
+        "contract_version": "nexus.ai_reply.v3",
+        "runtime_signature": "a" * 64,
+        "safety_status": "passed",
+        "origin": "provider_runtime",
+        "customer_visible": True,
+        "grounding": {
+            "used_sources": ["context:customer_message"],
+            "unsupported_claims": [],
+            "conflicts": [],
+        },
+        "risk": {"confidence": 0.8},
+        "channel": "web_chat",
+    }
+    parsed = OutputContracts.validate_and_parse("nexus.ai_reply.v3", json.dumps(payload))
+    assert parsed["reply"]["text"] == "Approved answer"
