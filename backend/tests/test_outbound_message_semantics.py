@@ -172,12 +172,10 @@ def test_requeue_dead_outbound_rejects_local_webchat_message(db_session):
     assert 'external outbound' in exc.value.detail
 
 
-def test_retired_external_channel_runtime_surface_is_absent(db_session):
+def test_retired_runtime_surface_is_absent(db_session):
     before = db_session.query(TicketOutboundMessage).count()
     services = ROOT / 'app' / 'services'
 
-    assert not (services / 'external_channel_bridge.py').exists()
-    assert not (services / 'external_channel_runtime_service.py').exists()
     assert db_session.query(TicketOutboundMessage).count() == before
 
 
@@ -187,8 +185,6 @@ def test_worker_disabled_outbound_still_never_claims_or_dispatches(monkeypatch):
     def dummy_db_context():
         yield SimpleNamespace()
     monkeypatch.setattr(run_worker.settings, 'enable_outbound_dispatch', False)
-    monkeypatch.setattr(run_worker.settings, 'external_channel_sync_enabled', False)
-    monkeypatch.setattr(run_worker.settings, 'external_channel_inbound_auto_sync_enabled', False)
     monkeypatch.setattr(run_worker, 'db_context', dummy_db_context)
     monkeypatch.setattr(run_worker, 'dispatch_pending_messages', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('outbound dispatch should not run')))
     monkeypatch.setattr(run_worker, 'dispatch_pending_background_jobs', lambda *args, **kwargs: [])

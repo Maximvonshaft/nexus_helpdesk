@@ -463,7 +463,7 @@ def test_downgrade_fails_closed_when_a_migration_owned_projection_changed() -> N
         migration = _load(connection)
         migration.upgrade()
         events = sa.Table("ticket_events", sa.MetaData(), autoload_with=connection)
-        event_id = connection.execute(sa.select(events.c.id).order_by(events.c.id.asc())).scalar_one()
+        event_id = connection.execute(sa.select(events.c.id).order_by(events.c.id.asc())).scalars().first()
         connection.execute(events.update().where(events.c.id == event_id).values(note="operator changed this evidence"))
         with pytest.raises(RuntimeError, match="retirement_downgrade_reference_changed"):
             migration.downgrade()

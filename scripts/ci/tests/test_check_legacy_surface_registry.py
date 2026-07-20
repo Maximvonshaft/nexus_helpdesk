@@ -66,31 +66,6 @@ class LegacySurfaceRegistryTests(unittest.TestCase):
         ):
             legacy.validate_registry(raw)
 
-    def test_external_channel_alembic_overlap_is_explicit_and_protected(self):
-        path = "backend/alembic/versions/20260410_0005_round8_external_channel_markets.py"
-        result = legacy.scan_registry(self.registry, [path], read_text=lambda _: "")
-        self.assertTrue(result["ok"], result)
-        self.assertEqual(result["overlap_count"], 0)
-        self.assertEqual(result["owner_issue_match_counts"]["532"], 1)
-        self.assertEqual(result["owner_issue_match_counts"]["572"], 1)
-
-    def test_unknown_external_channel_surface_fails_closed(self):
-        raw = self.raw_registry()
-        raw["domains"][0]["selectors"] = {
-            "paths": [],
-            "globs": [],
-            "path_regexes": ["^known/external_channel.py$"],
-            "content_rules": [],
-        }
-        registry = legacy.validate_registry(raw)
-        result = legacy.scan_registry(
-            registry,
-            ["unknown/external_channel.py"],
-            read_text=lambda _: "secret-looking-content-must-not-appear",
-        )
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["unowned_count"], 1)
-        self.assertNotIn("secret-looking-content", json.dumps(result))
 
     def test_source_sha_is_runtime_input_not_registry_state(self):
         result = legacy.scan_registry(

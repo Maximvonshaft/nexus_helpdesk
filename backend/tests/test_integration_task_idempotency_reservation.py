@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.api.integration import IntegrationTaskRequest  # noqa: E402
+from app.api.integration_runtime import IntegrationTaskRequest  # noqa: E402
 from app.auth_service import hash_password, hash_secret  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.enums import UserRole  # noqa: E402

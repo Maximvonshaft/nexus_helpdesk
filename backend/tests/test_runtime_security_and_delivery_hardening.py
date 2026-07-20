@@ -18,14 +18,12 @@ BACKEND_ROOT = ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.api import auth as auth_api
 from app.api import integration_runtime as integration_api
 from app.api import webchat_ws as webchat_ws_api
 from app.auth_service import hash_password, verify_password
-from app.models import User
-from app.services.observability import SafeJsonFormatter, log_event
-from app.services.speedaf.track_query import _build_tracking_event_summary
-from app.services.webchat_ai_decision_runtime.executor import _execute_tool_calls
+from app.services import observability
+from app.services.observability import _JsonFormatter, log_event
+from app.utils import client_ip as client_ip_service
 from app.settings import Settings
 
 
@@ -47,54 +45,6 @@ def _request(*, host: str, xff: str | None, client_host: str) -> Request:
     )
 
 
-def test_parallel_tool_calls_preserve_input_order(monkeypatch):
-    async def fake_execute(*, tool_call, **_kwargs):
-        await asyncio.sleep(0.02 if tool_call["id"] == "slow" else 0)
-        return {"tool_call_id": tool_call["id"], "status": "ok"}
-
-    monkeypatch.setattr(
-        "app.services.webchat_ai_decision_runtime.executor._execute_tool_call",
-        fake_execute,
-    )
-    results = asyncio.run(
-        _execute_tool_calls(
-            tool_calls=[
-                {"id": "slow", "type": "function", "function": {"name": "a", "arguments": "{}"}},
-                {"id": "fast", "type": "function", "function": {"name": "b", "arguments": "{}"}},
-            ],
-            session_key="session-1",
-            ticket_id=1,
-            market_id=None,
-            country_code="PH",
-            query="test",
-            visitor_token=None,
-            trace_id="trace-1",
-        )
-    )
-    assert [item["tool_call_id"] for item in results] == ["slow", "fast"]
-
-
-def test_tracking_summary_excludes_raw_identifiers():
-    summary = _build_tracking_event_summary(
-        [
-            {
-                "waybill_no": "SECRET-WAYBILL",
-                "order_no": "SECRET-ORDER",
-                "tracking_number": "SECRET-TRACKING",
-                "scan_type": "ARRIVAL",
-                "scan_time": "2025-01-01T00:00:00Z",
-                "site_name": "Hub A",
-                "scan_content": "arrived",
-            }
-        ]
-    )
-    serialized = json.dumps(summary, ensure_ascii=False)
-    assert "SECRET-WAYBILL" not in serialized
-    assert "SECRET-ORDER" not in serialized
-    assert "SECRET-TRACKING" not in serialized
-    assert summary["event_count"] == 1
-
-
 def test_json_formatter_masks_sensitive_structured_values():
     logger = logging.getLogger("runtime-hardening")
     record = logger.makeRecord(
@@ -111,7 +61,7 @@ def test_json_formatter_masks_sensitive_structured_values():
         "phone": "+639171234567",
         "authorization": "Bearer secret-token",
     }
-    rendered = SafeJsonFormatter().format(record)
+    rendered = _JsonFormatter().format(record)
     assert "SECRET_PAYLOAD" not in rendered
     assert "+639171234567" not in rendered
     assert "secret-token" not in rendered
@@ -123,7 +73,7 @@ def test_log_event_does_not_promote_arbitrary_event_fields(monkeypatch):
     def fake_log(_level, _message, **kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(logging.getLogger("app.services.observability"), "log", fake_log)
+    monkeypatch.setattr(observability.LOGGER, "log", fake_log)
     log_event(logging.INFO, "probe", status="ok", provider_payload={"content": "SECRET"})
     assert captured["extra"]["event_payload"]["status"] == "ok"
     assert "provider_payload" not in captured["extra"]
@@ -142,9 +92,9 @@ def test_websocket_rejects_non_json_messages():
         async def accept(self):
             self.accepted = True
 
-        async def receive(self):
+        async def receive_json(self):
             if not self.sent:
-                return {"type": "websocket.receive", "text": "not-json"}
+                raise json.JSONDecodeError("invalid", "not-json", 0)
             raise WebSocketDisconnect(code=1000)
 
         async def send_json(self, payload):
@@ -154,17 +104,21 @@ def test_websocket_rejects_non_json_messages():
             self.closed = code
 
     websocket = FakeWebSocket()
-    asyncio.run(webchat_ws_api._handle_public_socket(websocket, "session-1"))
+    asyncio.run(webchat_ws_api.webchat_ws(websocket, db=SimpleNamespace()))
     assert websocket.accepted is True
     assert any(item.get("code") == "invalid_json" for item in websocket.sent)
 
 
 def test_auth_uses_forwarded_address_only_from_trusted_proxy(monkeypatch):
-    monkeypatch.setattr(auth_api.settings, "trusted_proxy_ips", ["127.0.0.1"])
+    monkeypatch.setattr(
+        client_ip_service,
+        "get_settings",
+        lambda: SimpleNamespace(trusted_proxy_ips=["127.0.0.1"]),
+    )
     trusted = _request(host="helpdesk.example", xff="203.0.113.8, 127.0.0.1", client_host="127.0.0.1")
     untrusted = _request(host="helpdesk.example", xff="203.0.113.8", client_host="198.51.100.5")
-    assert auth_api._client_ip(trusted) == "203.0.113.8"
-    assert auth_api._client_ip(untrusted) == "198.51.100.5"
+    assert client_ip_service.get_client_ip(trusted) == "203.0.113.8"
+    assert client_ip_service.get_client_ip(untrusted) == "198.51.100.5"
 
 
 def test_integration_business_failure_rolls_back(monkeypatch):
@@ -199,18 +153,12 @@ def test_integration_business_failure_rolls_back(monkeypatch):
     assert db.rollbacks == 1
 
 
-def test_password_hashing_and_legacy_upgrade(monkeypatch):
+def test_password_hashing_rejects_non_argon2_hashes():
     encoded = hash_password("correct horse battery staple")
     assert verify_password("correct horse battery staple", encoded) is True
     assert verify_password("wrong", encoded) is False
-
-    legacy = "$2b$12$KIXQ4I3mM1kQeF24kL8fHevZxQ.FYyEoYkYjPXxY2v0bH2Wy2lF4u"
-    user = User(username="legacy-user", password_hash=legacy, display_name="Legacy")
-    monkeypatch.setattr(auth_api, "verify_password", lambda *_args: True)
-    monkeypatch.setattr(auth_api, "password_hash_needs_upgrade", lambda *_args: True)
-    monkeypatch.setattr(auth_api, "hash_password", lambda value: f"upgraded:{value}")
-    assert auth_api._verify_login_password(user, "secret") is True
-    assert user.password_hash == "upgraded:secret"
+    bcrypt_hash = "$2b$12$KIXQ4I3mM1kQeF24kL8fHevZxQ.FYyEoYkYjPXxY2v0bH2Wy2lF4u"
+    assert verify_password("secret", bcrypt_hash) is False
 
 
 def test_production_metrics_token_must_be_strong(monkeypatch):

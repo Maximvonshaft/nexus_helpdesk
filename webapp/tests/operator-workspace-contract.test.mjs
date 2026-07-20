@@ -11,6 +11,7 @@ const paths = {
   case: 'src/features/operator-workspace/OperatorWorkspaceCase.tsx',
   conversation: 'src/features/operator-workspace/OperatorWorkspaceConversation.tsx',
   actions: 'src/features/operator-workspace/OperatorWorkspaceActions.tsx',
+  closure: 'src/features/operator-workspace/OperatorWorkspaceClosure.tsx',
   state: 'src/features/operator-workspace/operatorWorkspaceState.ts',
   api: 'src/lib/operatorWorkspaceApi.ts',
 }

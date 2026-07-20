@@ -315,8 +315,6 @@ def test_process_email_message_uses_smtp_adapter_and_marks_sent(db_session, monk
     monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_customer_visible_policy", lambda *args, **kwargs: True)
-    assert not hasattr(message_dispatch, "dispatch_via_external_channel_bridge")
-    assert not hasattr(message_dispatch, "dispatch_via_external_channel_cli")
 
     def fake_email_dispatch(db, *, message, ticket, idempotency_key):
         return MessageStatus.sent, "smtp_sent", utc_now(), {

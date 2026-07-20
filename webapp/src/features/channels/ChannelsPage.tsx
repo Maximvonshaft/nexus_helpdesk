@@ -45,7 +45,6 @@ type OnboardingDraft = {
   targetSlot: string
   displayName: string
   accountBinding: string
-  externalAccountId: string
 }
 
 const emptyDraft: OnboardingDraft = {
@@ -53,7 +52,6 @@ const emptyDraft: OnboardingDraft = {
   targetSlot: '',
   displayName: '',
   accountBinding: '',
-  externalAccountId: '',
 }
 
 function maskPhone(value: string | null | undefined) {
@@ -133,7 +131,6 @@ export function ChannelsPage() {
       target_slot: draft.targetSlot.trim() || null,
       desired_display_name: draft.displayName.trim() || null,
       desired_channel_account_binding: draft.accountBinding.trim() || null,
-      external_channel_account_id: draft.externalAccountId.trim() || null,
     }),
     onSuccess: async () => {
       setDraft(emptyDraft)
@@ -151,7 +148,6 @@ export function ChannelsPage() {
       if (!selectedTask || !pendingAction) throw new Error('未选择操作')
       if (pendingAction === 'complete') {
         return supportApi.completeChannelOnboardingTask(selectedTask.id, {
-          external_channel_account_id: selectedTask.external_channel_account_id || null,
           desired_channel_account_binding: selectedTask.desired_channel_account_binding || null,
         })
       }
@@ -170,7 +166,7 @@ export function ChannelsPage() {
   })
 
   const actionError = createTask.error || startTask.error || settleTask.error
-  const createReady = Boolean(draft.provider.trim() && (draft.displayName.trim() || draft.targetSlot.trim() || draft.externalAccountId.trim()))
+  const createReady = Boolean(draft.provider.trim() && (draft.displayName.trim() || draft.targetSlot.trim() || draft.accountBinding.trim()))
   const closeTaskDialog = () => {
     if (settleTask.isPending) return
     setSelectedTask(null)
@@ -244,7 +240,7 @@ export function ChannelsPage() {
               <OperatorTechnicalDisclosure title="系统信息">
                 <OperatorFactGrid facts={[
                   ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
-                  ['外部账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
+                  ['渠道账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
                   ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
                   ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
                 ]} />
@@ -264,7 +260,6 @@ export function ChannelsPage() {
             <TextField label="接入位置" helperText="内部接入位置，如 ch-primary" value={draft.targetSlot} onChange={(event) => setDraft((current) => ({ ...current, targetSlot: event.target.value }))} />
             <TextField label="账号名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
             <TextField label="绑定账号或号码" value={draft.accountBinding} onChange={(event) => setDraft((current) => ({ ...current, accountBinding: event.target.value }))} />
-            <TextField label="外部账号编号" value={draft.externalAccountId} onChange={(event) => setDraft((current) => ({ ...current, externalAccountId: event.target.value }))} />
             <Button variant="contained" disabled={!createReady || createTask.isPending} startIcon={createTask.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => createTask.mutate()}>
               {createTask.isPending ? '创建中…' : '创建接入任务'}
             </Button>

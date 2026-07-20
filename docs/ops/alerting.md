@@ -11,7 +11,6 @@ This runbook defines the minimum alerting contract for NexusDesk production or c
 | `external_pending_outbound > 0` while `ENABLE_OUTBOUND_DISPATCH=false` | `scripts/probe_nexus_runtime.sh` or `/api/admin/queues/summary` | P1/P2 | Confirm this is intended queued-only mode; otherwise enable provider after safety review. |
 | `external_dead_outbound > 0` | Queue summary | P1/P2 | Inspect `failure_code`, `failure_reason`, provider route, and safety gate result. |
 | worker service missing or unhealthy | `scripts/smoke/worker_daemon_readiness_probe.py` | P2 | Inspect `worker-outbound`, `worker-background`, `worker-webchat-ai`, and `worker-handoff-snapshot` logs. |
-| retired legacy session sync jobs are accumulating | Runtime health / jobs table | P2 | Confirm no old producer is enqueueing `external_channel.sync_session`; these jobs should be drained as retired compatibility work. |
 | worker logs contain repeated cycle failures | `docker compose logs worker-*` | P2 | Inspect DB, queue lock, dispatch gate, and provider config. |
 | disk usage above 80% | host probe | P2 | Clean logs, rotate backups, or expand disk before uploads fail. |
 | uploads write probe fails | `scripts/probe_nexus_runtime.sh` | P1 | Stop accepting production attachments/POD until storage is fixed. |
@@ -70,4 +69,4 @@ Each production rollout should attach:
 2. Migration revision from `/readyz`.
 3. Output from `scripts/probe_nexus_runtime.sh`.
 4. CI run link for `backend-ci` and `frontend-ci`.
-5. Explicit statement that outbound is either `disabled/queued-only`, `enabled/native`, `enabled/email`, or another approved non-ExternalChannel adapter.
+5. Explicit statement that outbound is either `disabled/queued-only`, `enabled/native`, `enabled/email`, or another approved provider adapter.

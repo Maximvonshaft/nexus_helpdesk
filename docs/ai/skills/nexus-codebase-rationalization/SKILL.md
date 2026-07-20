@@ -91,7 +91,7 @@ Use the smallest permanent control that closes the root cause: forbidden path/im
 - Root reports, scratch manifests and completed implementation plans belong in PRs/Issues or external artifacts, not the current source tree.
 - `webapp/` is the sole authenticated operator product. The public WebChat widget is a separate customer surface.
 - Runtime code is removable only after startup, route, worker, configuration and deployment consumers are gone.
-- ExternalChannel persistence names are data-migration dependencies, not an active transport; destructive removal requires explicit migration authorization.
+- Retired channel persistence is removed from runtime code; its archive-backed Alembic migration is the sole restoration authority.
 - Historical Alembic revisions are protected executable history, not ordinary residue.
 - Versioned machine contracts are schema identities, not parallel implementations.
 - Tests are rewritten or deleted only after the covered contract is migrated or retired.

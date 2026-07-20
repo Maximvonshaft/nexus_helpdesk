@@ -395,7 +395,7 @@ def test_explicit_human_text_does_not_generate_local_handoff_card_or_ack():
         db.close()
 
 
-def test_outbound_semantics_labels_and_external_channels():
+def test_outbound_semantics_labels_and_delivery_channels():
     assert not is_external_outbound_channel(SourceChannel.web_chat)
     assert is_external_outbound_channel(SourceChannel.whatsapp)
     assert outbound_ui_label(SourceChannel.web_chat, MessageStatus.sent, 'webchat_delivered') == 'Local WebChat ACK'

@@ -44,8 +44,6 @@ RETIRED_PATHS = (
     "webapp/src/lib/cn.ts",
     "backend/app/services/outbound_adapters/whatsapp.py",
     "backend/app/services/webchat_ai_decision_runtime/prompt_builder.py",
-    "backend/app/services/external_channel_runtime_service.py",
-    "backend/app/services/external_channel_bridge.py",
     "backend/app/services/canonical_ticket_service.py",
     "backend/app/services/canonical_operator_work_queue.py",
     "backend/app/services/canonical_webchat_handoff_service.py",
@@ -109,6 +107,8 @@ REQUIRED_PATHS = (
     "backend/app/services/webchat_handoff_service.py",
     "backend/app/services/webchat_handoff_service_core.py",
     "backend/app/services/worker_progress.py",
+    "backend/alembic/versions/20260720_0063_retire_legacy_channel_persistence.py",
+    "backend/tests/test_retired_persistence_absence.py",
     "backend/scripts/run_worker.py",
     "backend/scripts/run_worker_supervised.py",
     "backend/scripts/check_worker_progress.py",
@@ -147,7 +147,8 @@ FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_ticket_safe_closure_contract.py",
     "backend/tests/test_worker_progress_health.py",
     "backend/tests/test_migration_0062_runtime_contract_provenance.py",
-    "backend/tests/test_external_channel_final_retirement.py",
+    "backend/tests/test_retired_persistence_absence.py",
+    "backend/tests/test_migration_0063_legacy_channel_retirement.py",
     "backend/tests/test_controlled_least_privilege.py",
     "backend/tests/test_supply_chain_qualification.py",
 )
@@ -375,6 +376,47 @@ def _migration_authority_failures() -> list[str]:
         ):
             if marker not in source:
                 failures.append(f"migration 0062 provenance marker missing: {marker}")
+
+    retirement = ROOT / "backend/alembic/versions/20260720_0063_retire_legacy_channel_persistence.py"
+    if retirement.is_file():
+        source = retirement.read_text(encoding="utf-8")
+        for marker in (
+            "migration_retirement_archive",
+            "canonical_refs_json",
+            "retirement_archive_payload_hash_mismatch",
+            "retirement_canonical_row_missing",
+            "_delete_canonical_refs",
+        ):
+            if marker not in source:
+                failures.append(f"migration 0063 retirement marker missing: {marker}")
+    return failures
+
+
+def _retired_persistence_failures() -> list[str]:
+    """Reject reintroduction outside protected schema history and its proof tests."""
+
+    failures: list[str] = []
+    snake = "external" + "_channel"
+    pascal = "External" + "Channel"
+    kebab = "external" + "-channel"
+    markers = (snake, pascal, kebab)
+    allowed = {
+        "backend/tests/test_migration_0063_legacy_channel_retirement.py",
+        "backend/tests/test_retired_persistence_absence.py",
+    }
+    text_suffixes = {".py", ".ts", ".tsx", ".js", ".mjs", ".json", ".yaml", ".yml", ".md", ".sh"}
+    for relative in _tracked_files():
+        if relative.startswith("backend/alembic/versions/") or relative in allowed:
+            continue
+        path = ROOT / relative
+        if path.suffix.lower() not in text_suffixes or not path.is_file():
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if any(marker in source or marker in relative for marker in markers):
+            failures.append(f"retired channel persistence residue exists: {relative}")
     return failures
 
 
@@ -477,6 +519,7 @@ def static_failures() -> list[str]:
     failures.extend(_qualification_failures("scripts/qualification/service_authority.py"))
     failures.extend(_qualification_failures("scripts/ci/check_legacy_surface_registry.py"))
     failures.extend(_migration_authority_failures())
+    failures.extend(_retired_persistence_failures())
     failures.extend(_frontend_failures())
     failures.extend(_worker_and_closure_failures())
     failures.extend(_supply_input_failures())

@@ -43,9 +43,9 @@ def test_tracking_lookup_disabled_does_not_call_provider(monkeypatch):
     assert result.failure_reason == "tracking_fact_lookup_disabled"
 
 
-def test_legacy_bridge_tracking_source_is_unsupported(monkeypatch):
+def test_unsupported_tracking_source_is_rejected(monkeypatch):
     monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_lookup_enabled", True)
-    monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_source", "external_channel_bridge")
+    monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_source", "unsupported_bridge")
     monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_timeout_seconds", 8)
 
     result = tracking_fact_service.lookup_tracking_fact(
@@ -87,7 +87,7 @@ def test_tracking_fact_prompt_includes_sanitized_tracking_fact_only():
     assert "raw tool output" in prompt
 
 
-def test_tracking_fact_prompt_does_not_name_legacy_bridge():
+def test_tracking_fact_prompt_does_not_name_internal_runtime():
     fact = TrackingFactResult(
         ok=True,
         tracking_number="PK120053679836",
@@ -98,7 +98,6 @@ def test_tracking_fact_prompt_does_not_name_legacy_bridge():
     )
 
     prompt = fact.prompt_summary()
-    assert "ExternalChannel" not in prompt
     assert "Bridge" not in prompt
     assert "PK120053679836" not in prompt
     assert "parcel ending 679836" in prompt

@@ -63,7 +63,7 @@ Docs-only PRs may not trigger all checks, but runtime-affecting PRs must trigger
 | Backend runtime | `backend-ci`, `backend-full-regression`, `production-readiness` |
 | Alembic migrations | `postgres-migration`, `backend-full-regression` |
 | Frontend/webapp | `webapp-build`, `round-a-smoke` |
-| Provider/ExternalChannel/Codex runtime | `provider-runtime-gate`, `backend-full-regression` |
+| Provider and tool runtime | `provider-runtime-gate`, `backend-full-regression` |
 | Speedaf code or docs | `speedaf-contract-gate`, `backend-full-regression`, `postgres-migration` when migrations change |
 | Integration API | `integration-contracts`, `backend-ci` |
 

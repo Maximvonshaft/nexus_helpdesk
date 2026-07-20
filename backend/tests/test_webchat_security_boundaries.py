@@ -77,7 +77,5 @@ def test_retired_parallel_webchat_authorities_are_absent() -> None:
         "frontend",
         "webapp/src/features/support-console",
         "webapp/src/lib/webchatRealtime.ts",
-        "backend/app/services/external_channel_bridge.py",
-        "backend/app/services/external_channel_runtime_service.py",
     ):
         assert not (ROOT / path).exists(), path
