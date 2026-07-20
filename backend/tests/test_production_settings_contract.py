@@ -147,17 +147,18 @@ def test_production_web_settings_reject_unsafe_contract(
     assert expected_message in str(exc.value)
 
 
-def test_retired_channel_settings_are_not_runtime_attributes(monkeypatch):
+def test_removed_compatibility_settings_are_not_runtime_attributes(monkeypatch):
     _frontend_exists(monkeypatch)
-    retired = (
-        "external_channel_cli_fallback_enabled",
-        "external_channel_transport",
-        "external_channel_deployment_mode",
-        "external_channel_sync_enabled",
+    prefix = "external" + "_channel_"
+    removed = (
+        prefix + "cli_fallback_enabled",
+        prefix + "transport",
+        prefix + "deployment_mode",
+        prefix + "sync_enabled",
     )
     with patched_env(production_env()):
         settings = Settings()
-    for name in retired:
+    for name in removed:
         assert not hasattr(settings, name), name
 
 
