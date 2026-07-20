@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.services.webchat_ai_decision_runtime.policy_gate import validate_ai_decision
 from app.services.webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionToolCall
 from app.services.webchat_ai_decision_runtime.tool_registry import (
@@ -45,35 +47,25 @@ def test_tool_registry_contains_complete_canonical_contracts():
     assert {item["name"] for item in safe_registry_summary()} == set(registered_tool_names())
 
 
-def test_legacy_tool_names_resolve_only_to_canonical_contracts():
-    aliases = {
-        "support_knowledge_retrieve": "knowledge.search",
-        "speedaf_lookup": "speedaf.order.query",
-        "speedaf_query_waybills": "speedaf.order.waybillCode.query",
-        "speedaf_create_work_order": "speedaf.workOrder.create",
-        "speedaf_cancel_order": "speedaf.order.cancel.request",
-        "speedaf_update_address": "speedaf.order.updateAddress.request",
-    }
-    for alias, canonical in aliases.items():
-        assert canonical_tool_name(alias) == canonical
-        assert get_tool_contract(alias).name == canonical
+def test_tool_names_are_exact_and_aliases_are_not_supported():
+    assert canonical_tool_name("  knowledge.search  ") == "knowledge.search"
+    assert get_tool_contract("knowledge.search") is not None
+    for retired_alias in (
+        "support_knowledge_retrieve",
+        "speedaf_lookup",
+        "speedaf_query_waybills",
+        "speedaf_create_work_order",
+        "speedaf_cancel_order",
+        "speedaf_update_address",
+    ):
+        assert get_tool_contract(retired_alias) is None
+        with pytest.raises(ValueError, match="registered canonical Tool"):
+            AIDecisionToolCall(tool_name=retired_alias, arguments={})
 
 
-def test_unknown_tool_is_blocked():
-    decision = AIDecision(
-        customer_reply=None,
-        intent="tool_execution",
-        confidence=1.0,
-        risk_level="high",
-        next_action="call_tool",
-        handoff_required=False,
-        tool_calls=[AIDecisionToolCall(tool_name="database.write.anything", arguments={})],
-    )
-
-    result = validate_ai_decision(decision)
-
-    assert result.ok is False
-    assert result.violations[0].code == "unknown_tool_blocked"
+def test_unknown_tool_is_rejected_by_agent_turn_schema():
+    with pytest.raises(ValueError, match="registered canonical Tool"):
+        AIDecisionToolCall(tool_name="database.write.anything", arguments={})
 
 
 def test_tool_permission_is_enforced_generically():
@@ -124,9 +116,7 @@ def test_confirmation_and_high_risk_write_policy_are_tool_contract_driven():
 
     confirmed = decision.model_copy(
         update={
-            "tool_calls": [
-                decision.tool_calls[0].model_copy(update={"requires_confirmation": True})
-            ]
+            "tool_calls": [decision.tool_calls[0].model_copy(update={"requires_confirmation": True})]
         }
     )
     allowed = validate_ai_decision(
