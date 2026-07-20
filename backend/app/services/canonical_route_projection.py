@@ -9,6 +9,8 @@ _CANONICAL_PREFIXES = (
     "/channels",
     "/runtime",
     "/control-tower",
+    "/administration",
+    "/account",
 )
 
 _LEGACY_TO_CANONICAL = {
