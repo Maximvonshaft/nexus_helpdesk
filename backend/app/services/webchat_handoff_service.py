@@ -8,6 +8,7 @@ audit, capability, and queue-scope authorities without manufacturing a Ticket.
 from __future__ import annotations
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from ..models import User
@@ -145,6 +146,11 @@ def _ticketless_payload(
         ticket=None,
     )
     capabilities = resolve_capabilities(current_user, db)
+    assigned_owner_can_resume = bool(
+        request_row.status == "accepted"
+        and request_row.assigned_agent_id == current_user.id
+        and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+    )
     payload.update(
         {
             "ticket_no": None,
@@ -152,6 +158,13 @@ def _ticketless_payload(
             or request_row.reason_code
             or "WebChat human support",
             "queue_position": queue_position(db, request_row=request_row),
+            "can_resume_ai": bool(
+                request_row.status in _OPEN
+                and (
+                    CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
+                    or assigned_owner_can_resume
+                )
+            ),
             "can_reply": bool(
                 request_row.status == "accepted"
                 and request_row.assigned_agent_id == current_user.id
@@ -181,7 +194,20 @@ def _ticketless_queue_items(
             ConversationControl,
             ConversationControl.conversation_id == WebchatConversation.id,
         )
-        .filter(WebchatHandoffRequest.ticket_id.is_(None))
+        .join(
+            OperatorQueueScopeGrant,
+            and_(
+                OperatorQueueScopeGrant.user_id == current_user.id,
+                OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
+                OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
+                OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
+                OperatorQueueScopeGrant.enabled.is_(True),
+            ),
+        )
+        .filter(
+            WebchatHandoffRequest.ticket_id.is_(None),
+            ConversationControl.country_code.is_not(None),
+        )
     )
     if view == "mine":
         query = query.filter(
@@ -192,41 +218,35 @@ def _ticketless_queue_items(
         query = query.filter(WebchatHandoffRequest.status.in_(_TERMINAL))
     else:
         query = query.filter(WebchatHandoffRequest.status == "requested")
+        if not include_declined:
+            declined_exists = (
+                db.query(WebchatHandoffDecision.id)
+                .filter(
+                    WebchatHandoffDecision.request_id == WebchatHandoffRequest.id,
+                    WebchatHandoffDecision.actor_id == current_user.id,
+                    WebchatHandoffDecision.decision == "declined",
+                )
+                .exists()
+            )
+            query = query.filter(~declined_exists)
 
     rows = (
         query.order_by(
             WebchatHandoffRequest.requested_at.asc(),
             WebchatHandoffRequest.id.asc(),
         )
-        .limit(max(1, min(limit, 100)) * 2)
+        .limit(max(1, min(limit, 100)))
         .all()
     )
-    items: list[dict] = []
-    for request_row, conversation, control in rows:
-        if len(items) >= limit:
-            break
-        if not _scope_visible(
+    return [
+        _ticketless_payload(
             db,
+            request_row=request_row,
+            conversation=conversation,
             current_user=current_user,
-            control=control,
-        ):
-            continue
-        declined = _declined_by_current_user(
-            db,
-            request_id=request_row.id,
-            user_id=current_user.id,
         )
-        if view == "requested" and declined and not include_declined:
-            continue
-        items.append(
-            _ticketless_payload(
-                db,
-                request_row=request_row,
-                conversation=conversation,
-                current_user=current_user,
-            )
-        )
-    return items
+        for request_row, conversation, _control in rows
+    ]
 
 
 def list_handoff_queue(
@@ -555,13 +575,21 @@ def resume_ai_for_handoff(
             note=note,
         )
 
-    _require_capability(
-        db,
-        current_user=current_user,
-        capability=CAP_WEBCHAT_HANDOFF_RESUME_AI,
-        detail="webchat_handoff_resume_ai_requires_capability",
-    )
     request_row = _core._request_by_id(db, request_id, lock=True)
+    capabilities = resolve_capabilities(current_user, db)
+    assigned_owner_can_resume = bool(
+        request_row.status == "accepted"
+        and request_row.assigned_agent_id == current_user.id
+        and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+    )
+    if (
+        CAP_WEBCHAT_HANDOFF_RESUME_AI not in capabilities
+        and not assigned_owner_can_resume
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
+        )
     conversation, _control = _ticketless_context(
         db,
         request_row=request_row,
