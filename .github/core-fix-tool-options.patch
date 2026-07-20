@@ -1,0 +1,30 @@
+diff --git a/backend/app/services/nexus_osr/tool_execution_service.py b/backend/app/services/nexus_osr/tool_execution_service.py
+index 2d9542a..026c965 100644
+--- a/backend/app/services/nexus_osr/tool_execution_service.py
++++ b/backend/app/services/nexus_osr/tool_execution_service.py
+@@ -47,6 +47,8 @@ from .runtime_decision_contract import (
+ class GovernedToolExecutionOptions:
+     allow_high_risk_write_execution: bool = False
+     allowed_high_risk_write_tools: frozenset[str] = frozenset()
++    customer_confirmation_granted: bool = False
++    human_confirmation_granted: bool = False
+ 
+ 
+ def runtime_tool_actions_from_tool_calls(
+@@ -188,7 +190,15 @@ def execute_controlled_tool_calls(
+                 country_code=country_code,
+                 case_context=case_context,
+                 idempotency_key=idempotency_key,
+-                audit_context={"tenant_id": tenant_id},
++                audit_context={
++                    "tenant_id": tenant_id,
++                    "customer_confirmation_granted": bool(
++                        options.customer_confirmation_granted
++                    ),
++                    "human_confirmation_granted": bool(
++                        options.human_confirmation_granted
++                    ),
++                },
+             )
+         )
+         elapsed_ms = int((time.monotonic() - started) * 1000)
