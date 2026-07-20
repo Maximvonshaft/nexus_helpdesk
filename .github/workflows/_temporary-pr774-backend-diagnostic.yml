@@ -1,3 +1,4 @@
+# Isolated one-shot diagnostic; self-deletes after publishing bounded evidence.
 name: Temporary PR 774 Backend Diagnostic
 
 on:
