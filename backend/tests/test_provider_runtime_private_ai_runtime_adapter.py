@@ -3031,7 +3031,7 @@ async def test_private_ai_runtime_repairs_tracking_unresolved_bad_clarification(
 
 
 @pytest.mark.asyncio
-async def test_private_ai_runtime_repairs_live_tracking_claim_without_evidence(monkeypatch, tmp_path):
+async def test_private_ai_runtime_allows_live_tracking_claim_without_removed_contract(monkeypatch, tmp_path):
     token_file = tmp_path / "ai-runtime-token"
     token_file.write_text("test-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
@@ -3044,20 +3044,11 @@ async def test_private_ai_runtime_repairs_live_tracking_claim_without_evidence(m
     def fake_post_json(endpoint, payload, token):
         prompts.append(json.dumps(payload, ensure_ascii=False))
         assert endpoint.endswith("/api/chat")
-        if len(prompts) == 1:
-            return {
-                "customer_reply": "Your parcel has been delivered today.",
-                "language": "en",
-                "intent": "tracking",
-                "tracking_number": "CH1200000011425",
-                "handoff_required": False,
-                "ticket_should_create": False,
-            }
         return {
-            "customer_reply": "I do not have verified live tracking evidence for the waybill you provided yet. Please check whether the number is complete and correct.",
+            "customer_reply": "Your parcel has been delivered today.",
             "language": "en",
-            "intent": "tracking_unresolved",
-            "tracking_number": None,
+            "intent": "tracking",
+            "tracking_number": "CH1200000011425",
             "handoff_required": False,
             "ticket_should_create": False,
         }
@@ -3067,11 +3058,44 @@ async def test_private_ai_runtime_repairs_live_tracking_claim_without_evidence(m
     result = await adapter.generate(Mock(), _request(body="Where is my parcel CH1200000011425?"))
 
     assert result.ok is True
-    assert len(prompts) == 2
-    assert "shipment_status_without_evidence" in prompts[1]
-    assert result.structured_output["customer_reply"].startswith("I do not have verified live tracking evidence")
-    assert result.raw_payload_safe_summary["output_contract_repair_applied"] is True
-    assert result.raw_payload_safe_summary["output_contract_repair_reason"] == "shipment_status_without_evidence"
+    assert len(prompts) == 1
+    assert result.structured_output["customer_reply"] == "Your parcel has been delivered today."
+    assert result.raw_payload_safe_summary["output_contract_repair_applied"] is False
+    assert result.raw_payload_safe_summary["output_contract_repair_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_private_ai_runtime_allows_general_support_capability_language(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    adapter = PrivateAIRuntimeAdapter()
+    prompts = []
+
+    def fake_post_json(endpoint, payload, token):
+        prompts.append(json.dumps(payload, ensure_ascii=False))
+        assert endpoint.endswith("/api/chat")
+        return {
+            "customer_reply": "您好，我可以协助查询物流状态、处理配送问题，也可以帮您联系人工客服。您今天想了解什么？",
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="你好"))
+
+    assert result.ok is True
+    assert len(prompts) == 1
+    assert "物流状态" in result.structured_output["customer_reply"]
+    assert result.raw_payload_safe_summary["output_contract_repair_applied"] is False
+    assert result.raw_payload_safe_summary["output_contract_repair_reason"] is None
 
 
 @pytest.mark.asyncio
