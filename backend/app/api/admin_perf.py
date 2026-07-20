@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import database_pool_snapshot, get_db
 from ..models import User, UserCapabilityOverride
+from ..services.identity_tenant_scope import actor_tenant_id, apply_tenant_scope
 from ..services.permissions import ensure_can_manage_users, resolve_capabilities_from_preloaded
 from ..services.runtime_permissions import ensure_can_read_runtime
 from .deps import get_current_user
@@ -63,12 +64,13 @@ def list_admin_users_paginated(
     legacy: bool = False,
 ):
     ensure_can_manage_users(current_user, db)
+    tenant_id = actor_tenant_id(db, current_user)
     safe_limit = _safe_limit(limit)
 
     if cursor is not None and cursor < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor")
 
-    query = db.query(User)
+    query = apply_tenant_scope(db.query(User), User, tenant_id)
     if not include_inactive and not legacy:
         query = query.filter(User.is_active.is_(True))
     if cursor is not None:
