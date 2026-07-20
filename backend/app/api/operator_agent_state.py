@@ -39,12 +39,16 @@ class ConversationCloseRequest(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+def _ensure_agent_capability(user: User, db: Session) -> None:
+    ensure_capability(user, CAP_WEBCHAT_HANDOFF_ACCEPT, db)
+
+
 @router.get("/agent-state")
 def get_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ensure_capability(current_user, db, CAP_WEBCHAT_HANDOFF_ACCEPT)
+    _ensure_agent_capability(current_user, db)
     with managed_session(db):
         return read_agent_state(db, user_id=current_user.id)
 
@@ -55,7 +59,7 @@ def update_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ensure_capability(current_user, db, CAP_WEBCHAT_HANDOFF_ACCEPT)
+    _ensure_agent_capability(current_user, db)
     with managed_session(db):
         return set_agent_state(
             db,
@@ -70,7 +74,7 @@ def heartbeat_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ensure_capability(current_user, db, CAP_WEBCHAT_HANDOFF_ACCEPT)
+    _ensure_agent_capability(current_user, db)
     with managed_session(db):
         return heartbeat_agent(db, user=current_user)
 
@@ -84,7 +88,7 @@ def get_operator_availability(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ensure_capability(current_user, db, CAP_WEBCHAT_HANDOFF_ACCEPT)
+    _ensure_agent_capability(current_user, db)
     request_row = (
         db.get(WebchatHandoffRequest, handoff_request_id)
         if handoff_request_id is not None
@@ -105,7 +109,7 @@ def accept_operator_handoff(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ensure_capability(current_user, db, CAP_WEBCHAT_HANDOFF_ACCEPT)
+    _ensure_agent_capability(current_user, db)
     with managed_session(db):
         request_row = db.get(WebchatHandoffRequest, request_id)
         if request_row is None:
@@ -129,7 +133,7 @@ def close_operator_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ensure_capability(current_user, db, CAP_WEBCHAT_HANDOFF_ACCEPT)
+    _ensure_agent_capability(current_user, db)
     with managed_session(db):
         conversation = (
             db.query(WebchatConversation)
