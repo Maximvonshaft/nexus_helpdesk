@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -10,6 +12,25 @@ from ..models_agent_routing import ConversationControl, OperatorAgentState
 from ..operator_models import OperatorQueueScopeGrant
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .agent_routing_service import active_agent_load, heartbeat_is_fresh
+
+
+_CURRENT_AVAILABILITY_REQUEST: ContextVar[WebchatHandoffRequest | None] = ContextVar(
+    "nexus_current_availability_request",
+    default=None,
+)
+
+
+@contextmanager
+def bind_availability_request(
+    request_row: WebchatHandoffRequest | None,
+) -> Iterator[None]:
+    """Bind the current customer's handoff only for one governed tool execution."""
+
+    token = _CURRENT_AVAILABILITY_REQUEST.set(request_row)
+    try:
+        yield
+    finally:
+        _CURRENT_AVAILABILITY_REQUEST.reset(token)
 
 
 def _request_scope(
@@ -97,6 +118,7 @@ def availability_summary(
     channel_key: str,
     request_row: WebchatHandoffRequest | None = None,
 ) -> dict[str, Any]:
+    effective_request = request_row or _CURRENT_AVAILABILITY_REQUEST.get()
     candidates = (
         db.query(User, OperatorAgentState)
         .join(OperatorAgentState, OperatorAgentState.user_id == User.id)
@@ -155,8 +177,8 @@ def availability_summary(
         "available_capacity": available_capacity,
         "queue_count": queue_count,
         "queue_position": (
-            queue_position(db, request_row=request_row)
-            if request_row is not None
+            queue_position(db, request_row=effective_request)
+            if effective_request is not None
             else None
         ),
     }
