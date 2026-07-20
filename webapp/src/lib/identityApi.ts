@@ -41,6 +41,24 @@ async function listAllAdminUsers() {
   return users
 }
 
+async function updateAdminUser(userId: number, payload: UserUpdatePayload) {
+  const hasTeamAssignment = Object.prototype.hasOwnProperty.call(payload, 'team_id')
+  const { team_id: teamId, ...profilePayload } = payload
+  const user = await apiRequest<AdminUser>(`/api/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(profilePayload),
+    requestIdPrefix: 'identity-admin',
+  })
+
+  if (!hasTeamAssignment) return user
+  const assignment = await apiRequest<{ ok: boolean; user_id: number; team_id: number | null }>(`/api/admin/users/${userId}/team`, {
+    method: 'PUT',
+    body: JSON.stringify({ team_id: teamId ?? null }),
+    requestIdPrefix: 'identity-admin',
+  })
+  return { ...user, team_id: assignment.team_id }
+}
+
 export const identityApi = {
   accountSecurity: () => apiRequest<AccountSecurity>('/api/auth/security'),
 
@@ -72,17 +90,7 @@ export const identityApi = {
     requestIdPrefix: 'identity-admin',
   }),
 
-  updateUser: (userId: number, payload: UserUpdatePayload) => apiRequest<AdminUser>(`/api/admin/users/${userId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-    requestIdPrefix: 'identity-admin',
-  }),
-
-  assignUserTeam: (userId: number, teamId: number | null) => apiRequest<{ ok: boolean; user_id: number; team_id: number | null }>(`/api/admin/users/${userId}/team`, {
-    method: 'PUT',
-    body: JSON.stringify({ team_id: teamId }),
-    requestIdPrefix: 'identity-admin',
-  }),
+  updateUser: updateAdminUser,
 
   activateUser: (userId: number) => apiRequest<AdminUser>(`/api/admin/users/${userId}/activate`, {
     method: 'POST',
