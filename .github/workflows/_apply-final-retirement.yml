@@ -48,6 +48,7 @@ jobs:
           mapfile -t parts < <(find .github -maxdepth 1 -type f -name 'final-retirement.patch.gz.b64.part*' | sort)
           printf '%s\n' "${parts[@]}" > /tmp/retirement-diagnostics/parts.txt
           wc -c "${parts[@]}" > /tmp/retirement-diagnostics/part-sizes.txt
+          sha256sum "${parts[@]}" > /tmp/retirement-diagnostics/part-sha256.txt
           test "${#parts[@]}" -gt 0 || { echo no_parts > /tmp/retirement-diagnostics/error.txt; exit 1; }
           cat "${parts[@]}" > /tmp/final-retirement.patch.gz.b64
           if ! base64 --decode /tmp/final-retirement.patch.gz.b64 > /tmp/final-retirement.patch.gz 2>/tmp/retirement-diagnostics/base64-error.txt; then exit 1; fi
