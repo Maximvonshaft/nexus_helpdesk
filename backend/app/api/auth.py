@@ -16,7 +16,6 @@ from ..services.password_policy import PasswordPolicyError, validate_admin_passw
 from ..services.permissions import resolve_capabilities
 from ..services.user_security_service import (
     complete_password_change,
-    get_security_state,
     record_successful_login,
     revoke_all_sessions,
     security_state_payload,
