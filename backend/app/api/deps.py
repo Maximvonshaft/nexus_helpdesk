@@ -2,7 +2,7 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from ..auth_service import decode_access_token
+from ..auth_service import load_current_user_for_token
 from ..db import get_db
 from ..models import User
 from ..services.permissions import CAP_USER_MANAGE, resolve_capabilities
@@ -17,11 +17,7 @@ def get_current_user(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
-    user = None
-    if credentials:
-        user_id = decode_access_token(credentials.credentials)
-        if user_id:
-            user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    user = load_current_user_for_token(db, credentials.credentials) if credentials else None
 
     if user is None and settings.allow_dev_auth and x_user_id:
         user = db.query(User).filter(User.id == x_user_id, User.is_active.is_(True)).first()
