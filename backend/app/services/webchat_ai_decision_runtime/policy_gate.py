@@ -38,12 +38,15 @@ def validate_ai_decision(
     allow_high_risk_write_execution: bool = False,
     allowed_high_risk_write_tools: set[str] | frozenset[str] | None = None,
     granted_permissions: set[str] | frozenset[str] | None = None,
+    customer_confirmation_granted: bool = False,
+    human_confirmation_granted: bool = False,
     **_legacy: Any,
 ) -> PolicyGateResult:
-    """Validate generic Agent output and Tool authority.
+    """Validate generic Agent output and server-owned Tool authority.
 
-    Domain truth is owned by Skills and Tool observations. This gate only
-    enforces platform concerns that apply uniformly to every Agent.
+    Domain truth is owned by Skills and Tool observations. This gate enforces
+    platform controls only. Model-produced confirmation flags are descriptive
+    output and never authorize execution.
     """
 
     violations: list[PolicyViolation] = []
@@ -51,6 +54,9 @@ def validate_ai_decision(
     checked_tools: list[str] = []
     allowed_high_risk = set(allowed_high_risk_write_tools or set())
     permissions = set(granted_permissions or set())
+    trusted_confirmation = bool(
+        customer_confirmation_granted or human_confirmation_granted
+    )
 
     if decision.customer_reply:
         customer_policy = evaluate_customer_visible_policy(decision.customer_reply)
@@ -78,7 +84,7 @@ def validate_ai_decision(
             continue
         _validate_contract_authority(
             contract,
-            call_requires_confirmation=call.requires_confirmation,
+            trusted_confirmation=trusted_confirmation,
             allow_high_risk_write_execution=allow_high_risk_write_execution,
             allowed_high_risk=allowed_high_risk,
             permissions=permissions,
@@ -97,7 +103,7 @@ def validate_ai_decision(
 def _validate_contract_authority(
     contract: ToolContract,
     *,
-    call_requires_confirmation: bool | None,
+    trusted_confirmation: bool,
     allow_high_risk_write_execution: bool,
     allowed_high_risk: set[str],
     permissions: set[str],
@@ -113,7 +119,9 @@ def _validate_contract_authority(
                 risk_level=contract.risk_level,
             )
         )
-    if permissions and not set(contract.required_permissions).issubset(permissions):
+    if contract.required_permissions and not set(
+        contract.required_permissions
+    ).issubset(permissions):
         violations.append(
             PolicyViolation(
                 code="tool_permission_denied",
@@ -122,17 +130,20 @@ def _validate_contract_authority(
                 risk_level=contract.risk_level,
             )
         )
-    if contract.confirmation_required and call_requires_confirmation is not True:
+    if contract.confirmation_required and not trusted_confirmation:
         violations.append(
             PolicyViolation(
                 code="write_tool_confirmation_required",
-                message="The requested action requires explicit confirmation.",
+                message="The requested action requires trusted server-side confirmation.",
                 tool_name=contract.name,
                 risk_level=contract.risk_level,
             )
         )
     if contract.is_write_tool and contract.risk_level == "high":
-        if not allow_high_risk_write_execution or contract.name not in allowed_high_risk:
+        if (
+            not allow_high_risk_write_execution
+            or contract.name not in allowed_high_risk
+        ):
             violations.append(
                 PolicyViolation(
                     code="high_risk_write_tool_blocked",
@@ -141,5 +152,8 @@ def _validate_contract_authority(
                     risk_level="high",
                 )
             )
-    elif contract.is_write_tool and contract.allowed_auto_execution_mode == "policy_gated":
+    elif (
+        contract.is_write_tool
+        and contract.allowed_auto_execution_mode == "policy_gated"
+    ):
         warnings.append(f"policy_gated_write:{contract.name}")
