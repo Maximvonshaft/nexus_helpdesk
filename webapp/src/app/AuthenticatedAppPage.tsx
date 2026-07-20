@@ -1,6 +1,6 @@
 import { Alert, Box, Button, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   OperatorLoadingState,
@@ -29,6 +29,12 @@ export function AuthenticatedAppPage({
     navigate({ to: '/login', replace: true })
   }
 
+  useEffect(() => {
+    if (session.data?.must_change_password && activeRoute !== 'account') {
+      navigate({ to: '/account', replace: true })
+    }
+  }, [activeRoute, navigate, session.data?.must_change_password])
+
   if (session.isLoading || !session.data) {
     if (session.isError) {
       return (
@@ -52,7 +58,15 @@ export function AuthenticatedAppPage({
     )
   }
 
-  const allowed = requiredAny.some((capability) => capabilities.has(capability))
+  if (session.data.must_change_password && activeRoute !== 'account') {
+    return (
+      <OperatorPageBoundary busy>
+        <OperatorLoadingState label="正在打开密码修改…" minHeight={0} />
+      </OperatorPageBoundary>
+    )
+  }
+
+  const allowed = requiredAny.length === 0 || requiredAny.some((capability) => capabilities.has(capability))
 
   return (
     <AppShell
