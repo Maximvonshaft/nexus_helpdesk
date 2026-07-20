@@ -15,6 +15,7 @@ from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
 from ..api.email import router as email_router
 from ..api.files import router as files_router
+from ..api.identity_admin import router as identity_admin_router
 from ..api.knowledge_items import router as knowledge_items_router
 from ..api.lite import router as lite_router
 from ..api.lookups import router as lookups_router
@@ -52,6 +53,7 @@ def register_api_routers(app: FastAPI) -> None:
         dependencies=[Depends(enforce_admin_password_request_policy)],
     )
     for router in (
+        identity_admin_router,
         admin_queue_router,
         osr_admin_router,
         operator_queue_router,
