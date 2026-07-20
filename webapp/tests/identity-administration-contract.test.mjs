@@ -48,10 +48,13 @@ test('nullable identity fields use explicit canonical commands instead of silent
 })
 
 
-test('account security uses the canonical auth boundary and replaces the token after rotation', () => {
+test('account security is projected through the one session read and rotates the token', () => {
   assert.match(identityApi, /\/api\/auth\/change-password/)
   assert.match(identityApi, /setSupportToken\(response\.access_token\)/)
   assert.match(identityApi, /\/api\/auth\/logout-all/)
+  assert.doesNotMatch(identityApi + account, /\/api\/auth\/security|accountSecurity/)
+  assert.match(account, /session\.data\.last_login_at/)
+  assert.match(account, /session\.data\.password_changed_at/)
   assert.match(account, /修改后所有旧会话立即失效/)
   assert.match(authenticatedPage, /must_change_password/)
   assert.match(authenticatedPage, /to: '\/account'/)
