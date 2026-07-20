@@ -42,6 +42,7 @@ from app.services.agent_routing_service import (  # noqa: E402
 )
 from app.services.webchat_handoff_service import (  # noqa: E402
     list_handoff_queue,
+    release_handoff_request,
     resume_ai_for_handoff,
 )
 from app.webchat_models import WebchatConversation  # noqa: E402
@@ -240,3 +241,76 @@ def test_assigned_agent_can_resume_ai_but_other_agent_cannot(db_session):
     )
     assert result["status"] == "resumed_ai"
     assert result["can_resume_ai"] is False
+
+
+def test_release_excludes_previous_owner_and_fills_next_waiter(db_session):
+    agent = _agent(db_session, suffix="release")
+    set_agent_state(
+        db_session,
+        user=agent,
+        presence_status="online",
+        max_concurrent_conversations=1,
+    )
+    first_conversation = _conversation(
+        db_session,
+        suffix="release-first",
+        country_code="ME",
+    )
+    first_request = _handoff(db_session, conversation=first_conversation)
+    second_conversation = _conversation(
+        db_session,
+        suffix="release-second",
+        country_code="ME",
+    )
+    second_request = _handoff(db_session, conversation=second_conversation)
+    db_session.refresh(first_request)
+    db_session.refresh(second_request)
+    assert first_request.status == "accepted"
+    assert second_request.status == "requested"
+
+    release_handoff_request(
+        db_session,
+        request_id=first_request.id,
+        current_user=agent,
+        note="Route this conversation to another agent.",
+    )
+
+    db_session.refresh(first_request)
+    db_session.refresh(second_request)
+    assert first_request.status == "requested"
+    assert first_request.assigned_agent_id is None
+    assert second_request.status == "accepted"
+    assert second_request.assigned_agent_id == agent.id
+
+
+def test_ai_active_view_uses_ticketless_conversation_state_not_handoff_queue(db_session):
+    agent = _agent(db_session, suffix="ai-active")
+    ai_conversation = _conversation(
+        db_session,
+        suffix="ai-active-visible",
+        country_code="ME",
+    )
+    ai_conversation.ai_suspended = False
+    ai_conversation.active_ai_status = "processing"
+    db_session.flush()
+
+    waiting_conversation = _conversation(
+        db_session,
+        suffix="ai-active-waiting-human",
+        country_code="ME",
+    )
+    waiting_request = _handoff(db_session, conversation=waiting_conversation)
+    assert waiting_request.status == "requested"
+
+    result = list_handoff_queue(
+        db_session,
+        agent,
+        view="ai_active",
+        limit=10,
+    )
+
+    assert [item["conversation_id"] for item in result["items"]] == [
+        ai_conversation.public_id
+    ]
+    assert result["items"][0]["ticket_id"] is None
+    assert result["items"][0]["status"] == "ai_active"
