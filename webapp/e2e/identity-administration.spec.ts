@@ -62,13 +62,17 @@ async function installIdentityMocks(page: Page, options?: { mustChangePassword?:
       return json(route, {
         access_token: 'rotated-token',
         token_type: 'bearer',
-        user: {
-          ...adminUser(false),
-          password_changed_at: '2026-07-20T13:00:00Z',
-        },
+        user: adminUser(false),
       })
     }
-    if (path === '/api/admin/users' && request.method() === 'GET') return json(route, [managedUser()])
+    if (path === '/api/admin/users' && request.method() === 'GET') {
+      return json(route, {
+        items: [managedUser()],
+        next_cursor: null,
+        has_more: false,
+        filters: { limit: 100, include_inactive: true },
+      })
+    }
     if (path === '/api/admin/users' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() || '{}')
       return json(route, {
