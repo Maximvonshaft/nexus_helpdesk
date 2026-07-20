@@ -1,0 +1,240 @@
+name: Temporary Finalize PR 774
+
+on:
+  push:
+    branches:
+      - feat/conversation-first-agent-routing
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-pr-774
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: feat/conversation-first-agent-routing
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install exact dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Apply final ownership convergence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git rev-parse HEAD > /tmp/pr774-start-sha
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"replacement mismatch {path}: expected=1 actual={count}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          handoff = "backend/app/services/webchat_handoff_service.py"
+          helper = dedent(
+              '''
+              def can_resume_ticketless_handoff(
+                  *,
+                  handoff: WebchatHandoffRequest,
+                  conversation: WebchatConversation,
+                  user: User,
+                  capabilities: set[str],
+              ) -> bool:
+                  """Use one server authority for ticketless AI-resume eligibility."""
+
+                  if handoff.status not in _OPEN:
+                      return False
+                  if CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities:
+                      return True
+                  return bool(
+                      handoff.status == "accepted"
+                      and handoff.assigned_agent_id == user.id
+                      and conversation.active_agent_id == user.id
+                      and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+                  )
+
+
+              '''
+          )
+          replace_once(
+              handoff,
+              "def _ticketless_payload(\n",
+              helper + "def _ticketless_payload(\n",
+          )
+          replace_once(
+              handoff,
+              '''    capabilities = resolve_capabilities(current_user, db)
+                  assigned_owner_can_resume = bool(
+                      request_row.status == "accepted"
+                      and request_row.assigned_agent_id == current_user.id
+                      and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+                  )
+              ''',
+              '''    capabilities = resolve_capabilities(current_user, db)
+              ''',
+          )
+          replace_once(
+              handoff,
+              '''            "can_resume_ai": bool(
+                              request_row.status in _OPEN
+                              and (
+                                  CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
+                                  or assigned_owner_can_resume
+                              )
+                          ),
+              ''',
+              '''            "can_resume_ai": can_resume_ticketless_handoff(
+                              handoff=request_row,
+                              conversation=conversation,
+                              user=current_user,
+                              capabilities=capabilities,
+                          ),
+              ''',
+          )
+          replace_once(
+              handoff,
+              '''    request_row = _core._request_by_id(db, request_id, lock=True)
+                  capabilities = resolve_capabilities(current_user, db)
+                  assigned_owner_can_resume = bool(
+                      request_row.status == "accepted"
+                      and request_row.assigned_agent_id == current_user.id
+                      and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+                  )
+                  if (
+                      CAP_WEBCHAT_HANDOFF_RESUME_AI not in capabilities
+                      and not assigned_owner_can_resume
+                  ):
+                      raise HTTPException(
+                          status_code=status.HTTP_403_FORBIDDEN,
+                          detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
+                      )
+                  conversation, _control = _ticketless_context(
+                      db,
+                      request_row=request_row,
+                      current_user=current_user,
+                  )
+              ''',
+              '''    request_row = _core._request_by_id(db, request_id, lock=True)
+                  conversation, _control = _ticketless_context(
+                      db,
+                      request_row=request_row,
+                      current_user=current_user,
+                  )
+                  capabilities = resolve_capabilities(current_user, db)
+                  if not can_resume_ticketless_handoff(
+                      handoff=request_row,
+                      conversation=conversation,
+                      user=current_user,
+                      capabilities=capabilities,
+                  ):
+                      raise HTTPException(
+                          status_code=status.HTTP_403_FORBIDDEN,
+                          detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
+                      )
+              ''',
+          )
+
+          operator = "backend/app/services/conversation_operator_service.py"
+          replace_once(operator, "    CAP_WEBCHAT_HANDOFF_RESUME_AI,\n", "")
+          replace_once(
+              operator,
+              "from .webchat_ai_turn_service import ai_snapshot\n",
+              "from .webchat_ai_turn_service import ai_snapshot\nfrom .webchat_handoff_service import can_resume_ticketless_handoff\n",
+          )
+          replace_once(
+              operator,
+              '''        "can_resume_ai": handoff.status in {"requested", "accepted"}
+                      and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,
+              ''',
+              '''        "can_resume_ai": can_resume_ticketless_handoff(
+                          handoff=handoff,
+                          conversation=conversation,
+                          user=user,
+                          capabilities=capabilities,
+                      ),
+              ''',
+          )
+
+          test_path = "backend/tests/test_agent_routing_scope_fifo.py"
+          replace_once(
+              test_path,
+              "from app.services.webchat_handoff_service import (  # noqa: E402\n",
+              "from app.services.conversation_operator_service import read_conversation_thread  # noqa: E402\nfrom app.services.webchat_handoff_service import (  # noqa: E402\n",
+          )
+          replace_once(
+              test_path,
+              '''    db_session.refresh(request)
+                  assert request.status == "accepted"
+                  assert request.assigned_agent_id == owner.id
+
+                  with pytest.raises(HTTPException) as exc:
+              ''',
+              '''    db_session.refresh(request)
+                  db_session.refresh(conversation)
+                  assert request.status == "accepted"
+                  assert request.assigned_agent_id == owner.id
+                  assert conversation.active_agent_id == owner.id
+
+                  owner_thread = read_conversation_thread(
+                      db_session,
+                      conversation=conversation,
+                      user=owner,
+                  )
+                  other_thread = read_conversation_thread(
+                      db_session,
+                      conversation=conversation,
+                      user=other,
+                  )
+                  assert owner_thread["handoff"]["can_resume_ai"] is True
+                  assert other_thread["handoff"]["can_resume_ai"] is False
+
+                  with pytest.raises(HTTPException) as exc:
+              ''',
+          )
+          PY
+
+          rm -f backend/tests/conftest.py
+          python -m compileall -q backend/app
+          python -m pytest -q \
+            backend/tests/test_agent_routing_scope_fifo.py \
+            backend/tests/test_conversation_first_agent_routing.py \
+            backend/tests/test_conversation_first_agent_routing_residuals.py \
+            backend/tests/test_conversation_resume_scope_integrity.py \
+            backend/tests/test_ticketless_voice_ticket_binding.py \
+            backend/tests/test_ticketless_support_scope_isolation.py
+
+      - name: Commit clean final tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          start_sha="$(cat /tmp/pr774-start-sha)"
+          git fetch --no-tags origin feat/conversation-first-agent-routing
+          test "$(git rev-parse origin/feat/conversation-first-agent-routing)" = "$start_sha"
+          git rm .github/workflows/_temporary-finalize-pr774.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: unify ownership-aware ticketless AI resume"
+          git push origin HEAD:feat/conversation-first-agent-routing
