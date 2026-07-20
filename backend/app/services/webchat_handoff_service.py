@@ -18,7 +18,6 @@ from ..webchat_models import (
     WebchatHandoffRequest,
 )
 from . import webchat_handoff_service_core as _core
-from .agent_routing_service import serialize_handoff
 from .permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_DECLINE,
@@ -92,6 +91,10 @@ def _ticketless_queue_items(
     include_declined: bool,
     limit: int,
 ) -> list[dict]:
+    # Local import keeps this public projection from participating in the
+    # WebChat service -> handoff service -> agent routing initialization cycle.
+    from .agent_routing_service import serialize_handoff
+
     query = (
         db.query(WebchatHandoffRequest, WebchatConversation, ConversationControl)
         .join(
@@ -122,6 +125,7 @@ def _ticketless_queue_items(
         .all()
     )
     items: list[dict] = []
+    capabilities = resolve_capabilities(current_user, db)
     for request_row, conversation, control in rows:
         if len(items) >= limit:
             break
@@ -155,20 +159,16 @@ def _ticketless_queue_items(
                 "visitor_phone": conversation.visitor_phone,
                 "origin": conversation.origin,
                 "can_accept": request_row.status == "requested"
-                and CAP_WEBCHAT_HANDOFF_ACCEPT
-                in resolve_capabilities(current_user, db),
+                and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities,
                 "can_decline": request_row.status == "requested"
-                and CAP_WEBCHAT_HANDOFF_DECLINE
-                in resolve_capabilities(current_user, db),
+                and CAP_WEBCHAT_HANDOFF_DECLINE in capabilities,
                 "can_force_takeover": CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER
-                in resolve_capabilities(current_user, db),
+                in capabilities,
                 "can_release": request_row.status == "accepted"
                 and request_row.assigned_agent_id == current_user.id
-                and CAP_WEBCHAT_HANDOFF_RELEASE
-                in resolve_capabilities(current_user, db),
+                and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities,
                 "can_resume_ai": request_row.status in _OPEN
-                and CAP_WEBCHAT_HANDOFF_RESUME_AI
-                in resolve_capabilities(current_user, db),
+                and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,
                 "can_reply": request_row.status == "accepted"
                 and request_row.assigned_agent_id == current_user.id,
             }
