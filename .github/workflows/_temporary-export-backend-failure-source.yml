@@ -1,0 +1,44 @@
+name: Temporary Export Backend Failure Source
+
+on:
+  push:
+    branches:
+      - feat/conversation-first-agent-routing
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Archive tracked source
+        run: git archive --format=tar.gz --output=/tmp/nexus-current-source.tar.gz HEAD
+      - name: Upload source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-failure-source-${{ github.sha }}
+          path: /tmp/nexus-current-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+      - name: Publish export identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"backend-failure-source-export\",\"description\":\"run_id=${RUN_ID}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
