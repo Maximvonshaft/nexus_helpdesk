@@ -1,3 +1,4 @@
+# One-shot diagnostic on an isolated non-PR branch.
 name: Temporary Map Historical Blob
 
 on:
