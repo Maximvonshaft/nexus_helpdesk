@@ -29,6 +29,10 @@ class PasswordChangeResponse(BaseModel):
 
 class CredentialPolicyRead(BaseModel):
     user_id: int
+    username: str
+    display_name: str
+    role: str
+    is_active: bool
     must_change_password: bool
     password_changed_at: datetime | None = None
     last_login_at: datetime | None = None
