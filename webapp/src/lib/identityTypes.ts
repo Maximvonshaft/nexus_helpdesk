@@ -17,7 +17,7 @@ export interface AuthSessionResponse {
   user: AuthUser
 }
 
-export interface UserSecurityState extends AccountSecurity {}
+export type UserSecurityState = AccountSecurity
 
 export interface RoleProfile {
   role: UserRole
