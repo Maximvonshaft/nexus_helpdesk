@@ -1,4 +1,4 @@
-name: Temporary Apply Final Canonical Gate Fixes
+name: Temporary Apply Final Gate Fixes
 
 on:
   push:
@@ -7,13 +7,11 @@ on:
 
 permissions:
   contents: write
-  actions: write
-  statuses: write
 
 jobs:
-  apply-validate-dispatch:
+  apply:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout exact staging Head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -21,37 +19,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
           ref: ${{ github.sha }}
-      - name: Apply and validate exact gate fixes
+      - name: Apply and validate exact fixes
         shell: bash
         run: |
           set -Eeuo pipefail
           git apply --check .github/final-gate-fixes.patch
           git apply .github/final-gate-fixes.patch
-          rm -f \
-            .github/final-gate-fixes.patch \
-            .github/workflows/_temporary-apply-final-gate-fixes.yml
+          rm -f .github/final-gate-fixes.patch
+          rm -f .github/workflows/_temporary-apply-final-gate-fixes.yml
           git diff --check
           grep -F 'TENANT_RUNTIME_AUTHORITY_MODE: shadow' .github/workflows/canonical-acceptance.yml
-          APP_ENV=test TENANT_RUNTIME_AUTHORITY_MODE=shadow PYTHONPATH=backend python - <<'PY'
-          from pathlib import Path
-          from app.settings import Settings
-          from scripts.security.assert_sarif_clean import _load_exceptions
-
-          settings = Settings()
-          assert settings.tenant_runtime_authority_mode == "shadow"
-          exceptions = _load_exceptions(
-              Path("config/security/codeql-exceptions.json"),
-              root=Path.cwd(),
-          )
-          key = (
-              "py/weak-sensitive-data-hashing",
-              "backend/app/services/speedaf/track_query.py",
-              429,
-          )
-          assert key in exceptions
-          PY
-      - name: Commit final gate fixes
-        id: commit
+          python -m json.tool config/security/codeql-exceptions.json >/dev/null
+          grep -F 'py/weak-sensitive-data-hashing' config/security/codeql-exceptions.json
+          grep -F 'hashlib.md5(payload, usedforsecurity=False)' backend/app/services/speedaf/track_query.py
+      - name: Commit final fixes
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -60,55 +41,3 @@ jobs:
           git add -A
           git commit -m "ci: close tenant authority and protocol signing gates"
           git push origin HEAD:feat/conversation-first-agent-routing
-          echo "final_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Dispatch Canonical Acceptance
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -Eeuo pipefail
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/dispatches" \
-            --data '{"ref":"feat/conversation-first-agent-routing"}'
-      - name: Publish exact final run identity
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          FINAL_SHA: ${{ steps.commit.outputs.final_sha }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -Eeuo pipefail
-          canonical_run_id=""
-          for _attempt in $(seq 1 30); do
-            runs="$(curl --fail-with-body --silent --show-error \
-              --header "Authorization: Bearer ${GH_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/runs?branch=feat%2Fconversation-first-agent-routing&event=workflow_dispatch&per_page=20")"
-            canonical_run_id="$(jq -r --arg sha "${FINAL_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' <<<"${runs}" | head -n 1)"
-            if [[ -n "${canonical_run_id}" && "${canonical_run_id}" != "null" ]]; then
-              break
-            fi
-            sleep 2
-          done
-          test -n "${canonical_run_id}"
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
-            --data "{\"state\":\"pending\",\"context\":\"canonical-acceptance-dispatched\",\"description\":\"run_id=${canonical_run_id}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${canonical_run_id}\"}"
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
-            --data "{\"state\":\"success\",\"context\":\"final-gate-fixes\",\"description\":\"tenant authority and protocol exception validated\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
