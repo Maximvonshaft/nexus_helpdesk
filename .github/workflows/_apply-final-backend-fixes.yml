@@ -1,0 +1,85 @@
+name: Apply Verified Backend Closure Patch
+
+on:
+  push:
+    branches:
+      - fix/final-external-channel-data-retirement
+
+permissions:
+  contents: write
+  statuses: write
+
+concurrency:
+  group: apply-final-backend-closure
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ contains(github.event.head_commit.message, 'trigger verified backend closure') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"apply-final-backend-closure\",\"description\":\"run_id=${RUN_ID}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+
+      - name: Checkout exact branch Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: fix/final-external-channel-data-retirement
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .github/final-backend-fixes.patch.gz.b64 > /tmp/final-backend-fixes.patch.gz
+          echo '7e47a52e31657cca89df8120ad2d44299dcfcf0052105ea14484c3bb02bc9dfb  /tmp/final-backend-fixes.patch.gz' | sha256sum --check --strict
+          gzip -dc /tmp/final-backend-fixes.patch.gz > /tmp/final-backend-fixes.patch
+          echo 'cbcace79812e4f8da1cac6d69fbab6e485e99a6944c2167ebc35630c87ff60c3  /tmp/final-backend-fixes.patch' | sha256sum --check --strict
+          git apply --check /tmp/final-backend-fixes.patch
+
+      - name: Apply atomically and remove delivery tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --index /tmp/final-backend-fixes.patch
+          rm -f .github/final-backend-fixes.patch.gz.b64
+          rm -f .github/final-backend-fixes.trigger
+          rm -f .github/workflows/_apply-final-backend-fixes.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'nexus-governance-bot'
+          git config user.email 'nexus-governance-bot@users.noreply.github.com'
+          git commit -m 'fix: close final backend contract regressions'
+          git push origin HEAD:fix/final-external-channel-data-retirement
+
+      - name: Publish final status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "${JOB_STATUS}" = success ]; then state=success; fi
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"${state}\",\"context\":\"apply-final-backend-closure\",\"description\":\"run_id=${RUN_ID}; job=${JOB_STATUS}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
