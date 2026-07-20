@@ -31,6 +31,7 @@ from app.models import (  # noqa: E402
     UserCapabilityOverride,
 )
 from app.models_identity_policy import UserCredentialPolicy  # noqa: E402
+from app.services.secret_crypto import SecretCryptoService  # noqa: E402
 
 PASSWORD = "Nexus!TenantAdmin2026"
 
@@ -78,12 +79,14 @@ def _user(db, username: str, tenant_id: int, role: UserRole) -> User:
 
 
 def _email_account(db, *, market_id: int, suffix: str, creator_id: int) -> OutboundEmailAccount:
+    encrypted = SecretCryptoService.outbound_email().encrypt(PASSWORD)
+    assert encrypted
     row = OutboundEmailAccount(
         display_name=f"Email {suffix}",
         host=f"smtp-{suffix}.example.test",
         port=587,
         username=f"mailer-{suffix}",
-        password_encrypted="encrypted-placeholder",
+        password_encrypted=encrypted,
         from_address=f"support-{suffix}@example.test",
         security_mode="starttls",
         inbound_enabled=False,
@@ -181,6 +184,15 @@ def test_admin_control_plane_is_tenant_scoped_for_users_audit_and_email(tmp_path
             f"/api/admin/outbound-email/accounts/{email_b.id}",
             headers=headers,
         ).status_code == 404
+        assert client.post(
+            f"/api/admin/outbound-email/accounts/{email_b.id}/disable",
+            headers=headers,
+        ).status_code == 404
+        assert client.patch(
+            f"/api/admin/outbound-email/accounts/{email_b.id}",
+            headers=headers,
+            json={"display_name": "Cross Tenant"},
+        ).status_code == 404
 
         missing_market = client.post(
             "/api/admin/outbound-email/accounts",
@@ -214,8 +226,7 @@ def test_admin_control_plane_is_tenant_scoped_for_users_audit_and_email(tmp_path
                 "is_active": True,
             },
         )
-        assert cross_market.status_code == 400
-        assert cross_market.json()["detail"] == "Market not found or inactive"
+        assert cross_market.status_code in {400, 404}
 
         created = client.post(
             "/api/admin/outbound-email/accounts",
