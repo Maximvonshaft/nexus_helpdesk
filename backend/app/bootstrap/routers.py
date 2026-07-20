@@ -18,6 +18,7 @@ from ..api.files import router as files_router
 from ..api.knowledge_items import router as knowledge_items_router
 from ..api.lite import router as lite_router
 from ..api.lookups import router as lookups_router
+from ..api.operator_agent_state import router as operator_agent_state_router
 from ..api.operator_queue import router as operator_queue_router
 from ..api.outbound_channels import router as outbound_channels_router
 from ..api.persona_profiles import router as persona_profiles_router
@@ -37,6 +38,7 @@ from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
 
 
+
 def register_api_routers(app: FastAPI) -> None:
     """Register every supported API router exactly once in deterministic order."""
 
@@ -54,6 +56,7 @@ def register_api_routers(app: FastAPI) -> None:
     for router in (
         admin_queue_router,
         osr_admin_router,
+        operator_agent_state_router,
         operator_queue_router,
         outbound_channels_router,
         auth_router,
