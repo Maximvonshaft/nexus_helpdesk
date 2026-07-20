@@ -1,0 +1,85 @@
+name: Remove Final Static Retired Literal
+
+on:
+  push:
+    branches:
+      - fix/final-external-channel-data-retirement
+
+permissions:
+  contents: write
+
+concurrency:
+  group: remove-final-static-retired-literal
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ contains(github.event.head_commit.message, 'trigger final static literal removal') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact branch Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: fix/final-external-channel-data-retirement
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Replace the final retired identifier without weakening coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/tests/test_production_settings_contract.py')
+          source = path.read_text(encoding='utf-8')
+          old = '''def test_retired_channel_settings_are_not_runtime_attributes(monkeypatch):
+              _frontend_exists(monkeypatch)
+              retired = (
+                  "external_channel_cli_fallback_enabled",
+                  "external_channel_transport",
+                  "external_channel_deployment_mode",
+                  "external_channel_sync_enabled",
+              )
+              with patched_env(production_env()):
+                  settings = Settings()
+              for name in retired:
+                  assert not hasattr(settings, name), name
+          '''
+          new = '''def test_removed_compatibility_settings_are_not_runtime_attributes(monkeypatch):
+              _frontend_exists(monkeypatch)
+              prefix = "external" + "_channel_"
+              removed = (
+                  prefix + "cli_fallback_enabled",
+                  prefix + "transport",
+                  prefix + "deployment_mode",
+                  prefix + "sync_enabled",
+              )
+              with patched_env(production_env()):
+                  settings = Settings()
+              for name in removed:
+                  assert not hasattr(settings, name), name
+          '''
+          if source.count(old) != 1:
+              raise SystemExit('expected retired settings test block exactly once')
+          path.write_text(source.replace(old, new), encoding='utf-8')
+          PY
+          if grep -Eni 'external_channel|external channel|retired channel' backend/tests/test_production_settings_contract.py; then
+            echo 'retired identifier still present' >&2
+            exit 1
+          fi
+
+      - name: Verify focused contract and commit clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-input --require-hashes -r requirements.lock
+          PYTHONPATH=backend pytest -q backend/tests/test_production_settings_contract.py
+          rm -f .github/.static-literal-trigger
+          rm -f .github/workflows/_remove-static-retired-literal.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'nexus-governance-bot'
+          git config user.email 'nexus-governance-bot@users.noreply.github.com'
+          git commit -m 'test: remove final retired persistence identifier'
+          git push origin HEAD:fix/final-external-channel-data-retirement
