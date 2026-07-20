@@ -9,6 +9,8 @@ _CANONICAL_PREFIXES = (
     "/channels",
     "/runtime",
     "/control-tower",
+    "/administration",
+    "/account",
 )
 
 _LEGACY_TO_CANONICAL = {
@@ -16,6 +18,10 @@ _LEGACY_TO_CANONICAL = {
     "/outbound-email": "/channels",
     "/ai-control": "/knowledge",
     "/bulletins": "/control-tower",
+}
+
+_CONTROL_TOWER_ROUTE_AUTHORITIES = {
+    ("governance_lanes", "rbac-lens"): "/administration",
 }
 
 
@@ -46,7 +52,11 @@ def project_control_tower_routes(payload: Mapping[str, Any]) -> dict[str, Any]:
         rows = []
         for raw in payload.get(collection_name, []) or []:
             row = dict(raw)
-            href = canonical_operator_href(row.get("href"))
+            route_authority = _CONTROL_TOWER_ROUTE_AUTHORITIES.get(
+                (collection_name, str(row.get("key") or "")),
+                row.get("href"),
+            )
+            href = canonical_operator_href(route_authority)
             row["href"] = href
             if href is None and "enabled" in row:
                 row["enabled"] = False
