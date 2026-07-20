@@ -110,6 +110,18 @@ def _handoff_payload(
     capabilities: set[str],
 ) -> dict[str, Any]:
     assigned_to_current_user = handoff.assigned_agent_id == user.id
+    can_resume_ai = bool(
+        handoff.status in {"requested", "accepted"}
+        and (
+            CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
+            or (
+                handoff.status == "accepted"
+                and assigned_to_current_user
+                and conversation.active_agent_id == user.id
+                and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+            )
+        )
+    )
     return {
         "id": handoff.id,
         "conversation_id": conversation.public_id,
@@ -140,8 +152,7 @@ def _handoff_payload(
         "can_release": handoff.status == "accepted"
         and assigned_to_current_user
         and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities,
-        "can_resume_ai": handoff.status in {"requested", "accepted"}
-        and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,
+        "can_resume_ai": can_resume_ai,
         "can_reply": handoff.status == "accepted"
         and assigned_to_current_user
         and CAP_OUTBOUND_SEND in capabilities,
@@ -278,18 +289,12 @@ def reply_to_conversation(
                 {
                     "message_id": message.id,
                     "direction": "agent",
-                    "actor_id": user.id,
+                    "author_user_id": user.id,
                 },
-                ensure_ascii=False,
+                separators=(",", ":"),
             ),
             created_at=now,
         )
     )
-    conversation.updated_at = now
-    conversation.last_seen_at = now
     db.flush()
-    return {
-        "ok": True,
-        "conversation_id": conversation.public_id,
-        "message": _message_payload(message),
-    }
+    return _message_payload(message)
