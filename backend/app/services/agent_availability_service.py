@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -10,6 +12,49 @@ from ..models_agent_routing import ConversationControl, OperatorAgentState
 from ..operator_models import OperatorQueueScopeGrant
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .agent_routing_service import active_agent_load, heartbeat_is_fresh
+
+
+_CURRENT_AVAILABILITY_CONVERSATION_ID: ContextVar[int | None] = ContextVar(
+    "nexus_current_availability_conversation_id",
+    default=None,
+)
+
+
+@contextmanager
+def bind_availability_conversation(
+    conversation_id: int | None,
+) -> Iterator[None]:
+    """Bind one conversation to the existing availability calculation.
+
+    The public governed tool authority sets this bounded request context before
+    delegating to the single private executor. The core handler therefore logs
+    and audits the exact customer's queue position without mutable module
+    monkey-patching or a second execution path.
+    """
+
+    token = _CURRENT_AVAILABILITY_CONVERSATION_ID.set(
+        int(conversation_id) if conversation_id is not None else None
+    )
+    try:
+        yield
+    finally:
+        _CURRENT_AVAILABILITY_CONVERSATION_ID.reset(token)
+
+
+def _context_request_row(db: Session) -> WebchatHandoffRequest | None:
+    conversation_id = _CURRENT_AVAILABILITY_CONVERSATION_ID.get()
+    if conversation_id is None:
+        return None
+    conversation = db.get(WebchatConversation, conversation_id)
+    if conversation is None or conversation.current_handoff_request_id is None:
+        return None
+    request_row = db.get(
+        WebchatHandoffRequest,
+        conversation.current_handoff_request_id,
+    )
+    if request_row is None or request_row.conversation_id != conversation.id:
+        return None
+    return request_row
 
 
 def _request_scope(
@@ -147,6 +192,7 @@ def availability_summary(
         or 0
     )
     available_capacity = max(0, total_capacity - occupied_capacity)
+    effective_request = request_row or _context_request_row(db)
     return {
         "available": available_capacity > 0,
         "online_agents": online_agents,
@@ -155,8 +201,8 @@ def availability_summary(
         "available_capacity": available_capacity,
         "queue_count": queue_count,
         "queue_position": (
-            queue_position(db, request_row=request_row)
-            if request_row is not None
+            queue_position(db, request_row=effective_request)
+            if effective_request is not None
             else None
         ),
     }
