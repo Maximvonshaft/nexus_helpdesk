@@ -225,7 +225,7 @@ function LoginPage() {
 
                 {login.error ? (
                   <Alert ref={errorRef} severity="error" role="alert" tabIndex={-1}>
-                    账号或密码错误，或登录尝试已被暂时限制。
+                    账号或密码错误。
                   </Alert>
                 ) : null}
 
