@@ -10,6 +10,35 @@ export interface AuthUser {
   must_change_password?: boolean
   password_changed_at?: string | null
   last_login_at?: string | null
+  mfa_enabled?: boolean
+}
+export interface AuthSessionResponse {
+  access_token: string
+  token_type?: string
+  user: AuthUser
+}
+export interface MfaLoginChallenge {
+  mfa_required: true
+  challenge_token: string
+  expires_in_seconds: number
+  display_name: string
+}
+export type LoginResult = AuthSessionResponse | MfaLoginChallenge
+export interface MfaStatus {
+  enabled: boolean
+  setup_pending: boolean
+  confirmed_at?: string | null
+  last_verified_at?: string | null
+  recovery_codes_remaining: number
+}
+export interface MfaSetupBegin {
+  secret: string
+  otpauth_uri: string
+}
+export interface MfaRecoveryCodes {
+  ok: boolean
+  recovery_codes: string[]
+  reauthenticate: boolean
 }
 export interface AdminUser extends AuthUser {
   is_active: boolean
@@ -35,6 +64,10 @@ export interface CredentialPolicy {
   must_change_password: boolean
   password_changed_at?: string | null
   last_login_at?: string | null
+  mfa_enabled: boolean
+  mfa_confirmed_at?: string | null
+  mfa_last_verified_at?: string | null
+  mfa_recovery_codes_remaining: number
   updated_at?: string | null
 }
 export interface RolePolicy {
