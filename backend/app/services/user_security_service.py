@@ -44,9 +44,9 @@ def record_successful_login(db: Session, user_id: int) -> UserSecurityState:
 
 def complete_password_change(db: Session, user_id: int) -> UserSecurityState:
     row = ensure_security_state(db, user_id)
-    # Password rotation is performed by the User model listener in the same
-    # transaction. Refresh before clearing the forced-rotation flag so the ORM
-    # view and the issued token use the same incremented session version.
+    # Password changes rotate the version through the User model event using a
+    # connection-level UPDATE. Refresh before clearing the forced-change flag so
+    # the ORM state and the audit record observe the same canonical version.
     db.refresh(row)
     row.must_change_password = False
     row.updated_at = utc_now()
