@@ -38,13 +38,25 @@ jobs:
           python scripts/_pr788_tenant_voice_fix.py
           python -m compileall -q backend/app
       - name: Run focused tenant and voice regression
+        shell: bash
         run: |
+          set -o pipefail
+          mkdir -p /tmp/pr788-tenant-voice
           python -m pytest -q \
             backend/tests/test_ticketless_voice_ticket_binding.py \
             backend/tests/test_webchat_public_tenant_binding.py \
             backend/tests/test_webchat_voice_api.py \
             backend/tests/test_webchat_voice_p0_gap_closure.py \
-            backend/tests/test_tenant_authority.py
+            backend/tests/test_tenant_authority.py \
+            2>&1 | tee /tmp/pr788-tenant-voice/pytest.log
+      - name: Upload focused evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr788-tenant-voice-${{ github.event.pull_request.head.sha }}
+          path: /tmp/pr788-tenant-voice
+          if-no-files-found: error
+          retention-days: 7
       - name: Commit clean candidate
         shell: bash
         run: |
