@@ -22,6 +22,8 @@ _TICKET_OPTIONAL_TABLES = (
     "webchat_events",
     "webchat_handoff_requests",
     "webchat_card_actions",
+    "webchat_ai_debug_runs",
+    "webchat_ai_test_findings",
 )
 
 
