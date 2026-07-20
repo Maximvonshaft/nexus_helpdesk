@@ -1,4 +1,4 @@
-name: Temporary Diagnose Resolved Main Merge Tests
+name: Temporary Resolve Main Synchronization
 
 on:
   push:
@@ -6,13 +6,14 @@ on:
       - feat/conversation-first-agent-routing
 
 permissions:
-  contents: read
+  contents: write
+  actions: write
   statuses: write
 
 jobs:
-  diagnose:
+  resolve-and-validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       PYTHONPATH: backend
       APP_ENV: test
@@ -25,11 +26,26 @@ jobs:
       WEBCHAT_AI_AUTO_REPLY_MODE: off
       SPEEDAF_MCP_ENABLED: "false"
     steps:
+      - name: Register exact merge resolution run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"main-synchronization\",\"description\":\"resolving three audited conflicts\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
       - name: Checkout exact branch Head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
           ref: ${{ github.sha }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -39,7 +55,8 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install exact backend dependencies
         run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
-      - name: Reproduce audited resolution
+      - name: Merge current main with audited resolutions
+        id: merge
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -47,13 +64,18 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags origin main
           set +e
-          git merge --no-commit --no-ff origin/main > /tmp/merge-output.txt 2>&1
+          git merge --no-commit --no-ff origin/main
           merge_code=$?
           set -e
-          test "$merge_code" = "1"
+          if [[ "$merge_code" != "0" && "$merge_code" != "1" ]]; then
+            exit "$merge_code"
+          fi
           unresolved="$(git diff --name-only --diff-filter=U | sort)"
           expected=$'backend/app/api/ticket_perf.py\nbackend/tests/test_nexus_osr_admin_api.py\nbackend/tests/test_retired_persistence_absence.py'
-          test "$unresolved" = "$expected"
+          if [[ "$unresolved" != "$expected" ]]; then
+            printf 'Unexpected merge conflict set.\nExpected:\n%s\nActual:\n%s\n' "$expected" "$unresolved" >&2
+            exit 1
+          fi
           git checkout --theirs -- \
             backend/app/api/ticket_perf.py \
             backend/tests/test_nexus_osr_admin_api.py \
@@ -62,47 +84,81 @@ jobs:
             backend/app/api/ticket_perf.py \
             backend/tests/test_nexus_osr_admin_api.py \
             backend/tests/test_retired_persistence_absence.py
+          rm -f \
+            .github/workflows/_temporary-sync-main.yml \
+            .github/workflows/_temporary-sync-conversation-main.yml
+          git add -A
           test -z "$(git diff --name-only --diff-filter=U)"
-      - name: Capture merge-sensitive test output
-        id: tests
+          git diff --check --cached
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
+      - name: Run merge-sensitive regressions in isolated processes
         shell: bash
         run: |
-          set +e
-          python -m pytest -vv \
+          set -Eeuo pipefail
+          for test_file in \
             backend/tests/test_nexus_osr_admin_api.py \
             backend/tests/test_retired_persistence_absence.py \
             backend/tests/test_ticket_detail_summary.py \
-            backend/tests/test_ticket_summary_evidence_truth.py \
-            > /tmp/merge-sensitive-pytest.log 2>&1
-          code=$?
-          set -e
-          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Upload exact merge test diagnostics
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: resolved-main-merge-tests-${{ github.sha }}
-          path: |
-            /tmp/merge-output.txt
-            /tmp/merge-sensitive-pytest.log
-          if-no-files-found: error
-          retention-days: 3
-      - name: Abort local merge and publish run identity
+            backend/tests/test_ticket_summary_evidence_truth.py
+          do
+            python -m pytest -q "$test_file"
+          done
+      - name: Commit merged candidate and push
+        id: commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git commit -m "merge: synchronize conversation-first branch with latest main"
+          git merge-base --is-ancestor origin/main HEAD
+          git push origin HEAD:feat/conversation-first-agent-routing
+          echo "final_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Dispatch canonical acceptance for merged Head
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          TEST_EXIT: ${{ steps.tests.outputs.exit_code }}
         run: |
-          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-            git merge --abort
-          fi
           curl --fail-with-body --silent --show-error \
             --request POST \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
-            --data "{\"state\":\"success\",\"context\":\"resolved-merge-test-diagnostics\",\"description\":\"pytest exit=${TEST_EXIT}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/dispatches" \
+            --data '{"ref":"feat/conversation-first-agent-routing"}'
+      - name: Publish synchronized candidate identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          FINAL_SHA: ${{ steps.commit.outputs.final_sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          canonical_run_id=""
+          for _attempt in $(seq 1 30); do
+            runs="$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/runs?branch=feat%2Fconversation-first-agent-routing&event=workflow_dispatch&per_page=20")"
+            canonical_run_id="$(jq -r --arg sha "${FINAL_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' <<<"${runs}" | head -n 1)"
+            if [[ -n "${canonical_run_id}" && "${canonical_run_id}" != "null" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          test -n "${canonical_run_id}"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"main-synchronization\",\"description\":\"latest main merged; canonical run=${canonical_run_id}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"canonical-acceptance-dispatched\",\"description\":\"run_id=${canonical_run_id}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${canonical_run_id}\"}"
