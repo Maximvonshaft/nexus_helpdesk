@@ -19,6 +19,11 @@ export interface AuthSessionResponse {
 
 export interface UserSecurityState extends AccountSecurity {}
 
+export interface RoleProfile {
+  role: UserRole
+  capabilities: string[]
+}
+
 export interface UserCreatePayload {
   username: string
   password: string
@@ -40,6 +45,7 @@ export interface UserUpdatePayload {
 export interface IdentityAdministrationSnapshot {
   users: AdminUser[]
   teams: Team[]
+  roles: RoleProfile[]
   capabilityCatalog: string[]
   securityStates: UserSecurityState[]
   securityAudit: SecurityAudit
