@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from ..models import Ticket, User
@@ -235,66 +235,62 @@ def _scope_grant_exists(
     )
 
 
-def _declined_by_agent(
-    db: Session,
-    *,
-    request_id: int,
-    user_id: int,
-) -> bool:
-    return bool(
-        db.query(WebchatHandoffDecision.id)
-        .filter(
-            WebchatHandoffDecision.request_id == request_id,
-            WebchatHandoffDecision.actor_id == user_id,
-            WebchatHandoffDecision.decision == "declined",
-        )
-        .first()
-    )
-
-
 def _eligible_requested_handoff(
     db: Session,
     *,
     user: User,
 ) -> tuple[WebchatHandoffRequest, WebchatConversation, ConversationControl] | None:
-    rows = (
-        _lock(
-            db.query(
-                WebchatHandoffRequest,
-                WebchatConversation,
-                ConversationControl,
-            )
-            .join(
-                WebchatConversation,
-                WebchatConversation.id == WebchatHandoffRequest.conversation_id,
-            )
-            .join(
-                ConversationControl,
-                ConversationControl.conversation_id == WebchatConversation.id,
-            )
-            .filter(
-                WebchatHandoffRequest.status == "requested",
-                WebchatConversation.status == "open",
-            )
-            .order_by(
-                WebchatHandoffRequest.requested_at.asc(),
-                WebchatHandoffRequest.id.asc(),
-            ),
-            db,
+    """Lock the oldest request the agent can actually serve.
+
+    Scope eligibility and this agent's prior declines are part of the SQL
+    candidate set, so unrelated global backlog cannot starve later eligible work.
+    """
+
+    declined_exists = (
+        db.query(WebchatHandoffDecision.id)
+        .filter(
+            WebchatHandoffDecision.request_id == WebchatHandoffRequest.id,
+            WebchatHandoffDecision.actor_id == user.id,
+            WebchatHandoffDecision.decision == "declined",
         )
-        .limit(100)
-        .all()
+        .exists()
     )
-    for request_row, conversation, control in rows:
-        if _declined_by_agent(
-            db,
-            request_id=request_row.id,
-            user_id=user.id,
-        ):
-            continue
-        if _scope_grant_exists(db, user=user, control=control):
-            return request_row, conversation, control
-    return None
+    query = (
+        db.query(
+            WebchatHandoffRequest,
+            WebchatConversation,
+            ConversationControl,
+        )
+        .join(
+            WebchatConversation,
+            WebchatConversation.id == WebchatHandoffRequest.conversation_id,
+        )
+        .join(
+            ConversationControl,
+            ConversationControl.conversation_id == WebchatConversation.id,
+        )
+        .join(
+            OperatorQueueScopeGrant,
+            and_(
+                OperatorQueueScopeGrant.user_id == user.id,
+                OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
+                OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
+                OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
+                OperatorQueueScopeGrant.enabled.is_(True),
+            ),
+        )
+        .filter(
+            WebchatHandoffRequest.status == "requested",
+            WebchatConversation.status == "open",
+            ConversationControl.country_code.is_not(None),
+            ~declined_exists,
+        )
+        .order_by(
+            WebchatHandoffRequest.requested_at.asc(),
+            WebchatHandoffRequest.id.asc(),
+        )
+    )
+    return _lock(query, db).first()
 
 
 def _operator_task(
@@ -621,7 +617,7 @@ def availability_summary(
     channel_key: str,
     request_row: WebchatHandoffRequest | None = None,
 ) -> dict[str, Any]:
-    # Backward-compatible public import; calculation lives in one service.
+    # Public import delegates calculation to the single scope-aware service.
     from .agent_availability_service import (
         availability_summary as scoped_availability_summary,
     )
