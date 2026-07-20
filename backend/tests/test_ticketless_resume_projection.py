@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from app.services.conversation_operator_service import _handoff_payload
 from app.services.permissions import (
-    CAP_WEBCHAT_HANDOFF_ACCEPT,
+    CAP_WEBCHAT_HANDOFF_RELEASE,
     CAP_WEBCHAT_HANDOFF_RESUME_AI,
 )
 
@@ -44,19 +44,19 @@ def test_ticketless_resume_projection_is_owner_and_occupancy_aware():
         handoff=handoff,
         conversation=active_conversation,
         user=owner,
-        capabilities={CAP_WEBCHAT_HANDOFF_ACCEPT},
+        capabilities={CAP_WEBCHAT_HANDOFF_RELEASE},
     )
     other_payload = _handoff_payload(
         handoff=handoff,
         conversation=active_conversation,
         user=other,
-        capabilities={CAP_WEBCHAT_HANDOFF_ACCEPT},
+        capabilities={CAP_WEBCHAT_HANDOFF_RELEASE},
     )
     stale_owner_payload = _handoff_payload(
         handoff=handoff,
         conversation=_conversation(active_agent_id=None),
         user=owner,
-        capabilities={CAP_WEBCHAT_HANDOFF_ACCEPT},
+        capabilities={CAP_WEBCHAT_HANDOFF_RELEASE},
     )
     supervisor_payload = _handoff_payload(
         handoff=handoff,

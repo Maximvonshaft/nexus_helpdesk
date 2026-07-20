@@ -28,9 +28,9 @@ from .permissions import (
     CAP_WEBCHAT_HANDOFF_DECLINE,
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
     CAP_WEBCHAT_HANDOFF_RELEASE,
-    CAP_WEBCHAT_HANDOFF_RESUME_AI,
     resolve_capabilities,
 )
+from .ticketless_handoff_policy import can_resume_ticketless_handoff
 from .webchat_handoff_service_core import (
     ensure_can_reply_in_handoff,
     force_takeover_ticket,
@@ -145,11 +145,6 @@ def _ticketless_payload(
         ticket=None,
     )
     capabilities = resolve_capabilities(current_user, db)
-    assigned_owner_can_resume = bool(
-        request_row.status == "accepted"
-        and request_row.assigned_agent_id == current_user.id
-        and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
-    )
     payload.update(
         {
             "ticket_no": None,
@@ -157,12 +152,11 @@ def _ticketless_payload(
             or request_row.reason_code
             or "WebChat human support",
             "queue_position": queue_position(db, request_row=request_row),
-            "can_resume_ai": bool(
-                request_row.status in _OPEN
-                and (
-                    CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
-                    or assigned_owner_can_resume
-                )
+            "can_resume_ai": can_resume_ticketless_handoff(
+                handoff=request_row,
+                conversation=conversation,
+                user_id=current_user.id,
+                capabilities=capabilities,
             ),
             "can_reply": bool(
                 request_row.status == "accepted"
@@ -691,20 +685,6 @@ def resume_ai_for_handoff(
         )
 
     request_row = _core._request_by_id(db, request_id, lock=True)
-    capabilities = resolve_capabilities(current_user, db)
-    assigned_owner_can_resume = bool(
-        request_row.status == "accepted"
-        and request_row.assigned_agent_id == current_user.id
-        and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
-    )
-    if (
-        CAP_WEBCHAT_HANDOFF_RESUME_AI not in capabilities
-        and not assigned_owner_can_resume
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
-        )
     conversation, _control = _ticketless_context(
         db,
         request_row=request_row,
@@ -714,6 +694,17 @@ def resume_ai_for_handoff(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="webchat handoff request is already terminal",
+        )
+    capabilities = resolve_capabilities(current_user, db)
+    if not can_resume_ticketless_handoff(
+        handoff=request_row,
+        conversation=conversation,
+        user_id=current_user.id,
+        capabilities=capabilities,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
         )
 
     now = utc_now()

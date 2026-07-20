@@ -21,10 +21,10 @@ from .permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_DECLINE,
     CAP_WEBCHAT_HANDOFF_RELEASE,
-    CAP_WEBCHAT_HANDOFF_RESUME_AI,
     ensure_can_send_outbound,
     resolve_capabilities,
 )
+from .ticketless_handoff_policy import can_resume_ticketless_handoff
 from .webchat_ai_turn_service import ai_snapshot
 
 
@@ -110,17 +110,11 @@ def _handoff_payload(
     capabilities: set[str],
 ) -> dict[str, Any]:
     assigned_to_current_user = handoff.assigned_agent_id == user.id
-    can_resume_ai = bool(
-        handoff.status in {"requested", "accepted"}
-        and (
-            CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
-            or (
-                handoff.status == "accepted"
-                and assigned_to_current_user
-                and conversation.active_agent_id == user.id
-                and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
-            )
-        )
+    can_resume_ai = can_resume_ticketless_handoff(
+        handoff=handoff,
+        conversation=conversation,
+        user_id=user.id,
+        capabilities=capabilities,
     )
     return {
         "id": handoff.id,
