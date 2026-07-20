@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -13,7 +12,10 @@ from sqlalchemy.orm import Session
 from ..knowledge_retrieval_service import retrieve_published_chunks
 from ..tracking_fact_schema import TrackingFactResult, safe_tracking_reference
 from ..tracking_fact_service import lookup_tracking_fact
-from ..speedaf.tracking_fact_source import lookup_speedaf_track_history_fact, lookup_speedaf_tracking_fact
+from ..speedaf.tracking_fact_source import (
+    lookup_speedaf_track_history_fact,
+    lookup_speedaf_tracking_fact,
+)
 from ..tool_governance import ToolPolicyBlocked, enforce_tool_policy, record_tool_call
 from ..webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionToolCall
 from ..webchat_ai_decision_runtime.tool_registry import ToolContract, get_tool_contract
@@ -34,7 +36,10 @@ _SECRET_KEY_PARTS = (
     "raw_payload",
     "provider_payload",
 )
-_IDENTIFIER_RE = re.compile(r"(?<![A-Z0-9])[A-Z0-9][A-Z0-9._-]{7,47}(?![A-Z0-9])", re.IGNORECASE)
+_IDENTIFIER_RE = re.compile(
+    r"(?<![A-Z0-9])[A-Z0-9][A-Z0-9._-]{7,47}(?![A-Z0-9])",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,8 @@ class AgentExecutionContext:
     allowed_tools: frozenset[str] = frozenset()
     granted_permissions: frozenset[str] = frozenset()
     actor_capabilities: frozenset[str] = frozenset()
+    customer_confirmation_granted: bool = False
+    human_confirmation_granted: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,7 +82,10 @@ class ToolObservation:
         }
 
 
-ReadHandler = Callable[[Session, AIDecisionToolCall, AgentExecutionContext], ToolObservation]
+ReadHandler = Callable[
+    [Session, AIDecisionToolCall, AgentExecutionContext],
+    ToolObservation,
+]
 
 
 def executable_tool_names() -> tuple[str, ...]:
@@ -83,7 +93,6 @@ def executable_tool_names() -> tuple[str, ...]:
     controlled = (
         "handoff.request.create",
         "ticket.create",
-        "speedaf.workOrder.create",
         "timeline.event.create",
     )
     return tuple(dict.fromkeys((*read_tools, *controlled)))
@@ -96,49 +105,115 @@ def execute_agent_tool_calls(
     context: AgentExecutionContext,
     allow_high_risk_writes: bool = False,
 ) -> list[ToolObservation]:
+    """Project canonical Tool execution results into model observations.
+
+    The model can propose Tool calls only. Availability, permissions,
+    confirmation, high-risk enablement and execution are server-owned.
+    """
+
     observations: list[ToolObservation] = []
     for call in calls:
         started = time.monotonic()
         contract = get_tool_contract(call.tool_name)
         if contract is None:
-            observations.append(_audited_error(db, call, context, "unknown_tool", started))
+            observations.append(
+                _audited_error(db, call, context, "unknown_tool", started)
+            )
             continue
-        if context.allowed_tools and contract.name not in context.allowed_tools:
-            observations.append(_audited_error(db, call, context, "tool_not_available", started))
+        if contract.name not in context.allowed_tools:
+            observations.append(
+                _audited_error(db, call, context, "tool_not_available", started)
+            )
             continue
-        if context.granted_permissions and not set(contract.required_permissions).issubset(context.granted_permissions):
-            observations.append(_audited_error(db, call, context, "tool_permission_denied", started))
+        if contract.required_permissions and not set(
+            contract.required_permissions
+        ).issubset(context.granted_permissions):
+            observations.append(
+                _audited_error(
+                    db,
+                    call,
+                    context,
+                    "tool_permission_denied",
+                    started,
+                )
+            )
             continue
         schema_error = _validate_arguments(contract, call.arguments)
         if schema_error:
-            observations.append(_audited_error(db, call, context, schema_error, started))
+            observations.append(
+                _audited_error(db, call, context, schema_error, started)
+            )
             continue
         if contract.allowed_auto_execution_mode == "disabled":
-            observations.append(_audited_error(db, call, context, "tool_disabled", started))
+            observations.append(
+                _audited_error(db, call, context, "tool_disabled", started)
+            )
             continue
-        if contract.confirmation_required and call.requires_confirmation is not True:
-            observations.append(_audited_error(db, call, context, "confirmation_required", started))
+        if contract.confirmation_required and not (
+            context.customer_confirmation_granted
+            or context.human_confirmation_granted
+        ):
+            observations.append(
+                _audited_error(
+                    db,
+                    call,
+                    context,
+                    "confirmation_required",
+                    started,
+                )
+            )
             continue
-        if contract.is_write_tool and contract.risk_level == "high" and not allow_high_risk_writes:
-            observations.append(_audited_error(db, call, context, "high_risk_write_tool_blocked", started))
+        if (
+            contract.is_write_tool
+            and contract.risk_level == "high"
+            and not allow_high_risk_writes
+        ):
+            observations.append(
+                _audited_error(
+                    db,
+                    call,
+                    context,
+                    "high_risk_write_tool_blocked",
+                    started,
+                )
+            )
             continue
         try:
             enforce_tool_policy(
                 tool_name=contract.name,
-                tool_type="read_only" if contract.is_read_tool else "write_action",
+                tool_type=(
+                    "read_only" if contract.is_read_tool else "write_action"
+                ),
                 actor_capabilities=context.actor_capabilities,
             )
         except ToolPolicyBlocked as exc:
-            observations.append(_audited_error(db, call, context, exc.decision.reason_code, started))
+            observations.append(
+                _audited_error(
+                    db,
+                    call,
+                    context,
+                    exc.decision.reason_code,
+                    started,
+                )
+            )
             continue
+
         if contract.is_read_tool:
             handler = _READ_HANDLERS.get(contract.name)
             if handler is None:
-                observations.append(_audited_error(db, call, context, "read_handler_unavailable", started))
+                observations.append(
+                    _audited_error(
+                        db,
+                        call,
+                        context,
+                        "read_handler_unavailable",
+                        started,
+                    )
+                )
                 continue
             try:
                 observation = handler(db, call, context)
-            except Exception as exc:  # pragma: no cover - bounded failure observation
+            except Exception as exc:  # pragma: no cover
                 observation = ToolObservation(
                     tool_name=call.tool_name,
                     ok=False,
@@ -149,21 +224,7 @@ def execute_agent_tool_calls(
                 _audit_observation(db, call, context, observation)
             observations.append(observation)
             continue
-        direct_handler = _WRITE_HANDLERS.get(contract.name)
-        if direct_handler is not None:
-            try:
-                observations.append(direct_handler(db, call, context))
-            except Exception as exc:  # pragma: no cover - bounded failure observation
-                observation = ToolObservation(
-                    tool_name=call.tool_name,
-                    ok=False,
-                    status="failed",
-                    error_code=f"tool_exception:{type(exc).__name__}",
-                    elapsed_ms=_elapsed(started),
-                )
-                _audit_observation(db, call, context, observation)
-                observations.append(observation)
-            continue
+
         observations.append(
             _execute_controlled_write(
                 db,
@@ -177,9 +238,15 @@ def execute_agent_tool_calls(
     return observations
 
 
-def _validate_arguments(contract: ToolContract, arguments: dict[str, Any]) -> str | None:
+def _validate_arguments(
+    contract: ToolContract,
+    arguments: dict[str, Any],
+) -> str | None:
     try:
-        jsonschema.validate(instance=arguments, schema=contract.input_schema or {"type": "object"})
+        jsonschema.validate(
+            instance=arguments,
+            schema=contract.input_schema or {"type": "object"},
+        )
     except jsonschema.ValidationError as exc:
         return f"invalid_arguments:{exc.validator}"
     return None
@@ -235,7 +302,9 @@ def _shipment_query(
 ) -> ToolObservation:
     del db
     started = time.monotonic()
-    tracking_number = str(call.arguments.get("tracking_number") or "").strip().upper()
+    tracking_number = str(
+        call.arguments.get("tracking_number") or ""
+    ).strip().upper()
     fact = lookup_tracking_fact(
         tracking_number=tracking_number,
         conversation_id=context.conversation_id,
@@ -253,7 +322,9 @@ def _shipment_history_query(
 ) -> ToolObservation:
     del db
     started = time.monotonic()
-    tracking_number = str(call.arguments.get("tracking_number") or "").strip().upper()
+    tracking_number = str(
+        call.arguments.get("tracking_number") or ""
+    ).strip().upper()
     fact = lookup_speedaf_track_history_fact(
         tracking_number=tracking_number,
         conversation_id=context.conversation_id,
@@ -273,7 +344,14 @@ def _waybill_candidates_query(
     fact = lookup_speedaf_tracking_fact(
         tracking_number=None,
         caller_id=str(call.arguments.get("caller_id") or "").strip(),
-        country_code=str(call.arguments.get("country_code") or context.country_code or "").strip() or None,
+        country_code=(
+            str(
+                call.arguments.get("country_code")
+                or context.country_code
+                or ""
+            ).strip()
+            or None
+        ),
         conversation_id=context.conversation_id,
         ticket_id=context.ticket_id,
         request_id=context.request_id,
@@ -281,7 +359,12 @@ def _waybill_candidates_query(
     return _tracking_observation(call.tool_name, fact, started=started)
 
 
-def _tracking_observation(tool_name: str, fact: TrackingFactResult, *, started: float) -> ToolObservation:
+def _tracking_observation(
+    tool_name: str,
+    fact: TrackingFactResult,
+    *,
+    started: float,
+) -> ToolObservation:
     result: dict[str, Any] = {
         "reference": safe_tracking_reference(fact.tracking_number),
         "checked_at": fact.checked_at,
@@ -295,8 +378,15 @@ def _tracking_observation(tool_name: str, fact: TrackingFactResult, *, started: 
             {
                 "status": fact.status,
                 "status_label": fact.status_label,
-                "latest_event": fact.latest_event.to_safe_dict() if fact.latest_event else None,
-                "recent_events": [event.to_safe_dict() for event in fact.events_summary[:5]],
+                "latest_event": (
+                    fact.latest_event.to_safe_dict()
+                    if fact.latest_event
+                    else None
+                ),
+                "recent_events": [
+                    event.to_safe_dict()
+                    for event in fact.events_summary[:5]
+                ],
                 "status_context": _safe_value(fact.status_context),
             }
         )
@@ -306,7 +396,9 @@ def _tracking_observation(tool_name: str, fact: TrackingFactResult, *, started: 
                 "failure_reason": fact.failure_reason,
                 "failure_summary": fact.failure_summary,
                 "retryable": fact.failure_retryable,
-                "needs_customer_confirmation": fact.failure_needs_customer_confirmation,
+                "needs_customer_confirmation": (
+                    fact.failure_needs_customer_confirmation
+                ),
                 "needs_human_review": fact.failure_needs_human_review,
                 "safe_candidates": _safe_value(fact.safe_candidates[:10]),
             }
@@ -314,77 +406,19 @@ def _tracking_observation(tool_name: str, fact: TrackingFactResult, *, started: 
     return ToolObservation(
         tool_name=tool_name,
         ok=bool(fact.fact_evidence_present),
-        status="success" if fact.fact_evidence_present else str(fact.tool_status or "no_evidence"),
+        status=(
+            "success"
+            if fact.fact_evidence_present
+            else str(fact.tool_status or "no_evidence")
+        ),
         result=_safe_value(result),
-        error_code=None if fact.fact_evidence_present else str(fact.failure_reason or "tracking_unavailable")[:120],
+        error_code=(
+            None
+            if fact.fact_evidence_present
+            else str(fact.failure_reason or "tracking_unavailable")[:120]
+        ),
         elapsed_ms=_elapsed(started),
     )
-
-
-def _speedaf_work_order_create(
-    db: Session,
-    call: AIDecisionToolCall,
-    context: AgentExecutionContext,
-) -> ToolObservation:
-    from ...models import Ticket
-    from ...webchat_models import WebchatConversation
-    from ..background_jobs import enqueue_speedaf_work_order_create_job
-    from ..speedaf.status_map import is_auto_work_order_type_allowed
-
-    started = time.monotonic()
-    if not _env_bool("WEBCHAT_AI_AUTO_WORK_ORDER_ENABLED", False):
-        return _audited_error(db, call, context, "tool_disabled", started)
-    if not _env_bool("SPEEDAF_WORK_ORDER_CREATE_ENABLED", False):
-        return _audited_error(db, call, context, "provider_write_disabled", started)
-    tracking_number = str(call.arguments.get("tracking_number") or "").strip().upper()
-    work_order_type = str(call.arguments.get("work_order_type") or "").strip()
-    if not is_auto_work_order_type_allowed(work_order_type):
-        return _audited_error(db, call, context, "work_order_type_not_allowed", started)
-    conversation = db.get(WebchatConversation, context.conversation_id) if context.conversation_id else None
-    ticket = db.get(Ticket, context.ticket_id) if context.ticket_id else None
-    if conversation is None or ticket is None:
-        return _audited_error(db, call, context, "conversation_or_ticket_required", started)
-    caller_id = _first_phone(
-        getattr(conversation, "visitor_phone", None),
-        getattr(ticket, "preferred_reply_contact", None),
-        getattr(getattr(ticket, "customer", None), "phone", None),
-    )
-    if not caller_id:
-        return _audited_error(db, call, context, "caller_id_required", started)
-    description = str(call.arguments.get("description") or "Customer requested delivery follow-up.").strip()[:500]
-    job = enqueue_speedaf_work_order_create_job(
-        db,
-        ticket_id=ticket.id,
-        conversation_id=conversation.id,
-        waybill_code=tracking_number,
-        caller_id=caller_id,
-        description=description,
-        work_order_type=work_order_type,
-    )
-    observation = ToolObservation(
-        tool_name=call.tool_name,
-        ok=True,
-        status="queued",
-        result={
-            "work_order_type": work_order_type,
-            "reference": safe_tracking_reference(tracking_number),
-            "job_id": job.id,
-        },
-        elapsed_ms=_elapsed(started),
-    )
-    _audit_observation(db, call, context, observation)
-    return observation
-
-
-def _first_phone(*values: Any) -> str | None:
-    for value in values:
-        text = str(value or "").strip()
-        match = re.search(r"\+?\d[\d\s().-]{6,}\d", text)
-        if match:
-            cleaned = re.sub(r"[\s().-]+", "", match.group(0))
-            if 8 <= len(re.sub(r"\D", "", cleaned)) <= 18:
-                return cleaned[:80]
-    return None
 
 
 def _execute_controlled_write(
@@ -399,15 +433,27 @@ def _execute_controlled_write(
     from ...models import Customer, Ticket
     from ...webchat_models import WebchatConversation
 
-    conversation = db.get(WebchatConversation, context.conversation_id) if context.conversation_id else None
+    conversation = (
+        db.get(WebchatConversation, context.conversation_id)
+        if context.conversation_id
+        else None
+    )
     ticket = db.get(Ticket, context.ticket_id) if context.ticket_id else None
-    customer = db.get(Customer, context.customer_id) if context.customer_id else None
+    customer = (
+        db.get(Customer, context.customer_id)
+        if context.customer_id
+        else None
+    )
     case_context = CaseContext(
         conversation_id=context.conversation_id,
         ticket_id=context.ticket_id,
         channel=context.channel_key,
         country_code=context.country_code,
-    ).with_inbound_message(context.customer_message, channel=context.channel_key, country_code=context.country_code)
+    ).with_inbound_message(
+        context.customer_message,
+        channel=context.channel_key,
+        country_code=context.country_code,
+    )
     tool_decision = AIDecision(
         customer_reply=None,
         intent="tool_execution",
@@ -430,21 +476,43 @@ def _execute_controlled_write(
         ai_decision=tool_decision,
         options=GovernedToolExecutionOptions(
             allow_high_risk_write_execution=allow_high_risk_writes,
-            allowed_high_risk_write_tools=frozenset({contract.name}) if allow_high_risk_writes else frozenset(),
+            allowed_high_risk_write_tools=(
+                frozenset({contract.name})
+                if allow_high_risk_writes
+                else frozenset()
+            ),
+            customer_confirmation_granted=(
+                context.customer_confirmation_granted
+            ),
+            human_confirmation_granted=context.human_confirmation_granted,
         ),
     )
     if not results:
-        return _audited_error(db, call, context, "tool_not_executed", started)
+        return _audited_error(
+            db,
+            call,
+            context,
+            "tool_not_executed",
+            started,
+        )
     result = results[0]
     safe_result = {
         "summary": _safe_value(result.summary or {}),
-        "customer_visible_summary": str(result.customer_visible_summary or "")[:1000] or None,
+        "customer_visible_summary": (
+            str(result.customer_visible_summary or "")[:1000] or None
+        ),
     }
     return ToolObservation(
         tool_name=call.tool_name,
         ok=bool(result.ok),
-        status=str(result.status or ("success" if result.ok else "failed"))[:80],
-        result={key: value for key, value in safe_result.items() if value not in (None, "", [], {})},
+        status=str(
+            result.status or ("success" if result.ok else "failed")
+        )[:80],
+        result={
+            key: value
+            for key, value in safe_result.items()
+            if value not in (None, "", [], {})
+        },
         error_code=str(result.error_code or "")[:120] or None,
         elapsed_ms=_elapsed(started),
     )
@@ -460,13 +528,21 @@ def _audit_observation(
     record_tool_call(
         tool_name=call.tool_name,
         provider="agent_runtime",
-        tool_type="read_only" if contract is None or contract.is_read_tool else "write_action",
+        tool_type=(
+            "read_only"
+            if contract is None or contract.is_read_tool
+            else "write_action"
+        ),
         input_payload=call.arguments,
         output_payload=observation.prompt_projection(),
         status=observation.status,
         error_code=observation.error_code,
         elapsed_ms=observation.elapsed_ms,
-        conversation_id=str(context.conversation_id) if context.conversation_id is not None else None,
+        conversation_id=(
+            str(context.conversation_id)
+            if context.conversation_id is not None
+            else None
+        ),
         webchat_conversation_id=context.conversation_id,
         ticket_id=context.ticket_id,
         ai_turn_id=context.ai_turn_id,
@@ -488,18 +564,27 @@ def _audited_error(
     return observation
 
 
-def _error(tool_name: str, error_code: str, started: float) -> ToolObservation:
+def _error(
+    tool_name: str,
+    error_code: str,
+    started: float,
+) -> ToolObservation:
     return ToolObservation(
         tool_name=tool_name,
         ok=False,
-        status="blocked" if error_code in {
-            "unknown_tool",
-            "tool_not_available",
-            "tool_permission_denied",
-            "tool_disabled",
-            "confirmation_required",
-            "high_risk_write_tool_blocked",
-        } else "failed",
+        status=(
+            "blocked"
+            if error_code
+            in {
+                "unknown_tool",
+                "tool_not_available",
+                "tool_permission_denied",
+                "tool_disabled",
+                "confirmation_required",
+                "high_risk_write_tool_blocked",
+            }
+            else "failed"
+        ),
         error_code=error_code[:160],
         elapsed_ms=_elapsed(started),
     )
@@ -518,17 +603,26 @@ def _safe_value(value: Any, *, depth: int = 0) -> Any:
         bounded = value[:2000]
         return _IDENTIFIER_RE.sub(_redact_identifier, bounded)
     if isinstance(value, (list, tuple, set)):
-        return [_safe_value(item, depth=depth + 1) for item in list(value)[:20]]
+        return [
+            _safe_value(item, depth=depth + 1)
+            for item in list(value)[:20]
+        ]
     if isinstance(value, dict):
         safe: dict[str, Any] = {}
         for key, item in list(value.items())[:40]:
             normalized = str(key).lower()
             if any(part in normalized for part in _SECRET_KEY_PARTS):
                 continue
-            safe[str(key)[:100]] = _safe_value(item, depth=depth + 1)
+            safe[str(key)[:100]] = _safe_value(
+                item,
+                depth=depth + 1,
+            )
         return safe
     try:
-        return _safe_value(json.loads(json.dumps(value, default=str)), depth=depth + 1)
+        return _safe_value(
+            json.loads(json.dumps(value, default=str)),
+            depth=depth + 1,
+        )
     except Exception:
         return type(value).__name__
 
@@ -541,20 +635,9 @@ def _redact_identifier(match: re.Match[str]) -> str:
     return f"reference ending {compact[-6:]}"
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 _READ_HANDLERS: dict[str, ReadHandler] = {
     "knowledge.search": _knowledge_search,
     "speedaf.order.query": _shipment_query,
     "speedaf.express.track.query": _shipment_history_query,
     "speedaf.order.waybillCode.query": _waybill_candidates_query,
-}
-
-_WRITE_HANDLERS: dict[str, ReadHandler] = {
-    "speedaf.workOrder.create": _speedaf_work_order_create,
 }
