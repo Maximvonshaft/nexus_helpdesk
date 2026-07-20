@@ -10,7 +10,7 @@ function json(route: Route, body: unknown, status = 200) {
   })
 }
 
-function adminUser() {
+function adminUser(mustChangePassword = false) {
   return {
     id: 1,
     username: 'admin',
@@ -19,6 +19,9 @@ function adminUser() {
     role: 'admin',
     team_id: 1,
     capabilities: ['user.manage', 'security.read', 'audit.read', 'runtime.manage'],
+    must_change_password: mustChangePassword,
+    password_changed_at: mustChangePassword ? null : '2026-07-20T13:00:00Z',
+    last_login_at: '2026-07-20T12:00:00Z',
   }
 }
 
@@ -51,23 +54,13 @@ async function installIdentityMocks(page: Page, options: IdentityMockOptions = {
     const path = url.pathname
     const command = `${request.method()} ${path}`
 
-    if (path === '/api/auth/me') return json(route, adminUser())
-    if (path === '/api/auth/security') {
-      return json(route, {
-        user_id: 1,
-        session_version: mustChangePassword ? 1 : 2,
-        must_change_password: mustChangePassword,
-        password_changed_at: mustChangePassword ? null : '2026-07-20T13:00:00Z',
-        last_login_at: '2026-07-20T12:00:00Z',
-        updated_at: '2026-07-20T13:00:00Z',
-      })
-    }
+    if (path === '/api/auth/me') return json(route, adminUser(mustChangePassword))
     if (path === '/api/auth/change-password' && request.method() === 'POST') {
       mustChangePassword = false
       return json(route, {
         access_token: 'rotated-token',
         token_type: 'bearer',
-        user: adminUser(),
+        user: adminUser(false),
       })
     }
     if (path === '/api/admin/users' && request.method() === 'GET') {
