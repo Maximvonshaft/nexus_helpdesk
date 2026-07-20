@@ -40,7 +40,6 @@ import {
 type SpeedafActionKind = 'none' | 'waybill_lookup' | 'work_order' | 'address_update' | 'cancel'
 type ActionResultEnvelope = { kind: SpeedafActionKind; result: Record<string, unknown> }
 type CancelPreviewBinding = { fingerprint: string; result: SpeedafCancelPreviewResponse }
-
 type ConversationOutcome = 'human_resolved' | 'no_action_required' | 'customer_abandoned' | 'unresolved'
 
 const CONVERSATION_OUTCOMES: Array<{ value: ConversationOutcome; label: string }> = [
@@ -284,7 +283,7 @@ export function OperatorWorkspaceActions({
                 onChange={(event) => setConversationCloseNote(event.target.value)}
                 multiline
                 minRows={2}
-                inputProps={{ maxLength: 2000 }}
+                slotProps={{ htmlInput: { maxLength: 2000 } }}
               />
               <Button
                 color={conversationOutcome === 'unresolved' ? 'warning' : 'success'}
