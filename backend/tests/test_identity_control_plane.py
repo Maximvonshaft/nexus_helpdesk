@@ -22,12 +22,17 @@ sys.path.insert(0, str(ROOT.parent))
 from app.api.admin import activate_user, deactivate_user, reset_user_password  # noqa: E402
 from app.api.auth import ChangePasswordRequest, change_password  # noqa: E402
 from app.api.deps import get_current_user  # noqa: E402
-from app.api.identity_admin import admin_logout_all_sessions  # noqa: E402
+from app.api.identity_admin import (  # noqa: E402
+    UserTeamAssignmentRequest,
+    admin_logout_all_sessions,
+    assign_user_team,
+    clear_user_email,
+)
 from app.auth_service import create_access_token, decode_access_token_claims, hash_password, verify_password  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.model_registry import register_all_models  # noqa: E402
-from app.models import AdminAuditLog, User  # noqa: E402
+from app.models import AdminAuditLog, Team, User  # noqa: E402
 from app.models_identity import UserSecurityState  # noqa: E402
 from app.schemas import PasswordResetRequest  # noqa: E402
 
@@ -170,3 +175,56 @@ def test_deactivate_then_reactivate_does_not_resurrect_old_session(db_session):
     assert refreshed.session_version == 2
     assert user.is_active is True
     assert_token_rejected(db_session, old_token)
+
+
+def test_team_assignment_and_removal_use_one_explicit_command(db_session):
+    admin = make_user(db_session, "admin-team", UserRole.admin)
+    user = make_user(db_session, "team-target", UserRole.agent)
+    team = Team(name="Customer Care", team_type="support", is_active=True)
+    db_session.add(team)
+    db_session.flush()
+
+    assigned = assign_user_team(
+        user.id,
+        UserTeamAssignmentRequest(team_id=team.id),
+        db=db_session,
+        current_user=admin,
+    )
+    assert assigned == {"ok": True, "user_id": user.id, "team_id": team.id}
+    assert user.team_id == team.id
+
+    removed = assign_user_team(
+        user.id,
+        UserTeamAssignmentRequest(team_id=None),
+        db=db_session,
+        current_user=admin,
+    )
+    assert removed == {"ok": True, "user_id": user.id, "team_id": None}
+    assert user.team_id is None
+
+    actions = [
+        row.action
+        for row in db_session.query(AdminAuditLog)
+        .filter(AdminAuditLog.target_id == user.id)
+        .order_by(AdminAuditLog.id.asc())
+        .all()
+    ]
+    assert actions[-2:] == ["user.team.assign", "user.team.assign"]
+
+
+def test_optional_email_removal_is_explicit_and_audited(db_session):
+    admin = make_user(db_session, "admin-email", UserRole.admin)
+    user = make_user(db_session, "email-target", UserRole.agent)
+    previous_email = user.email
+
+    result = clear_user_email(user.id, db=db_session, current_user=admin)
+
+    assert result == {"ok": True, "user_id": user.id, "email": None}
+    assert user.email is None
+    audit = (
+        db_session.query(AdminAuditLog)
+        .filter(AdminAuditLog.action == "user.email.clear", AdminAuditLog.target_id == user.id)
+        .one()
+    )
+    assert json.loads(audit.old_value_json or "{}") == {"email": previous_email}
+    assert json.loads(audit.new_value_json or "{}") == {"email": None}
