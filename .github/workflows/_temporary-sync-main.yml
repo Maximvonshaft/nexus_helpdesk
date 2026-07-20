@@ -1,4 +1,4 @@
-name: Temporary Synchronize Conversation Branch With Main
+name: Temporary Diagnose Main Merge
 
 on:
   push:
@@ -6,92 +6,70 @@ on:
       - feat/conversation-first-agent-routing
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
   statuses: write
 
 jobs:
-  synchronize:
+  diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
     steps:
-      - name: Register synchronization run
+      - name: Checkout exact branch Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Reproduce merge and capture complete evidence
+        id: merge
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin main
+          set +e
+          git merge --no-commit --no-ff origin/main > /tmp/merge-output.txt 2>&1
+          merge_code=$?
+          set -e
+          {
+            echo "merge_exit_code=${merge_code}"
+            echo
+            echo "=== merge output ==="
+            cat /tmp/merge-output.txt
+            echo
+            echo "=== unresolved paths ==="
+            git diff --name-only --diff-filter=U
+            echo
+            echo "=== status ==="
+            git status --short
+            echo
+            echo "=== combined conflict diff ==="
+            git diff --cc --no-ext-diff
+          } > /tmp/merge-diagnostics.txt
+          echo "merge_code=${merge_code}" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+            git merge --abort
+          fi
+      - name: Upload merge diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: conversation-main-merge-diagnostics-${{ github.sha }}
+          path: /tmp/merge-diagnostics.txt
+          if-no-files-found: error
+          retention-days: 3
+      - name: Publish diagnostic run identity
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          MERGE_CODE: ${{ steps.merge.outputs.merge_code }}
         run: |
+          state="success"
+          description="merge diagnostics captured; exit=${MERGE_CODE}"
           curl --fail-with-body --silent --show-error \
             --request POST \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
-            --data "{\"state\":\"pending\",\"context\":\"main-synchronization\",\"description\":\"merging latest main\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
-      - name: Checkout exact branch Head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-          ref: ${{ github.sha }}
-      - name: Remove synchronizer and merge current main
-        id: merge
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/_temporary-sync-main.yml
-          git commit -m "chore: remove temporary main synchronizer"
-          git fetch --no-tags origin main
-          git merge --no-ff -m "merge: synchronize conversation-first branch with latest main" origin/main
-          git merge-base --is-ancestor origin/main HEAD
-          git diff --check origin/main...HEAD
-          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
-          git push origin HEAD:feat/conversation-first-agent-routing
-          echo "final_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Dispatch canonical acceptance for merged Head
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/dispatches" \
-            --data '{"ref":"feat/conversation-first-agent-routing"}'
-      - name: Publish merged candidate identity
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          FINAL_SHA: ${{ steps.merge.outputs.final_sha }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -Eeuo pipefail
-          canonical_run_id=""
-          for _attempt in $(seq 1 30); do
-            runs="$(curl --fail-with-body --silent --show-error \
-              --header "Authorization: Bearer ${GH_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/runs?branch=feat%2Fconversation-first-agent-routing&event=workflow_dispatch&per_page=20")"
-            canonical_run_id="$(jq -r --arg sha "${FINAL_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' <<<"${runs}" | head -n 1)"
-            if [[ -n "${canonical_run_id}" && "${canonical_run_id}" != "null" ]]; then
-              break
-            fi
-            sleep 2
-          done
-          test -n "${canonical_run_id}"
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
-            --data "{\"state\":\"pending\",\"context\":\"canonical-acceptance-dispatched\",\"description\":\"run_id=${canonical_run_id}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${canonical_run_id}\"}"
+            --data "{\"state\":\"${state}\",\"context\":\"main-merge-diagnostics\",\"description\":\"${description}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
