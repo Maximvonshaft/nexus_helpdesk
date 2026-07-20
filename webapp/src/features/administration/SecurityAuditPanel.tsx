@@ -30,11 +30,14 @@ import { supportApi } from '@/lib/supportApi'
 function auditActionLabel(action: string) {
   const labels: Record<string, string> = {
     'auth.password_changed': '用户修改密码',
+    'auth.sessions_revoked': '用户撤销全部会话',
     'user.create': '创建用户',
     'user.update': '更新用户',
     'user.activate': '启用用户',
     'user.deactivate': '停用用户',
     'user.reset_password': '管理员重置密码',
+    'user.password_change_required': '管理员要求修改密码',
+    'user.sessions_revoked': '管理员撤销用户会话',
     'user.team_cleared': '清除用户团队',
     'team.create': '创建团队',
     'team.update': '更新团队',
