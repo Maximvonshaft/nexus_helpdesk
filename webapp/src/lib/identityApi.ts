@@ -43,20 +43,37 @@ async function listAllAdminUsers() {
 
 async function updateAdminUser(userId: number, payload: UserUpdatePayload) {
   const hasTeamAssignment = Object.prototype.hasOwnProperty.call(payload, 'team_id')
-  const { team_id: teamId, ...profilePayload } = payload
-  const user = await apiRequest<AdminUser>(`/api/admin/users/${userId}`, {
+  const hasEmailAssignment = Object.prototype.hasOwnProperty.call(payload, 'email')
+  const { team_id: teamId, email, ...profileFields } = payload
+  const profilePayload = {
+    ...profileFields,
+    ...(hasEmailAssignment && email !== null ? { email } : {}),
+  }
+
+  let user = await apiRequest<AdminUser>(`/api/admin/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify(profilePayload),
     requestIdPrefix: 'identity-admin',
   })
 
-  if (!hasTeamAssignment) return user
-  const assignment = await apiRequest<{ ok: boolean; user_id: number; team_id: number | null }>(`/api/admin/users/${userId}/team`, {
-    method: 'PUT',
-    body: JSON.stringify({ team_id: teamId ?? null }),
-    requestIdPrefix: 'identity-admin',
-  })
-  return { ...user, team_id: assignment.team_id }
+  if (hasEmailAssignment && email === null) {
+    await apiRequest<{ ok: boolean; user_id: number; email: null }>(`/api/admin/users/${userId}/email`, {
+      method: 'DELETE',
+      requestIdPrefix: 'identity-admin',
+    })
+    user = { ...user, email: null }
+  }
+
+  if (hasTeamAssignment) {
+    const assignment = await apiRequest<{ ok: boolean; user_id: number; team_id: number | null }>(`/api/admin/users/${userId}/team`, {
+      method: 'PUT',
+      body: JSON.stringify({ team_id: teamId ?? null }),
+      requestIdPrefix: 'identity-admin',
+    })
+    user = { ...user, team_id: assignment.team_id }
+  }
+
+  return user
 }
 
 export const identityApi = {
