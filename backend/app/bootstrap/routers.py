@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI
 
 from ..api.admin import router as admin_router
 from ..api.admin_identity import router as admin_identity_router
+from ..api.admin_identity_policy import enforce_admin_identity_request_policy
 from ..api.admin_password_policy import enforce_admin_password_request_policy
 from ..api.admin_perf import router as admin_perf_router
 from ..api.admin_provider_runtime import router as admin_provider_runtime_router
@@ -51,7 +52,10 @@ def register_api_routers(app: FastAPI) -> None:
         app.include_router(router)
     app.include_router(
         admin_router,
-        dependencies=[Depends(enforce_admin_password_request_policy)],
+        dependencies=[
+            Depends(enforce_admin_identity_request_policy),
+            Depends(enforce_admin_password_request_policy),
+        ],
     )
     for router in (
         admin_queue_router,
