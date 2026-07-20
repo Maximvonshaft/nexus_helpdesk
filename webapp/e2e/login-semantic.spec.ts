@@ -89,7 +89,7 @@ test('Login failure is bounded, announced, and focused without exposing backend 
   await page.getByRole('button', { name: '登录' }).click()
 
   const alert = page.getByRole('alert')
-  await expect(alert).toHaveText('账号或密码错误，或登录尝试已被暂时限制。')
+  await expect(alert).toHaveText('账号或密码错误。')
   await expect(alert).toBeFocused()
   await expect(page.getByText('raw-private-backend-error')).toHaveCount(0)
 })
