@@ -1,5 +1,6 @@
 import KeyRoundedIcon from '@mui/icons-material/KeyRounded'
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
+import SecurityRoundedIcon from '@mui/icons-material/SecurityRounded'
 import {
   Alert,
   Box,
@@ -35,13 +36,14 @@ import { supportApi } from '@/lib/supportApi'
 import type { CredentialPolicy } from '@/lib/types'
 
 type CredentialAction = {
-  kind: 'require-password-change' | 'revoke-sessions'
+  kind: 'require-password-change' | 'revoke-sessions' | 'reset-mfa'
   policy: CredentialPolicy
 }
 
 function actionTitle(action: CredentialAction | null) {
   if (action?.kind === 'require-password-change') return '要求修改密码'
   if (action?.kind === 'revoke-sessions') return '撤销全部会话'
+  if (action?.kind === 'reset-mfa') return '重置两步验证'
   return '凭据操作'
 }
 
@@ -71,6 +73,9 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
       if (selected.kind === 'require-password-change') {
         return supportApi.requireAdminUserPasswordChange(selected.policy.user_id)
       }
+      if (selected.kind === 'reset-mfa') {
+        return supportApi.resetAdminUserMfa(selected.policy.user_id)
+      }
       return supportApi.revokeAdminUserSessions(selected.policy.user_id)
     },
     onSuccess: async () => {
@@ -84,6 +89,7 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
   })
 
   const forcedCount = (policies.data ?? []).filter((policy) => policy.must_change_password).length
+  const mfaCount = (policies.data ?? []).filter((policy) => policy.mfa_enabled).length
   const neverLoggedInCount = (policies.data ?? []).filter((policy) => !policy.last_login_at).length
 
   return (
@@ -92,7 +98,7 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
         <Box>
           <Typography id="credential-governance-title" component="h2" variant="h2">凭据与会话</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            查看密码轮换状态、最近登录，并通过同一身份版本撤销 HTTP 与实时工作会话。
+            查看密码轮换、两步验证与最近登录，并通过同一身份版本撤销 HTTP 和实时工作会话。
           </Typography>
         </Box>
         <TextField
@@ -105,6 +111,7 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 2 }}>
         <Chip label={`待修改密码 ${forcedCount}`} color={forcedCount ? 'warning' : 'default'} />
+        <Chip label={`已启用 MFA ${mfaCount}`} color={mfaCount ? 'success' : 'default'} />
         <Chip label={`从未登录 ${neverLoggedInCount}`} />
         <Chip label={`账号总数 ${policies.data?.length ?? 0}`} />
       </Stack>
@@ -127,6 +134,7 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
                 <TableCell>账号</TableCell>
                 <TableCell>身份</TableCell>
                 <TableCell>密码状态</TableCell>
+                <TableCell>两步验证</TableCell>
                 <TableCell>上次登录</TableCell>
                 <TableCell>密码更新</TableCell>
                 <TableCell align="right">操作</TableCell>
@@ -154,6 +162,12 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
                         label={policy.must_change_password ? '必须修改' : '正常'}
                       />
                     </TableCell>
+                    <TableCell>
+                      <Stack spacing={0.5} sx={{ alignItems: 'flex-start' }}>
+                        <Chip size="small" color={policy.mfa_enabled ? 'success' : 'default'} label={policy.mfa_enabled ? '已启用' : '未启用'} />
+                        {policy.mfa_enabled ? <Typography variant="caption" color="text.secondary">恢复码 {policy.mfa_recovery_codes_remaining}</Typography> : null}
+                      </Stack>
+                    </TableCell>
                     <TableCell>{policy.last_login_at ? formatDateTime(policy.last_login_at) : '从未登录'}</TableCell>
                     <TableCell>{policy.password_changed_at ? formatDateTime(policy.password_changed_at) : '暂无'}</TableCell>
                     <TableCell align="right">
@@ -176,6 +190,17 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
                         >
                           撤销会话
                         </Button>
+                        {policy.mfa_enabled ? (
+                          <Button
+                            size="small"
+                            color="error"
+                            startIcon={<SecurityRoundedIcon />}
+                            disabled={isSelf || mutatePolicy.isPending}
+                            onClick={() => setAction({ kind: 'reset-mfa', policy })}
+                          >
+                            重置 MFA
+                          </Button>
+                        ) : null}
                       </Stack>
                       {isSelf ? <Typography variant="caption" color="text.secondary">当前账号请在账户设置操作</Typography> : null}
                     </TableCell>
@@ -193,10 +218,15 @@ export function CredentialGovernance({ currentUserId }: { currentUserId: number 
           <DialogContentText>
             {action?.kind === 'require-password-change'
               ? `${action.policy.display_name} 的现有会话将立即失效；下次登录后只能进入账户设置，完成密码修改后才能恢复业务访问。`
-              : `${action?.policy.display_name ?? '该账号'} 在所有设备和实时工作连接中的现有访问将立即失效；密码不会改变。`}
+              : action?.kind === 'reset-mfa'
+                ? `${action.policy.display_name} 的验证器密钥和全部恢复码将被删除，现有会话也会立即失效。用户下次登录只需密码，可在账户设置重新启用 MFA。`
+                : `${action?.policy.display_name ?? '该账号'} 在所有设备和实时工作连接中的现有访问将立即失效；密码不会改变。`}
           </DialogContentText>
           {action?.kind === 'require-password-change' && action.policy.must_change_password ? (
             <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>该账号当前已经处于必须修改密码状态；确认后仍会再次撤销现有会话。</Alert>
+          ) : null}
+          {action?.kind === 'reset-mfa' ? (
+            <Alert severity="warning" variant="outlined" sx={{ mt: 2 }}>MFA 重置不可撤销，且不会显示或恢复旧密钥与恢复码。</Alert>
           ) : null}
         </DialogContent>
         <DialogActions>
