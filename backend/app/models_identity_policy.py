@@ -9,6 +9,7 @@ from sqlalchemy.orm.util import identity_key
 
 from .db import Base
 from .models import User
+from .services.credential_creation_context import administrator_issued_credential_active
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
@@ -74,7 +75,7 @@ def _create_policy_for_new_user(mapper, connection: Connection, target: User) ->
     connection.execute(
         UserCredentialPolicy.__table__.insert().values(
             user_id=target.id,
-            must_change_password=True,
+            must_change_password=administrator_issued_credential_active(),
             password_changed_at=None,
             last_login_at=None,
             created_at=now,
