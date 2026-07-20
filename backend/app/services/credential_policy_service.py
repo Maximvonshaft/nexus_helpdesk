@@ -77,10 +77,23 @@ def advance_user_identity_version(user: User) -> None:
 
 def credential_policy_payload(db: Session, user_id: int) -> dict:
     row = get_credential_policy(db, user_id)
+    recovery_codes_remaining = 0
+    if row is not None and row.mfa_recovery_codes_json:
+        try:
+            import json
+
+            value = json.loads(row.mfa_recovery_codes_json)
+            recovery_codes_remaining = len(value) if isinstance(value, list) else 0
+        except (TypeError, json.JSONDecodeError):
+            recovery_codes_remaining = 0
     return {
         "user_id": user_id,
         "must_change_password": bool(row.must_change_password) if row is not None else False,
         "password_changed_at": row.password_changed_at if row is not None else None,
         "last_login_at": row.last_login_at if row is not None else None,
+        "mfa_enabled": bool(row.mfa_enabled) if row is not None else False,
+        "mfa_confirmed_at": row.mfa_confirmed_at if row is not None else None,
+        "mfa_last_verified_at": row.mfa_last_verified_at if row is not None else None,
+        "mfa_recovery_codes_remaining": recovery_codes_remaining,
         "updated_at": row.updated_at if row is not None else None,
     }
