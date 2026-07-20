@@ -1,0 +1,256 @@
+--- a/backend/app/services/webchat_voice_service.py
++++ b/backend/app/services/webchat_voice_service.py
+@@ -14,2 +14,3 @@
+-from ..enums import EventType
+-from ..models import Ticket, TicketInternalNote, User
++from ..enums import EventType, SourceChannel, TicketPriority
++from ..models import Customer, Ticket, TicketInternalNote, User
++from ..models_agent_routing import ConversationControl
+@@ -20,0 +22,2 @@
++from .nexus_osr.auto_ticket_service import create_or_reuse_ticket_from_case_context
++from .nexus_osr.case_context import CaseContext
+@@ -351,0 +355,50 @@
++def _ensure_voice_ticket(db: Session, *, conversation: WebchatConversation) -> Ticket:
++    """Create the formal support ticket only when a customer starts a voice call.
++
++    Text chat remains conversation-first. The existing voice operator surface is
++    ticket-addressed, so the voice action is the explicit business boundary that
++    creates (or reuses) the ticket. The canonical OSR ticket authority supplies
++    locking, idempotency, audit events, and the conversation linkage.
++    """
++
++    if conversation.ticket_id is not None:
++        ticket = db.get(Ticket, conversation.ticket_id)
++        if ticket is None:
++            raise HTTPException(
++                status_code=status.HTTP_409_CONFLICT,
++                detail="voice_conversation_ticket_missing",
++            )
++        return ticket
++
++    control = (
++        db.query(ConversationControl)
++        .filter(ConversationControl.conversation_id == conversation.id)
++        .one_or_none()
++    )
++    customer = (
++        db.get(Customer, control.customer_id)
++        if control is not None and control.customer_id is not None
++        else None
++    )
++    case_context = CaseContext(
++        conversation_id=conversation.id,
++        channel=conversation.channel_key or SourceChannel.web_chat.value,
++        country_code=control.country_code if control is not None else None,
++        issue_type="live_voice_support",
++        customer_claim_summary="Customer requested live voice support.",
++        ai_actions_taken=["live_voice_requested"],
++    )
++    result = create_or_reuse_ticket_from_case_context(
++        db,
++        case_context=case_context,
++        customer=customer,
++        conversation=conversation,
++        source_channel=SourceChannel.web_chat,
++        title=f"Live voice support · {conversation.visitor_name or conversation.public_id}"[:200],
++        description="Customer initiated a live voice support session from WebChat.",
++        priority=TicketPriority.medium,
++        issue_type="live_voice_support",
++    )
++    return result.ticket
++
++
+@@ -374,0 +428 @@
++    ticket = _ensure_voice_ticket(db, conversation=conversation)
+@@ -397 +451 @@
+-            ticket_id=conversation.ticket_id,
++            ticket_id=ticket.id,
+@@ -417 +471 @@
+-        _write_voice_event(db, conversation_id=conversation.id, ticket_id=conversation.ticket_id, event_type="voice.session.created", payload={"voice_session_id": session.public_id, "provider": session.provider, "room_name": session.provider_room_name})
++        _write_voice_event(db, conversation_id=conversation.id, ticket_id=ticket.id, event_type="voice.session.created", payload={"voice_session_id": session.public_id, "provider": session.provider, "room_name": session.provider_room_name})
+@@ -419 +473 @@
+-        _write_voice_event(db, conversation_id=conversation.id, ticket_id=conversation.ticket_id, event_type="voice.session.ringing", payload={"voice_session_id": session.public_id})
++        _write_voice_event(db, conversation_id=conversation.id, ticket_id=ticket.id, event_type="voice.session.ringing", payload={"voice_session_id": session.public_id})
+--- a/backend/tests/test_nexus_osr_admin_api.py
++++ b/backend/tests/test_nexus_osr_admin_api.py
+@@ -14,0 +15 @@
++from app.api import osr_admin_core
+@@ -50 +51 @@
+-    monkeypatch.setattr(osr_admin_api, "ensure_can_manage_runtime", lambda user, db: None)
++    monkeypatch.setattr(osr_admin_core, "ensure_can_manage_runtime", lambda user, db: None)
+@@ -93 +94 @@
+-        json={"is_active": False},
++        json={"enabled": False},
+@@ -96 +97 @@
+-    assert updated.json()["is_active"] is False
++    assert updated.json()["enabled"] is False
+@@ -99 +100 @@
+-    assert deleted.status_code == 204
++    assert deleted.status_code == 200
+@@ -108,5 +109,6 @@
+-                    tenant_key="tenant-a",
+-                    request_id="request-a",
+-                    issue_type="signed_not_received",
+-                    decision="route_to_whatsapp",
+-                    safe_summary={"destination_configured": True},
++                    tenant_id="tenant-a",
++                    business_reply_type="handoff_notice",
++                    next_action="request_handoff",
++                    risk_level="medium",
++                    allowed=True,
++                    decision_json={"audit_reasons": ["request-a"]},
+@@ -115,5 +117,6 @@
+-                    tenant_key="tenant-b",
+-                    request_id="request-b",
+-                    issue_type="damaged_parcel",
+-                    decision="create_ticket",
+-                    safe_summary={"destination_configured": False},
++                    tenant_id="tenant-b",
++                    business_reply_type="clarification",
++                    next_action="create_ticket",
++                    risk_level="low",
++                    allowed=True,
++                    decision_json={"audit_reasons": ["request-b"]},
+@@ -122,4 +125,5 @@
+-                    tenant_key="tenant-a",
+-                    case_key="case-a",
+-                    context_version=1,
+-                    safe_context={"status": "open"},
++                    tenant_id="tenant-a",
++                    channel="webchat",
++                    status="closed",
++                    is_active=False,
++                    customer_claim_summary="case-a",
+@@ -131 +135 @@
+-    audit = client.get("/api/admin/osr/runtime-decisions", headers=TENANT_A)
++    audit = client.get("/api/admin/osr/runtime-decision-audits", headers=TENANT_A)
+@@ -134 +138 @@
+-    assert payload["configuration_scope"] == "tenant"
++    assert payload["tenant_id"] == "tenant-a"
+@@ -138 +142 @@
+-    assert "tenant-a" not in serialized
++    assert "tenant-b" not in serialized
+@@ -142 +146 @@
+-    assert contexts.json()["items"][0]["case_key"] == "case-a"
++    assert contexts.json()["items"][0]["customer_claim_summary"] == "case-a"
+@@ -153 +157 @@
+-    monkeypatch.setattr(osr_admin_api, "ensure_can_manage_runtime", deny)
++    monkeypatch.setattr(osr_admin_core, "ensure_can_manage_runtime", deny)
+--- a/backend/tests/test_nexus_osr_tool_execution_facade.py
++++ b/backend/tests/test_nexus_osr_tool_execution_facade.py
+@@ -28,0 +29 @@
++from app.services.nexus_osr.tool_execution_service import GovernedToolExecutionOptions  # noqa: E402
+@@ -101,0 +103 @@
++    options: GovernedToolExecutionOptions | None = None,
+@@ -108,0 +111 @@
++        options=options,
+@@ -117 +120,2 @@
+-    assert by_name["ticket.create"].ai_auto_executable is True
++    assert by_name["ticket.create"].ai_auto_executable is False
++    assert by_name["ticket.create"].requires_customer_confirmation is True
+@@ -153 +157 @@
+-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "no-policy"}, ctx_with_tracking_and_contact())
++    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "no-policy", "requires_confirmation": True}, ctx_with_tracking_and_contact())
+@@ -164 +168 @@
+-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "channel-mismatch"}, ctx_with_tracking_and_contact())
++    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "channel-mismatch", "requires_confirmation": True}, ctx_with_tracking_and_contact())
+@@ -173 +177 @@
+-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "country-mismatch"}, ctx_with_tracking_and_contact())
++    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "country-mismatch", "requires_confirmation": True}, ctx_with_tracking_and_contact())
+@@ -182 +186 @@
+-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-tracking"}, ctx_empty())
++    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-tracking", "requires_confirmation": True}, ctx_empty())
+@@ -192 +196 @@
+-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-contact"}, ctx_with_tracking())
++    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-contact", "requires_confirmation": True}, ctx_with_tracking())
+@@ -214,2 +218,13 @@
+-def test_policy_execute_returns_safe_result_not_direct_send(db_session):
+-    add_policy(db_session, "ticket.create", requires_tracking_number=True, requires_contact=True)
++def test_policy_execute_returns_safe_result_only_after_customer_confirmation(db_session):
++    add_policy(
++        db_session,
++        "ticket.create",
++        requires_tracking_number=True,
++        requires_contact=True,
++        requires_customer_confirmation=True,
++    )
++    tool_call = {
++        "tool_name": "ticket.create",
++        "idempotency_key": "safe-result",
++        "requires_confirmation": True,
++    }
+@@ -217 +232,8 @@
+-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "safe-result"}, ctx_with_tracking_and_contact())
++    proposed = execute_one(
++        db_session,
++        tool_call,
++        ctx_with_tracking_and_contact(),
++    )
++    assert proposed.mode == OSRToolExecutionMode.CONFIRMATION_REQUIRED
++    assert proposed.executed is False
++    assert proposed.results[0].error_code == "customer_confirmation_required"
+@@ -218,0 +241,8 @@
++    result = execute_one(
++        db_session,
++        tool_call,
++        ctx_with_tracking_and_contact(),
++        options=GovernedToolExecutionOptions(
++            customer_confirmation_granted=True,
++        ),
++    )
+--- a/backend/tests/test_nexus_osr_tool_execution_service.py
++++ b/backend/tests/test_nexus_osr_tool_execution_service.py
+@@ -148 +148 @@
+-        tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "disabled-ticket"}],
++        tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "disabled-ticket", "requires_confirmation": True}],
+@@ -174 +174 @@
+-        tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "missing-context"}],
++        tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "missing-context", "requires_confirmation": True}],
+@@ -215,2 +215,8 @@
+-def test_ticket_create_creates_real_ticket_and_is_idempotent(db_session):
+-    add_policy(db_session, "ticket.create", requires_tracking_number=True, requires_contact=True)
++def test_ticket_create_requires_customer_confirmation_then_executes_idempotently(db_session):
++    add_policy(
++        db_session,
++        "ticket.create",
++        requires_tracking_number=True,
++        requires_contact=True,
++        requires_customer_confirmation=True,
++    )
+@@ -219,0 +226,20 @@
++    tool_call = {
++        "tool_name": "ticket.create",
++        "idempotency_key": "ticket-idem",
++        "requires_confirmation": True,
++        "arguments": {"issue_type": "tracking"},
++    }
++
++    proposed = execute_controlled_tool_calls(
++        db_session,
++        tool_calls=[tool_call],
++        case_context=ctx,
++        conversation=conversation,
++        customer=customer,
++        channel="webchat",
++        country_code="ME",
++    )[0]
++    assert proposed.ok is False
++    assert proposed.status == "confirmation_required"
++    assert proposed.error_code == "customer_confirmation_required"
++    assert db_session.query(Ticket).count() == 0
+@@ -220,0 +247,3 @@
++    confirmed_options = GovernedToolExecutionOptions(
++        customer_confirmation_granted=True,
++    )
+@@ -223 +252 @@
+-        tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "ticket-idem", "arguments": {"issue_type": "tracking"}}],
++        tool_calls=[tool_call],
+@@ -228,0 +258 @@
++        options=confirmed_options,
+@@ -232 +262 @@
+-        tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "ticket-idem", "arguments": {"issue_type": "tracking"}}],
++        tool_calls=[tool_call],
+@@ -237,0 +268 @@
++        options=confirmed_options,
+@@ -250 +280,0 @@
+-
