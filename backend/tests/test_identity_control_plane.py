@@ -104,9 +104,9 @@ def test_self_password_change_rotates_session_clears_forced_state_and_audits_rea
     )
 
     refreshed = db_session.get(UserSecurityState, user.id)
-    assert refreshed is not None
-    assert refreshed.session_version == 2
-    assert refreshed.must_change_password is False
+    assert refreshed is state
+    assert state.session_version == 2
+    assert state.must_change_password is False
     assert verify_password("Replacement-Password-456!", user.password_hash)
 
     claims = decode_access_token_claims(response.access_token)
@@ -136,11 +136,10 @@ def test_admin_password_reset_forces_rotation_and_invalidates_existing_token(db_
         current_user=admin,
     )
 
-    db_session.expire(state)
     refreshed = db_session.get(UserSecurityState, user.id)
-    assert refreshed is not None
-    assert refreshed.session_version == 2
-    assert refreshed.must_change_password is True
+    assert refreshed is state
+    assert state.session_version == 2
+    assert state.must_change_password is True
     assert verify_password("Admin-Reset-Password-789!", user.password_hash)
     assert_token_rejected(db_session, old_token)
 
@@ -156,6 +155,7 @@ def test_admin_logout_all_revokes_sessions_without_changing_password(db_session)
     result = admin_logout_all_sessions(user.id, db=db_session, current_user=admin)
 
     assert result.session_version == 2
+    assert state.session_version == 2
     assert user.password_hash == original_hash
     assert_token_rejected(db_session, old_token)
 
@@ -180,12 +180,12 @@ def test_deactivate_then_reactivate_does_not_resurrect_old_session(db_session):
     old_token = create_access_token(user.id, session_version=state.session_version)
 
     deactivate_user(user.id, db=db_session, current_user=admin)
+    assert state.session_version == 2
     activate_user(user.id, db=db_session, current_user=admin)
 
-    db_session.expire(state)
     refreshed = db_session.get(UserSecurityState, user.id)
-    assert refreshed is not None
-    assert refreshed.session_version == 2
+    assert refreshed is state
+    assert state.session_version == 2
     assert user.is_active is True
     assert_token_rejected(db_session, old_token)
 
