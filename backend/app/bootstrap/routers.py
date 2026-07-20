@@ -41,6 +41,16 @@ from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
 
 
+def _compose_admin_dependencies(*, dependencies: list) -> list:
+    """Return the one ordered policy chain for the canonical admin router."""
+
+    return [
+        Depends(enforce_admin_tenant_query_scope),
+        Depends(enforce_admin_identity_request_policy),
+        *dependencies,
+    ]
+
+
 def register_api_routers(app: FastAPI) -> None:
     """Register every supported API router exactly once in deterministic order."""
 
@@ -55,11 +65,9 @@ def register_api_routers(app: FastAPI) -> None:
         app.include_router(router)
     app.include_router(
         admin_router,
-        dependencies=[
-            Depends(enforce_admin_tenant_query_scope),
-            Depends(enforce_admin_identity_request_policy),
-            Depends(enforce_admin_password_request_policy),
-        ],
+        dependencies=_compose_admin_dependencies(
+            dependencies=[Depends(enforce_admin_password_request_policy)]
+        ),
     )
     for router in (
         admin_queue_router,
