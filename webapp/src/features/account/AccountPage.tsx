@@ -49,12 +49,14 @@ export function AccountPage() {
 
   const changePassword = useMutation({
     mutationFn: () => identityApi.changePassword(currentPassword, newPassword),
-    onSuccess: async (response) => {
+    onSuccess: async () => {
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      queryClient.setQueryData(['session'], response.user)
-      await queryClient.invalidateQueries({ queryKey: ['accountSecurity'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['session'] }),
+        queryClient.invalidateQueries({ queryKey: ['accountSecurity'] }),
+      ])
     },
   })
 
