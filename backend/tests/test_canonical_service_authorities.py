@@ -201,26 +201,17 @@ def test_compatibility_lifecycle_assets_are_bounded() -> None:
     for row in lifecycle["assets"]:
         assert row["owner"], row
         assert _project_path(row["path"]).exists(), row
-        if row["kind"] in {"compose-alias", "environment-tombstone"}:
-            assert row["replacement"], row
-            assert row["remove_after"], row
-            assert date.fromisoformat(row["remove_after"]) > date(2026, 7, 18), row
+        assert row["kind"] not in {"compose-alias", "environment-tombstone"}, row
 
-    for relative in ("deploy/docker-compose.server.yml", "deploy/docker-compose.candidate.yml"):
-        source = _source(relative)
-        assert "services:" not in source, relative
-        assert "include:" in source, relative
-
-    for relative in (
+    for retired in (
+        "deploy/docker-compose.server.yml",
+        "deploy/docker-compose.candidate.yml",
         "deploy/.env.prod.example",
         "deploy/.env.prod.local-postgres.example",
         "deploy/.env.prod.external-postgres.example",
+        "deploy/.env.candidate.example",
     ):
-        source = _source(relative)
-        assert "RETIRED COMPATIBILITY PATH" in source, relative
-        assert "NEXUS_ENV_TEMPLATE_RETIRED=true" in source, relative
-        assert "SECRET_KEY=" not in source, relative
-        assert "DATABASE_URL=" not in source, relative
+        assert not _project_path(retired).exists(), retired
 
 
 def test_admin_password_policy_is_bound_without_runtime_mutation() -> None:
@@ -284,7 +275,8 @@ def test_production_entrypoints_use_canonical_authorities() -> None:
     tickets = (APP / "api" / "tickets.py").read_text(encoding="utf-8")
     lite = (APP / "api" / "lite.py").read_text(encoding="utf-8")
     main = (APP / "main.py").read_text(encoding="utf-8")
-    assert "services.canonical_ticket_service" in tickets
+    assert "services.ticket_service" in tickets
+    assert "services.canonical_ticket_service" not in tickets
     assert "services.canonical_control_tower_service" in lite
     assert "services.canonical_qa_training_service" in lite
     assert "._validate_password_length =" not in main
