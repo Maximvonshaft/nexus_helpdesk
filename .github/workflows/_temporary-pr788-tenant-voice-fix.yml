@@ -11,6 +11,9 @@ concurrency:
   group: pr788-tenant-voice-fix
   cancel-in-progress: true
 
+env:
+  PYTHONPATH: backend
+
 jobs:
   fix:
     if: github.event.pull_request.number == 788 && github.event.pull_request.head.ref == 'delivery/canonical-routing-final-a31f6c'
