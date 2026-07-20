@@ -43,6 +43,10 @@ No ticket is created.
 
 The existing governed `ticket.create` action creates or reuses the ticket and binds its id to the conversation.
 
+### Voice is explicitly initiated
+
+Ordinary text conversations remain ticketless. When the customer actually initiates the existing voice workflow, Nexus lazily creates or reuses the ticket required by the ticket-backed voice authority, then continues through the existing voice queue. Opening WebChat alone never creates that ticket.
+
 ## Agent presence and capacity
 
 Each operator has one server-owned state:
@@ -79,25 +83,48 @@ The existing governed tool registry remains canonical.
 
 - `support.availability` returns a safe aggregate: online agents, total capacity, occupied capacity, available capacity, queue length, and the current request position when available.
 - `handoff.request.create` creates or updates a ticketless handoff request.
-- `ticket.create` creates or reuses a ticket only after the configured policy permits it.
+- `ticket.create` first returns `customer_confirmation_required` for ordinary cases. A controlled caller must explicitly provide `customer_confirmation_granted=true` before the executor may create or reuse the ticket.
 
 The model proposes tools. The controlled executor validates policy, scope, confirmation, idempotency, and handler availability before executing them.
+
+## Runtime, evidence, and audit
+
+Conversation is the primary runtime identity. Ticket is optional context.
+
+- Ticketless AI turns, messages, events, handoffs, OSR decisions, Case Context records, Debug Runs, and Test Findings persist with `ticket_id = NULL`.
+- Runtime generation rechecks the server-owned conversation state immediately before creating a public AI message. A human takeover or superseding customer message suppresses the stale reply.
+- Runtime traces and customer-visible message metadata are sanitized before persistence.
+- Failure of the OSR audit path is non-blocking for an otherwise permitted customer-visible reply, while the failure remains observable.
 
 ## Delivery boundaries
 
 This delivery is WebChat-first. It preserves current ticket-backed WhatsApp behavior until outbound routing can be conversation-bound without weakening provider safety. It does not introduce a parallel WhatsApp conversation implementation.
 
-The delivery must include:
+The delivered foundation includes:
 
-- reversible Alembic migration;
+- reversible Alembic migration through revision `20260720_0064`;
 - ticketless WebChat initialization and AI execution;
 - ticketless handoff lifecycle;
 - operator presence, heartbeat, capacity, and FIFO assignment;
-- conversation closure outcomes;
-- availability and ticket tools;
+- conversation closure outcomes and capacity release;
+- aggregate availability and customer-confirmed ticket tools;
 - one canonical frontend presence control;
-- PostgreSQL concurrency tests and existing canonical acceptance.
+- lazy ticket creation only when the existing voice workflow is initiated;
+- ticketless OSR audit, Case Context, Debug Bundle, and Test Finding support.
+
+## Verification contract
+
+The acceptance suite must prove at least these business outcomes:
+
+1. Creating and using text WebChat does not create a ticket.
+2. Ticketless AI replies are persisted, audited, redacted, and visible in the debug bundle.
+3. A human takeover during AI generation prevents the AI reply from being committed.
+4. A ticketless handoff can enter the unified queue and be assigned according to online state, heartbeat, capacity, scope, and FIFO order.
+5. Closing one accepted conversation releases one slot and assigns the next eligible request.
+6. `ticket.create` cannot execute without recorded customer confirmation and is idempotent after confirmation.
+7. Initiating voice creates or reuses the necessary ticket without restoring automatic ticket creation for text chat.
+8. PostgreSQL migration, concurrency, complete backend regression, frontend verification, browser journeys, security checks, and image smoke all pass for the exact candidate Head.
 
 ## Retirement rule
 
-Any old WebChat path that assumes a ticket is mandatory must be changed at its source or reduced to a thin backward-compatible wrapper. No duplicate live path may remain.
+Any old WebChat path that assumes a ticket is mandatory must be changed at its source or reduced to a thin backward-compatible wrapper. No duplicate live path may remain. Temporary patch, export, or migration helper files are not part of the final tree.
