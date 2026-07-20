@@ -11,7 +11,6 @@ class OperatorTaskRead(BaseModel):
     source_id: str | None = None
     ticket_id: int | None = None
     webchat_conversation_id: int | None = None
-    unresolved_event_id: int | None = None
     task_type: str
     status: str
     priority: int
@@ -44,7 +43,6 @@ class OperatorTaskTransitionResponse(BaseModel):
 
 
 class OperatorQueueProjectResponse(BaseModel):
-    projected_external_channel_unresolved: int = 0
     projected_webchat_handoff: int = 0
     created_total: int = 0
     skipped_existing: int = 0

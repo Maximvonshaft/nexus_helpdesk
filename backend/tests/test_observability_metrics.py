@@ -24,7 +24,7 @@ from app.services.observability import (  # noqa: E402
 
 def test_metric_path_normalization_removes_ids() -> None:
     assert normalize_metric_path('/api/tickets/123/messages') == '/api/tickets/{id}/messages'
-    assert normalize_metric_path('/api/external_channel/abcdef1234567890/replay') == '/api/external_channel/{id}/replay'
+    assert normalize_metric_path('/api/provider-runtime/abcdef1234567890/replay') == '/api/provider-runtime/{id}/replay'
 
 
 def test_http_client_access_logs_do_not_emit_credential_query_urls() -> None:

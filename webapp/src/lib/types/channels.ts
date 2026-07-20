@@ -349,8 +349,7 @@ export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number
   attachments_count: number
-  external_channel_transcript_count: number
-  external_channel_attachment_references_count: number
+  events_count: number
   active_market_bulletins_count: number
 }
 export interface CaseDetail {
@@ -381,20 +380,9 @@ export interface CaseDetail {
   resolution_summary?: string | null
   evidence_summary?: EvidenceSummary
   attachments_count?: number
-  external_channel_transcript_count?: number
-  external_channel_attachment_references_count?: number
+  events_count?: number
   active_market_bulletins_count?: number
-  external_channel_conversation?: {
-    session_key: string
-    channel?: string | null
-    recipient?: string | null
-    account_id?: string | null
-    thread_id?: string | null
-    last_synced_at?: string | null
-  } | null
-  external_channel_transcript?: TranscriptMessage[]
   attachments?: SystemAttachment[]
-  external_channel_attachment_references?: AttachmentReference[]
   active_market_bulletins?: Bulletin[]
   customer?: {
     name?: string | null
@@ -413,5 +401,4 @@ export interface QueueSummary {
   webchat_handoff_ack_sent?: number
   pending_jobs: number
   dead_jobs: number
-  external_channel_links: number
 }

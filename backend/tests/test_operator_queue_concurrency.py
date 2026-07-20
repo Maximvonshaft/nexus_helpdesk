@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, UserRole  # noqa: E402
-from app.models import ExternalChannelUnresolvedEvent, Ticket, User  # noqa: E402
+from app.models import Ticket, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services import operator_queue  # noqa: E402
 from app.services.operator_queue import create_operator_task, project_operator_queue  # noqa: E402
@@ -44,24 +44,6 @@ def db_session(tmp_path):
 
 def make_admin(db):
     row = User(username="admin", display_name="admin", email="admin@example.test", password_hash="x", role=UserRole.admin, is_active=True)
-    db.add(row)
-    db.flush()
-    return row
-
-
-def make_unresolved(db):
-    row = ExternalChannelUnresolvedEvent(
-        source="default",
-        session_key="session-key",
-        event_type="message",
-        recipient="recipient",
-        source_chat_id="chat",
-        preferred_reply_contact="contact",
-        payload_json=json.dumps({"type": "message"}),
-        status="pending",
-        replay_count=0,
-        last_error="provider error",
-    )
     db.add(row)
     db.flush()
     return row
@@ -94,23 +76,6 @@ def make_conversation(db, ticket: Ticket) -> WebchatConversation:
     db.add(row)
     db.flush()
     return row
-
-
-def test_new_external_channel_operator_task_is_rejected(db_session):
-    event = make_unresolved(db_session)
-
-    with pytest.raises(operator_queue.OperatorQueueError) as exc:
-        create_operator_task(
-            db_session,
-            source_type="external_channel",
-            source_id=str(event.id),
-            unresolved_event_id=event.id,
-            task_type="bridge_unresolved",
-        )
-
-    assert exc.value.status_code == 410
-    assert exc.value.code == "legacy_operator_task_creation_retired"
-    assert db_session.query(OperatorTask).count() == 0
 
 
 def test_integrity_error_for_same_webchat_handoff_returns_existing_not_500(db_session, monkeypatch):
@@ -189,42 +154,8 @@ def test_webchat_handoff_task_reuses_conversation_identity_when_source_id_change
     assert json.loads(row.payload_json or "{}")["ticket_no"] == ticket.ticket_no
 
 
-def test_project_operator_queue_skipped_existing_counts_are_correct(db_session):
-    admin = make_admin(db_session)
-    event = make_unresolved(db_session)
-    ticket = make_ticket(db_session)
-    conversation = make_conversation(db_session, ticket)
-    db_session.add(OperatorTask(
-        source_type="external_channel",
-        source_id=str(event.id),
-        unresolved_event_id=event.id,
-        task_type="bridge_unresolved",
-        status="pending",
-        priority=50,
-    ))
-    db_session.add(OperatorTask(
-        source_type="webchat",
-        source_id=conversation.public_id,
-        ticket_id=ticket.id,
-        webchat_conversation_id=conversation.id,
-        task_type="handoff",
-        status="pending",
-        priority=40,
-    ))
-    db_session.flush()
-
-    summary = project_operator_queue(db_session, actor_id=admin.id)
-
-    assert summary["created_total"] == 0
-    assert summary["projected_external_channel_unresolved"] == 0
-    assert summary["projected_webchat_handoff"] == 0
-    assert summary["skipped_existing"] == 1
-    assert db_session.query(OperatorTask).count() == 2
-
-
 def test_get_operator_queue_projection_does_not_duplicate_active_tasks(db_session):
     admin = make_admin(db_session)
-    make_unresolved(db_session)
     ticket = make_ticket(db_session)
     make_conversation(db_session, ticket)
 

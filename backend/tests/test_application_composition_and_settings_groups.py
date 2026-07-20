@@ -33,14 +33,5 @@ def test_effective_safe_config_is_typed_and_contains_no_secret_values(monkeypatc
     assert "synthetic-access" not in rendered
     assert "synthetic-secret" not in rendered
     assert set(payload["groups"]) == {
-        "database", "authentication", "storage", "outbound", "provider", "webchat", "voice", "compatibility"
+        "database", "authentication", "storage", "outbound", "provider", "webchat", "voice"
     }
-
-
-def test_retired_runtime_requests_are_detectable(monkeypatch, tmp_path):
-    monkeypatch.setenv("APP_ENV", "test")
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'settings.db'}")
-    monkeypatch.setenv("EXTERNAL_CHANNEL_BRIDGE_ENABLED", "false")
-    settings = Settings()
-    settings.external_channel_bridge_enabled = True
-    assert settings.retired_runtime_requests() == ("EXTERNAL_CHANNEL_BRIDGE_ENABLED",)

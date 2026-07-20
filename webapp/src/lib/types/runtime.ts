@@ -59,27 +59,12 @@ export interface OutboundChannelCapability {
 export interface OutboundChannelCapabilitiesResponse {
   channels: OutboundChannelCapability[]
 }
-export interface ExternalChannelConnectivityProbe {
-  deployment_mode: string
-  transport: string
-  command?: string | null
-  url?: string | null
-  token_auth_configured: boolean
-  password_auth_configured: boolean
-  bridge_started: boolean
-  conversations_tool_ok: boolean
-  conversations_seen: number
-  sample_session_key?: string | null
-  warnings: string[]
-}
 export interface ProductionReadiness {
   app_env: string
   database_url_scheme: string
   is_postgres: boolean
   storage_backend: string
-  external_channel_transport: string
   metrics_enabled: boolean
-  external_channel_sync_enabled: boolean
   outbound_email_production_pilot_enabled?: boolean
   outbound_email_active_accounts?: number
   outbound_email_successful_test_send_accounts?: number

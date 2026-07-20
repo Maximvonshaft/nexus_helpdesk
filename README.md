@@ -89,21 +89,10 @@ Production API and service code must not infer access directly from a role name.
 - `backend/app/services/scope_permissions.py`
 - `backend/app/services/operator_queue_scope.py`
 
-## ExternalChannel retirement
+## Retired persistence boundary
 
-ExternalChannel runtime settings remain disabled:
+The former channel persistence boundary is removed from application code and current schema. Migration `20260720_0063` preserves historical rows in a hash-verified rollback archive, projects ticket-linked evidence into canonical ticket events and attachments, and removes the retired tables and columns. No runtime route, worker, setting, model, or provider fallback may recreate that state.
 
-```env
-EXTERNAL_CHANNEL_TRANSPORT=disabled
-EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled
-EXTERNAL_CHANNEL_SYNC_ENABLED=false
-EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false
-EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false
-EXTERNAL_CHANNEL_BRIDGE_ENABLED=false
-EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false
-```
-
-Persisted `ExternalChannel*` database/schema names may remain only as bounded historical-read and data-migration contracts. Application routes and workers must create no new ExternalChannel links, cursors, unresolved events, attachment records or legacy jobs. They do not authorize a live bridge, CLI or second transport.
 
 ## Voice capability authority
 

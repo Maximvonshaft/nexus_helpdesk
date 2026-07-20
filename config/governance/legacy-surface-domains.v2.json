@@ -1,6 +1,6 @@
 {
   "schema": "nexus.legacy-surface.registry.v2",
-  "registry_version": "2026-07-19.1",
+  "registry_version": "2026-07-20.1",
   "coverage": "current_tracked_tree_classification_under_compatibility_lifecycle",
   "enforcement": "fail_closed",
   "finding_limit": 100,
@@ -15,35 +15,6 @@
     "unknown_fail_closed"
   ],
   "domains": [
-    {
-      "id": "external_channel_persistence",
-      "owner_issue": 572,
-      "disposition": "data_migration_dependency",
-      "deletion_authorized": false,
-      "rationale": "ExternalChannel runtime and mutations are retired. Remaining model, migration and bounded read-only names are protected only until an explicitly authorized data export and destructive schema retirement is executed.",
-      "prerequisites": [
-        "zero_new_writes",
-        "zero_runtime_callers",
-        "historical_export",
-        "restore_rehearsal",
-        "explicit_destructive_retirement_authorization"
-      ],
-      "selectors": {
-        "paths": [],
-        "globs": [
-          "*external_channel*",
-          "**/*external_channel*",
-          "*external-channel*",
-          "**/*external-channel*"
-        ],
-        "path_regexes": [],
-        "content_rules": []
-      },
-      "authoritative_refs": [
-        "config:compatibility-lifecycle.v1",
-        "issue:#572"
-      ]
-    },
     {
       "id": "application_settings_composition",
       "owner_issue": 570,
@@ -142,18 +113,6 @@
   ],
   "discovery_rules": [
     {
-      "id": "external_channel_path_marker",
-      "path_regex": "(?i)external[_-]channel",
-      "path_globs": [],
-      "content_markers": [],
-      "content_path_globs": [],
-      "allowed_domain_ids": [
-        "external_channel_persistence",
-        "protected_alembic_history"
-      ],
-      "allow_multiple_domains": true
-    },
-    {
       "id": "alembic_revision_path",
       "path_regex": null,
       "path_globs": [
@@ -162,10 +121,9 @@
       "content_markers": [],
       "content_path_globs": [],
       "allowed_domain_ids": [
-        "protected_alembic_history",
-        "external_channel_persistence"
+        "protected_alembic_history"
       ],
-      "allow_multiple_domains": true
+      "allow_multiple_domains": false
     },
     {
       "id": "versioned_contract_path",

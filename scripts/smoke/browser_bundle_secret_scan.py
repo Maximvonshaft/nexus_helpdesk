@@ -10,8 +10,6 @@ from pathlib import Path
 DEFAULT_PATTERNS = [
     r"EXTERNAL_CHANNEL_RESPONSES_URL",
     r"EXTERNAL_CHANNEL_RESPONSES_TOKEN",
-    r"external_channel_gateway_token",
-    r"external_channel-gateway",
     r"/v1/responses",
     r"Bearer\s+[A-Za-z0-9_\-.]{12,}",
 ]
@@ -34,7 +32,7 @@ def _iter_files(paths: list[Path]):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Scan browser/static bundles for ExternalChannel URLs or tokens")
+    parser = argparse.ArgumentParser(description="Scan browser/static bundles for internal URLs or credentials")
     parser.add_argument("--dist", action="append", default=[])
     parser.add_argument("--static", action="append", default=[])
     parser.add_argument("--pattern", action="append", default=[])

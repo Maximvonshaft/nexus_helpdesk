@@ -131,8 +131,6 @@ def test_ticket_summary_large_fixture_counts_query_count_and_returns_bounded_pre
     assert payload["counts"]["events_count"] == 80
     assert payload["evidence_summary"]["loaded"] is True
     assert payload["evidence_summary"]["attachments_count"] == 25
-    assert payload["evidence_summary"]["external_channel_transcript_count"] == 0
-    assert payload["evidence_summary"]["external_channel_attachment_references_count"] == 0
     assert payload["evidence_summary"]["active_market_bulletins_count"] == 0
     assert "comments" not in payload
     assert "internal_notes" not in payload
@@ -140,8 +138,6 @@ def test_ticket_summary_large_fixture_counts_query_count_and_returns_bounded_pre
     assert "ai_intakes" not in payload
     assert len(payload["attachments"]) == 3
     assert payload["attachments"][0]["file_name"].startswith("file")
-    assert payload["external_channel_transcript"] == []
-    assert payload["external_channel_attachment_references"] == []
     assert payload["active_market_bulletins"] == []
     assert payload["latest_ai_summary"] is not None
     assert payload["latest_outbound_status"] == "sent"

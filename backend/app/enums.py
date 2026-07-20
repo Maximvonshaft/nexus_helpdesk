@@ -82,10 +82,6 @@ class EventType(str, Enum):
     sla_breached = "sla_breached"
     field_updated = "field_updated"
     integration_request_received = "integration_request_received"
-    external_channel_synced = "external_channel_synced"
-    external_channel_reply_sent = "external_channel_reply_sent"
-    external_channel_attachment_synced = "external_channel_attachment_synced"
-    external_channel_attachment_persisted = "external_channel_attachment_persisted"
     conversation_state_changed = "conversation_state_changed"
 
 

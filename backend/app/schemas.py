@@ -9,7 +9,6 @@ from .enums import ConversationState, MessageStatus, NoteVisibility, ResolutionC
 from .utils.time import format_utc
 
 
-
 class APIModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,20 +71,6 @@ class UserUpdate(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     password: str = Field(min_length=6)
-
-class ExternalChannelUnresolvedEventRead(APIModel):
-    id: int
-    source: str
-    session_key: Optional[str] = None
-    event_type: Optional[str] = None
-    recipient: Optional[str] = None
-    source_chat_id: Optional[str] = None
-    preferred_reply_contact: Optional[str] = None
-    status: str
-    replay_count: int
-    last_error: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
 
 
 class TagRead(APIModel):
@@ -549,9 +534,6 @@ class TicketRead(APIModel):
     attachments: list[AttachmentRead] = Field(default_factory=list)
     outbound_messages: list[OutboundMessageRead] = Field(default_factory=list)
     ai_intakes: list[AIIntakeRead] = Field(default_factory=list)
-    external_channel_conversation: Optional[ExternalChannelConversationRead] = None
-    external_channel_transcript: list[ExternalChannelTranscriptRead] = Field(default_factory=list)
-    external_channel_attachment_references: list["ExternalChannelAttachmentReferenceRead"] = Field(default_factory=list)
     active_market_bulletins: list["MarketBulletinRead"] = Field(default_factory=list)
 
 
@@ -930,49 +912,6 @@ class TeamMarketAssignRequest(BaseModel):
     market_id: Optional[int] = None
 
 
-class ExternalChannelLinkRequest(BaseModel):
-    ticket_id: int
-    session_key: str
-    channel: Optional[str] = None
-    recipient: Optional[str] = None
-    account_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    route: Optional[dict[str, Any]] = None
-
-
-class ExternalChannelConversationRead(APIModel):
-    id: int
-    ticket_id: int
-    session_key: str
-    channel: Optional[str] = None
-    recipient: Optional[str] = None
-    account_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    last_cursor: Optional[int] = None
-    last_message_id: Optional[str] = None
-    last_synced_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class ExternalChannelTranscriptRead(APIModel):
-    id: int
-    conversation_id: int
-    ticket_id: int
-    session_key: str
-    message_id: str
-    role: Optional[str] = None
-    author_name: Optional[str] = None
-    body_text: Optional[str] = None
-    received_at: Optional[datetime] = None
-    created_at: datetime
-
-
-class ExternalChannelSyncResult(APIModel):
-    conversation: ExternalChannelConversationRead
-    messages: list[ExternalChannelTranscriptRead]
-    linked_ticket_id: int
-
 class BackgroundJobRead(APIModel):
     id: int
     queue_name: str
@@ -989,21 +928,11 @@ class BackgroundJobRead(APIModel):
     updated_at: datetime
 
 
-class ExternalChannelSyncEnqueueRequest(BaseModel):
-    ticket_id: int
-    session_key: str
-    transcript_limit: Optional[int] = None
-    dedupe: bool = True
-
-
 class QueueSummaryRead(APIModel):
     pending_outbound: int
     dead_outbound: int
     pending_jobs: int
     dead_jobs: int
-    external_channel_links: int
-    external_channel_transcript_messages: int = 0
-    external_channel_unresolved_events: int = 0
 
 
 class ProductionReadinessRead(APIModel):
@@ -1011,31 +940,12 @@ class ProductionReadinessRead(APIModel):
     database_url_scheme: str
     is_postgres: bool
     storage_backend: str
-    external_channel_transport: str
     metrics_enabled: bool
-    external_channel_sync_enabled: bool
-    external_channel_inbound_auto_sync_enabled: bool
-    external_channel_links_count: int = 0
-    external_channel_transcript_messages_count: int = 0
-    external_channel_unresolved_events_count: int = 0
     outbound_email_production_pilot_enabled: bool = False
     outbound_email_active_accounts: int = 0
     outbound_email_successful_test_send_accounts: int = 0
     outbound_email_test_send_max_age_hours: int = 24
     warnings: list[str]
-
-
-
-class ExternalChannelAttachmentReferenceRead(APIModel):
-    id: int
-    ticket_id: int
-    transcript_message_id: int
-    remote_attachment_id: str
-    content_type: Optional[str] = None
-    filename: Optional[str] = None
-    storage_status: str
-    storage_key: Optional[str] = None
-    created_at: datetime
 
 
 class ChannelAccountRead(APIModel):
@@ -1253,35 +1163,6 @@ class EmailMailboxSyncEnqueueResponse(APIModel):
     ok: bool = True
     enqueued: int
     job_ids: list[int] = Field(default_factory=list)
-
-
-class ExternalChannelRuntimeHealthRead(APIModel):
-    sync_cursor: Optional[str] = None
-    sync_daemon_last_seen_at: Optional[datetime] = None
-    sync_daemon_status: Optional[str] = None
-    stale_link_count: int
-    external_channel_links_count: int = 0
-    transcript_messages_count: int = 0
-    unresolved_events_count: int = 0
-    pending_sync_jobs: int
-    dead_sync_jobs: int
-    pending_attachment_jobs: int = 0
-    dead_attachment_jobs: int = 0
-    warnings: list[str]
-
-
-class ExternalChannelConnectivityProbeRead(APIModel):
-    deployment_mode: str
-    transport: str
-    command: Optional[str] = None
-    url: Optional[str] = None
-    token_auth_configured: bool = False
-    password_auth_configured: bool = False
-    bridge_started: bool = False
-    conversations_tool_ok: bool = False
-    conversations_seen: int = 0
-    sample_session_key: Optional[str] = None
-    warnings: list[str] = []
 
 
 class MarketBulletinRead(APIModel):

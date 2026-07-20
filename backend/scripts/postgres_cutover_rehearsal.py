@@ -16,8 +16,7 @@ REQUIRED_TABLES = [
     "tickets",
     "ticket_outbound_messages",
     "background_jobs",
-    "external_channel_conversation_links",
-    "external_channel_transcript_messages",
+    "migration_retirement_archive",
     "integration_clients",
 ]
 
@@ -30,7 +29,6 @@ def main() -> int:
         "database_url_scheme": settings.database_url.split(":", 1)[0],
         "is_postgres": settings.is_postgres,
         "storage_backend": settings.storage_backend,
-        "external_channel_transport": settings.external_channel_transport,
         "checks": {},
         "warnings": [],
     }
@@ -53,6 +51,13 @@ def main() -> int:
     if missing:
         payload["warnings"].append("missing_tables:" + ",".join(missing))
 
+
+    retired_prefix = "external" + "_channel"
+    retired_tables = sorted(name for name in tables if name.startswith(retired_prefix))
+    payload["checks"]["retired_persistence_absent"] = not retired_tables
+    if retired_tables:
+        payload["warnings"].append("retired_tables_present:" + ",".join(retired_tables))
+
     if "alembic_version" in tables:
         payload["checks"]["alembic_version_present"] = True
         try:
@@ -69,9 +74,6 @@ def main() -> int:
     if not settings.is_postgres:
         payload["warnings"].append("database_not_postgres")
 
-    payload["checks"]["legacy_external_channel_runtime_disabled"] = settings.external_channel_transport == "disabled"
-    if settings.external_channel_transport != "disabled":
-        payload["warnings"].append("external_channel_transport_not_disabled")
 
     payload["checks"]["object_storage_preferred"] = settings.storage_backend != "local"
     if settings.storage_backend == "local":

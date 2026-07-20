@@ -81,7 +81,7 @@ def test_reclaim_stale_processing_returns_attempt_to_retry_state(monkeypatch):
 
     monkeypatch.setattr(
         message_dispatch,
-        "external_channel_values",
+        "external_delivery_channel_values",
         lambda: ["email", "whatsapp"],
     )
     monkeypatch.setattr(
@@ -108,7 +108,7 @@ def test_reclaim_stale_processing_marks_exhausted_attempt_dead(monkeypatch):
     row.max_retries = 3
     db = _FakeDB([row])
 
-    monkeypatch.setattr(message_dispatch, "external_channel_values", lambda: ["email"])
+    monkeypatch.setattr(message_dispatch, "external_delivery_channel_values", lambda: ["email"])
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
 
     recovered = reclaim_stale_processing_messages(db)

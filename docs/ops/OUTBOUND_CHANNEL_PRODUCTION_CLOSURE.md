@@ -42,10 +42,9 @@ The production templates intentionally default to:
 ```text
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
-EXTERNAL_CHANNEL_BRIDGE_ALLOW_WRITES=false
 ```
 
-This default must remain fail-closed until the channel smoke test is complete. Legacy ExternalChannel write flags are retained only as disabled compatibility settings.
+This default remains fail-closed until channel smoke evidence is complete. There is no compatibility write switch or alternate provider path.
 
 ## API contract
 
@@ -90,7 +89,7 @@ This branch implements the production closure foundation:
 4. Tests that lock the production boundary.
 5. Runbook for safe rollout.
 
-The legacy ExternalChannel provider path is retired; new external send adapters must use native sidecars or explicit provider adapters.
+External sends use only registered native sidecars or explicit provider adapters.
 
 ## Phase 2 acceptance criteria
 
@@ -128,10 +127,9 @@ Emergency rollback is configuration-only:
 ```bash
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
-EXTERNAL_CHANNEL_BRIDGE_ALLOW_WRITES=false
 ```
 
-After rollback, run the outbound queue summary and confirm no external channel is being processed.
+After rollback, run the outbound queue summary and confirm no external delivery channel is being processed.
 
 ## Test commands
 

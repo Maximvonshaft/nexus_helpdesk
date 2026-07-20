@@ -12,7 +12,7 @@ _SECRET_PATTERNS = [
     re.compile(("ey" + "J") + r"[A-Za-z0-9_\-]{12,}"),
     re.compile(("Bear" + "er") + r"\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
 ]
-_INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "external_channel", "provider_runtime"]
+_INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "provider_runtime"]
 _MAX_RUNTIME_REPLY_CHARS = 1200
 WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus.webchat_runtime_reply"
 _COUNTRY_CONFLICT_GROUPS = (

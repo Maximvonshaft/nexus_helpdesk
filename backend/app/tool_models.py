@@ -24,7 +24,7 @@ class ToolRegistry(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tool_name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
-    provider: Mapped[str] = mapped_column(String(80), default="external_channel", index=True)
+    provider: Mapped[str] = mapped_column(String(80), default="provider_runtime", index=True)
     tool_type: Mapped[str] = mapped_column(String(40), default="read_only", index=True)
     capability_scope: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     default_timeout_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -50,7 +50,7 @@ class ToolCallLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tool_name: Mapped[str] = mapped_column(String(160), index=True)
-    provider: Mapped[str] = mapped_column(String(80), default="external_channel", index=True)
+    provider: Mapped[str] = mapped_column(String(80), default="provider_runtime", index=True)
     tool_type: Mapped[str] = mapped_column(String(40), default="read_only", index=True)
     conversation_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
     webchat_conversation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)

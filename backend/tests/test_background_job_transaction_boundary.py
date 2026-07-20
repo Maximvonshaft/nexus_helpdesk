@@ -147,7 +147,6 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
     db = _FakeDB([first, second])
     processed_ids: list[int] = []
 
-    monkeypatch.setattr(background_jobs.settings, "external_channel_sync_enabled", False)
     monkeypatch.setattr(background_jobs.settings, "email_mailbox_sync_enabled", False)
     monkeypatch.setattr(
         background_jobs,
@@ -191,7 +190,6 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
     db = _FakeDB([row])
     db.current_recovery_row = row
 
-    monkeypatch.setattr(background_jobs.settings, "external_channel_sync_enabled", False)
     monkeypatch.setattr(background_jobs.settings, "email_mailbox_sync_enabled", False)
     monkeypatch.setattr(
         background_jobs,

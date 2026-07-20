@@ -229,7 +229,7 @@ def _archive_rows(
     statement = sa.select(table)
     if "id" in table.c:
         statement = statement.order_by(table.c.id.asc())
-    result = _bind().execution_options(stream_results=True).execute(statement)
+    result = _bind().execute(statement)
     archived: list[dict[str, Any]] = []
     while True:
         batch = result.fetchmany(500)
@@ -624,6 +624,8 @@ def _normalize_generic_markers() -> None:
                 column: _replace_markers(payload.get(column))
                 for column in columns
             }
+            if table_name == "ticket_events" and "event_type" in updates:
+                updates["event_type"] = "field_updated"
             if table_name == "provider_routing_rules":
                 if "enabled" in table.c:
                     updates["enabled"] = False
