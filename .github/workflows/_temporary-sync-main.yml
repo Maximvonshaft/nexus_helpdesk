@@ -24,6 +24,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags origin main
           set +e
           git merge --no-commit --no-ff origin/main > /tmp/merge-output.txt 2>&1
@@ -64,7 +66,6 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           MERGE_CODE: ${{ steps.merge.outputs.merge_code }}
         run: |
-          state="success"
           description="merge diagnostics captured; exit=${MERGE_CODE}"
           curl --fail-with-body --silent --show-error \
             --request POST \
@@ -72,4 +73,4 @@ jobs:
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
-            --data "{\"state\":\"${state}\",\"context\":\"main-merge-diagnostics\",\"description\":\"${description}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+            --data "{\"state\":\"success\",\"context\":\"main-merge-diagnostics\",\"description\":\"${description}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
