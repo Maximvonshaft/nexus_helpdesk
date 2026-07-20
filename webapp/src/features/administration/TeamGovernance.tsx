@@ -14,6 +14,7 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -34,7 +35,7 @@ import {
 } from '@/app/OperatorPresentation'
 import { formatDateTime } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
-import type { IdentityTeam } from '@/lib/types'
+import type { IdentityTeam, Market } from '@/lib/types'
 
 type TeamDraft = {
   name: string
@@ -46,10 +47,12 @@ const emptyTeamDraft: TeamDraft = { name: '', teamType: 'support', marketId: '' 
 
 export function TeamGovernance({
   teams,
+  markets,
   isLoading,
   error,
 }: {
   teams: IdentityTeam[]
+  markets: Market[]
   isLoading: boolean
   error: unknown
 }) {
@@ -68,9 +71,9 @@ export function TeamGovernance({
 
   const saveTeam = useMutation({
     mutationFn: () => {
-      const marketId = draft.marketId.trim() ? Number(draft.marketId) : null
+      const marketId = draft.marketId ? Number(draft.marketId) : null
       if (marketId !== null && (!Number.isInteger(marketId) || marketId <= 0)) {
-        throw new Error('市场编号必须为正整数')
+        throw new Error('市场配置无效')
       }
       const payload = {
         name: draft.name.trim(),
@@ -117,6 +120,12 @@ export function TeamGovernance({
     if (draft.name.trim() && draft.teamType.trim()) saveTeam.mutate()
   }
 
+  const marketName = (marketId: number | null | undefined) => {
+    if (!marketId) return '全局/未绑定'
+    const market = markets.find((item) => item.id === marketId)
+    return market ? `${market.country_code || market.code} · ${market.name}` : `已停用市场 #${marketId}`
+  }
+
   return (
     <Paper component="section" variant="outlined" aria-labelledby="team-governance-title" sx={{ p: 2 }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
@@ -156,7 +165,7 @@ export function TeamGovernance({
                     <Typography variant="caption" color="text.secondary">#{team.id}</Typography>
                   </TableCell>
                   <TableCell>{team.team_type}</TableCell>
-                  <TableCell>{team.market_id ? `#${team.market_id}` : '全局/未绑定'}</TableCell>
+                  <TableCell>{marketName(team.market_id)}</TableCell>
                   <TableCell align="right">{team.active_users}</TableCell>
                   <TableCell><Chip size="small" color={team.is_active ? 'success' : 'default'} label={team.is_active ? '启用' : '停用'} /></TableCell>
                   <TableCell>{formatDateTime(team.updated_at)}</TableCell>
@@ -186,13 +195,21 @@ export function TeamGovernance({
           <DialogTitle>{selectedTeam ? '编辑团队' : '新建团队'}</DialogTitle>
           <DialogContent>
             <DialogContentText>
-              市场编号来自现有市场配置；留空表示不绑定单一市场。团队名称在系统内必须唯一。
+              选择团队负责的市场；留空表示不绑定单一市场。团队名称在系统内必须唯一。
             </DialogContentText>
             <Stack spacing={2} sx={{ mt: 2 }}>
               {saveTeam.isError ? <OperatorErrorNotice title="保存失败" error={saveTeam.error} fallback="请检查名称和市场配置" /> : null}
               <TextField label="团队名称" required value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
               <TextField label="团队类型" required value={draft.teamType} onChange={(event) => setDraft((current) => ({ ...current, teamType: event.target.value }))} />
-              <TextField label="市场编号" type="number" value={draft.marketId} onChange={(event) => setDraft((current) => ({ ...current, marketId: event.target.value }))} inputProps={{ min: 1 }} />
+              <TextField select label="负责市场" value={draft.marketId} onChange={(event) => setDraft((current) => ({ ...current, marketId: event.target.value }))}>
+                <MenuItem value="">全局/未绑定</MenuItem>
+                {markets.map((market) => (
+                  <MenuItem key={market.id} value={String(market.id)}>{market.country_code || market.code} · {market.name}</MenuItem>
+                ))}
+                {selectedTeam?.market_id && !markets.some((market) => market.id === selectedTeam.market_id) ? (
+                  <MenuItem value={String(selectedTeam.market_id)} disabled>已停用市场 #{selectedTeam.market_id}</MenuItem>
+                ) : null}
+              </TextField>
               {selectedTeam?.active_users ? (
                 <Alert severity="info" variant="outlined">当前团队有 {selectedTeam.active_users} 个活跃用户。修改市场会影响其工作范围。</Alert>
               ) : null}
