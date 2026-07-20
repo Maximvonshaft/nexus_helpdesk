@@ -46,6 +46,12 @@ export const identityApi = {
     requestIdPrefix: 'identity-admin',
   }),
 
+  assignUserTeam: (userId: number, teamId: number | null) => apiRequest<{ ok: boolean; user_id: number; team_id: number | null }>(`/api/admin/users/${userId}/team`, {
+    method: 'PUT',
+    body: JSON.stringify({ team_id: teamId }),
+    requestIdPrefix: 'identity-admin',
+  }),
+
   activateUser: (userId: number) => apiRequest<AdminUser>(`/api/admin/users/${userId}/activate`, {
     method: 'POST',
     requestIdPrefix: 'identity-admin',
