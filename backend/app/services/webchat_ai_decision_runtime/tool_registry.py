@@ -10,11 +10,7 @@ AutoExecutionMode = Literal["auto", "policy_gated", "confirmation_required", "di
 
 @dataclass(frozen=True)
 class ToolContract:
-    """Canonical contract for every tool exposed to an Agent.
-
-    The Agent receives only the safe prompt projection. Execution, permission,
-    confirmation, idempotency and audit remain server-side concerns.
-    """
+    """Canonical contract for every Tool exposed to an Agent."""
 
     name: str
     classification: ToolClassification
@@ -47,103 +43,88 @@ class ToolContract:
         }
 
 
+def _schema(
+    properties: dict[str, Any],
+    *,
+    required: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": False,
+    }
+
+
+_TRACKING_NUMBER = {"type": "string", "minLength": 8, "maxLength": 48}
+
 TOOL_CONTRACTS: dict[str, ToolContract] = {
     "knowledge.search": ToolContract(
         name="knowledge.search",
         classification="read",
         description="Search approved knowledge visible to the current audience.",
-        input_schema={
-            "type": "object",
-            "properties": {
+        input_schema=_schema(
+            {
                 "query": {"type": "string", "minLength": 1, "maxLength": 1000},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 8},
             },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
+            required=("query",),
+        ),
         required_permissions=("knowledge:read",),
         idempotency_key_strategy="sha256(tenant,channel,session,query)",
-        risk_level="low",
         redaction_requirements=("no_internal_chunk_payload", "no_secret", "no_raw_customer_pii"),
-        confirmation_required=False,
-        allowed_auto_execution_mode="auto",
     ),
     "speedaf.order.query": ToolContract(
         name="speedaf.order.query",
         classification="read",
         description="Query the current Speedaf shipment fact for one waybill.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "tracking_number": {"type": "string", "minLength": 8, "maxLength": 48},
-            },
-            "required": ["tracking_number"],
-            "additionalProperties": False,
-        },
+        input_schema=_schema({"tracking_number": _TRACKING_NUMBER}, required=("tracking_number",)),
         required_permissions=("speedaf:tracking:read",),
         idempotency_key_strategy="sha256(tenant,session,tracking_number,request_id)",
         risk_level="medium",
         redaction_requirements=("hash_waybill", "suffix_only", "no_recipient_pii", "no_raw_tool_payload"),
-        confirmation_required=False,
-        allowed_auto_execution_mode="auto",
     ),
     "speedaf.express.track.query": ToolContract(
         name="speedaf.express.track.query",
         classification="read",
         description="Query Speedaf shipment event history for one waybill.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "tracking_number": {"type": "string", "minLength": 8, "maxLength": 48},
-            },
-            "required": ["tracking_number"],
-            "additionalProperties": False,
-        },
+        input_schema=_schema({"tracking_number": _TRACKING_NUMBER}, required=("tracking_number",)),
         required_permissions=("speedaf:tracking:read",),
         idempotency_key_strategy="sha256(tenant,session,tracking_number,request_id)",
         risk_level="medium",
         redaction_requirements=("hash_waybill", "suffix_only", "no_recipient_pii", "no_raw_track_payload"),
-        confirmation_required=False,
-        allowed_auto_execution_mode="auto",
     ),
     "speedaf.order.waybillCode.query": ToolContract(
         name="speedaf.order.waybillCode.query",
         classification="read",
         description="Find safe candidate waybills linked to a caller identifier.",
-        input_schema={
-            "type": "object",
-            "properties": {
+        input_schema=_schema(
+            {
                 "caller_id": {"type": "string", "minLength": 6, "maxLength": 80},
                 "country_code": {"type": "string", "minLength": 2, "maxLength": 8},
             },
-            "required": ["caller_id"],
-            "additionalProperties": False,
-        },
+            required=("caller_id",),
+        ),
         required_permissions=("speedaf:tracking:read",),
         idempotency_key_strategy="sha256(tenant,session,caller_id,country_code)",
         risk_level="medium",
         redaction_requirements=("hash_caller_id", "suffix_only_candidates", "no_raw_waybill"),
-        confirmation_required=False,
-        allowed_auto_execution_mode="auto",
     ),
     "handoff.request.create": ToolContract(
         name="handoff.request.create",
         classification="system",
         description="Request human support and suspend autonomous replies for the conversation.",
-        input_schema={
-            "type": "object",
-            "properties": {
+        input_schema=_schema(
+            {
                 "reason": {"type": "string", "minLength": 1, "maxLength": 240},
                 "recommended_agent_action": {"type": "string", "maxLength": 1000},
             },
-            "required": ["reason"],
-            "additionalProperties": False,
-        },
+            required=("reason",),
+        ),
         required_permissions=("webchat:handoff:create",),
         idempotency_key_strategy="active_request_per_conversation",
         risk_level="medium",
         redaction_requirements=("no_secret", "no_raw_tool_payload", "clip_reason"),
-        confirmation_required=False,
         allowed_auto_execution_mode="policy_gated",
         controlled_action_required=True,
     ),
@@ -151,21 +132,18 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="ticket.create",
         classification="write",
         description="Create or reuse a support ticket for the current conversation.",
-        input_schema={
-            "type": "object",
-            "properties": {
+        input_schema=_schema(
+            {
                 "title": {"type": "string", "maxLength": 200},
                 "description": {"type": "string", "maxLength": 4000},
                 "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
                 "issue_type": {"type": "string", "maxLength": 120},
-            },
-            "additionalProperties": False,
-        },
+            }
+        ),
         required_permissions=("ticket:create",),
         idempotency_key_strategy="source_dedupe_key + active_ticket_scope",
         risk_level="medium",
         redaction_requirements=("no_secret", "no_raw_tool_payload", "clip_customer_message"),
-        confirmation_required=False,
         allowed_auto_execution_mode="policy_gated",
         controlled_action_required=True,
     ),
@@ -173,16 +151,11 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="conversation.suspend_ai",
         classification="system",
         description="Suspend autonomous replies for the current conversation.",
-        input_schema={
-            "type": "object",
-            "properties": {"reason": {"type": "string", "maxLength": 240}},
-            "additionalProperties": False,
-        },
+        input_schema=_schema({"reason": {"type": "string", "maxLength": 240}}),
         required_permissions=("webchat:ai:suspend",),
         idempotency_key_strategy="conversation_id + active_handoff_request",
         risk_level="medium",
         redaction_requirements=("clip_reason", "no_secret"),
-        confirmation_required=False,
         allowed_auto_execution_mode="policy_gated",
         controlled_action_required=True,
     ),
@@ -190,11 +163,7 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="conversation.resume_ai",
         classification="system",
         description="Resume autonomous replies after human review has completed.",
-        input_schema={
-            "type": "object",
-            "properties": {"reason": {"type": "string", "maxLength": 240}},
-            "additionalProperties": False,
-        },
+        input_schema=_schema({"reason": {"type": "string", "maxLength": 240}}),
         required_permissions=("webchat:ai:resume",),
         idempotency_key_strategy="conversation_id + handoff_status",
         risk_level="medium",
@@ -207,21 +176,18 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="speedaf.workOrder.create",
         classification="write",
         description="Create a Speedaf delivery follow-up work order.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "tracking_number": {"type": "string", "minLength": 8, "maxLength": 48},
+        input_schema=_schema(
+            {
+                "tracking_number": _TRACKING_NUMBER,
                 "work_order_type": {"type": "string", "minLength": 1, "maxLength": 40},
                 "description": {"type": "string", "maxLength": 500},
             },
-            "required": ["tracking_number", "work_order_type"],
-            "additionalProperties": False,
-        },
+            required=("tracking_number", "work_order_type"),
+        ),
         required_permissions=("speedaf:work_order:create",),
         idempotency_key_strategy="sha256(ticket,conversation,tracking_number,work_order_type)",
         risk_level="high",
         redaction_requirements=("hash_waybill", "hash_caller_id", "no_raw_request", "no_secret"),
-        confirmation_required=False,
         allowed_auto_execution_mode="policy_gated",
         controlled_action_required=True,
     ),
@@ -229,15 +195,13 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="speedaf.order.cancel.request",
         classification="write",
         description="Submit a customer-confirmed order cancellation request.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "tracking_number": {"type": "string", "minLength": 8, "maxLength": 48},
+        input_schema=_schema(
+            {
+                "tracking_number": _TRACKING_NUMBER,
                 "reason_code": {"type": "string", "minLength": 1, "maxLength": 40},
             },
-            "required": ["tracking_number", "reason_code"],
-            "additionalProperties": False,
-        },
+            required=("tracking_number", "reason_code"),
+        ),
         required_permissions=("speedaf:order:cancel",),
         idempotency_key_strategy="sha256(tracking_number,caller_id,reason_code)",
         risk_level="high",
@@ -250,15 +214,13 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="speedaf.order.updateAddress.request",
         classification="write",
         description="Submit a customer-confirmed delivery address update request.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "tracking_number": {"type": "string", "minLength": 8, "maxLength": 48},
+        input_schema=_schema(
+            {
+                "tracking_number": _TRACKING_NUMBER,
                 "address": {"type": "string", "minLength": 1, "maxLength": 1000},
             },
-            "required": ["tracking_number", "address"],
-            "additionalProperties": False,
-        },
+            required=("tracking_number", "address"),
+        ),
         required_permissions=("speedaf:order:update_address",),
         idempotency_key_strategy="sha256(tracking_number,caller_id,address,confirmation_token)",
         risk_level="high",
@@ -271,15 +233,13 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="speedaf.voice.callback",
         classification="write",
         description="Request a customer-confirmed voice callback.",
-        input_schema={
-            "type": "object",
-            "properties": {
+        input_schema=_schema(
+            {
                 "phone": {"type": "string", "minLength": 6, "maxLength": 80},
                 "reason": {"type": "string", "maxLength": 500},
             },
-            "required": ["phone"],
-            "additionalProperties": False,
-        },
+            required=("phone",),
+        ),
         required_permissions=("speedaf:voice:callback",),
         idempotency_key_strategy="sha256(voice_session,ticket,event_type)",
         risk_level="high",
@@ -292,43 +252,27 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         name="timeline.event.create",
         classification="system",
         description="Write a safe internal timeline event for the current case.",
-        input_schema={
-            "type": "object",
-            "properties": {
+        input_schema=_schema(
+            {
                 "event_type": {"type": "string", "maxLength": 120},
                 "summary": {"type": "string", "minLength": 1, "maxLength": 500},
             },
-            "required": ["summary"],
-            "additionalProperties": False,
-        },
+            required=("summary",),
+        ),
         required_permissions=("timeline:event:create",),
         idempotency_key_strategy="sha256(conversation,ticket,event_type,client_message)",
-        risk_level="low",
         redaction_requirements=("safe_summary_only", "no_secret", "no_raw_tool_payload"),
-        confirmation_required=False,
         allowed_auto_execution_mode="policy_gated",
         controlled_action_required=True,
         customer_visible_result=False,
     ),
 }
 
-TOOL_NAME_ALIASES: dict[str, str] = {
-    "support_knowledge_retrieve": "knowledge.search",
-    "speedaf_lookup": "speedaf.order.query",
-    "speedaf_query_waybills": "speedaf.order.waybillCode.query",
-    "speedaf.order.waybill_code.query": "speedaf.order.waybillCode.query",
-    "speedaf_create_work_order": "speedaf.workOrder.create",
-    "speedaf.work_order.create": "speedaf.workOrder.create",
-    "speedaf_cancel_order": "speedaf.order.cancel.request",
-    "speedaf.order.cancel": "speedaf.order.cancel.request",
-    "speedaf_update_address": "speedaf.order.updateAddress.request",
-    "speedaf.order.update_address": "speedaf.order.updateAddress.request",
-}
-
 
 def canonical_tool_name(name: str | None) -> str:
-    cleaned = " ".join(str(name or "").strip().split())
-    return TOOL_NAME_ALIASES.get(cleaned, cleaned)
+    """Normalize spelling only; aliases are intentionally unsupported."""
+
+    return " ".join(str(name or "").strip().split())
 
 
 def get_tool_contract(name: str | None) -> ToolContract | None:
@@ -338,7 +282,7 @@ def get_tool_contract(name: str | None) -> ToolContract | None:
 def require_tool_contract(name: str) -> ToolContract:
     contract = get_tool_contract(name)
     if contract is None:
-        raise KeyError(f"unknown tool: {name}")
+        raise KeyError(f"unknown Tool: {name}")
     return contract
 
 
