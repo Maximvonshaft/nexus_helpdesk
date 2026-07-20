@@ -3,6 +3,7 @@ import type {
   AdminUserCreate,
   AdminUserPage,
   AdminUserUpdate,
+  AuthSessionResponse,
   AuthUser,
   ChannelAccount,
   ControlTower,
@@ -16,7 +17,11 @@ import type {
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
+  LoginResult,
   Market,
+  MfaRecoveryCodes,
+  MfaSetupBegin,
+  MfaStatus,
   OutboundEmailAccount,
   OutboundEmailAccountCreate,
   OutboundEmailAccountUpdate,
@@ -69,9 +74,13 @@ export {
 export const normalizeSupportApiBaseUrl = normalizeApiBaseUrl
 
 export const supportApi = {
-  login: (username: string, password: string) => apiRequest<{ access_token: string; user: AuthUser }>('/api/auth/login', {
+  login: (username: string, password: string) => apiRequest<LoginResult>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+  }),
+  verifyMfaLogin: (challengeToken: string, credential: string) => apiRequest<AuthSessionResponse>('/api/auth/mfa/login/verify', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_token: challengeToken, credential }),
   }),
   me: () => apiRequest<AuthUser>('/api/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/change-password', {
@@ -79,6 +88,24 @@ export const supportApi = {
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   }),
   logoutAll: () => apiRequest<{ ok: boolean }>('/api/auth/logout-all', { method: 'POST' }),
+  mfaStatus: () => apiRequest<MfaStatus>('/api/auth/mfa/status'),
+  beginMfaSetup: (currentPassword: string) => apiRequest<MfaSetupBegin>('/api/auth/mfa/setup/begin', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword }),
+  }),
+  cancelMfaSetup: () => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/mfa/setup/cancel', { method: 'POST' }),
+  confirmMfaSetup: (code: string) => apiRequest<MfaRecoveryCodes>('/api/auth/mfa/setup/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  }),
+  regenerateMfaRecoveryCodes: (currentPassword: string, credential: string) => apiRequest<MfaRecoveryCodes>('/api/auth/mfa/recovery-codes/regenerate', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, credential }),
+  }),
+  disableMfa: (currentPassword: string, credential: string) => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/mfa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, credential }),
+  }),
 
   adminUsers: (params?: { cursor?: string | null; limit?: number; includeInactive?: boolean }) => {
     const search = new URLSearchParams({
@@ -122,6 +149,9 @@ export const supportApi = {
     method: 'POST',
   }),
   revokeAdminUserSessions: (userId: number) => apiRequest<{ ok: boolean; user_id: number }>(`/api/admin/identity/users/${userId}/revoke-sessions`, {
+    method: 'POST',
+  }),
+  resetAdminUserMfa: (userId: number) => apiRequest<{ ok: boolean; user_id: number; sessions_revoked: boolean }>(`/api/admin/identity/users/${userId}/reset-mfa`, {
     method: 'POST',
   }),
 
