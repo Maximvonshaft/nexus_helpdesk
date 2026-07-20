@@ -6,6 +6,68 @@ set -Eeuo pipefail
 : "${RELEASE_IMAGE_DIR:?RELEASE_IMAGE_DIR required}"
 
 mkdir -p "${RELEASE_IMAGE_DIR}"
+
+expected_migration_head="$(
+  python - <<'PY'
+from pathlib import Path
+
+from scripts.release.generate_rc_test_env import discover_alembic_head
+
+print(discover_alembic_head(Path("backend/alembic/versions")))
+PY
+)"
+test -n "${expected_migration_head}"
+migration_contract_raw="${RELEASE_IMAGE_DIR}/migration-readiness-contract.raw"
+docker exec -i \
+  -e EXPECTED_MIGRATION_HEAD="${expected_migration_head}" \
+  -e NEXUS_ASSURANCE_SOURCE_SHA="${SOURCE_SHA}" \
+  -e PYTHONPATH=/app/backend \
+  nexus-ci-candidate \
+  python - <<'PY' > "${migration_contract_raw}"
+import json
+import os
+
+from starlette.responses import Response
+
+from app.main import readyz
+
+result = readyz()
+if isinstance(result, Response):
+    status_code = result.status_code
+    payload = json.loads(bytes(result.body).decode("utf-8"))
+else:
+    status_code = 200
+    payload = result
+contract = {
+    "schema": "nexus.migration-readiness-contract.v1",
+    "source_sha": os.environ["NEXUS_ASSURANCE_SOURCE_SHA"],
+    "expected_migration_head": os.environ["EXPECTED_MIGRATION_HEAD"],
+    "http_status": status_code,
+    "payload": payload,
+}
+print("NEXUS_MIGRATION_READINESS_CONTRACT=" + json.dumps(contract, sort_keys=True))
+PY
+sed -n 's/^NEXUS_MIGRATION_READINESS_CONTRACT=//p' "${migration_contract_raw}" \
+  | tail -n 1 > "${RELEASE_IMAGE_DIR}/migration-readiness-contract.json"
+rm -f "${migration_contract_raw}"
+test -s "${RELEASE_IMAGE_DIR}/migration-readiness-contract.json"
+jq -e \
+  --arg source_sha "${SOURCE_SHA}" \
+  --arg expected "${expected_migration_head}" \
+  '.schema == "nexus.migration-readiness-contract.v1"
+   and .source_sha == $source_sha
+   and .expected_migration_head == $expected
+   and .http_status == 200
+   and .payload.status == "ready"
+   and .payload.database == "ok"
+   and .payload.migration.ok == true
+   and .payload.migration.required == true
+   and .payload.migration.expected == $expected
+   and .payload.migration.observed == $expected
+   and .payload.migration_revision == $expected
+   and .payload.reason_codes == []' \
+  "${RELEASE_IMAGE_DIR}/migration-readiness-contract.json" >/dev/null
+
 python scripts/security/sanitize_image_sbom.py \
   --input "${RELEASE_IMAGE_DIR}/image.raw.cdx.json" \
   --frontend-input "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json" \
