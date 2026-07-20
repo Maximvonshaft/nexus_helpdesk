@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime
 from typing import Optional
 
@@ -25,22 +23,6 @@ from .enums import (
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
-
-
-def _canonical_payload_json(payload: object) -> str:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _payload_hash_from_json_text(payload_json: str | None) -> str:
-    try:
-        payload = json.loads(payload_json or "{}")
-    except Exception:
-        payload = payload_json or ""
-    return hashlib.sha256(_canonical_payload_json(payload).encode("utf-8")).hexdigest()
-
-
-def _external_channel_payload_hash_default(context) -> str:
-    return _payload_hash_from_json_text(context.get_current_parameters().get("payload_json"))
 
 
 class Tenant(Base):
@@ -88,8 +70,6 @@ class Team(Base):
     tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="teams")
 
 
-
-
 class Market(Base):
     __tablename__ = "markets"
 
@@ -115,8 +95,6 @@ class Market(Base):
     bulletins: Mapped[list["MarketBulletin"]] = relationship(back_populates="market")
 
 
-
-
 class MarketBulletin(Base):
     __tablename__ = "market_bulletins"
 
@@ -139,6 +117,7 @@ class MarketBulletin(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
     market: Mapped[Optional["Market"]] = relationship(back_populates="bulletins")
+
 
 class AIConfigResource(Base):
     __tablename__ = "ai_config_resources"
@@ -325,7 +304,6 @@ class User(Base):
     tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="users")
 
 
-
 class IntegrationClient(Base):
     __tablename__ = "integration_clients"
 
@@ -369,7 +347,6 @@ class AuthThrottleEntry(Base):
     last_failed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
-
 
 
 class WebchatRateLimitBucket(Base):
@@ -427,36 +404,6 @@ class AdminActionRateLimitBucket(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
 
-class ExternalChannelUnresolvedEvent(Base):
-    __tablename__ = "external_channel_unresolved_events"
-    __table_args__ = (
-        Index(
-            "uq_external_channel_unresolved_active_payload_hash",
-            "source",
-            text("COALESCE(session_key, '')"),
-            "payload_hash",
-            unique=True,
-            sqlite_where=text("payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"),
-            postgresql_where=text("payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"),
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    source: Mapped[str] = mapped_column(String(80), index=True)
-    session_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-    event_type: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
-    recipient: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-    source_chat_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
-    preferred_reply_contact: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
-    payload_json: Mapped[str] = mapped_column(Text)
-    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True, default=_external_channel_payload_hash_default)
-    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
-    replay_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
-
-
 class Customer(Base):
     __tablename__ = "customers"
 
@@ -477,8 +424,6 @@ class Customer(Base):
 
     tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="customers")
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="customer")
-
-
 
 
 class ServiceHeartbeat(Base):
@@ -595,8 +540,6 @@ class Ticket(Base):
     outbound_messages: Mapped[list["TicketOutboundMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     inbound_email_messages: Mapped[list["TicketInboundEmailMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     ai_intakes: Mapped[list["TicketAIIntake"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
-    external_channel_link: Mapped[Optional["ExternalChannelConversationLink"]] = relationship(back_populates="ticket", uselist=False, cascade="all, delete-orphan")
-    external_channel_attachment_references: Mapped[list["ExternalChannelAttachmentReference"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
 
 
 class TicketComment(Base):
@@ -873,85 +816,6 @@ class BackgroundJob(Base):
     locked_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
-
-
-
-
-class ExternalChannelConversationLink(Base):
-    __tablename__ = "external_channel_conversation_links"
-    __table_args__ = (
-        UniqueConstraint("session_key", name="uq_external_channel_session_key"),
-        UniqueConstraint("ticket_id", name="uq_external_channel_ticket_link"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
-    session_key: Mapped[str] = mapped_column(String(255), index=True)
-    channel: Mapped[Optional[str]] = mapped_column(String(60), nullable=True, index=True)
-    recipient: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-    account_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
-    thread_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
-    channel_account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("channel_accounts.id"), nullable=True, index=True)
-    route_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    last_cursor: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    last_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    last_synced_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
-
-    ticket: Mapped["Ticket"] = relationship(back_populates="external_channel_link")
-    channel_account: Mapped[Optional["ChannelAccount"]] = relationship()
-    transcript_messages: Mapped[list["ExternalChannelTranscriptMessage"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
-
-
-class ExternalChannelTranscriptMessage(Base):
-    __tablename__ = "external_channel_transcript_messages"
-    __table_args__ = (UniqueConstraint("conversation_id", "message_id", name="uq_external_channel_conversation_message"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("external_channel_conversation_links.id"), index=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
-    session_key: Mapped[str] = mapped_column(String(255), index=True)
-    message_id: Mapped[str] = mapped_column(String(255), index=True)
-    role: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
-    author_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
-    body_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    content_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    received_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
-
-    conversation: Mapped["ExternalChannelConversationLink"] = relationship(back_populates="transcript_messages")
-    ticket: Mapped["Ticket"] = relationship()
-
-
-class ExternalChannelAttachmentReference(Base):
-    __tablename__ = "external_channel_attachment_references"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("external_channel_conversation_links.id"), index=True)
-    transcript_message_id: Mapped[int] = mapped_column(ForeignKey("external_channel_transcript_messages.id"), index=True)
-    remote_attachment_id: Mapped[str] = mapped_column(String(160), index=True)
-    content_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
-    filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    storage_status: Mapped[str] = mapped_column(String(40), default="referenced")
-    storage_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
-
-    ticket: Mapped["Ticket"] = relationship(back_populates="external_channel_attachment_references")
-    conversation: Mapped["ExternalChannelConversationLink"] = relationship()
-    transcript_message: Mapped["ExternalChannelTranscriptMessage"] = relationship()
-
-
-class ExternalChannelSyncCursor(Base):
-    __tablename__ = "external_channel_sync_cursors"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    source: Mapped[str] = mapped_column(String(80), unique=True, index=True)
-    cursor_value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
 
