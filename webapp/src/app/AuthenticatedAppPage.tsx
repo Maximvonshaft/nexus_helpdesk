@@ -52,7 +52,7 @@ export function AuthenticatedAppPage({
     )
   }
 
-  const allowed = requiredAny.some((capability) => capabilities.has(capability))
+  const allowed = requiredAny.length === 0 || requiredAny.some((capability) => capabilities.has(capability))
 
   return (
     <AppShell
