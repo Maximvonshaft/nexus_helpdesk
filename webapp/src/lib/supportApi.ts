@@ -17,7 +17,13 @@ import type {
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
   Market,
+  OutboundEmailAccount,
+  OutboundEmailAccountCreate,
+  OutboundEmailAccountUpdate,
+  OutboundEmailTestSendRequest,
+  OutboundEmailTestSendResult,
   ProviderRuntimeStatus,
+  QueueSummary,
   RolePolicy,
   SecurityAudit,
   SupportConversationMetrics,
@@ -170,6 +176,21 @@ export const supportApi = {
 
   channelAccounts: () => apiRequest<ChannelAccount[]>('/api/admin/channel-accounts'),
   whatsappNativeStatus: (accountId: string) => apiRequest<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
+  outboundEmailAccounts: () => apiRequest<OutboundEmailAccount[]>('/api/admin/outbound-email/accounts'),
+  createOutboundEmailAccount: (payload: OutboundEmailAccountCreate) => apiRequest<OutboundEmailAccount>('/api/admin/outbound-email/accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateOutboundEmailAccount: (accountId: number, payload: OutboundEmailAccountUpdate) => apiRequest<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  enableOutboundEmailAccount: (accountId: number) => apiRequest<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}/enable`, { method: 'POST' }),
+  disableOutboundEmailAccount: (accountId: number) => apiRequest<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}/disable`, { method: 'POST' }),
+  testOutboundEmailAccount: (accountId: number, payload: OutboundEmailTestSendRequest) => apiRequest<OutboundEmailTestSendResult>(`/api/admin/outbound-email/accounts/${accountId}/test-send`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   channelOnboardingTasks: (params?: { provider?: string; status?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams({
       limit: String(params?.limit ?? 50),
@@ -198,6 +219,13 @@ export const supportApi = {
     method: 'POST',
   }),
   providerRuntimeStatus: () => apiRequest<ProviderRuntimeStatus>('/api/admin/provider-runtime/status'),
+  queueSummary: () => apiRequest<QueueSummary>('/api/admin/queues/summary'),
+  requeueDeadJobs: (limit = 50) => apiRequest<{ ok: boolean; requeued: number; job_type?: string | null }>(`/api/admin/jobs/requeue-dead?limit=${Math.max(1, Math.min(limit, 200))}`, {
+    method: 'POST',
+  }),
+  requeueDeadOutbound: (limit = 50) => apiRequest<{ ok: boolean; requeued: number }>(`/api/admin/outbound/requeue-dead?limit=${Math.max(1, Math.min(limit, 200))}`, {
+    method: 'POST',
+  }),
 
   querySpeedafWaybills: (ticketId: number, payload: SpeedafWaybillLookupPayload) => apiRequest<SpeedafWaybillLookupResponse>(`/api/tickets/${ticketId}/speedaf/waybills/query`, {
     method: 'POST',
