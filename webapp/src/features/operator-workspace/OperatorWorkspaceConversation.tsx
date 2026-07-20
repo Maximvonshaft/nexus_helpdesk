@@ -10,6 +10,7 @@ import {
   OperatorStatusLine,
   operatorScrollBehavior,
 } from '@/app/OperatorPresentation'
+import { agentRoutingApi } from '@/lib/agentRoutingApi'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
 import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type { UnifiedOperatorQueueItem } from '@/lib/operatorWorkspaceTypes'
@@ -55,7 +56,20 @@ export function OperatorWorkspaceConversation({
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const previousLatestMessageIdRef = useRef<string | number | undefined>(thread?.messages.at(-1)?.id)
-  const canReply = Boolean(item.ticket_id && thread && !selectionUnavailable && hasWorkspaceCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'))
+  const ticketReplyAllowed = Boolean(
+    item.ticket_id
+    && thread
+    && !selectionUnavailable
+    && hasWorkspaceCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'),
+  )
+  const conversationReplyAllowed = Boolean(
+    !item.ticket_id
+    && thread?.conversation_id
+    && thread.handoff?.can_reply
+    && !selectionUnavailable
+    && hasWorkspaceCapability(capabilities, 'webchat.handoff.accept'),
+  )
+  const canReply = ticketReplyAllowed || conversationReplyAllowed
 
   useEffect(() => {
     setReply('')
@@ -89,7 +103,11 @@ export function OperatorWorkspaceConversation({
   useEffect(() => () => onReplyDirtyChange(false), [onReplyDirtyChange])
 
   const replyMutation = useMutation({
-    mutationFn: () => operatorWorkspaceApi.reply(item.ticket_id as number, reply.trim()),
+    mutationFn: () => {
+      if (item.ticket_id) return operatorWorkspaceApi.reply(item.ticket_id, reply.trim())
+      if (!thread?.conversation_id) throw new Error('当前会话编号不可用')
+      return agentRoutingApi.reply(thread.conversation_id, reply.trim())
+    },
     onSuccess: async () => {
       setReply('')
       onReplyDirtyChange(false)
@@ -177,7 +195,7 @@ export function OperatorWorkspaceConversation({
           {replyMutation.isError ? <OperatorErrorNotice title="发送失败" error={replyMutation.error} fallback="请稍后重试" /> : null}
           <Box component="form" onSubmit={(event) => { event.preventDefault(); if (canReply && reply.trim()) replyMutation.mutate() }}>
             <Stack spacing={1.25}>
-              <TextField label="回复客户" helperText={canReply ? '发送状态以送达结果为准。' : '当前不可回复。'} value={reply} onChange={(event) => setReply(event.target.value)} multiline minRows={4} placeholder="输入回复" autoComplete="off" disabled={!canReply} />
+              <TextField label="回复客户" helperText={canReply ? '当前会话由您接管，回复会直接进入会话记录。' : '接受人工会话后才能回复。'} value={reply} onChange={(event) => setReply(event.target.value)} multiline minRows={4} placeholder="输入回复" autoComplete="off" disabled={!canReply} />
               <Button type="submit" variant="contained" disabled={!canReply || !reply.trim() || replyMutation.isPending} startIcon={replyMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} sx={{ alignSelf: 'flex-end' }}>{replyMutation.isPending ? '发送中…' : '发送回复'}</Button>
             </Stack>
           </Box>
