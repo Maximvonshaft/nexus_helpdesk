@@ -1,0 +1,629 @@
+name: Temporary PR 774 Takeover Fixes
+
+on:
+  push:
+    branches:
+      - fix/pr-774-agent-routing-takeover
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr-774-takeover-fixes
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  PYTHONPATH: backend
+  APP_ENV: test
+  AUTO_INIT_DB: "false"
+  SEED_DEMO_DATA: "false"
+  ALLOW_DEV_AUTH: "false"
+  PROVIDER_RUNTIME_ENABLED: "false"
+  PRIVATE_AI_RUNTIME_ENABLED: "false"
+  WEBCHAT_AI_ENABLED: "false"
+  WEBCHAT_VOICE_ENABLED: "false"
+  ENABLE_OUTBOUND_DISPATCH: "false"
+
+jobs:
+  verify-and-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact takeover Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install exact dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Apply routing and support projection corrections
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str, label: str) -> None:
+              source = path.read_text(encoding="utf-8")
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 target, found {count}")
+              path.write_text(source.replace(old, new, 1), encoding="utf-8")
+
+          routing = Path("backend/app/services/agent_routing_service.py")
+          replace_once(
+              routing,
+              "from ..webchat_models import WebchatConversation, WebchatEvent, WebchatHandoffRequest\n",
+              "from ..webchat_models import (\n"
+              "    WebchatConversation,\n"
+              "    WebchatEvent,\n"
+              "    WebchatHandoffDecision,\n"
+              "    WebchatHandoffRequest,\n"
+              ")\n",
+              "routing_decision_import",
+          )
+          replace_once(
+              routing,
+              "    if has_global_case_visibility(user, db):\n        return True\n",
+              "",
+              "routing_role_bypass",
+          )
+          replace_once(
+              routing,
+              "    for request_row, conversation, control in rows:\n"
+              "        if _scope_grant_exists(db, user=user, control=control):\n"
+              "            return request_row, conversation, control\n",
+              "    for request_row, conversation, control in rows:\n"
+              "        declined = (\n"
+              "            db.query(WebchatHandoffDecision.id)\n"
+              "            .filter(\n"
+              "                WebchatHandoffDecision.request_id == request_row.id,\n"
+              "                WebchatHandoffDecision.actor_id == user.id,\n"
+              "                WebchatHandoffDecision.decision == \"declined\",\n"
+              "            )\n"
+              "            .first()\n"
+              "        )\n"
+              "        if declined is not None:\n"
+              "            continue\n"
+              "        if _scope_grant_exists(db, user=user, control=control):\n"
+              "            return request_row, conversation, control\n",
+              "routing_declined_skip",
+          )
+          replace_once(
+              routing,
+              "        assign_handoff_to_agent(\n"
+              "            db,\n"
+              "            request_row=request_row,\n"
+              "            conversation=conversation,\n"
+              "            user=user,\n"
+              "            mode=\"automatic\",\n"
+              "        )\n"
+              "        return\n",
+              "        fill_agent_capacity(db, user=user)\n"
+              "        if request_row.status != \"requested\":\n"
+              "            return\n",
+              "routing_fifo_dispatch",
+          )
+
+          support = Path("backend/app/api/support_conversations.py")
+          replace_once(
+              support,
+              "        Ticket.source_channel == SourceChannel.whatsapp,\n",
+              "        and_(\n"
+              "            Ticket.id.is_not(None),\n"
+              "            Ticket.source_channel == SourceChannel.whatsapp,\n"
+              "        ),\n",
+              "support_whatsapp_null_semantics",
+          )
+          replace_once(
+              support,
+              "                Ticket.source_channel == SourceChannel.web_chat,\n",
+              "                and_(\n"
+              "                    Ticket.id.is_not(None),\n"
+              "                    Ticket.source_channel == SourceChannel.web_chat,\n"
+              "                ),\n",
+              "support_webchat_null_semantics",
+          )
+          replace_once(
+              support,
+              "    query = (\n"
+              "        db.query(WebchatAITurn)\n"
+              "        .join(Ticket, Ticket.id == WebchatAITurn.ticket_id)\n"
+              "        .filter(WebchatAITurn.created_at >= since)\n"
+              "    )\n"
+              "    turns = (\n"
+              "        apply_support_ticket_scope(query, current_user, db)\n",
+              "    query = (\n"
+              "        db.query(WebchatAITurn)\n"
+              "        .join(\n"
+              "            WebchatConversation,\n"
+              "            WebchatConversation.id == WebchatAITurn.conversation_id,\n"
+              "        )\n"
+              "        .outerjoin(Ticket, Ticket.id == WebchatAITurn.ticket_id)\n"
+              "        .filter(WebchatAITurn.created_at >= since)\n"
+              "    )\n"
+              "    turns = (\n"
+              "        apply_support_conversation_scope(query, current_user, db)\n",
+              "support_ticketless_runtime_metrics",
+          )
+          replace_once(
+              support,
+              "    if view == \"closed\":\n"
+              "        query = query.filter(\n"
+              "            Ticket.status.in_(\n"
+              "                [\n"
+              "                    TicketStatus.resolved,\n"
+              "                    TicketStatus.closed,\n"
+              "                    TicketStatus.canceled,\n"
+              "                ]\n"
+              "            )\n"
+              "        )\n"
+              "    elif view != \"all\":\n"
+              "        query = query.filter(\n"
+              "            Ticket.status.notin_(\n"
+              "                [\n"
+              "                    TicketStatus.resolved,\n"
+              "                    TicketStatus.closed,\n"
+              "                    TicketStatus.canceled,\n"
+              "                ]\n"
+              "            )\n"
+              "        )\n",
+              "    terminal_ticket_statuses = [\n"
+              "        TicketStatus.resolved,\n"
+              "        TicketStatus.closed,\n"
+              "        TicketStatus.canceled,\n"
+              "    ]\n"
+              "    if view == \"closed\":\n"
+              "        query = query.filter(\n"
+              "            or_(\n"
+              "                Ticket.status.in_(terminal_ticket_statuses),\n"
+              "                and_(\n"
+              "                    Ticket.id.is_(None),\n"
+              "                    WebchatConversation.status == \"closed\",\n"
+              "                ),\n"
+              "            )\n"
+              "        )\n"
+              "    elif view != \"all\":\n"
+              "        query = query.filter(\n"
+              "            or_(\n"
+              "                Ticket.status.notin_(terminal_ticket_statuses),\n"
+              "                and_(\n"
+              "                    Ticket.id.is_(None),\n"
+              "                    WebchatConversation.status == \"open\",\n"
+              "                ),\n"
+              "            )\n"
+              "        )\n",
+              "support_ticketless_open_closed",
+          )
+          replace_once(
+              support,
+              "                handoff_status == \"none\"\n"
+              "                or (\n",
+              "                (ticket is not None and handoff_status == \"none\")\n"
+              "                or (\n",
+              "support_ticketless_reply_projection",
+          )
+          replace_once(
+              support,
+              "    query = (\n"
+              "        db.query(WebchatConversation, Ticket)\n"
+              "        .join(Ticket, Ticket.id == WebchatConversation.ticket_id)\n"
+              "        .filter(WebchatConversation.updated_at >= since)\n"
+              "    )\n"
+              "    rows = apply_support_ticket_scope(query, current_user, db).all()\n"
+              "    by_channel: Counter[str] = Counter()\n"
+              "    state_counts: Counter[str] = Counter()\n"
+              "    needs_human = 0\n"
+              "    ai_active = 0\n"
+              "    for conversation, ticket in rows:\n"
+              "        by_channel[_channel(conversation, ticket)] += 1\n"
+              "        state_counts[_enum_value(ticket.conversation_state)] += 1\n"
+              "        if (\n"
+              "            ticket.conversation_state\n"
+              "            == ConversationState.human_review_required\n"
+              "            or ticket.required_action\n"
+              "            or getattr(conversation, \"handoff_status\", None)\n"
+              "            in {\"requested\", \"accepted\"}\n"
+              "        ):\n"
+              "            needs_human += 1\n"
+              "        if _ai_pending(conversation):\n"
+              "            ai_active += 1\n",
+              "    query = (\n"
+              "        db.query(WebchatConversation, Ticket)\n"
+              "        .outerjoin(Ticket, Ticket.id == WebchatConversation.ticket_id)\n"
+              "        .filter(WebchatConversation.updated_at >= since)\n"
+              "    )\n"
+              "    rows = apply_support_conversation_scope(query, current_user, db).all()\n"
+              "    by_channel: Counter[str] = Counter()\n"
+              "    state_counts: Counter[str] = Counter()\n"
+              "    needs_human = 0\n"
+              "    ai_active = 0\n"
+              "    for conversation, ticket in rows:\n"
+              "        handoff_status = getattr(conversation, \"handoff_status\", None) or \"none\"\n"
+              "        by_channel[_channel(conversation, ticket)] += 1\n"
+              "        if ticket is not None:\n"
+              "            state_key = _enum_value(ticket.conversation_state)\n"
+              "        elif conversation.status == \"closed\":\n"
+              "            state_key = \"closed\"\n"
+              "        elif handoff_status == \"accepted\":\n"
+              "            state_key = \"human_owned\"\n"
+              "        elif handoff_status == \"requested\":\n"
+              "            state_key = \"human_review_required\"\n"
+              "        else:\n"
+              "            state_key = \"ai_active\"\n"
+              "        state_counts[state_key] += 1\n"
+              "        if (\n"
+              "            (\n"
+              "                ticket is not None\n"
+              "                and (\n"
+              "                    ticket.conversation_state\n"
+              "                    == ConversationState.human_review_required\n"
+              "                    or ticket.required_action\n"
+              "                )\n"
+              "            )\n"
+              "            or handoff_status in {\"requested\", \"accepted\"}\n"
+              "        ):\n"
+              "            needs_human += 1\n"
+              "        if _ai_pending(conversation):\n"
+              "            ai_active += 1\n",
+              "support_ticketless_metrics",
+          )
+
+          state_start = support.read_text(encoding="utf-8")
+          old_state = '''@router.get("/state")
+          def support_conversation_state(
+              db: Session = Depends(get_db),
+              current_user=Depends(get_current_user),
+          ) -> dict[str, Any]:
+              ensure_capability(
+                  current_user,
+                  CAP_TICKET_READ,
+                  db,
+                  message="support_conversation_read_requires_capability",
+              )
+              open_query = (
+                  db.query(WebchatConversation.id)
+                  .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
+                  .filter(
+                      Ticket.status.notin_(
+                          [
+                              TicketStatus.resolved,
+                              TicketStatus.closed,
+                              TicketStatus.canceled,
+                          ]
+                      )
+                  )
+              )
+              open_count = apply_support_ticket_scope(
+                  open_query,
+                  current_user,
+                  db,
+              ).count()
+
+              requested_query = (
+                  db.query(WebchatHandoffRequest.id)
+                  .join(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+                  .filter(WebchatHandoffRequest.status == "requested")
+              )
+              requested_handoffs = apply_support_ticket_scope(
+                  requested_query,
+                  current_user,
+                  db,
+              ).count()
+
+              my_query = (
+                  db.query(WebchatHandoffRequest.id)
+                  .join(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+                  .filter(
+                      WebchatHandoffRequest.status == "accepted",
+                      WebchatHandoffRequest.assigned_agent_id == current_user.id,
+                  )
+              )
+              my_handoffs = apply_support_ticket_scope(
+                  my_query,
+                  current_user,
+                  db,
+              ).count()
+              return {
+                  "source": "nexus_support_conversations",
+                  "open": open_count,
+                  "requested_handoffs": requested_handoffs,
+                  "my_handoffs": my_handoffs,
+                  "generated_at": _iso(utc_now()),
+              }
+          '''
+          new_state = '''@router.get("/state")
+          def support_conversation_state(
+              db: Session = Depends(get_db),
+              current_user=Depends(get_current_user),
+          ) -> dict[str, Any]:
+              ensure_capability(
+                  current_user,
+                  CAP_TICKET_READ,
+                  db,
+                  message="support_conversation_read_requires_capability",
+              )
+              terminal_ticket_statuses = [
+                  TicketStatus.resolved,
+                  TicketStatus.closed,
+                  TicketStatus.canceled,
+              ]
+              open_query = (
+                  db.query(WebchatConversation.id)
+                  .outerjoin(Ticket, Ticket.id == WebchatConversation.ticket_id)
+                  .filter(
+                      or_(
+                          Ticket.status.notin_(terminal_ticket_statuses),
+                          and_(
+                              Ticket.id.is_(None),
+                              WebchatConversation.status == "open",
+                          ),
+                      )
+                  )
+              )
+              open_count = apply_support_conversation_scope(
+                  open_query,
+                  current_user,
+                  db,
+              ).count()
+
+              requested_query = (
+                  db.query(WebchatHandoffRequest.id)
+                  .join(
+                      WebchatConversation,
+                      WebchatConversation.id == WebchatHandoffRequest.conversation_id,
+                  )
+                  .outerjoin(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+                  .filter(WebchatHandoffRequest.status == "requested")
+              )
+              requested_handoffs = apply_support_conversation_scope(
+                  requested_query,
+                  current_user,
+                  db,
+              ).count()
+
+              my_query = (
+                  db.query(WebchatHandoffRequest.id)
+                  .join(
+                      WebchatConversation,
+                      WebchatConversation.id == WebchatHandoffRequest.conversation_id,
+                  )
+                  .outerjoin(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+                  .filter(
+                      WebchatHandoffRequest.status == "accepted",
+                      WebchatHandoffRequest.assigned_agent_id == current_user.id,
+                  )
+              )
+              my_handoffs = apply_support_conversation_scope(
+                  my_query,
+                  current_user,
+                  db,
+              ).count()
+              return {
+                  "source": "nexus_support_conversations",
+                  "open": open_count,
+                  "requested_handoffs": requested_handoffs,
+                  "my_handoffs": my_handoffs,
+                  "generated_at": _iso(utc_now()),
+              }
+          '''
+          if state_start.count(old_state) != 1:
+              raise SystemExit("support_ticketless_state: exact endpoint target not found")
+          support.write_text(state_start.replace(old_state, new_state, 1), encoding="utf-8")
+
+          tests = Path("backend/tests/test_conversation_first_agent_routing.py")
+          source = tests.read_text(encoding="utf-8")
+          import_marker = "from app.api.webchat_public import WebchatInitRequest  # noqa: E402\n"
+          import_addition = (
+              "from app.api.support_conversations import (  # noqa: E402\n"
+              "    list_support_conversations,\n"
+              "    support_conversation_metrics,\n"
+              "    support_conversation_state,\n"
+              ")\n"
+          )
+          if import_addition not in source:
+              if source.count(import_marker) != 1:
+                  raise SystemExit("routing_test_support_import_marker_mismatch")
+              source = source.replace(import_marker, import_addition + import_marker, 1)
+
+          additional_tests = r'''
+
+          def test_new_handoff_dispatches_oldest_newly_eligible_waiter(db_session):
+              agent = _agent(
+                  db_session,
+                  suffix="fifo-newly-eligible",
+                  granted=False,
+              )
+              older = _conversation(db_session, suffix="fifo-older")
+              newer = _conversation(db_session, suffix="fifo-newer")
+              set_agent_state(
+                  db_session,
+                  user=agent,
+                  presence_status="online",
+                  max_concurrent_conversations=1,
+              )
+              older_request = request_handoff(
+                  db_session,
+                  conversation=older,
+                  source="ai_runtime",
+                  trigger_type="runtime_handoff",
+                  reason_code="older_waiter",
+              )
+              db_session.add(
+                  OperatorQueueScopeGrant(
+                      user_id=agent.id,
+                      tenant_key="default",
+                      country_code="ME",
+                      channel_key="webchat",
+                      enabled=True,
+                  )
+              )
+              db_session.flush()
+              newer_request = request_handoff(
+                  db_session,
+                  conversation=newer,
+                  source="ai_runtime",
+                  trigger_type="runtime_handoff",
+                  reason_code="newer_waiter",
+              )
+
+              db_session.refresh(older_request)
+              db_session.refresh(newer_request)
+              assert older_request.status == "accepted"
+              assert older_request.assigned_agent_id == agent.id
+              assert newer_request.status == "requested"
+              assert newer_request.assigned_agent_id is None
+
+
+          def test_declined_waiter_is_not_immediately_auto_assigned_again(db_session):
+              agent = _agent(
+                  db_session,
+                  suffix="decline-skip",
+                  granted=False,
+              )
+              declined_conversation = _conversation(db_session, suffix="declined-waiter")
+              next_conversation = _conversation(db_session, suffix="next-waiter")
+              declined_request = request_handoff(
+                  db_session,
+                  conversation=declined_conversation,
+                  source="ai_runtime",
+                  trigger_type="runtime_handoff",
+                  reason_code="decline_me",
+              )
+              db_session.add(
+                  OperatorQueueScopeGrant(
+                      user_id=agent.id,
+                      tenant_key="default",
+                      country_code="ME",
+                      channel_key="webchat",
+                      enabled=True,
+                  )
+              )
+              db_session.flush()
+              decline_handoff_request(
+                  db_session,
+                  request_id=declined_request.id,
+                  current_user=agent,
+                  reason_code="agent_skipped",
+              )
+              next_request = request_handoff(
+                  db_session,
+                  conversation=next_conversation,
+                  source="ai_runtime",
+                  trigger_type="runtime_handoff",
+                  reason_code="next_waiter",
+              )
+              set_agent_state(
+                  db_session,
+                  user=agent,
+                  presence_status="online",
+                  max_concurrent_conversations=1,
+              )
+
+              db_session.refresh(declined_request)
+              db_session.refresh(next_request)
+              assert declined_request.status == "requested"
+              assert declined_request.assigned_agent_id is None
+              assert next_request.status == "accepted"
+              assert next_request.assigned_agent_id == agent.id
+
+
+          def test_ticketless_support_views_include_open_closed_metrics_and_state(db_session):
+              operator = _agent(
+                  db_session,
+                  suffix="support-projection",
+                  role=UserRole.admin,
+              )
+              open_conversation = _conversation(db_session, suffix="support-open")
+              closed_conversation = _conversation(db_session, suffix="support-closed")
+              waiting_conversation = _conversation(db_session, suffix="support-waiting")
+              close_conversation(
+                  db_session,
+                  conversation=closed_conversation,
+                  user=operator,
+                  outcome="human_resolved",
+                  note="Closed without creating a Ticket.",
+              )
+              waiting_request = request_handoff(
+                  db_session,
+                  conversation=waiting_conversation,
+                  source="ai_runtime",
+                  trigger_type="runtime_handoff",
+                  reason_code="needs_human",
+              )
+
+              open_result = list_support_conversations(
+                  q=None,
+                  channel="webchat",
+                  view="open",
+                  limit=80,
+                  db=db_session,
+                  current_user=operator,
+              )
+              closed_result = list_support_conversations(
+                  q=None,
+                  channel="webchat",
+                  view="closed",
+                  limit=80,
+                  db=db_session,
+                  current_user=operator,
+              )
+              metrics = support_conversation_metrics(
+                  since_hours=24,
+                  db=db_session,
+                  current_user=operator,
+              )
+              state = support_conversation_state(
+                  db=db_session,
+                  current_user=operator,
+              )
+
+              open_ids = {item["conversation_id"] for item in open_result["items"]}
+              closed_ids = {item["conversation_id"] for item in closed_result["items"]}
+              assert open_conversation.public_id in open_ids
+              assert waiting_conversation.public_id in open_ids
+              assert closed_conversation.public_id in closed_ids
+              assert metrics["total"] == 3
+              assert metrics["needs_human"] == 1
+              assert state["open"] == 2
+              assert state["requested_handoffs"] == 1
+              assert waiting_request.status == "requested"
+          '''
+          marker = "def test_new_handoff_dispatches_oldest_newly_eligible_waiter"
+          if marker not in source:
+              source = source.rstrip() + "\n" + additional_tests.lstrip()
+          tests.write_text(source, encoding="utf-8")
+          PY
+
+      - name: Verify focused behavior and static integrity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m compileall -q backend/app backend/tests/test_conversation_first_agent_routing.py
+          python -m pytest -q \
+            backend/tests/test_conversation_first_agent_routing.py \
+            backend/tests/test_canonical_policy_projection_behavior.py
+          git diff --check
+
+      - name: Commit verified takeover corrections
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/workflows/_temporary-pr774-takeover-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          test -n "$(git status --porcelain)"
+          git commit -m "fix: enforce FIFO and ticketless support authority"
+          git push origin HEAD:fix/pr-774-agent-routing-takeover
