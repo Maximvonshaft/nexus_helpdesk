@@ -116,7 +116,7 @@ def case_context_with_tracking_and_contact(conversation: WebchatConversation | N
 def test_runtime_tool_calls_convert_to_runtime_tool_actions_and_redact_arguments():
     actions = runtime_tool_actions_from_tool_calls([
         {
-            "name": "speedaf_create_work_order",
+            "tool_name": "speedaf.workOrder.create",
             "arguments": {
                 "tracking_number": "CH1234567890",
                 "phone": "+382 67123456",

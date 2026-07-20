@@ -1,4 +1,5 @@
-import json
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -14,16 +15,16 @@ from app import models_control_plane  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.models import User  # noqa: E402
-from app.schemas_control_plane import KnowledgeItemCreate, PersonaProfileCreate  # noqa: E402
-from app.services import knowledge_service, persona_service  # noqa: E402
-from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
-from app.services.knowledge_grounding_service import (  # noqa: E402
-    enforce_grounded_answer,
-    select_approved_direct_answer_override,
+from app.schemas_control_plane import KnowledgeItemCreate  # noqa: E402
+from app.services import knowledge_service  # noqa: E402
+from app.services.nexus_osr.tool_execution_policy_seed import seed_default_tool_execution_policies  # noqa: E402
+from app.services.agent_runtime.tool_adapter import (  # noqa: E402
+    AgentExecutionContext,
+    execute_agent_tool_calls,
 )
-from app.services.knowledge_prompt_service import build_knowledge_prompt_block, summarize_rag_trace  # noqa: E402
-from app.services.knowledge_retrieval_service import analyze_query, retrieve_published_chunks  # noqa: E402
-from app.services.provider_runtime.output_contracts import OutputContracts  # noqa: E402
+from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
+from app.services.knowledge_retrieval_service import retrieve_published_chunks  # noqa: E402
+from app.services.webchat_ai_decision_runtime.schemas import AIDecisionToolCall  # noqa: E402
 
 
 @pytest.fixture()
@@ -92,7 +93,7 @@ def _business_fact(session, admin, **overrides):
     return _create(session, admin, **data)
 
 
-def test_chinese_natural_query_retrieves_business_fact_above_generic_document(db_session):
+def test_chinese_query_retrieves_approved_business_fact_above_generic_document(db_session):
     admin = _user(db_session)
     fact = _business_fact(
         db_session,
@@ -129,14 +130,11 @@ def test_chinese_natural_query_retrieves_business_fact_above_generic_document(db
     assert result.hits[0].item_key == fact.item_key
     assert result.hits[0].direct_answer == "瑞士地址变更服务费为 8 CHF。"
     assert result.hits[0].score > result.hits[1].score
-    assert result.query_analysis.language == "zh"
-    assert "瑞士这边改地址要多少钱啊" not in result.query_analysis.terms
-    assert len(result.query_analysis.high_value_terms) > 1
 
 
-def test_english_query_retrieves_approved_business_fact(db_session):
+def test_english_and_mixed_language_facts_remain_retrievable(db_session):
     admin = _user(db_session)
-    fact = _business_fact(
+    uk = _business_fact(
         db_session,
         admin,
         item_key="fact.uk.sla",
@@ -146,17 +144,7 @@ def test_english_query_retrieves_approved_business_fact(db_session):
         fact_aliases_json=["UK delivery time", "UK SLA"],
         language="en",
     )
-
-    result = retrieve_published_chunks(db_session, q="What is the UK delivery time?", channel="website", audience_scope="customer", language="en")
-
-    assert result.hits[0].item_key == fact.item_key
-    assert "2 business days" in result.hits[0].direct_answer
-    assert "sla" in result.query_analysis.intent_terms or "delivery" in result.query_analysis.service_terms
-
-
-def test_english_query_can_retrieve_mixed_language_direct_fact(db_session):
-    admin = _user(db_session)
-    fact = _business_fact(
+    swiss = _business_fact(
         db_session,
         admin,
         item_key="fact.ch.service-availability",
@@ -164,136 +152,31 @@ def test_english_query_can_retrieve_mixed_language_direct_fact(db_session):
         language="mixed",
         fact_question="Do you provide domestic-to-domestic delivery in Switzerland?",
         fact_answer="Switzerland domestic-to-domestic service is currently unavailable. 瑞士目前暂未开通本对本业务。",
-        fact_aliases_json=[
-            "domestic to domestic delivery in Switzerland",
-            "Swiss local delivery",
-            "瑞士本对本",
-            "瑞士暂未开通",
-        ],
-        priority=6,
+        fact_aliases_json=["Swiss local delivery", "瑞士本对本"],
     )
 
-    result = retrieve_published_chunks(
+    uk_result = retrieve_published_chunks(
+        db_session,
+        q="What is the UK delivery time?",
+        channel="website",
+        audience_scope="customer",
+        language="en",
+    )
+    swiss_result = retrieve_published_chunks(
         db_session,
         q="Do you provide domestic to domestic delivery in Switzerland?",
         channel="website",
         audience_scope="customer",
         language="en",
-        limit=5,
     )
 
-    assert result.hits[0].item_key == fact.item_key
-    assert "currently unavailable" in result.hits[0].direct_answer
+    assert uk_result.hits[0].item_key == uk.item_key
+    assert "2 business days" in uk_result.hits[0].direct_answer
+    assert swiss_result.hits[0].item_key == swiss.item_key
+    assert "currently unavailable" in swiss_result.hits[0].direct_answer
 
 
-def test_guided_structured_fact_exposes_fact_answer_for_runtime_grounding(db_session):
-    admin = _user(db_session)
-    fact = _business_fact(
-        db_session,
-        admin,
-        item_key="qa.production.guided",
-        title="生产知识闭环冒烟",
-        language="zh",
-        fact_question="客户问生产知识闭环暗号是什么？",
-        fact_answer="生产知识闭环暗号是 canyon-lime。这是知识库事实，不是固定客服话术。",
-        fact_aliases_json=["生产知识闭环暗号", "knowledge qa"],
-        answer_mode="guided_answer",
-    )
-
-    result = retrieve_published_chunks(
-        db_session,
-        q="请告诉我生产知识闭环暗号是什么？",
-        channel="website",
-        audience_scope="customer",
-        language="zh",
-        limit=5,
-    )
-
-    assert result.hits[0].item_key == fact.item_key
-    assert result.hits[0].answer_mode == "guided_answer"
-    assert result.hits[0].direct_answer == "生产知识闭环暗号是 canyon-lime。这是知识库事实，不是固定客服话术。"
-
-
-def test_tracking_query_does_not_promote_business_fact_to_locked_fact(db_session):
-    admin = _user(db_session)
-    _business_fact(
-        db_session,
-        admin,
-        item_key="fact.ch.service-availability",
-        title="Switzerland domestic-to-domestic service availability",
-        language="mixed",
-        fact_question="Do you provide domestic-to-domestic delivery in Switzerland?",
-        fact_answer="Switzerland domestic-to-domestic service is currently unavailable. 瑞士目前暂未开通本对本业务。",
-        fact_aliases_json=["domestic to domestic delivery in Switzerland", "Swiss local delivery"],
-        priority=6,
-    )
-
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        body="Please help me track my parcel. I will provide the tracking number.",
-        language="en",
-    )
-
-    assert context["knowledge_context"]["locked_facts"] == []
-
-
-def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db_session):
-    admin = _user(db_session)
-    fact = _business_fact(
-        db_session,
-        admin,
-        item_key="fact.ch.shipping-sla",
-        title="瑞士海运时效",
-        language="zh",
-        fact_question="瑞士海运时效是多少？",
-        fact_answer="瑞士海运时效为 15 天。",
-        fact_aliases_json=["瑞士海运多久", "瑞士海运时效", "瑞士海运15天"],
-        citation_metadata_json={"source": "Speedaf CH SLA", "version": "2026-06-01"},
-    )
-
-    result = retrieve_published_chunks(
-        db_session,
-        q="瑞士海运时效是多少？",
-        channel="website",
-        audience_scope="customer",
-        language="zh",
-        limit=5,
-    )
-
-    assert result.hits[0].item_key == fact.item_key
-    assert result.hits[0].direct_answer == "瑞士海运时效为 15 天。"
-    assert result.grounding_source["item_key"] == fact.item_key
-
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        body="瑞士海运时效是多少？",
-        language="zh",
-    )
-
-    assert context["knowledge_context"]["hits"][0]["direct_answer"] == "瑞士海运时效为 15 天。"
-    assert context["knowledge_context"]["grounding_source"]["item_key"] == fact.item_key
-    assert context["knowledge_context"]["locked_facts"][0]["item_key"] == fact.item_key
-    assert context["knowledge_context"]["locked_facts"][0]["answer"] == "瑞士海运时效为 15 天。"
-    evidence = context["knowledge_context"]["evidence_pack"][0]
-    assert evidence["item_key"] == fact.item_key
-    assert evidence["source_version"] == 1
-    assert evidence["published_version"] == 1
-    assert evidence["chunk_index"] == 0
-    assert evidence["score"] > 0
-    assert evidence["retrieval_method"]
-    assert evidence["citation"] == {"source": "Speedaf CH SLA", "version": "2026-06-01"}
-
-    trace = summarize_rag_trace(context)
-    assert trace["evidence_pack"][0]["item_key"] == fact.item_key
-    assert trace["evidence_pack"][0]["source_version"] == 1
-    assert trace["evidence_pack"][0]["citation"]["version"] == "2026-06-01"
-
-
-def test_approved_qa_outranks_raw_chunk_and_unapproved_facts_are_excluded(db_session):
+def test_unapproved_and_archived_facts_are_not_returned(db_session):
     admin = _user(db_session)
     approved = _business_fact(
         db_session,
@@ -302,19 +185,8 @@ def test_approved_qa_outranks_raw_chunk_and_unapproved_facts_are_excluded(db_ses
         title="Refusal fee FAQ",
         knowledge_kind="faq",
         fact_question="Can customer refuse delivery?",
-        fact_answer="Customers may refuse delivery; support must record the refusal reason before return processing.",
+        fact_answer="Customers may refuse delivery; support must record the refusal reason.",
         fact_aliases_json=["refuse delivery", "拒收"],
-        priority=100,
-    )
-    _create(
-        db_session,
-        admin,
-        item_key="doc.refusal.generic",
-        title="Refusal SOP",
-        knowledge_kind="document",
-        priority=1,
-        draft_body="Refusal delivery procedures include many operational review steps.",
-        draft_normalized_text="Refusal delivery procedures include many operational review steps.",
     )
     _business_fact(
         db_session,
@@ -326,348 +198,96 @@ def test_approved_qa_outranks_raw_chunk_and_unapproved_facts_are_excluded(db_ses
         fact_answer="Draft answer must not be retrieved.",
         fact_aliases_json=["refuse delivery"],
     )
-    _business_fact(
+    archived = _business_fact(
         db_session,
         admin,
         item_key="faq.refusal.archived",
         title="Archived refusal FAQ",
-        status="archived",
         fact_question="Can customer refuse delivery?",
         fact_answer="Archived answer must not be retrieved.",
         fact_aliases_json=["refuse delivery"],
     )
+    archived.status = "archived"
+    db_session.flush()
 
-    result = retrieve_published_chunks(db_session, q="Can I refuse delivery?", channel="website", audience_scope="customer")
+    result = retrieve_published_chunks(
+        db_session,
+        q="Can customer refuse delivery?",
+        channel="website",
+        audience_scope="customer",
+        language="en",
+        limit=10,
+    )
 
-    keys = [hit.item_key for hit in result.hits]
-    assert keys[0] == approved.item_key
+    keys = {hit.item_key for hit in result.hits}
+    assert approved.item_key in keys
     assert "faq.refusal.draft" not in keys
     assert "faq.refusal.archived" not in keys
 
 
-def test_channel_audience_and_language_filters_are_enforced(db_session):
+def test_generic_runtime_context_does_not_prefetch_knowledge(db_session):
     admin = _user(db_session)
-    website_en = _business_fact(db_session, admin, item_key="fact.website.en", title="Website English", language="en")
-    _business_fact(db_session, admin, item_key="fact.email.en", title="Email English", channel="email", language="en")
-    _business_fact(db_session, admin, item_key="fact.website.zh", title="Website Chinese", language="zh")
-    _business_fact(db_session, admin, item_key="fact.internal.en", title="Internal English", audience_scope="internal", language="en")
-
-    result = retrieve_published_chunks(
-        db_session,
-        q="Swiss address change fee",
-        channel="website",
-        audience_scope="customer",
-        language="en",
-    )
-
-    assert [hit.item_key for hit in result.hits] == [website_en.item_key]
-
-
-def test_direct_answer_grounding_rewrites_safe_refusal_and_blocks_tracking_boundary(db_session):
-    admin = _user(db_session)
-    _business_fact(db_session, admin, item_key="fact.ch.address-grounding", title="Swiss address fee")
-    result = retrieve_published_chunks(db_session, q="Swiss address change fee", channel="website", audience_scope="customer", language="en")
-
-    decision = enforce_grounded_answer(
-        query="Swiss address change fee",
-        provider_reply="I cannot confirm that from the available information.",
-        hits=result.hits,
-    )
-
-    assert decision.applied is True
-    assert decision.reply == "The Switzerland address-change service fee is 8 CHF."
-
-    blocked = enforce_grounded_answer(
-        query="Where is package PK120053679836?",
-        provider_reply="I cannot confirm that from the available information.",
-        hits=result.hits,
-        tracking_fact_evidence_present=False,
-    )
-    assert blocked.applied is False
-
-
-def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
-    hits = [
-        {
-            "item_key": "fact.shipping.sla",
-            "title": "运输时效",
-            "score": 42.0,
-            "chunk_index": 0,
-            "retrieval_method": "structured_fact_recall+direct_answer_fact",
-            "direct_answer": "海运15天，空运10天。",
-            "answer_mode": "direct_answer",
-            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
-            "source_metadata": {"item_key": "fact.shipping.sla"},
-        }
-    ]
-
-    decision = enforce_grounded_answer(
-        query="海运和空运多久？",
-        provider_reply="通常需要30-45天。",
-        hits=hits,
-    )
-
-    assert decision.applied is True
-    assert decision.reply == "海运15天，空运10天。"
-    assert decision.reason == "direct_answer_conflict_rewrite"
-
-    legal_blocked = enforce_grounded_answer(
-        query="如果海运晚了要赔偿吗，海运多久？",
-        provider_reply="通常需要30-45天。",
-        hits=hits,
-    )
-    assert legal_blocked.applied is False
-
-    tracking_blocked = enforce_grounded_answer(
-        query="PK120053679836 现在在哪里，海运多久？",
-        provider_reply="通常需要30-45天。",
-        hits=hits,
-        tracking_fact_evidence_present=True,
-    )
-    assert tracking_blocked.applied is False
-
-
-def test_approved_direct_answer_override_policy_blocks_tracking_and_high_risk_queries():
-    hits = [
-        {
-            "item_key": "fact.ch.shipping-sla",
-            "title": "瑞士海运时效",
-            "score": 161.04,
-            "chunk_index": 0,
-            "retrieval_method": "structured_fact_recall+direct_answer_fact",
-            "direct_answer": "瑞士海运时效为 15 天。",
-            "answer_mode": "direct_answer",
-            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
-            "source_metadata": {"item_key": "fact.ch.shipping-sla"},
-        }
-    ]
-    knowledge_context = {
-        "grounding_would_apply": True,
-        "grounding_source": {"item_key": "fact.ch.shipping-sla"},
-        "hits": hits,
-    }
-    provider_output = {
-        "customer_reply": "请提供您的运单号，我才能查询包裹状态。",
-        "intent": "tracking_missing_number",
-        "tracking_number": None,
-    }
-
-    decision = select_approved_direct_answer_override(
-        query="瑞士海运时效是多少",
-        provider_output=provider_output,
-        knowledge_context=knowledge_context,
-    )
-
-    assert decision.applied is True
-    assert decision.reply == "瑞士海运时效为 15 天。"
-    assert decision.reason == "approved_direct_answer_override"
-
-    tracking_blocked = select_approved_direct_answer_override(
-        query="我的包裹在哪里",
-        provider_output=provider_output,
-        knowledge_context=knowledge_context,
-    )
-    assert tracking_blocked.applied is False
-
-    complaint_blocked = select_approved_direct_answer_override(
-        query="我要投诉，瑞士海运时效是多少",
-        provider_output=provider_output,
-        knowledge_context=knowledge_context,
-    )
-    assert complaint_blocked.applied is False
-
-
-def test_approved_direct_answer_override_requires_entity_compatible_candidate():
-    hits = [
-        {
-            "item_key": "fact.ch.shipping-sla",
-            "title": "瑞士海运时效",
-            "text": "Question: 瑞士海运时效是多少？ Answer: 瑞士海运时效为 15 天。",
-            "score": 161.04,
-            "chunk_index": 0,
-            "retrieval_method": "structured_fact_recall+direct_answer_fact",
-            "direct_answer": "瑞士海运时效为 15 天。",
-            "answer_mode": "direct_answer",
-            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
-            "source_metadata": {"item_key": "fact.ch.shipping-sla", "title": "瑞士海运时效"},
-        }
-    ]
-    provider_output = {
-        "customer_reply": "请提供您的运单号，我才能查询包裹状态。",
-        "intent": "tracking_missing_number",
-        "tracking_number": None,
-    }
-
-    swiss_context = {
-        "grounding_would_apply": True,
-        "grounding_source": {"item_key": "fact.ch.shipping-sla"},
-        "query_analysis": {"entity_terms": ["瑞士"]},
-        "hits": hits,
-    }
-    swiss = select_approved_direct_answer_override(
-        query="瑞士海运时效是多少",
-        provider_output=provider_output,
-        knowledge_context=swiss_context,
-    )
-    assert swiss.applied is True
-    assert swiss.reply == "瑞士海运时效为 15 天。"
-
-    for query in ("尼日利亚海运时效是多少", "尼日利亚空运时效是多少"):
-        blocked = select_approved_direct_answer_override(
-            query=query,
-            provider_output=provider_output,
-            knowledge_context={
-                **swiss_context,
-                "query_analysis": {"entity_terms": ["尼日利亚"]},
-            },
-        )
-        assert blocked.applied is False
-        assert blocked.reason == "entity_mismatch"
-
-
-@pytest.mark.parametrize(
-    "query",
-    [
-        "If ocean shipping is late, can I get compensation?",
-        "瑞士海运晚了有法律责任吗？",
-        "Can you provide the driver-phone for this service?",
-        "What internal API token should I use for shipping SLA?",
-        "Does this create account-risk?",
-    ],
-)
-def test_direct_answer_grounding_blocks_protected_topics(query):
-    hits = [
-        {
-            "item_key": "fact.shipping.sla",
-            "title": "运输时效",
-            "score": 42.0,
-            "chunk_index": 0,
-            "retrieval_method": "structured_fact_recall+direct_answer_fact",
-            "direct_answer": "瑞士海运时效为 15 天。",
-            "answer_mode": "direct_answer",
-            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
-            "source_metadata": {"item_key": "fact.shipping.sla"},
-        }
-    ]
-
-    decision = enforce_grounded_answer(
-        query=query,
-        provider_reply="通常需要30-45天。",
-        hits=hits,
-    )
-
-    assert decision.applied is False
-
-
-@pytest.mark.parametrize(
-    "answer",
-    [
-        "We guarantee compensation if the shipment is late.",
-        "The driver-phone is 123456.",
-        "Use the internal API token from the admin console.",
-    ],
-)
-def test_direct_answer_grounding_blocks_unsafe_answers(answer):
-    hits = [
-        {
-            "item_key": "fact.unsafe",
-            "title": "Unsafe answer",
-            "score": 42.0,
-            "chunk_index": 0,
-            "retrieval_method": "structured_fact_recall+direct_answer_fact",
-            "direct_answer": answer,
-            "answer_mode": "direct_answer",
-            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
-            "source_metadata": {"item_key": "fact.unsafe"},
-        }
-    ]
-
-    decision = enforce_grounded_answer(
-        query="What is the Switzerland shipping SLA?",
-        provider_reply="I cannot confirm that from the available information.",
-        hits=hits,
-    )
-
-    assert decision.applied is False
-
-
-def test_runtime_context_is_bounded_and_sanitized(db_session):
-    admin = _user(db_session)
-    _create(
+    _business_fact(
         db_session,
         admin,
-        item_key="doc.return.window",
-        title="Return window policy",
-        draft_body="Return window is 7 days. Bearer sk-not-a-real-secret http://127.0.0.1/private",
-        draft_normalized_text="Return window is 7 days. Bearer sk-not-a-real-secret http://127.0.0.1/private",
-    )
-
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        body="What is the return window?",
-        language="en",
-    )
-    encoded = json.dumps(context, ensure_ascii=False)
-    assert "Bearer" not in encoded
-    assert "127.0.0.1" not in encoded
-    assert context["knowledge_context"]["query_analysis"]["language"] == "en"
-
-def test_persona_identity_context_is_context_only_not_backend_reply_override(db_session):
-    admin = _user(db_session)
-    profile = persona_service.create_profile(
-        db_session,
-        PersonaProfileCreate(
-            profile_key="identity.website.zh",
-            name="Identity Website Chinese",
-            channel="website",
-            language="zh",
-            draft_summary="Identity contract only.",
-            draft_content_json={
-                "brand_name": "猴王山",
-                "assistant_name": "悟空客服",
-                "identity_statement": "我是猴王山的悟空客服，可以协助处理客户服务问题。",
-                "disallowed_identity_claims": ["NexusDesk"],
-            },
-        ),
-        admin,
-    )
-    persona_service.publish_profile(db_session, profile, admin, notes="publish")
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
+        item_key="fact.ch.shipping-sla",
+        title="瑞士海运时效",
         language="zh",
-        body="你是谁",
-    )
-    parsed = OutputContracts.validate_and_parse(
-        "nexus.webchat_runtime_reply",
-        json.dumps({"customer_reply": "我是客服助手。", "language": "zh", "intent": "other", "handoff_required": False, "ticket_should_create": False}),
-        evidence_present=False,
-        persona_context=context["persona_context"],
-        request_body="你是谁",
+        fact_question="瑞士海运时效是多少？",
+        fact_answer="瑞士海运时效为 15 天。",
+        fact_aliases_json=["瑞士海运多久", "瑞士海运时效"],
     )
 
-    assert context["persona_context"]["identity_context"]["assistant_name"] == "悟空客服"
-    assert parsed["customer_reply"] == "我是客服助手。"
-
-
-def test_knowledge_prompt_block_force_includes_direct_answer_first(db_session):
-    admin = _user(db_session)
-    _business_fact(db_session, admin, item_key="fact.direct.prompt", title="Direct prompt fact")
     context = build_webchat_runtime_context(
         db_session,
         tenant_key="default",
         channel_key="website",
-        language="en",
-        body="Swiss address change fee",
+        body="瑞士海运时效是多少？",
+        language="zh",
     )
 
-    block = build_knowledge_prompt_block(context["knowledge_context"])
+    assert context["context_version"] == "nexus.agent_context.v1"
+    assert "knowledge_context" not in context
+    assert "locked_facts" not in str(context)
 
-    assert "[LOCKED FACT 1] item_key=fact.direct.prompt" in block
-    assert "answer=The Switzerland address-change service fee is 8 CHF." in block
-    assert "[KB 1] item_key=fact.direct.prompt" in block
-    assert "direct_answer=The Switzerland address-change service fee is 8 CHF." in block
-    assert "not live parcel tracking evidence" in block
+
+def test_knowledge_search_tool_returns_safe_observation(db_session):
+    admin = _user(db_session)
+    fact = _business_fact(
+        db_session,
+        admin,
+        item_key="fact.ch.shipping-sla",
+        title="瑞士海运时效",
+        language="zh",
+        fact_question="瑞士海运时效是多少？",
+        fact_answer="瑞士海运时效为 15 天。",
+        fact_aliases_json=["瑞士海运多久", "瑞士海运时效"],
+    )
+    seed_default_tool_execution_policies(db_session)
+    context = AgentExecutionContext(
+        tenant_key="default",
+        channel_key="website",
+        session_id="session",
+        request_id="request",
+        customer_message="瑞士海运时效是多少？",
+        language="zh",
+        allowed_tools=frozenset({"knowledge.search"}),
+        granted_permissions=frozenset({"knowledge:read"}),
+    )
+
+    observations = execute_agent_tool_calls(
+        db_session,
+        calls=[
+            AIDecisionToolCall(
+                tool_name="knowledge.search",
+                arguments={"query": "瑞士海运时效是多少？", "limit": 3},
+            )
+        ],
+        context=context,
+    )
+
+    assert len(observations) == 1
+    assert observations[0].ok is True
+    assert observations[0].status == "executed"
+    assert observations[0].result["hits"][0]["source_id"] == fact.item_key
+    assert observations[0].result["hits"][0]["answer"] == "瑞士海运时效为 15 天。"

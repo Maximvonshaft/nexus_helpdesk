@@ -34,22 +34,11 @@ READ_TOOLS = {
     "attachments_fetch",
     "events_poll",
     "events_wait",
-    "support_knowledge_retrieve",
-    "speedaf_lookup",
-    "speedaf_query_waybills",
-    "tracking_fact_lookup",
     "speedaf.order.query",
     "speedaf.order.waybillCode.query",
-    "speedaf.order.waybill_code.query",
 }
 WRITE_TOOLS = {
     "messages_send",
-    "speedaf_create_work_order",
-    "speedaf_cancel_order",
-    "speedaf_update_address",
-    "speedaf.work_order.create",
-    "speedaf.order.cancel",
-    "speedaf.order.update_address",
 }
 EXTERNAL_SEND_TOOLS = {"messages_send"}
 SYSTEM_TOOLS = {"speedaf.voice.callback"}
