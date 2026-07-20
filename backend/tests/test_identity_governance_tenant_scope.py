@@ -151,7 +151,7 @@ def test_identity_governance_is_tenant_scoped_end_to_end(tmp_path):
             headers=headers,
             json={"name": "Invalid Cross Market Team", "team_type": "support", "market_id": market_b.id},
         )
-        assert cross_market.status_code == 400
+        assert cross_market.status_code == 404
 
         created = client.post(
             "/api/admin/identity/teams",
