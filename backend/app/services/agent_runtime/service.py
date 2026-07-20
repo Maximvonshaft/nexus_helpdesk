@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ...db import SessionLocal
@@ -54,7 +55,7 @@ class AgentRunState:
 
 
 async def run_agent(request: RuntimeAIProviderRequest) -> RuntimeAIProviderResult:
-    """Execute the canonical model → tool → observation → model loop."""
+    """Execute the canonical model → Tool → observation → model loop."""
 
     started = time.monotonic()
     db = SessionLocal()
@@ -90,7 +91,7 @@ async def _run_agent_with_db(
             "customer_language": request.language or metadata.get("customer_language") or metadata.get("language"),
         }
         provider_request = ProviderRequest(
-            request_id=request.request_id or f"agent-{request.session_id}-{round_index}",
+            request_id=_round_request_id(request, round_index),
             tenant_id=request.tenant_key,
             tenant_key=request.tenant_key,
             channel_key=request.channel_key,
@@ -118,6 +119,27 @@ async def _run_agent_with_db(
                 request,
                 state=state,
                 error_code=result.error_code or "provider_unavailable",
+                elapsed_ms=state.elapsed_ms,
+            )
+
+        if not _authoritative_provider_audit_exists(
+            db,
+            request=provider_request,
+            provider=result.provider,
+        ):
+            state.traces.append(
+                AgentRoundTrace(
+                    round_index=round_index,
+                    next_action=None,
+                    provider=result.provider,
+                    elapsed_ms=result.elapsed_ms,
+                    error_code="provider_runtime_audit_unavailable",
+                )
+            )
+            return _fallback_result(
+                request,
+                state=state,
+                error_code="provider_runtime_audit_unavailable",
                 elapsed_ms=state.elapsed_ms,
             )
 
@@ -154,7 +176,11 @@ async def _run_agent_with_db(
                 ai_generated=True,
                 reply_source=result.provider,
                 raw_provider=result.raw_provider or result.provider,
-                raw_payload_safe_summary=_safe_summary(state, decision=decision, provider_summary=result.raw_payload_safe_summary),
+                raw_payload_safe_summary=_safe_summary(
+                    state,
+                    decision=decision,
+                    provider_summary=result.raw_payload_safe_summary,
+                ),
                 reply=decision.customer_reply,
                 intent=decision.intent,
                 handoff_required=decision.handoff_required,
@@ -224,6 +250,49 @@ async def _run_agent_with_db(
         error_code="agent_loop_exhausted",
         elapsed_ms=_elapsed(started),
     )
+
+
+def _authoritative_provider_audit_exists(
+    db: Session,
+    *,
+    request: ProviderRequest,
+    provider: str | None,
+) -> bool:
+    """A Provider result is authoritative only after its durable success audit exists."""
+
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM provider_runtime_audit_logs
+                WHERE request_id = :request_id
+                  AND tenant_id = :tenant_id
+                  AND channel_key = :channel_key
+                  AND session_id = :session_id
+                  AND provider = :provider
+                  AND operation = 'generate'
+                  AND status = 'ok'
+                  AND error_code IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {
+                "request_id": request.request_id,
+                "tenant_id": request.tenant_id,
+                "channel_key": request.channel_key,
+                "session_id": request.session_id,
+                "provider": provider,
+            },
+        ).first()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return False
+    return row is not None
 
 
 def _execution_context(
@@ -338,6 +407,11 @@ def _safe_summary(
     if error_code:
         summary["error_code"] = error_code[:160]
     return summary
+
+
+def _round_request_id(request: RuntimeAIProviderRequest, round_index: int) -> str:
+    base = str(request.request_id or f"agent-{request.session_id}").strip()[:130]
+    return f"{base}:round:{round_index}"[:160]
 
 
 def _optional_int(value: Any) -> int | None:
