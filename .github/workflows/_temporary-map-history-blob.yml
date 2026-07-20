@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   map-blob:
@@ -20,7 +21,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.sha }}
-      - name: Resolve exact historical paths
+      - name: Resolve exact historical path
+        id: map
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,10 +41,15 @@ jobs:
               raise SystemExit(f"expected exactly one path-hash match, got {len(matches)}")
           Path("/tmp/blob-map/matched-path.txt").write_text(matches[0] + "\n")
           PY
-      - name: Upload path evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: historical-blob-path
-          path: /tmp/blob-map/matched-path.txt
-          if-no-files-found: error
-          retention-days: 1
+          {
+            echo 'path<<EOF'
+            cat /tmp/blob-map/matched-path.txt
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Report path to takeover thread
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATCHED_PATH: ${{ steps.map.outputs.path }}
+        run: |
+          gh api repos/${{ github.repository }}/issues/774/comments \
+            -f body="<!-- pr774-history-path -->Historical scan fixture path: \`${MATCHED_PATH}\`."
