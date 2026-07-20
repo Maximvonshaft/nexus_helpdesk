@@ -27,7 +27,19 @@ const typeOwners = [
 
 test('router exposes only the owned canonical route files', () => {
   const actual = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
-  assert.deepEqual(actual, ['channels.tsx', 'control-tower.tsx', 'index.tsx', 'knowledge.tsx', 'login.tsx', 'root.tsx', 'runtime.tsx', 'webchat.tsx', 'workspace.tsx'])
+  assert.deepEqual(actual, [
+    'account.tsx',
+    'administration.tsx',
+    'channels.tsx',
+    'control-tower.tsx',
+    'index.tsx',
+    'knowledge.tsx',
+    'login.tsx',
+    'root.tsx',
+    'runtime.tsx',
+    'webchat.tsx',
+    'workspace.tsx',
+  ])
 })
 
 test('workspace is the sole queue, conversation and governed-action surface', () => {
