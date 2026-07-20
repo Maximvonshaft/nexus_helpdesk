@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import User
 from ..models_agent_routing import ConversationControl
+from ..services.agent_availability_service import availability_summary
 from ..services.agent_routing_service import (
     assign_handoff_to_agent,
-    availability_summary,
     close_conversation,
     heartbeat_agent,
     read_agent_state,
@@ -159,10 +159,7 @@ def get_operator_conversation_thread(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
-    conversation = _conversation_by_public_id(
-        db,
-        conversation_id=conversation_id,
-    )
+    conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
     return read_conversation_thread(
         db,
         conversation=conversation,
@@ -181,10 +178,7 @@ def reply_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(
-            db,
-            conversation_id=conversation_id,
-        )
+        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
         return reply_to_conversation(
             db,
             conversation=conversation,
@@ -202,10 +196,7 @@ def close_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(
-            db,
-            conversation_id=conversation_id,
-        )
+        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
         control = (
             db.query(ConversationControl)
             .filter(ConversationControl.conversation_id == conversation.id)
