@@ -1585,8 +1585,6 @@ def _soft_accept_repair_failure(violation: str | None, output: dict[str, Any], *
         if _tracking_fact_status_guidance_mismatch(reply, tracking_fact_summary=request.tracking_fact_summary):
             return False
         return True
-    if not request.tracking_fact_evidence_present and _contains_live_shipment_conclusion(reply):
-        return False
     return True
 
 def _runtime_output_contract_violation(output: dict[str, Any], *, request: ProviderRequest) -> str | None:
@@ -1631,8 +1629,6 @@ def _runtime_output_contract_violation(output: dict[str, Any], *, request: Provi
         and not _reply_asks_for_logistics_identifier(reply)
     ):
         return "tracking_missing_identifier_request"
-    if not request.tracking_fact_evidence_present and _contains_live_shipment_conclusion(reply):
-        return "shipment_status_without_evidence"
     metadata = request.metadata if isinstance(request.metadata, dict) else {}
     intent_hint = _customer_intent_hint(request.body)
     if request.tracking_fact_evidence_present and intent_hint == "logistics_or_tracking":
@@ -2104,98 +2100,6 @@ def _contains_unsupported_proactive_promise(reply: str) -> bool:
     return any(marker in text for marker in promise_markers)
 
 
-def _contains_live_shipment_conclusion(reply: str) -> bool:
-    text = " ".join(str(reply or "").strip().lower().split())
-    if not text:
-        return False
-    status_markers = (
-        "out for delivery",
-        "in transit",
-        "has been delivered",
-        "was delivered",
-        "is delivered",
-        "delivered today",
-        "delivery failed",
-        "delivery attempt",
-        "failed delivery",
-        "returned to sender",
-        "customs clearance",
-        "cleared customs",
-        "held by customs",
-        "arrived at",
-        "departed from",
-        "picked up",
-        "dispatched",
-        "estimated delivery",
-        "scheduled delivery",
-        "will arrive",
-        "your parcel is",
-        "your package is",
-        "your shipment is",
-        "the parcel is",
-        "the package is",
-        "the shipment is",
-        "已签收",
-        "已送达",
-        "派送中",
-        "配送中",
-        "运输中",
-        "清关",
-        "已清关",
-        "海关",
-        "已退回",
-        "退回中",
-        "预计送达",
-        "预计到达",
-        "派送失败",
-        "投递失败",
-        "已揽收",
-        "已发出",
-        "已到达",
-        "物流状态",
-        "包裹状态",
-        "快件状态",
-    )
-    padded_text = f" {text} "
-    if not any(marker in text for marker in status_markers) and " eta " not in padded_text:
-        return False
-    uncertainty_markers = (
-        "i cannot verify",
-        "i can't verify",
-        "cannot confirm",
-        "can't confirm",
-        "unable to confirm",
-        "do not have trusted",
-        "don't have trusted",
-        "no trusted",
-        "without verified",
-        "need to check",
-        "needs to be checked",
-        "无法确认",
-        "不能确认",
-        "暂时无法核实",
-        "没有可信",
-        "需要核实",
-        "需要查询",
-    )
-    if any(marker in text for marker in uncertainty_markers):
-        factual_claim_markers = (
-            "has been delivered",
-            "was delivered",
-            "is delivered",
-            "out for delivery",
-            "in transit",
-            "will arrive",
-            "已签收",
-            "已送达",
-            "派送中",
-            "运输中",
-            "预计送达",
-        )
-        return any(marker in text for marker in factual_claim_markers)
-    return True
-
-
 def _build_contract_repair_prompt(
     *,
     request: ProviderRequest,
@@ -2404,7 +2308,6 @@ def _build_contract_repair_prompt(
         "If customer_language_hint=zh, customer_reply must be Simplified Chinese and contain Chinese characters. "
         "If customer_language_hint=en, customer_reply must be English. "
         "If customer_intent_hint=general_support, do not ask for a tracking, waybill, parcel, package, shipment, order number, or order id; briefly greet and ask what the customer needs. "
-        "If violation=shipment_status_without_evidence, the previous reply claimed live parcel facts without trusted tracking_fact_summary; rewrite without shipment status, ETA, delivery outcome, customs state, route progress, or exception status. "
         "If violation=tracking_missing_identifier_request, keep the tracking intent and ask naturally for the missing tracking, waybill, parcel, shipment, or order reference. Do not answer as a generic greeting. "
         "If violation=locked_fact_grounding_conflict, rewrite customer_reply to match the customer-visible locked_facts in knowledge_context. "
         "If violation=unsupported_proactive_update_promise, remove future notification or monitoring promises. "
