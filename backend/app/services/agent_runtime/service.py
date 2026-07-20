@@ -75,8 +75,14 @@ async def _run_agent_with_db(
     state = AgentRunState()
     max_rounds = _int_env("NEXUS_AGENT_MAX_TOOL_ROUNDS", 3, minimum=1, maximum=6)
     allow_high_risk_writes = _env_bool("NEXUS_AGENT_HIGH_RISK_WRITES_ENABLED", False)
-    available_tools = _available_tools(metadata, allow_high_risk_writes=allow_high_risk_writes)
-    execution_context = _execution_context(request, available_tools=available_tools)
+    available_tools = _available_tools(
+        metadata,
+        allow_high_risk_writes=allow_high_risk_writes,
+    )
+    execution_context = _execution_context(
+        request,
+        available_tools=available_tools,
+    )
     skills = prompt_skill_catalog(available_tools=available_tools)
     tools = prompt_tool_catalog(names=sorted(available_tools))
 
@@ -87,8 +93,14 @@ async def _run_agent_with_db(
             "agent_round": round_index,
             "agent_skills": skills,
             "agent_tools": tools,
-            "tool_observations": [item.prompt_projection() for item in state.observations],
-            "customer_language": request.language or metadata.get("customer_language") or metadata.get("language"),
+            "tool_observations": [
+                item.prompt_projection() for item in state.observations
+            ],
+            "customer_language": (
+                request.language
+                or metadata.get("customer_language")
+                or metadata.get("language")
+            ),
         }
         provider_request = ProviderRequest(
             request_id=_round_request_id(request, round_index),
@@ -186,7 +198,9 @@ async def _run_agent_with_db(
                 handoff_required=decision.handoff_required,
                 handoff_reason=decision.handoff_reason,
                 recommended_agent_action=(
-                    "Review the conversation and take over." if decision.handoff_required else None
+                    "Review the conversation and take over."
+                    if decision.handoff_required
+                    else None
                 ),
                 tool_calls=list(state.executed_calls),
                 elapsed_ms=state.elapsed_ms,
@@ -199,7 +213,9 @@ async def _run_agent_with_db(
                 AgentRoundTrace(
                     round_index=round_index,
                     next_action="call_tool",
-                    tool_names=tuple(call.tool_name for call in decision.tool_calls),
+                    tool_names=tuple(
+                        call.tool_name for call in decision.tool_calls
+                    ),
                     provider=result.provider,
                     elapsed_ms=result.elapsed_ms,
                     error_code="max_tool_rounds_exceeded",
@@ -237,7 +253,9 @@ async def _run_agent_with_db(
                 round_index=round_index,
                 next_action="call_tool",
                 tool_names=tuple(call.tool_name for call in decision.tool_calls),
-                observation_statuses=tuple(item.status for item in observations),
+                observation_statuses=tuple(
+                    item.status for item in observations
+                ),
                 provider=result.provider,
                 elapsed_ms=result.elapsed_ms,
             )
@@ -301,18 +319,11 @@ def _execution_context(
     available_tools: set[str],
 ) -> AgentExecutionContext:
     metadata = request.metadata if isinstance(request.metadata, dict) else {}
-    execution = metadata.get("agent_execution_context") if isinstance(metadata.get("agent_execution_context"), dict) else {}
-    permissions = {
-        permission
-        for name in available_tools
-        if (contract := get_tool_contract(name)) is not None
-        for permission in contract.required_permissions
-    }
-    capabilities = {
-        f"tool:{name}:write"
-        for name in available_tools
-        if (contract := get_tool_contract(name)) is not None and contract.is_write_tool
-    }
+    execution = (
+        metadata.get("agent_execution_context")
+        if isinstance(metadata.get("agent_execution_context"), dict)
+        else {}
+    )
     return AgentExecutionContext(
         tenant_key=request.tenant_key,
         channel_key=request.channel_key,
@@ -324,19 +335,33 @@ def _execution_context(
         conversation_id=_optional_int(execution.get("conversation_id")),
         ticket_id=_optional_int(execution.get("ticket_id")),
         customer_id=_optional_int(execution.get("customer_id")),
-        country_code=str(execution.get("country_code") or "").strip()[:8] or None,
+        country_code=(
+            str(execution.get("country_code") or "").strip()[:8] or None
+        ),
         ai_turn_id=_optional_int(execution.get("ai_turn_id")),
         allowed_tools=frozenset(available_tools),
-        granted_permissions=frozenset(permissions),
-        actor_capabilities=frozenset(capabilities),
+        granted_permissions=_string_set(execution.get("granted_permissions")),
+        actor_capabilities=_string_set(execution.get("actor_capabilities")),
+        customer_confirmation_granted=bool(
+            execution.get("customer_confirmation_granted") is True
+        ),
+        human_confirmation_granted=bool(
+            execution.get("human_confirmation_granted") is True
+        ),
     )
 
 
-def _available_tools(metadata: dict[str, Any], *, allow_high_risk_writes: bool) -> set[str]:
+def _available_tools(
+    metadata: dict[str, Any],
+    *,
+    allow_high_risk_writes: bool,
+) -> set[str]:
     executable = set(executable_tool_names())
     configured = metadata.get("agent_allowed_tools")
     if isinstance(configured, (list, tuple, set)):
-        executable &= {str(item).strip() for item in configured if str(item).strip()}
+        executable &= {
+            str(item).strip() for item in configured if str(item).strip()
+        }
     if not allow_high_risk_writes:
         executable = {
             name
@@ -363,7 +388,10 @@ def _fallback_result(
         ai_generated=False,
         reply_source="agent_runtime:fallback",
         raw_provider="agent_runtime",
-        raw_payload_safe_summary=_safe_summary(state, error_code=error_code),
+        raw_payload_safe_summary=_safe_summary(
+            state,
+            error_code=error_code,
+        ),
         reply=reply,
         intent="runtime_unavailable",
         handoff_required=False,
@@ -409,7 +437,10 @@ def _safe_summary(
     return summary
 
 
-def _round_request_id(request: RuntimeAIProviderRequest, round_index: int) -> str:
+def _round_request_id(
+    request: RuntimeAIProviderRequest,
+    round_index: int,
+) -> str:
     base = str(request.request_id or f"agent-{request.session_id}").strip()[:130]
     return f"{base}:round:{round_index}"[:160]
 
@@ -420,6 +451,16 @@ def _optional_int(value: Any) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _string_set(value: Any) -> frozenset[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return frozenset()
+    return frozenset(
+        str(item).strip()
+        for item in value
+        if isinstance(item, str) and str(item).strip()
+    )
 
 
 def _elapsed(started: float) -> int:
@@ -433,7 +474,13 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+def _int_env(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
     try:
         value = int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
