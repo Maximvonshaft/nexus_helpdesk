@@ -134,6 +134,13 @@ export function UserGovernance({
     retry: false,
   })
   const users = useMemo(() => usersQuery.data?.pages.flatMap((page) => page.items) ?? [], [usersQuery.data?.pages])
+  const activeAdminCount = useMemo(
+    () => users.filter((user) => user.is_active && user.role === 'admin').length,
+    [users],
+  )
+  const selectedUserIsFinalActiveAdmin = Boolean(
+    selectedUser?.is_active && selectedUser.role === 'admin' && activeAdminCount === 1,
+  )
   const normalizedSearch = search.trim().toLowerCase()
   const visibleUsers = useMemo(
     () => users.filter((user) => !normalizedSearch || [user.username, user.display_name, user.email, user.role]
@@ -247,10 +254,24 @@ export function UserGovernance({
   }
 
   const changeRole = (role: string) => {
+    if (selectedUserIsFinalActiveAdmin && role !== 'admin') return
     setDraft((current) => ({ ...current, role, capabilities: [...roleDefaults(role)] }))
   }
 
+  const restoreRoleDefaults = () => {
+    const defaults = [...roleDefaults(draft.role)]
+    const protectedDefaults = selectedUserIsFinalActiveAdmin && !defaults.includes('user.manage')
+      ? [...defaults, 'user.manage'].sort()
+      : defaults
+    setDraft((current) => ({ ...current, capabilities: protectedDefaults }))
+  }
+
   const toggleCapability = (capability: string) => {
+    if (
+      selectedUserIsFinalActiveAdmin
+      && capability === 'user.manage'
+      && draft.capabilities.includes(capability)
+    ) return
     setDraft((current) => ({
       ...current,
       capabilities: current.capabilities.includes(capability)
@@ -358,12 +379,17 @@ export function UserGovernance({
             <Stack spacing={2} sx={{ mt: 2 }}>
               {saveUser.isError ? <OperatorErrorNotice title="保存用户失败" error={saveUser.error} fallback="请检查账号唯一性、密码规则和管理员保护规则" /> : null}
               {selectedUser?.id === currentUserId ? <Alert severity="warning" variant="outlined">正在修改当前登录账号；保存后需要重新登录。</Alert> : null}
+              {selectedUserIsFinalActiveAdmin ? (
+                <Alert severity="warning" variant="outlined">
+                  这是当前租户最后一个活跃管理员。角色和 user.manage 权限已锁定，避免造成治理失联。
+                </Alert>
+              ) : null}
               <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
                 <TextField label="账号" required disabled={Boolean(selectedUser)} value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
                 {!selectedUser ? <TextField label="初始密码" required type="password" autoComplete="new-password" value={draft.password} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} /> : null}
                 <TextField label="姓名" required value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
                 <TextField label="邮箱" type="email" value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} helperText={selectedUser ? '留空时保留当前邮箱' : '可选'} />
-                <TextField select label="角色" required value={draft.role} onChange={(event) => changeRole(event.target.value)}>
+                <TextField select label="角色" required disabled={selectedUserIsFinalActiveAdmin} value={draft.role} onChange={(event) => changeRole(event.target.value)}>
                   {roles.map((role) => <MenuItem key={role.role} value={role.role}>{roleLabel(role.role)}</MenuItem>)}
                 </TextField>
                 <TextField select label="团队" value={draft.teamId} onChange={(event) => setDraft((current) => ({ ...current, teamId: event.target.value }))}>
@@ -380,7 +406,7 @@ export function UserGovernance({
                     <Typography component="h3" variant="h3">有效权限</Typography>
                     <Typography variant="body2" color="text.secondary">已选择 {draft.capabilities.length} 项；角色默认 {selectedRoleDefaults.length} 项。</Typography>
                   </Box>
-                  <Button color="inherit" startIcon={<RestartAltRoundedIcon />} onClick={() => setDraft((current) => ({ ...current, capabilities: [...selectedRoleDefaults] }))}>恢复角色默认</Button>
+                  <Button color="inherit" startIcon={<RestartAltRoundedIcon />} onClick={restoreRoleDefaults}>恢复角色默认</Button>
                 </Stack>
                 <Divider sx={{ my: 2 }} />
                 <Stack spacing={2} sx={{ maxHeight: 360, overflowY: 'auto', pr: 1 }}>
@@ -391,7 +417,13 @@ export function UserGovernance({
                         {capabilities.map((capability) => (
                           <FormControlLabel
                             key={capability}
-                            control={<Checkbox checked={draft.capabilities.includes(capability)} onChange={() => toggleCapability(capability)} />}
+                            control={(
+                              <Checkbox
+                                checked={draft.capabilities.includes(capability)}
+                                disabled={selectedUserIsFinalActiveAdmin && capability === 'user.manage'}
+                                onChange={() => toggleCapability(capability)}
+                              />
+                            )}
                             label={<Typography variant="body2">{capabilityLabel(capability)}</Typography>}
                           />
                         ))}
