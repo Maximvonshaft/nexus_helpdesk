@@ -37,6 +37,12 @@ class _JsonFormatter(logging.Formatter):
             return '{"level":"ERROR","logger":"logging","message":"log_formatter_failure","redacted":true}'
 
 
+# Public compatibility name retained for logging integrations.  The formatter
+# always delegates to ``build_safe_log_payload`` and therefore never bypasses
+# the structured-log redaction boundary.
+SafeJsonFormatter = _JsonFormatter
+
+
 class _SafeTextFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         try:
