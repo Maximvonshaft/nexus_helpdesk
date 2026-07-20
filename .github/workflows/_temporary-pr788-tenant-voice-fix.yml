@@ -47,21 +47,8 @@ jobs:
         run: python -m pytest -q backend/tests/test_webchat_voice_api.py
       - name: Test voice P0 gap closure
         run: python -m pytest -q backend/tests/test_webchat_voice_p0_gap_closure.py
-      - name: Test tenant authority
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p /tmp/pr788-tenant-authority
-          python -m pytest -vv -x backend/tests/test_tenant_authority.py \
-            2>&1 | tee /tmp/pr788-tenant-authority/tenant-authority.log
-      - name: Upload tenant authority failure evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: pr788-tenant-authority-${{ github.event.pull_request.head.sha }}
-          path: /tmp/pr788-tenant-authority
-          if-no-files-found: error
-          retention-days: 7
+      - name: Test tenant runtime authority
+        run: python -m pytest -q backend/tests/test_tenant_runtime_authority.py
       - name: Commit clean candidate
         shell: bash
         run: |
