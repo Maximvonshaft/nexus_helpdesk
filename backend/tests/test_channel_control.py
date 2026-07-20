@@ -73,7 +73,6 @@ def _payload(**overrides) -> ChannelOnboardingTaskCreate:
         "target_slot": "zurich-primary",
         "desired_display_name": "Zurich WhatsApp",
         "desired_channel_account_binding": "wa-zurich-primary",
-        "external_channel_account_id": "oc-wa-zurich",
     }
     data.update(overrides)
     return ChannelOnboardingTaskCreate(**data)
@@ -150,13 +149,12 @@ def test_status_flow_start_complete_and_terminal_immutable(db_session):
 
     completed = complete_onboarding_task(
         task.id,
-        ChannelOnboardingTaskCompleteRequest(external_channel_account_id="oc-final", desired_channel_account_binding="wa-final"),
+        ChannelOnboardingTaskCompleteRequest(desired_channel_account_binding="wa-final"),
         db_session,
         admin,
     )
     assert completed.status == "completed"
     assert completed.completed_at is not None
-    assert completed.external_channel_account_id == "oc-final"
     assert completed.desired_channel_account_binding == "wa-final"
 
     with pytest.raises(HTTPException) as update_exc:
@@ -178,7 +176,7 @@ def test_fail_then_complete_task(db_session):
 
     completed = complete_onboarding_task(
         task.id,
-        ChannelOnboardingTaskCompleteRequest(external_channel_account_id="oc-recovered"),
+        ChannelOnboardingTaskCompleteRequest(desired_channel_account_binding="recovered"),
         db_session,
         admin,
     )

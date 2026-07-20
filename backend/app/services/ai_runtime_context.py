@@ -54,7 +54,6 @@ _INTERNAL_WORDS = {
     "provider_runtime",
     "bridge token",
     "system prompt",
-    "external_channel",
     "localhost",
     "127.0.0.1",
 }

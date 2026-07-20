@@ -233,7 +233,6 @@ class WebChatSiteCreate(BaseModel):
     business_hours_json: Optional[dict[str, Any]] = None
     mapped_market_id: Optional[int] = None
     mapped_team_id: Optional[int] = None
-    mapped_external_channel_agent: Optional[str] = None
     is_active: bool = True
 
 
@@ -248,7 +247,6 @@ class WebChatSiteUpdate(BaseModel):
     business_hours_json: Optional[dict[str, Any]] = None
     mapped_market_id: Optional[int] = None
     mapped_team_id: Optional[int] = None
-    mapped_external_channel_agent: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -265,7 +263,6 @@ class WebChatSiteRead(WebChatAPIModel):
     business_hours_json: Optional[dict[str, Any]] = None
     mapped_market_id: Optional[int] = None
     mapped_team_id: Optional[int] = None
-    mapped_external_channel_agent: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

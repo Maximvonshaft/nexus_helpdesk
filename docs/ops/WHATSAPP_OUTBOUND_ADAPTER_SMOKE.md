@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This runbook validates the current WhatsApp outbound path after the legacy ExternalChannel bridge was retired.
+This runbook validates the canonical WhatsApp native-sidecar outbound path.
 
 Current scope:
 
 - WhatsApp outbound uses the native sidecar adapter boundary.
 - The adapter validates channel, target, and active WhatsApp account before dispatch.
 - Production remains fail-closed unless runtime flags explicitly enable dispatch.
-- The legacy ExternalChannel bridge module is absent and cannot be used for smoke evidence.
+- No alternate bridge, CLI, or fallback adapter is accepted as smoke evidence.
 
 ## Safety Boundary
 

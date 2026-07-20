@@ -81,10 +81,10 @@ test('type exports have one declaration and one domain owner', () => {
   const operations = read('src/lib/types/operations.ts')
   const knowledge = read('src/lib/types/knowledge.ts')
   const channelControl = channelControlSource
-  assert.doesNotMatch(operations, /KnowledgeStudio|PersonaBuilder|ChannelOnboardingTask|ExternalChannelUnresolvedEvent/)
+  assert.doesNotMatch(operations, /KnowledgeStudio|PersonaBuilder|ChannelOnboardingTask/)
   assert.match(knowledge, /KnowledgeStudio/)
   assert.match(knowledge, /PersonaBuilder/)
-  assert.doesNotMatch(knowledge, /ChannelOnboardingTask|ExternalChannelUnresolvedEvent/)
+  assert.doesNotMatch(knowledge, /ChannelOnboardingTask/)
   assert.match(channelControl, /ChannelOnboardingTask/)
-  assert.match(channelControl, /ExternalChannelUnresolvedEvent/)
+  assert.doesNotMatch(channelControl, /externalAccountId/)
 })

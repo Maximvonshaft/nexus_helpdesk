@@ -1,3 +1,0 @@
-[submodule "vendor/chatwoot"]
-	path = vendor/chatwoot
-	url = https://github.com/chatwoot/chatwoot.git

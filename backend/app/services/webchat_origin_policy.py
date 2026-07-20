@@ -35,6 +35,31 @@ def validate_public_origin(request: Request, settings: Any) -> str | None:
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is required")
 
 
+def validate_websocket_origin(websocket: Any, settings: Any) -> str | None:
+    """Validate the browser Origin before accepting a public WebSocket.
+
+    WebSocket handshakes do not carry a reliable Referer, so production
+    connections must either provide an allowed Origin or explicitly opt into
+    no-Origin clients through the same server-owned policy used by HTTP.
+    """
+
+    allowed = normalized_allowed_origins(settings)
+    origin = websocket.headers.get("origin")
+    if origin:
+        if origin.rstrip("/") not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Webchat origin is not allowed",
+            )
+        return origin
+    if settings.webchat_allow_no_origin or settings.app_env in {"development", "test", "local"}:
+        return None
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Webchat origin is required",
+    )
+
+
 def public_cors_headers(
     request: Request,
     settings: Any,

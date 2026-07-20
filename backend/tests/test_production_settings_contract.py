@@ -35,10 +35,7 @@ def production_env(**overrides: str) -> dict[str, str]:
         "SEED_DEMO_DATA": "false",
         "ALLOW_DEV_AUTH": "false",
         "ALLOW_LEGACY_INTEGRATION_API_KEY": "false",
-        "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED": "false",
         "STORAGE_BACKEND": "s3",
-        "EXTERNAL_CHANNEL_TRANSPORT": "disabled",
-        "EXTERNAL_CHANNEL_DEPLOYMENT_MODE": "disabled",
         "WEBCHAT_RATE_LIMIT_BACKEND": "database",
         "WEBCHAT_AI_ENABLED": "true",
         "WEBCHAT_AI_AUTO_REPLY_MODE": "runtime",
@@ -113,17 +110,6 @@ def test_production_settings_accept_hardened_web_contract(monkeypatch):
             "ALLOW_LEGACY_INTEGRATION_API_KEY",
         ),
         (
-            "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED",
-            "true",
-            "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED",
-        ),
-        ("EXTERNAL_CHANNEL_TRANSPORT", "mcp", "EXTERNAL_CHANNEL_TRANSPORT"),
-        (
-            "EXTERNAL_CHANNEL_DEPLOYMENT_MODE",
-            "remote_gateway",
-            "EXTERNAL_CHANNEL_DEPLOYMENT_MODE",
-        ),
-        (
             "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT",
             "true",
             "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT",
@@ -159,6 +145,21 @@ def test_production_web_settings_reject_unsafe_contract(
             with pytest.raises(RuntimeError) as exc:
                 Settings()
     assert expected_message in str(exc.value)
+
+
+def test_removed_compatibility_settings_are_not_runtime_attributes(monkeypatch):
+    _frontend_exists(monkeypatch)
+    prefix = "external" + "_channel_"
+    removed = (
+        prefix + "cli_fallback_enabled",
+        prefix + "transport",
+        prefix + "deployment_mode",
+        prefix + "sync_enabled",
+    )
+    with patched_env(production_env()):
+        settings = Settings()
+    for name in removed:
+        assert not hasattr(settings, name), name
 
 
 @pytest.mark.parametrize(

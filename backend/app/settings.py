@@ -157,63 +157,6 @@ class Settings:
         )
 
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
-        self.external_channel_bin = os.getenv("EXTERNAL_CHANNEL_BIN")
-        self.external_channel_transport = (
-            os.getenv("EXTERNAL_CHANNEL_TRANSPORT", "disabled")
-            .strip()
-            .lower()
-            or "disabled"
-        )
-        self.external_channel_deployment_mode = (
-            os.getenv("EXTERNAL_CHANNEL_DEPLOYMENT_MODE", "disabled")
-            .strip()
-            .lower()
-            or "disabled"
-        )
-        self.external_channel_mcp_command = os.getenv(
-            "EXTERNAL_CHANNEL_MCP_COMMAND",
-            self.external_channel_bin or "",
-        ).strip()
-        self.external_channel_extra_paths = self._parse_paths(
-            os.getenv("EXTERNAL_CHANNEL_EXTRA_PATHS", "")
-        )
-        self.external_channel_mcp_url = os.getenv(
-            "EXTERNAL_CHANNEL_MCP_URL"
-        )
-        self.external_channel_mcp_token_file = os.getenv(
-            "EXTERNAL_CHANNEL_MCP_TOKEN_FILE"
-        )
-        self.external_channel_mcp_password_file = os.getenv(
-            "EXTERNAL_CHANNEL_MCP_PASSWORD_FILE"
-        )
-        self.external_channel_mcp_claude_channel_mode = (
-            os.getenv("EXTERNAL_CHANNEL_MCP_CLAUDE_CHANNEL_MODE", "off")
-            .strip()
-            .lower()
-            or "off"
-        )
-        self.external_channel_cli_fallback_enabled = (
-            os.getenv("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED", "false")
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_bridge_enabled = (
-            os.getenv("EXTERNAL_CHANNEL_BRIDGE_ENABLED", "false")
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_bridge_url = (
-            os.getenv(
-                "EXTERNAL_CHANNEL_BRIDGE_URL",
-                "http://127.0.0.1:18792",
-            ).strip()
-            or "http://127.0.0.1:18792"
-        ).rstrip("/")
-        self.external_channel_bridge_timeout_seconds = int(
-            os.getenv("EXTERNAL_CHANNEL_BRIDGE_TIMEOUT_SECONDS", "20")
-        )
         self.enable_outbound_dispatch = (
             os.getenv("ENABLE_OUTBOUND_DISPATCH", "false")
             .strip()
@@ -297,64 +240,6 @@ class Settings:
         )
         self.webchat_ai_worker_busy_poll_seconds = float(
             os.getenv("WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS", "0.05")
-        )
-        self.external_channel_sync_enabled = (
-            os.getenv("EXTERNAL_CHANNEL_SYNC_ENABLED", "false")
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_sync_batch_size = int(
-            os.getenv("EXTERNAL_CHANNEL_SYNC_BATCH_SIZE", "50")
-        )
-        self.external_channel_sync_stale_seconds = int(
-            os.getenv("EXTERNAL_CHANNEL_SYNC_STALE_SECONDS", "120")
-        )
-        self.external_channel_sync_transcript_limit = int(
-            os.getenv("EXTERNAL_CHANNEL_SYNC_TRANSCRIPT_LIMIT", "100")
-        )
-        self.external_channel_sync_poll_timeout_seconds = int(
-            os.getenv("EXTERNAL_CHANNEL_SYNC_POLL_TIMEOUT_SECONDS", "10")
-        )
-        self.external_channel_inbound_auto_sync_enabled = (
-            os.getenv("EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED", "false")
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_inbound_sync_limit = int(
-            os.getenv("EXTERNAL_CHANNEL_INBOUND_SYNC_LIMIT", "10")
-        )
-        self.external_channel_inbound_sync_message_limit = int(
-            os.getenv(
-                "EXTERNAL_CHANNEL_INBOUND_SYNC_MESSAGE_LIMIT",
-                str(self.external_channel_sync_transcript_limit),
-            )
-        )
-        self.external_channel_inbound_sync_include_groups = (
-            os.getenv("EXTERNAL_CHANNEL_INBOUND_SYNC_INCLUDE_GROUPS", "false")
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_inbound_auto_sync_interval_seconds = int(
-            os.getenv(
-                "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS",
-                "30",
-            )
-        )
-        self.external_channel_session_dm_scope = os.getenv(
-            "EXTERNAL_CHANNEL_SESSION_DM_SCOPE",
-            "per-account-channel-peer",
-        ).strip()
-        self.external_channel_event_driver_enabled = (
-            os.getenv("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED", "false")
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_sync_daemon_stale_seconds = int(
-            os.getenv("EXTERNAL_CHANNEL_SYNC_DAEMON_STALE_SECONDS", "90")
         )
         self.require_prometheus_client_in_production = (
             os.getenv(
@@ -616,44 +501,6 @@ class Settings:
         )
         self.metrics_token = os.getenv("METRICS_TOKEN")
 
-        self.external_channel_attachment_url_fetch_enabled = (
-            os.getenv(
-                "EXTERNAL_CHANNEL_ATTACHMENT_URL_FETCH_ENABLED",
-                "false",
-            )
-            .strip()
-            .lower()
-            == "true"
-        )
-        self.external_channel_attachment_allowed_hosts = [
-            host.lower()
-            for host in self._parse_csv(
-                os.getenv("EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_HOSTS", "")
-            )
-        ]
-        self.external_channel_attachment_fetch_timeout_seconds = int(
-            os.getenv(
-                "EXTERNAL_CHANNEL_ATTACHMENT_FETCH_TIMEOUT_SECONDS",
-                "10",
-            )
-        )
-        self.external_channel_attachment_max_download_bytes = int(
-            os.getenv(
-                "EXTERNAL_CHANNEL_ATTACHMENT_MAX_DOWNLOAD_BYTES",
-                str(self.max_upload_bytes),
-            )
-        )
-        self.external_channel_attachment_allowed_mime_types = set(
-            self._parse_csv(
-                os.getenv(
-                    "EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_MIME_TYPES",
-                    ",".join(
-                        self.allowed_upload_mime_types
-                        + ["application/octet-stream"]
-                    ),
-                )
-            )
-        )
 
         self._normalize()
 
@@ -842,41 +689,6 @@ class Settings:
             raise RuntimeError(
                 "TENANT_RUNTIME_AUTHORITY_MODE must be shadow or enforce"
             )
-        if self.external_channel_transport != "disabled":
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_TRANSPORT has been retired; set "
-                "EXTERNAL_CHANNEL_TRANSPORT=disabled"
-            )
-        if self.external_channel_deployment_mode != "disabled":
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_DEPLOYMENT_MODE has been retired; set "
-                "EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled"
-            )
-        if self.external_channel_cli_fallback_enabled:
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED has been retired; "
-                "set EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false"
-            )
-        if self.external_channel_bridge_enabled:
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_BRIDGE_ENABLED has been retired; set "
-                "EXTERNAL_CHANNEL_BRIDGE_ENABLED=false"
-            )
-        if self.external_channel_sync_enabled:
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_SYNC_ENABLED has been retired; set "
-                "EXTERNAL_CHANNEL_SYNC_ENABLED=false"
-            )
-        if self.external_channel_inbound_auto_sync_enabled:
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED has been retired; "
-                "set EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false"
-            )
-        if self.external_channel_event_driver_enabled:
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED has been retired; set "
-                "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false"
-            )
         if self.app_env == "production":
             self._validate_production()
         if not self.jwt_secret_key and self.app_env != "production":
@@ -901,15 +713,6 @@ class Settings:
             )
         if self.storage_backend not in {"local", "s3"}:
             raise RuntimeError("STORAGE_BACKEND must be local or s3")
-        if self.external_channel_session_dm_scope not in {
-            "per-account-channel-peer",
-            "per-channel-peer",
-            "per-peer",
-        }:
-            raise RuntimeError(
-                "EXTERNAL_CHANNEL_SESSION_DM_SCOPE must be a supported "
-                "session dm scope"
-            )
         if self.whatsapp_dispatch_mode == "native_sidecar":
             if not self.whatsapp_native_enabled:
                 raise RuntimeError(
@@ -966,11 +769,13 @@ class Settings:
                     "Production ALLOWED_ORIGINS must not include localhost "
                     "defaults for the Web process"
                 )
-            if self.metrics_enabled and not self.metrics_token:
-                raise RuntimeError(
-                    "METRICS_TOKEN must be set for the production Web process "
-                    "when METRICS_ENABLED=true"
-                )
+            if self.metrics_enabled:
+                token = (self.metrics_token or "").strip()
+                if len(token) < 32 or token.lower() in weak_secrets:
+                    raise RuntimeError(
+                        "METRICS_TOKEN must be a non-placeholder secret of at least 32 characters "
+                        "for the production Web process when METRICS_ENABLED=true"
+                    )
             if self.webchat_allow_legacy_token_transport:
                 raise RuntimeError(
                     "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in "
@@ -980,14 +785,6 @@ class Settings:
                 raise RuntimeError(
                     "WEBCHAT_WS_BROKER=memory is not allowed in the production "
                     "Web process when WEBCHAT_WS_ENABLED=true"
-                )
-            if (
-                self.external_channel_attachment_url_fetch_enabled
-                and not self.external_channel_attachment_allowed_hosts
-            ):
-                raise RuntimeError(
-                    "EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_HOSTS must be set "
-                    "when URL attachment fetch is enabled"
                 )
             if not self.frontend_dist_available:
                 raise RuntimeError(
@@ -1046,25 +843,6 @@ class Settings:
         from .settings_groups import effective_safe_config
 
         return effective_safe_config(self)
-
-    def retired_runtime_requests(self) -> tuple[str, ...]:
-        compatibility = self.capability_groups()["compatibility"]
-        if not compatibility.retired_runtime_requested:
-            return ()
-        names = []
-        if self.external_channel_transport != "disabled":
-            names.append("EXTERNAL_CHANNEL_TRANSPORT")
-        if self.external_channel_deployment_mode != "disabled":
-            names.append("EXTERNAL_CHANNEL_DEPLOYMENT_MODE")
-        if self.external_channel_sync_enabled:
-            names.append("EXTERNAL_CHANNEL_SYNC_ENABLED")
-        if self.external_channel_event_driver_enabled:
-            names.append("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED")
-        if self.external_channel_bridge_enabled:
-            names.append("EXTERNAL_CHANNEL_BRIDGE_ENABLED")
-        if self.external_channel_cli_fallback_enabled:
-            names.append("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED")
-        return tuple(names)
 
     @staticmethod
     def _is_truthy(raw: str | None) -> bool:

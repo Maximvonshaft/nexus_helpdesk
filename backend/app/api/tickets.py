@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import NoteVisibility, SourceChannel
-from ..models import ExternalChannelTranscriptMessage, Ticket, Tag, TicketTag, TicketOutboundMessage
+from ..models import Ticket, Tag, TicketTag, TicketOutboundMessage
 from ..schemas import (
     AIIntakeCreate,
     AIIntakeRead,
@@ -32,10 +32,6 @@ from ..schemas import (
     TicketUpdate,
     TimelineItemRead,
     UserRead,
-    MarketRead,
-    ExternalChannelAttachmentReferenceRead,
-    ExternalChannelConversationRead,
-    ExternalChannelTranscriptRead,
     TeamRead,
     CustomerRead,
     TagRead,
@@ -135,7 +131,6 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
 
 def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
     tag_rows = db.query(Tag).join(TicketTag, TicketTag.tag_id == Tag.id).filter(TicketTag.ticket_id == ticket.id).all()
-    external_channel_rows = db.query(ExternalChannelTranscriptMessage).filter(ExternalChannelTranscriptMessage.ticket_id == ticket.id).order_by(ExternalChannelTranscriptMessage.created_at.desc()).limit(50).all()
     return TicketRead(
         id=ticket.id,
         ticket_no=ticket.ticket_no,
@@ -187,10 +182,15 @@ def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
         attachments=[AttachmentRead.model_validate(x) for x in ticket.attachments],
         outbound_messages=[OutboundMessageRead.model_validate(x) for x in ticket.outbound_messages],
         ai_intakes=[AIIntakeRead.model_validate(x) for x in ticket.ai_intakes],
-        external_channel_conversation=ExternalChannelConversationRead.model_validate(ticket.external_channel_link) if ticket.external_channel_link else None,
-        external_channel_transcript=[ExternalChannelTranscriptRead.model_validate(x) for x in reversed(external_channel_rows)],
-        external_channel_attachment_references=[ExternalChannelAttachmentReferenceRead.model_validate(x) for x in ticket.external_channel_attachment_references],
-        active_market_bulletins=[MarketBulletinRead.model_validate(x) for x in list_active_bulletins(db, market_id=ticket.market_id, country_code=ticket.country_code, channel=ticket.preferred_reply_channel or (ticket.source_channel.value if ticket.source_channel else None))],
+        active_market_bulletins=[
+            MarketBulletinRead.model_validate(x)
+            for x in list_active_bulletins(
+                db,
+                market_id=ticket.market_id,
+                country_code=ticket.country_code,
+                channel=ticket.preferred_reply_channel or (ticket.source_channel.value if ticket.source_channel else None),
+            )
+        ],
     )
 
 

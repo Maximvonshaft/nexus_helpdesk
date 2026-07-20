@@ -27,28 +27,3 @@ def test_manager_default_system_governance_capabilities_are_removed():
 def test_admin_still_has_all_capabilities():
     user = SimpleNamespace(id=1, role=UserRole.admin)
     assert resolve_capabilities(user) == set(ALL_CAPABILITIES)
-
-
-def test_external_channel_cli_fallback_default_false(monkeypatch):
-    from app.settings import get_settings
-
-    get_settings.cache_clear()
-    monkeypatch.delenv("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED", raising=False)
-    monkeypatch.setenv("APP_ENV", "development")
-    settings = get_settings()
-    assert settings.external_channel_cli_fallback_enabled is False
-    get_settings.cache_clear()
-
-
-def test_production_rejects_external_channel_cli_fallback(monkeypatch):
-    from app.settings import get_settings
-
-    get_settings.cache_clear()
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/helpdesk")
-    monkeypatch.setenv("SECRET_KEY", "strong-production-secret-value-for-test-only")
-    monkeypatch.setenv("ALLOWED_ORIGINS", "https://console.example.com")
-    monkeypatch.setenv("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED", "true")
-    with pytest.raises(RuntimeError, match="EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED"):
-        get_settings()
-    get_settings.cache_clear()

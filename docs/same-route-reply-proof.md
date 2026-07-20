@@ -17,7 +17,7 @@ For customer messaging, guessing a fallback recipient is not acceptable.
 1. Use the ticket's explicit outbound route fields when available.
 2. Use a channel-native sidecar or provider adapter that can prove the exact account and thread.
 3. Fall back to draft/human review when route provenance is incomplete.
-4. Do not use the retired ExternalChannel bridge, MCP, Gateway, or CLI path for production sends.
+4. Do not use retired bridge, gateway, CLI, or ungoverned fallback paths for production sends.
 
 ## Route Proof Log
 
@@ -43,7 +43,7 @@ The system must not send when:
 - multiple open tickets match the same recipient and no ticket link exists.
 - the customer-visible content policy returns `block`.
 - an AI message fails its signed Runtime contract.
-- the selected adapter is the retired ExternalChannel bridge.
+- the selected adapter is retired or cannot prove its account and route.
 
 ## Proof Scope
 

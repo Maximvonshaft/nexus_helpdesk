@@ -36,7 +36,6 @@ def test_background_worker_claims_only_background_owned_job_types():
     assert "WEBCHAT_AI_REPLY_JOB" not in function
     assert "WEBCHAT_HANDOFF_SNAPSHOT_JOB" not in function
     assert "EXTERNAL_CHANNEL_SYNC_JOB" not in function
-    assert "enqueue_stale_external_channel_sync_jobs" not in function
 
 
 def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():

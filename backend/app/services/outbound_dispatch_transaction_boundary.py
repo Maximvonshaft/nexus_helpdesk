@@ -181,7 +181,7 @@ def reclaim_stale_processing_messages(
         db.query(message_dispatch.TicketOutboundMessage)
         .filter(
             message_dispatch.TicketOutboundMessage.channel.in_(
-                message_dispatch.external_channel_values()
+                message_dispatch.external_delivery_channel_values()
             ),
             message_dispatch.TicketOutboundMessage.status
             == message_dispatch.MessageStatus.processing,

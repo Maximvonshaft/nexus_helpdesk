@@ -1,6 +1,6 @@
 {
   "schema": "nexus.compatibility-lifecycle.v1",
-  "policy": "This is the sole compatibility lifecycle authority. Compatibility assets may redirect, document, or provide bounded historical reads, but may not create new legacy state, enqueue legacy work, send provider traffic, mutate schema, own secrets, or define a parallel product.",
+  "policy": "This is the sole compatibility lifecycle authority. Compatibility assets may document bounded product boundaries or subordinate discovery, but may not create retired state, enqueue retired work, send provider traffic, mutate schema, own secrets, or define a parallel product.",
   "assets": [
     {
       "path": "backend/app/static/webchat",
@@ -9,25 +9,10 @@
       "replacement": null,
       "introduced_at": "2026-07-18",
       "remove_after": null,
-      "constraints": ["not-an-operator-console", "provider-governed-customer-messages"]
-    },
-    {
-      "path": "connectors/whatsapp-sidecar",
-      "kind": "disabled-connector-boundary",
-      "owner": "channel-platform",
-      "replacement": null,
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-12-31",
-      "constraints": ["disabled-by-default", "no-provider-authority", "separate-socket-lifecycle"]
-    },
-    {
-      "path": "vendor/chatwoot",
-      "kind": "vendor-reference-gitlink",
-      "owner": "architecture-governance",
-      "replacement": null,
-      "introduced_at": "2026-07-18",
-      "remove_after": "2026-12-31",
-      "constraints": ["not-runtime-code", "license-and-reference-purpose-must-remain-documented"]
+      "constraints": [
+        "not-an-operator-console",
+        "provider-governed-customer-messages"
+      ]
     },
     {
       "path": "config/governance/legacy-surface-domains.v2.json",
@@ -36,7 +21,12 @@
       "replacement": "config/architecture/compatibility-lifecycle.v1.json",
       "introduced_at": "2026-07-19",
       "remove_after": null,
-      "constraints": ["subordinate-only", "fail-closed", "runtime-head-bound", "no-independent-policy"]
+      "constraints": [
+        "subordinate-only",
+        "fail-closed",
+        "runtime-head-bound",
+        "no-independent-policy"
+      ]
     }
   ],
   "detailed_registry": "config/governance/legacy-surface-domains.v2.json",

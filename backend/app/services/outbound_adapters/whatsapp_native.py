@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from ...enums import MessageStatus, SourceChannel
-from ...models import ChannelAccount, ExternalChannelConversationLink, Ticket, TicketOutboundMessage
+from ...models import ChannelAccount, Ticket, TicketOutboundMessage
 from ...settings import get_settings
 from ...utils.time import utc_now
 
@@ -59,17 +59,6 @@ def _is_direct_whatsapp_jid(value: str) -> bool:
     return value.endswith("@s.whatsapp.net") or value.endswith("@lid")
 
 
-def _active_account_by_id(db: Session, account_id: str | None) -> ChannelAccount | None:
-    cleaned = _clean(account_id)
-    if not cleaned:
-        return None
-    return db.query(ChannelAccount).filter(
-        ChannelAccount.account_id == cleaned,
-        ChannelAccount.provider == SourceChannel.whatsapp.value,
-        ChannelAccount.is_active.is_(True),
-    ).first()
-
-
 def _active_account_by_pk(db: Session, account_pk: int | None) -> ChannelAccount | None:
     if not account_pk:
         return None
@@ -92,30 +81,18 @@ def _active_account_for_market(db: Session, market_id: int | None) -> ChannelAcc
     return query.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
 
 
-def _resolve_account(db: Session, *, ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> tuple[ChannelAccount | None, str]:
+def _resolve_account(db: Session, *, ticket: Ticket | None) -> tuple[ChannelAccount | None, str]:
     if ticket is not None:
         row = _active_account_by_pk(db, getattr(ticket, "channel_account_id", None))
         if row is not None:
             return row, "ticket.channel_account_id"
-    if link is not None:
-        row = _active_account_by_pk(db, getattr(link, "channel_account_id", None))
-        if row is not None:
-            return row, "external_channel_link.channel_account_id"
-        row = _active_account_by_id(db, getattr(link, "account_id", None))
-        if row is not None:
-            return row, "external_channel_link.account_id"
-    if ticket is not None:
         row = _active_account_for_market(db, getattr(ticket, "market_id", None))
         if row is not None:
             return row, "market_or_global_whatsapp_account"
     return None, WHATSAPP_NATIVE_MISSING_ACCOUNT
 
 
-def _ticket_target(ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> tuple[str | None, str | None, str]:
-    if link is not None:
-        recipient = _clean(getattr(link, "recipient", None))
-        if recipient:
-            return recipient, None, "external_channel_link.recipient"
+def _ticket_target(ticket: Ticket | None) -> tuple[str | None, str | None, str]:
     if ticket is not None:
         customer = getattr(ticket, "customer", None)
         for source, value in (
@@ -134,12 +111,11 @@ def resolve_whatsapp_native_route(db: Session, *, message: TicketOutboundMessage
     if message.channel != SourceChannel.whatsapp:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_CONFIGURATION_MISSING, "Native WhatsApp adapter received a non-WhatsApp message", retryable=False)
 
-    link = ticket.external_channel_link if ticket is not None else None
-    target, chat_jid, target_source = _ticket_target(ticket, link)
+    target, chat_jid, target_source = _ticket_target(ticket)
     if target is None:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_MISSING_TARGET, "No WhatsApp target address is available", retryable=False)
 
-    account, account_source = _resolve_account(db, ticket=ticket, link=link)
+    account, account_source = _resolve_account(db, ticket=ticket)
     if account is None:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_MISSING_ACCOUNT, "No active WhatsApp channel account is configured", retryable=True)
 

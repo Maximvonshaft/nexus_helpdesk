@@ -14,7 +14,7 @@ ACTIVE_TASK_SQL = "status NOT IN ('resolved', 'dropped', 'replayed', 'replay_fai
 
 
 class OperatorTask(Base):
-    """Operator queue task projected from WebChat handoff or ExternalChannel unresolved work."""
+    """Durable operator task projected from canonical support workflows."""
 
     __tablename__ = "operator_tasks"
     __table_args__ = (
@@ -23,16 +23,8 @@ class OperatorTask(Base):
         Index("ix_operator_tasks_task_status", "task_type", "status"),
         Index("ix_operator_tasks_ticket_id", "ticket_id"),
         Index("ix_operator_tasks_webchat_conversation_id", "webchat_conversation_id"),
-        Index("ix_operator_tasks_unresolved_event_id", "unresolved_event_id"),
         Index("ix_operator_tasks_assignee_id", "assignee_id"),
         Index("ix_operator_tasks_reason_code", "reason_code"),
-        Index(
-            "uq_operator_tasks_active_external_channel_unresolved",
-            "unresolved_event_id",
-            unique=True,
-            postgresql_where=text(f"unresolved_event_id IS NOT NULL AND {ACTIVE_TASK_SQL}"),
-            sqlite_where=text(f"unresolved_event_id IS NOT NULL AND {ACTIVE_TASK_SQL}"),
-        ),
         Index(
             "uq_operator_tasks_active_webchat_handoff",
             "webchat_conversation_id",
@@ -57,7 +49,6 @@ class OperatorTask(Base):
     source_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     ticket_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     webchat_conversation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    unresolved_event_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     task_type: Mapped[str] = mapped_column(String(80))
     status: Mapped[str] = mapped_column(String(40), default="pending")
     priority: Mapped[int] = mapped_column(Integer, default=100)

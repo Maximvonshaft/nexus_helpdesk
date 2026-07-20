@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -19,7 +18,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
-from app.models import AdminAuditLog, ExternalChannelUnresolvedEvent, User  # noqa: E402
+from app.models import AdminAuditLog, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import (  # noqa: E402
     OperatorQueueError,
@@ -50,30 +49,11 @@ def make_admin(db):
     return row
 
 
-def make_unresolved(db, status: str = "pending") -> ExternalChannelUnresolvedEvent:
-    row = ExternalChannelUnresolvedEvent(
-        source="default",
-        session_key="session-key",
-        event_type="message",
-        recipient="recipient",
-        source_chat_id="chat",
-        preferred_reply_contact="contact",
-        payload_json=json.dumps({"type": "message"}),
-        status=status,
-        replay_count=0,
-        last_error="provider error",
-    )
-    db.add(row)
-    db.flush()
-    return row
-
-
-def make_task(db, *, status: str = "pending", unresolved_event_id: int | None = None, source_type: str = "webchat") -> OperatorTask:
+def make_task(db, *, status: str = "pending") -> OperatorTask:
     row = OperatorTask(
-        source_type=source_type,
-        source_id=str(unresolved_event_id or status),
-        unresolved_event_id=unresolved_event_id,
-        task_type="bridge_unresolved" if source_type == "external_channel" else "handoff",
+        source_type="webchat",
+        source_id=status,
+        task_type="handoff",
         status=status,
         priority=50,
     )
@@ -111,21 +91,16 @@ def test_resolved_task_assign_returns_409_without_audit(db_session):
     assert task.status == "resolved"
 
 
-def test_dropped_task_resolve_returns_409_without_source_change(db_session):
+def test_dropped_task_resolve_returns_409(db_session):
     admin = make_admin(db_session)
-    event = make_unresolved(db_session, status="dropped")
-    task = make_task(db_session, status="dropped", unresolved_event_id=event.id)
+    task = make_task(db_session, status="dropped")
 
     with pytest.raises(OperatorQueueError) as exc:
         transition_operator_task(db_session, task_id=task.id, action="resolve", actor_id=admin.id)
 
     assert_terminal_error(exc)
-    db_session.refresh(event)
     db_session.refresh(task)
-    assert event.status == "dropped"
     assert task.status == "dropped"
-
-
 
 
 def test_missing_task_still_returns_404(db_session):
@@ -147,18 +122,3 @@ def test_unsupported_action_still_returns_400(db_session):
 
     assert exc.value.status_code == 400
     assert exc.value.code == "unsupported_operator_task_action"
-
-def test_pending_external_channel_task_is_read_only(db_session):
-    admin = make_admin(db_session)
-    event = make_unresolved(db_session, status="pending")
-    task = make_task(db_session, status="pending", unresolved_event_id=event.id, source_type="external_channel")
-
-    with pytest.raises(OperatorQueueError) as exc:
-        transition_operator_task(db_session, task_id=task.id, action="drop", actor_id=admin.id)
-
-    assert exc.value.status_code == 410
-    assert exc.value.code == "legacy_operator_task_read_only"
-    db_session.refresh(event)
-    db_session.refresh(task)
-    assert event.status == "pending"
-    assert task.status == "pending"

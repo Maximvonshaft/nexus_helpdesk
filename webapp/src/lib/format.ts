@@ -1,7 +1,6 @@
 import type { BadgeTone } from '@/lib/types'
 
 const textReplacements: Array<[RegExp, string]> = [
-  [/ExternalChannel/gi, '会话服务'],
   [/MCP/gi, '消息桥接'],
   [/CLI/gi, '备用通道'],
   [/NexusDesk/gi, '客服工作台'],

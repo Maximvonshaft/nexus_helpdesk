@@ -16,7 +16,6 @@ from ..enums import (
 )
 from ..models import (
     ChannelAccount,
-    ExternalChannelConversationLink,
     Ticket,
     TicketOutboundAttachment,
     TicketOutboundMessage,
@@ -47,7 +46,7 @@ from .outbound_adapters.whatsapp_native import (
     dispatch_whatsapp_native_outbound,
 )
 from .outbound_semantics import (
-    external_channel_values,
+    external_delivery_channel_values,
     is_external_outbound_message,
 )
 
@@ -142,17 +141,7 @@ def _ensure_provider_idempotency_key(
 def _resolve_first_send_channel_account(
     db: Session,
     ticket: Ticket | None,
-    link: ExternalChannelConversationLink | None,
 ) -> ChannelAccount | None:
-    if link is not None and getattr(link, "channel_account_id", None):
-        return (
-            db.query(ChannelAccount)
-            .filter(
-                ChannelAccount.id == link.channel_account_id,
-                ChannelAccount.is_active.is_(True),
-            )
-            .first()
-        )
     if ticket is not None and getattr(ticket, "channel_account_id", None):
         row = (
             db.query(ChannelAccount)
@@ -453,7 +442,7 @@ def claim_pending_messages(
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.outbox_lock_seconds)
     pending_filters = [
-        TicketOutboundMessage.channel.in_(external_channel_values()),
+        TicketOutboundMessage.channel.in_(external_delivery_channel_values()),
         TicketOutboundMessage.status == MessageStatus.pending,
         or_(
             TicketOutboundMessage.next_retry_at.is_(None),
@@ -522,9 +511,6 @@ def claim_pending_messages(
         .options(
             joinedload(TicketOutboundMessage.ticket).joinedload(
                 Ticket.customer
-            ),
-            joinedload(TicketOutboundMessage.ticket).joinedload(
-                Ticket.external_channel_link
             ),
             joinedload(TicketOutboundMessage.attachment_links).joinedload(
                 TicketOutboundAttachment.attachment
@@ -706,22 +692,6 @@ def _handle_dispatch_result(
             and getattr(ticket, "conversation_state", None) is not None
         ):
             ticket.conversation_state = ConversationState.waiting_customer
-        if session_key:
-            log_event(
-                db,
-                ticket_id=message.ticket_id,
-                actor_id=message.created_by,
-                event_type=EventType.external_channel_reply_sent,
-                note="Legacy same-route reply sent",
-                payload={
-                    "message_id": message.id,
-                    "session_key": session_key,
-                    "provider_status": provider_status,
-                    "idempotency_key": route_context.get(
-                        "idempotency_key"
-                    ),
-                },
-            )
         log_event(
             db,
             ticket_id=message.ticket_id,
@@ -944,20 +914,14 @@ def process_outbound_message(
         )
 
     target = None
-    session_key = None
-    link = None
     if ticket is not None:
         target = (
             ticket.source_chat_id
             or ticket.preferred_reply_contact
             or (ticket.customer.phone if ticket.customer else None)
         )
-        if ticket.external_channel_link is not None:
-            link = ticket.external_channel_link
-            session_key = link.session_key
-            target = link.recipient or target
 
-    if not target and not session_key:
+    if not target:
         _mark_retry(message, "No target address available")
         event_type = (
             EventType.outbound_dead
@@ -979,40 +943,17 @@ def process_outbound_message(
         )
         return message
 
-    channel_value = (
-        link.channel
-        if link is not None and link.channel
-        else message.channel.value
-    )
-    resolved_channel_account = _resolve_first_send_channel_account(
-        db,
-        ticket,
-        link,
-    )
-    account_id = (
-        link.account_id
-        if link is not None and link.account_id
-        else (
-            resolved_channel_account.account_id
-            if resolved_channel_account
-            else None
-        )
-    )
-    thread_id = link.thread_id if link is not None else None
+    channel_value = message.channel.value
+    resolved_channel_account = _resolve_first_send_channel_account(db, ticket)
     route_context = {
         "channel": channel_value,
-        "account_id": account_id,
-        "thread_id": thread_id,
-        "session_key": session_key,
+        "account_id": resolved_channel_account.account_id if resolved_channel_account else None,
         "target": target,
         "idempotency_key": idempotency_key,
-        "source": "ticket_or_market_or_fallback",
-        "adapter": "unsupported_external_channel",
-        "failure_code": "unsupported_external_channel",
-        "error": (
-            "No native dispatcher is configured for channel "
-            f"{channel_value}"
-        ),
+        "source": "ticket_or_market",
+        "adapter": "unsupported_delivery_channel",
+        "failure_code": "unsupported_delivery_channel",
+        "error": f"No native dispatcher is configured for channel {channel_value}",
         "retryable": False,
     }
     return _handle_dispatch_result(
@@ -1020,7 +961,7 @@ def process_outbound_message(
         message=message,
         ticket=ticket,
         status_value=MessageStatus.failed,
-        provider_status="unsupported_external_channel",
+        provider_status="unsupported_delivery_channel",
         sent_at=None,
         route_context=route_context,
     )

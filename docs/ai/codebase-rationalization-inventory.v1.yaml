@@ -36,6 +36,7 @@ canonical_authorities:
   provider_traffic_selection: backend/app/services/provider_runtime/traffic_selection.py
   background_job_attempt_boundary: backend/app/services/background_job_transaction_boundary.py
   outbound_attempt_boundary: backend/app/services/outbound_dispatch_transaction_boundary.py
+  whatsapp_native_connector: connectors/whatsapp-sidecar/src/index.ts
   queue_business_health: backend/app/services/queue_health.py
   worker_progress: backend/app/services/worker_progress.py
   controlled_worker_entrypoint: backend/scripts/run_worker_supervised.py
@@ -64,8 +65,6 @@ retired_paths_must_be_absent:
   - backend/app/api/integration.py
   - backend/app/api/integration_core.py
   - backend/app/api/osr_admin.py
-  - backend/app/services/external_channel_bridge.py
-  - backend/app/services/external_channel_runtime_service.py
   - backend/app/services/outbound_adapters/whatsapp.py
   - backend/app/services/webchat_ai_decision_runtime/prompt_builder.py
   - artifacts/supply-chain
@@ -115,4 +114,4 @@ production_authority:
   granted_by_repository_file: false
   deployment_requires_exact_action_authorization: true
   provider_enablement_requires_exact_action_authorization: true
-  destructive_data_retirement_requires_exact_action_authorization: true
+  archive_backed_schema_retirement_requires_exact_action_authorization: true

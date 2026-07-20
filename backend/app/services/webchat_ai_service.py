@@ -447,7 +447,7 @@ def process_webchat_ai_reply_job(
     reply_source = _LAST_AI_REPLY_SOURCE
     fallback_reason = _LAST_AI_FALLBACK_REASON
     bridge_elapsed_ms = _LAST_BRIDGE_ELAPSED_MS
-    bridge_timeout_seconds = getattr(settings, "external_channel_bridge_timeout_seconds", None)
+    bridge_timeout_seconds = 20
     bridge_effective_timeout_seconds = _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS
     bridge_wait_timeout_ms = _LAST_BRIDGE_WAIT_TIMEOUT_MS
     runtime_handoff_required = bool(_LAST_RUNTIME_HANDOFF_REQUIRED)
@@ -610,9 +610,9 @@ def process_webchat_ai_reply_job(
         "provider_status": provider_status,
         "external_send": is_external_whatsapp,
         "reply_channel": SourceChannel.whatsapp.value if is_external_whatsapp else SourceChannel.web_chat.value,
-        "external_channel_session_key": session_policy['session_key'],
-        "external_channel_session_generation": session_policy['generation'],
-        "external_channel_session_rotation_reason": session_policy['rotation_reason'],
+        "provider_session_key": session_policy['session_key'],
+        "provider_session_generation": session_policy['generation'],
+        "provider_session_rotation_reason": session_policy['rotation_reason'],
         "bridge_elapsed_ms": bridge_elapsed_ms,
         "bridge_timeout_seconds": bridge_timeout_seconds,
         "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -645,9 +645,9 @@ def process_webchat_ai_reply_job(
             reply_source=reply_source,
             fact_evidence_present=fact_evidence_present,
             external_send=is_external_whatsapp,
-            external_channel_session_key=session_policy['session_key'],
-            external_channel_session_generation=session_policy['generation'],
-            external_channel_session_rotation_reason=session_policy['rotation_reason'],
+            provider_session_key=session_policy['session_key'],
+            provider_session_generation=session_policy['generation'],
+            provider_session_rotation_reason=session_policy['rotation_reason'],
             bridge_elapsed_ms=bridge_elapsed_ms,
             bridge_timeout_seconds=bridge_timeout_seconds,
             bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
@@ -710,9 +710,9 @@ def process_webchat_ai_reply_job(
             "tracking_fact_tool_status": tracking_fact.tool_status if tracking_fact else None,
             "provider_status": provider_status,
             "external_send": is_external_whatsapp,
-            "external_channel_session_key": session_policy['session_key'],
-            "external_channel_session_generation": session_policy['generation'],
-            "external_channel_session_rotation_reason": session_policy['rotation_reason'],
+            "provider_session_key": session_policy['session_key'],
+            "provider_session_generation": session_policy['generation'],
+            "provider_session_rotation_reason": session_policy['rotation_reason'],
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
             "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -1001,7 +1001,6 @@ def _sanitize_public_ai_reply(raw: str | None) -> str:
         r"\bhidden reasoning\b",
         r"\binternal context\b",
         r"\binternal instruction\b",
-        r"\bExternalChannel\b",
         r"\bMCP\b",
         r"\btool call\b",
         r"\baccording to .*?\.md\b",

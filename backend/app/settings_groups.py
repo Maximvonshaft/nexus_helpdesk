@@ -63,27 +63,6 @@ class VoiceCapabilitySettings:
     legacy_aggregate_enabled: bool
 
 
-@dataclass(frozen=True)
-class CompatibilityCapabilitySettings:
-    external_channel_transport: str
-    external_channel_deployment_mode: str
-    external_channel_sync_enabled: bool
-    external_channel_event_driver_enabled: bool
-    external_channel_bridge_enabled: bool
-    external_channel_cli_fallback_enabled: bool
-
-    @property
-    def retired_runtime_requested(self) -> bool:
-        return bool(
-            self.external_channel_transport != "disabled"
-            or self.external_channel_deployment_mode != "disabled"
-            or self.external_channel_sync_enabled
-            or self.external_channel_event_driver_enabled
-            or self.external_channel_bridge_enabled
-            or self.external_channel_cli_fallback_enabled
-        )
-
-
 def _scheme(value: str) -> str:
     return str(value or "").split(":", 1)[0].lower() or "unknown"
 
@@ -97,7 +76,7 @@ def capability_groups(settings: Any) -> dict[str, Any]:
     live_ai_voice_enabled = bool(
         getattr(settings, "webchat_live_ai_voice_enabled", False)
     )
-    groups = {
+    return {
         "database": DatabaseCapabilitySettings(
             url_scheme=_scheme(settings.database_url),
             echo=bool(settings.database_echo),
@@ -142,16 +121,7 @@ def capability_groups(settings: Any) -> dict[str, Any]:
             live_ai_voice_enabled=live_ai_voice_enabled,
             legacy_aggregate_enabled=bool(getattr(settings, "webchat_voice_enabled", False)),
         ),
-        "compatibility": CompatibilityCapabilitySettings(
-            external_channel_transport=settings.external_channel_transport,
-            external_channel_deployment_mode=settings.external_channel_deployment_mode,
-            external_channel_sync_enabled=bool(settings.external_channel_sync_enabled),
-            external_channel_event_driver_enabled=bool(settings.external_channel_event_driver_enabled),
-            external_channel_bridge_enabled=bool(settings.external_channel_bridge_enabled),
-            external_channel_cli_fallback_enabled=bool(settings.external_channel_cli_fallback_enabled),
-        ),
     }
-    return groups
 
 
 def effective_safe_config(settings: Any) -> dict[str, Any]:

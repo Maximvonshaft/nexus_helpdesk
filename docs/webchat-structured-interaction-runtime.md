@@ -22,7 +22,7 @@ Customer input
 3. Visitor sends text with an optional `client_message_id`.
 4. Backend writes `webchat_messages`, `ticket_comments`, and `ticket_events`.
 5. Backend detects intent and safely creates an allowlisted card when useful.
-6. When Tracking Fact MVP flags are enabled and a tracking number is present, backend calls the ExternalChannel Bridge read-only `/tools/speedaf_lookup` endpoint, redacts and normalizes the result, and injects only the sanitized fact summary into the AI prompt.
+6. When Tracking Fact MVP flags are enabled and a tracking number is present, backend calls the governed Speedaf provider tool through the canonical runtime router, redacts and normalizes the result, and injects only the sanitized fact summary into the AI prompt.
 7. Visitor clicks a card action when a rendered card is present.
 8. `POST /api/webchat/conversations/{conversation_id}/actions` validates the card/action and writes `webchat_card_actions`.
 9. Admin thread shows text, card, action, handoff state, and tracking fact audit metadata.

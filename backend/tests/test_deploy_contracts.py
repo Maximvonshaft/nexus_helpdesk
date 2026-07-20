@@ -6,17 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONTROLLED = ROOT / "deploy" / "docker-compose.controlled.yml"
 LOCAL_DB = ROOT / "deploy" / "docker-compose.controlled-postgres.yml"
-SERVER_ALIAS = ROOT / "deploy" / "docker-compose.server.yml"
-CANDIDATE_ALIAS = ROOT / "deploy" / "docker-compose.candidate.yml"
 CONTROLLED_ENV = ROOT / "deploy" / ".env.controlled.example"
 LOCAL_ENV = ROOT / "deploy" / ".env.controlled.local-postgres.example"
-PROD_TOMBSTONES = (
-    ROOT / "deploy" / ".env.prod.example",
-    ROOT / "deploy" / ".env.prod.local-postgres.example",
-    ROOT / "deploy" / ".env.prod.external-postgres.example",
-    ROOT / "deploy" / ".env.candidate.example",
-)
-
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -33,29 +24,16 @@ def _env(path: Path) -> dict[str, str]:
     return values
 
 
-def test_server_and_candidate_filenames_are_thin_canonical_aliases():
-    server = _read(SERVER_ALIAS)
-    candidate = _read(CANDIDATE_ALIAS)
-
-    assert "services:" not in server
-    assert "services:" not in candidate
-    assert "./docker-compose.controlled.yml" in server
-    assert "./docker-compose.controlled-postgres.yml" in server
-    assert "./.env.controlled.local-postgres" in server
-    assert "./docker-compose.controlled.yml" in candidate
-    assert "./.env.controlled" in candidate
-    for forbidden in (
-        "app-candidate",
-        "worker-outbound-candidate",
-        "whatsapp-sidecar-candidate",
-        "legacy-worker",
-        "runtime-warmer",
-        "/run/secrets",
-        "ai_runtime_token",
-        "live_voice_token",
+def test_retired_deployment_aliases_are_physically_absent():
+    for relative in (
+        "deploy/docker-compose.server.yml",
+        "deploy/docker-compose.candidate.yml",
+        "deploy/.env.prod.example",
+        "deploy/.env.prod.local-postgres.example",
+        "deploy/.env.prod.external-postgres.example",
+        "deploy/.env.candidate.example",
     ):
-        assert forbidden not in server
-        assert forbidden not in candidate
+        assert not (ROOT / relative).exists(), relative
 
 
 def test_canonical_app_worker_topology_exists_in_one_file_only():
@@ -118,17 +96,6 @@ def test_local_postgres_overlay_bootstraps_only_database_authority():
     assert "GRANT USAGE, SELECT ON SEQUENCES" in bootstrap
     assert "DROP DATABASE" not in bootstrap
     assert "DROP ROLE" not in bootstrap
-
-
-def test_retired_env_paths_are_bounded_tombstones():
-    for path in PROD_TOMBSTONES:
-        text = _read(path)
-        env = _env(path)
-        assert env["NEXUS_ENV_TEMPLATE_RETIRED"] == "true"
-        assert "DATABASE_URL=" not in text
-        assert "SECRET_KEY=" not in text
-        assert "TOKEN_FILE=" not in text
-        assert len(text.splitlines()) <= 20
 
 
 def test_controlled_profile_keeps_external_effects_and_credentials_absent():

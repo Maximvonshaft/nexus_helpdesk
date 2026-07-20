@@ -45,7 +45,7 @@ def _value(raw: Any) -> str:
     return str(value or '').strip()
 
 
-def external_channel_values() -> list[str]:
+def external_delivery_channel_values() -> list[str]:
     return sorted(EXTERNAL_OUTBOUND_CHANNELS)
 
 
@@ -135,14 +135,14 @@ def outbound_is_external_send(channel: Any, provider_status: str | None = None) 
 
 
 def count_outbound_semantics(db: Session) -> dict[str, int]:
-    external_channels = external_channel_values()
+    delivery_channels = external_delivery_channel_values()
     return {
         'external_pending_outbound': db.query(TicketOutboundMessage).filter(
-            TicketOutboundMessage.channel.in_(external_channels),
+            TicketOutboundMessage.channel.in_(delivery_channels),
             TicketOutboundMessage.status == MessageStatus.pending,
         ).count(),
         'external_dead_outbound': db.query(TicketOutboundMessage).filter(
-            TicketOutboundMessage.channel.in_(external_channels),
+            TicketOutboundMessage.channel.in_(delivery_channels),
             TicketOutboundMessage.status == MessageStatus.dead,
         ).count(),
         'webchat_local_ack_sent': db.query(TicketOutboundMessage).filter(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +28,7 @@ from ..services.observability import (
     record_webchat_websocket_fallback_polling,
 )
 from ..services.webchat_handoff_service import force_takeover_ticket, list_handoff_queue
+from ..services.webchat_origin_policy import validate_websocket_origin
 from ..services.webchat_realtime_event_service import (
     list_admin_queue_event_envelopes,
     list_conversation_event_envelopes,
@@ -389,6 +391,11 @@ async def _handle_command(websocket: WebSocket, db: Session, state: ConnectionSt
 
 @router.websocket("/api/webchat/ws")
 async def webchat_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> None:
+    try:
+        validate_websocket_origin(websocket, get_settings())
+    except HTTPException:
+        await websocket.close(code=4403, reason="webchat_origin_forbidden")
+        return
     await websocket.accept()
     settings = get_settings()
     state = ConnectionState()
@@ -400,6 +407,10 @@ async def webchat_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
             await _send_error(websocket, "hello_timeout", "connection.hello is required", retryable=False)
             await websocket.close(code=4408)
             return
+        except (json.JSONDecodeError, ValueError, TypeError):
+            await _send_error(websocket, "invalid_json", "WebSocket messages must be valid JSON objects", retryable=False)
+            await websocket.close(code=4400)
+            return
         await _handle_command(websocket, db, state, hello if isinstance(hello, dict) else {})
         if not state.connection_id:
             return
@@ -408,8 +419,14 @@ async def webchat_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
                 message = await asyncio.wait_for(websocket.receive_json(), timeout=poll_seconds)
                 if isinstance(message, dict):
                     await _handle_command(websocket, db, state, message)
+                else:
+                    await _send_error(websocket, "invalid_json", "WebSocket messages must be JSON objects", retryable=False)
             except asyncio.TimeoutError:
                 pass
+            except (json.JSONDecodeError, ValueError, TypeError):
+                await _send_error(websocket, "invalid_json", "WebSocket messages must be valid JSON objects", retryable=False)
+                await websocket.close(code=4400)
+                return
             await _send_replay(websocket, db, state)
             state.hub_version = await webchat_realtime_hub.wait_for_event(
                 last_seen_version=state.hub_version,

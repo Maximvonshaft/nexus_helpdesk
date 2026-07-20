@@ -863,9 +863,10 @@ def process_background_job(
 
             ticket = get_ticket_or_404(db, int(payload["ticket_id"]))
             user = get_user_or_404(db, int(payload["user_id"]))
-            if (
-                not ticket.preferred_reply_contact
-                and ticket.external_channel_link is None
+            if not (
+                ticket.preferred_reply_contact
+                or ticket.source_chat_id
+                or (ticket.customer.phone if ticket.customer else None)
             ):
                 _mark_done(job)
                 return job
@@ -877,22 +878,7 @@ def process_background_job(
             if not human_note:
                 _mark_done(job)
                 return job
-            transcript_rows = (
-                db.query(ExternalChannelTranscriptMessage)
-                .filter(
-                    ExternalChannelTranscriptMessage.ticket_id == ticket.id
-                )
-                .order_by(
-                    ExternalChannelTranscriptMessage.created_at.desc()
-                )
-                .limit(5)
-                .all()
-            )
-            transcript_context = "\n".join(
-                reversed(
-                    [row.body_text for row in transcript_rows if row.body_text]
-                )
-            )
+            transcript_context = ticket.last_customer_message or ""
             customer_request = (
                 transcript_context
                 or ticket.customer_request

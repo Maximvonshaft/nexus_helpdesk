@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, AdminAuditLog, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, ExternalChannelConversationLink, ExternalChannelTranscriptMessage, ExternalChannelUnresolvedEvent, OutboundEmailAccount, Team, TicketOutboundMessage, User, UserCapabilityOverride
-from ..schemas import UserUpdate, PasswordResetRequest, ExternalChannelUnresolvedEventRead, AdminAuditLogRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinImpactPreviewRead, MarketBulletinImpactPreviewRequest, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, ExternalChannelConversationRead, ProductionReadinessRead, QueueSummaryRead, SecurityAuditRead, SecurityAuditSummaryRead, SecurityCapabilityUserRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
+from ..models import AIConfigResource, AdminAuditLog, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OutboundEmailAccount, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..schemas import UserUpdate, PasswordResetRequest, AdminAuditLogRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinImpactPreviewRead, MarketBulletinImpactPreviewRequest, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, ProductionReadinessRead, QueueSummaryRead, SecurityAuditRead, SecurityAuditSummaryRead, SecurityCapabilityUserRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
@@ -148,7 +148,6 @@ def _validate_channel_account_payload(
             raise HTTPException(status_code=400, detail='Fallback market must be global or match primary market')
 
     return normalized_provider, normalized_account_id, normalized_fallback
-
 
 
 @router.get('/capabilities/catalog', response_model=list[str])
@@ -367,15 +366,6 @@ def assign_team_market(team_id: int, payload: TeamMarketAssignRequest, db: Sessi
     return TeamRead.model_validate(team)
 
 
-@router.get('/external_channel/links', response_model=list[ExternalChannelConversationRead])
-def list_external_channel_links(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Read-only access to historical ExternalChannel linkage."""
-
-    ensure_can_manage_runtime(current_user, db)
-    rows = db.query(ExternalChannelConversationLink).order_by(ExternalChannelConversationLink.updated_at.desc()).all()
-    return [ExternalChannelConversationRead.model_validate(row) for row in rows]
-
-
 def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     return QueueSummaryRead(
@@ -383,9 +373,6 @@ def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_cu
         dead_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.dead).count(),
         pending_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.pending).count(),
         dead_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead).count(),
-        external_channel_links=db.query(ExternalChannelConversationLink).count(),
-        external_channel_transcript_messages=db.query(ExternalChannelTranscriptMessage).count(),
-        external_channel_unresolved_events=db.query(ExternalChannelUnresolvedEvent).count(),
     )
 
 
@@ -407,14 +394,10 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         warnings.append('DATABASE_URL is not PostgreSQL; stage/prod cutover is still pending')
     if settings.storage_backend == 'local':
         warnings.append('STORAGE_BACKEND=local; object storage cutover is still pending')
-    if settings.external_channel_deployment_mode != 'disabled' or settings.external_channel_transport != 'disabled':
-        warnings.append('Legacy ExternalChannel runtime env vars are still enabled')
     if not settings.metrics_enabled:
         warnings.append('Metrics are disabled')
     if db.bind and not db.bind.dialect.name.startswith('postgresql'):
         warnings.append('Current runtime DB dialect is not PostgreSQL')
-    if settings.external_channel_sync_enabled and not settings.external_channel_inbound_auto_sync_enabled and not settings.external_channel_event_driver_enabled:
-        warnings.append('ExternalChannel sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
     outbound_email_active_accounts = db.query(OutboundEmailAccount).filter(OutboundEmailAccount.is_active.is_(True)).count()
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
         db,
@@ -429,13 +412,7 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         database_url_scheme=settings.database_url.split(':', 1)[0],
         is_postgres=settings.is_postgres,
         storage_backend=settings.storage_backend,
-        external_channel_transport=settings.external_channel_transport,
         metrics_enabled=settings.metrics_enabled,
-        external_channel_sync_enabled=settings.external_channel_sync_enabled,
-        external_channel_inbound_auto_sync_enabled=settings.external_channel_inbound_auto_sync_enabled,
-        external_channel_links_count=db.query(ExternalChannelConversationLink).count(),
-        external_channel_transcript_messages_count=db.query(ExternalChannelTranscriptMessage).count(),
-        external_channel_unresolved_events_count=db.query(ExternalChannelUnresolvedEvent).count(),
         outbound_email_production_pilot_enabled=settings.outbound_email_production_pilot_enabled,
         outbound_email_active_accounts=outbound_email_active_accounts,
         outbound_email_successful_test_send_accounts=outbound_email_successful_test_send_accounts,
@@ -449,23 +426,15 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
     ensure_can_manage_runtime(current_user, db)
     warnings: list[str] = []
     checks: dict[str, bool] = {}
-
     checks['postgres_configured'] = settings.is_postgres
     if not checks['postgres_configured']:
         warnings.append('DATABASE_URL is not PostgreSQL')
-
     checks['storage_not_local'] = settings.storage_backend != 'local'
     if not checks['storage_not_local']:
         warnings.append('STORAGE_BACKEND is local')
-
-    checks['legacy_external_channel_disabled'] = settings.external_channel_deployment_mode == 'disabled' and settings.external_channel_transport == 'disabled'
-    if not checks['legacy_external_channel_disabled']:
-        warnings.append('Legacy ExternalChannel runtime is still enabled')
-
     checks['metrics_enabled'] = settings.metrics_enabled
     if not checks['metrics_enabled']:
         warnings.append('METRICS_ENABLED is false')
-
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
@@ -473,10 +442,6 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
     except Exception:
         checks['database_connected'] = False
         warnings.append('Database connectivity check failed')
-
-    if settings.external_channel_event_driver_enabled:
-        warnings.append('Legacy ExternalChannel event driver is still enabled')
-
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
         db,
         max_age_hours=settings.outbound_email_test_send_max_age_hours,
@@ -556,8 +521,6 @@ def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: S
         db.flush()
     db.refresh(row)
     return ChannelAccountRead.model_validate(row)
-
-
 
 
 @router.get('/ai-configs', response_model=list[AIConfigResourceRead])
@@ -813,9 +776,3 @@ def reset_user_password(user_id: int, payload: PasswordResetRequest, db: Session
         db.flush()
         log_admin_audit(db, actor_id=current_user.id, action='user.reset_password', target_type='user', target_id=row.id, old_value={}, new_value={})
     return {"ok": True}
-
-@router.get('/external_channel/unresolved-events', response_model=list[ExternalChannelUnresolvedEventRead])
-def list_unresolved_events(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_runtime(current_user, db)
-    rows = db.query(ExternalChannelUnresolvedEvent).order_by(ExternalChannelUnresolvedEvent.created_at.desc()).all()
-    return [ExternalChannelUnresolvedEventRead.model_validate(x) for x in rows]

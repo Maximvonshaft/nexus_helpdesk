@@ -55,7 +55,6 @@ _DECISION_KEYS = {
     "safety_notes",
 }
 _INTERNAL_PATTERNS = [
-    r"\bExternalChannel\b",
     r"\bgateway\b",
     r"\bprompt\b",
     r"\bsystem prompt\b",

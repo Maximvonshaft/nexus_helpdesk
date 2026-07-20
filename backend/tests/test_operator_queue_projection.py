@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -19,7 +18,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, UserRole  # noqa: E402
-from app.models import ExternalChannelUnresolvedEvent, Ticket, User  # noqa: E402
+from app.models import Ticket, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import project_operator_queue, transition_operator_task  # noqa: E402
 from app.webchat_models import WebchatConversation  # noqa: E402
@@ -80,49 +79,24 @@ def make_webchat(db, ticket):
     return row
 
 
-def make_unresolved(db):
-    row = ExternalChannelUnresolvedEvent(
-        source="default",
-        session_key="sess-secret",
-        event_type="message",
-        recipient="+411234567",
-        source_chat_id="+411234567",
-        preferred_reply_contact="+411234567",
-        payload_json=json.dumps({"type": "message", "sessionKey": "sess-secret"}),
-        status="pending",
-        replay_count=0,
-        last_error="provider error with sensitive context",
-    )
-    db.add(row)
-    db.flush()
-    return row
-
-
-def test_project_is_idempotent_for_webchat_and_never_projects_external_channel(db_session):
+def test_project_is_idempotent_for_webchat(db_session):
     admin = make_user(db_session)
     ticket = make_ticket(db_session)
     conversation = make_webchat(db_session, ticket)
-    event = make_unresolved(db_session)
     db_session.commit()
 
     first = project_operator_queue(db_session, actor_id=admin.id)
     second = project_operator_queue(db_session, actor_id=admin.id)
 
-    assert first["projected_external_channel_unresolved"] == 0
-    assert second["projected_external_channel_unresolved"] == 0
     assert first["projected_webchat_handoff"] == 1
     assert second["projected_webchat_handoff"] == 0
-    assert db_session.query(OperatorTask).filter_by(source_type="external_channel").count() == 0
     assert db_session.query(OperatorTask).filter_by(webchat_conversation_id=conversation.id).count() == 1
-    db_session.refresh(event)
-    assert event.status == "pending"
 
 
-def test_webchat_source_closure_prevents_reprojection_without_mutating_legacy_event(db_session):
+def test_webchat_source_closure_prevents_reprojection(db_session):
     admin = make_user(db_session)
     ticket = make_ticket(db_session)
     conversation = make_webchat(db_session, ticket)
-    event = make_unresolved(db_session)
     db_session.commit()
 
     project_operator_queue(db_session, actor_id=admin.id)
@@ -132,9 +106,7 @@ def test_webchat_source_closure_prevents_reprojection_without_mutating_legacy_ev
 
     again = project_operator_queue(db_session, actor_id=admin.id)
     db_session.refresh(ticket)
-    db_session.refresh(event)
 
     assert again["created_total"] == 0
     assert ticket.required_action is None
-    assert event.status == "pending"
     assert db_session.query(OperatorTask).count() == 1
