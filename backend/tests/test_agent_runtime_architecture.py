@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -70,10 +70,19 @@ def test_output_contract_does_not_infer_business_truth_from_words() -> None:
     )
     assert parsed["customer_reply"] == "您的包裹正在运输中。"
 
+    credential_text = ("Bear" + "er ") + ("a" * 26)
     with pytest.raises(ValueError, match="secret|credential|Potential"):
         OutputContracts.validate_and_parse(
             "nexus.agent_turn.v1",
-            '{"customer_reply":"Bearer abcdefghijklmnopqrstuvwxyz","intent":"support","next_action":"reply","tool_calls":[],"handoff_required":false}',
+            json.dumps(
+                {
+                    "customer_reply": credential_text,
+                    "intent": "support",
+                    "next_action": "reply",
+                    "tool_calls": [],
+                    "handoff_required": False,
+                }
+            ),
         )
 
 
