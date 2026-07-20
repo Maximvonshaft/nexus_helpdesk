@@ -91,8 +91,9 @@ def _ticketless_queue_items(
     include_declined: bool,
     limit: int,
 ) -> list[dict]:
-    # Local import keeps this public projection from participating in the
+    # Local imports keep this public projection from participating in the
     # WebChat service -> handoff service -> agent routing initialization cycle.
+    from .agent_availability_service import queue_position
     from .agent_routing_service import serialize_handoff
 
     query = (
@@ -153,6 +154,7 @@ def _ticketless_queue_items(
                 "title": request_row.reason_text
                 or request_row.reason_code
                 or "WebChat human support",
+                "queue_position": queue_position(db, request_row=request_row),
                 "declined_by_me": declined,
                 "visitor_name": conversation.visitor_name,
                 "visitor_email": conversation.visitor_email,
