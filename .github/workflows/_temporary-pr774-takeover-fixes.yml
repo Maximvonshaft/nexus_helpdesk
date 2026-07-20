@@ -1,3 +1,4 @@
+# One-shot verification workflow; deletes itself after a successful commit.
 name: Temporary PR 774 Takeover Fixes
 
 on:
@@ -280,7 +281,7 @@ jobs:
               "support_ticketless_metrics",
           )
 
-          state_start = support.read_text(encoding="utf-8")
+          state_source = support.read_text(encoding="utf-8")
           old_state = '''@router.get("/state")
           def support_conversation_state(
               db: Session = Depends(get_db),
@@ -418,9 +419,9 @@ jobs:
                   "generated_at": _iso(utc_now()),
               }
           '''
-          if state_start.count(old_state) != 1:
+          if state_source.count(old_state) != 1:
               raise SystemExit("support_ticketless_state: exact endpoint target not found")
-          support.write_text(state_start.replace(old_state, new_state, 1), encoding="utf-8")
+          support.write_text(state_source.replace(old_state, new_state, 1), encoding="utf-8")
 
           tests = Path("backend/tests/test_conversation_first_agent_routing.py")
           source = tests.read_text(encoding="utf-8")
