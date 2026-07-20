@@ -245,7 +245,7 @@ def enqueue_webchat_ai_reply_job(
     db: Session,
     *,
     conversation_id: int,
-    ticket_id: int,
+    ticket_id: int | None,
     visitor_message_id: int,
 ) -> BackgroundJob:
     return enqueue_background_job(
@@ -915,10 +915,15 @@ def process_background_job(
                 process_webchat_ai_reply_job,
             )
 
+            raw_ticket_id = payload.get("ticket_id")
             process_webchat_ai_reply_job(
                 db,
                 conversation_id=int(payload["conversation_id"]),
-                ticket_id=int(payload["ticket_id"]),
+                ticket_id=(
+                    int(raw_ticket_id)
+                    if raw_ticket_id is not None
+                    else None
+                ),
                 visitor_message_id=int(payload["visitor_message_id"]),
             )
             _mark_done(job)

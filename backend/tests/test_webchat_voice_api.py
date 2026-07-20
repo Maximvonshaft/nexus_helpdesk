@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
-from app.enums import JobStatus, UserRole
+from app.enums import ConversationState, JobStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
 from app.main import app
 from app.models import AdminAuditLog, BackgroundJob, Ticket, TicketEvent, TicketInternalNote, User, UserCapabilityOverride
 from app.services import webchat_rate_limit as webchat_rate_limit_service
@@ -28,7 +28,7 @@ from app.services.speedaf.action_service import SpeedafActionResult, SpeedafActi
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession, WebchatVoiceSessionAction, WebchatVoiceTranscriptSegment
-from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
+from app.webchat_models import WebchatConversation, WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -73,7 +73,12 @@ def _admin_headers(user_id: int = 9201) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(user_id)}"}
 
 
-def _create_webchat_conversation(client: TestClient, name: str = "Voice Visitor") -> tuple[str, str, int]:
+def _create_webchat_conversation(
+    client: TestClient,
+    name: str = "Voice Visitor",
+    *,
+    create_ticket: bool = True,
+) -> tuple[str, str, int | None]:
     init = client.post(
         "/api/webchat/init",
         json={
@@ -87,23 +92,37 @@ def _create_webchat_conversation(client: TestClient, name: str = "Voice Visitor"
     payload = init.json()
     conversation_id = payload["conversation_id"]
     visitor_token = payload["visitor_token"]
+    if not create_ticket:
+        return conversation_id, visitor_token, None
 
-    thread_candidates = client.get(
-        "/api/support/conversations",
-        params={"view": "all", "channel": "all", "limit": 100},
-        headers=_admin_headers(),
-    )
-    assert thread_candidates.status_code == 200, thread_candidates.text
-    ticket_id = next(
-        item["ticket_id"]
-        for item in thread_candidates.json()["items"]
-        if item["conversation_id"] == conversation_id
-    )
-    return conversation_id, visitor_token, ticket_id
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id
+        ).one()
+        ticket = Ticket(
+            ticket_no=f"VOICE-{conversation_id[-20:]}",
+            title="Voice support follow-up",
+            description="Explicit formal Ticket for ticket-scoped voice operator tests.",
+            source=TicketSource.user_message,
+            source_channel=SourceChannel.web_chat,
+            priority=TicketPriority.medium,
+            status=TicketStatus.in_progress,
+            resolution_category=ResolutionCategory.none,
+            conversation_state=ConversationState.human_owned,
+        )
+        db.add(ticket)
+        db.flush()
+        conversation.ticket_id = ticket.id
+        db.commit()
+        return conversation_id, visitor_token, ticket.id
+    finally:
+        db.close()
 
 
 def _create_voice_session(client: TestClient, *, name: str = "Voice Visitor") -> tuple[str, str, int, str]:
     conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, name=name)
+    assert ticket_id is not None
     created = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",
         headers={"X-Webchat-Visitor-Token": visitor_token},
@@ -173,9 +192,10 @@ def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
     assert "unit_key" not in response.text
 
 
-def test_public_create_voice_session_binds_conversation_and_ticket():
+def test_public_create_voice_session_binds_conversation_without_ticket():
     client = TestClient(app)
-    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, create_ticket=False)
+    assert ticket_id is None
 
     created = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",
@@ -199,9 +219,12 @@ def test_public_create_voice_session_binds_conversation_and_ticket():
     db = SessionLocal()
     try:
         row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == payload["voice_session_id"]).one()
-        assert row.ticket_id == ticket_id
+        assert row.ticket_id is None
         assert row.provider == "mock"
-        events = db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()
+        events = db.query(WebchatEvent).filter(
+            WebchatEvent.conversation_id == row.conversation_id,
+            WebchatEvent.ticket_id.is_(None),
+        ).all()
         event_types = {event.event_type for event in events}
         assert "voice.session.created" in event_types
         assert "voice.session.ringing" in event_types
@@ -211,7 +234,7 @@ def test_public_create_voice_session_binds_conversation_and_ticket():
 
 def test_public_create_voice_session_rejects_invalid_token():
     client = TestClient(app)
-    conversation_id, _visitor_token, _ticket_id = _create_webchat_conversation(client)
+    conversation_id, _visitor_token, _ticket_id = _create_webchat_conversation(client, create_ticket=False)
 
     created = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",
@@ -224,7 +247,7 @@ def test_public_create_voice_session_rejects_invalid_token():
 
 def test_public_create_voice_session_returns_existing_active_session():
     client = TestClient(app)
-    conversation_id, visitor_token, _ticket_id = _create_webchat_conversation(client)
+    conversation_id, visitor_token, _ticket_id = _create_webchat_conversation(client, create_ticket=False)
 
     first = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",

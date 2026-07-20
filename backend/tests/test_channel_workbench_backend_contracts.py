@@ -161,6 +161,29 @@ def _ticket_attachment(db_session, ticket: Ticket, *, uploaded_by: int | None = 
     return row
 
 
+
+
+def _link_formal_webcall_ticket(db_session, *, conversation_id: str) -> Ticket:
+    conversation = db_session.query(WebchatConversation).filter(
+        WebchatConversation.public_id == conversation_id
+    ).one()
+    ticket = Ticket(
+        ticket_no=f"WEBCALL-{_uid()}",
+        title="WebCall formal follow-up",
+        description="Explicit Ticket for ticket-scoped WebCall workbench operations.",
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.web_chat,
+        priority=TicketPriority.medium,
+        status=TicketStatus.in_progress,
+        resolution_category=ResolutionCategory.none,
+        conversation_state=ConversationState.human_owned,
+    )
+    db_session.add(ticket)
+    db_session.flush()
+    conversation.ticket_id = ticket.id
+    db_session.flush()
+    return ticket
+
 def _attach_webcall_operator_context(db_session, *, ticket_id: int, conversation_id: str):
     ticket = db_session.query(Ticket).filter(Ticket.id == ticket_id).one()
     conversation = db_session.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).one()
@@ -696,17 +719,7 @@ def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_con
     conversation_id = init.json()["conversation_id"]
     visitor_token = init.json()["visitor_token"]
 
-    conversations = client.get(
-        "/api/support/conversations",
-        params={"view": "all", "channel": "all", "limit": 100},
-        headers=headers,
-    )
-    assert conversations.status_code == 200, conversations.text
-    ticket_id = next(
-        item["ticket_id"]
-        for item in conversations.json()["items"]
-        if item["conversation_id"] == conversation_id
-    )
+    ticket_id = _link_formal_webcall_ticket(db_session, conversation_id=conversation_id).id
     ticket, conversation, handoff, turn = _attach_webcall_operator_context(db_session, ticket_id=ticket_id, conversation_id=conversation_id)
     db_session.add(
         WebchatEvent(
@@ -817,17 +830,7 @@ def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, d
     conversation_id = init_payload["conversation_id"]
     visitor_token = init_payload["visitor_token"]
 
-    conversations = client.get(
-        "/api/support/conversations",
-        params={"view": "all", "channel": "all", "limit": 100},
-        headers=headers,
-    )
-    assert conversations.status_code == 200, conversations.text
-    ticket_id = next(
-        item["ticket_id"]
-        for item in conversations.json()["items"]
-        if item["conversation_id"] == conversation_id
-    )
+    ticket_id = _link_formal_webcall_ticket(db_session, conversation_id=conversation_id).id
 
     created = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",

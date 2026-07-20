@@ -14,11 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.auth_service import create_access_token
-from app.db import Base, SessionLocal, engine
-from app.enums import UserRole
+from app.db import Base, engine
 from app.main import app
-from app.models import User
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceProviderError
 
@@ -26,20 +23,7 @@ from app.services.voice_provider import VoiceProviderError
 @pytest.fixture(scope="module", autouse=True)
 def ensure_schema():
     Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        user = User(id=9301, username="voice_comp_admin", display_name="Voice Compensation Admin", password_hash="test", role=UserRole.admin, is_active=True)
-        existing = db.query(User).filter(User.id == user.id).first()
-        if existing is None:
-            db.add(user)
-        else:
-            existing.username = user.username
-            existing.display_name = user.display_name
-            existing.role = user.role
-            existing.is_active = True
-        db.commit()
-    finally:
-        db.close()
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -55,10 +39,6 @@ def voice_env(monkeypatch):
     yield
 
 
-def _admin_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {create_access_token(9301)}"}
-
-
 def _create_webchat_conversation(client: TestClient) -> tuple[str, str]:
     init = client.post(
         "/api/webchat/init",
@@ -71,16 +51,6 @@ def _create_webchat_conversation(client: TestClient) -> tuple[str, str]:
     )
     assert init.status_code == 200, init.text
     payload = init.json()
-    canonical_list = client.get(
-        "/api/support/conversations",
-        params={"view": "all", "channel": "all", "limit": 100},
-        headers=_admin_headers(),
-    )
-    assert canonical_list.status_code == 200, canonical_list.text
-    assert any(
-        item["session_key"].endswith(f":{payload['conversation_id']}")
-        for item in canonical_list.json()["items"]
-    )
     return payload["conversation_id"], payload["visitor_token"]
 
 
@@ -96,7 +66,13 @@ def test_livekit_room_is_closed_when_token_issuance_fails(monkeypatch):
         closed_rooms.append(room_name)
         return None
 
-    def fake_issue_token(self, *, room_name: str, participant_identity: str, ttl_seconds: int):
+    def fake_issue_token(
+        self,
+        *,
+        room_name: str,
+        participant_identity: str,
+        ttl_seconds: int,
+    ):
         raise VoiceProviderError("simulated token issuance failure")
 
     monkeypatch.setattr(LiveKitVoiceProvider, "create_room", fake_create_room)
