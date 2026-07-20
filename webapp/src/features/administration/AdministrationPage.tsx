@@ -41,13 +41,19 @@ export function AdministrationPage() {
     enabled: canManageUsers,
     retry: false,
   })
+  const markets = useQuery({
+    queryKey: ['identityMarkets'],
+    queryFn: supportApi.identityMarkets,
+    enabled: canManageUsers,
+    retry: false,
+  })
 
   useEffect(() => { document.title = '系统管理 · Nexus OSR' }, [])
   useEffect(() => {
     if (!canManageUsers && tab !== 'security') setTab('security')
   }, [canManageUsers, tab])
 
-  const referenceError = roles.error || teams.error
+  const referenceError = roles.error || teams.error || markets.error
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
@@ -98,7 +104,12 @@ export function AdministrationPage() {
           />
         ) : null}
         {tab === 'teams' && canManageUsers ? (
-          <TeamGovernance teams={teams.data ?? []} isLoading={teams.isLoading} error={teams.error} />
+          <TeamGovernance
+            teams={teams.data ?? []}
+            markets={markets.data ?? []}
+            isLoading={teams.isLoading || markets.isLoading}
+            error={teams.error || markets.error}
+          />
         ) : null}
         {tab === 'security' && canReadSecurity ? <SecurityAuditPanel readOnly={!canManageUsers} /> : null}
       </Box>
