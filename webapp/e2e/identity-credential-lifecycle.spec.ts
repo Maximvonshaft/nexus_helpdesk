@@ -152,10 +152,11 @@ test('forced password rotation cannot render the workspace and completes through
   await expect(page.getByText('完成密码修改前，业务页面和实时工作连接均不可使用。')).toBeVisible()
   await expect(page.getByTestId('operator-workspace')).toHaveCount(0)
 
-  await page.getByLabel('当前密码').fill('Nexus!Issued2026')
-  await page.getByLabel('新密码', { exact: true }).fill('Nexus!Rotated2026')
-  await page.getByLabel('确认新密码').fill('Nexus!Rotated2026')
-  await page.getByRole('button', { name: '更新密码并重新登录' }).click()
+  const passwordRegion = page.getByRole('region', { name: '修改密码' })
+  await passwordRegion.getByRole('textbox', { name: '当前密码' }).fill('Nexus!Issued2026')
+  await passwordRegion.getByRole('textbox', { name: '新密码', exact: true }).fill('Nexus!Rotated2026')
+  await passwordRegion.getByRole('textbox', { name: '确认新密码' }).fill('Nexus!Rotated2026')
+  await passwordRegion.getByRole('button', { name: '更新密码并重新登录' }).click()
 
   await expect(page).toHaveURL(/\/login$/)
 })
