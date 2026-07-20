@@ -35,31 +35,58 @@ test('account and administration extend the canonical route registry and shell',
   assert.doesNotMatch(administrationRoute, /AppShell/)
 })
 
-test('identity UI consumes only canonical supportApi contracts and server role policy', () => {
+test('identity UI consumes only canonical supportApi contracts and server policy', () => {
   const api = read('src/lib/supportApi.ts')
   const account = read('src/features/account/AccountPage.tsx')
   const administration = read('src/features/administration/AdministrationPage.tsx')
   const users = read('src/features/administration/UserGovernance.tsx')
+  const credentials = read('src/features/administration/CredentialGovernance.tsx')
   const teams = read('src/features/administration/TeamGovernance.tsx')
   const audit = read('src/features/administration/SecurityAuditPanel.tsx')
 
   for (const path of [
     '/api/auth/change-password',
+    '/api/auth/logout-all',
     '/api/admin/users',
     '/api/admin/identity/roles',
+    '/api/admin/identity/credential-policies',
+    '/api/admin/identity/users/${userId}/require-password-change',
+    '/api/admin/identity/users/${userId}/revoke-sessions',
     '/api/admin/identity/teams',
     '/api/admin/security-audit',
-  ]) assert.match(api, new RegExp(path.replaceAll('/', '\\/')))
+  ]) assert.match(api, new RegExp(path.replaceAll('/', '\\/').replaceAll('$', '\\$').replaceAll('{', '\\{').replaceAll('}', '\\}')))
 
   assert.doesNotMatch(api, /\bfetch\s*\(/)
   assert.match(account, /supportApi\.changePassword/)
+  assert.match(account, /supportApi\.logoutAll/)
+  assert.match(administration, /CredentialGovernance/)
   assert.match(administration, /supportApi\.rolePolicies/)
   assert.match(users, /default_capabilities/)
   assert.match(users, /supportApi\.createAdminUser/)
   assert.match(users, /supportApi\.updateAdminUser/)
+  assert.match(credentials, /supportApi\.credentialPolicies/)
+  assert.match(credentials, /supportApi\.requireAdminUserPasswordChange/)
+  assert.match(credentials, /supportApi\.revokeAdminUserSessions/)
+  assert.doesNotMatch(credentials, /createAdminUser|updateAdminUser|resetAdminUserPassword/)
   assert.match(teams, /supportApi\.createIdentityTeam/)
   assert.match(audit, /supportApi\.securityAudit/)
-  assert.doesNotMatch(administration + users, /ROLE_CAPABILITIES|roleCapabilities|hardcodedCapabilities/)
+  assert.doesNotMatch(administration + users + credentials, /ROLE_CAPABILITIES|roleCapabilities|hardcodedCapabilities/)
+})
+
+test('forced rotation is fail closed and has one recovery surface', () => {
+  const boundary = read('src/app/AuthenticatedAppPage.tsx')
+  const account = read('src/features/account/AccountPage.tsx')
+  const api = read('src/lib/supportApi.ts')
+
+  assert.match(boundary, /must_change_password/)
+  assert.match(boundary, /to: '\/account'/)
+  assert.match(boundary, /passwordRecoveryRequired \? '正在进入凭据恢复…'/)
+  assert.match(account, /完成密码修改前，业务页面和实时工作连接均不可使用/)
+  assert.match(account, /更新密码并重新登录/)
+  assert.match(account, /退出所有设备/)
+  assert.equal((api.match(/\/api\/auth\/change-password/g) ?? []).length, 1)
+  assert.equal((api.match(/\/api\/auth\/logout-all/g) ?? []).length, 1)
+  assert.doesNotMatch(api, /session_version|\/api\/auth\/security/)
 })
 
 test('administration remains inside MUI and canonical presentation authorities', () => {
@@ -67,6 +94,7 @@ test('administration remains inside MUI and canonical presentation authorities',
     'src/features/account/AccountPage.tsx',
     'src/features/administration/AdministrationPage.tsx',
     'src/features/administration/UserGovernance.tsx',
+    'src/features/administration/CredentialGovernance.tsx',
     'src/features/administration/TeamGovernance.tsx',
     'src/features/administration/SecurityAuditPanel.tsx',
   ]
