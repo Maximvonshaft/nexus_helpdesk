@@ -256,6 +256,9 @@ export function EmailAccountGovernance() {
         <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreate}>新增邮件账号</Button>
       </Stack>
       <Divider sx={{ my: 2 }} />
+      <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
+        SMTP 与 IMAP 密码只在新增或主动替换时提交；列表、编辑表单、审计记录和错误提示均不回显明文。
+      </Alert>
 
       {accounts.isError ? <OperatorErrorNotice title="无法读取邮件账号" error={accounts.error} fallback="请稍后重试" /> : null}
       {markets.isError ? <OperatorErrorNotice title="无法读取市场" error={markets.error} fallback="请稍后重试" /> : null}
