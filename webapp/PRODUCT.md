@@ -2,9 +2,9 @@
 
 ## Product identity
 
-Nexus OSR is a **case-resolution cockpit for multi-country logistics operations**.
+Nexus OSR is a **case-resolution cockpit for multi-country logistics operations** with one bounded administration control plane.
 
-It is not primarily a chatbot, a WebChat inbox, a Knowledge CMS, a Runtime console, or a generic administration dashboard. Those capabilities support the operator journey; they do not define it.
+It is not primarily a chatbot, a WebChat inbox, a Knowledge CMS, a Runtime console, or a generic administration dashboard. Those capabilities support the operator journey; they do not define it. Identity and access administration exists only to establish who may perform that journey, within which scope, and under which auditable authority.
 
 The product helps an authorized operator establish the case, inspect authoritative evidence, take ownership, perform governed actions, understand the operational and customer outcome, and determine whether the case is blocked, under observation, eligible to close, safely closed, or must reopen.
 
@@ -18,9 +18,13 @@ For every customer contact or governed operational signal, the frontend must mak
 4. **What actually happened after an action was requested?**
 5. **Can this case be safely completed, observed, repaired, or reopened?**
 
-The canonical journey is:
+The canonical operator journey is:
 
 `Login → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
+
+The canonical identity lifecycle is:
+
+`Administrator creates identity → role/team/capability projection → forced initial password rotation → authenticated session → permission or account change → auditable session revocation`
 
 ## Users
 
@@ -45,7 +49,7 @@ The canonical journey is:
 
 ### Knowledge and SOP Steward
 
-- Maintains approved customer-visible Knowledge and, after M11, internal SOP skills.
+- Maintains approved customer-visible Knowledge and internal operating guidance.
 - Cannot override live facts, action authority or case closure.
 
 ### Channel Administrator
@@ -58,20 +62,47 @@ The canonical journey is:
 - Inspects bounded Runtime, debug, evaluation and audit evidence.
 - Technical access does not imply customer-data or operational-action authority.
 
+### Identity Administrator
+
+- Creates, updates, activates and deactivates operator identities.
+- Assigns canonical role profiles, team membership and explicit capability overrides.
+- Resets credentials, requires password rotation and revokes sessions.
+- Cannot bypass the final-active-admin, self-deactivation or backend authorization safeguards.
+
+### Security Auditor
+
+- Reviews effective capabilities, high-risk overrides and administrator actions.
+- Read-only audit access does not imply identity mutation authority.
+
 ## Canonical route domains
 
 | Domain | Route | Job |
 |---|---|---|
 | Authentication | `/login` | Establish operator identity |
+| Account security | `/account` | Self-service password rotation and session revocation |
 | Operator work | `/workspace` | Queue, case, evidence, ownership, action, communication and closure target |
 | Knowledge and SOP | `/knowledge` | Govern Knowledge and internal operating guidance |
 | Channels | `/channels` | Channel/account configuration and health |
-| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded evidence |
+| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded runtime evidence |
 | Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
+| Administration | `/administration` | Users, roles, teams, capabilities, identity security and audit |
 
 `/webchat` is a compatibility redirect only. It does not mount a second product surface.
 
-Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
+Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization. `/account` is available from the single account menu rather than duplicated in the primary operational navigation.
+
+## Identity and access model
+
+- `users` remains the sole credential and operator identity authority.
+- `UserRole` and `ROLE_CAPABILITIES` remain the sole standard role-profile authority.
+- `user_capability_overrides` remains the sole per-user permission override authority.
+- `user_security_states` is the sole mutable session-version, forced-password-rotation and bounded login-metadata authority.
+- `/api/admin/users` remains the sole user CRUD authority.
+- `/api/auth/change-password` is the sole self-service password-change authority.
+- Every password reset, password change, deactivation or explicit session revocation invalidates older access tokens through the canonical session version.
+- Existing tokens issued before the session-version migration are interpreted as version 1 to avoid an uncontrolled global logout during deployment.
+- New administrator-created identities must rotate the issued password before entering another protected product domain.
+- Frontend capability checks only control presentation. Backend capability checks remain authoritative.
 
 ## Operator work model
 
@@ -154,6 +185,14 @@ For operator work, show information in this order:
 6. Customer conversation and communication composer.
 7. Technical evidence behind progressive disclosure.
 
+For identity administration, show information in this order:
+
+1. Identity, active state, standard role and team.
+2. Effective capabilities and explicit overrides.
+3. Password-rotation and latest-login state.
+4. Safe administrative actions with self/last-admin safeguards.
+5. Resulting audit evidence.
+
 Runtime model identity, raw Job identifiers and implementation traces are not primary operator content. They belong in bounded technical detail or the Runtime domain.
 
 ## Product behavior principles
@@ -166,12 +205,16 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 - Errors state what failed and what the operator can do.
 - Degraded, unavailable, stale, conflict and repair-required are first-class states.
 - Refresh preserves durable state and never duplicates commands.
+- Credential changes revoke prior sessions rather than relying on client-side logout.
+- Role templates and explicit overrides are shown as distinct concepts.
 - Keyboard operation and screen-reader structure are part of product behavior.
 
 ## Non-goals
 
 - No direct Provider execution from UI code.
 - No second queue, case truth or action truth.
+- No second user-management API or parallel administration application.
+- No client-authoritative permission or session state.
 - No probabilistic silent cross-channel merge.
 - No raw tracking/contact/provider identifiers on unsafe surfaces.
 - No customer-visible reply bypass.
@@ -183,8 +226,12 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 
 - `webapp/src/routes/` contains the only route registry.
 - `/workspace` is the only queue, case, conversation and governed-action surface.
+- `/administration` is the only user, role, capability and identity-audit surface.
+- `/account` is the only operator password and session self-service surface.
 - `KnowledgePage.tsx` is the only Knowledge implementation; capability controls editing.
+- `identityApi.ts` is the only identity-specific frontend API client and delegates transport to `apiClient.ts`.
 - `apiClient.ts` is the only generic HTTP transport.
+- `AppShell.tsx` and `navigation.ts` remain the only application-shell and navigation authorities.
 - Material UI, one Nexus theme and one bounded operator-presentation module are the only generic visual authorities.
 - `/webchat` redirects to canonical routes and does not own a product UI.
 
