@@ -32,10 +32,9 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install exact backend dependencies
         run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
-      - name: Apply tenant-safe voice fix
+      - name: Compile tenant-safe voice fix
         run: |
           git rev-parse HEAD > /tmp/pr788-start-sha
-          python scripts/_pr788_tenant_voice_fix.py
           python -m compileall -q backend/app
       - name: Test lazy voice ticket binding
         run: python -m pytest -q backend/tests/test_ticketless_voice_ticket_binding.py
@@ -54,7 +53,6 @@ jobs:
           start_sha="$(cat /tmp/pr788-start-sha)"
           git fetch --no-tags origin delivery/canonical-routing-final-a31f6c
           test "$(git rev-parse origin/delivery/canonical-routing-final-a31f6c)" = "$start_sha"
-          git rm scripts/_pr788_tenant_voice_fix.py
           git rm .github/workflows/_temporary-pr788-tenant-voice-fix.yml
           git add -A
           test -z "$(find .github/workflows -maxdepth 1 -type f -name '_temporary-*' -print)"
