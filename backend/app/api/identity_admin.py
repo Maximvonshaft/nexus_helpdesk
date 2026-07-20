@@ -7,10 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..enums import UserRole
 from ..models import User
 from ..models_identity import UserSecurityState
 from ..services.audit_service import log_admin_audit
-from ..services.permissions import ensure_can_manage_users
+from ..services.permissions import ROLE_CAPABILITIES, ensure_can_manage_users
 from ..services.user_security_service import ensure_security_state, revoke_all_sessions
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
@@ -26,6 +27,11 @@ class UserSecurityStateRead(BaseModel):
     password_changed_at: datetime | None = None
     last_login_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class RoleProfileRead(BaseModel):
+    role: UserRole
+    capabilities: list[str]
 
 
 def _user_or_404(db: Session, user_id: int) -> User:
@@ -44,6 +50,18 @@ def _serialize(row: UserSecurityState) -> UserSecurityStateRead:
         last_login_at=row.last_login_at,
         updated_at=row.updated_at,
     )
+
+
+@router.get('/roles', response_model=list[RoleProfileRead])
+def list_role_profiles(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    return [
+        RoleProfileRead(role=role, capabilities=sorted(ROLE_CAPABILITIES.get(role, set())))
+        for role in UserRole
+    ]
 
 
 @router.get('/user-security-states', response_model=list[UserSecurityStateRead])
