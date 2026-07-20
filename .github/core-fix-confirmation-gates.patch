@@ -1,0 +1,28 @@
+diff --git a/backend/app/services/nexus_osr/controlled_action_executor.py b/backend/app/services/nexus_osr/controlled_action_executor.py
+index 44b3078..525e0ba 100644
+--- a/backend/app/services/nexus_osr/controlled_action_executor.py
++++ b/backend/app/services/nexus_osr/controlled_action_executor.py
+@@ -98,7 +98,10 @@ class ControlledActionExecutor:
+                 error_code="high_risk_write_tool_blocked",
+                 error_message="High-risk write tools require explicit test or operator configuration before execution.",
+             )
+-        if policy_decision.requires_customer_confirmation:
++        if (
++            policy_decision.requires_customer_confirmation
++            and not bool(request.audit_context.get("customer_confirmation_granted"))
++        ):
+             return ActionExecutionResult(
+                 ok=False,
+                 tool_name=request.action.tool_name,
+@@ -107,7 +110,10 @@ class ControlledActionExecutor:
+                 error_code="customer_confirmation_required",
+                 error_message="Customer confirmation is required before this action can execute.",
+             )
+-        if policy_decision.requires_human_confirmation:
++        if (
++            policy_decision.requires_human_confirmation
++            and not bool(request.audit_context.get("human_confirmation_granted"))
++        ):
+             return ActionExecutionResult(
+                 ok=False,
+                 tool_name=request.action.tool_name,
