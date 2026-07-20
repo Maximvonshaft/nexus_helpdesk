@@ -11,6 +11,7 @@ from argon2.exceptions import InvalidHash, VerifyMismatchError
 from sqlalchemy.orm import Session
 
 from .models import User
+from .services.credential_policy_service import password_change_required
 from .services.permissions import capability_fingerprint
 from .settings import get_settings
 
@@ -128,10 +129,14 @@ def access_token_is_current(user: User, claims: AccessTokenClaims) -> bool:
     updated_at = _utc(user.updated_at)
     if claims.user_version is not None:
         return claims.user_version == updated_at
-    return int(claims.issued_at.timestamp()) >= int(updated_at.timestamp())
+    # Legacy tokens have second precision. Fail closed when an identity change
+    # occurs inside the token's second instead of silently accepting stale access.
+    return claims.issued_at >= updated_at
 
 
-def load_current_user_for_token(db: Session, token: str | None) -> User | None:
+def load_authenticated_user_for_token(db: Session, token: str | None) -> User | None:
+    """Validate identity freshness without applying password-rotation gating."""
+
     if not token:
         return None
     claims = decode_access_token_claims(token)
@@ -141,5 +146,14 @@ def load_current_user_for_token(db: Session, token: str | None) -> User | None:
     if user is None or not access_token_is_current(user, claims):
         return None
     if claims.policy_fingerprint is not None and claims.policy_fingerprint != capability_fingerprint(user, db):
+        return None
+    return user
+
+
+def load_current_user_for_token(db: Session, token: str | None) -> User | None:
+    """Load an application-authorized user through the one credential boundary."""
+
+    user = load_authenticated_user_for_token(db, token)
+    if user is None or password_change_required(db, user.id):
         return None
     return user
