@@ -86,8 +86,6 @@ jobs:
               printf '%s\n' "${conflicts[@]}"
               exit 1
             fi
-            # These files belong to already-merged main authorities (#772/#777),
-            # not the Conversation-first domain. Preserve current main exactly.
             for path in "${expected_sorted[@]}"; do
               git checkout origin/main -- "$path"
               git add "$path"
@@ -114,6 +112,7 @@ jobs:
           SPEEDAF_WORK_ORDER_CREATE_ENABLED: 'false'
         run: |
           set -Eeuo pipefail
+          mkdir -p /tmp/conversation-main-sync
           python -m compileall -q backend/app backend/tests
           python -m pytest -q \
             backend/tests/test_conversation_first_agent_routing.py \
@@ -121,7 +120,17 @@ jobs:
             backend/tests/test_nexus_osr_tool_execution_facade.py \
             backend/tests/test_nexus_osr_tool_execution_service.py \
             backend/tests/test_webchat_ai_turn_runtime.py \
-            backend/tests/test_webchat_osr_audit_integration.py
+            backend/tests/test_webchat_osr_audit_integration.py \
+            2>&1 | tee /tmp/conversation-main-sync/pytest.log
+
+      - name: Upload merged regression diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: conversation-main-sync-${{ github.sha }}
+          path: /tmp/conversation-main-sync
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Commit merged candidate and push
         shell: bash
