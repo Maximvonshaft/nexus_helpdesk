@@ -4,13 +4,15 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, event, inspect
 from sqlalchemy.engine import Connection
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column, object_session
+from sqlalchemy.orm.util import identity_key
 
 from .db import Base
 from .models import User
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
+_ROTATED_SECURITY_USER_IDS = "rotated_user_security_state_ids"
 
 
 class UserSecurityState(Base):
@@ -48,6 +50,24 @@ class UserSecurityState(Base):
 
 def _security_table_exists(connection: Connection) -> bool:
     return inspect(connection).has_table(UserSecurityState.__tablename__)
+
+
+def _mark_security_state_for_expiration(target: User) -> None:
+    session = object_session(target)
+    if session is None:
+        return
+    session.info.setdefault(_ROTATED_SECURITY_USER_IDS, set()).add(target.id)
+
+
+@event.listens_for(Session, "after_flush_postexec")
+def _expire_rotated_security_states(session: Session, flush_context) -> None:  # noqa: ANN001
+    del flush_context
+    user_ids = session.info.pop(_ROTATED_SECURITY_USER_IDS, set())
+    for user_id in user_ids:
+        key = identity_key(UserSecurityState, (user_id,))
+        row = session.identity_map.get(key)
+        if row is not None:
+            session.expire(row)
 
 
 @event.listens_for(User, "after_insert")
@@ -112,3 +132,4 @@ def _rotate_security_state_after_identity_change(mapper, connection: Connection,
                 updated_at=now,
             )
         )
+    _mark_security_state_for_expiration(target)
