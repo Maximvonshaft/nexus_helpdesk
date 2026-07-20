@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from ..models_identity import UserSecurityState
@@ -54,12 +55,37 @@ def complete_password_change(db: Session, user_id: int) -> UserSecurityState:
     return row
 
 
-def revoke_all_sessions(db: Session, user_id: int) -> UserSecurityState:
+def _rotate_session_version(
+    db: Session,
+    user_id: int,
+    *,
+    require_password_change: bool = False,
+) -> UserSecurityState:
     row = ensure_security_state(db, user_id)
-    row.session_version = max(1, int(row.session_version)) + 1
-    row.updated_at = utc_now()
+    values: dict = {
+        "session_version": UserSecurityState.session_version + 1,
+        "updated_at": utc_now(),
+    }
+    if require_password_change:
+        values["must_change_password"] = True
+    db.execute(
+        update(UserSecurityState)
+        .where(UserSecurityState.user_id == user_id)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
     db.flush()
+    db.expire(row)
+    db.refresh(row)
     return row
+
+
+def revoke_all_sessions(db: Session, user_id: int) -> UserSecurityState:
+    return _rotate_session_version(db, user_id)
+
+
+def require_password_change_and_revoke(db: Session, user_id: int) -> UserSecurityState:
+    return _rotate_session_version(db, user_id, require_password_change=True)
 
 
 def security_state_payload(db: Session, user_id: int) -> dict:
