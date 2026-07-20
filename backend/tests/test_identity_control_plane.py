@@ -27,6 +27,7 @@ from app.api.identity_admin import (  # noqa: E402
     admin_logout_all_sessions,
     assign_user_team,
     clear_user_email,
+    require_password_change,
 )
 from app.auth_service import create_access_token, decode_access_token_claims, hash_password, verify_password  # noqa: E402
 from app.db import Base  # noqa: E402
@@ -157,6 +158,18 @@ def test_admin_logout_all_revokes_sessions_without_changing_password(db_session)
     assert result.session_version == 2
     assert user.password_hash == original_hash
     assert_token_rejected(db_session, old_token)
+
+
+def test_explicit_security_commands_advance_session_version_monotonically(db_session):
+    admin = make_user(db_session, "admin-monotonic", UserRole.admin)
+    user = make_user(db_session, "monotonic-target", UserRole.agent)
+
+    first = admin_logout_all_sessions(user.id, db=db_session, current_user=admin)
+    second = require_password_change(user.id, db=db_session, current_user=admin)
+
+    assert first.session_version == 2
+    assert second.session_version == 3
+    assert second.must_change_password is True
 
 
 def test_deactivate_then_reactivate_does_not_resurrect_old_session(db_session):
