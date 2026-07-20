@@ -17,6 +17,7 @@ from ..webchat_models import (
     WebchatMessage,
 )
 from .permissions import has_global_case_visibility
+from .webchat_ai_turn_service import ai_snapshot
 
 
 MAX_THREAD_MESSAGES = 200
@@ -95,6 +96,44 @@ def _message_payload(row: WebchatMessage) -> dict[str, Any]:
     }
 
 
+def _handoff_payload(
+    *,
+    handoff: WebchatHandoffRequest,
+    conversation: WebchatConversation,
+    user: User,
+) -> dict[str, Any]:
+    return {
+        "id": handoff.id,
+        "conversation_id": conversation.public_id,
+        "webchat_conversation_id": conversation.id,
+        "ticket_id": None,
+        "ticket_no": None,
+        "title": handoff.reason_text or handoff.reason_code or "WebChat human support",
+        "status": handoff.status,
+        "source": handoff.source,
+        "trigger_type": handoff.trigger_type,
+        "reason_code": handoff.reason_code,
+        "reason_text": handoff.reason_text,
+        "recommended_agent_action": handoff.recommended_agent_action,
+        "assigned_agent_id": handoff.assigned_agent_id,
+        "accepted_by_user_id": handoff.accepted_by_user_id,
+        "requested_at": handoff.requested_at.isoformat()
+        if handoff.requested_at
+        else None,
+        "accepted_at": handoff.accepted_at.isoformat()
+        if handoff.accepted_at
+        else None,
+        "closed_at": handoff.closed_at.isoformat() if handoff.closed_at else None,
+        "can_accept": handoff.status == "requested",
+        "can_decline": False,
+        "can_force_takeover": False,
+        "can_release": False,
+        "can_resume_ai": False,
+        "can_reply": handoff.status == "accepted"
+        and handoff.assigned_agent_id == user.id,
+    }
+
+
 def read_conversation_thread(
     db: Session,
     *,
@@ -114,37 +153,36 @@ def read_conversation_thread(
     )
     if before_message_id is not None:
         query = query.filter(WebchatMessage.id < int(before_message_id))
-    rows = (
-        query.order_by(WebchatMessage.id.desc())
-        .limit(safe_limit + 1)
-        .all()
-    )
+    rows = query.order_by(WebchatMessage.id.desc()).limit(safe_limit + 1).all()
     has_more = len(rows) > safe_limit
     rows = rows[:safe_limit]
     rows.reverse()
     handoff = _handoff(db, conversation=conversation)
+    conversation_state = (
+        "human_owned"
+        if conversation.handoff_status == "accepted"
+        else "human_review_required"
+        if conversation.handoff_status == "requested"
+        else "ai_active"
+        if conversation.status == "open"
+        else "closed"
+    )
     return {
-        "ticket": None,
-        "conversation": {
-            "id": conversation.id,
-            "public_id": conversation.public_id,
-            "ticket_id": conversation.ticket_id,
-            "status": conversation.status,
-            "tenant_key": control.tenant_key,
-            "country_code": control.country_code,
-            "channel_key": control.channel_key,
-            "outcome": control.outcome,
-            "handoff_status": conversation.handoff_status,
-            "active_agent_id": conversation.active_agent_id,
-            "ai_suspended": bool(conversation.ai_suspended),
-            "active_ai_status": conversation.active_ai_status,
-            "created_at": conversation.created_at.isoformat()
-            if conversation.created_at
-            else None,
-            "updated_at": conversation.updated_at.isoformat()
-            if conversation.updated_at
-            else None,
-        },
+        "conversation_id": conversation.public_id,
+        "ticket_id": None,
+        "ticket_no": None,
+        "origin": conversation.origin,
+        "page_url": conversation.page_url,
+        "status": conversation.status,
+        "conversation_state": conversation_state,
+        "required_action": (
+            handoff.recommended_agent_action
+            or handoff.reason_text
+            or handoff.reason_code
+            if handoff is not None
+            else None
+        ),
+        "outcome": control.outcome,
         "visitor": {
             "name": conversation.visitor_name,
             "email": conversation.visitor_email,
@@ -153,22 +191,11 @@ def read_conversation_thread(
         },
         "messages": [_message_payload(row) for row in rows],
         "handoff": (
-            {
-                "id": handoff.id,
-                "status": handoff.status,
-                "reason_code": handoff.reason_code,
-                "reason_text": handoff.reason_text,
-                "recommended_agent_action": handoff.recommended_agent_action,
-                "assigned_agent_id": handoff.assigned_agent_id,
-                "requested_at": handoff.requested_at.isoformat()
-                if handoff.requested_at
-                else None,
-                "accepted_at": handoff.accepted_at.isoformat()
-                if handoff.accepted_at
-                else None,
-                "can_reply": handoff.status == "accepted"
-                and handoff.assigned_agent_id == user.id,
-            }
+            _handoff_payload(
+                handoff=handoff,
+                conversation=conversation,
+                user=user,
+            )
             if handoff is not None
             else None
         ),
@@ -177,6 +204,7 @@ def read_conversation_thread(
             "has_more": has_more,
             "limit": safe_limit,
         },
+        **ai_snapshot(conversation),
     }
 
 
