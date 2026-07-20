@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -19,10 +19,15 @@ from ..services.conversation_operator_service import (
     read_conversation_thread,
     reply_to_conversation,
 )
+from ..services.operator_agent_capacity_service import (
+    set_operator_agent_capacity,
+)
 from ..services.operator_queue_scope import authorize_operator_scope
 from ..services.permissions import (
+    CAP_USER_MANAGE,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_capability,
+    resolve_capabilities,
 )
 from ..unit_of_work import managed_session
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
@@ -36,6 +41,11 @@ class AgentStateUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str = Field(min_length=2, max_length=24)
     max_concurrent_conversations: int | None = Field(default=None, ge=1, le=20)
+
+
+class AgentCapacityUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_concurrent_conversations: int = Field(ge=1, le=20)
 
 
 class ConversationReplyRequest(BaseModel):
@@ -53,6 +63,21 @@ def _ensure_agent_capability(user: User, db: Session) -> None:
     ensure_capability(user, CAP_WEBCHAT_HANDOFF_ACCEPT, db)
 
 
+def _managed_operator(db: Session, *, user_id: int) -> User:
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="operator_not_found",
+        )
+    if CAP_WEBCHAT_HANDOFF_ACCEPT not in resolve_capabilities(target, db):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="target_user_is_not_operator",
+        )
+    return target
+
+
 def _conversation_by_public_id(
     db: Session,
     *,
@@ -64,7 +89,10 @@ def _conversation_by_public_id(
         .first()
     )
     if conversation is None:
-        raise HTTPException(status_code=404, detail="conversation_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="conversation_not_found",
+        )
     return conversation
 
 
@@ -86,11 +114,26 @@ def update_agent_state(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
+        current_state = read_agent_state(db, user_id=current_user.id)
+        requested_capacity = payload.max_concurrent_conversations
+        capacity_changed = bool(
+            requested_capacity is not None
+            and requested_capacity
+            != current_state["max_concurrent_conversations"]
+        )
+        if (
+            capacity_changed
+            and CAP_USER_MANAGE not in resolve_capabilities(current_user, db)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="agent_capacity_update_requires_user_manage",
+            )
         return set_agent_state(
             db,
             user=current_user,
             presence_status=payload.status,
-            max_concurrent_conversations=payload.max_concurrent_conversations,
+            max_concurrent_conversations=requested_capacity,
         )
 
 
@@ -102,6 +145,41 @@ def heartbeat_agent_state(
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
         return heartbeat_agent(db, user=current_user)
+
+
+@router.get("/agent-states/{user_id}")
+def get_managed_agent_state(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_capability(current_user, CAP_USER_MANAGE, db)
+    with managed_session(db):
+        target = _managed_operator(db, user_id=user_id)
+        return {
+            **read_agent_state(db, user_id=target.id),
+            "username": target.username,
+            "display_name": target.display_name,
+            "is_active": target.is_active,
+        }
+
+
+@router.put("/agent-states/{user_id}/capacity")
+def update_managed_agent_capacity(
+    user_id: int,
+    payload: AgentCapacityUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ensure_capability(current_user, CAP_USER_MANAGE, db)
+    with managed_session(db):
+        target = _managed_operator(db, user_id=user_id)
+        return set_operator_agent_capacity(
+            db,
+            actor=current_user,
+            target_user=target,
+            max_concurrent_conversations=payload.max_concurrent_conversations,
+        )
 
 
 @router.get("/availability")
@@ -129,7 +207,10 @@ def get_operator_availability(
     if request_row is not None:
         control = (
             db.query(ConversationControl)
-            .filter(ConversationControl.conversation_id == request_row.conversation_id)
+            .filter(
+                ConversationControl.conversation_id
+                == request_row.conversation_id
+            )
             .first()
         )
         if control is None or (
@@ -137,7 +218,10 @@ def get_operator_availability(
             control.country_code,
             control.channel_key,
         ) != (tenant, country, channel):
-            raise HTTPException(status_code=404, detail="handoff_not_found_in_scope")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="handoff_not_found_in_scope",
+            )
     return availability_summary(
         db,
         tenant_key=tenant,
@@ -157,10 +241,19 @@ def accept_operator_handoff(
     with managed_session(db):
         request_row = db.get(WebchatHandoffRequest, request_id)
         if request_row is None:
-            raise HTTPException(status_code=404, detail="handoff_not_found")
-        conversation = db.get(WebchatConversation, request_row.conversation_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="handoff_not_found",
+            )
+        conversation = db.get(
+            WebchatConversation,
+            request_row.conversation_id,
+        )
         if conversation is None:
-            raise HTTPException(status_code=409, detail="handoff_conversation_missing")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="handoff_conversation_missing",
+            )
         return assign_handoff_to_agent(
             db,
             request_row=request_row,
@@ -179,7 +272,10 @@ def get_operator_conversation_thread(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
-    conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
+    conversation = _conversation_by_public_id(
+        db,
+        conversation_id=conversation_id,
+    )
     return read_conversation_thread(
         db,
         conversation=conversation,
@@ -198,7 +294,10 @@ def reply_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
+        conversation = _conversation_by_public_id(
+            db,
+            conversation_id=conversation_id,
+        )
         return reply_to_conversation(
             db,
             conversation=conversation,
@@ -216,14 +315,22 @@ def close_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
+        conversation = _conversation_by_public_id(
+            db,
+            conversation_id=conversation_id,
+        )
         control = (
             db.query(ConversationControl)
-            .filter(ConversationControl.conversation_id == conversation.id)
+            .filter(
+                ConversationControl.conversation_id == conversation.id
+            )
             .first()
         )
         if control is None:
-            raise HTTPException(status_code=409, detail="conversation_control_missing")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="conversation_control_missing",
+            )
         return close_conversation(
             db,
             conversation=conversation,
