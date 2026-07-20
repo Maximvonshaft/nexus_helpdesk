@@ -1,7 +1,14 @@
 import type {
+  AdminUser,
+  AdminUserCreate,
+  AdminUserPage,
+  AdminUserUpdate,
   AuthUser,
   ChannelAccount,
   ControlTower,
+  IdentityTeam,
+  IdentityTeamCreate,
+  IdentityTeamUpdate,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
@@ -9,6 +16,8 @@ import type {
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
   ProviderRuntimeStatus,
+  RolePolicy,
+  SecurityAudit,
   SupportConversationMetrics,
   SupportConversationPage,
   SupportConversationReplyPayload,
@@ -57,6 +66,47 @@ export const supportApi = {
     body: JSON.stringify({ username, password }),
   }),
   me: () => apiRequest<AuthUser>('/api/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  }),
+
+  adminUsers: (params?: { cursor?: string | null; limit?: number; includeInactive?: boolean }) => {
+    const search = new URLSearchParams({
+      limit: String(params?.limit ?? 100),
+      include_inactive: String(params?.includeInactive ?? true),
+    })
+    if (params?.cursor) search.set('cursor', params.cursor)
+    return apiRequest<AdminUserPage>(`/api/admin/users?${search.toString()}`)
+  },
+  rolePolicies: () => apiRequest<RolePolicy[]>('/api/admin/identity/roles'),
+  identityTeams: () => apiRequest<IdentityTeam[]>('/api/admin/identity/teams'),
+  createIdentityTeam: (payload: IdentityTeamCreate) => apiRequest<IdentityTeam>('/api/admin/identity/teams', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateIdentityTeam: (teamId: number, payload: IdentityTeamUpdate) => apiRequest<IdentityTeam>(`/api/admin/identity/teams/${teamId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  securityAudit: (limit = 100) => apiRequest<SecurityAudit>(`/api/admin/security-audit?limit=${Math.max(1, Math.min(limit, 100))}`),
+  createAdminUser: (payload: AdminUserCreate) => apiRequest<AdminUser>('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateAdminUser: (userId: number, payload: AdminUserUpdate) => apiRequest<AdminUser>(`/api/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  activateAdminUser: (userId: number) => apiRequest<AdminUser>(`/api/admin/users/${userId}/activate`, { method: 'POST' }),
+  deactivateAdminUser: (userId: number) => apiRequest<AdminUser>(`/api/admin/users/${userId}/deactivate`, { method: 'POST' }),
+  resetAdminUserPassword: (userId: number, password: string) => apiRequest<{ ok: boolean }>(`/api/admin/users/${userId}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  }),
+  clearAdminUserTeam: (userId: number) => apiRequest<{ ok: boolean; user_id: number; team_id: null }>(`/api/admin/identity/users/${userId}/team`, {
+    method: 'DELETE',
+  }),
 
   controlTower: () => apiRequest<ControlTower>('/api/lite/control-tower'),
   supportConversations: (params?: { view?: string; channel?: string; q?: string; limit?: number }, init?: RequestInit) => {

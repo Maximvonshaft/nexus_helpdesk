@@ -58,20 +58,29 @@ The canonical journey is:
 - Inspects bounded Runtime, debug, evaluation and audit evidence.
 - Technical access does not imply customer-data or operational-action authority.
 
+### Identity and Security Administrator
+
+- Creates, updates, activates and deactivates operator accounts through the canonical Administration domain.
+- Assigns server-defined roles, effective capabilities, teams and work-scope boundaries.
+- Resets credentials through audited commands; password and identity changes revoke stale sessions.
+- Cannot bypass backend authorization, last-admin protection, audit redaction or team lifecycle safeguards.
+
 ## Canonical route domains
 
 | Domain | Route | Job |
 |---|---|---|
 | Authentication | `/login` | Establish operator identity |
+| Operator account | `/account` | Inspect current identity and rotate the current user's password |
 | Operator work | `/workspace` | Queue, case, evidence, ownership, action, communication and closure target |
 | Knowledge and SOP | `/knowledge` | Govern Knowledge and internal operating guidance |
 | Channels | `/channels` | Channel/account configuration and health |
-| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded evidence |
+| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded runtime evidence |
 | Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
+| Administration | `/administration` | User, role, capability, team, work-scope and security-audit governance |
 
 `/webchat` is a compatibility redirect only. It does not mount a second product surface.
 
-Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
+Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization. `/account` is reached from the authenticated identity area rather than duplicating the primary business navigation.
 
 ## Operator work model
 
@@ -167,11 +176,14 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 - Degraded, unavailable, stale, conflict and repair-required are first-class states.
 - Refresh preserves durable state and never duplicates commands.
 - Keyboard operation and screen-reader structure are part of product behavior.
+- Credential, role, team, status and capability changes invalidate stale authenticated sessions.
+- Administrative mutation controls are absent in read-only audit mode and remain backend-authorized when present.
 
 ## Non-goals
 
 - No direct Provider execution from UI code.
 - No second queue, case truth or action truth.
+- No second admin product, user-management service, role policy table or session store.
 - No probabilistic silent cross-channel merge.
 - No raw tracking/contact/provider identifiers on unsafe surfaces.
 - No customer-visible reply bypass.
@@ -183,6 +195,8 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 
 - `webapp/src/routes/` contains the only route registry.
 - `/workspace` is the only queue, case, conversation and governed-action surface.
+- `/account` is the only current-user credential surface.
+- `/administration` is the only user, role, capability, team and security-audit governance surface.
 - `KnowledgePage.tsx` is the only Knowledge implementation; capability controls editing.
 - `apiClient.ts` is the only generic HTTP transport.
 - Material UI, one Nexus theme and one bounded operator-presentation module are the only generic visual authorities.
