@@ -6,6 +6,7 @@ import type {
   AuthUser,
   ChannelAccount,
   ControlTower,
+  CredentialPolicy,
   IdentityTeam,
   IdentityTeamCreate,
   IdentityTeamUpdate,
@@ -71,6 +72,7 @@ export const supportApi = {
     method: 'POST',
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   }),
+  logoutAll: () => apiRequest<{ ok: boolean }>('/api/auth/logout-all', { method: 'POST' }),
 
   adminUsers: (params?: { cursor?: string | null; limit?: number; includeInactive?: boolean }) => {
     const search = new URLSearchParams({
@@ -81,6 +83,7 @@ export const supportApi = {
     return apiRequest<AdminUserPage>(`/api/admin/users?${search.toString()}`)
   },
   rolePolicies: () => apiRequest<RolePolicy[]>('/api/admin/identity/roles'),
+  credentialPolicies: () => apiRequest<CredentialPolicy[]>('/api/admin/identity/credential-policies'),
   identityTeams: () => apiRequest<IdentityTeam[]>('/api/admin/identity/teams'),
   identityMarkets: () => apiRequest<Market[]>('/api/lookups/markets'),
   createIdentityTeam: (payload: IdentityTeamCreate) => apiRequest<IdentityTeam>('/api/admin/identity/teams', {
@@ -108,6 +111,12 @@ export const supportApi = {
   }),
   clearAdminUserTeam: (userId: number) => apiRequest<{ ok: boolean; user_id: number; team_id: null }>(`/api/admin/identity/users/${userId}/team`, {
     method: 'DELETE',
+  }),
+  requireAdminUserPasswordChange: (userId: number) => apiRequest<{ ok: boolean; user_id: number }>(`/api/admin/identity/users/${userId}/require-password-change`, {
+    method: 'POST',
+  }),
+  revokeAdminUserSessions: (userId: number) => apiRequest<{ ok: boolean; user_id: number }>(`/api/admin/identity/users/${userId}/revoke-sessions`, {
+    method: 'POST',
   }),
 
   controlTower: () => apiRequest<ControlTower>('/api/lite/control-tower'),
