@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app import models as _models  # noqa: E402,F401
+from app import models_identity_policy as _identity_models  # noqa: E402,F401
 from app import operator_models as _operator_models  # noqa: E402,F401
 from app import voice_models as _voice_models  # noqa: E402,F401
 from app import webchat_models as _webchat_models  # noqa: E402,F401
@@ -23,11 +24,13 @@ from app.auth_service import create_access_token, hash_password  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AdminAuditLog, Market, Team, User  # noqa: E402
+from app.models import AdminAuditLog, Market, User  # noqa: E402
+from app.models_identity_policy import UserCredentialPolicy  # noqa: E402
 
 STRONG_PASSWORD = "Nexus!Admin2026"
 NEXT_PASSWORD = "Nexus!Changed2026"
 RESET_PASSWORD = "Nexus!Reset2026"
+FINAL_PASSWORD = "Nexus!Final2026"
 
 
 def _headers(user: User) -> dict[str, str]:
@@ -36,7 +39,15 @@ def _headers(user: User) -> dict[str, str]:
     }
 
 
-def _user(db_session, username: str, role: UserRole, *, password: str = STRONG_PASSWORD, team_id: int | None = None) -> User:
+def _user(
+    db_session,
+    username: str,
+    role: UserRole,
+    *,
+    password: str = STRONG_PASSWORD,
+    team_id: int | None = None,
+    must_change_password: bool = False,
+) -> User:
     row = User(
         username=username,
         display_name=username.replace("_", " ").title(),
@@ -47,6 +58,10 @@ def _user(db_session, username: str, role: UserRole, *, password: str = STRONG_P
         is_active=True,
     )
     db_session.add(row)
+    db_session.flush()
+    policy = db_session.get(UserCredentialPolicy, row.id)
+    assert policy is not None
+    policy.must_change_password = must_change_password
     db_session.flush()
     return row
 
@@ -70,6 +85,52 @@ def _close(db_session, engine) -> None:
     db_session.close()
     Base.metadata.drop_all(engine)
     engine.dispose()
+
+
+def test_new_account_is_recovery_only_until_password_rotation(tmp_path):
+    client, db_session, engine = _client(tmp_path)
+    try:
+        operator = _user(
+            db_session,
+            "issued_account",
+            UserRole.agent,
+            must_change_password=True,
+        )
+        db_session.commit()
+
+        login = client.post(
+            "/api/auth/login",
+            json={"username": operator.username, "password": STRONG_PASSWORD},
+        )
+        assert login.status_code == 200, login.text
+        assert login.json()["user"]["must_change_password"] is True
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        assert client.get("/api/auth/me", headers=headers).status_code == 200
+        blocked = client.get("/api/lookups/teams", headers=headers)
+        assert blocked.status_code == 403
+        assert blocked.json()["detail"] == "Password change required"
+
+        changed = client.post(
+            "/api/auth/change-password",
+            headers=headers,
+            json={"current_password": STRONG_PASSWORD, "new_password": NEXT_PASSWORD},
+        )
+        assert changed.status_code == 200, changed.text
+        assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+        new_login = client.post(
+            "/api/auth/login",
+            json={"username": operator.username, "password": NEXT_PASSWORD},
+        )
+        assert new_login.status_code == 200
+        assert new_login.json()["user"]["must_change_password"] is False
+        assert client.get(
+            "/api/lookups/teams",
+            headers={"Authorization": f"Bearer {new_login.json()['access_token']}"},
+        ).status_code == 200
+    finally:
+        _close(db_session, engine)
 
 
 def test_self_service_password_change_revokes_http_session_and_redacts_audit(tmp_path):
@@ -105,7 +166,9 @@ def test_self_service_password_change_revokes_http_session_and_redacts_audit(tmp
 
         assert client.get("/api/auth/me", headers=headers).status_code == 401
         assert client.post("/api/auth/login", json={"username": operator.username, "password": STRONG_PASSWORD}).status_code == 401
-        assert client.post("/api/auth/login", json={"username": operator.username, "password": NEXT_PASSWORD}).status_code == 200
+        next_login = client.post("/api/auth/login", json={"username": operator.username, "password": NEXT_PASSWORD})
+        assert next_login.status_code == 200
+        assert next_login.json()["user"]["must_change_password"] is False
 
         audit = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "auth.password_changed").one()
         assert audit.actor_id == operator.id
@@ -117,7 +180,26 @@ def test_self_service_password_change_revokes_http_session_and_redacts_audit(tmp
         _close(db_session, engine)
 
 
-def test_admin_password_policy_and_identity_changes_revoke_existing_tokens(tmp_path):
+def test_self_logout_all_revokes_current_token(tmp_path):
+    client, db_session, engine = _client(tmp_path)
+    try:
+        operator = _user(db_session, "logout_all_operator", UserRole.agent)
+        db_session.commit()
+        headers = _headers(operator)
+
+        response = client.post("/api/auth/logout-all", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        assert client.get("/api/auth/me", headers=headers).status_code == 401
+        assert db_session.query(AdminAuditLog).filter(
+            AdminAuditLog.action == "auth.sessions_revoked",
+            AdminAuditLog.target_id == operator.id,
+        ).count() == 1
+    finally:
+        _close(db_session, engine)
+
+
+def test_admin_reset_forces_rotation_and_identity_changes_revoke_existing_tokens(tmp_path):
     client, db_session, engine = _client(tmp_path)
     try:
         admin = _user(db_session, "identity_admin", UserRole.admin)
@@ -134,7 +216,20 @@ def test_admin_password_policy_and_identity_changes_revoke_existing_tokens(tmp_p
         assert reset.status_code == 200, reset.text
         assert client.get("/api/auth/me", headers=original_agent_headers).status_code == 401
 
-        policy_login = client.post("/api/auth/login", json={"username": agent.username, "password": RESET_PASSWORD})
+        reset_login = client.post("/api/auth/login", json={"username": agent.username, "password": RESET_PASSWORD})
+        assert reset_login.status_code == 200, reset_login.text
+        assert reset_login.json()["user"]["must_change_password"] is True
+        reset_headers = {"Authorization": f"Bearer {reset_login.json()['access_token']}"}
+        assert client.get("/api/lookups/teams", headers=reset_headers).status_code == 403
+
+        rotate = client.post(
+            "/api/auth/change-password",
+            headers=reset_headers,
+            json={"current_password": RESET_PASSWORD, "new_password": NEXT_PASSWORD},
+        )
+        assert rotate.status_code == 200
+
+        policy_login = client.post("/api/auth/login", json={"username": agent.username, "password": NEXT_PASSWORD})
         assert policy_login.status_code == 200, policy_login.text
         policy_headers = {"Authorization": f"Bearer {policy_login.json()['access_token']}"}
 
@@ -146,7 +241,7 @@ def test_admin_password_policy_and_identity_changes_revoke_existing_tokens(tmp_p
         assert policy_updated.status_code == 200, policy_updated.text
         assert client.get("/api/auth/me", headers=policy_headers).status_code == 401
 
-        profile_login = client.post("/api/auth/login", json={"username": agent.username, "password": RESET_PASSWORD})
+        profile_login = client.post("/api/auth/login", json={"username": agent.username, "password": NEXT_PASSWORD})
         assert profile_login.status_code == 200, profile_login.text
         profile_headers = {"Authorization": f"Bearer {profile_login.json()['access_token']}"}
 
@@ -157,6 +252,41 @@ def test_admin_password_policy_and_identity_changes_revoke_existing_tokens(tmp_p
         )
         assert updated.status_code == 200, updated.text
         assert client.get("/api/auth/me", headers=profile_headers).status_code == 401
+    finally:
+        _close(db_session, engine)
+
+
+def test_admin_can_force_rotation_and_revoke_sessions_without_password_reset(tmp_path):
+    client, db_session, engine = _client(tmp_path)
+    try:
+        admin = _user(db_session, "security_admin", UserRole.admin)
+        agent = _user(db_session, "security_agent", UserRole.agent)
+        db_session.commit()
+        admin_headers = _headers(admin)
+        agent_headers = _headers(agent)
+
+        revoked = client.post(
+            f"/api/admin/identity/users/{agent.id}/revoke-sessions",
+            headers=admin_headers,
+        )
+        assert revoked.status_code == 200
+        assert client.get("/api/auth/me", headers=agent_headers).status_code == 401
+
+        login = client.post("/api/auth/login", json={"username": agent.username, "password": STRONG_PASSWORD})
+        assert login.status_code == 200
+        force = client.post(
+            f"/api/admin/identity/users/{agent.id}/require-password-change",
+            headers=admin_headers,
+        )
+        assert force.status_code == 200
+        forced_login = client.post("/api/auth/login", json={"username": agent.username, "password": STRONG_PASSWORD})
+        assert forced_login.status_code == 200
+        assert forced_login.json()["user"]["must_change_password"] is True
+
+        policies = client.get("/api/admin/identity/credential-policies", headers=admin_headers)
+        assert policies.status_code == 200
+        policy = next(item for item in policies.json() if item["user_id"] == agent.id)
+        assert policy["must_change_password"] is True
     finally:
         _close(db_session, engine)
 
