@@ -1,5 +1,11 @@
 import { apiRequest, ApiError } from '@/lib/apiClient'
-import type { WebchatEventSummary, WebchatReadStateResult, WebchatReplyResult, WebchatThread } from '@/lib/types'
+import type {
+  WebchatEventSummary,
+  WebchatHandoffRequest,
+  WebchatReadStateResult,
+  WebchatReplyResult,
+  WebchatThread,
+} from '@/lib/types'
 import type {
   AuthorizedWorkspaceScopesResponse,
   UnifiedOperatorQueueResponse,
@@ -11,7 +17,11 @@ import type {
 const UNIFIED_OPERATOR_QUEUE_PATH = '/api/admin/operator-queue/unified'
 const CURRENT_OPERATOR_SCOPES_PATH = '/api/admin/operator-queue/my-scopes'
 
-export type OperatorWorkspaceThread = WebchatThread & {
+export type OperatorWorkspaceThread = Omit<WebchatThread, 'ticket_id' | 'ticket_no' | 'handoff'> & {
+  ticket_id: number | null
+  ticket_no: string | null
+  outcome?: string | null
+  handoff?: (Omit<WebchatHandoffRequest, 'ticket_id'> & { ticket_id: number | null }) | null
   message_page?: {
     before_id?: number | null
     has_more: boolean

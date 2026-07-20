@@ -9,6 +9,8 @@ from app.enums import UserRole
 from app.models import BackgroundJob, User
 from app.services import background_jobs
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB
+from app.services.tracking_fact_schema import TrackingFactResult
+from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
@@ -65,27 +67,43 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     client = TestClient(app)
     conversation_id, visitor_token = _create_webchat_message_flow(client)
 
-    from app.services import webchat_ai_service
+    from app.services import conversation_ai_service
     from app.services import webchat_ai_orchestration_service
 
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 18
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = False
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = None
-        webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = None
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'general_support',
-            'ai_decision_next_action': 'reply',
-        }
-        return 'I can help with shipment questions, delivery updates, and general support requests.'
-
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        'lookup_tracking_fact',
+        lambda **_kwargs: TrackingFactResult(
+            ok=False,
+            tool_status='skipped',
+            pii_redacted=True,
+            failure_reason='missing_tracking_number',
+        ),
+    )
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: WebchatRuntimeReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source='private_ai_runtime',
+            reply='I can help with shipment questions, delivery updates, and general support requests.',
+            intent='general_support',
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=18,
+            runtime_trace={
+                'ai_decision_policy_ok': True,
+                'ai_decision_intent': 'general_support',
+                'ai_decision_next_action': 'reply',
+            },
+            tool_calls=[],
+        ),
+    )
 
     db = SessionLocal()
     try:

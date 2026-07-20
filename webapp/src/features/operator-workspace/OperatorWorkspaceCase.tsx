@@ -49,7 +49,7 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
       <Box sx={{ mt: 1.5 }}>
         <OperatorTechnicalDisclosure title="系统信息" compact>
           <Typography component="code" variant="caption" sx={{ overflowWrap: 'anywhere' }}>
-            任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ''}
+            任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ' · 独立会话'}
           </Typography>
         </OperatorTechnicalDisclosure>
       </Box>
@@ -57,7 +57,40 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
   )
 }
 
-function CaseSpine({ item, memory }: { item: UnifiedOperatorQueueItem; memory: SupportMemoryLedger | null }) {
+function CaseSpine({
+  item,
+  memory,
+  thread,
+}: {
+  item: UnifiedOperatorQueueItem
+  memory: SupportMemoryLedger | null
+  thread: OperatorWorkspaceThread | null
+}) {
+  if (!item.ticket_id) {
+    const handoffStatus = thread?.handoff?.status || item.source_status
+    const stages = [
+      ['范围', `${item.country_code} · ${item.channel_key}`, true],
+      ['会话', thread?.status === 'closed' ? '已结束' : '进行中', Boolean(thread)],
+      ['AI', thread?.ai_suspended ? '已暂停' : thread?.ai_status || '未处理', Boolean(thread)],
+      ['人工转接', handoffStatus === 'accepted' ? '人工处理中' : handoffStatus === 'requested' ? '等待人工' : sanitizeDisplayText(handoffStatus), Boolean(handoffStatus)],
+      ['工单', '未创建', false],
+      ['会话结果', thread?.outcome ? sanitizeDisplayText(thread.outcome) : '尚未结束', Boolean(thread?.outcome)],
+    ] as const
+    return (
+      <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label="会话进度">
+        <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}><Typography variant="subtitle2">会话进度</Typography></Box>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(6, minmax(0, 1fr))' } }}>
+          {stages.map(([label, value, available], index) => (
+            <Box key={label} sx={{ borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 }, borderColor: 'divider', borderRight: { xl: index === stages.length - 1 ? 0 : 1 }, minWidth: 0, p: 1.5 }}>
+              <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography variant="caption" color="text.secondary" sx={{ fontWeight: 650 }}>{label}</Typography></Stack>
+              <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{value}</Typography>
+            </Box>
+          ))}
+        </Box>
+      </Paper>
+    )
+  }
+
   const timeline = memory?.evidence_timeline ?? []
   const latestByClass = (value: ReturnType<typeof evidencePresentation>['evidenceClass']) => [...timeline].reverse().find((entry) => evidencePresentation(entry).evidenceClass === value)
   const decision = latestByClass('human')
@@ -94,7 +127,7 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
     <Box component="section" aria-labelledby="operator-evidence-title">
       <OperatorSectionHeading id="operator-evidence-title" title="已知信息" />
       <Divider sx={{ my: 2 }} />
-      {!timeline.length ? <OperatorEmptyState title="暂无结构化信息" description="可查看任务摘要和客户沟通" /> : null}
+      {!timeline.length ? <OperatorEmptyState title="暂无结构化信息" description="可查看客户沟通和转接原因" /> : null}
       <Stack divider={<Divider flexItem />}>
         {timeline.map((entry, index) => {
           const presentation = evidencePresentation(entry)
@@ -178,17 +211,15 @@ export function WorkspaceCasePane({
         <>
           <Box sx={{ display: { xs: caseVisible ? 'block' : 'none', lg: 'block' } }}>
             <CaseHeader item={item} currentUserId={currentUserId} />
-            <CaseSpine item={item} memory={memory} />
+            <CaseSpine item={item} memory={memory} thread={thread} />
             {preserveMissingSelection ? <Alert severity="warning" variant="outlined" sx={{ mb: 2.5 }}><AlertTitle>任务已离开待处理列表</AlertTitle>回复草稿已保留，操作已暂停。</Alert> : null}
             {sourceRecord && !thread ? <SourceSummary data={sourceRecord} item={item} /> : null}
             <EvidencePanel memory={memory} />
-            <Box component="section" aria-label="安全关闭" sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: 'divider' }}>
-              <OperatorWorkspaceClosure
-                ticketId={item.ticket_id}
-                sourceStatus={item.source_status}
-                onRefresh={onRefresh}
-              />
-            </Box>
+            {item.ticket_id ? (
+              <Box component="section" aria-label="安全关闭" sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: 'divider' }}>
+                <OperatorWorkspaceClosure ticketId={item.ticket_id} sourceStatus={item.source_status} onRefresh={onRefresh} />
+              </Box>
+            ) : null}
           </Box>
           <OperatorWorkspaceConversation
             item={item}

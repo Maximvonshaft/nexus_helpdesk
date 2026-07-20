@@ -18,7 +18,7 @@ class WebchatAIDebugRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
     ai_turn_id: Mapped[int] = mapped_column(ForeignKey("webchat_ai_turns.id"), index=True)
     visitor_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_messages.id"), nullable=True, index=True)
     reply_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_messages.id"), nullable=True, index=True)
@@ -58,7 +58,7 @@ class WebchatAITestFinding(Base):
     debug_run_id: Mapped[int] = mapped_column(ForeignKey("webchat_ai_debug_runs.id"), index=True)
     ai_turn_id: Mapped[int] = mapped_column(ForeignKey("webchat_ai_turns.id"), index=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
     finding_type: Mapped[str] = mapped_column(String(120), index=True)
     severity: Mapped[str] = mapped_column(String(40), default="medium", index=True)
     tester_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

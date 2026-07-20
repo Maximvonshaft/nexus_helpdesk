@@ -635,9 +635,11 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     if selected.action_type != payload.action_type:
         raise HTTPException(status_code=400, detail="action_type does not match card action")
 
-    ticket = db.query(Ticket).filter(Ticket.id == conversation.ticket_id).first()
-    if not ticket:
-        raise HTTPException(status_code=404, detail="ticket not found")
+    ticket = (
+        db.query(Ticket).filter(Ticket.id == conversation.ticket_id).first()
+        if conversation.ticket_id is not None
+        else None
+    )
     action_payload = {
         "card_id": payload.card_id,
         "card_type": card_payload.card_type,
@@ -649,7 +651,7 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     }
     action = WebchatCardAction(
         conversation_id=conversation.id,
-        ticket_id=ticket.id,
+        ticket_id=ticket.id if ticket is not None else None,
         message_id=card_message.id,
         action_type=payload.action_type,
         action_payload_json=json.dumps(action_payload, ensure_ascii=False),
@@ -664,7 +666,7 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     action_text = f"Visitor selected: {selected.label}"
     action_message = WebchatMessage(
         conversation_id=conversation.id,
-        ticket_id=ticket.id,
+        ticket_id=ticket.id if ticket is not None else None,
         direction="action",
         body=action_text,
         body_text=action_text,
@@ -680,24 +682,26 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
-        ticket_id=ticket.id,
+        ticket_id=ticket.id if ticket is not None else None,
         event_type="message.created",
         payload={"message_id": action_message.id, "direction": "action", "message_type": "action"},
     )
     card_message.action_status = "submitted"
-    db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=action_text, visibility=NoteVisibility.external))
-    db.add(TicketEvent(
-        ticket_id=ticket.id,
-        actor_id=None,
-        event_type=EventType.comment_added,
-        note="Webchat card action submitted",
-        payload_json=json.dumps({"public_conversation_id": conversation.public_id, "webchat_card_action_id": action.id, "external_send": False, **action_payload}, ensure_ascii=False),
-    ))
+    if ticket is not None:
+        db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=action_text, visibility=NoteVisibility.external))
+        db.add(TicketEvent(
+            ticket_id=ticket.id,
+            actor_id=None,
+            event_type=EventType.comment_added,
+            note="Webchat card action submitted",
+            payload_json=json.dumps({"public_conversation_id": conversation.public_id, "webchat_card_action_id": action.id, "external_send": False, **action_payload}, ensure_ascii=False),
+        ))
     handoff_triggered = payload.action_type == "handoff_request" or card_payload.card_type == "handoff" or payload.action_id == "talk_to_human"
     if handoff_triggered:
-        ticket.required_action = "WebChat customer requested human support"
-        ticket.status = TicketStatus.in_progress
-        ticket.conversation_state = ConversationState.human_review_required
+        if ticket is not None:
+            ticket.required_action = "WebChat customer requested human support"
+            ticket.status = TicketStatus.in_progress
+            ticket.conversation_state = ConversationState.human_review_required
         request_webchat_handoff(
             db,
             conversation=conversation,
@@ -710,19 +714,21 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
             trigger_message_id=action_message.id,
             requested_by_actor_type="visitor",
         )
-        db.add(TicketEvent(
-            ticket_id=ticket.id,
-            actor_id=None,
-            event_type=EventType.conversation_state_changed,
-            note="Webchat handoff requested",
-            payload_json=json.dumps({"public_conversation_id": conversation.public_id, "required_action": ticket.required_action, "external_send": False}, ensure_ascii=False),
-        ))
-        WEBCHAT_LOGGER.info("webchat_handoff_triggered", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "action_id": action.id}})
+        if ticket is not None:
+            db.add(TicketEvent(
+                ticket_id=ticket.id,
+                actor_id=None,
+                event_type=EventType.conversation_state_changed,
+                note="Webchat handoff requested",
+                payload_json=json.dumps({"public_conversation_id": conversation.public_id, "required_action": ticket.required_action, "external_send": False}, ensure_ascii=False),
+            ))
+        WEBCHAT_LOGGER.info("webchat_handoff_triggered", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id if ticket is not None else None, "action_id": action.id}})
     conversation.updated_at = utc_now()
     conversation.last_seen_at = utc_now()
-    ticket.updated_at = utc_now()
+    if ticket is not None:
+        ticket.updated_at = utc_now()
     db.flush()
-    WEBCHAT_LOGGER.info("webchat_card_action_submitted", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "action_id": action.id}})
+    WEBCHAT_LOGGER.info("webchat_card_action_submitted", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id if ticket is not None else None, "action_id": action.id}})
     db.refresh(action_message)
     return {"ok": True, "action_id": action.id, "status": action.status, "message": _message_read(action_message), "handoff_triggered": handoff_triggered}
 
