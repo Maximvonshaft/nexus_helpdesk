@@ -113,7 +113,7 @@ def _audit_runtime_turn_non_blocking(
     turn: WebchatAITurn | None,
     result: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if turn is None or ticket is None:
+    if turn is None:
         return None
     try:
         with db.begin_nested():
@@ -131,7 +131,7 @@ def _audit_runtime_turn_non_blocking(
             extra={
                 "event_payload": {
                     "conversation_id": conversation.id,
-                    "ticket_id": ticket.id,
+                    "ticket_id": getattr(ticket, "id", None),
                     "visitor_message_id": visitor_message.id,
                     "ai_turn_id": turn.id,
                     "error_type": type(exc).__name__,

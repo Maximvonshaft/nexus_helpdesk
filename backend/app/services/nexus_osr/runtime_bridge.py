@@ -6,6 +6,7 @@ from typing import Any, Iterable
 from sqlalchemy.orm import Session
 
 from ...models import Ticket
+from ...models_agent_routing import ConversationControl
 from ...webchat_models import WebchatConversation, WebchatMessage
 from ..knowledge_retrieval_service import KnowledgeChunkHit
 from ..tracking_fact_schema import TrackingFactResult
@@ -24,10 +25,25 @@ from .runtime_decision_contract import (
 from .tool_execution_facade import OSRToolExecutionFacade, OSRToolExecutionFacadeResult, OSRToolExecutionMode, osr_tool_execution_mode_from_env
 
 
+def _conversation_country_code(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket | None,
+) -> str | None:
+    if ticket is not None:
+        return getattr(ticket, "country_code", None)
+    return (
+        db.query(ConversationControl.country_code)
+        .filter(ConversationControl.conversation_id == conversation.id)
+        .scalar()
+    )
+
+
 def build_case_context_from_webchat(
     db: Session,
     *,
-    ticket: Ticket,
+    ticket: Ticket | None,
     conversation: WebchatConversation,
     visitor_message: WebchatMessage | None = None,
     tracking_fact: TrackingFactResult | None = None,
@@ -35,19 +51,34 @@ def build_case_context_from_webchat(
 ) -> CaseContext:
     """Load/update a persistent Case Context from current WebChat runtime facts."""
 
-    existing = load_case_context(db, conversation_id=conversation.id, ticket_id=ticket.id)
+    ticket_id = getattr(ticket, "id", None)
+    country_code = _conversation_country_code(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+    )
+    existing = load_case_context(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=ticket_id,
+        tenant_id=getattr(conversation, "tenant_key", None) or "default",
+    )
     context = existing or CaseContext(
         conversation_id=conversation.id,
-        ticket_id=ticket.id,
+        ticket_id=ticket_id,
         channel=getattr(conversation, "channel_key", None) or "webchat",
-        country_code=getattr(ticket, "country_code", None),
-        issue_type=issue_type or getattr(conversation, "last_intent", None) or getattr(ticket, "case_type", None),
+        country_code=country_code,
+        issue_type=(
+            issue_type
+            or getattr(conversation, "last_intent", None)
+            or getattr(ticket, "case_type", None)
+        ),
     )
     if visitor_message is not None:
         context = context.with_inbound_message(
             getattr(visitor_message, "body_text", None) or getattr(visitor_message, "body", None) or "",
             channel=getattr(conversation, "channel_key", None) or context.channel,
-            country_code=getattr(ticket, "country_code", None) or context.country_code,
+            country_code=country_code or context.country_code,
         )
     if tracking_fact is not None:
         context = context.with_mcp_fact(tracking_fact.metadata_payload())
@@ -161,7 +192,7 @@ def build_runtime_decision_from_existing_runtime(
 def audit_existing_webchat_runtime_decision(
     db: Session,
     *,
-    ticket: Ticket,
+    ticket: Ticket | None,
     conversation: WebchatConversation,
     decision: RuntimeDecision,
     case_context: CaseContext | None = None,
@@ -174,9 +205,13 @@ def audit_existing_webchat_runtime_decision(
         case_context=case_context,
         tenant_id=getattr(conversation, "tenant_key", None) or "default",
         channel=getattr(conversation, "channel_key", None),
-        country_code=getattr(ticket, "country_code", None),
+        country_code=_conversation_country_code(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+        ),
         conversation_id=conversation.id,
-        ticket_id=ticket.id,
+        ticket_id=getattr(ticket, "id", None),
     )
 
 
