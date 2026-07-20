@@ -170,6 +170,7 @@ export function AppShell({
 
             <Button
               id="nd-account-menu-button"
+              aria-label="账号与退出菜单"
               aria-controls={accountAnchor ? 'nd-account-menu' : undefined}
               aria-haspopup="true"
               aria-expanded={accountAnchor ? 'true' : undefined}
