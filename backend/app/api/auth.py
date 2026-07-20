@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth_service import create_access_token, hash_password, verify_password
 from ..db import get_db
 from ..models import User
+from ..schemas import AuthUserRead, LoginRequest, LoginResponse
 from ..services.audit_service import log_admin_audit
 from ..services.auth_throttle import build_login_throttle_key, clear_login_failures, enforce_login_allowed, record_login_failure
 from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
@@ -26,32 +27,6 @@ from ..utils.client_ip import get_client_ip
 from .deps import get_current_user
 
 router = APIRouter(prefix='/api/auth', tags=['auth'])
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class AuthUserRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    username: str
-    display_name: str
-    email: str | None = None
-    role: str
-    team_id: int | None = None
-    capabilities: list[str] = Field(default_factory=list)
-    must_change_password: bool = False
-    password_changed_at: datetime | None = None
-    last_login_at: datetime | None = None
-
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = 'bearer'
-    user: AuthUserRead
 
 
 class ChangePasswordRequest(BaseModel):
@@ -76,19 +51,8 @@ def _validate_password(password: str) -> None:
 
 
 def _auth_user_for(user: User, db: Session) -> AuthUserRead:
-    security = security_state_payload(db, user.id)
-    role = user.role.value if hasattr(user.role, 'value') else str(user.role)
-    return AuthUserRead(
-        id=user.id,
-        username=user.username,
-        display_name=user.display_name,
-        email=user.email,
-        role=role,
-        team_id=user.team_id,
-        capabilities=sorted(resolve_capabilities(user, db)),
-        must_change_password=security['must_change_password'],
-        password_changed_at=security['password_changed_at'],
-        last_login_at=security['last_login_at'],
+    return AuthUserRead.model_validate(user).model_copy(
+        update={'capabilities': sorted(resolve_capabilities(user, db))}
     )
 
 
