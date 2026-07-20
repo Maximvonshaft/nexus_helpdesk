@@ -1,0 +1,48 @@
+name: Temporary Dispatch PR 774 Canonical
+
+on:
+  push:
+    branches:
+      - fix/pr-774-agent-routing-takeover
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: dispatch-pr-774-canonical
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout isolated dispatcher branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ github.sha }}
+      - name: Dispatch exact PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/dispatches" \
+            --data '{"ref":"feat/conversation-first-agent-routing"}'
+      - name: Remove isolated dispatcher
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/workflows/_temporary-dispatch-pr774-canonical.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: remove PR 774 canonical dispatcher"
+          git push origin HEAD:fix/pr-774-agent-routing-takeover
