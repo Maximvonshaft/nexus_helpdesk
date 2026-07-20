@@ -73,13 +73,19 @@ test('identity UI consumes only canonical supportApi contracts and server policy
   assert.doesNotMatch(administration + users + credentials, /ROLE_CAPABILITIES|roleCapabilities|hardcodedCapabilities/)
 })
 
-test('forced rotation is fail closed and has one recovery surface', () => {
+test('forced rotation is fail closed through one shared recovery guard', () => {
+  const guard = read('src/app/usePasswordRecoveryGuard.ts')
   const boundary = read('src/app/AuthenticatedAppPage.tsx')
+  const workspace = read('src/routes/workspace.tsx')
   const account = read('src/features/account/AccountPage.tsx')
   const api = read('src/lib/supportApi.ts')
 
-  assert.match(boundary, /must_change_password/)
-  assert.match(boundary, /to: '\/account'/)
+  assert.match(guard, /Boolean\(mustChangePassword\)/)
+  assert.match(guard, /to: '\/account'/)
+  assert.equal((guard.match(/to: '\/account'/g) ?? []).length, 1)
+  assert.match(boundary, /usePasswordRecoveryGuard/)
+  assert.match(workspace, /usePasswordRecoveryGuard/)
+  assert.match(workspace, /enabled: Boolean\(session\.data\) && !passwordRecoveryRequired/)
   assert.match(boundary, /passwordRecoveryRequired \? '正在进入凭据恢复…'/)
   assert.match(account, /完成密码修改前，业务页面和实时工作连接均不可使用/)
   assert.match(account, /更新密码并重新登录/)
