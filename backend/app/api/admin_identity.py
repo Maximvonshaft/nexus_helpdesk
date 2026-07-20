@@ -133,9 +133,13 @@ def _serialize_team(row: Team, active_users: int) -> TeamGovernanceRead:
     )
 
 
-def _serialize_policy(user_id: int, row: UserCredentialPolicy | None) -> CredentialPolicyRead:
+def _serialize_policy(user: User, row: UserCredentialPolicy | None) -> CredentialPolicyRead:
     return CredentialPolicyRead(
-        user_id=user_id,
+        user_id=user.id,
+        username=user.username,
+        display_name=user.display_name,
+        role=user.role.value,
+        is_active=user.is_active,
         must_change_password=bool(row.must_change_password) if row is not None else False,
         password_changed_at=row.password_changed_at if row is not None else None,
         last_login_at=row.last_login_at if row is not None else None,
@@ -161,12 +165,12 @@ def list_credential_policies(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    user_ids = [user_id for (user_id,) in db.query(User.id).order_by(User.id.asc()).all()]
+    users = db.query(User).order_by(User.is_active.desc(), User.username.asc(), User.id.asc()).all()
     policies = {
         row.user_id: row
         for row in db.query(UserCredentialPolicy).order_by(UserCredentialPolicy.user_id.asc()).all()
     }
-    return [_serialize_policy(user_id, policies.get(user_id)) for user_id in user_ids]
+    return [_serialize_policy(user, policies.get(user.id)) for user in users]
 
 
 @router.post("/users/{user_id}/require-password-change", response_model=IdentityActionResponse)
