@@ -43,14 +43,27 @@ jobs:
       - name: Reconstruct and verify exact patch
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          mkdir -p /tmp/retirement-diagnostics
           mapfile -t parts < <(find .github -maxdepth 1 -type f -name 'final-retirement.patch.gz.b64.part*' | sort)
-          test "${#parts[@]}" -gt 0
+          printf '%s\n' "${parts[@]}" > /tmp/retirement-diagnostics/parts.txt
+          wc -c "${parts[@]}" > /tmp/retirement-diagnostics/part-sizes.txt
+          test "${#parts[@]}" -gt 0 || { echo no_parts > /tmp/retirement-diagnostics/error.txt; exit 1; }
           cat "${parts[@]}" > /tmp/final-retirement.patch.gz.b64
-          base64 --decode /tmp/final-retirement.patch.gz.b64 > /tmp/final-retirement.patch.gz
-          gzip -dc /tmp/final-retirement.patch.gz > /tmp/final-retirement.patch
-          echo '3c573b2b25429ac63fba8bdaea4d539d698b2b3447cc6d87703879ebe6d55bd6  /tmp/final-retirement.patch' | sha256sum --check --strict
-          git apply --check /tmp/final-retirement.patch
+          if ! base64 --decode /tmp/final-retirement.patch.gz.b64 > /tmp/final-retirement.patch.gz 2>/tmp/retirement-diagnostics/base64-error.txt; then exit 1; fi
+          if ! gzip -dc /tmp/final-retirement.patch.gz > /tmp/final-retirement.patch 2>/tmp/retirement-diagnostics/gzip-error.txt; then exit 1; fi
+          sha256sum /tmp/final-retirement.patch > /tmp/retirement-diagnostics/actual-sha256.txt
+          if ! echo '3c573b2b25429ac63fba8bdaea4d539d698b2b3447cc6d87703879ebe6d55bd6  /tmp/final-retirement.patch' | sha256sum --check --strict > /tmp/retirement-diagnostics/sha-check.txt 2>&1; then exit 1; fi
+          if ! git apply --check /tmp/final-retirement.patch > /tmp/retirement-diagnostics/apply-check.txt 2>&1; then exit 1; fi
+
+      - name: Upload reconstruction diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retirement-apply-diagnostics-${{ github.sha }}
+          path: /tmp/retirement-diagnostics
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Apply atomically and remove delivery tooling
         shell: bash
