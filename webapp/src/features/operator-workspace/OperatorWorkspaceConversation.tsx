@@ -67,7 +67,7 @@ export function OperatorWorkspaceConversation({
     && thread?.conversation_id
     && thread.handoff?.can_reply
     && !selectionUnavailable
-    && hasWorkspaceCapability(capabilities, 'webchat.handoff.accept'),
+    && hasWorkspaceCapability(capabilities, 'outbound.send', 'webchat.handoff.accept'),
   )
   const canReply = ticketReplyAllowed || conversationReplyAllowed
 
