@@ -16,7 +16,7 @@ concurrency:
 jobs:
   apply:
     runs-on: ubuntu-24.04
-    if: ${{ !contains(github.event.head_commit.message, 'complete retired persistence convergence') }}
+    if: ${{ contains(github.event.head_commit.message, 'trigger final retirement application') }}
     steps:
       - name: Publish exact run identity
         env:
@@ -71,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply --index /tmp/final-retirement.patch
-          git rm -f --ignore-unmatch vendor/chatwoot
+          git rm -f --ignore-unmatch vendor/chatwoot .github/.tree-api-probe
           rm -f .github/final-retirement.patch.gz.b64.part*
           rm -f .github/workflows/_apply-final-retirement.yml
           git add -A
