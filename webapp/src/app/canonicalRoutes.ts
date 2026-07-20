@@ -1,4 +1,4 @@
-export type CanonicalAppRoute = '/workspace' | '/knowledge' | '/channels' | '/runtime' | '/control-tower'
+export type CanonicalAppRoute = '/workspace' | '/knowledge' | '/channels' | '/runtime' | '/control-tower' | '/administration' | '/account'
 
 const CANONICAL_ROUTES: CanonicalAppRoute[] = [
   '/workspace',
@@ -6,6 +6,8 @@ const CANONICAL_ROUTES: CanonicalAppRoute[] = [
   '/channels',
   '/runtime',
   '/control-tower',
+  '/administration',
+  '/account',
 ]
 
 export function canonicalAppHref(value: string | null | undefined): string | null {
