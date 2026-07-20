@@ -35,14 +35,14 @@ from app.enums import UserRole  # noqa: E402
 from app.models import Customer, Ticket, User  # noqa: E402
 from app.models_agent_routing import ConversationControl, OperatorAgentState  # noqa: E402
 from app.operator_models import OperatorQueueScopeGrant  # noqa: E402
+from app.services.agent_availability_service import availability_summary  # noqa: E402
 from app.services.agent_routing_service import (  # noqa: E402
-    availability_summary,
     close_conversation,
     request_handoff,
     set_agent_state,
 )
 from app.services.conversation_first_service import create_or_resume_conversation  # noqa: E402
-from app.webchat_models import WebchatConversation, WebchatHandoffRequest  # noqa: E402
+from app.webchat_models import WebchatConversation  # noqa: E402
 
 
 @pytest.fixture()
