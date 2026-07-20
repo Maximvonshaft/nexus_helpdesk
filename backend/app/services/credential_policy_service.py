@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from ..models import User
 from ..models_identity_policy import UserCredentialPolicy
 from ..utils.time import utc_now
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def get_credential_policy(db: Session, user_id: int) -> UserCredentialPolicy | None:
@@ -66,10 +72,15 @@ def require_password_change(db: Session, user_id: int) -> UserCredentialPolicy:
 
 
 def advance_user_identity_version(user: User) -> None:
-    """Advance the sole JWT freshness authority monotonically."""
+    """Advance the sole JWT freshness authority monotonically.
 
-    now = utc_now()
-    current = user.updated_at
+    PostgreSQL returns timezone-aware values while SQLite may return a naive
+    value for the same ``DateTime(timezone=True)`` column. Normalize both sides
+    to UTC before comparison so credential and MFA changes remain portable.
+    """
+
+    now = _utc(utc_now())
+    current = _utc(user.updated_at) if user.updated_at is not None else None
     if current is not None and now <= current:
         now = current + timedelta(microseconds=1)
     user.updated_at = now
