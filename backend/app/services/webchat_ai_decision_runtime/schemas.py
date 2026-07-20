@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .tool_registry import canonical_tool_name
+from .tool_registry import get_tool_contract
 
 AI_DECISION_SCHEMA_VERSION = "nexus.agent_turn.v1"
 RiskLevel = Literal["low", "medium", "high"]
@@ -12,7 +12,7 @@ NextAction = Literal["reply", "ask_clarifying_question", "call_tool", "request_h
 
 
 class AIDecisionToolCall(BaseModel):
-    """A model-proposed tool call. The backend remains execution authority."""
+    """A model-proposed Tool call. The backend remains execution authority."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -22,46 +22,25 @@ class AIDecisionToolCall(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
     requires_confirmation: bool | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _compat_tool_name(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        data = dict(value)
-        if not data.get("tool_name"):
-            data["tool_name"] = data.get("name") or data.get("tool") or data.get("type")
-        if not isinstance(data.get("arguments"), dict):
-            data["arguments"] = {}
-        for legacy_key in ("name", "tool", "type"):
-            data.pop(legacy_key, None)
-        return data
-
     @field_validator("tool_name")
     @classmethod
-    def _clean_tool_name(cls, value: str) -> str:
-        cleaned = canonical_tool_name(value)
-        if not cleaned:
-            raise ValueError("tool_name is required")
+    def _validate_tool_name(cls, value: str) -> str:
+        cleaned = " ".join(str(value or "").strip().split())
+        if not cleaned or get_tool_contract(cleaned) is None:
+            raise ValueError("tool_name must reference a registered canonical Tool")
         return cleaned
 
 
 class AIDecisionEvidence(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     source: str = Field(min_length=1, max_length=160)
-    evidence_type: str | None = Field(default=None, max_length=120)
     evidence_id: str | None = Field(default=None, max_length=240)
-    fact_evidence_present: bool | None = None
-    policy_evidence_present: bool | None = None
-    raw_identifier_exposed: bool = False
+    observation_status: str | None = Field(default=None, max_length=80)
 
 
 class AIDecision(BaseModel):
-    """Canonical model turn for direct replies and tool requests.
-
-    Business domains are intentionally absent. A new capability is introduced by
-    adding a Skill and Tool, not by extending this contract with domain fields.
-    """
+    """Canonical model turn for direct replies and Tool requests."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -75,28 +54,6 @@ class AIDecision(BaseModel):
     tool_calls: list[AIDecisionToolCall] = Field(default_factory=list, max_length=12)
     evidence_used: list[AIDecisionEvidence] = Field(default_factory=list, max_length=20)
     safety_notes: list[str] = Field(default_factory=list, max_length=20)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _compat_fields(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        data = dict(value)
-        if "customer_reply" not in data and "reply" in data:
-            data["customer_reply"] = data.pop("reply")
-        if data.get("tool_calls") is None:
-            data["tool_calls"] = []
-        if data.get("evidence_used") is None:
-            data["evidence_used"] = []
-        if data.get("safety_notes") is None:
-            data["safety_notes"] = []
-        data.pop("tracking_number", None)
-        data.pop("ticket_should_create", None)
-        data.pop("recommended_agent_action", None)
-        data.pop("internal_summary", None)
-        data.pop("risk_flags", None)
-        data.pop("language", None)
-        return data
 
     @field_validator("customer_reply")
     @classmethod
@@ -130,7 +87,7 @@ class AIDecision(BaseModel):
             if not self.tool_calls:
                 raise ValueError("next_action=call_tool requires tool_calls")
             if self.customer_reply:
-                raise ValueError("tool-call turns cannot contain a customer_reply")
+                raise ValueError("Tool-call turns cannot contain a customer_reply")
             return self
         if self.tool_calls:
             raise ValueError("tool_calls require next_action=call_tool")
