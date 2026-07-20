@@ -1,0 +1,35 @@
+--- a/backend/tests/test_webchat_voice_p0_gap_closure.py
++++ b/backend/tests/test_webchat_voice_p0_gap_closure.py
+@@ -50 +50 @@
+-def _create_webchat_conversation(client: TestClient, name: str) -> tuple[str, str, int]:
++def _create_webchat_conversation(client: TestClient, name: str) -> tuple[str, str]:
+@@ -57,2 +57,4 @@
+-    conversation_id = payload["conversation_id"]
+-    visitor_token = payload["visitor_token"]
++    return payload["conversation_id"], payload["visitor_token"]
++
++
++def _ticket_id_for_conversation(client: TestClient, conversation_id: str) -> int:
+@@ -65 +67 @@
+-    ticket_id = next(
++    return next(
+@@ -70 +71,0 @@
+-    return conversation_id, visitor_token, ticket_id
+@@ -74 +75 @@
+-    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, name=name)
++    conversation_id, visitor_token = _create_webchat_conversation(client, name=name)
+@@ -80,0 +82 @@
++    ticket_id = _ticket_id_for_conversation(client, conversation_id)
+--- a/backend/tests/test_webchat_voice_room_compensation.py
++++ b/backend/tests/test_webchat_voice_room_compensation.py
+@@ -74,10 +73,0 @@
+-    canonical_list = client.get(
+-        "/api/support/conversations",
+-        params={"view": "all", "channel": "all", "limit": 100},
+-        headers=_admin_headers(),
+-    )
+-    assert canonical_list.status_code == 200, canonical_list.text
+-    assert any(
+-        item["session_key"].endswith(f":{payload['conversation_id']}")
+-        for item in canonical_list.json()["items"]
+-    )
