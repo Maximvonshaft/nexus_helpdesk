@@ -17,6 +17,7 @@ import type { SelectChangeEvent } from '@mui/material/Select'
 import type { ReactNode } from 'react'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 import { channelPresentation } from '@/lib/supportStatus'
+import { AgentPresenceControl } from './AgentPresenceControl'
 import { AppNavigation } from './AppNavigation'
 import type { AppRouteKey } from './navigation'
 
@@ -125,6 +126,8 @@ export function AppShell({
           </Box>
 
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
+            <AgentPresenceControl capabilities={capabilities} />
+
             {selectedScope && scopes.length === 1 ? (
               <Chip label={scopeLabel(selectedScope)} aria-label="当前工作范围" sx={{ display: { xs: 'none', md: 'inline-flex' } }} />
             ) : null}
