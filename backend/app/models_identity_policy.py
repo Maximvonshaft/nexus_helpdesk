@@ -9,7 +9,11 @@ from sqlalchemy.orm.util import identity_key
 
 from .db import Base
 from .models import User
-from .services.credential_creation_context import administrator_issued_credential_active
+from .services.credential_creation_context import (
+    administrator_issued_credential_active,
+    administrator_issued_tenant_id,
+)
+from .services.tenant_authority import stamp_runtime_tenant
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
@@ -64,6 +68,12 @@ def _expire_changed_credential_policies(session: Session, flush_context) -> None
         row = session.identity_map.get(identity_key(UserCredentialPolicy, (user_id,)))
         if row is not None:
             session.expire(row)
+
+
+@event.listens_for(User, "before_insert")
+def _stamp_admin_created_user_tenant(mapper, connection: Connection, target: User) -> None:  # noqa: ANN001
+    del mapper, connection
+    stamp_runtime_tenant(target, administrator_issued_tenant_id())
 
 
 @event.listens_for(User, "after_insert")
