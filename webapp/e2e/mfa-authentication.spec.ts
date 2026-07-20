@@ -75,15 +75,15 @@ test('password login does not store an access token until MFA challenge verifica
   })
 
   await page.goto('/login')
-  await page.getByLabel('账号').fill('mfa-agent')
-  await page.getByLabel('密码').fill('Nexus!Mfa2026')
+  await page.getByRole('textbox', { name: '账号' }).fill('mfa-agent')
+  await page.getByRole('textbox', { name: '密码' }).fill('Nexus!Mfa2026')
   await page.getByRole('button', { name: '登录' }).click()
 
   await expect(page.getByRole('heading', { level: 1, name: '两步验证' })).toBeVisible()
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), TOKEN_KEY)).toBeNull()
   expect(workspaceScopeRequests).toBe(0)
 
-  await page.getByLabel('验证码或恢复码').fill('123456')
+  await page.getByRole('textbox', { name: '验证码或恢复码' }).fill('123456')
   await page.getByRole('button', { name: '验证并登录' }).click()
 
   await expect(page).toHaveURL(/\/workspace$/)
@@ -127,12 +127,13 @@ test('account MFA setup displays recovery codes once and returns to login after 
 
   await page.goto('/account')
   await expect(page.getByRole('heading', { level: 2, name: '两步验证' })).toBeVisible()
-  await page.getByLabel('当前密码').last().fill('Nexus!Mfa2026')
-  await page.getByRole('button', { name: '开始启用' }).click()
+  const mfaRegion = page.getByRole('region', { name: '两步验证' })
+  await mfaRegion.getByRole('textbox', { name: '当前密码' }).fill('Nexus!Mfa2026')
+  await mfaRegion.getByRole('button', { name: '开始启用' }).click()
 
-  await expect(page.getByText('JBSWY3DPEHPK3PXP')).toBeVisible()
-  await page.getByLabel('6 位验证码').fill('654321')
-  await page.getByRole('button', { name: '确认并启用' }).click()
+  await expect(mfaRegion.getByText('JBSWY3DPEHPK3PXP', { exact: true })).toBeVisible()
+  await mfaRegion.getByRole('textbox', { name: '6 位验证码' }).fill('654321')
+  await mfaRegion.getByRole('button', { name: '确认并启用' }).click()
 
   const recoveryDialog = page.getByRole('dialog', { name: '保存恢复码' })
   await expect(recoveryDialog.getByText('AAAAA-BBBBB')).toBeVisible()
