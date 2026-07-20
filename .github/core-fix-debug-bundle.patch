@@ -1,0 +1,33 @@
+diff --git a/backend/app/services/webchat_debug_bundle_service.py b/backend/app/services/webchat_debug_bundle_service.py
+index 0a16ae6..2093d15 100644
+--- a/backend/app/services/webchat_debug_bundle_service.py
++++ b/backend/app/services/webchat_debug_bundle_service.py
+@@ -278,8 +278,8 @@ def _safe_request_id(turn: WebchatAITurn, conversation: WebchatConversation) ->
+ 
+ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str, Any], WebchatAIDebugRun]:
+     conversation = db.get(WebchatConversation, turn.conversation_id)
+-    ticket = db.get(Ticket, turn.ticket_id)
+-    if conversation is None or ticket is None:
++    ticket = db.get(Ticket, turn.ticket_id) if turn.ticket_id is not None else None
++    if conversation is None:
+         raise ValueError("webchat_debug_context_missing")
+     visitor_message = db.get(WebchatMessage, turn.latest_visitor_message_id or turn.trigger_message_id)
+     reply_message = db.get(WebchatMessage, turn.reply_message_id) if turn.reply_message_id else None
+@@ -287,9 +287,15 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
+     runtime_trace = _runtime_trace(turn, reply_message)
+     rag_trace = metadata.get("rag_trace") if isinstance(metadata.get("rag_trace"), dict) else None
+     trace_fields = runtime_trace.get("runtime_trace_context_fields") if isinstance(runtime_trace.get("runtime_trace_context_fields"), dict) else {}
++    event_query = db.query(WebchatEvent).filter(
++        WebchatEvent.conversation_id == turn.conversation_id,
++    )
++    if turn.ticket_id is None:
++        event_query = event_query.filter(WebchatEvent.ticket_id.is_(None))
++    else:
++        event_query = event_query.filter(WebchatEvent.ticket_id == turn.ticket_id)
+     events = (
+-        db.query(WebchatEvent)
+-        .filter(WebchatEvent.conversation_id == turn.conversation_id, WebchatEvent.ticket_id == turn.ticket_id)
++        event_query
+         .order_by(WebchatEvent.id.asc())
+         .limit(300)
+         .all()
