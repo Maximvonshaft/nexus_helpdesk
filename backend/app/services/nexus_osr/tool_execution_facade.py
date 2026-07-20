@@ -20,7 +20,11 @@ from .runtime_decision_contract import (
     RuntimeDecisionEvaluation,
     RuntimeToolAction,
 )
-from .tool_execution_service import GovernedToolExecutionOptions, execute_controlled_tool_calls, runtime_tool_actions_from_tool_calls
+from .tool_execution_service import (
+    GovernedToolExecutionOptions,
+    execute_controlled_tool_calls,
+    runtime_tool_actions_from_tool_calls,
+)
 
 
 class OSRToolExecutionMode(StrEnum):
@@ -30,18 +34,23 @@ class OSRToolExecutionMode(StrEnum):
     BLOCKED = "blocked"
 
 
-POLICY_EXECUTE_ALLOWED_TOOLS = frozenset({
-    "ticket.create",
-    "handoff.request.create",
-    "timeline.event.create",
-})
+POLICY_EXECUTE_ALLOWED_TOOLS = frozenset(
+    {
+        "support.availability",
+        "ticket.create",
+        "handoff.request.create",
+        "timeline.event.create",
+    }
+)
 
 
 @dataclass(frozen=True)
 class OSRToolExecutionFacadeResult:
     mode: OSRToolExecutionMode
     results: tuple[ActionExecutionResult, ...] = field(default_factory=tuple)
-    safe_customer_visible_results: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    safe_customer_visible_results: tuple[dict[str, Any], ...] = field(
+        default_factory=tuple
+    )
 
     @property
     def executed(self) -> bool:
@@ -69,13 +78,7 @@ class OSRToolExecutionFacadeResult:
 
 
 class OSRToolExecutionFacade:
-    """Only supported entry point for channel-facing OSR tool execution.
-
-    WebChat/WhatsApp/Voice callers should depend on this facade rather than
-    calling `execute_controlled_tool_calls()` directly. The facade returns safe
-    customer-visible result templates only. It never sends or enqueues customer
-    messages and never accepts provider-native tool calls.
-    """
+    """Only supported entry point for channel-facing OSR tool execution."""
 
     def __init__(self, db: Session):
         self._db = db
@@ -107,12 +110,32 @@ class OSRToolExecutionFacade:
                 ticket=ticket,
             )
         if normalized_mode == OSRToolExecutionMode.BLOCKED:
-            return self.blocked(tool_calls=tool_calls, case_context=case_context, tenant_id=tenant_id, channel=channel, country_code=country_code, conversation=conversation, ticket=ticket)
+            return self.blocked(
+                tool_calls=tool_calls,
+                case_context=case_context,
+                tenant_id=tenant_id,
+                channel=channel,
+                country_code=country_code,
+                conversation=conversation,
+                ticket=ticket,
+            )
         if normalized_mode == OSRToolExecutionMode.CONFIRMATION_REQUIRED:
-            return self.confirmation_required(tool_calls=tool_calls, case_context=case_context, tenant_id=tenant_id, channel=channel, country_code=country_code, conversation=conversation, ticket=ticket)
+            return self.confirmation_required(
+                tool_calls=tool_calls,
+                case_context=case_context,
+                tenant_id=tenant_id,
+                channel=channel,
+                country_code=country_code,
+                conversation=conversation,
+                ticket=ticket,
+            )
 
         actions = runtime_tool_actions_from_tool_calls(tool_calls)
-        disallowed = [action for action in actions if action.tool_name not in POLICY_EXECUTE_ALLOWED_TOOLS]
+        disallowed = [
+            action
+            for action in actions
+            if action.tool_name not in POLICY_EXECUTE_ALLOWED_TOOLS
+        ]
         if disallowed:
             return self.blocked(
                 tool_calls=tool_calls,
@@ -123,22 +146,27 @@ class OSRToolExecutionFacade:
                 conversation=conversation,
                 ticket=ticket,
                 error_code="tool_not_allowed_in_policy_execute",
-                error_message="Policy execution is limited to ticket.create, handoff.request.create, and timeline.event.create.",
+                error_message=(
+                    "Policy execution is limited to aggregate availability, "
+                    "ticket creation, handoff, and internal timeline tools."
+                ),
             )
 
-        results = tuple(execute_controlled_tool_calls(
-            self._db,
-            tool_calls=tool_calls,
-            case_context=case_context,
-            channel=channel,
-            country_code=country_code,
-            tenant_id=tenant_id,
-            conversation=conversation,
-            ticket=ticket,
-            customer=customer,
-            ai_decision=ai_decision,
-            options=options,
-        ))
+        results = tuple(
+            execute_controlled_tool_calls(
+                self._db,
+                tool_calls=tool_calls,
+                case_context=case_context,
+                channel=channel,
+                country_code=country_code,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                ticket=ticket,
+                customer=customer,
+                ai_decision=ai_decision,
+                options=options,
+            )
+        )
         return OSRToolExecutionFacadeResult(
             mode=_mode_from_results(results),
             results=results,
@@ -286,7 +314,11 @@ class OSRToolExecutionFacade:
             business_reply_type=BusinessReplyType.TOOL_ACTION_RESULT,
             next_action=RuntimeAction.CALL_TOOL,
             customer_reply=None,
-            risk_level="low" if mode == OSRToolExecutionMode.OBSERVE_ONLY else "medium",
+            risk_level=(
+                "low"
+                if mode == OSRToolExecutionMode.OBSERVE_ONLY
+                else "medium"
+            ),
             tool_actions=[
                 RuntimeToolAction(
                     tool_name=action.tool_name,
@@ -296,7 +328,10 @@ class OSRToolExecutionFacade:
                 )
                 for action in actions
             ],
-            audit_reasons=[mode.value, *[item.error_code or item.status for item in results]],
+            audit_reasons=[
+                mode.value,
+                *[item.error_code or item.status for item in results],
+            ],
         )
         audit_runtime_decision(
             self._db,
@@ -307,7 +342,15 @@ class OSRToolExecutionFacade:
             channel=channel,
             country_code=country_code,
             conversation_id=getattr(conversation, "id", None),
-            ticket_id=getattr(ticket, "id", None) or (int(case_context.ticket_id) if case_context.ticket_id is not None and str(case_context.ticket_id).isdigit() else None),
+            ticket_id=(
+                getattr(ticket, "id", None)
+                or (
+                    int(case_context.ticket_id)
+                    if case_context.ticket_id is not None
+                    and str(case_context.ticket_id).isdigit()
+                    else None
+                )
+            ),
         )
 
 
@@ -315,7 +358,9 @@ def osr_tool_execution_mode_from_env() -> OSRToolExecutionMode:
     return _normalize_mode(os.getenv("OSR_TOOL_EXECUTION_MODE"))
 
 
-def _normalize_mode(value: OSRToolExecutionMode | str | None) -> OSRToolExecutionMode:
+def _normalize_mode(
+    value: OSRToolExecutionMode | str | None,
+) -> OSRToolExecutionMode:
     if value is None:
         return OSRToolExecutionMode.OBSERVE_ONLY
     if isinstance(value, OSRToolExecutionMode):
@@ -326,25 +371,34 @@ def _normalize_mode(value: OSRToolExecutionMode | str | None) -> OSRToolExecutio
         return OSRToolExecutionMode.OBSERVE_ONLY
 
 
-def _mode_from_results(results: tuple[ActionExecutionResult, ...]) -> OSRToolExecutionMode:
+def _mode_from_results(
+    results: tuple[ActionExecutionResult, ...],
+) -> OSRToolExecutionMode:
     if not results:
         return OSRToolExecutionMode.OBSERVE_ONLY
     if any(item.status == "confirmation_required" for item in results):
         return OSRToolExecutionMode.CONFIRMATION_REQUIRED
-    if any((not item.ok) or item.status in {"blocked", "failed"} for item in results):
+    if any(
+        (not item.ok) or item.status in {"blocked", "failed"}
+        for item in results
+    ):
         return OSRToolExecutionMode.BLOCKED
     return OSRToolExecutionMode.POLICY_EXECUTE
 
 
-def _safe_customer_visible_results(results: tuple[ActionExecutionResult, ...]) -> tuple[dict[str, Any], ...]:
+def _safe_customer_visible_results(
+    results: tuple[ActionExecutionResult, ...],
+) -> tuple[dict[str, Any], ...]:
     safe: list[dict[str, Any]] = []
     for item in results:
         if not item.customer_visible_summary:
             continue
-        safe.append({
-            "tool_name": item.tool_name,
-            "status": item.status,
-            "summary_template": item.customer_visible_summary,
-            "send_directly": False,
-        })
+        safe.append(
+            {
+                "tool_name": item.tool_name,
+                "status": item.status,
+                "summary_template": item.customer_visible_summary,
+                "send_directly": False,
+            }
+        )
     return tuple(safe)

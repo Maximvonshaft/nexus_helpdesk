@@ -12,6 +12,7 @@ from ..enums import JobStatus
 from ..models import BackgroundJob
 from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
 from ..services.observability import log_event, record_webchat_websocket_fallback_polling
+from ..services.conversation_first_service import create_or_resume_conversation
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
 from ..services.webchat_performance import list_public_messages_throttled, webchat_poll_interval_ms
@@ -22,7 +23,6 @@ from ..services.webchat_service import (
     _hash_token as hash_webchat_visitor_token,
     _validate_token as validate_webchat_visitor_token,
     add_visitor_message,
-    create_or_resume_conversation,
     submit_card_action,
 )
 from ..settings import get_settings

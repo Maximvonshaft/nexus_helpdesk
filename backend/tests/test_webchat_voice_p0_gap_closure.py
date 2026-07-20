@@ -15,11 +15,11 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
-from app.enums import UserRole
+from app.enums import ConversationState, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
 from app.main import app
-from app.models import User
+from app.models import Ticket, User
 from app.voice_models import WebchatVoiceSession
-from app.webchat_models import WebchatEvent, WebchatMessage
+from app.webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
 
 
 def _admin_headers(user_id: int = 9301) -> dict[str, str]:
@@ -56,18 +56,29 @@ def _create_webchat_conversation(client: TestClient, name: str) -> tuple[str, st
     payload = init.json()
     conversation_id = payload["conversation_id"]
     visitor_token = payload["visitor_token"]
-    conversations = client.get(
-        "/api/support/conversations",
-        params={"view": "all", "channel": "all", "limit": 100},
-        headers=_admin_headers(),
-    )
-    assert conversations.status_code == 200, conversations.text
-    ticket_id = next(
-        item["ticket_id"]
-        for item in conversations.json()["items"]
-        if item["conversation_id"] == conversation_id
-    )
-    return conversation_id, visitor_token, ticket_id
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id
+        ).one()
+        ticket = Ticket(
+            ticket_no=f"VOICE-P0-{conversation_id[-16:]}",
+            title="Voice P0 formal follow-up",
+            description="Explicit Ticket for ticket-scoped P0 voice tests.",
+            source=TicketSource.user_message,
+            source_channel=SourceChannel.web_chat,
+            priority=TicketPriority.medium,
+            status=TicketStatus.in_progress,
+            resolution_category=ResolutionCategory.none,
+            conversation_state=ConversationState.human_owned,
+        )
+        db.add(ticket)
+        db.flush()
+        conversation.ticket_id = ticket.id
+        db.commit()
+        return conversation_id, visitor_token, ticket.id
+    finally:
+        db.close()
 
 
 def _create_voice_session(client: TestClient, name: str = "Voice P0 Visitor") -> tuple[str, str, int, str]:
