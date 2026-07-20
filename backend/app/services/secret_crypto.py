@@ -67,6 +67,15 @@ class SecretCryptoService:
             default_prod_key_path="/run/nexus/outbound_email_encryption_key",
         )
 
+    @classmethod
+    def identity_mfa(cls) -> "SecretCryptoService":
+        return cls(
+            purpose="identity-mfa",
+            key_file_env="IDENTITY_MFA_ENCRYPTION_KEY_FILE",
+            key_env="IDENTITY_MFA_ENCRYPTION_KEY",
+            default_prod_key_path="/run/nexus/identity_mfa_encryption_key",
+        )
+
     def encrypt(self, value: str | None) -> str | None:
         if value is None:
             return None
