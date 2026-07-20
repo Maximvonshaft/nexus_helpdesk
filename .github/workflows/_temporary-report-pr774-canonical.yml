@@ -1,0 +1,54 @@
+name: Temporary Report PR 774 Canonical
+
+on:
+  push:
+    branches:
+      - fix/pr-774-agent-routing-takeover
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+
+concurrency:
+  group: report-pr-774-canonical
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout isolated observer branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ github.sha }}
+      - name: Resolve and report exact canonical run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ab50cd840fa788492335daf453d79ff1856dbcf1
+        run: |
+          set -Eeuo pipefail
+          runs="$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/runs?branch=feat%2Fconversation-first-agent-routing&event=workflow_dispatch&per_page=30")"
+          run_id="$(jq -r --arg sha "${TARGET_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' <<<"${runs}" | head -n 1)"
+          status="$(jq -r --arg sha "${TARGET_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .status' <<<"${runs}" | head -n 1)"
+          conclusion="$(jq -r --arg sha "${TARGET_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .conclusion' <<<"${runs}" | head -n 1)"
+          test -n "${run_id}"
+          gh api repos/${REPOSITORY}/issues/774/comments \
+            -f body="<!-- pr774-canonical-run -->Canonical Acceptance for \`${TARGET_SHA}\`: run \`${run_id}\`, status \`${status}\`, conclusion \`${conclusion}\`."
+      - name: Remove isolated observer
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/workflows/_temporary-report-pr774-canonical.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: remove PR 774 canonical observer"
+          git push origin HEAD:fix/pr-774-agent-routing-takeover
