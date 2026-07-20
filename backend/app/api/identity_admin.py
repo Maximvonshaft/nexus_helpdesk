@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import UserRole
-from ..models import User
+from ..models import Team, User
 from ..models_identity import UserSecurityState
 from ..services.audit_service import log_admin_audit
 from ..services.permissions import ROLE_CAPABILITIES, ensure_can_manage_users
@@ -32,6 +32,10 @@ class UserSecurityStateRead(BaseModel):
 class RoleProfileRead(BaseModel):
     role: UserRole
     capabilities: list[str]
+
+
+class UserTeamAssignmentRequest(BaseModel):
+    team_id: int | None = None
 
 
 def _user_or_404(db: Session, user_id: int) -> User:
@@ -62,6 +66,36 @@ def list_role_profiles(
         RoleProfileRead(role=role, capabilities=sorted(ROLE_CAPABILITIES.get(role, set())))
         for role in UserRole
     ]
+
+
+@router.put('/users/{user_id}/team')
+def assign_user_team(
+    user_id: int,
+    payload: UserTeamAssignmentRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    target = _user_or_404(db, user_id)
+    if payload.team_id is not None:
+        team = db.query(Team).filter(Team.id == payload.team_id, Team.is_active.is_(True)).first()
+        if team is None:
+            raise HTTPException(status_code=404, detail='Team not found or inactive')
+    with managed_session(db):
+        previous_team_id = target.team_id
+        target.team_id = payload.team_id
+        db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='user.team.assign',
+            target_type='user',
+            target_id=target.id,
+            old_value={'team_id': previous_team_id},
+            new_value={'team_id': target.team_id},
+        )
+        db.flush()
+    return {'ok': True, 'user_id': target.id, 'team_id': target.team_id}
 
 
 @router.get('/user-security-states', response_model=list[UserSecurityStateRead])
