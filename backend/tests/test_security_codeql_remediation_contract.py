@@ -64,12 +64,11 @@ def test_integration_secret_delivery_is_stdin_only_and_never_echoed() -> None:
     assert '"secret_delivery": "stdin"' in source
 
 
-def test_codeql_exception_is_single_exact_protocol_exception() -> None:
+def test_codeql_exception_policy_has_no_stale_exceptions() -> None:
     payload = json.loads((ROOT / "config/security/codeql-exceptions.json").read_text(encoding="utf-8"))
     assert payload["schema_version"] == "nexus_codeql_exception_policy_v1"
-    assert len(payload["exceptions"]) == 1
-    exception = payload["exceptions"][0]
-    assert exception["rule_id"] == "py/weak-sensitive-data-hashing"
-    assert exception["path"] == "backend/app/services/speedaf/track_query.py"
-    assert exception["start_line"] == 429
-    assert exception["expires_on"] == "2026-10-31"
+    assert payload["exceptions"] == []
+
+    protocol = (ROOT / "backend/app/services/speedaf/track_query.py").read_text(encoding="utf-8")
+    assert "# codeql[py/weak-sensitive-data-hashing]" in protocol
+    assert "hashlib.md5(payload, usedforsecurity=False)" in protocol
