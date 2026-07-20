@@ -1,6 +1,6 @@
 import { Alert, Box, Button, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   OperatorLoadingState,
@@ -9,6 +9,7 @@ import {
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { AppShell } from './AppShell'
 import type { AppRouteKey } from './navigation'
+import { usePasswordRecoveryGuard } from './usePasswordRecoveryGuard'
 
 export function AuthenticatedAppPage({
   activeRoute,
@@ -23,11 +24,7 @@ export function AuthenticatedAppPage({
   const logout = useLogout()
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
-  const passwordRecoveryRequired = Boolean(session.data?.must_change_password) && activeRoute !== 'account'
-
-  useEffect(() => {
-    if (passwordRecoveryRequired) navigate({ to: '/account', replace: true })
-  }, [navigate, passwordRecoveryRequired])
+  const passwordRecoveryRequired = usePasswordRecoveryGuard(session.data?.must_change_password, activeRoute)
 
   const handleLogout = () => {
     logout()
