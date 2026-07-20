@@ -8,11 +8,27 @@ on:
 permissions:
   contents: write
   actions: write
+  statuses: write
 
 jobs:
   apply:
     runs-on: ubuntu-24.04
     steps:
+      - name: Register apply run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"candidate-fixes-apply\",\"description\":\"applying validated fixes\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
       - name: Checkout exact Head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -29,10 +45,12 @@ jobs:
           rm -f \
             .github/conversation-fixes.patch.gz \
             .github/workflows/_temporary-apply-conversation-fixes.yml \
-            .github/workflows/_temporary-candidate-source-export.yml
+            .github/workflows/_temporary-candidate-source-export.yml \
+            .github/workflows/_temporary-tree-sha-export.yml
           git diff --check
           python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
       - name: Commit exact final tree
+        id: commit
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -41,13 +59,23 @@ jobs:
           git add -A
           git commit -m "fix: complete conversation-first routing foundation"
           git push origin HEAD:feat/conversation-first-agent-routing
-      - name: Dispatch canonical acceptance for final Head
+          echo "final_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish final identity and dispatch canonical acceptance
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          FINAL_SHA: ${{ steps.commit.outputs.final_sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -Eeuo pipefail
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"candidate-fixes-apply\",\"description\":\"validated fixes applied\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
           curl --fail-with-body --silent --show-error \
             --request POST \
             --header "Authorization: Bearer ${GH_TOKEN}" \
