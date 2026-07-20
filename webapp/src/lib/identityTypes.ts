@@ -2,7 +2,13 @@ import type { AdminUser, AuthUser, SecurityAudit, Team } from '@/lib/types'
 
 export type UserRole = 'admin' | 'manager' | 'lead' | 'agent' | 'auditor'
 
-export interface AccountSecurity {
+export interface AuthSessionResponse {
+  access_token: string
+  token_type: string
+  user: AuthUser
+}
+
+export interface UserSecurityState {
   user_id: number
   session_version: number
   must_change_password: boolean
@@ -10,14 +16,6 @@ export interface AccountSecurity {
   last_login_at?: string | null
   updated_at?: string | null
 }
-
-export interface AuthSessionResponse {
-  access_token: string
-  token_type: string
-  user: AuthUser
-}
-
-export type UserSecurityState = AccountSecurity
 
 export interface RoleProfile {
   role: UserRole
