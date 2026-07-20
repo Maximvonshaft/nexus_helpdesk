@@ -1,18 +1,4 @@
 {
-  "exceptions": [
-    {
-      "expires_on": "2027-01-20",
-      "owner": "Nexus Security",
-      "path": "backend/app/services/speedaf/track_query.py",
-      "reason": "Speedaf's external track-query wire protocol mandates MD5 over timestamp, secretKey, and the canonical data string. The digest is used only for provider compatibility signing, never for password storage, key derivation, or local security decisions; transport remains HTTPS and the integration is disabled unless explicitly configured.",
-      "required_markers": [
-        "Speedaf wire protocol mandates MD5",
-        "usedforsecurity=False",
-        "TRACK_QUERY_PATH"
-      ],
-      "rule_id": "py/weak-sensitive-data-hashing",
-      "start_line": 429
-    }
-  ],
+  "exceptions": [],
   "schema_version": "nexus_codeql_exception_policy_v1"
 }
