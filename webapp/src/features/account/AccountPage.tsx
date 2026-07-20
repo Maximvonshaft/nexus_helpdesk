@@ -22,6 +22,7 @@ import {
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { formatDateTime } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
+import { MfaAccountPanel } from './MfaAccountPanel'
 
 export function AccountPage() {
   const navigate = useNavigate()
@@ -77,7 +78,7 @@ export function AccountPage() {
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Typography component="h1" variant="h1">账户设置</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-        管理当前登录身份和凭据。修改密码或撤销会话后，所有旧令牌会立即失效。
+        管理当前登录身份、密码、两步验证和会话。安全配置变更后，所有旧令牌会立即失效。
       </Typography>
 
       {session.data.must_change_password ? (
@@ -96,6 +97,7 @@ export function AccountPage() {
             ['邮箱', session.data.email || '未设置'],
             ['角色', session.data.role],
             ['团队编号', session.data.team_id ?? '未分配'],
+            ['两步验证', session.data.mfa_enabled ? '已启用' : '未启用'],
             ['上次登录', session.data.last_login_at ? formatDateTime(session.data.last_login_at) : '暂无'],
             ['密码更新', session.data.password_changed_at ? formatDateTime(session.data.password_changed_at) : '暂无'],
           ]} />
@@ -152,6 +154,8 @@ export function AccountPage() {
           </Box>
         </Paper>
       </Box>
+
+      {!session.data.must_change_password ? <MfaAccountPanel /> : null}
 
       <Paper component="section" variant="outlined" aria-labelledby="account-session-title" sx={{ p: 2, mt: 2 }}>
         <Typography id="account-session-title" component="h2" variant="h3">会话控制</Typography>
