@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check --no-input --require-hashes -r requirements.lock
+          python -m pip install --disable-pip-version-check --no-input -r backend/requirements.txt
           PYTHONPATH=backend pytest -q backend/tests/test_production_settings_contract.py
           rm -f .github/.static-literal-trigger
           rm -f .github/workflows/_remove-static-retired-literal.yml
