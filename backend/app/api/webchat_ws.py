@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
-from ..auth_service import decode_access_token
+from ..auth_service import load_current_user_for_token
 from ..db import get_db
 from ..models import User
 from ..settings import get_settings
@@ -61,6 +61,7 @@ class ConnectionState:
     connection_id: str | None = None
     client_type: str | None = None
     current_user: User | None = None
+    access_token: str | None = None
     visitor_token: str | None = None
     conversations: list[ConversationSubscription] | None = None
     queues: list[QueueSubscription] | None = None
@@ -79,12 +80,19 @@ def _access_token_from_headers(websocket: WebSocket) -> str | None:
 
 
 def _load_user(db: Session, token: str | None) -> User | None:
-    if not token:
-        return None
-    user_id = decode_access_token(token)
-    if not user_id:
-        return None
-    return db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    return load_current_user_for_token(db, token)
+
+
+def _refresh_agent_session(db: Session, state: ConnectionState) -> bool:
+    if state.client_type != "agent":
+        return True
+    db.expire_all()
+    current_user = _load_user(db, state.access_token)
+    if current_user is None:
+        state.current_user = None
+        return False
+    state.current_user = current_user
+    return True
 
 
 def _error_payload(code: str, message: str, *, retryable: bool = False, request_id: str | None = None) -> dict[str, Any]:
@@ -152,7 +160,8 @@ async def _handle_hello(websocket: WebSocket, db: Session, state: ConnectionStat
         await websocket.close(code=4403)
         return
     token = message.get("access_token") or _access_token_from_headers(websocket)
-    current_user = _load_user(db, str(token)) if client_type == "agent" else None
+    access_token = str(token) if token else None
+    current_user = _load_user(db, access_token) if client_type == "agent" else None
     if client_type == "agent" and current_user is None:
         _record_auth_failed(client_type, "authentication_required")
         await _send_error(websocket, "authentication_required", "Authentication required", retryable=False)
@@ -173,6 +182,7 @@ async def _handle_hello(websocket: WebSocket, db: Session, state: ConnectionStat
             return
     state.client_type = client_type
     state.current_user = current_user
+    state.access_token = access_token if client_type == "agent" else None
     state.visitor_token = str(message.get("visitor_token") or "") or websocket.headers.get("x-webchat-visitor-token")
     state.connection_id = await webchat_realtime_hub.connect(
         client_type=client_type,
@@ -415,6 +425,11 @@ async def webchat_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
         if not state.connection_id:
             return
         while True:
+            if not _refresh_agent_session(db, state):
+                _record_auth_failed("agent", "session_revoked")
+                await _send_error(websocket, "session_revoked", "Login state has changed; authenticate again", retryable=False)
+                await websocket.close(code=4401)
+                return
             try:
                 message = await asyncio.wait_for(websocket.receive_json(), timeout=poll_seconds)
                 if isinstance(message, dict):
