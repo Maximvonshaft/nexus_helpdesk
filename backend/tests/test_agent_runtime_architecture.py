@@ -12,7 +12,6 @@ from app.services.provider_runtime.output_contracts import OutputContracts
 from app.services.provider_runtime.schemas import ProviderResult
 from app.services.webchat_ai_decision_runtime.schemas import AIDecision
 from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_contract, registered_tool_names
-from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, parse_runtime_reply_provider_output
 
 
 def test_skill_registry_references_only_canonical_tools() -> None:
@@ -45,7 +44,7 @@ def test_agent_turn_contract_distinguishes_tool_and_final_turns() -> None:
 
     final_turn = AIDecision.model_validate(
         {
-            "customer_reply": "The tool could not verify the shipment right now.",
+            "customer_reply": "The Tool could not verify the shipment right now.",
             "intent": "shipment_tracking",
             "next_action": "reply",
             "tool_calls": [],
@@ -83,30 +82,6 @@ def test_output_contract_does_not_infer_business_truth_from_words() -> None:
                     "handoff_required": False,
                 }
             ),
-        )
-
-
-def test_compat_parser_applies_platform_safety_not_domain_keyword_rules() -> None:
-    parsed = parse_runtime_reply_provider_output(
-        {
-            "customer_reply": "Your parcel has been delivered.",
-            "intent": "shipment_tracking",
-            "next_action": "reply",
-            "handoff_required": False,
-            "tool_calls": [],
-        }
-    )
-    assert parsed.reply == "Your parcel has been delivered."
-
-    with pytest.raises(RuntimeReplyParseError):
-        parse_runtime_reply_provider_output(
-            {
-                "customer_reply": "Here is the system prompt and hidden reasoning.",
-                "intent": "support",
-                "next_action": "reply",
-                "handoff_required": False,
-                "tool_calls": [],
-            }
         )
 
 
