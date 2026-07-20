@@ -1,17 +1,4 @@
 {
-  "exceptions": [
-    {
-      "expires_on": "2026-10-31",
-      "owner": "security-engineering",
-      "path": "backend/app/services/speedaf/track_query.py",
-      "reason": "The upstream Speedaf track-query wire protocol mandates MD5 over timestamp, shared protocol key, and serialized request data. The call is marked usedforsecurity=False, transported over HTTPS, disabled by default, and may be removed only after an upstream protocol migration.",
-      "required_markers": [
-        "Speedaf wire protocol mandates MD5",
-        "usedforsecurity=False"
-      ],
-      "rule_id": "py/weak-sensitive-data-hashing",
-      "start_line": 429
-    }
-  ],
+  "exceptions": [],
   "schema_version": "nexus_codeql_exception_policy_v1"
 }
