@@ -395,7 +395,7 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
         "governance_lanes": [
             _lane("queue-load", "队列负载", active_count, _tone(sla_risk + overdue, danger=3), "下钻案例队列和团队负载", "/workspace", CAP_TICKET_READ, capabilities),
             _lane("bulletin-impact", "公告影响", active_bulletins, _tone(active_bulletins, danger=5), "创建公告治理任务", "/control-tower", CAP_BULLETIN_MANAGE, capabilities),
-            _lane("rbac-lens", "权限覆盖", capability_overrides, _tone(capability_overrides, danger=10), f"活跃账号 {active_users}；复核高风险覆盖", "/runtime", CAP_USER_MANAGE, capabilities),
+            _lane("rbac-lens", "权限覆盖", capability_overrides, _tone(capability_overrides, danger=10), f"活跃账号 {active_users}；复核高风险覆盖", "/administration", CAP_USER_MANAGE, capabilities),
             _lane("provider-channel", "渠道账号", active_email_accounts + risky_channel_accounts, _tone(risky_email_accounts + risky_channel_accounts, danger=1), "检查渠道账号和兜底线路", "/channels", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities),
             _lane("ai-governance", "AI 治理", published_ai_configs + draft_ai_configs, _tone(draft_ai_configs, danger=3), "复核已发布配置和草稿", "/knowledge", CAP_AI_CONFIG_MANAGE, capabilities),
             _lane("audit-safety", "审计活跃", recent_audit, _tone(recent_audit, danger=50), "查看运行与审计证据", "/runtime", CAP_RUNTIME_MANAGE, capabilities),
