@@ -26,9 +26,10 @@ import { OperatorErrorNotice, OperatorFactGrid, OperatorLoadingState } from '@/a
 import { useLogout } from '@/hooks/useAuth'
 import { formatDateTime } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
-import type { MfaSetupBegin } from '@/lib/types'
+import type { MfaRecoveryCodes, MfaSetupBegin } from '@/lib/types'
 
 type SensitiveAction = 'regenerate' | 'disable' | null
+type SensitiveResult = MfaRecoveryCodes | { ok: boolean; reauthenticate: boolean }
 
 export function MfaAccountPanel() {
   const navigate = useNavigate()
@@ -81,7 +82,7 @@ export function MfaAccountPanel() {
     },
   })
 
-  const sensitiveMutation = useMutation({
+  const sensitiveMutation = useMutation<SensitiveResult, Error, void>({
     mutationFn: async () => {
       if (!sensitiveAction) throw new Error('未选择 MFA 操作')
       if (sensitiveAction === 'regenerate') {
@@ -210,7 +211,7 @@ export function MfaAccountPanel() {
         </Stack>
       )}
 
-      <Dialog open={Boolean(recoveryCodes.length)} maxWidth="sm" fullWidth disableEscapeKeyDown>
+      <Dialog open={Boolean(recoveryCodes.length)} maxWidth="sm" fullWidth>
         <DialogTitle>保存恢复码</DialogTitle>
         <DialogContent>
           <DialogContentText>
