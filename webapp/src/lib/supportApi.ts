@@ -15,6 +15,7 @@ import type {
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
+  Market,
   ProviderRuntimeStatus,
   RolePolicy,
   SecurityAudit,
@@ -81,6 +82,7 @@ export const supportApi = {
   },
   rolePolicies: () => apiRequest<RolePolicy[]>('/api/admin/identity/roles'),
   identityTeams: () => apiRequest<IdentityTeam[]>('/api/admin/identity/teams'),
+  identityMarkets: () => apiRequest<Market[]>('/api/lookups/markets'),
   createIdentityTeam: (payload: IdentityTeamCreate) => apiRequest<IdentityTeam>('/api/admin/identity/teams', {
     method: 'POST',
     body: JSON.stringify(payload),
