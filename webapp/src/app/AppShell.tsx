@@ -190,7 +190,7 @@ export function AppShell({
               anchorEl={accountAnchor}
               open={Boolean(accountAnchor)}
               onClose={closeAccountMenu}
-              MenuListProps={{ 'aria-labelledby': 'nd-account-menu-button' }}
+              slotProps={{ list: { 'aria-labelledby': 'nd-account-menu-button' } }}
             >
               <MenuItem component="a" href="/account" onClick={closeAccountMenu}>
                 <ListItemIcon><AccountCircleRoundedIcon fontSize="small" /></ListItemIcon>
