@@ -1,3 +1,5 @@
+import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded'
+import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded'
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
 import {
   AppBar,
@@ -5,8 +7,11 @@ import {
   Box,
   Button,
   Chip,
+  Divider,
   FormControl,
   InputLabel,
+  ListItemIcon,
+  Menu,
   MenuItem,
   Select,
   Stack,
@@ -14,7 +19,8 @@ import {
   Typography,
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
-import type { ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
+import { useState } from 'react'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 import { channelPresentation } from '@/lib/supportStatus'
 import { AppNavigation } from './AppNavigation'
@@ -56,6 +62,7 @@ export function AppShell({
   onLogout: () => void
   children: ReactNode
 }) {
+  const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null)
   const selectedIndex = selectedScope ? scopes.findIndex((scope) => sameScope(scope, selectedScope)) : -1
   const labelCounts = new Map<string, number>()
   for (const scope of scopes) {
@@ -63,9 +70,18 @@ export function AppShell({
     labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1)
   }
 
+  const canAccessAdministration = capabilities.has('user.manage') || capabilities.has('security.read') || capabilities.has('audit.read')
+
   const handleScopeChange = (event: SelectChangeEvent<string>) => {
     const next = scopes[Number.parseInt(event.target.value, 10)]
     if (next) onScopeChange?.(next)
+  }
+
+  const openAccountMenu = (event: MouseEvent<HTMLElement>) => setAccountAnchor(event.currentTarget)
+  const closeAccountMenu = () => setAccountAnchor(null)
+  const logoutFromMenu = () => {
+    closeAccountMenu()
+    onLogout()
   }
 
   return (
@@ -152,15 +168,45 @@ export function AppShell({
               </FormControl>
             ) : null}
 
-            <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-hidden="true">
-              {initials(userLabel)}
-            </Avatar>
-            <Typography variant="body2" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' }, maxWidth: 140 }} noWrap>
-              {userLabel}
-            </Typography>
-            <Button aria-label="退出" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
-              <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>退出</Box>
+            <Button
+              id="nd-account-menu-button"
+              aria-controls={accountAnchor ? 'nd-account-menu' : undefined}
+              aria-haspopup="true"
+              aria-expanded={accountAnchor ? 'true' : undefined}
+              color="inherit"
+              onClick={openAccountMenu}
+              sx={{ color: 'text.secondary', minWidth: 44, textTransform: 'none' }}
+            >
+              <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700, mr: { xs: 0, lg: 1 } }} aria-hidden="true">
+                {initials(userLabel)}
+              </Avatar>
+              <Typography component="span" variant="body2" sx={{ display: { xs: 'none', lg: 'block' }, maxWidth: 140 }} noWrap>
+                {userLabel}
+              </Typography>
             </Button>
+            <Menu
+              id="nd-account-menu"
+              anchorEl={accountAnchor}
+              open={Boolean(accountAnchor)}
+              onClose={closeAccountMenu}
+              MenuListProps={{ 'aria-labelledby': 'nd-account-menu-button' }}
+            >
+              <MenuItem component="a" href="/account" onClick={closeAccountMenu}>
+                <ListItemIcon><AccountCircleRoundedIcon fontSize="small" /></ListItemIcon>
+                账号与安全
+              </MenuItem>
+              {canAccessAdministration ? (
+                <MenuItem component="a" href="/administration" onClick={closeAccountMenu}>
+                  <ListItemIcon><AdminPanelSettingsRoundedIcon fontSize="small" /></ListItemIcon>
+                  管理控制台
+                </MenuItem>
+              ) : null}
+              <Divider />
+              <MenuItem onClick={logoutFromMenu}>
+                <ListItemIcon><LogoutRoundedIcon fontSize="small" /></ListItemIcon>
+                退出
+              </MenuItem>
+            </Menu>
           </Stack>
         </Toolbar>
       </AppBar>
