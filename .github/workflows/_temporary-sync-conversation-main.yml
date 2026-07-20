@@ -100,6 +100,7 @@ jobs:
         env:
           PYTHONPATH: backend
           APP_ENV: test
+          TENANT_RUNTIME_AUTHORITY_MODE: shadow
           AUTO_INIT_DB: 'false'
           SEED_DEMO_DATA: 'false'
           ALLOW_DEV_AUTH: 'false'
