@@ -1,0 +1,33 @@
+diff --git a/.github/workflows/canonical-acceptance.yml b/.github/workflows/canonical-acceptance.yml
+--- a/.github/workflows/canonical-acceptance.yml
++++ b/.github/workflows/canonical-acceptance.yml
+@@ -17,6 +17,7 @@ env:
+   NODE_VERSION: "22"
+   PYTHONPATH: backend
+   APP_ENV: test
++  TENANT_RUNTIME_AUTHORITY_MODE: shadow
+   AUTO_INIT_DB: "false"
+   SEED_DEMO_DATA: "false"
+   ALLOW_DEV_AUTH: "false"
+diff --git a/config/security/codeql-exceptions.json b/config/security/codeql-exceptions.json
+--- a/config/security/codeql-exceptions.json
++++ b/config/security/codeql-exceptions.json
+@@ -1,6 +1,18 @@
+ {
+-  "exceptions": [],
++  "exceptions": [
++    {
++      "rule_id": "py/weak-sensitive-data-hashing",
++      "path": "backend/app/services/speedaf/track_query.py",
++      "start_line": 429,
++      "owner": "security",
++      "expires_on": "2027-01-31",
++      "reason": "Speedaf track-query wire protocol requires MD5 over timestamp, secret key, and serialized data; usedforsecurity=False marks this as non-security compatibility signing. Review on provider protocol change or expiry.",
++      "required_markers": [
++        "Speedaf wire protocol mandates MD5",
++        "hashlib.md5(payload, usedforsecurity=False)"
++      ]
++    }
++  ],
+   "schema_version": "nexus_codeql_exception_policy_v1"
+ }
