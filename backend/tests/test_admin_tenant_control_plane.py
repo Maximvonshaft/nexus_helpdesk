@@ -237,7 +237,7 @@ def test_admin_control_plane_is_tenant_scoped_for_users_audit_and_email(tmp_path
                 "port": 587,
                 "username": "new-a",
                 "password": PASSWORD,
-                "from_address": "new-a@example.test",
+                "from_address": "new-a@example.com",
                 "security_mode": "starttls",
                 "market_id": market_a.id,
                 "priority": 100,
