@@ -9,6 +9,38 @@ import type {
   UserUpdatePayload,
 } from '@/lib/identityTypes'
 
+type AdminUsersPage = {
+  items: AdminUser[]
+  next_cursor: string | null
+  has_more: boolean
+}
+
+async function listAllAdminUsers() {
+  const users: AdminUser[] = []
+  const seenUserIds = new Set<number>()
+  const seenCursors = new Set<string>()
+  let cursor: string | null = null
+
+  while (true) {
+    const params = new URLSearchParams({ limit: '100', include_inactive: 'true' })
+    if (cursor) params.set('cursor', cursor)
+    const page = await apiRequest<AdminUsersPage>(`/api/admin/users?${params.toString()}`)
+
+    for (const user of page.items) {
+      if (seenUserIds.has(user.id)) continue
+      seenUserIds.add(user.id)
+      users.push(user)
+    }
+
+    if (!page.has_more || !page.next_cursor) break
+    if (seenCursors.has(page.next_cursor)) throw new Error('用户分页游标未推进')
+    seenCursors.add(page.next_cursor)
+    cursor = page.next_cursor
+  }
+
+  return users
+}
+
 export const identityApi = {
   accountSecurity: () => apiRequest<AccountSecurity>('/api/auth/security'),
 
@@ -27,7 +59,7 @@ export const identityApi = {
     requestIdPrefix: 'account-security',
   }),
 
-  users: () => apiRequest<AdminUser[]>('/api/admin/users?legacy=true&include_inactive=true&limit=100'),
+  users: listAllAdminUsers,
   teams: () => apiRequest<Team[]>('/api/lookups/teams'),
   roles: () => apiRequest<RoleProfile[]>('/api/admin/roles'),
   capabilityCatalog: () => apiRequest<string[]>('/api/admin/capabilities/catalog'),
