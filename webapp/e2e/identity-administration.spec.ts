@@ -10,7 +10,7 @@ function json(route: Route, body: unknown, status = 200) {
   })
 }
 
-function adminUser(mustChangePassword = false) {
+function adminUser() {
   return {
     id: 1,
     username: 'admin',
@@ -19,9 +19,6 @@ function adminUser(mustChangePassword = false) {
     role: 'admin',
     team_id: 1,
     capabilities: ['user.manage', 'security.read', 'audit.read', 'runtime.manage'],
-    must_change_password: mustChangePassword,
-    password_changed_at: null,
-    last_login_at: '2026-07-20T12:00:00Z',
   }
 }
 
@@ -40,29 +37,37 @@ function managedUser() {
   }
 }
 
-async function installIdentityMocks(page: Page, options?: { mustChangePassword?: boolean }) {
+type IdentityMockOptions = {
+  mustChangePassword?: boolean
+  commandLog?: string[]
+}
+
+async function installIdentityMocks(page: Page, options: IdentityMockOptions = {}) {
+  let mustChangePassword = Boolean(options.mustChangePassword)
   await page.addInitScript(([key, token]) => sessionStorage.setItem(key, token), [TOKEN_KEY, 'identity-token'])
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname
+    const command = `${request.method()} ${path}`
 
-    if (path === '/api/auth/me') return json(route, adminUser(Boolean(options?.mustChangePassword)))
+    if (path === '/api/auth/me') return json(route, adminUser())
     if (path === '/api/auth/security') {
       return json(route, {
         user_id: 1,
-        session_version: 1,
-        must_change_password: Boolean(options?.mustChangePassword),
-        password_changed_at: null,
+        session_version: mustChangePassword ? 1 : 2,
+        must_change_password: mustChangePassword,
+        password_changed_at: mustChangePassword ? null : '2026-07-20T13:00:00Z',
         last_login_at: '2026-07-20T12:00:00Z',
-        updated_at: '2026-07-20T12:00:00Z',
+        updated_at: '2026-07-20T13:00:00Z',
       })
     }
     if (path === '/api/auth/change-password' && request.method() === 'POST') {
+      mustChangePassword = false
       return json(route, {
         access_token: 'rotated-token',
         token_type: 'bearer',
-        user: adminUser(false),
+        user: adminUser(),
       })
     }
     if (path === '/api/admin/users' && request.method() === 'GET') {
@@ -83,6 +88,19 @@ async function installIdentityMocks(page: Page, options?: { mustChangePassword?:
         created_at: '2026-07-20T13:00:00Z',
         updated_at: '2026-07-20T13:00:00Z',
       })
+    }
+    if (path === '/api/admin/users/2' && request.method() === 'PATCH') {
+      options.commandLog?.push(`${command} ${request.postData() || ''}`)
+      const body = JSON.parse(request.postData() || '{}')
+      return json(route, { ...managedUser(), ...body })
+    }
+    if (path === '/api/admin/users/2/email' && request.method() === 'DELETE') {
+      options.commandLog?.push(command)
+      return json(route, { ok: true, user_id: 2, email: null })
+    }
+    if (path === '/api/admin/users/2/team' && request.method() === 'PUT') {
+      options.commandLog?.push(`${command} ${request.postData() || ''}`)
+      return json(route, { ok: true, user_id: 2, team_id: null })
     }
     if (path === '/api/lookups/teams') return json(route, [{ id: 1, name: 'Customer Care', team_type: 'support', market_id: 1 }])
     if (path === '/api/admin/roles') {
@@ -143,7 +161,7 @@ async function installIdentityMocks(page: Page, options?: { mustChangePassword?:
     }
     if (path === '/api/support/conversations/metrics') return json(route, { total: 0, needs_human: 0, ai_active: 0, by_channel: {} })
 
-    return json(route, { detail: `Unhandled identity API ${request.method()} ${path}` }, 404)
+    return json(route, { detail: `Unhandled identity API ${command}` }, 404)
   })
 }
 
@@ -163,6 +181,28 @@ test('administrator creates an account from the one canonical control plane', as
   await dialog.getByRole('button', { name: '创建账号' }).click()
 
   await expect(dialog).not.toBeVisible()
+})
+
+test('administrator explicitly removes optional email and team assignment', async ({ page }) => {
+  const commandLog: string[] = []
+  await installIdentityMocks(page, { commandLog })
+  await page.goto('/administration')
+
+  await page.getByRole('button', { name: '编辑' }).click()
+  const dialog = page.getByRole('dialog', { name: /编辑账号/ })
+  await dialog.getByRole('textbox', { name: '邮箱' }).fill('')
+  await dialog.getByRole('combobox', { name: '团队' }).click()
+  await page.getByRole('option', { name: '未分配' }).click()
+  await dialog.getByRole('button', { name: '保存账号' }).click()
+
+  await expect(dialog).not.toBeVisible()
+  expect(commandLog).toEqual([
+    expect.stringMatching(/^PATCH \/api\/admin\/users\/2 /),
+    'DELETE /api/admin/users/2/email',
+    'PUT /api/admin/users/2/team {"team_id":null}',
+  ])
+  expect(commandLog[0]).not.toContain('"email"')
+  expect(commandLog[0]).not.toContain('"team_id"')
 })
 
 test('operator rotates a password and receives durable success', async ({ page }) => {
