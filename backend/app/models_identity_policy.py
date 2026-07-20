@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, event, inspect
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Text, event, inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapped, Session, mapped_column, object_session
 from sqlalchemy.orm.util import identity_key
@@ -24,8 +24,8 @@ class UserCredentialPolicy(Base):
     """Credential lifecycle policy for one canonical User identity.
 
     Token freshness remains owned exclusively by ``User.updated_at`` and the
-    capability fingerprint. This row stores only password-rotation policy and
-    bounded account metadata; it is not a session store.
+    capability fingerprint. This row stores password-rotation policy, MFA
+    configuration and bounded login metadata; it is not a session store.
     """
 
     __tablename__ = "user_credential_policies"
@@ -42,6 +42,13 @@ class UserCredentialPolicy(Base):
     )
     password_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True, index=True)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_pending_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_recovery_codes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    mfa_last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    mfa_last_used_step: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime,
@@ -88,6 +95,13 @@ def _create_policy_for_new_user(mapper, connection: Connection, target: User) ->
             must_change_password=administrator_issued_credential_active(),
             password_changed_at=None,
             last_login_at=None,
+            mfa_enabled=False,
+            mfa_secret_encrypted=None,
+            mfa_pending_secret_encrypted=None,
+            mfa_recovery_codes_json=None,
+            mfa_confirmed_at=None,
+            mfa_last_verified_at=None,
+            mfa_last_used_step=None,
             created_at=now,
             updated_at=now,
         )
@@ -120,6 +134,13 @@ def _require_rotation_after_admin_password_write(mapper, connection: Connection,
                 must_change_password=True,
                 password_changed_at=now,
                 last_login_at=None,
+                mfa_enabled=False,
+                mfa_secret_encrypted=None,
+                mfa_pending_secret_encrypted=None,
+                mfa_recovery_codes_json=None,
+                mfa_confirmed_at=None,
+                mfa_last_verified_at=None,
+                mfa_last_used_step=None,
                 created_at=now,
                 updated_at=now,
             )
