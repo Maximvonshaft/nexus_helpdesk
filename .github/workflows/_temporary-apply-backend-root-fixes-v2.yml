@@ -1,0 +1,200 @@
+name: Temporary Apply Backend Root Fixes V2
+
+on:
+  push:
+    branches:
+      - feat/conversation-first-agent-routing
+
+permissions:
+  contents: write
+  actions: write
+  statuses: write
+
+concurrency:
+  group: apply-backend-root-fixes-v2
+  cancel-in-progress: false
+
+jobs:
+  apply-validate-dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Publish application run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"backend-root-fix-application\",\"description\":\"validating exact backend fix set\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+
+      - name: Checkout exact staging Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ github.sha }}
+
+      - name: Prove expected source ancestry
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor 414f580dedb5eee0e1d4b6ea85d40a2f45cd1285 HEAD
+          changed="$(git diff --name-only 414f580dedb5eee0e1d4b6ea85d40a2f45cd1285..HEAD | sort)"
+          expected="$(printf '%s\n' \
+            .github/backend-root-fixes.patch.gz.b64 \
+            .github/workflows/_temporary-apply-backend-root-fixes-v2.yml \
+            .github/workflows/_temporary-apply-backend-root-fixes.yml | sort)"
+          test "${changed}" = "${expected}"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install exact backend dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Apply exact validated patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "ede721f50e46b2441fa06f051304183d87eabedf679e7ff5fd8f97e80566c28b  .github/backend-root-fixes.patch.gz.b64" | sha256sum -c -
+          base64 --decode .github/backend-root-fixes.patch.gz.b64 > /tmp/backend-root-fixes.patch.gz
+          echo "5c21568e97c37a1ba1d056bad44e5426deea4c799d781cd5e4b3397eb0f57fc9  /tmp/backend-root-fixes.patch.gz" | sha256sum -c -
+          gzip --decompress --stdout /tmp/backend-root-fixes.patch.gz > /tmp/backend-root-fixes.patch
+          echo "e1b31064a3fd74a3746e1c43768c0f3fb4ab327b04a4968ea7f387ad094fc55c  /tmp/backend-root-fixes.patch" | sha256sum -c -
+          git apply --check /tmp/backend-root-fixes.patch
+          git apply /tmp/backend-root-fixes.patch
+          rm -f .github/backend-root-fixes.patch.gz.b64
+          rm -f .github/workflows/_temporary-apply-backend-root-fixes.yml
+          rm -f .github/workflows/_temporary-apply-backend-root-fixes-v2.yml
+          rm -f .github/workflows/_temporary-export-backend-failure-source.yml
+          git diff --check
+          python -m compileall -q backend/app backend/tests
+
+      - name: Commit clean candidate locally
+        id: candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: complete ticketless conversation capability coverage"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify canonical static authority
+        shell: bash
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          unset TENANT_RUNTIME_AUTHORITY_MODE || true
+          python scripts/verify_repository.py --static-only --expected-sha "${{ steps.candidate.outputs.sha }}"
+
+      - name: Run original failure coverage in isolated processes
+        shell: bash
+        env:
+          PYTHONPATH: backend
+          APP_ENV: test
+          AUTO_INIT_DB: 'false'
+          SEED_DEMO_DATA: 'false'
+          ALLOW_DEV_AUTH: 'false'
+          PROVIDER_RUNTIME_ENABLED: 'false'
+          PRIVATE_AI_RUNTIME_ENABLED: 'false'
+          WEBCHAT_AI_ENABLED: 'false'
+          WEBCHAT_AI_AUTO_REPLY_MODE: off
+          SPEEDAF_MCP_ENABLED: 'false'
+          SPEEDAF_TRACK_QUERY_ENABLED: 'false'
+          SPEEDAF_WORK_ORDER_CREATE_ENABLED: 'false'
+        run: |
+          set -Eeuo pipefail
+          unset TENANT_RUNTIME_AUTHORITY_MODE || true
+          files=(
+            backend/tests/test_canonical_service_authorities.py
+            backend/tests/test_channel_workbench_backend_contracts.py
+            backend/tests/test_production_settings_contract.py
+            backend/tests/test_runtime_security_and_delivery_hardening.py
+            backend/tests/test_settings.py
+            backend/tests/test_webchat_action_idempotency.py
+            backend/tests/test_webchat_round_b.py
+            backend/tests/test_webchat_voice_api.py
+            backend/tests/test_webchat_voice_p0_gap_closure.py
+            backend/tests/test_webchat_voice_room_compensation.py
+            backend/tests/test_webchat_ws_static_contracts.py
+            backend/tests/test_support_conversation_authority_contract.py
+            backend/tests/test_support_conversations_api.py
+            backend/tests/test_support_conversations_rbac.py
+            backend/tests/test_conversation_first_agent_routing.py
+          )
+          for file in "${files[@]}"; do
+            echo "=== ${file} ==="
+            timeout 360 python -m pytest -q "${file}"
+          done
+
+      - name: Push exact candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git push origin HEAD:feat/conversation-first-agent-routing
+
+      - name: Dispatch Canonical Acceptance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/dispatches" \
+            --data '{"ref":"feat/conversation-first-agent-routing"}'
+
+      - name: Publish final run identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          FINAL_SHA: ${{ steps.candidate.outputs.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          canonical_run_id=""
+          for _attempt in $(seq 1 30); do
+            runs="$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/actions/workflows/canonical-acceptance.yml/runs?branch=feat%2Fconversation-first-agent-routing&event=workflow_dispatch&per_page=20")"
+            canonical_run_id="$(jq -r --arg sha "${FINAL_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' <<<"${runs}" | head -n 1)"
+            if [[ -n "${canonical_run_id}" && "${canonical_run_id}" != "null" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          test -n "${canonical_run_id}"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"backend-root-fixes\",\"description\":\"validated and pushed; canonical run=${canonical_run_id}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${FINAL_SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"canonical-acceptance-dispatched\",\"description\":\"run_id=${canonical_run_id}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${canonical_run_id}\"}"
