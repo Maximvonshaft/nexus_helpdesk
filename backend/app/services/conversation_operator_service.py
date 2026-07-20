@@ -291,4 +291,4 @@ def reply_to_conversation(
         )
     )
     db.flush()
-    return _message_payload(message)
+    return {"ok": True, **_message_payload(message)}
