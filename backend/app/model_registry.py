@@ -7,7 +7,6 @@ Every merged ORM model family that contributes production tables to
 explicit, capability-named plugin declaration; an enabled plugin is imported
 fail-closed and must declare one representative table.
 """
-
 from dataclasses import dataclass
 from importlib import import_module
 
@@ -33,6 +32,7 @@ class ModelPlugin:
 
 REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models",
+    "app.models_identity_policy",
     "app.webchat_models",
     "app.models_webchat_binding",
     "app.voice_models",
@@ -51,6 +51,7 @@ MODEL_PLUGINS: tuple[ModelPlugin, ...] = ()
 
 REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models": "tickets",
+    "app.models_identity_policy": "user_credential_policies",
     "app.webchat_models": "webchat_conversations",
     "app.models_webchat_binding": "webchat_public_origin_bindings",
     "app.voice_models": "webchat_voice_sessions",
