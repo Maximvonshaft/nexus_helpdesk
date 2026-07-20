@@ -32,8 +32,7 @@ class AccountSecurityRead(BaseModel):
     updated_at: datetime | None = None
 
 
-class UserSecurityStateRead(AccountSecurityRead):
-    pass
+UserSecurityStateRead = AccountSecurityRead
 
 
 class RoleProfileRead(BaseModel):
