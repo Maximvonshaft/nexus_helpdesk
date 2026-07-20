@@ -3,6 +3,7 @@ import type { AdminUser, SecurityAudit, Team } from '@/lib/types'
 import type {
   AccountSecurity,
   AuthSessionResponse,
+  RoleProfile,
   UserCreatePayload,
   UserSecurityState,
   UserUpdatePayload,
@@ -28,6 +29,7 @@ export const identityApi = {
 
   users: () => apiRequest<AdminUser[]>('/api/admin/users?legacy=true&include_inactive=true&limit=100'),
   teams: () => apiRequest<Team[]>('/api/lookups/teams'),
+  roles: () => apiRequest<RoleProfile[]>('/api/admin/roles'),
   capabilityCatalog: () => apiRequest<string[]>('/api/admin/capabilities/catalog'),
   securityStates: () => apiRequest<UserSecurityState[]>('/api/admin/user-security-states'),
   securityAudit: () => apiRequest<SecurityAudit>('/api/admin/security-audit?limit=100'),
