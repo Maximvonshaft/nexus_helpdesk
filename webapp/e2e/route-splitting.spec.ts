@@ -52,7 +52,6 @@ async function setAuthenticatedSession(page: Page) {
         username: 'operator',
         display_name: 'Operations User',
         role: 'admin',
-        must_change_password: false,
         capabilities: [
           'ticket.read',
           'operator_queue.read',
@@ -64,6 +63,16 @@ async function setAuthenticatedSession(page: Page) {
           'ticket.assign',
           'user.manage',
         ],
+      })
+    }
+    if (url.pathname === '/api/auth/security') {
+      return json(route, {
+        user_id: 1,
+        session_version: 1,
+        must_change_password: false,
+        password_changed_at: null,
+        last_login_at: '2026-07-20T10:00:00Z',
+        updated_at: '2026-07-20T10:00:00Z',
       })
     }
     if (url.pathname === '/api/admin/operator-queue/my-scopes') {
