@@ -7,6 +7,9 @@ export interface AuthUser {
   role: string
   team_id?: number | null
   capabilities?: string[]
+  must_change_password?: boolean
+  password_changed_at?: string | null
+  last_login_at?: string | null
 }
 export interface AdminUser extends AuthUser {
   is_active: boolean
