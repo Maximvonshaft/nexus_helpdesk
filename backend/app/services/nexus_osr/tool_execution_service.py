@@ -20,7 +20,12 @@ from ..webchat_ai_turn_service import safe_write_webchat_event
 from ..webchat_handoff_service import request_webchat_handoff
 from .auto_ticket_service import create_or_reuse_ticket_from_case_context
 from .case_context import CaseContext, redact_case_text
-from .controlled_action_executor import ActionExecutionRequest, ActionExecutionResult, ActionHandler, ControlledActionExecutor
+from .controlled_action_executor import (
+    ActionExecutionRequest,
+    ActionExecutionResult,
+    ActionHandler,
+    ControlledActionExecutor,
+)
 from .persistence import audit_runtime_decision, resolve_tool_execution_policy, save_case_context
 from .runtime_decision_contract import (
     BusinessReplyType,
@@ -39,25 +44,24 @@ class GovernedToolExecutionOptions:
 
 
 def runtime_tool_actions_from_tool_calls(tool_calls: Iterable[Any]) -> list[RuntimeToolAction]:
-    """Convert strict AI Runtime tool proposals into RuntimeToolAction objects.
-
-    Provider-native tool calls are intentionally not supported here. Callers must
-    pass the already-parsed decision JSON `tool_calls` field or AIDecisionToolCall
-    objects from the strict WebChat AI decision contract.
-    """
+    """Convert canonical Agent Tool proposals into controlled runtime actions."""
 
     actions: list[RuntimeToolAction] = []
     for item in tool_calls or []:
         data = _tool_call_dict(item)
-        tool_name = canonical_tool_name(data.get("tool_name") or data.get("name") or data.get("tool"))
+        tool_name = canonical_tool_name(data.get("tool_name"))
         if not tool_name:
             continue
-        actions.append(RuntimeToolAction(
-            tool_name=tool_name,
-            arguments=_safe_tool_arguments(data.get("arguments") if isinstance(data.get("arguments"), dict) else {}),
-            requires_confirmation=bool(data.get("requires_confirmation")),
-            executed=False,
-        ))
+        actions.append(
+            RuntimeToolAction(
+                tool_name=tool_name,
+                arguments=_safe_tool_arguments(
+                    data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+                ),
+                requires_confirmation=bool(data.get("requires_confirmation")),
+                executed=False,
+            )
+        )
     return actions
 
 
@@ -116,32 +120,56 @@ def execute_controlled_tool_calls(
     results: list[ActionExecutionResult] = []
     for action in actions:
         idempotency_key = _idempotency_key_for_action(raw_calls, action)
-        duplicate = _existing_executed_log(db, action=action, idempotency_key=idempotency_key, conversation=conversation, ticket=ticket)
+        duplicate = _existing_executed_log(
+            db,
+            action=action,
+            idempotency_key=idempotency_key,
+            conversation=conversation,
+            ticket=ticket,
+        )
         if duplicate is not None:
-            results.append(ActionExecutionResult(
-                ok=True,
-                tool_name=action.tool_name,
-                status="duplicate",
-                summary={"tool_call_log_id": duplicate.id, "idempotency_key": idempotency_key},
-                case_context=case_context,
-            ))
+            results.append(
+                ActionExecutionResult(
+                    ok=True,
+                    tool_name=action.tool_name,
+                    status="duplicate",
+                    summary={"tool_call_log_id": duplicate.id, "idempotency_key": idempotency_key},
+                    case_context=case_context,
+                )
+            )
             continue
 
-        policy = resolve_tool_execution_policy(db, tool_name=action.tool_name, country_code=country_code, channel=channel)
+        policy = resolve_tool_execution_policy(
+            db,
+            tool_name=action.tool_name,
+            country_code=country_code,
+            channel=channel,
+        )
         executor = ControlledActionExecutor(
             policies={action.tool_name: policy} if policy else {},
-            handlers=_production_handlers(db, conversation=conversation, ticket=ticket, customer=customer),
-            allowed_high_risk_write_tools=options.allowed_high_risk_write_tools if options.allow_high_risk_write_execution else frozenset(),
+            handlers=_production_handlers(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                customer=customer,
+            ),
+            allowed_high_risk_write_tools=(
+                options.allowed_high_risk_write_tools
+                if options.allow_high_risk_write_execution
+                else frozenset()
+            ),
         )
         started = time.monotonic()
-        result = executor.execute(ActionExecutionRequest(
-            action=action,
-            channel=channel,
-            country_code=country_code,
-            case_context=case_context,
-            idempotency_key=idempotency_key,
-            audit_context={"tenant_id": tenant_id},
-        ))
+        result = executor.execute(
+            ActionExecutionRequest(
+                action=action,
+                channel=channel,
+                country_code=country_code,
+                case_context=case_context,
+                idempotency_key=idempotency_key,
+                audit_context={"tenant_id": tenant_id},
+            )
+        )
         elapsed_ms = int((time.monotonic() - started) * 1000)
         if result.case_context is not None:
             case_context = result.case_context
@@ -181,7 +209,12 @@ def _production_handlers(
 ) -> dict[str, ActionHandler]:
     def ticket_create(request: ActionExecutionRequest) -> ActionExecutionResult:
         if request.case_context is None:
-            return ActionExecutionResult(False, request.action.tool_name, "failed", error_code="case_context_required")
+            return ActionExecutionResult(
+                False,
+                request.action.tool_name,
+                "failed",
+                error_code="case_context_required",
+            )
         result = create_or_reuse_ticket_from_case_context(
             db,
             case_context=request.case_context,
@@ -218,7 +251,12 @@ def _production_handlers(
         if current_ticket is None and current_conversation is not None and getattr(current_conversation, "ticket_id", None):
             current_ticket = db.get(Ticket, int(current_conversation.ticket_id))
         if ctx is None or current_conversation is None or current_ticket is None:
-            return ActionExecutionResult(False, request.action.tool_name, "failed", error_code="handoff_context_required")
+            return ActionExecutionResult(
+                False,
+                request.action.tool_name,
+                "failed",
+                error_code="handoff_context_required",
+            )
         reason = _optional_arg(request.action.arguments, "reason", 160) or "human_review_required"
         note = _optional_arg(request.action.arguments, "note", 500)
         request_row = request_webchat_handoff(
@@ -226,11 +264,15 @@ def _production_handlers(
             conversation=current_conversation,
             ticket=current_ticket,
             source="ai_auto",
-            trigger_type="osr_tool_call",
+            trigger_type="agent_tool_call",
             reason_code=reason,
             reason_text=reason,
-            recommended_agent_action=_optional_arg(request.action.arguments, "recommended_agent_action", 1000),
-            requested_by_actor_type="system",
+            recommended_agent_action=_optional_arg(
+                request.action.arguments,
+                "recommended_agent_action",
+                1000,
+            ),
+            requested_by_actor_type="agent_runtime",
             note=note,
         )
         next_context = ctx.mark_handoff_requested(summary=reason)
@@ -245,9 +287,13 @@ def _production_handlers(
 
     def timeline_event_create(request: ActionExecutionRequest) -> ActionExecutionResult:
         ctx = request.case_context
-        summary = _optional_arg(request.action.arguments, "summary", 500) or _optional_arg(request.action.arguments, "note", 500) or "OSR internal event"
+        summary = (
+            _optional_arg(request.action.arguments, "summary", 500)
+            or _optional_arg(request.action.arguments, "note", 500)
+            or "Agent internal event"
+        )
         payload = {
-            "source": "nexus_osr",
+            "source": "agent_runtime",
             "tool_name": request.action.tool_name,
             "summary": summary,
             "idempotency_key": request.idempotency_key,
@@ -269,7 +315,7 @@ def _production_handlers(
                 db,
                 conversation_id=conversation.id,
                 ticket_id=ticket.id,
-                event_type="osr.timeline_event",
+                event_type="agent.timeline_event",
                 payload=payload,
             )
         return ActionExecutionResult(
@@ -288,14 +334,19 @@ def _production_handlers(
     }
 
 
-def _decision_for_policy_gate(raw_calls: list[dict[str, Any]], actions: list[RuntimeToolAction]) -> AIDecision:
+def _decision_for_policy_gate(
+    raw_calls: list[dict[str, Any]],
+    actions: list[RuntimeToolAction],
+) -> AIDecision:
+    handoff = any(action.tool_name == "handoff.request.create" for action in actions)
     return AIDecision(
-        customer_reply="Tool execution proposal received.",
-        intent="handoff_request" if any(action.tool_name == "handoff.request.create" for action in actions) else "general_support",
+        customer_reply=None,
+        intent="tool_execution",
         confidence=1.0,
         risk_level="medium" if actions else "low",
         next_action="call_tool",
-        handoff_required=any(action.tool_name == "handoff.request.create" for action in actions),
+        handoff_required=handoff,
+        handoff_reason="human_review_requested" if handoff else None,
         tool_calls=[
             {
                 "tool_name": action.tool_name,
@@ -329,7 +380,7 @@ def _blocked_by_policy_gate(
         summary={"policy_gate": gate_result.safe_summary()},
         case_context=case_context,
         error_code=first.code if first else "policy_gate_blocked",
-        error_message=first.message if first else "PolicyGate blocked this tool action.",
+        error_message=first.message if first else "PolicyGate blocked this Tool action.",
     )
     _write_tool_call_log(
         db,
@@ -368,32 +419,56 @@ def _write_tool_call_log(
     idempotency_key: str | None,
     elapsed_ms: int,
 ) -> ToolCallLog:
-    input_summary = _summary_json({
-        "tool_name": action.tool_name,
-        "arguments": action.arguments,
-        "channel": channel,
-        "country_code": case_context.country_code,
-        "case_context": {
-            "safe_tracking_reference": case_context.safe_tracking_reference,
-            "tracking_number_hash_present": bool(case_context.tracking_number_hash),
-            "contact_methods_count": len(case_context.contact_methods),
-            "missing_info": list(case_context.missing_info),
-        },
-    })
-    output_summary = _summary_json({
-        "status": result.status,
-        "ok": result.ok,
-        "error_code": result.error_code,
-        "summary": result.summary,
-    })
+    input_summary = _summary_json(
+        {
+            "tool_name": action.tool_name,
+            "arguments": action.arguments,
+            "channel": channel,
+            "country_code": case_context.country_code,
+            "case_context": {
+                "safe_tracking_reference": case_context.safe_tracking_reference,
+                "tracking_number_hash_present": bool(case_context.tracking_number_hash),
+                "contact_methods_count": len(case_context.contact_methods),
+                "missing_info": list(case_context.missing_info),
+            },
+        }
+    )
+    output_summary = _summary_json(
+        {
+            "status": result.status,
+            "ok": result.ok,
+            "error_code": result.error_code,
+            "summary": result.summary,
+        }
+    )
     row = ToolCallLog(
         tool_name=action.tool_name,
-        provider="nexus_osr",
+        provider="agent_runtime",
         tool_type="controlled_action",
-        conversation_id=str(getattr(conversation, "public_id", None) or case_context.conversation_id or "")[:160] or None,
-        webchat_conversation_id=getattr(conversation, "id", None) or (int(case_context.conversation_id) if case_context.conversation_id is not None and str(case_context.conversation_id).isdigit() else None),
-        ticket_id=getattr(ticket, "id", None) or (int(case_context.ticket_id) if case_context.ticket_id is not None and str(case_context.ticket_id).isdigit() else None),
-        actor_type="ai_runtime_proposal",
+        conversation_id=str(
+            getattr(conversation, "public_id", None)
+            or case_context.conversation_id
+            or ""
+        )[:160]
+        or None,
+        webchat_conversation_id=(
+            getattr(conversation, "id", None)
+            or (
+                int(case_context.conversation_id)
+                if case_context.conversation_id is not None
+                and str(case_context.conversation_id).isdigit()
+                else None
+            )
+        ),
+        ticket_id=(
+            getattr(ticket, "id", None)
+            or (
+                int(case_context.ticket_id)
+                if case_context.ticket_id is not None and str(case_context.ticket_id).isdigit()
+                else None
+            )
+        ),
+        actor_type="agent_runtime_proposal",
         actor_id=None,
         request_id=idempotency_key,
         input_hash=_sha256(input_summary),
@@ -402,7 +477,11 @@ def _write_tool_call_log(
         output_summary=output_summary,
         status=result.status,
         error_code=result.error_code,
-        error_message=redact_case_text(result.error_message, limit=500) if result.error_message else None,
+        error_message=(
+            redact_case_text(result.error_message, limit=500)
+            if result.error_message
+            else None
+        ),
         elapsed_ms=elapsed_ms,
         redaction_applied=True,
         created_at=utc_now(),
@@ -424,35 +503,51 @@ def _audit_tool_decision(
     conversation: WebchatConversation | None,
     ticket: Ticket | None,
 ) -> None:
-    violation = None if result.ok else RuntimeDecisionViolation(
-        code=result.error_code or "tool_execution_blocked",
-        message=result.error_message or result.status,
-        severity="high" if result.status == "blocked" else "medium",
+    violation = (
+        None
+        if result.ok
+        else RuntimeDecisionViolation(
+            code=result.error_code or "tool_execution_blocked",
+            message=result.error_message or result.status,
+            severity="high" if result.status == "blocked" else "medium",
+        )
     )
     decision = RuntimeDecision(
         business_reply_type=BusinessReplyType.TOOL_ACTION_RESULT,
         next_action=RuntimeAction.CALL_TOOL,
         customer_reply=None,
         risk_level=str(action.arguments.get("risk_level") or "medium"),
-        tool_actions=[RuntimeToolAction(
-            tool_name=action.tool_name,
-            arguments=action.arguments,
-            requires_confirmation=action.requires_confirmation,
-            executed=result.ok and result.status == "executed",
-            result_source_id=_result_source_id(result),
-        )],
+        tool_actions=[
+            RuntimeToolAction(
+                tool_name=action.tool_name,
+                arguments=action.arguments,
+                requires_confirmation=action.requires_confirmation,
+                executed=result.ok and result.status == "executed",
+                result_source_id=_result_source_id(result),
+            )
+        ],
         audit_reasons=[result.status, result.error_code or "ok"],
     )
     audit_runtime_decision(
         db,
         decision=decision,
-        evaluation=RuntimeDecisionEvaluation(allowed=result.ok, violations=[violation] if violation else []),
+        evaluation=RuntimeDecisionEvaluation(
+            allowed=result.ok,
+            violations=[violation] if violation else [],
+        ),
         case_context=case_context,
         tenant_id=tenant_id,
         channel=channel,
         country_code=country_code,
         conversation_id=getattr(conversation, "id", None),
-        ticket_id=getattr(ticket, "id", None) or (int(case_context.ticket_id) if case_context.ticket_id is not None and str(case_context.ticket_id).isdigit() else None),
+        ticket_id=(
+            getattr(ticket, "id", None)
+            or (
+                int(case_context.ticket_id)
+                if case_context.ticket_id is not None and str(case_context.ticket_id).isdigit()
+                else None
+            )
+        ),
     )
 
 
@@ -487,9 +582,12 @@ def _tool_call_dict(item: Any) -> dict[str, Any]:
     return dict(item) if isinstance(item, dict) else {}
 
 
-def _idempotency_key_for_action(raw_calls: list[dict[str, Any]], action: RuntimeToolAction) -> str | None:
+def _idempotency_key_for_action(
+    raw_calls: list[dict[str, Any]],
+    action: RuntimeToolAction,
+) -> str | None:
     for item in raw_calls:
-        tool_name = canonical_tool_name(item.get("tool_name") or item.get("name") or item.get("tool"))
+        tool_name = canonical_tool_name(item.get("tool_name"))
         if tool_name == action.tool_name:
             raw_key = item.get("idempotency_key")
             if raw_key:
@@ -515,7 +613,10 @@ def _safe_value(key: str, value: Any) -> Any:
     if lowered in {"raw", "raw_payload", "payload", "request", "response", "body", "message", "customer_message"}:
         return "[redacted_payload]"
     if isinstance(value, dict):
-        return {str(child_key)[:80]: _safe_value(str(child_key), child_value) for child_key, child_value in value.items()}
+        return {
+            str(child_key)[:80]: _safe_value(str(child_key), child_value)
+            for child_key, child_value in value.items()
+        }
     if isinstance(value, list):
         return [_safe_value(key, item) for item in value[:20]]
     if isinstance(value, str):
@@ -549,7 +650,12 @@ def _source_channel(channel: str | None) -> SourceChannel:
 
 
 def _summary_json(value: dict[str, Any]) -> str:
-    return json.dumps(_safe_value("summary", value), ensure_ascii=False, sort_keys=True, default=str)[:4000]
+    return json.dumps(
+        _safe_value("summary", value),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )[:4000]
 
 
 def _sha256(value: str) -> str:
