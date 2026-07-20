@@ -25,6 +25,7 @@ from ..services.identity_tenant_scope import (
     team_for_actor,
     user_for_actor,
 )
+from ..services.mfa_service import mfa_status_payload
 from ..services.permissions import ROLE_CAPABILITIES, ensure_can_manage_users
 from ..services.tenant_authority import stamp_runtime_tenant
 from ..unit_of_work import managed_session
@@ -111,8 +112,6 @@ def _ensure_market(db: Session, tenant_id: int | None, market_id: int | None) ->
 
 
 def _ensure_unique_team_name(db: Session, name: str, *, exclude_team_id: int | None = None) -> None:
-    # Team.name remains globally unique in the canonical schema. Validate before
-    # insert/update so the API returns a bounded domain error instead of a DB leak.
     query = db.query(Team).filter(func.lower(Team.name) == name.strip().lower())
     if exclude_team_id is not None:
         query = query.filter(Team.id != exclude_team_id)
@@ -148,6 +147,12 @@ def _serialize_team(row: Team, active_users: int) -> TeamGovernanceRead:
 
 
 def _serialize_policy(user: User, row: UserCredentialPolicy | None) -> CredentialPolicyRead:
+    mfa = mfa_status_payload(row) if row is not None else {
+        "enabled": False,
+        "confirmed_at": None,
+        "last_verified_at": None,
+        "recovery_codes_remaining": 0,
+    }
     return CredentialPolicyRead(
         user_id=user.id,
         username=user.username,
@@ -157,6 +162,10 @@ def _serialize_policy(user: User, row: UserCredentialPolicy | None) -> Credentia
         must_change_password=bool(row.must_change_password) if row is not None else False,
         password_changed_at=row.password_changed_at if row is not None else None,
         last_login_at=row.last_login_at if row is not None else None,
+        mfa_enabled=bool(mfa["enabled"]),
+        mfa_confirmed_at=mfa["confirmed_at"],
+        mfa_last_verified_at=mfa["last_verified_at"],
+        mfa_recovery_codes_remaining=int(mfa["recovery_codes_remaining"]),
         updated_at=row.updated_at if row is not None else None,
     )
 
