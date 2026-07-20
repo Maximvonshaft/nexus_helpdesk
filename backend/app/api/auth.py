@@ -10,11 +10,11 @@ from ..schemas import AuthUserRead, LoginRequest, LoginResponse
 from ..services.audit_service import log_admin_audit
 from ..services.auth_throttle import build_login_throttle_key, clear_login_failures, enforce_login_allowed, record_login_failure
 from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
+from ..services.permissions import capability_fingerprint, resolve_capabilities
 from ..utils.client_ip import get_client_ip
 from ..utils.time import utc_now
 from ..unit_of_work import managed_session
 from .deps import get_current_user
-from ..services.permissions import resolve_capabilities
 
 router = APIRouter(prefix='/api/auth', tags=['auth'])
 
@@ -30,7 +30,12 @@ class PasswordChangeResponse(BaseModel):
 
 
 def _login_response_for_user(user: User, db: Session) -> LoginResponse:
-    token = create_access_token(user.id, user.updated_at)
+    capabilities = sorted(resolve_capabilities(user, db))
+    token = create_access_token(
+        user.id,
+        user.updated_at,
+        policy_fingerprint=capability_fingerprint(user, db),
+    )
     return LoginResponse(
         access_token=token,
         user=AuthUserRead(
@@ -40,7 +45,7 @@ def _login_response_for_user(user: User, db: Session) -> LoginResponse:
             email=user.email,
             role=user.role,
             team_id=user.team_id,
-            capabilities=sorted(resolve_capabilities(user, db))
+            capabilities=capabilities,
         )
     )
 
