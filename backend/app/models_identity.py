@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, event, inspect
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, event, inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,6 +22,12 @@ class UserSecurityState(Base):
     """
 
     __tablename__ = "user_security_states"
+    __table_args__ = (
+        CheckConstraint(
+            "session_version >= 1",
+            name="ck_user_security_states_session_version",
+        ),
+    )
 
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
