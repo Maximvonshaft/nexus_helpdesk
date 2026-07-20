@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState
-from ..models import ExternalChannelUnresolvedEvent, Ticket
+from ..models import Ticket
 from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
@@ -141,7 +141,6 @@ def serialize_operator_task(row: OperatorTask) -> dict[str, Any]:
         "source_id": row.source_id,
         "ticket_id": row.ticket_id,
         "webchat_conversation_id": row.webchat_conversation_id,
-        "unresolved_event_id": row.unresolved_event_id,
         "task_type": row.task_type,
         "status": row.status,
         "priority": row.priority,
@@ -163,29 +162,6 @@ def _task_snapshot(row: OperatorTask) -> dict[str, Any]:
         "source_id": row.source_id,
         "ticket_id": row.ticket_id,
         "webchat_conversation_id": row.webchat_conversation_id,
-        "unresolved_event_id": row.unresolved_event_id,
-    }
-
-
-def _ticket_snapshot(ticket: Ticket | None) -> dict[str, Any] | None:
-    if ticket is None:
-        return None
-    state = ticket.conversation_state
-    return {
-        "ticket_id": ticket.id,
-        "required_action": ticket.required_action,
-        "conversation_state": state.value if hasattr(state, "value") else str(state),
-    }
-
-
-def _unresolved_snapshot(row: ExternalChannelUnresolvedEvent | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    return {
-        "unresolved_event_id": row.id,
-        "status": row.status,
-        "replay_count": row.replay_count,
-        "last_error": _safe_error_summary(row.last_error),
     }
 
 
@@ -204,14 +180,11 @@ def _find_existing_active_task(
     task_type: str,
     source_id: str | None = None,
     webchat_conversation_id: int | None = None,
-    unresolved_event_id: int | None = None,
 ) -> OperatorTask | None:
     query = _active_query(db, source_type=source_type, task_type=task_type)
     identities = []
     if source_id:
         identities.append(OperatorTask.source_id == source_id)
-    if unresolved_event_id is not None:
-        identities.append(OperatorTask.unresolved_event_id == unresolved_event_id)
     if webchat_conversation_id is not None:
         identities.append(OperatorTask.webchat_conversation_id == webchat_conversation_id)
     if not identities:
@@ -231,7 +204,6 @@ def _refresh_existing_task(
     source_id: str | None = None,
     ticket_id: int | None = None,
     webchat_conversation_id: int | None = None,
-    unresolved_event_id: int | None = None,
     reason_code: str | None = None,
     priority: int | None = None,
     payload: dict[str, Any] | None = None,
@@ -242,8 +214,6 @@ def _refresh_existing_task(
         row.ticket_id = ticket_id
     if webchat_conversation_id is not None:
         row.webchat_conversation_id = webchat_conversation_id
-    if unresolved_event_id is not None:
-        row.unresolved_event_id = unresolved_event_id
     if reason_code:
         row.reason_code = reason_code[:160]
     if priority is not None:
@@ -262,24 +232,16 @@ def create_operator_task(
     source_id: str | None = None,
     ticket_id: int | None = None,
     webchat_conversation_id: int | None = None,
-    unresolved_event_id: int | None = None,
     priority: int = 100,
     payload: dict[str, Any] | None = None,
     note: str | None = None,
 ) -> tuple[OperatorTask, bool]:
-    if source_type == "external_channel":
-        raise OperatorQueueError(
-            410,
-            "legacy_operator_task_creation_retired",
-            "creation of legacy ExternalChannel tasks is retired",
-        )
     existing = _find_existing_active_task(
         db,
         source_type=source_type,
         task_type=task_type,
         source_id=source_id,
         webchat_conversation_id=webchat_conversation_id,
-        unresolved_event_id=unresolved_event_id,
     )
     if existing:
         _refresh_existing_task(
@@ -287,7 +249,6 @@ def create_operator_task(
             source_id=source_id,
             ticket_id=ticket_id,
             webchat_conversation_id=webchat_conversation_id,
-            unresolved_event_id=unresolved_event_id,
             reason_code=reason_code,
             priority=priority,
             payload=payload,
@@ -299,7 +260,6 @@ def create_operator_task(
         source_id=source_id[:160] if source_id else None,
         ticket_id=ticket_id,
         webchat_conversation_id=webchat_conversation_id,
-        unresolved_event_id=unresolved_event_id,
         task_type=task_type[:80],
         status="pending",
         priority=priority,
@@ -319,7 +279,6 @@ def create_operator_task(
             task_type=task_type,
             source_id=source_id,
             webchat_conversation_id=webchat_conversation_id,
-            unresolved_event_id=unresolved_event_id,
         )
         if existing:
             _refresh_existing_task(
@@ -327,7 +286,6 @@ def create_operator_task(
                 source_id=source_id,
                 ticket_id=ticket_id,
                 webchat_conversation_id=webchat_conversation_id,
-                unresolved_event_id=unresolved_event_id,
                 reason_code=reason_code,
                 priority=priority,
                 payload=payload,
@@ -416,7 +374,13 @@ def _log_operator_audit(
     )
 
 
-def project_webchat_handoff_tasks(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
+def project_webchat_handoff_tasks(
+    db: Session,
+    *,
+    limit: int = 100,
+    actor_id: int | None = None,
+    note: str | None = None,
+) -> ProjectResult:
     rows = (
         db.query(WebchatConversation, Ticket)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
@@ -466,10 +430,14 @@ def project_webchat_handoff_tasks(db: Session, *, limit: int = 100, actor_id: in
     return result
 
 
-def project_operator_queue(db: Session, *, actor_id: int | None = None, note: str | None = None) -> dict[str, int]:
+def project_operator_queue(
+    db: Session,
+    *,
+    actor_id: int | None = None,
+    note: str | None = None,
+) -> dict[str, int]:
     webchat = project_webchat_handoff_tasks(db, actor_id=actor_id, note=note)
     return {
-        "projected_external_channel_unresolved": 0,
         "projected_webchat_handoff": webchat.created,
         "created_total": webchat.created,
         "skipped_existing": webchat.skipped_existing,
@@ -538,7 +506,14 @@ def _get_task(db: Session, task_id: int) -> OperatorTask:
     return row
 
 
-def _close_webchat_source(db: Session, row: OperatorTask, *, action: str, actor_id: int | None, note: str | None) -> dict[str, Any]:
+def _close_webchat_source(
+    db: Session,
+    row: OperatorTask,
+    *,
+    action: str,
+    actor_id: int | None,
+    note: str | None,
+) -> dict[str, Any]:
     if not row.ticket_id:
         return {}
     ticket = db.query(Ticket).filter(Ticket.id == row.ticket_id).first()
@@ -554,6 +529,17 @@ def _close_webchat_source(db: Session, row: OperatorTask, *, action: str, actor_
     return {"old": old, "new": new}
 
 
+def _ticket_snapshot(ticket: Ticket | None) -> dict[str, Any] | None:
+    if ticket is None:
+        return None
+    state = ticket.conversation_state
+    return {
+        "ticket_id": ticket.id,
+        "required_action": ticket.required_action,
+        "conversation_state": state.value if hasattr(state, "value") else str(state),
+    }
+
+
 def transition_operator_task(
     db: Session,
     *,
@@ -566,8 +552,6 @@ def transition_operator_task(
         raise OperatorQueueError(400, "unsupported_operator_task_action", "unsupported operator task action")
     row = _get_task(db, task_id)
     _ensure_task_mutable(row)
-    if row.source_type == "external_channel":
-        raise OperatorQueueError(410, "legacy_operator_task_read_only", "historical ExternalChannel tasks are read-only")
     old_task = _task_snapshot(row)
     now = utc_now()
     source_transition: dict[str, Any] = {}
@@ -579,7 +563,13 @@ def transition_operator_task(
         row.status = "resolved" if action == "resolve" else "dropped"
         row.resolved_at = now
         if row.source_type == "webchat":
-            source_transition = _close_webchat_source(db, row, action="resolved" if action == "resolve" else "dropped", actor_id=actor_id, note=note)
+            source_transition = _close_webchat_source(
+                db,
+                row,
+                action="resolved" if action == "resolve" else "dropped",
+                actor_id=actor_id,
+                note=note,
+            )
     row.updated_at = now
     db.flush()
     _log_operator_audit(
