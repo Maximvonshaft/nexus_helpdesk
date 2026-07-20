@@ -47,7 +47,7 @@ jobs:
             backend/tests/test_webchat_public_tenant_binding.py \
             backend/tests/test_webchat_voice_api.py \
             backend/tests/test_webchat_voice_p0_gap_closure.py \
-            backend/tests/test_tenant_authority.py \
+            backend/tests/test_tenant_runtime_authority.py \
             2>&1 | tee /tmp/pr788-tenant-voice/pytest.log
       - name: Upload focused evidence
         if: always()
