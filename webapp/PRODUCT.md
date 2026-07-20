@@ -20,7 +20,7 @@ For every customer contact or governed operational signal, the frontend must mak
 
 The canonical journey is:
 
-`Login → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
+`Login → Credential recovery when required → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
 
 ## Users
 
@@ -53,34 +53,45 @@ The canonical journey is:
 - Manages channel/account configuration and health.
 - Does not gain case access solely from channel configuration permission.
 
+### Identity Administrator
+
+- Manages users, server-authoritative role and capability assignments, teams, credential policy, and session revocation.
+- Cannot create a second user directory, RBAC table, session store, or authentication path.
+- Uses audited commands for password reset, forced rotation, account status, team scope, and session revocation.
+- Manages their own password and sessions only through `/account`.
+
 ### Runtime and Audit Operator
 
 - Inspects bounded Runtime, debug, evaluation and audit evidence.
 - Technical access does not imply customer-data or operational-action authority.
-
-### Identity and Security Administrator
-
-- Creates, updates, activates and deactivates operator accounts through the canonical Administration domain.
-- Assigns server-defined roles, effective capabilities, teams and work-scope boundaries.
-- Resets credentials through audited commands; password and identity changes revoke stale sessions.
-- Cannot bypass backend authorization, last-admin protection, audit redaction or team lifecycle safeguards.
 
 ## Canonical route domains
 
 | Domain | Route | Job |
 |---|---|---|
 | Authentication | `/login` | Establish operator identity |
-| Operator account | `/account` | Inspect current identity and rotate the current user's password |
+| Account and credential recovery | `/account` | Inspect current identity, rotate password, and revoke all current-account sessions |
 | Operator work | `/workspace` | Queue, case, evidence, ownership, action, communication and closure target |
 | Knowledge and SOP | `/knowledge` | Govern Knowledge and internal operating guidance |
 | Channels | `/channels` | Channel/account configuration and health |
-| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded runtime evidence |
+| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded evidence |
 | Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
-| Administration | `/administration` | User, role, capability, team, work-scope and security-audit governance |
+| Identity administration | `/administration` | Users, role/capability assignments, credential/session governance, teams and security audit |
 
 `/webchat` is a compatibility redirect only. It does not mount a second product surface.
 
-Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization. `/account` is reached from the authenticated identity area rather than duplicating the primary business navigation.
+Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
+
+## Credential and session model
+
+- `User` is the only operator identity record.
+- `User.updated_at` is the only mutable token-revocation version.
+- The server capability fingerprint is the only permission-freshness version.
+- `user_credential_policies` stores only forced-password-change policy and bounded login/password timestamps; it is not a token, device, refresh-token, or session store.
+- New administrator-issued credentials and administrator password resets require password rotation.
+- A forced-rotation identity may access only authentication recovery endpoints and `/account`; business APIs and agent WebSockets fail closed.
+- Password change, identity change, capability-policy change, account deactivation, forced rotation, and explicit session revocation invalidate stale access through the canonical identity version.
+- Passwords and tokens never enter audit payloads, frontend logs, or operator-visible technical evidence.
 
 ## Operator work model
 
@@ -176,14 +187,14 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 - Degraded, unavailable, stale, conflict and repair-required are first-class states.
 - Refresh preserves durable state and never duplicates commands.
 - Keyboard operation and screen-reader structure are part of product behavior.
-- Credential, role, team, status and capability changes invalidate stale authenticated sessions.
-- Administrative mutation controls are absent in read-only audit mode and remain backend-authorized when present.
+- Credential recovery blocks protected content before business requests are sent.
+- Session revocation applies to HTTP and active agent WebSocket access through the same identity authority.
 
 ## Non-goals
 
 - No direct Provider execution from UI code.
 - No second queue, case truth or action truth.
-- No second admin product, user-management service, role policy table or session store.
+- No second user directory, RBAC table, session store or authentication transport.
 - No probabilistic silent cross-channel merge.
 - No raw tracking/contact/provider identifiers on unsafe surfaces.
 - No customer-visible reply bypass.
@@ -195,10 +206,11 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 
 - `webapp/src/routes/` contains the only route registry.
 - `/workspace` is the only queue, case, conversation and governed-action surface.
-- `/account` is the only current-user credential surface.
-- `/administration` is the only user, role, capability, team and security-audit governance surface.
+- `/account` is the only current-user password and session surface.
+- `/administration` is the only user, credential, role/capability, team and security-audit surface.
 - `KnowledgePage.tsx` is the only Knowledge implementation; capability controls editing.
-- `apiClient.ts` is the only generic HTTP transport.
+- `apiClient.ts` is the only generic HTTP transport; `supportApi.ts` is the typed product API.
+- `User.updated_at` and the server capability fingerprint are the only token-freshness authorities for HTTP and agent WebSocket access.
 - Material UI, one Nexus theme and one bounded operator-presentation module are the only generic visual authorities.
 - `/webchat` redirects to canonical routes and does not own a product UI.
 
