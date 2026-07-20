@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth_service import create_access_token, hash_password, verify_password
 from ..db import get_db
+from ..identity_schemas import (
+    AccountSecurityRead,
+    AuthSessionResponse,
+    AuthSessionUserRead,
+    ChangePasswordRequest,
+)
 from ..models import User
-from ..schemas import AuthUserRead, LoginRequest, LoginResponse
+from ..schemas import LoginRequest
 from ..services.audit_service import log_admin_audit
 from ..services.auth_throttle import build_login_throttle_key, clear_login_failures, enforce_login_allowed, record_login_failure
 from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
@@ -29,20 +32,6 @@ from .deps import get_current_user
 router = APIRouter(prefix='/api/auth', tags=['auth'])
 
 
-class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
-
-
-class AccountSecurityRead(BaseModel):
-    user_id: int
-    session_version: int
-    must_change_password: bool
-    password_changed_at: datetime | None = None
-    last_login_at: datetime | None = None
-    updated_at: datetime | None = None
-
-
 def _validate_password(password: str) -> None:
     try:
         validate_admin_password_policy(password)
@@ -50,21 +39,27 @@ def _validate_password(password: str) -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _auth_user_for(user: User, db: Session) -> AuthUserRead:
-    return AuthUserRead.model_validate(user).model_copy(
-        update={'capabilities': sorted(resolve_capabilities(user, db))}
+def _auth_user_for(user: User, db: Session) -> AuthSessionUserRead:
+    security = security_state_payload(db, user.id)
+    return AuthSessionUserRead.model_validate(user).model_copy(
+        update={
+            'capabilities': sorted(resolve_capabilities(user, db)),
+            'must_change_password': security['must_change_password'],
+            'password_changed_at': security['password_changed_at'],
+            'last_login_at': security['last_login_at'],
+        }
     )
 
 
-def _login_response_for_user(user: User, db: Session) -> LoginResponse:
+def _login_response_for_user(user: User, db: Session) -> AuthSessionResponse:
     session_version = session_version_for_user(db, user.id)
-    return LoginResponse(
+    return AuthSessionResponse(
         access_token=create_access_token(user.id, session_version=session_version),
         user=_auth_user_for(user, db),
     )
 
 
-@router.post('/login', response_model=LoginResponse)
+@router.post('/login', response_model=AuthSessionResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     username = payload.username.strip()
     throttle_key = build_login_throttle_key(username, get_client_ip(request))
@@ -81,7 +76,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     return _login_response_for_user(user, db)
 
 
-@router.get('/me', response_model=AuthUserRead)
+@router.get('/me', response_model=AuthSessionUserRead)
 def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return _auth_user_for(current_user, db)
 
@@ -91,7 +86,7 @@ def account_security(current_user: User = Depends(get_current_user), db: Session
     return AccountSecurityRead(**security_state_payload(db, current_user.id))
 
 
-@router.post('/change-password', response_model=LoginResponse)
+@router.post('/change-password', response_model=AuthSessionResponse)
 def change_password(
     payload: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
