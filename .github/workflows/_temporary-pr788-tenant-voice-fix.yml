@@ -39,7 +39,20 @@ jobs:
       - name: Test lazy voice ticket binding
         run: python -m pytest -q backend/tests/test_ticketless_voice_ticket_binding.py
       - name: Test public webchat tenant binding
-        run: python -m pytest -q backend/tests/test_webchat_public_tenant_binding.py
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/pr788-tenant-evidence
+          python -m pytest -vv -x backend/tests/test_webchat_public_tenant_binding.py \
+            2>&1 | tee /tmp/pr788-tenant-evidence/public-tenant-binding.log
+      - name: Upload tenant binding failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr788-public-tenant-binding-${{ github.event.pull_request.head.sha }}
+          path: /tmp/pr788-tenant-evidence
+          if-no-files-found: error
+          retention-days: 7
       - name: Test voice API
         run: python -m pytest -q backend/tests/test_webchat_voice_api.py
       - name: Test voice P0 gap closure
