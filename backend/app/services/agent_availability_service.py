@@ -10,7 +10,6 @@ from ..models_agent_routing import ConversationControl, OperatorAgentState
 from ..operator_models import OperatorQueueScopeGrant
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .agent_routing_service import active_agent_load, heartbeat_is_fresh
-from .permissions import has_global_case_visibility
 
 
 def _request_scope(
@@ -75,8 +74,6 @@ def _agent_authorized_for_scope(
     country_code: str | None,
     channel_key: str,
 ) -> bool:
-    if has_global_case_visibility(user, db):
-        return True
     if not country_code:
         return False
     return bool(
