@@ -11,6 +11,7 @@ from argon2.exceptions import InvalidHash, VerifyMismatchError
 from sqlalchemy.orm import Session
 
 from .models import User
+from .services.permissions import capability_fingerprint
 from .settings import get_settings
 
 settings = get_settings()
@@ -25,6 +26,7 @@ class AccessTokenClaims:
     user_id: int
     issued_at: datetime
     user_version: datetime | None
+    policy_fingerprint: str | None
     token_id: str | None
 
 
@@ -70,7 +72,11 @@ def verify_secret(secret: str, secret_hash: str) -> bool:
     return verify_password(secret, secret_hash)
 
 
-def create_access_token(user_id: int, user_updated_at: datetime | None = None) -> str:
+def create_access_token(
+    user_id: int,
+    user_updated_at: datetime | None = None,
+    policy_fingerprint: str | None = None,
+) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     payload = {
@@ -84,6 +90,8 @@ def create_access_token(user_id: int, user_updated_at: datetime | None = None) -
     }
     if user_updated_at is not None:
         payload["uv"] = _utc(user_updated_at).isoformat()
+    if policy_fingerprint:
+        payload["pf"] = policy_fingerprint
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -104,6 +112,7 @@ def decode_access_token_claims(token: str) -> AccessTokenClaims | None:
             user_id=int(sub),
             issued_at=issued_at,
             user_version=_parse_datetime(payload.get("uv")),
+            policy_fingerprint=str(payload.get("pf")) if payload.get("pf") else None,
             token_id=str(payload.get("jti")) if payload.get("jti") else None,
         )
     except Exception:
@@ -130,5 +139,7 @@ def load_current_user_for_token(db: Session, token: str | None) -> User | None:
         return None
     user = db.query(User).filter(User.id == claims.user_id, User.is_active.is_(True)).first()
     if user is None or not access_token_is_current(user, claims):
+        return None
+    if claims.policy_fingerprint is not None and claims.policy_fingerprint != capability_fingerprint(user, db):
         return None
     return user
