@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..enums import UserRole
 from ..identity_schemas import CredentialPolicyRead
-from ..models import Market, Team, User
+from ..models import Team, User
 from ..models_identity_policy import UserCredentialPolicy
 from ..services.audit_service import log_admin_audit
 from ..services.credential_policy_service import (
@@ -18,7 +18,15 @@ from ..services.credential_policy_service import (
     ensure_credential_policy,
     require_password_change as require_password_change_policy,
 )
+from ..services.identity_tenant_scope import (
+    active_market_for_actor,
+    actor_tenant_id,
+    apply_tenant_scope,
+    team_for_actor,
+    user_for_actor,
+)
 from ..services.permissions import ROLE_CAPABILITIES, ensure_can_manage_users
+from ..services.tenant_authority import stamp_runtime_tenant
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
@@ -88,21 +96,23 @@ class IdentityActionResponse(BaseModel):
     user_id: int
 
 
-def _user_or_404(db: Session, user_id: int) -> User:
-    row = db.query(User).filter(User.id == user_id).first()
+def _user_or_404(db: Session, tenant_id: int | None, user_id: int) -> User:
+    row = user_for_actor(db, tenant_id, user_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return row
 
 
-def _ensure_market(db: Session, market_id: int | None) -> None:
+def _ensure_market(db: Session, tenant_id: int | None, market_id: int | None) -> None:
     if market_id is None:
         return
-    if db.query(Market).filter(Market.id == market_id, Market.is_active.is_(True)).first() is None:
+    if active_market_for_actor(db, tenant_id, market_id) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Market not found or inactive")
 
 
 def _ensure_unique_team_name(db: Session, name: str, *, exclude_team_id: int | None = None) -> None:
+    # Team.name remains globally unique in the canonical schema. Validate before
+    # insert/update so the API returns a bounded domain error instead of a DB leak.
     query = db.query(Team).filter(func.lower(Team.name) == name.strip().lower())
     if exclude_team_id is not None:
         query = query.filter(Team.id != exclude_team_id)
@@ -110,10 +120,14 @@ def _ensure_unique_team_name(db: Session, name: str, *, exclude_team_id: int | N
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team name already exists")
 
 
-def _active_user_counts(db: Session) -> dict[int, int]:
+def _active_user_counts(db: Session, tenant_id: int | None) -> dict[int, int]:
+    query = apply_tenant_scope(
+        db.query(User.team_id, func.count(User.id)),
+        User,
+        tenant_id,
+    )
     rows = (
-        db.query(User.team_id, func.count(User.id))
-        .filter(User.team_id.is_not(None), User.is_active.is_(True))
+        query.filter(User.team_id.is_not(None), User.is_active.is_(True))
         .group_by(User.team_id)
         .all()
     )
@@ -153,6 +167,7 @@ def list_role_policies(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
+    actor_tenant_id(db, current_user)
     return [
         RolePolicyRead(role=role, default_capabilities=sorted(ROLE_CAPABILITIES.get(role, set())))
         for role in UserRole
@@ -165,10 +180,23 @@ def list_credential_policies(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    users = db.query(User).order_by(User.is_active.desc(), User.username.asc(), User.id.asc()).all()
+    tenant_id = actor_tenant_id(db, current_user)
+    users = (
+        apply_tenant_scope(db.query(User), User, tenant_id)
+        .order_by(User.is_active.desc(), User.username.asc(), User.id.asc())
+        .all()
+    )
+    user_ids = [user.id for user in users]
     policies = {
         row.user_id: row
-        for row in db.query(UserCredentialPolicy).order_by(UserCredentialPolicy.user_id.asc()).all()
+        for row in (
+            db.query(UserCredentialPolicy)
+            .filter(UserCredentialPolicy.user_id.in_(user_ids))
+            .order_by(UserCredentialPolicy.user_id.asc())
+            .all()
+            if user_ids
+            else []
+        )
     }
     return [_serialize_policy(user, policies.get(user.id)) for user in users]
 
@@ -180,7 +208,8 @@ def require_user_password_change(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    target = _user_or_404(db, user_id)
+    tenant_id = actor_tenant_id(db, current_user)
+    target = _user_or_404(db, tenant_id, user_id)
     with managed_session(db):
         previous = ensure_credential_policy(db, target.id)
         old_value = {"must_change_password": previous.must_change_password}
@@ -207,7 +236,8 @@ def revoke_user_sessions(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    target = _user_or_404(db, user_id)
+    tenant_id = actor_tenant_id(db, current_user)
+    target = _user_or_404(db, tenant_id, user_id)
     with managed_session(db):
         advance_user_identity_version(target)
         db.flush()
@@ -230,8 +260,13 @@ def list_identity_teams(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    counts = _active_user_counts(db)
-    rows = db.query(Team).order_by(Team.is_active.desc(), Team.name.asc(), Team.id.asc()).all()
+    tenant_id = actor_tenant_id(db, current_user)
+    counts = _active_user_counts(db, tenant_id)
+    rows = (
+        apply_tenant_scope(db.query(Team), Team, tenant_id)
+        .order_by(Team.is_active.desc(), Team.name.asc(), Team.id.asc())
+        .all()
+    )
     return [_serialize_team(row, counts.get(row.id, 0)) for row in rows]
 
 
@@ -242,8 +277,9 @@ def create_identity_team(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
+    tenant_id = actor_tenant_id(db, current_user)
     _ensure_unique_team_name(db, payload.name)
-    _ensure_market(db, payload.market_id)
+    _ensure_market(db, tenant_id, payload.market_id)
     with managed_session(db):
         row = Team(
             name=payload.name,
@@ -251,6 +287,7 @@ def create_identity_team(
             market_id=payload.market_id,
             is_active=True,
         )
+        stamp_runtime_tenant(row, tenant_id)
         db.add(row)
         db.flush()
         log_admin_audit(
@@ -279,7 +316,8 @@ def update_identity_team(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    row = db.query(Team).filter(Team.id == team_id).first()
+    tenant_id = actor_tenant_id(db, current_user)
+    row = team_for_actor(db, tenant_id, team_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
@@ -287,9 +325,9 @@ def update_identity_team(
     if "name" in data:
         _ensure_unique_team_name(db, data["name"], exclude_team_id=row.id)
     if "market_id" in data:
-        _ensure_market(db, data["market_id"])
+        _ensure_market(db, tenant_id, data["market_id"])
     active_users = int(
-        db.query(func.count(User.id))
+        apply_tenant_scope(db.query(func.count(User.id)), User, tenant_id)
         .filter(User.team_id == row.id, User.is_active.is_(True))
         .scalar()
         or 0
@@ -336,11 +374,12 @@ def clear_user_team(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    row = _user_or_404(db, user_id)
+    tenant_id = actor_tenant_id(db, current_user)
+    row = _user_or_404(db, tenant_id, user_id)
     previous_team_id = row.team_id
     with managed_session(db):
         row.team_id = None
-        row.updated_at = utc_now()
+        advance_user_identity_version(row)
         db.flush()
         log_admin_audit(
             db,
