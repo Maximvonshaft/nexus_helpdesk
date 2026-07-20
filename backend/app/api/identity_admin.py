@@ -98,6 +98,31 @@ def assign_user_team(
     return {'ok': True, 'user_id': target.id, 'team_id': target.team_id}
 
 
+@router.delete('/users/{user_id}/email')
+def clear_user_email(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    target = _user_or_404(db, user_id)
+    with managed_session(db):
+        previous_email = target.email
+        target.email = None
+        db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='user.email.clear',
+            target_type='user',
+            target_id=target.id,
+            old_value={'email': previous_email},
+            new_value={'email': None},
+        )
+        db.flush()
+    return {'ok': True, 'user_id': target.id, 'email': None}
+
+
 @router.get('/user-security-states', response_model=list[UserSecurityStateRead])
 def list_user_security_states(
     db: Session = Depends(get_db),
