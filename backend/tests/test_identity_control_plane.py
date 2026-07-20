@@ -117,14 +117,14 @@ def test_self_service_password_change_revokes_http_session_and_redacts_audit(tmp
         _close(db_session, engine)
 
 
-def test_admin_password_reset_and_user_update_revoke_existing_tokens(tmp_path):
+def test_admin_password_policy_and_identity_changes_revoke_existing_tokens(tmp_path):
     client, db_session, engine = _client(tmp_path)
     try:
         admin = _user(db_session, "identity_admin", UserRole.admin)
         agent = _user(db_session, "identity_agent", UserRole.agent)
         db_session.commit()
         admin_headers = _headers(admin)
-        agent_headers = _headers(agent)
+        original_agent_headers = _headers(agent)
 
         reset = client.post(
             f"/api/admin/users/{agent.id}/reset-password",
@@ -132,11 +132,23 @@ def test_admin_password_reset_and_user_update_revoke_existing_tokens(tmp_path):
             json={"password": RESET_PASSWORD},
         )
         assert reset.status_code == 200, reset.text
-        assert client.get("/api/auth/me", headers=agent_headers).status_code == 401
+        assert client.get("/api/auth/me", headers=original_agent_headers).status_code == 401
 
-        login = client.post("/api/auth/login", json={"username": agent.username, "password": RESET_PASSWORD})
-        assert login.status_code == 200, login.text
-        fresh_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        policy_login = client.post("/api/auth/login", json={"username": agent.username, "password": RESET_PASSWORD})
+        assert policy_login.status_code == 200, policy_login.text
+        policy_headers = {"Authorization": f"Bearer {policy_login.json()['access_token']}"}
+
+        policy_updated = client.patch(
+            f"/api/admin/users/{agent.id}",
+            headers=admin_headers,
+            json={"capabilities": ["ticket.read", "operator_queue.read"]},
+        )
+        assert policy_updated.status_code == 200, policy_updated.text
+        assert client.get("/api/auth/me", headers=policy_headers).status_code == 401
+
+        profile_login = client.post("/api/auth/login", json={"username": agent.username, "password": RESET_PASSWORD})
+        assert profile_login.status_code == 200, profile_login.text
+        profile_headers = {"Authorization": f"Bearer {profile_login.json()['access_token']}"}
 
         updated = client.patch(
             f"/api/admin/users/{agent.id}",
@@ -144,7 +156,7 @@ def test_admin_password_reset_and_user_update_revoke_existing_tokens(tmp_path):
             json={"display_name": "Identity Agent Updated"},
         )
         assert updated.status_code == 200, updated.text
-        assert client.get("/api/auth/me", headers=fresh_headers).status_code == 401
+        assert client.get("/api/auth/me", headers=profile_headers).status_code == 401
     finally:
         _close(db_session, engine)
 
