@@ -130,6 +130,7 @@ def test_admin_password_reset_forces_rotation_and_invalidates_existing_token(db_
         current_user=admin,
     )
 
+    db_session.expire(state)
     refreshed = db_session.get(UserSecurityState, user.id)
     assert refreshed is not None
     assert refreshed.session_version == 2
@@ -163,6 +164,7 @@ def test_deactivate_then_reactivate_does_not_resurrect_old_session(db_session):
     deactivate_user(user.id, db=db_session, current_user=admin)
     activate_user(user.id, db=db_session, current_user=admin)
 
+    db_session.expire(state)
     refreshed = db_session.get(UserSecurityState, user.id)
     assert refreshed is not None
     assert refreshed.session_version == 2
