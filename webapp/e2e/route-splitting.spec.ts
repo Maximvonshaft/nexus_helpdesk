@@ -9,6 +9,8 @@ const CANONICAL_SOURCES = [
   'src/features/channels/lazy.tsx',
   'src/features/runtime/lazy.tsx',
   'src/features/control-tower/lazy.tsx',
+  'src/features/administration/lazy.ts',
+  'src/features/account/lazy.ts',
 ]
 
 type ManifestRecord = {
@@ -50,6 +52,7 @@ async function setAuthenticatedSession(page: Page) {
         username: 'operator',
         display_name: 'Operations User',
         role: 'admin',
+        must_change_password: false,
         capabilities: [
           'ticket.read',
           'operator_queue.read',
@@ -59,6 +62,7 @@ async function setAuthenticatedSession(page: Page) {
           'runtime.manage',
           'audit.read',
           'ticket.assign',
+          'user.manage',
         ],
       })
     }
