@@ -1,0 +1,29 @@
+name: Temporary Tree SHA Export
+
+on:
+  push:
+    branches:
+      - feat/conversation-first-agent-routing
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Capture exact tree SHA
+        run: git rev-parse 'HEAD^{tree}' > /tmp/tree-sha.txt
+      - name: Upload tree identity
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-tree-${{ github.sha }}
+          path: /tmp/tree-sha.txt
+          if-no-files-found: error
+          retention-days: 1
