@@ -1,0 +1,28 @@
+name: Temporary Exact Source Export
+
+on:
+  push:
+    branches:
+      - fix/final-external-channel-data-retirement
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Archive tracked source only
+        run: git archive --format=tar.gz --output=/tmp/nexus-exact-source.tar.gz HEAD
+      - name: Upload exact source artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: temporary-exact-source-${{ github.sha }}
+          path: /tmp/nexus-exact-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
