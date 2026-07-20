@@ -1,6 +1,6 @@
 import { Alert, Box, Button, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   OperatorLoadingState,
@@ -23,13 +23,18 @@ export function AuthenticatedAppPage({
   const logout = useLogout()
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
+  const passwordRecoveryRequired = Boolean(session.data?.must_change_password) && activeRoute !== 'account'
+
+  useEffect(() => {
+    if (passwordRecoveryRequired) navigate({ to: '/account', replace: true })
+  }, [navigate, passwordRecoveryRequired])
 
   const handleLogout = () => {
     logout()
     navigate({ to: '/login', replace: true })
   }
 
-  if (session.isLoading || !session.data) {
+  if (session.isLoading || !session.data || passwordRecoveryRequired) {
     if (session.isError) {
       return (
         <OperatorPageBoundary>
@@ -47,7 +52,7 @@ export function AuthenticatedAppPage({
     }
     return (
       <OperatorPageBoundary busy>
-        <OperatorLoadingState label="正在登录…" minHeight={0} />
+        <OperatorLoadingState label={passwordRecoveryRequired ? '正在进入凭据恢复…' : '正在登录…'} minHeight={0} />
       </OperatorPageBoundary>
     )
   }
