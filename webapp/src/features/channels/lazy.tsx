@@ -1,1 +1,1 @@
-export { ChannelsPage as default } from './ChannelsPage'
+export { ChannelsControlPlane as default } from './ChannelsControlPlane'

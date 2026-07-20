@@ -3,10 +3,17 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI
 
 from ..api.admin import router as admin_router
-from ..api.admin_password_policy import enforce_admin_password_request_policy
+from ..api.admin_identity import router as admin_identity_router
+from ..api.admin_identity_policy import enforce_admin_identity_request_policy
+from ..api.admin_mfa import router as admin_mfa_router
+from ..api.admin_password_policy import (
+    enforce_admin_password_request_policy_dependency
+    as enforce_admin_password_request_policy,
+)
 from ..api.admin_perf import router as admin_perf_router
 from ..api.admin_provider_runtime import router as admin_provider_runtime_router
 from ..api.admin_queue import router as admin_queue_router
+from ..api.admin_tenant_query_scope import enforce_admin_tenant_query_scope
 from ..api.admin_whatsapp_native import router as admin_whatsapp_native_router
 from ..api.auth import router as auth_router
 from ..api.canonical_integration import router as integration_router
@@ -37,11 +44,23 @@ from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
 
 
+def _compose_admin_dependencies(*, dependencies: list) -> list:
+    """Return the one ordered policy chain for the canonical admin router."""
+
+    return [
+        Depends(enforce_admin_tenant_query_scope),
+        Depends(enforce_admin_identity_request_policy),
+        *dependencies,
+    ]
+
+
 def register_api_routers(app: FastAPI) -> None:
     """Register every supported API router exactly once in deterministic order."""
 
     for router in (
         admin_perf_router,
+        admin_identity_router,
+        admin_mfa_router,
         admin_provider_runtime_router,
         admin_whatsapp_native_router,
         ticket_perf_router,
@@ -49,7 +68,9 @@ def register_api_routers(app: FastAPI) -> None:
         app.include_router(router)
     app.include_router(
         admin_router,
-        dependencies=[Depends(enforce_admin_password_request_policy)],
+        dependencies=_compose_admin_dependencies(
+            dependencies=[Depends(enforce_admin_password_request_policy)]
+        ),
     )
     for router in (
         admin_queue_router,

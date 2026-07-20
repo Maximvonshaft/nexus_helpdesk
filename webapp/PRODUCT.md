@@ -20,7 +20,7 @@ For every customer contact or governed operational signal, the frontend must mak
 
 The canonical journey is:
 
-`Login → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
+`Password login → MFA when enabled → Credential recovery when required → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
 
 ## Users
 
@@ -45,33 +45,83 @@ The canonical journey is:
 
 ### Knowledge and SOP Steward
 
-- Maintains approved customer-visible Knowledge and, after M11, internal SOP skills.
+- Maintains approved customer-visible Knowledge and internal operating guidance.
 - Cannot override live facts, action authority or case closure.
 
 ### Channel Administrator
 
 - Manages channel/account configuration and health.
+- Governs SMTP external sending and optional IMAP receiving through `/channels`.
 - Does not gain case access solely from channel configuration permission.
+
+### Identity Administrator
+
+- Manages users, server-authoritative role and capability assignments, teams, credential policy, MFA recovery, and session revocation.
+- Cannot create a second user directory, RBAC table, session store, or authentication path.
+- Uses audited commands for password reset, forced rotation, account status, team scope, MFA reset, and session revocation.
+- Manages their own password, MFA and sessions only through `/account`.
 
 ### Runtime and Audit Operator
 
 - Inspects bounded Runtime, debug, evaluation and audit evidence.
+- A user with `runtime.manage` may explicitly requeue dead background jobs or dead outbound records through `/runtime`.
 - Technical access does not imply customer-data or operational-action authority.
 
 ## Canonical route domains
 
 | Domain | Route | Job |
 |---|---|---|
-| Authentication | `/login` | Establish operator identity |
+| Authentication | `/login` | Establish password identity and complete MFA when enabled |
+| Account and credential recovery | `/account` | Inspect identity, rotate password, manage MFA, recovery codes and current-account sessions |
 | Operator work | `/workspace` | Queue, case, evidence, ownership, action, communication and closure target |
 | Knowledge and SOP | `/knowledge` | Govern Knowledge and internal operating guidance |
-| Channels | `/channels` | Channel/account configuration and health |
-| Runtime and audit | `/runtime` | Technical readiness, debug/eval and bounded evidence |
+| Channels | `/channels` | Channel onboarding, health, SMTP/IMAP account configuration and test sending |
+| Runtime and audit | `/runtime` | Technical readiness, bounded evidence, queue health and audited dead-record recovery |
 | Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
+| Identity administration | `/administration` | Users, role/capability assignments, credential/MFA/session governance, teams and security audit |
 
 `/webchat` is a compatibility redirect only. It does not mount a second product surface.
 
 Navigation is derived from backend capabilities and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
+
+## Identity, credential and session model
+
+- `User` is the only operator identity record.
+- `User.updated_at` is the only mutable token-revocation version.
+- The server capability fingerprint is the only permission-freshness version.
+- `user_credential_policies` stores forced-password-change policy, bounded login/password timestamps, encrypted TOTP state and hashed one-use recovery codes. It stores no access token, refresh token, device session, role, permission, or tenant ownership.
+- Alembic `20260720_0064` introduces the credential-policy row; `20260720_0065` adds MFA state.
+- New administrator-issued credentials and administrator password resets require password rotation.
+- A forced-rotation identity may access only authentication recovery endpoints and `/account`; business APIs and agent WebSockets fail closed.
+- Correct password authentication for an MFA-enabled user produces only a short-lived MFA challenge. No application access token is issued before TOTP or recovery-code verification.
+- MFA secrets use the purpose-specific identity encryption key. Recovery codes are Argon2-hashed, single use and displayed in plaintext only immediately after generation.
+- Reusing a TOTP time step is rejected. Administrator MFA reset is same-tenant, audited, cannot target the current administrator, and revokes target sessions.
+- Password, MFA, identity, capability-policy, account-status, forced-rotation and explicit revocation changes invalidate stale HTTP and agent WebSocket access through the canonical identity version.
+- Passwords, TOTP secrets, MFA challenges, access tokens and recovery codes never enter audit payloads, frontend logs or operator-visible technical evidence.
+
+## Tenant authority
+
+- Tenant ownership is derived only from the authenticated server principal and canonical relations.
+- User, team, market, capability override, security audit, channel account and outbound-email administration queries are tenant scoped on the server.
+- Tenant-bound email accounts must bind to an active market owned by the same tenant; cross-tenant resources are concealed.
+- Tenant-bound external email routing never falls back to an unowned global account.
+- The browser never supplies or overrides a tenant identity.
+
+## Runtime recovery model
+
+- `/runtime` is the only runtime-health and queue-recovery surface.
+- Read access may inspect queue counts; mutation requires `runtime.manage`.
+- Recovery commands reuse existing rate-limited, audited backend authorities.
+- Each command requeues at most 50 oldest dead records and preserves idempotency and provider safety boundaries.
+- Requeue success means only that technical processing was rescheduled; it never means operational or business completion.
+
+## Channel account model
+
+- `/channels` is the only channel onboarding, health and account-governance surface.
+- The existing channel onboarding workflow remains canonical.
+- SMTP and IMAP passwords are write-only encrypted fields. Lists and edit forms expose only configured/masked status.
+- Test send invokes the existing real SMTP test authority and updates health evidence; enabling an account does not substitute for a successful test.
+- Historical messages and audit evidence remain after account disablement.
 
 ## Operator work model
 
@@ -128,7 +178,7 @@ Keep these distinct:
 - Business result confirmed
 - Repair required
 
-An API success, queued Job, Job `done`, message `sent`, or Dispatch `dispatched` is not business result confirmation.
+An API success, queued Job, Job `done`, message `sent`, Dispatch `dispatched`, test email success or dead-record requeue is not business result confirmation.
 
 ### Closure
 
@@ -159,19 +209,25 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 ## Product behavior principles
 
 - One primary action per current task state.
-- Server-calculated permissions and action availability.
+- Server-calculated permissions, tenant scope and action availability.
 - UI success only after durable backend confirmation.
 - No false success language.
 - Empty states teach the next valid action.
-- Errors state what failed and what the operator can do.
+- Errors state what failed and what the operator can do without exposing authentication distinctions or secrets.
 - Degraded, unavailable, stale, conflict and repair-required are first-class states.
 - Refresh preserves durable state and never duplicates commands.
 - Keyboard operation and screen-reader structure are part of product behavior.
+- Credential recovery blocks protected content before business requests are sent.
+- MFA challenge completion precedes access-token creation.
+- Session revocation applies to HTTP and active agent WebSocket access through the same identity authority.
+- Sensitive account operations require explicit confirmation and are durably audited.
 
 ## Non-goals
 
 - No direct Provider execution from UI code.
 - No second queue, case truth or action truth.
+- No second user directory, RBAC table, session store, MFA store, channel product, Runtime product or authentication transport.
+- No client-owned tenant scope.
 - No probabilistic silent cross-channel merge.
 - No raw tracking/contact/provider identifiers on unsafe surfaces.
 - No customer-visible reply bypass.
@@ -183,8 +239,14 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 
 - `webapp/src/routes/` contains the only route registry.
 - `/workspace` is the only queue, case, conversation and governed-action surface.
+- `/account` is the only current-user password, MFA, recovery-code and session surface.
+- `/administration` is the only user, credential, MFA recovery, role/capability, team and security-audit surface.
+- `/channels` is the only channel onboarding, channel health and SMTP/IMAP account-governance surface.
+- `/runtime` is the only runtime evidence, queue health and dead-record recovery surface.
 - `KnowledgePage.tsx` is the only Knowledge implementation; capability controls editing.
-- `apiClient.ts` is the only generic HTTP transport.
+- `apiClient.ts` is the only generic HTTP transport; `supportApi.ts` is the typed product API.
+- `User.updated_at` and the server capability fingerprint are the only token-freshness authorities for HTTP and agent WebSocket access.
+- `SecretCryptoService` is the only application-managed secret-encryption authority, with separate purpose-specific keys for outbound email and identity MFA.
 - Material UI, one Nexus theme and one bounded operator-presentation module are the only generic visual authorities.
 - `/webchat` redirects to canonical routes and does not own a product UI.
 

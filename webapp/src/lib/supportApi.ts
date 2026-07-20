@@ -1,14 +1,36 @@
 import type {
+  AdminUser,
+  AdminUserCreate,
+  AdminUserPage,
+  AdminUserUpdate,
+  AuthSessionResponse,
   AuthUser,
   ChannelAccount,
   ControlTower,
+  CredentialPolicy,
+  IdentityTeam,
+  IdentityTeamCreate,
+  IdentityTeamUpdate,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
   KnowledgeStudio,
+  LoginResult,
+  Market,
+  MfaRecoveryCodes,
+  MfaSetupBegin,
+  MfaStatus,
+  OutboundEmailAccount,
+  OutboundEmailAccountCreate,
+  OutboundEmailAccountUpdate,
+  OutboundEmailTestSendRequest,
+  OutboundEmailTestSendResult,
   ProviderRuntimeStatus,
+  QueueSummary,
+  RolePolicy,
+  SecurityAudit,
   SupportConversationMetrics,
   SupportConversationPage,
   SupportConversationReplyPayload,
@@ -52,11 +74,86 @@ export {
 export const normalizeSupportApiBaseUrl = normalizeApiBaseUrl
 
 export const supportApi = {
-  login: (username: string, password: string) => apiRequest<{ access_token: string; user: AuthUser }>('/api/auth/login', {
+  login: (username: string, password: string) => apiRequest<LoginResult>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   }),
+  verifyMfaLogin: (challengeToken: string, credential: string) => apiRequest<AuthSessionResponse>('/api/auth/mfa/login/verify', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_token: challengeToken, credential }),
+  }),
   me: () => apiRequest<AuthUser>('/api/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  }),
+  logoutAll: () => apiRequest<{ ok: boolean }>('/api/auth/logout-all', { method: 'POST' }),
+  mfaStatus: () => apiRequest<MfaStatus>('/api/auth/mfa/status'),
+  beginMfaSetup: (currentPassword: string) => apiRequest<MfaSetupBegin>('/api/auth/mfa/setup/begin', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword }),
+  }),
+  cancelMfaSetup: () => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/mfa/setup/cancel', { method: 'POST' }),
+  confirmMfaSetup: (code: string) => apiRequest<MfaRecoveryCodes>('/api/auth/mfa/setup/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  }),
+  regenerateMfaRecoveryCodes: (currentPassword: string, credential: string) => apiRequest<MfaRecoveryCodes>('/api/auth/mfa/recovery-codes/regenerate', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, credential }),
+  }),
+  disableMfa: (currentPassword: string, credential: string) => apiRequest<{ ok: boolean; reauthenticate: boolean }>('/api/auth/mfa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, credential }),
+  }),
+
+  adminUsers: (params?: { cursor?: string | null; limit?: number; includeInactive?: boolean }) => {
+    const search = new URLSearchParams({
+      limit: String(params?.limit ?? 100),
+      include_inactive: String(params?.includeInactive ?? true),
+    })
+    if (params?.cursor) search.set('cursor', params.cursor)
+    return apiRequest<AdminUserPage>(`/api/admin/users?${search.toString()}`)
+  },
+  rolePolicies: () => apiRequest<RolePolicy[]>('/api/admin/identity/roles'),
+  credentialPolicies: () => apiRequest<CredentialPolicy[]>('/api/admin/identity/credential-policies'),
+  identityTeams: () => apiRequest<IdentityTeam[]>('/api/admin/identity/teams'),
+  identityMarkets: () => apiRequest<Market[]>('/api/lookups/markets'),
+  createIdentityTeam: (payload: IdentityTeamCreate) => apiRequest<IdentityTeam>('/api/admin/identity/teams', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateIdentityTeam: (teamId: number, payload: IdentityTeamUpdate) => apiRequest<IdentityTeam>(`/api/admin/identity/teams/${teamId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  securityAudit: (limit = 100) => apiRequest<SecurityAudit>(`/api/admin/security-audit?limit=${Math.max(1, Math.min(limit, 100))}`),
+  createAdminUser: (payload: AdminUserCreate) => apiRequest<AdminUser>('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateAdminUser: (userId: number, payload: AdminUserUpdate) => apiRequest<AdminUser>(`/api/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  activateAdminUser: (userId: number) => apiRequest<AdminUser>(`/api/admin/users/${userId}/activate`, { method: 'POST' }),
+  deactivateAdminUser: (userId: number) => apiRequest<AdminUser>(`/api/admin/users/${userId}/deactivate`, { method: 'POST' }),
+  resetAdminUserPassword: (userId: number, password: string) => apiRequest<{ ok: boolean }>(`/api/admin/users/${userId}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  }),
+  clearAdminUserTeam: (userId: number) => apiRequest<{ ok: boolean; user_id: number; team_id: null }>(`/api/admin/identity/users/${userId}/team`, {
+    method: 'DELETE',
+  }),
+  requireAdminUserPasswordChange: (userId: number) => apiRequest<{ ok: boolean; user_id: number }>(`/api/admin/identity/users/${userId}/require-password-change`, {
+    method: 'POST',
+  }),
+  revokeAdminUserSessions: (userId: number) => apiRequest<{ ok: boolean; user_id: number }>(`/api/admin/identity/users/${userId}/revoke-sessions`, {
+    method: 'POST',
+  }),
+  resetAdminUserMfa: (userId: number) => apiRequest<{ ok: boolean; user_id: number; sessions_revoked: boolean }>(`/api/admin/identity/users/${userId}/reset-mfa`, {
+    method: 'POST',
+  }),
 
   controlTower: () => apiRequest<ControlTower>('/api/lite/control-tower'),
   supportConversations: (params?: { view?: string; channel?: string; q?: string; limit?: number }, init?: RequestInit) => {
@@ -109,6 +206,21 @@ export const supportApi = {
 
   channelAccounts: () => apiRequest<ChannelAccount[]>('/api/admin/channel-accounts'),
   whatsappNativeStatus: (accountId: string) => apiRequest<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
+  outboundEmailAccounts: () => apiRequest<OutboundEmailAccount[]>('/api/admin/outbound-email/accounts'),
+  createOutboundEmailAccount: (payload: OutboundEmailAccountCreate) => apiRequest<OutboundEmailAccount>('/api/admin/outbound-email/accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateOutboundEmailAccount: (accountId: number, payload: OutboundEmailAccountUpdate) => apiRequest<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  enableOutboundEmailAccount: (accountId: number) => apiRequest<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}/enable`, { method: 'POST' }),
+  disableOutboundEmailAccount: (accountId: number) => apiRequest<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}/disable`, { method: 'POST' }),
+  testOutboundEmailAccount: (accountId: number, payload: OutboundEmailTestSendRequest) => apiRequest<OutboundEmailTestSendResult>(`/api/admin/outbound-email/accounts/${accountId}/test-send`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   channelOnboardingTasks: (params?: { provider?: string; status?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams({
       limit: String(params?.limit ?? 50),
@@ -137,6 +249,13 @@ export const supportApi = {
     method: 'POST',
   }),
   providerRuntimeStatus: () => apiRequest<ProviderRuntimeStatus>('/api/admin/provider-runtime/status'),
+  queueSummary: () => apiRequest<QueueSummary>('/api/admin/queues/summary'),
+  requeueDeadJobs: (limit = 50) => apiRequest<{ ok: boolean; requeued: number; job_type?: string | null }>(`/api/admin/jobs/requeue-dead?limit=${Math.max(1, Math.min(limit, 200))}`, {
+    method: 'POST',
+  }),
+  requeueDeadOutbound: (limit = 50) => apiRequest<{ ok: boolean; requeued: number }>(`/api/admin/outbound/requeue-dead?limit=${Math.max(1, Math.min(limit, 200))}`, {
+    method: 'POST',
+  }),
 
   querySpeedafWaybills: (ticketId: number, payload: SpeedafWaybillLookupPayload) => apiRequest<SpeedafWaybillLookupResponse>(`/api/tickets/${ticketId}/speedaf/waybills/query`, {
     method: 'POST',

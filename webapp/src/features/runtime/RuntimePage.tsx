@@ -21,6 +21,7 @@ import {
 import { sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import { runtimePresentation } from '@/lib/supportStatus'
+import { RuntimeRecoveryPanel } from './RuntimeRecoveryPanel'
 
 const LazyRuntimeEvidenceAudit = lazy(async () => {
   const module = await import('./RuntimeEvidenceAudit')
@@ -149,6 +150,7 @@ export function RuntimePage() {
           </Paper>
         </Box>
       )}
+      <RuntimeRecoveryPanel />
     </Box>
   )
 }

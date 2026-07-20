@@ -1,4 +1,5 @@
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
+import ManageAccountsRoundedIcon from '@mui/icons-material/ManageAccountsRounded'
 import {
   AppBar,
   Avatar,
@@ -14,6 +15,7 @@ import {
   Typography,
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
+import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 import { channelPresentation } from '@/lib/supportStatus'
@@ -158,6 +160,30 @@ export function AppShell({
             <Typography variant="body2" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' }, maxWidth: 140 }} noWrap>
               {userLabel}
             </Typography>
+            <Link
+              to="/account"
+              aria-current={activeRoute === 'account' ? 'page' : undefined}
+              aria-label="账户设置"
+              style={{ color: 'inherit', textDecoration: 'none' }}
+            >
+              <Box
+                component="span"
+                sx={{
+                  alignItems: 'center',
+                  borderRadius: 1,
+                  color: activeRoute === 'account' ? 'primary.main' : 'text.secondary',
+                  display: 'inline-flex',
+                  gap: 0.75,
+                  minHeight: 40,
+                  px: 1,
+                  '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+                  '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+                }}
+              >
+                <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
+                <Typography component="span" variant="button" sx={{ display: { xs: 'none', xl: 'inline' } }}>账户</Typography>
+              </Box>
+            </Link>
             <Button aria-label="退出" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
               <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>退出</Box>
             </Button>

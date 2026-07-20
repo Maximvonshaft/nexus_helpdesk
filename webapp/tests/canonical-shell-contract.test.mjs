@@ -43,10 +43,11 @@ test('one MUI application shell owns product identity, navigation, session and s
   assert.match(shell, /channelPresentation\(scope\.channel_key\)\.label/)
   assert.match(shell, /<AppBar/)
   assert.match(shell, /<Toolbar/)
+  assert.match(shell, /to="\/account"/)
   assert.match(navigationView, /APP_NAVIGATION\.filter/)
   assert.match(navigationView, /from '@mui\/material'/)
   assert.match(navigationView, /from '@tanstack\/react-router'/)
-  for (const route of ['/workspace', '/knowledge', '/channels', '/runtime', '/control-tower']) {
+  for (const route of ['/workspace', '/knowledge', '/channels', '/runtime', '/control-tower', '/administration']) {
     assert.match(navigation, new RegExp(route.replace('/', '\\/')))
   }
   assert.match(theme, /MuiButton:/)

@@ -7,6 +7,8 @@ import { Route as KnowledgeRoute } from '@/routes/knowledge'
 import { Route as ChannelsRoute } from '@/routes/channels'
 import { Route as RuntimeRoute } from '@/routes/runtime'
 import { Route as ControlTowerRoute } from '@/routes/control-tower'
+import { Route as AdministrationRoute } from '@/routes/administration'
+import { Route as AccountRoute } from '@/routes/account'
 import { Route as WebchatRoute } from '@/routes/webchat'
 
 const routeTree = RootRoute.addChildren([
@@ -17,6 +19,8 @@ const routeTree = RootRoute.addChildren([
   ChannelsRoute,
   RuntimeRoute,
   ControlTowerRoute,
+  AdministrationRoute,
+  AccountRoute,
   WebchatRoute,
 ])
 

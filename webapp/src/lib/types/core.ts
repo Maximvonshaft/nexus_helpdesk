@@ -7,12 +7,88 @@ export interface AuthUser {
   role: string
   team_id?: number | null
   capabilities?: string[]
+  must_change_password?: boolean
+  password_changed_at?: string | null
+  last_login_at?: string | null
+  mfa_enabled?: boolean
+}
+export interface AuthSessionResponse {
+  access_token: string
+  token_type?: string
+  user: AuthUser
+}
+export interface MfaLoginChallenge {
+  mfa_required: true
+  challenge_token: string
+  expires_in_seconds: number
+  display_name: string
+}
+export type LoginResult = AuthSessionResponse | MfaLoginChallenge
+export interface MfaStatus {
+  enabled: boolean
+  setup_pending: boolean
+  confirmed_at?: string | null
+  last_verified_at?: string | null
+  recovery_codes_remaining: number
+}
+export interface MfaSetupBegin {
+  secret: string
+  otpauth_uri: string
+}
+export interface MfaRecoveryCodes {
+  ok: boolean
+  recovery_codes: string[]
+  reauthenticate: boolean
 }
 export interface AdminUser extends AuthUser {
   is_active: boolean
   capabilities: string[]
-  created_at: string
-  updated_at: string
+  created_at: string | null
+  updated_at: string | null
+}
+export interface AdminUserPage {
+  items: AdminUser[]
+  next_cursor: string | null
+  has_more: boolean
+  filters: {
+    limit: number
+    include_inactive: boolean
+  }
+}
+export interface CredentialPolicy {
+  user_id: number
+  username: string
+  display_name: string
+  role: string
+  is_active: boolean
+  must_change_password: boolean
+  password_changed_at?: string | null
+  last_login_at?: string | null
+  mfa_enabled: boolean
+  mfa_confirmed_at?: string | null
+  mfa_last_verified_at?: string | null
+  mfa_recovery_codes_remaining: number
+  updated_at?: string | null
+}
+export interface RolePolicy {
+  role: string
+  default_capabilities: string[]
+}
+export interface AdminUserCreate {
+  username: string
+  password: string
+  display_name: string
+  email?: string | null
+  role: string
+  team_id?: number | null
+  capabilities: string[]
+}
+export interface AdminUserUpdate {
+  display_name?: string
+  email?: string | null
+  role?: string
+  team_id?: number | null
+  capabilities?: string[]
 }
 export interface SecurityCapabilityUser {
   user_id: number
@@ -66,6 +142,23 @@ export interface Team {
   name: string
   team_type: string
   market_id?: number | null
+}
+export interface IdentityTeam extends Team {
+  is_active: boolean
+  active_users: number
+  created_at: string
+  updated_at: string
+}
+export interface IdentityTeamCreate {
+  name: string
+  team_type: string
+  market_id?: number | null
+}
+export interface IdentityTeamUpdate {
+  name?: string
+  team_type?: string
+  market_id?: number | null
+  is_active?: boolean
 }
 export interface LiteMeta {
   users: AuthUser[]

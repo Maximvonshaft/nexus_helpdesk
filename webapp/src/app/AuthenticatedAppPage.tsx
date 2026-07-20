@@ -9,6 +9,7 @@ import {
 import { useLogout, useSession } from '@/hooks/useAuth'
 import { AppShell } from './AppShell'
 import type { AppRouteKey } from './navigation'
+import { usePasswordRecoveryGuard } from './usePasswordRecoveryGuard'
 
 export function AuthenticatedAppPage({
   activeRoute,
@@ -23,13 +24,14 @@ export function AuthenticatedAppPage({
   const logout = useLogout()
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
+  const passwordRecoveryRequired = usePasswordRecoveryGuard(session.data?.must_change_password, activeRoute)
 
   const handleLogout = () => {
     logout()
     navigate({ to: '/login', replace: true })
   }
 
-  if (session.isLoading || !session.data) {
+  if (session.isLoading || !session.data || passwordRecoveryRequired) {
     if (session.isError) {
       return (
         <OperatorPageBoundary>
@@ -47,12 +49,12 @@ export function AuthenticatedAppPage({
     }
     return (
       <OperatorPageBoundary busy>
-        <OperatorLoadingState label="正在登录…" minHeight={0} />
+        <OperatorLoadingState label={passwordRecoveryRequired ? '正在进入凭据恢复…' : '正在登录…'} minHeight={0} />
       </OperatorPageBoundary>
     )
   }
 
-  const allowed = requiredAny.some((capability) => capabilities.has(capability))
+  const allowed = requiredAny.length === 0 || requiredAny.some((capability) => capabilities.has(capability))
 
   return (
     <AppShell

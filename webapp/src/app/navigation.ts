@@ -1,8 +1,9 @@
-export type AppRouteKey = 'workspace' | 'knowledge' | 'channels' | 'runtime' | 'control-tower'
-export type AppCanonicalPath = '/workspace' | '/knowledge' | '/channels' | '/runtime' | '/control-tower'
+export type AppRouteKey = 'workspace' | 'knowledge' | 'channels' | 'runtime' | 'control-tower' | 'administration' | 'account'
+export type AppNavigationRouteKey = Exclude<AppRouteKey, 'account'>
+export type AppCanonicalPath = '/workspace' | '/knowledge' | '/channels' | '/runtime' | '/control-tower' | '/administration'
 
 export interface AppNavigationItem {
-  key: AppRouteKey
+  key: AppNavigationRouteKey
   label: string
   canonicalRoute: AppCanonicalPath
   currentHref: AppCanonicalPath
@@ -57,6 +58,14 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
       'ai_config.manage',
       'user.manage',
     ],
+    status: 'canonical',
+  },
+  {
+    key: 'administration',
+    label: '系统管理',
+    canonicalRoute: '/administration',
+    currentHref: '/administration',
+    capabilityAny: ['user.manage', 'security.read', 'audit.read'],
     status: 'canonical',
   },
 ]
