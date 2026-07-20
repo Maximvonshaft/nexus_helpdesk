@@ -62,17 +62,25 @@ def _relational_tenant(db: Session) -> Tenant | None:
     return tenant
 
 
+def _conversation_control(
+    db: Session,
+    *,
+    conversation_id: int,
+) -> ConversationControl | None:
+    return (
+        db.query(ConversationControl)
+        .filter(ConversationControl.conversation_id == conversation_id)
+        .first()
+    )
+
+
 def ensure_conversation_control(
     db: Session,
     *,
     conversation: WebchatConversation,
     customer_id: int | None = None,
 ) -> ConversationControl:
-    row = (
-        db.query(ConversationControl)
-        .filter(ConversationControl.conversation_id == conversation.id)
-        .first()
-    )
+    row = _conversation_control(db, conversation_id=conversation.id)
     scope = current_verified_webchat_scope(db)
     if row is None:
         row = ConversationControl(
@@ -127,7 +135,9 @@ def _assert_resume_scope(
             status_code=status.HTTP_409_CONFLICT,
             detail="webchat_tenant_relationship_conflict",
         )
-    if tenant is not None and (customer is None or customer.tenant_id != expected_tenant_id):
+    if tenant is not None and (
+        customer is None or customer.tenant_id != expected_tenant_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="webchat_tenant_relationship_conflict",
@@ -164,11 +174,29 @@ def create_or_resume_conversation(
         )
         if existing is not None:
             _validate_token(existing, visitor_token)
-            control = ensure_conversation_control(
-                db,
-                conversation=existing,
-                customer_id=_legacy_customer_id(db, existing),
-            )
+            legacy_customer_id = _legacy_customer_id(db, existing)
+            control = _conversation_control(db, conversation_id=existing.id)
+            if control is None:
+                control = ensure_conversation_control(
+                    db,
+                    conversation=existing,
+                    customer_id=legacy_customer_id,
+                )
+            else:
+                # Validate the immutable stored routing scope before any refresh.
+                # Otherwise a request from another verified country could rewrite
+                # the row and make the subsequent comparison vacuous.
+                _assert_resume_scope(
+                    db,
+                    conversation=existing,
+                    control=control,
+                    tenant=tenant,
+                )
+                control = ensure_conversation_control(
+                    db,
+                    conversation=existing,
+                    customer_id=legacy_customer_id,
+                )
             _assert_resume_scope(
                 db,
                 conversation=existing,
