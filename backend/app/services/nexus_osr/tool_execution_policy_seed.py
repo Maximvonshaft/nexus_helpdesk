@@ -24,10 +24,18 @@ class ToolExecutionPolicySeed:
 
 DEFAULT_TOOL_EXECUTION_POLICY_SEEDS: tuple[ToolExecutionPolicySeed, ...] = (
     ToolExecutionPolicySeed(
-        tool_name="ticket.create",
+        tool_name="support.availability",
         enabled=True,
         ai_auto_executable=True,
+        risk_level="low",
+        audit_level="standard",
+    ),
+    ToolExecutionPolicySeed(
+        tool_name="ticket.create",
+        enabled=True,
+        ai_auto_executable=False,
         risk_level="medium",
+        requires_customer_confirmation=True,
         audit_level="standard",
     ),
     ToolExecutionPolicySeed(
@@ -64,11 +72,11 @@ def seed_default_tool_execution_policies(
     channel: str = "all",
     overwrite_existing: bool = False,
 ) -> list[ToolExecutionPolicyRecord]:
-    """Seed safe OSR ToolExecutionPolicy rows for controlled runtime actions.
+    """Seed conservative controlled-runtime actions.
 
-    The seed is conservative: low/medium Nexus-owned actions are enabled and
-    AI-auto-executable, while high-risk Speedaf write tools remain disabled by
-    default. Existing rows are left unchanged unless `overwrite_existing=True`.
+    Read-only availability and Nexus-owned handoff actions are safe to execute
+    automatically. Ticket creation requires explicit customer confirmation.
+    High-risk provider write tools remain disabled by default.
     """
 
     rows: list[ToolExecutionPolicyRecord] = []
