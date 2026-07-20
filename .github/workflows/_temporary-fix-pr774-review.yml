@@ -1,4 +1,4 @@
-name: Temporary Fix PR 774 Review Findings
+name: Temporary Close PR 774 Resume Ownership
 
 on:
   push:
@@ -9,11 +9,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: fix-pr-774-review-findings
+  group: close-pr-774-resume-ownership
   cancel-in-progress: true
 
 jobs:
-  fix-and-verify:
+  fix-test-clean:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -34,161 +34,33 @@ jobs:
       - name: Install exact dependencies
         run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
 
-      - name: Apply ownership and scope fixes
+      - name: Converge resume authority and tests
         shell: bash
         run: |
           set -Eeuo pipefail
+          echo "$(git rev-parse HEAD)" > /tmp/start-sha
           python - <<'PY'
           from pathlib import Path
-          from textwrap import dedent, indent
-
-          def read(path: str) -> str:
-              return Path(path).read_text(encoding="utf-8")
-
-          def write(path: str, text: str) -> None:
-              Path(path).write_text(text, encoding="utf-8")
+          from textwrap import dedent
 
           def replace_once(path: str, old: str, new: str) -> None:
-              text = read(path)
-              if text.count(old) != 1:
-                  raise SystemExit(f"exact replacement mismatch for {path}: {text.count(old)}")
-              write(path, text.replace(old, new, 1))
-
-          def replace_between(path: str, start: str, end: str, replacement: str) -> None:
-              text = read(path)
-              start_index = text.find(start)
-              if start_index < 0:
-                  raise SystemExit(f"start marker missing for {path}: {start!r}")
-              end_index = text.find(end, start_index)
-              if end_index < 0:
-                  raise SystemExit(f"end marker missing for {path}: {end!r}")
-              write(path, text[:start_index] + dedent(replacement).rstrip() + text[end_index:])
-
-          def replace_after(path: str, anchor: str, old: str, new: str) -> None:
-              text = read(path)
-              anchor_index = text.find(anchor)
-              if anchor_index < 0:
-                  raise SystemExit(f"anchor missing for {path}: {anchor!r}")
-              target_index = text.find(old, anchor_index)
-              if target_index < 0:
-                  raise SystemExit(f"target missing after anchor for {path}: {old!r}")
-              write(path, text[:target_index] + new + text[target_index + len(old):])
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"replacement mismatch {path}: expected 1, got {count}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
 
           def append_once(path: str, marker: str, content: str) -> None:
-              text = read(path)
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
               if marker in text:
-                  raise SystemExit(f"append marker already present for {path}: {marker}")
-              write(path, text.rstrip() + "\n\n\n" + dedent(content).strip() + "\n")
+                  raise SystemExit(f"test marker already exists: {marker}")
+              file.write_text(text.rstrip() + "\n\n\n" + dedent(content).strip() + "\n", encoding="utf-8")
 
-          resume_old = (
-              "            control = ensure_conversation_control(\n"
-              "                db,\n"
-              "                conversation=existing,\n"
-              "                customer_id=_legacy_customer_id(db, existing),\n"
-              "            )\n"
-              "            _assert_resume_scope(\n"
-              "                db,\n"
-              "                conversation=existing,\n"
-              "                control=control,\n"
-              "                tenant=tenant,\n"
-              "            )\n"
-          )
-          resume_new = indent(
-              dedent(
-                  """\
-                  control = (
-                      db.query(ConversationControl)
-                      .filter(ConversationControl.conversation_id == existing.id)
-                      .first()
-                  )
-                  if control is None:
-                      control = ensure_conversation_control(
-                          db,
-                          conversation=existing,
-                          customer_id=_legacy_customer_id(db, existing),
-                      )
-                  _assert_resume_scope(
-                      db,
-                      conversation=existing,
-                      control=control,
-                      tenant=tenant,
-                  )
-                  ensure_conversation_control(
-                      db,
-                      conversation=existing,
-                      customer_id=_legacy_customer_id(db, existing),
-                  )
-                  """
-              ),
-              "            ",
-          )
-          replace_once(
-              "backend/app/services/conversation_first_service.py",
-              resume_old,
-              resume_new,
-          )
-
-          replace_between(
-              "backend/app/services/agent_routing_service.py",
-              "def _eligible_requested_handoff(",
-              "\n\ndef _operator_task(",
-              """
-              def _eligible_requested_handoff(
-                  db: Session,
-                  *,
-                  user: User,
-              ) -> tuple[WebchatHandoffRequest, WebchatConversation, ConversationControl] | None:
-                  scope_grant_exists = (
-                      db.query(OperatorQueueScopeGrant.id)
-                      .filter(
-                          OperatorQueueScopeGrant.user_id == user.id,
-                          OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
-                          OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
-                          OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
-                          OperatorQueueScopeGrant.enabled.is_(True),
-                      )
-                      .exists()
-                  )
-                  declined_exists = (
-                      db.query(WebchatHandoffDecision.id)
-                      .filter(
-                          WebchatHandoffDecision.request_id == WebchatHandoffRequest.id,
-                          WebchatHandoffDecision.actor_id == user.id,
-                          WebchatHandoffDecision.decision == "declined",
-                      )
-                      .exists()
-                  )
-                  query = (
-                      db.query(
-                          WebchatHandoffRequest,
-                          WebchatConversation,
-                          ConversationControl,
-                      )
-                      .join(
-                          WebchatConversation,
-                          WebchatConversation.id == WebchatHandoffRequest.conversation_id,
-                      )
-                      .join(
-                          ConversationControl,
-                          ConversationControl.conversation_id == WebchatConversation.id,
-                      )
-                      .filter(
-                          WebchatHandoffRequest.status == "requested",
-                          WebchatConversation.status == "open",
-                          scope_grant_exists,
-                          ~declined_exists,
-                      )
-                      .order_by(
-                          WebchatHandoffRequest.requested_at.asc(),
-                          WebchatHandoffRequest.id.asc(),
-                      )
-                  )
-                  return _lock(query, db).first()
-              """,
-          )
-
+          handoff = "backend/app/services/webchat_handoff_service.py"
           helper = dedent(
-              """
+              '''
               def can_resume_ticketless_handoff(
                   *,
                   handoff: WebchatHandoffRequest,
@@ -196,6 +68,13 @@ jobs:
                   user: User,
                   capabilities: set[str],
               ) -> bool:
+                  """Return whether this actor may resume AI for a ticketless handoff.
+
+                  Global resume capability remains authoritative for supervisors. Ordinary
+                  agents may only resume an accepted conversation they currently own in
+                  both the durable handoff request and the conversation occupancy snapshot.
+                  """
+
                   if handoff.status not in _OPEN:
                       return False
                   if CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities:
@@ -208,266 +87,108 @@ jobs:
                   )
 
 
-              """
+              '''
+          )
+          replace_once(handoff, "def _ticketless_payload(\n", helper + "def _ticketless_payload(\n")
+          replace_once(
+              handoff,
+              '''    capabilities = resolve_capabilities(current_user, db)
+                  assigned_owner_can_resume = bool(
+                      request_row.status == "accepted"
+                      and request_row.assigned_agent_id == current_user.id
+                      and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+                  )
+              ''',
+              '''    capabilities = resolve_capabilities(current_user, db)
+              ''',
           )
           replace_once(
-              "backend/app/services/webchat_handoff_service.py",
-              "def _ticketless_payload(\n",
-              helper + "def _ticketless_payload(\n",
-          )
-
-          replace_once(
-              "backend/app/services/webchat_handoff_service.py",
-              (
-                  '            "queue_position": queue_position(db, request_row=request_row),\n'
-                  '            "can_reply": bool(\n'
-              ),
-              (
-                  '            "queue_position": queue_position(db, request_row=request_row),\n'
-                  '            "can_resume_ai": can_resume_ticketless_handoff(\n'
-                  '                handoff=request_row,\n'
-                  '                conversation=conversation,\n'
-                  '                user=current_user,\n'
-                  '                capabilities=capabilities,\n'
-                  '            ),\n'
-                  '            "can_reply": bool(\n'
-              ),
-          )
-
-          replace_between(
-              "backend/app/services/webchat_handoff_service.py",
-              "def _ticketless_queue_items(",
-              "\n\ndef list_handoff_queue(",
-              """
-              def _ticketless_queue_items(
-                  db: Session,
-                  *,
-                  current_user: User,
-                  view: str,
-                  include_declined: bool,
-                  limit: int,
-              ) -> list[dict]:
-                  scope_grant_exists = (
-                      db.query(OperatorQueueScopeGrant.id)
-                      .filter(
-                          OperatorQueueScopeGrant.user_id == current_user.id,
-                          OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
-                          OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
-                          OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
-                          OperatorQueueScopeGrant.enabled.is_(True),
-                      )
-                      .exists()
-                  )
-                  query = (
-                      db.query(WebchatHandoffRequest, WebchatConversation, ConversationControl)
-                      .join(
-                          WebchatConversation,
-                          WebchatConversation.id == WebchatHandoffRequest.conversation_id,
-                      )
-                      .join(
-                          ConversationControl,
-                          ConversationControl.conversation_id == WebchatConversation.id,
-                      )
-                      .filter(
-                          WebchatHandoffRequest.ticket_id.is_(None),
-                          scope_grant_exists,
-                      )
-                  )
-                  if view == "mine":
-                      query = query.filter(
-                          WebchatHandoffRequest.status == "accepted",
-                          WebchatHandoffRequest.assigned_agent_id == current_user.id,
-                      )
-                  elif view == "closed":
-                      query = query.filter(WebchatHandoffRequest.status.in_(_TERMINAL))
-                  else:
-                      query = query.filter(WebchatHandoffRequest.status == "requested")
-                      if not include_declined:
-                          declined_exists = (
-                              db.query(WebchatHandoffDecision.id)
-                              .filter(
-                                  WebchatHandoffDecision.request_id == WebchatHandoffRequest.id,
-                                  WebchatHandoffDecision.actor_id == current_user.id,
-                                  WebchatHandoffDecision.decision == "declined",
+              handoff,
+              '''            "can_resume_ai": bool(
+                              request_row.status in _OPEN
+                              and (
+                                  CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
+                                  or assigned_owner_can_resume
                               )
-                              .exists()
-                          )
-                          query = query.filter(~declined_exists)
-
-                  rows = (
-                      query.order_by(
-                          WebchatHandoffRequest.requested_at.asc(),
-                          WebchatHandoffRequest.id.asc(),
-                      )
-                      .limit(max(1, min(limit, 100)))
-                      .all()
-                  )
-                  items: list[dict] = []
-                  for request_row, conversation, control in rows:
-                      if not _scope_visible(
-                          db,
-                          current_user=current_user,
-                          control=control,
-                      ):
-                          continue
-                      declined = _declined_by_current_user(
-                          db,
-                          request_id=request_row.id,
-                          user_id=current_user.id,
-                      )
-                      item = _ticketless_payload(
-                          db,
-                          request_row=request_row,
-                          conversation=conversation,
-                          current_user=current_user,
-                      )
-                      item["declined_by_me"] = declined
-                      items.append(item)
-                  return items
-              """,
-          )
-
-          resume_auth_old = (
-              "    _require_capability(\n"
-              "        db,\n"
-              "        current_user=current_user,\n"
-              "        capability=CAP_WEBCHAT_HANDOFF_RESUME_AI,\n"
-              "        detail=\"webchat_handoff_resume_ai_requires_capability\",\n"
-              "    )\n"
-              "    request_row = _core._request_by_id(db, request_id, lock=True)\n"
-              "    conversation, _control = _ticketless_context(\n"
-              "        db,\n"
-              "        request_row=request_row,\n"
-              "        current_user=current_user,\n"
-              "    )\n"
-              "    if request_row.status not in _OPEN:\n"
-              "        raise HTTPException(\n"
-              "            status_code=status.HTTP_409_CONFLICT,\n"
-              "            detail=\"webchat handoff request is already terminal\",\n"
-              "        )\n"
-          )
-          resume_auth_new = dedent(
-              """\
-              request_row = _core._request_by_id(db, request_id, lock=True)
-              conversation, _control = _ticketless_context(
-                  db,
-                  request_row=request_row,
-                  current_user=current_user,
-              )
-              if request_row.status not in _OPEN:
-                  raise HTTPException(
-                      status_code=status.HTTP_409_CONFLICT,
-                      detail="webchat handoff request is already terminal",
-                  )
-              capabilities = resolve_capabilities(current_user, db)
-              if not can_resume_ticketless_handoff(
-                  handoff=request_row,
-                  conversation=conversation,
-                  user=current_user,
-                  capabilities=capabilities,
-              ):
-                  raise HTTPException(
-                      status_code=status.HTTP_403_FORBIDDEN,
-                      detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
-                  )
-              """
+                          ),
+              ''',
+              '''            "can_resume_ai": can_resume_ticketless_handoff(
+                              handoff=request_row,
+                              conversation=conversation,
+                              user=current_user,
+                              capabilities=capabilities,
+                          ),
+              ''',
           )
           replace_once(
-              "backend/app/services/webchat_handoff_service.py",
-              resume_auth_old,
-              indent(resume_auth_new, "    "),
+              handoff,
+              '''    request_row = _core._request_by_id(db, request_id, lock=True)
+                  capabilities = resolve_capabilities(current_user, db)
+                  assigned_owner_can_resume = bool(
+                      request_row.status == "accepted"
+                      and request_row.assigned_agent_id == current_user.id
+                      and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+                  )
+                  if (
+                      CAP_WEBCHAT_HANDOFF_RESUME_AI not in capabilities
+                      and not assigned_owner_can_resume
+                  ):
+                      raise HTTPException(
+                          status_code=status.HTTP_403_FORBIDDEN,
+                          detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
+                      )
+                  conversation, _control = _ticketless_context(
+                      db,
+                      request_row=request_row,
+                      current_user=current_user,
+                  )
+              ''',
+              '''    request_row = _core._request_by_id(db, request_id, lock=True)
+                  conversation, _control = _ticketless_context(
+                      db,
+                      request_row=request_row,
+                      current_user=current_user,
+                  )
+                  capabilities = resolve_capabilities(current_user, db)
+                  if not can_resume_ticketless_handoff(
+                      handoff=request_row,
+                      conversation=conversation,
+                      user=current_user,
+                      capabilities=capabilities,
+                  ):
+                      raise HTTPException(
+                          status_code=status.HTTP_403_FORBIDDEN,
+                          detail="webchat_handoff_resume_ai_requires_capability_or_ownership",
+                      )
+              ''',
           )
 
+          operator = "backend/app/services/conversation_operator_service.py"
+          replace_once(operator, "    CAP_WEBCHAT_HANDOFF_RESUME_AI,\n", "")
           replace_once(
-              "backend/app/services/conversation_operator_service.py",
-              "    CAP_WEBCHAT_HANDOFF_RESUME_AI,\n",
-              "",
-          )
-          replace_once(
-              "backend/app/services/conversation_operator_service.py",
+              operator,
               "from .webchat_ai_turn_service import ai_snapshot\n",
-              (
-                  "from .webchat_ai_turn_service import ai_snapshot\n"
-                  "from .webchat_handoff_service import can_resume_ticketless_handoff\n"
-              ),
+              "from .webchat_ai_turn_service import ai_snapshot\nfrom .webchat_handoff_service import can_resume_ticketless_handoff\n",
           )
           replace_once(
-              "backend/app/services/conversation_operator_service.py",
-              (
-                  '        "can_resume_ai": handoff.status in {"requested", "accepted"}\n'
-                  "        and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,\n"
-              ),
-              (
-                  '        "can_resume_ai": can_resume_ticketless_handoff(\n'
-                  "            handoff=handoff,\n"
-                  "            conversation=conversation,\n"
-                  "            user=user,\n"
-                  "            capabilities=capabilities,\n"
-                  "        ),\n"
-              ),
+              operator,
+              '''        "can_resume_ai": handoff.status in {"requested", "accepted"}
+                      and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,
+              ''',
+              '''        "can_resume_ai": can_resume_ticketless_handoff(
+                          handoff=handoff,
+                          conversation=conversation,
+                          user=user,
+                          capabilities=capabilities,
+                      ),
+              ''',
           )
 
-          replace_once(
-              "backend/tests/test_conversation_first_agent_routing.py",
-              "from app.webchat_models import WebchatConversation  # noqa: E402\n",
-              (
-                  "from app.services.webchat_tenant_binding import (  # noqa: E402\n"
-                  "    VerifiedWebchatPublicScope,\n"
-                  ")\n"
-                  "from app.webchat_models import WebchatConversation  # noqa: E402\n"
-              ),
-          )
           append_once(
               "backend/tests/test_conversation_first_agent_routing.py",
-              "test_resume_scope_is_validated_before_control_refresh",
-              """
-              def test_resume_scope_is_validated_before_control_refresh(db_session):
-                  scope_key = "nexus.webchat_public_scope.v1"
-                  db_session.info[scope_key] = VerifiedWebchatPublicScope(
-                      tenant_key="default",
-                      country_code="ME",
-                      channel_key="webchat",
-                      normalized_origin=None,
-                      binding_id=None,
-                      authority="non_production_legacy",
-                  )
-                  created = create_or_resume_conversation(
-                      db_session,
-                      WebchatInitRequest(
-                          tenant_key="default",
-                          channel_key="webchat",
-                          visitor_name="Scope Locked Customer",
-                      ),
-                      _request(),
-                  )
-                  control = db_session.query(ConversationControl).one()
-                  assert control.country_code == "ME"
-
-                  db_session.info[scope_key] = VerifiedWebchatPublicScope(
-                      tenant_key="default",
-                      country_code="RS",
-                      channel_key="webchat",
-                      normalized_origin=None,
-                      binding_id=None,
-                      authority="non_production_legacy",
-                  )
-                  with pytest.raises(HTTPException) as exc:
-                      create_or_resume_conversation(
-                          db_session,
-                          WebchatInitRequest(
-                              tenant_key="default",
-                              channel_key="webchat",
-                              conversation_id=created["conversation_id"],
-                              visitor_token=created["visitor_token"],
-                          ),
-                          _request(),
-                      )
-                  assert exc.value.status_code == 409
-                  db_session.refresh(control)
-                  assert control.country_code == "ME"
-
-
-              def test_unassigned_agent_cannot_resume_another_agents_ticketless_handoff(db_session):
+              "test_only_current_ticketless_owner_can_resume_without_global_capability",
+              '''
+              def test_only_current_ticketless_owner_can_resume_without_global_capability(db_session):
                   owner = _agent(db_session, suffix="resume-owner")
                   other = _agent(db_session, suffix="resume-other")
                   conversation = _conversation(db_session, suffix="resume-owned")
@@ -484,7 +205,22 @@ jobs:
                       trigger_type="runtime_handoff",
                       reason_code="needs_human",
                   )
+                  db_session.refresh(conversation)
                   assert request_row.assigned_agent_id == owner.id
+                  assert conversation.active_agent_id == owner.id
+
+                  owner_thread = read_conversation_thread(
+                      db_session,
+                      conversation=conversation,
+                      user=owner,
+                  )
+                  other_thread = read_conversation_thread(
+                      db_session,
+                      conversation=conversation,
+                      user=other,
+                  )
+                  assert owner_thread["handoff"]["can_resume_ai"] is True
+                  assert other_thread["handoff"]["can_resume_ai"] is False
 
                   with pytest.raises(HTTPException) as exc:
                       resume_ai_for_handoff(
@@ -499,125 +235,10 @@ jobs:
                       db_session,
                       request_id=request_row.id,
                       current_user=owner,
-                      note="Owner returns the customer to AI.",
+                      note="Current owner returns the customer to AI.",
                   )
                   assert resumed["status"] == "resumed_ai"
-              """,
-          )
-
-          replace_once(
-              "backend/tests/test_conversation_first_agent_routing_residuals.py",
-              (
-                  "from app.services.webchat_handoff_service import (  # noqa: E402\n"
-                  "    decline_handoff_request,\n"
-                  ")\n"
-              ),
-              (
-                  "from app.services.webchat_handoff_service import (  # noqa: E402\n"
-                  "    decline_handoff_request,\n"
-                  "    list_handoff_queue,\n"
-                  ")\n"
-              ),
-          )
-          replace_once(
-              "backend/tests/test_conversation_first_agent_routing_residuals.py",
-              "def _conversation(db_session, *, suffix: str) -> WebchatConversation:\n",
-              (
-                  "def _conversation(\n"
-                  "    db_session,\n"
-                  "    *,\n"
-                  "    suffix: str,\n"
-                  "    country_code: str = \"ME\",\n"
-                  ") -> WebchatConversation:\n"
-              ),
-          )
-          replace_after(
-              "backend/tests/test_conversation_first_agent_routing_residuals.py",
-              "def _conversation(",
-              'country_code="ME"',
-              "country_code=country_code",
-          )
-          append_once(
-              "backend/tests/test_conversation_first_agent_routing_residuals.py",
-              "test_capacity_fill_filters_scope_before_fifo_candidate_selection",
-              """
-              def test_capacity_fill_filters_scope_before_fifo_candidate_selection(db_session):
-                  agent = _agent(db_session, suffix="scope-limit")
-                  for index in range(101):
-                      other_scope = _conversation(
-                          db_session,
-                          suffix=f"scope-limit-rs-{index}",
-                          country_code="RS",
-                      )
-                      request_handoff(
-                          db_session,
-                          conversation=other_scope,
-                          source="ai_runtime",
-                          trigger_type="runtime_handoff",
-                          reason_code="other_scope",
-                      )
-
-                  eligible = _conversation(db_session, suffix="scope-limit-me")
-                  eligible_request = request_handoff(
-                      db_session,
-                      conversation=eligible,
-                      source="ai_runtime",
-                      trigger_type="runtime_handoff",
-                      reason_code="eligible_scope",
-                  )
-                  set_agent_state(
-                      db_session,
-                      user=agent,
-                      presence_status="online",
-                      max_concurrent_conversations=1,
-                  )
-
-                  db_session.refresh(eligible_request)
-                  assert eligible_request.status == "accepted"
-                  assert eligible_request.assigned_agent_id == agent.id
-
-
-              def test_ticketless_queue_filters_scope_before_page_limit(db_session):
-                  operator = _agent(db_session, suffix="queue-limit")
-                  for index in range(11):
-                      other_scope = _conversation(
-                          db_session,
-                          suffix=f"queue-limit-rs-{index}",
-                          country_code="RS",
-                      )
-                      request_handoff(
-                          db_session,
-                          conversation=other_scope,
-                          source="ai_runtime",
-                          trigger_type="runtime_handoff",
-                          reason_code="other_scope",
-                      )
-
-                  visible_request_ids = []
-                  for index in range(5):
-                      visible = _conversation(
-                          db_session,
-                          suffix=f"queue-limit-me-{index}",
-                      )
-                      visible_request_ids.append(
-                          request_handoff(
-                              db_session,
-                              conversation=visible,
-                              source="ai_runtime",
-                              trigger_type="runtime_handoff",
-                              reason_code="visible_scope",
-                          ).id
-                      )
-
-                  result = list_handoff_queue(
-                      db_session,
-                      operator,
-                      view="requested",
-                      include_declined=False,
-                      limit=5,
-                  )
-                  assert [item["id"] for item in result["items"]] == visible_request_ids
-              """,
+              ''',
           )
           PY
 
@@ -625,18 +246,22 @@ jobs:
           python -m pytest -q \
             backend/tests/test_conversation_first_agent_routing.py \
             backend/tests/test_conversation_first_agent_routing_residuals.py \
+            backend/tests/test_conversation_resume_scope_integrity.py \
             backend/tests/test_ticketless_support_scope_isolation.py \
             backend/tests/test_operator_agent_capacity_governance.py \
             backend/tests/test_support_availability_queue_position.py
 
-      - name: Commit clean review closure
+      - name: Commit only the clean business result
         shell: bash
         run: |
           set -Eeuo pipefail
+          start_sha="$(cat /tmp/start-sha)"
+          git fetch --no-tags origin feat/conversation-first-agent-routing
+          test "$(git rev-parse origin/feat/conversation-first-agent-routing)" = "$start_sha"
           git rm .github/workflows/_temporary-fix-pr774-review.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/app backend/tests
           git diff --cached --check
-          git commit -m "fix: close conversation routing authorization and queue scope gaps"
+          git commit -m "fix: enforce ownership-aware ticketless AI resume"
           git push origin HEAD:feat/conversation-first-agent-routing
