@@ -162,26 +162,31 @@ def verify_mfa_login(
     enforce_login_allowed(db, throttle_key)
     policy = ensure_credential_policy(db, user.id)
     try:
-        with managed_session(db):
-            method = verify_mfa_credential(db, policy, payload.credential)
-            if method is None:
-                record_login_failure(db, throttle_key)
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid MFA credential')
-            clear_login_failures(db, throttle_key)
-            record_successful_login(db, user.id)
-            if method == 'recovery_code':
-                log_admin_audit(
-                    db,
-                    actor_id=user.id,
-                    action='auth.mfa_recovery_code_used',
-                    target_type='user',
-                    target_id=user.id,
-                    old_value=None,
-                    new_value={'recovery_codes_remaining': mfa_status_payload(policy)['recovery_codes_remaining']},
-                )
-            db.flush()
+        method = verify_mfa_credential(db, policy, payload.credential)
     except RuntimeError as exc:
+        db.rollback()
         raise _service_unavailable(exc) from exc
+
+    if method is None:
+        db.rollback()
+        with managed_session(db):
+            record_login_failure(db, throttle_key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid MFA credential')
+
+    with managed_session(db):
+        clear_login_failures(db, throttle_key)
+        record_successful_login(db, user.id)
+        if method == 'recovery_code':
+            log_admin_audit(
+                db,
+                actor_id=user.id,
+                action='auth.mfa_recovery_code_used',
+                target_type='user',
+                target_id=user.id,
+                old_value=None,
+                new_value={'recovery_codes_remaining': mfa_status_payload(policy)['recovery_codes_remaining']},
+            )
+        db.flush()
     return _login_response_for_user(user, db)
 
 
