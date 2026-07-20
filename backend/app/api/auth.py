@@ -6,12 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..auth_service import create_access_token, hash_password, verify_password
 from ..db import get_db
-from ..identity_schemas import (
-    AccountSecurityRead,
-    AuthSessionResponse,
-    AuthSessionUserRead,
-    ChangePasswordRequest,
-)
+from ..identity_schemas import AuthSessionResponse, AuthSessionUserRead, ChangePasswordRequest
 from ..models import User
 from ..schemas import LoginRequest
 from ..services.audit_service import log_admin_audit
@@ -79,11 +74,6 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 @router.get('/me', response_model=AuthSessionUserRead)
 def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return _auth_user_for(current_user, db)
-
-
-@router.get('/security', response_model=AccountSecurityRead)
-def account_security(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return AccountSecurityRead(**security_state_payload(db, current_user.id))
 
 
 @router.post('/change-password', response_model=AuthSessionResponse)
