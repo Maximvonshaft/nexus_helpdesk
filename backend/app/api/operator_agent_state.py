@@ -15,6 +15,10 @@ from ..services.agent_routing_service import (
     read_agent_state,
     set_agent_state,
 )
+from ..services.conversation_operator_service import (
+    read_conversation_thread,
+    reply_to_conversation,
+)
 from ..services.permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_capability,
@@ -33,6 +37,11 @@ class AgentStateUpdateRequest(BaseModel):
     max_concurrent_conversations: int | None = Field(default=None, ge=1, le=20)
 
 
+class ConversationReplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    body: str = Field(min_length=1, max_length=2000)
+
+
 class ConversationCloseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     outcome: str = Field(min_length=2, max_length=64)
@@ -41,6 +50,21 @@ class ConversationCloseRequest(BaseModel):
 
 def _ensure_agent_capability(user: User, db: Session) -> None:
     ensure_capability(user, CAP_WEBCHAT_HANDOFF_ACCEPT, db)
+
+
+def _conversation_by_public_id(
+    db: Session,
+    *,
+    conversation_id: str,
+) -> WebchatConversation:
+    conversation = (
+        db.query(WebchatConversation)
+        .filter(WebchatConversation.public_id == conversation_id)
+        .first()
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    return conversation
 
 
 @router.get("/agent-state")
@@ -126,6 +150,49 @@ def accept_operator_handoff(
         )
 
 
+@router.get("/conversations/{conversation_id}/thread")
+def get_operator_conversation_thread(
+    conversation_id: str,
+    before_message_id: int | None = Query(default=None, ge=1),
+    message_limit: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_agent_capability(current_user, db)
+    conversation = _conversation_by_public_id(
+        db,
+        conversation_id=conversation_id,
+    )
+    return read_conversation_thread(
+        db,
+        conversation=conversation,
+        user=current_user,
+        before_message_id=before_message_id,
+        message_limit=message_limit,
+    )
+
+
+@router.post("/conversations/{conversation_id}/reply")
+def reply_operator_conversation(
+    conversation_id: str,
+    payload: ConversationReplyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_agent_capability(current_user, db)
+    with managed_session(db):
+        conversation = _conversation_by_public_id(
+            db,
+            conversation_id=conversation_id,
+        )
+        return reply_to_conversation(
+            db,
+            conversation=conversation,
+            user=current_user,
+            body=payload.body,
+        )
+
+
 @router.post("/conversations/{conversation_id}/close")
 def close_operator_conversation(
     conversation_id: str,
@@ -135,13 +202,10 @@ def close_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .first()
+        conversation = _conversation_by_public_id(
+            db,
+            conversation_id=conversation_id,
         )
-        if conversation is None:
-            raise HTTPException(status_code=404, detail="conversation_not_found")
         control = (
             db.query(ConversationControl)
             .filter(ConversationControl.conversation_id == conversation.id)
