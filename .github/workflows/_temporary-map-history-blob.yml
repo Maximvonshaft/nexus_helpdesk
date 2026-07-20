@@ -1,0 +1,47 @@
+name: Temporary Map Historical Blob
+
+on:
+  push:
+    branches:
+      - fix/pr-774-agent-routing-takeover
+
+permissions:
+  contents: read
+
+jobs:
+  map-blob:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout reachable history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Resolve exact historical paths
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/blob-map
+          git rev-list --objects --all \
+            | awk '$1 == "be68e2130c3f24304492e88b18105543d7e657e1" {sub($1 " ", ""); print}' \
+            | sort -u > /tmp/blob-map/paths.txt
+          test -s /tmp/blob-map/paths.txt
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          target = "730db233de26139b310a0c9eec2c4f55da59e4b53b42102889e44e9bf2f1a0ab"
+          paths = [line for line in Path("/tmp/blob-map/paths.txt").read_text().splitlines() if line]
+          matches = [path for path in paths if hashlib.sha256(path.encode()).hexdigest() == target]
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one path-hash match, got {len(matches)}")
+          Path("/tmp/blob-map/matched-path.txt").write_text(matches[0] + "\n")
+          PY
+      - name: Upload path evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: historical-blob-path
+          path: /tmp/blob-map/matched-path.txt
+          if-no-files-found: error
+          retention-days: 1
