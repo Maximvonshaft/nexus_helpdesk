@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, event
+from sqlalchemy import DateTime, ForeignKey, String, event
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
 from .models import OutboundEmailAccount
-from .services.outbound_email_tenant_scope import current_outbound_email_tenant
+from .services.outbound_email_tenant_context import current_outbound_email_tenant
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
