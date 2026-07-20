@@ -61,8 +61,18 @@ def find_duplicate_account(
 
 
 def resolve_outbound_email_account(db: Session, *, market_id: int | None = None) -> OutboundEmailAccount | None:
+    """Resolve one route without crossing a tenant boundary.
+
+    A market with authoritative tenant ownership may use only an account bound
+    to that exact market. The historical global fallback remains available only
+    for the fully legacy/shadow scope where the market has no tenant authority.
+    """
+
     query = db.query(OutboundEmailAccount).filter(OutboundEmailAccount.is_active.is_(True))
+    tenant_bound_market = False
     if market_id is not None:
+        market = db.query(Market).filter(Market.id == market_id).first()
+        tenant_bound_market = market is not None and market.tenant_id is not None
         row = (
             query.filter(OutboundEmailAccount.market_id == market_id)
             .order_by(OutboundEmailAccount.priority.asc(), OutboundEmailAccount.id.asc())
@@ -70,6 +80,8 @@ def resolve_outbound_email_account(db: Session, *, market_id: int | None = None)
         )
         if row is not None:
             return row
+        if tenant_bound_market:
+            return None
     return (
         query.filter(OutboundEmailAccount.market_id.is_(None))
         .order_by(OutboundEmailAccount.priority.asc(), OutboundEmailAccount.id.asc())
@@ -81,6 +93,8 @@ def has_active_outbound_email_account(db: Session | None, *, ticket: Ticket | No
     if db is None:
         return False
     market_id = getattr(ticket, "market_id", None) if ticket is not None else None
+    if ticket is not None and getattr(ticket, "tenant_id", None) is not None and market_id is None:
+        return False
     return resolve_outbound_email_account(db, market_id=market_id) is not None
 
 
