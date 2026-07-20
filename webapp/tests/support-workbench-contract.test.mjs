@@ -27,7 +27,35 @@ const typeOwners = [
 
 test('router exposes only the owned canonical route files', () => {
   const actual = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).sort()
-  assert.deepEqual(actual, ['channels.tsx', 'control-tower.tsx', 'index.tsx', 'knowledge.tsx', 'login.tsx', 'root.tsx', 'runtime.tsx', 'webchat.tsx', 'workspace.tsx'])
+  assert.deepEqual(actual, [
+    'account.tsx',
+    'administration.tsx',
+    'channels.tsx',
+    'control-tower.tsx',
+    'index.tsx',
+    'knowledge.tsx',
+    'login.tsx',
+    'root.tsx',
+    'runtime.tsx',
+    'webchat.tsx',
+    'workspace.tsx',
+  ])
+})
+
+test('account and administration remain supporting domains, not parallel workbenches', () => {
+  const account = read('src/features/account/AccountPage.tsx')
+  const administration = [
+    'src/features/administration/AdministrationPage.tsx',
+    'src/features/administration/UserGovernance.tsx',
+    'src/features/administration/TeamGovernance.tsx',
+    'src/features/administration/SecurityAuditPanel.tsx',
+  ].map(read).join('\n')
+
+  assert.match(account, /supportApi\.changePassword/)
+  assert.match(administration, /supportApi\.rolePolicies/)
+  assert.match(administration, /supportApi\.securityAudit/)
+  assert.doesNotMatch(account + administration, /operatorWorkspaceApi|supportConversations|querySpeedafWaybills|createSpeedafWorkOrder|confirmSpeedafCancel/)
+  assert.doesNotMatch(administration, /ROLE_CAPABILITIES|roleCapabilities|hardcodedCapabilities/)
 })
 
 test('workspace is the sole queue, conversation and governed-action surface', () => {
@@ -47,7 +75,7 @@ test('workspace is the sole queue, conversation and governed-action surface', ()
 test('knowledge is one capability-aware implementation', () => {
   const page = read('src/features/knowledge/KnowledgePage.tsx')
   const route = read('src/routes/knowledge.tsx')
-  assert.match(page, /KnowledgePage\(\{ canManage \}/)
+  assert.match(page, /KnowledgePage\(\{ canManage \}\/)/
   assert.match(route, /LazyKnowledgePage canManage/)
   assert.equal(exists('src/features/knowledge/KnowledgeReadOnlyPage.tsx'), false)
   for (const text of ['知识与流程', '标准答案与处理步骤', '搜索测试', '发布状态']) assert.match(page, new RegExp(text))
