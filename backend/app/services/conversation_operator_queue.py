@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -14,6 +14,23 @@ from .operator_queue_scope import (
     scope_grant_version,
     tenant_scope_hash,
 )
+
+
+def _apply_ticketless_sla_filter(query, *, requested: str | None, as_of: datetime):
+    if requested is None:
+        return query
+    active = tuple(_core._ACTIVE_HANDOFF)
+    if requested == "not_applicable":
+        return query.filter(WebchatHandoffRequest.status.notin_(active))
+    if requested in {"healthy", "at_risk", "breached", "paused"}:
+        return query.filter(WebchatHandoffRequest.id == -1)
+    stale_before = as_of - timedelta(seconds=_core._STALE_AFTER_SECONDS)
+    query = query.filter(WebchatHandoffRequest.status.in_(active))
+    if requested == "stale":
+        return query.filter(WebchatHandoffRequest.updated_at <= stale_before)
+    if requested == "unavailable":
+        return query.filter(WebchatHandoffRequest.updated_at > stale_before)
+    return query
 
 
 def _ticketless_handoff_items(
@@ -72,15 +89,11 @@ def _ticketless_handoff_items(
     elif owner == "team":
         return []
 
-    if filters["sla"] is not None:
-        query = _core._apply_sla_sql(
-            query,
-            status_column=WebchatHandoffRequest.status,
-            active_statuses=tuple(_core._ACTIVE_HANDOFF),
-            requested=filters["sla"],
-            now=as_of,
-            source_updated_column=WebchatHandoffRequest.updated_at,
-        )
+    query = _apply_ticketless_sla_filter(
+        query,
+        requested=filters["sla"],
+        as_of=as_of,
+    )
     query = _core._apply_cursor_query(
         query,
         created_column=WebchatHandoffRequest.created_at,
@@ -238,7 +251,6 @@ def list_unified_operator_queue(
             str(item["created_at"]).replace("Z", "+00:00")
         )
 
-    fetch_limit = limit + 1
     ticketless = _ticketless_handoff_items(
         db,
         tenant=tenant,
@@ -249,7 +261,7 @@ def list_unified_operator_queue(
         cursor_payload=cursor_payload,
         as_of=as_of,
         sort=sort,
-        fetch_limit=fetch_limit,
+        fetch_limit=limit + 1,
     )
     items = [*legacy_items, *ticketless]
     items.sort(
