@@ -129,9 +129,10 @@ def access_token_is_current(user: User, claims: AccessTokenClaims) -> bool:
     updated_at = _utc(user.updated_at)
     if claims.user_version is not None:
         return claims.user_version == updated_at
-    # Legacy tokens have second precision. Fail closed when an identity change
-    # occurs inside the token's second instead of silently accepting stale access.
-    return claims.issued_at >= updated_at
+    # Tokens issued before identity-version claims were introduced carry only
+    # integer-second ``iat`` values. Preserve that bounded compatibility path;
+    # every newly issued application token includes the exact ``uv`` claim.
+    return int(claims.issued_at.timestamp()) >= int(updated_at.timestamp())
 
 
 def load_authenticated_user_for_token(db: Session, token: str | None) -> User | None:
