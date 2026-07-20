@@ -1,4 +1,5 @@
 import LockResetRoundedIcon from '@mui/icons-material/LockResetRounded'
+import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
 import {
   Alert,
   Box,
@@ -19,6 +20,7 @@ import {
   OperatorLoadingState,
 } from '@/app/OperatorPresentation'
 import { useLogout, useSession } from '@/hooks/useAuth'
+import { formatDateTime } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 
 export function AccountPage() {
@@ -32,12 +34,19 @@ export function AccountPage() {
 
   useEffect(() => { document.title = '账户设置 · Nexus OSR' }, [])
 
+  const finishWithLogin = () => {
+    logout()
+    navigate({ to: '/login', replace: true })
+  }
+
   const changePassword = useMutation({
     mutationFn: () => supportApi.changePassword(currentPassword, newPassword),
-    onSuccess: () => {
-      logout()
-      navigate({ to: '/login', replace: true })
-    },
+    onSuccess: finishWithLogin,
+  })
+
+  const logoutAll = useMutation({
+    mutationFn: supportApi.logoutAll,
+    onSuccess: finishWithLogin,
   })
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -68,8 +77,14 @@ export function AccountPage() {
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Typography component="h1" variant="h1">账户设置</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-        管理当前登录身份和凭据。修改密码后，所有旧会话会立即失效。
+        管理当前登录身份和凭据。修改密码或撤销会话后，所有旧令牌会立即失效。
       </Typography>
+
+      {session.data.must_change_password ? (
+        <Alert severity="warning" variant="outlined" sx={{ mt: 2 }}>
+          当前密码由管理员签发或重置。完成密码修改前，业务页面和实时工作连接均不可使用。
+        </Alert>
+      ) : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(280px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2.5 }}>
         <Paper component="section" variant="outlined" aria-labelledby="account-identity-title" sx={{ p: 2, alignSelf: 'start' }}>
@@ -81,6 +96,8 @@ export function AccountPage() {
             ['邮箱', session.data.email || '未设置'],
             ['角色', session.data.role],
             ['团队编号', session.data.team_id ?? '未分配'],
+            ['上次登录', session.data.last_login_at ? formatDateTime(session.data.last_login_at) : '暂无'],
+            ['密码更新', session.data.password_changed_at ? formatDateTime(session.data.password_changed_at) : '暂无'],
           ]} />
         </Paper>
 
@@ -135,6 +152,24 @@ export function AccountPage() {
           </Box>
         </Paper>
       </Box>
+
+      <Paper component="section" variant="outlined" aria-labelledby="account-session-title" sx={{ p: 2, mt: 2 }}>
+        <Typography id="account-session-title" component="h2" variant="h3">会话控制</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+          撤销该账号在所有设备和实时工作连接中的访问。当前设备也会退出。
+        </Typography>
+        <Divider sx={{ my: 2 }} />
+        {logoutAll.isError ? <OperatorErrorNotice title="会话撤销失败" error={logoutAll.error} fallback="请稍后重试" /> : null}
+        <Button
+          color="error"
+          variant="outlined"
+          startIcon={logoutAll.isPending ? <CircularProgress color="inherit" size={16} /> : <LogoutRoundedIcon />}
+          disabled={logoutAll.isPending}
+          onClick={() => logoutAll.mutate()}
+        >
+          退出所有设备
+        </Button>
+      </Paper>
     </Box>
   )
 }
