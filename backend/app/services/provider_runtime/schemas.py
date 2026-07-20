@@ -1,17 +1,23 @@
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any
+
 from pydantic import BaseModel, Field
 
+
 class ProviderCapabilities(BaseModel):
+    # webchat_runtime_reply remains as a compatibility capability name.
+    # Both fields describe the same generic Agent-turn protocol.
+    agent_turn: bool = False
     webchat_runtime_reply: bool = False
     structured_output: bool = False
     streaming: bool = False
     tool_execution: bool = False
-    ticket_action: bool = False
     handoff_decision: bool = False
-    supports_tracking_context: bool = False
     supports_vision: bool = False
     max_timeout_ms: int = 30000
     safety_level: str = "standard"
+
 
 class ProviderRequest(BaseModel):
     request_id: str
@@ -21,28 +27,33 @@ class ProviderRequest(BaseModel):
     session_id: str
     scenario: str
     body: Any
-    recent_context: Optional[Any] = None
-    tracking_fact_summary: Optional[str] = None
-    tracking_fact_evidence_present: bool = False
+    recent_context: Any | None = None
     output_contract: str
     timeout_ms: int
-    metadata: Optional[dict] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 class ProviderResult(BaseModel):
     ok: bool
     provider: str
-    raw_provider: Optional[str] = None
-    reply_source: Optional[str] = None
-    model: Optional[str] = None
+    raw_provider: str | None = None
+    reply_source: str | None = None
+    model: str | None = None
     elapsed_ms: int
-    raw_payload_safe_summary: Optional[dict] = None
-    structured_output: Optional[dict] = None
-    error_code: Optional[str] = None
+    raw_payload_safe_summary: dict[str, Any] | None = None
+    structured_output: dict[str, Any] | None = None
+    error_code: str | None = None
     retryable: bool = False
     fallback_allowed: bool = True
 
     @classmethod
-    def unavailable(cls, provider: str, error_code: str, elapsed_ms: int, fallback_allowed: bool = True) -> 'ProviderResult':
+    def unavailable(
+        cls,
+        provider: str,
+        error_code: str,
+        elapsed_ms: int,
+        fallback_allowed: bool = True,
+    ) -> "ProviderResult":
         return cls(
             ok=False,
             provider=provider,
@@ -52,5 +63,5 @@ class ProviderResult(BaseModel):
             error_code=error_code,
             retryable=False,
             fallback_allowed=fallback_allowed,
-            raw_payload_safe_summary={"unavailable": True}
+            raw_payload_safe_summary={"unavailable": True},
         )
