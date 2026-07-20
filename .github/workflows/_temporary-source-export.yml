@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   export:
@@ -26,3 +27,17 @@ jobs:
           path: /tmp/nexus-exact-source.tar.gz
           if-no-files-found: error
           retention-days: 1
+      - name: Publish export run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"temporary-source-export\",\"description\":\"run_id=${RUN_ID}\",\"target_url\":\"https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}\"}"
