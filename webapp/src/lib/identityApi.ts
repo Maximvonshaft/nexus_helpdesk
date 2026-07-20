@@ -1,7 +1,6 @@
 import { apiRequest, setSupportToken } from '@/lib/apiClient'
 import type { AdminUser, SecurityAudit, Team } from '@/lib/types'
 import type {
-  AccountSecurity,
   AuthSessionResponse,
   RoleProfile,
   UserCreatePayload,
@@ -77,8 +76,6 @@ async function updateAdminUser(userId: number, payload: UserUpdatePayload) {
 }
 
 export const identityApi = {
-  accountSecurity: () => apiRequest<AccountSecurity>('/api/auth/security'),
-
   changePassword: async (currentPassword: string, newPassword: string) => {
     const response = await apiRequest<AuthSessionResponse>('/api/auth/change-password', {
       method: 'POST',
