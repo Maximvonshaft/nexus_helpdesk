@@ -127,7 +127,11 @@ async def enforce_admin_tenant_query_scope(
         payload = await _payload(request)
         market_present = "market_id" in payload
         market_id = payload.get("market_id") if market_present else None
-        if request.method.upper() == "POST" and tenant_id is not None and not market_present:
+        creating_account = (
+            request.method.upper() == "POST"
+            and request.url.path == _EMAIL_ACCOUNT_COLLECTION
+        )
+        if creating_account and tenant_id is not None and not market_present:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="market_id is required for a tenant-bound email account",
