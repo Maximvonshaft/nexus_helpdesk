@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import UserRole
+from ..identity_schemas import RoleProfileRead, UserSecurityStateRead, UserTeamAssignmentRequest
 from ..models import Team, User
 from ..models_identity import UserSecurityState
 from ..services.audit_service import log_admin_audit
@@ -18,24 +16,6 @@ from ..utils.time import utc_now
 from .deps import get_current_user
 
 router = APIRouter(prefix='/api/admin', tags=['identity-administration'])
-
-
-class UserSecurityStateRead(BaseModel):
-    user_id: int
-    session_version: int
-    must_change_password: bool
-    password_changed_at: datetime | None = None
-    last_login_at: datetime | None = None
-    updated_at: datetime | None = None
-
-
-class RoleProfileRead(BaseModel):
-    role: UserRole
-    capabilities: list[str]
-
-
-class UserTeamAssignmentRequest(BaseModel):
-    team_id: int | None = None
 
 
 def _user_or_404(db: Session, user_id: int) -> User:
