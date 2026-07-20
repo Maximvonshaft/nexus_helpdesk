@@ -9,8 +9,15 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import UserRole
+from ..identity_schemas import CredentialPolicyRead
 from ..models import Market, Team, User
+from ..models_identity_policy import UserCredentialPolicy
 from ..services.audit_service import log_admin_audit
+from ..services.credential_policy_service import (
+    advance_user_identity_version,
+    ensure_credential_policy,
+    require_password_change as require_password_change_policy,
+)
 from ..services.permissions import ROLE_CAPABILITIES, ensure_can_manage_users
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
@@ -76,6 +83,18 @@ class UserTeamClearResponse(BaseModel):
     team_id: None = None
 
 
+class IdentityActionResponse(BaseModel):
+    ok: bool
+    user_id: int
+
+
+def _user_or_404(db: Session, user_id: int) -> User:
+    row = db.query(User).filter(User.id == user_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return row
+
+
 def _ensure_market(db: Session, market_id: int | None) -> None:
     if market_id is None:
         return
@@ -114,6 +133,16 @@ def _serialize_team(row: Team, active_users: int) -> TeamGovernanceRead:
     )
 
 
+def _serialize_policy(user_id: int, row: UserCredentialPolicy | None) -> CredentialPolicyRead:
+    return CredentialPolicyRead(
+        user_id=user_id,
+        must_change_password=bool(row.must_change_password) if row is not None else False,
+        password_changed_at=row.password_changed_at if row is not None else None,
+        last_login_at=row.last_login_at if row is not None else None,
+        updated_at=row.updated_at if row is not None else None,
+    )
+
+
 @router.get("/roles", response_model=list[RolePolicyRead])
 def list_role_policies(
     db: Session = Depends(get_db),
@@ -124,6 +153,71 @@ def list_role_policies(
         RolePolicyRead(role=role, default_capabilities=sorted(ROLE_CAPABILITIES.get(role, set())))
         for role in UserRole
     ]
+
+
+@router.get("/credential-policies", response_model=list[CredentialPolicyRead])
+def list_credential_policies(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    user_ids = [user_id for (user_id,) in db.query(User.id).order_by(User.id.asc()).all()]
+    policies = {
+        row.user_id: row
+        for row in db.query(UserCredentialPolicy).order_by(UserCredentialPolicy.user_id.asc()).all()
+    }
+    return [_serialize_policy(user_id, policies.get(user_id)) for user_id in user_ids]
+
+
+@router.post("/users/{user_id}/require-password-change", response_model=IdentityActionResponse)
+def require_user_password_change(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    target = _user_or_404(db, user_id)
+    with managed_session(db):
+        previous = ensure_credential_policy(db, target.id)
+        old_value = {"must_change_password": previous.must_change_password}
+        require_password_change_policy(db, target.id)
+        advance_user_identity_version(target)
+        db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action="user.password_change_required",
+            target_type="user",
+            target_id=target.id,
+            old_value=old_value,
+            new_value={"must_change_password": True, "sessions_revoked": True},
+        )
+        db.flush()
+    return IdentityActionResponse(ok=True, user_id=target.id)
+
+
+@router.post("/users/{user_id}/revoke-sessions", response_model=IdentityActionResponse)
+def revoke_user_sessions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    target = _user_or_404(db, user_id)
+    with managed_session(db):
+        advance_user_identity_version(target)
+        db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action="user.sessions_revoked",
+            target_type="user",
+            target_id=target.id,
+            old_value=None,
+            new_value={"all_sessions_revoked": True},
+        )
+        db.flush()
+    return IdentityActionResponse(ok=True, user_id=target.id)
 
 
 @router.get("/teams", response_model=list[TeamGovernanceRead])
@@ -238,9 +332,7 @@ def clear_user_team(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    row = db.query(User).filter(User.id == user_id).first()
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    row = _user_or_404(db, user_id)
     previous_team_id = row.team_id
     with managed_session(db):
         row.team_id = None
