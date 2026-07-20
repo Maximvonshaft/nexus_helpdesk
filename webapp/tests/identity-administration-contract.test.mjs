@@ -30,6 +30,24 @@ test('identity administration has one route, one API client and no parallel shel
 })
 
 
+test('admin user loading is complete and never falls back to the bounded legacy list', () => {
+  assert.match(identityApi, /type AdminUsersPage/)
+  assert.match(identityApi, /while \(true\)/)
+  assert.match(identityApi, /next_cursor/)
+  assert.match(identityApi, /用户分页游标未推进/)
+  assert.doesNotMatch(identityApi, /legacy=true/)
+})
+
+
+test('nullable identity fields use explicit canonical commands instead of silent PATCH nulls', () => {
+  assert.match(identityApi, /method: 'DELETE'/)
+  assert.match(identityApi, /\/api\/admin\/users\/\$\{userId\}\/email/)
+  assert.match(identityApi, /\/api\/admin\/users\/\$\{userId\}\/team/)
+  assert.match(identityApi, /method: 'PUT'/)
+  assert.match(identityApi, /email !== null/)
+})
+
+
 test('account security uses the canonical auth boundary and replaces the token after rotation', () => {
   assert.match(identityApi, /\/api\/auth\/change-password/)
   assert.match(identityApi, /setSupportToken\(response\.access_token\)/)
