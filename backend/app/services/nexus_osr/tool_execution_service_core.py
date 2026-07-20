@@ -13,7 +13,7 @@ from ...models import Customer, Ticket, TicketEvent
 from ...models_agent_routing import ConversationControl
 from ...tool_models import ToolCallLog
 from ...utils.time import utc_now
-from ...webchat_models import WebchatConversation
+from ...webchat_models import WebchatConversation, WebchatHandoffRequest
 from ..agent_availability_service import availability_summary
 from ..agent_routing_service import request_handoff
 from ..webchat_ai_decision_runtime.policy_gate import PolicyGateResult, validate_ai_decision
@@ -287,11 +287,25 @@ def _production_handlers(
                 "failed",
                 error_code="conversation_control_required",
             )
+        request_row = (
+            db.get(
+                WebchatHandoffRequest,
+                current.current_handoff_request_id,
+            )
+            if current.current_handoff_request_id is not None
+            else None
+        )
+        if (
+            request_row is not None
+            and request_row.conversation_id != current.id
+        ):
+            request_row = None
         summary = availability_summary(
             db,
             tenant_key=control.tenant_key,
             country_code=control.country_code,
             channel_key=control.channel_key,
+            request_row=request_row,
         )
         return ActionExecutionResult(
             ok=True,
@@ -465,12 +479,30 @@ def _availability_customer_summary(summary: dict[str, Any]) -> str:
     online = int(summary.get("online_agents") or 0)
     available = int(summary.get("available_capacity") or 0)
     queued = int(summary.get("queue_count") or 0)
+    raw_position = summary.get("queue_position")
+    position = int(raw_position) if isinstance(raw_position, int) else None
     if online <= 0:
         return "No human support agent is currently online."
     if available > 0:
-        return f"Human support is available with {available} open conversation slot(s)."
-    return f"Human support is currently at capacity with {queued} conversation(s) waiting."
-
+        return (
+            "Human support is available with "
+            f"{available} open conversation slot(s)."
+        )
+    if position is not None and position > 0:
+        ahead = max(0, position - 1)
+        if ahead == 0:
+            return (
+                "Human support is currently at capacity. "
+                "This customer is next in the eligible queue."
+            )
+        return (
+            "Human support is currently at capacity with "
+            f"{ahead} conversation(s) ahead of this customer."
+        )
+    return (
+        "Human support is currently at capacity with "
+        f"{queued} conversation(s) waiting."
+    )
 
 def _decision_for_policy_gate(
     raw_calls: list[dict[str, Any]],

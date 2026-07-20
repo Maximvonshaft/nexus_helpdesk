@@ -358,7 +358,9 @@ def test_ticketless_transition_authority_and_reply_capability(db_session):
         user=agent,
         body="I am handling this conversation now.",
     )
-    assert result["ok"] is True
+    assert result["direction"] == "agent"
+    assert result["body_text"] == "I am handling this conversation now."
+    assert result["delivery_status"] == "sent"
 
     db_session.add(
         UserCapabilityOverride(

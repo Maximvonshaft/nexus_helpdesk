@@ -7,6 +7,7 @@ from ..db import get_db
 from ..unit_of_work import managed_session
 from ..voice_schemas import SpeedafVoiceCallbackRequest, SpeedafVoiceCallbackResponse, WebchatVoiceActionList, WebchatVoiceActionRequest, WebchatVoiceActionResponse, WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
+from ..services.conversation_first_service import ensure_voice_ticket_for_public_conversation
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
     accept_admin_voice_session,
@@ -43,6 +44,11 @@ def create_voice_session(
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
+        ensure_voice_ticket_for_public_conversation(
+            db,
+            conversation_public_id=conversation_id,
+            visitor_token=visitor_token,
+        )
         return create_public_voice_session(
             db,
             conversation_public_id=conversation_id,

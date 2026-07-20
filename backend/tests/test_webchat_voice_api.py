@@ -192,9 +192,12 @@ def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
     assert "unit_key" not in response.text
 
 
-def test_public_create_voice_session_binds_conversation_without_ticket():
+def test_public_create_voice_session_lazily_binds_canonical_ticket():
     client = TestClient(app)
-    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, create_ticket=False)
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(
+        client,
+        create_ticket=False,
+    )
     assert ticket_id is None
 
     created = client.post(
@@ -218,19 +221,35 @@ def test_public_create_voice_session_binds_conversation_without_ticket():
 
     db = SessionLocal()
     try:
-        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == payload["voice_session_id"]).one()
-        assert row.ticket_id is None
+        row = (
+            db.query(WebchatVoiceSession)
+            .filter(
+                WebchatVoiceSession.public_id
+                == payload["voice_session_id"]
+            )
+            .one()
+        )
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        assert row.ticket_id is not None
+        assert conversation.ticket_id == row.ticket_id
         assert row.provider == "mock"
-        events = db.query(WebchatEvent).filter(
-            WebchatEvent.conversation_id == row.conversation_id,
-            WebchatEvent.ticket_id.is_(None),
-        ).all()
+        events = (
+            db.query(WebchatEvent)
+            .filter(
+                WebchatEvent.conversation_id == row.conversation_id,
+                WebchatEvent.ticket_id == row.ticket_id,
+            )
+            .all()
+        )
         event_types = {event.event_type for event in events}
         assert "voice.session.created" in event_types
         assert "voice.session.ringing" in event_types
     finally:
         db.close()
-
 
 def test_public_create_voice_session_rejects_invalid_token():
     client = TestClient(app)
