@@ -12,6 +12,7 @@ RETIRED_PATHS = (
     ROOT / "backend/app/services/knowledge_prompt_service.py",
     ROOT / "backend/app/services/webchat_runtime_output_parser.py",
     ROOT / "backend/app/services/webchat_ai_decision_runtime/service.py",
+    ROOT / "backend/app/services/provider_runtime/webchat_runtime_dispatcher.py",
     ROOT / "backend/scripts/run_domain_runtime_eval.py",
     ROOT / "scripts/probe_domain_webchat_shadow_trace_e2e.py",
     ROOT / "scripts/probe_domain_webchat_shadow_trace_e2e.sh",
@@ -35,6 +36,12 @@ FORBIDDEN_CONTENT = (
     "build_webchat_domain_shadow_trace",
     "select_approved_direct_answer_override",
     "select_trusted_direct_answer_evidence",
+    "support_knowledge_retrieve",
+    "speedaf_lookup",
+    "speedaf_query_waybills",
+    "speedaf_create_work_order",
+    "speedaf_cancel_order",
+    "speedaf_update_address",
 )
 
 
@@ -48,9 +55,7 @@ def main() -> int:
         text = path.read_text(encoding="utf-8")
         for marker in FORBIDDEN_CONTENT:
             if marker in text:
-                failures.append(
-                    f"{path.relative_to(ROOT)}: contains retired marker {marker}"
-                )
+                failures.append(f"{path.relative_to(ROOT)}: contains retired marker {marker}")
 
     if failures:
         print("\n".join(failures))
