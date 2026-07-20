@@ -12,7 +12,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
   OperatorErrorNotice,
@@ -40,23 +40,14 @@ export function AccountPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
-  const security = useQuery({
-    queryKey: ['accountSecurity'],
-    queryFn: identityApi.accountSecurity,
-    enabled: Boolean(session.data),
-    retry: false,
-  })
-
   const changePassword = useMutation({
     mutationFn: () => identityApi.changePassword(currentPassword, newPassword),
-    onSuccess: async () => {
+    onSuccess: async (response) => {
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['session'] }),
-        queryClient.invalidateQueries({ queryKey: ['accountSecurity'] }),
-      ])
+      queryClient.setQueryData(['session'], response.user)
+      await queryClient.invalidateQueries({ queryKey: ['session'] })
     },
   })
 
@@ -87,17 +78,14 @@ export function AccountPage() {
             <Typography component="h2" variant="h3">当前账号</Typography>
             <Divider sx={{ my: 2 }} />
             {session.isLoading ? <OperatorLoadingState label="正在读取账号…" minHeight={160} /> : session.data ? (
-              <Stack spacing={2}>
-                <OperatorFactGrid facts={[
-                  ['姓名', session.data.display_name || '未设置'],
-                  ['账号', session.data.username],
-                  ['邮箱', session.data.email || '未设置'],
-                  ['角色', session.data.role],
-                  ['上次登录', security.data?.last_login_at ? formatDateTime(security.data.last_login_at) : '暂无'],
-                  ['密码更新', security.data?.password_changed_at ? formatDateTime(security.data.password_changed_at) : '暂无'],
-                ]} />
-                {security.isError ? <OperatorErrorNotice title="无法读取安全状态" error={security.error} fallback="请稍后重试" /> : null}
-              </Stack>
+              <OperatorFactGrid facts={[
+                ['姓名', session.data.display_name || '未设置'],
+                ['账号', session.data.username],
+                ['邮箱', session.data.email || '未设置'],
+                ['角色', session.data.role],
+                ['上次登录', session.data.last_login_at ? formatDateTime(session.data.last_login_at) : '暂无'],
+                ['密码更新', session.data.password_changed_at ? formatDateTime(session.data.password_changed_at) : '暂无'],
+              ]} />
             ) : null}
           </Paper>
 
