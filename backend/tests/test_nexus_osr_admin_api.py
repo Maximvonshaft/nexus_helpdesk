@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import canonical_osr_admin as osr_admin_api
+from app.api import osr_admin_core
 from app.api.deps import get_current_user
 from app.db import Base, get_db
 from app.enums import UserRole
@@ -47,7 +48,7 @@ def api_context(monkeypatch):
     def override_current_user():
         return current["user"]
 
-    monkeypatch.setattr(osr_admin_api, "ensure_can_manage_runtime", lambda user, db: None)
+    monkeypatch.setattr(osr_admin_core, "ensure_can_manage_runtime", lambda user, db: None)
     app = FastAPI()
     app.include_router(osr_admin_api.router)
     app.dependency_overrides[get_db] = override_get_db
@@ -90,13 +91,13 @@ def test_admin_crud_and_provider_group_redaction_are_consistent(api_context):
 
     updated = client.patch(
         f"/api/admin/osr/whatsapp-routing-rules/{rule_id}",
-        json={"is_active": False},
+        json={"enabled": False},
     )
     assert updated.status_code == 200
-    assert updated.json()["is_active"] is False
+    assert updated.json()["enabled"] is False
 
     deleted = client.delete(f"/api/admin/osr/whatsapp-routing-rules/{rule_id}")
-    assert deleted.status_code == 204
+    assert deleted.status_code == 200
 
 
 def test_runtime_decision_audit_is_tenant_isolated_and_payload_free(api_context):
@@ -105,41 +106,44 @@ def test_runtime_decision_audit_is_tenant_isolated_and_payload_free(api_context)
         db.add_all(
             [
                 RuntimeDecisionAuditRecord(
-                    tenant_key="tenant-a",
-                    request_id="request-a",
-                    issue_type="signed_not_received",
-                    decision="route_to_whatsapp",
-                    safe_summary={"destination_configured": True},
+                    tenant_id="tenant-a",
+                    business_reply_type="handoff_notice",
+                    next_action="request_handoff",
+                    risk_level="medium",
+                    allowed=True,
+                    decision_json={"audit_reasons": ["request-a"]},
                 ),
                 RuntimeDecisionAuditRecord(
-                    tenant_key="tenant-b",
-                    request_id="request-b",
-                    issue_type="damaged_parcel",
-                    decision="create_ticket",
-                    safe_summary={"destination_configured": False},
+                    tenant_id="tenant-b",
+                    business_reply_type="clarification",
+                    next_action="create_ticket",
+                    risk_level="low",
+                    allowed=True,
+                    decision_json={"audit_reasons": ["request-b"]},
                 ),
                 CaseContextRecord(
-                    tenant_key="tenant-a",
-                    case_key="case-a",
-                    context_version=1,
-                    safe_context={"status": "open"},
+                    tenant_id="tenant-a",
+                    channel="webchat",
+                    status="closed",
+                    is_active=False,
+                    customer_claim_summary="case-a",
                 ),
             ]
         )
         db.commit()
 
-    audit = client.get("/api/admin/osr/runtime-decisions", headers=TENANT_A)
+    audit = client.get("/api/admin/osr/runtime-decision-audits", headers=TENANT_A)
     assert audit.status_code == 200
     payload = audit.json()
-    assert payload["configuration_scope"] == "tenant"
+    assert payload["tenant_id"] == "tenant-a"
     serialized = _serialized(payload)
     assert "request-a" in serialized
     assert "request-b" not in serialized
-    assert "tenant-a" not in serialized
+    assert "tenant-b" not in serialized
 
     contexts = client.get("/api/admin/osr/case-contexts", headers=TENANT_A)
     assert contexts.status_code == 200
-    assert contexts.json()["items"][0]["case_key"] == "case-a"
+    assert contexts.json()["items"][0]["customer_claim_summary"] == "case-a"
 
 
 def test_admin_router_requires_runtime_permission(api_context, monkeypatch):
@@ -150,6 +154,6 @@ def test_admin_router_requires_runtime_permission(api_context, monkeypatch):
 
         raise HTTPException(status_code=403, detail="forbidden")
 
-    monkeypatch.setattr(osr_admin_api, "ensure_can_manage_runtime", deny)
+    monkeypatch.setattr(osr_admin_core, "ensure_can_manage_runtime", deny)
     response = client.get("/api/admin/osr/whatsapp-routing-rules")
     assert response.status_code == 403

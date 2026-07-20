@@ -26,6 +26,7 @@ from app.services.nexus_osr.tool_execution_facade import (  # noqa: E402
     osr_tool_execution_mode_from_env,
 )
 from app.services.nexus_osr.tool_execution_policy_seed import seed_default_tool_execution_policies  # noqa: E402
+from app.services.nexus_osr.tool_execution_service import GovernedToolExecutionOptions  # noqa: E402
 from app.tool_models import ToolCallLog  # noqa: E402
 
 
@@ -99,6 +100,7 @@ def execute_one(
     channel: str = "webchat",
     country_code: str = "ME",
     mode: OSRToolExecutionMode | str | None = OSRToolExecutionMode.POLICY_EXECUTE,
+    options: GovernedToolExecutionOptions | None = None,
 ):
     return OSRToolExecutionFacade(db_session).execute(
         tool_calls=[tool_call],
@@ -106,6 +108,7 @@ def execute_one(
         channel=channel,
         country_code=country_code,
         mode=mode,
+        options=options,
     )
 
 
@@ -114,7 +117,8 @@ def test_default_tool_execution_policy_seed_sets_safe_defaults(db_session):
 
     by_name = {row.tool_name: row for row in rows}
     assert by_name["ticket.create"].enabled is True
-    assert by_name["ticket.create"].ai_auto_executable is True
+    assert by_name["ticket.create"].ai_auto_executable is False
+    assert by_name["ticket.create"].requires_customer_confirmation is True
     assert by_name["handoff.request.create"].enabled is True
     assert by_name["handoff.request.create"].ai_auto_executable is True
     assert by_name["timeline.event.create"].enabled is True
@@ -150,7 +154,7 @@ def test_default_mode_observe_only_never_executes_or_writes_tool_call_log(db_ses
 
 
 def test_no_policy_must_block(db_session):
-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "no-policy"}, ctx_with_tracking_and_contact())
+    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "no-policy", "requires_confirmation": True}, ctx_with_tracking_and_contact())
 
     assert result.mode == OSRToolExecutionMode.BLOCKED
     assert result.results[0].status == "blocked"
@@ -161,7 +165,7 @@ def test_no_policy_must_block(db_session):
 def test_policy_channel_mismatch_blocks(db_session):
     add_policy(db_session, "ticket.create", allowed_channels=["whatsapp"])
 
-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "channel-mismatch"}, ctx_with_tracking_and_contact())
+    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "channel-mismatch", "requires_confirmation": True}, ctx_with_tracking_and_contact())
 
     assert result.mode == OSRToolExecutionMode.BLOCKED
     assert result.results[0].error_code == "channel_not_allowed"
@@ -170,7 +174,7 @@ def test_policy_channel_mismatch_blocks(db_session):
 def test_policy_country_mismatch_blocks(db_session):
     add_policy(db_session, "ticket.create", allowed_countries=["US"])
 
-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "country-mismatch"}, ctx_with_tracking_and_contact())
+    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "country-mismatch", "requires_confirmation": True}, ctx_with_tracking_and_contact())
 
     assert result.mode == OSRToolExecutionMode.BLOCKED
     assert result.results[0].error_code == "country_not_allowed"
@@ -179,7 +183,7 @@ def test_policy_country_mismatch_blocks(db_session):
 def test_requires_tracking_number_missing_blocks(db_session):
     add_policy(db_session, "ticket.create", requires_tracking_number=True)
 
-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-tracking"}, ctx_empty())
+    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-tracking", "requires_confirmation": True}, ctx_empty())
 
     assert result.mode == OSRToolExecutionMode.BLOCKED
     assert result.results[0].error_code == "missing_required_context"
@@ -189,7 +193,7 @@ def test_requires_tracking_number_missing_blocks(db_session):
 def test_requires_contact_missing_blocks(db_session):
     add_policy(db_session, "ticket.create", requires_contact=True)
 
-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-contact"}, ctx_with_tracking())
+    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "missing-contact", "requires_confirmation": True}, ctx_with_tracking())
 
     assert result.mode == OSRToolExecutionMode.BLOCKED
     assert result.results[0].error_code == "missing_required_context"
@@ -211,11 +215,37 @@ def test_confirmation_required_mode_returns_without_execution(db_session):
     assert result.results[0].error_code == "human_confirmation_required"
 
 
-def test_policy_execute_returns_safe_result_not_direct_send(db_session):
-    add_policy(db_session, "ticket.create", requires_tracking_number=True, requires_contact=True)
+def test_policy_execute_returns_safe_result_only_after_customer_confirmation(db_session):
+    add_policy(
+        db_session,
+        "ticket.create",
+        requires_tracking_number=True,
+        requires_contact=True,
+        requires_customer_confirmation=True,
+    )
+    tool_call = {
+        "tool_name": "ticket.create",
+        "idempotency_key": "safe-result",
+        "requires_confirmation": True,
+    }
 
-    result = execute_one(db_session, {"tool_name": "ticket.create", "idempotency_key": "safe-result"}, ctx_with_tracking_and_contact())
+    proposed = execute_one(
+        db_session,
+        tool_call,
+        ctx_with_tracking_and_contact(),
+    )
+    assert proposed.mode == OSRToolExecutionMode.CONFIRMATION_REQUIRED
+    assert proposed.executed is False
+    assert proposed.results[0].error_code == "customer_confirmation_required"
 
+    result = execute_one(
+        db_session,
+        tool_call,
+        ctx_with_tracking_and_contact(),
+        options=GovernedToolExecutionOptions(
+            customer_confirmation_granted=True,
+        ),
+    )
     assert result.mode == OSRToolExecutionMode.POLICY_EXECUTE
     assert result.executed is True
     assert result.safe_customer_visible_results

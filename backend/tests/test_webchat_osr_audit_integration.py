@@ -23,6 +23,7 @@ from app.models import BackgroundJob, User  # noqa: E402
 from app.models_osr import CaseContextRecord, RuntimeDecisionAuditRecord  # noqa: E402
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_webchat_ai_reply_jobs  # noqa: E402
 from app.services.tracking_fact_schema import TrackingFactEvent, TrackingFactResult  # noqa: E402
+from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult  # noqa: E402
 from app.services.webchat_debug_bundle_service import build_ai_debug_bundle  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage  # noqa: E402
 
@@ -115,6 +116,46 @@ def _agent_message(conversation_id: str) -> WebchatMessage:
         db.close()
 
 
+
+def _runtime_result(
+    *,
+    reply: str | None,
+    intent: str,
+    ok: bool = True,
+    handoff_required: bool = False,
+    runtime_trace: dict | None = None,
+    rag_trace: dict | None = None,
+    elapsed_ms: int = 20,
+    error_code: str | None = None,
+) -> WebchatRuntimeReplyResult:
+    return WebchatRuntimeReplyResult(
+        ok=ok,
+        ai_generated=bool(ok and reply),
+        reply_source='private_ai_runtime',
+        reply=reply,
+        intent=intent,
+        tracking_number=None,
+        handoff_required=handoff_required,
+        handoff_reason='customer_requested_human' if handoff_required else None,
+        recommended_agent_action='Human agent should review the customer request.' if handoff_required else None,
+        ticket_creation_queued=False,
+        elapsed_ms=elapsed_ms,
+        error_code=error_code,
+        rag_trace=rag_trace,
+        runtime_trace=runtime_trace,
+        tool_calls=[],
+    )
+
+
+def _no_tracking_fact(**_kwargs):
+    return TrackingFactResult(
+        ok=False,
+        tool_status='skipped',
+        pii_redacted=True,
+        fact_evidence_present=False,
+        failure_reason='missing_tracking_number',
+    )
+
 def test_webchat_ai_job_worker_uses_orchestration_service_entrypoint():
     from app.services import background_jobs
     from app.services.webchat_ai_orchestration_service import process_webchat_ai_reply_job
@@ -130,7 +171,7 @@ def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_chang
     sent = _send(client, conversation_id, visitor_token, 'Where is CH020000129135?', 'osr-audit-trusted-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
     def fake_tracking_fact(**_kwargs):
@@ -146,52 +187,59 @@ def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_chang
             latest_event=TrackingFactEvent(description='Out for delivery'),
         )
 
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 30
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'tracking',
-            'ai_decision_next_action': 'reply',
-        }
-        webchat_ai_service._LAST_RUNTIME_RAG_TRACE = None
-        return 'Your parcel is out for delivery.'
-
-    monkeypatch.setattr(webchat_ai_service, '_maybe_lookup_tracking_fact', fake_tracking_fact)
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(conversation_ai_service, 'lookup_tracking_fact', fake_tracking_fact)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: _runtime_result(
+            reply='Your parcel is out for delivery.',
+            intent='tracking',
+            elapsed_ms=30,
+            runtime_trace={
+                'ai_decision_policy_ok': True,
+                'ai_decision_intent': 'tracking',
+                'ai_decision_next_action': 'reply',
+            },
+        ),
+    )
 
     _run_ai_turn(ai_turn_id)
     message = _agent_message(conversation_id)
     assert message.body == 'Your parcel is out for delivery.'
+    assert message.ticket_id is None
 
     db = SessionLocal()
     try:
         turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
         assert turn is not None
-        audit = db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
+        audit = db.query(RuntimeDecisionAuditRecord).filter(
+            RuntimeDecisionAuditRecord.ticket_id.is_(None),
+            RuntimeDecisionAuditRecord.conversation_id == message.conversation_id,
+        ).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
         assert audit is not None
         assert audit.allowed is True
         assert audit.business_reply_type == 'tracking_status_answer'
-        context = db.query(CaseContextRecord).filter(CaseContextRecord.ticket_id == message.ticket_id, CaseContextRecord.conversation_id == message.conversation_id).first()
+        context = db.query(CaseContextRecord).filter(
+            CaseContextRecord.ticket_id.is_(None),
+            CaseContextRecord.conversation_id == message.conversation_id,
+        ).first()
         assert context is not None
         assert context.tracking_number_hash
-        metadata = json.loads(message.metadata_json or '{}')
+        stored_message = db.get(WebchatMessage, message.id)
+        metadata = json.loads(stored_message.metadata_json or '{}')
         assert metadata['osr_audit']['mode'] == 'audit_only'
         assert metadata['osr_audit']['audit_id'] == audit.id
         assert metadata['osr_audit']['allowed'] is True
         metadata_text = json.dumps(metadata, ensure_ascii=False)
         assert 'CH020000129135' not in metadata_text
-        bundle, _debug_run = build_ai_debug_bundle(db, turn=turn)
+        bundle, debug_run = build_ai_debug_bundle(db, turn=turn)
+        assert debug_run.ticket_id is None
         assert bundle['osr']['mode'] == 'audit_only'
         assert bundle['osr']['audit_id'] == audit.id
         timeline_types = {item.get('event_type') for item in bundle.get('timeline', [])}
         assert 'osr.runtime_decision.audited' in timeline_types
     finally:
         db.close()
-
 
 def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(monkeypatch):
     _ensure_schema_and_user()
@@ -200,24 +248,23 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
     sent = _send(client, conversation_id, visitor_token, 'Please help me track my parcel.', 'osr-audit-nofact-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
-    monkeypatch.setattr(webchat_ai_service, '_maybe_lookup_tracking_fact', lambda **_kwargs: None)
-
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 18
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'tracking_missing_number',
-            'ai_decision_next_action': 'ask_clarifying_question',
-        }
-        return 'Please share the parcel number so I can check the latest status.'
-
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(conversation_ai_service, 'lookup_tracking_fact', _no_tracking_fact)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: _runtime_result(
+            reply='Please share the parcel number so I can check the latest status.',
+            intent='tracking_missing_number',
+            elapsed_ms=18,
+            runtime_trace={
+                'ai_decision_policy_ok': True,
+                'ai_decision_intent': 'tracking_missing_number',
+                'ai_decision_next_action': 'ask_clarifying_question',
+            },
+        ),
+    )
 
     _run_ai_turn(ai_turn_id, worker='osr-audit-nofact-worker')
     message = _agent_message(conversation_id)
@@ -225,7 +272,10 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
 
     db = SessionLocal()
     try:
-        audit = db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
+        audit = db.query(RuntimeDecisionAuditRecord).filter(
+            RuntimeDecisionAuditRecord.ticket_id.is_(None),
+            RuntimeDecisionAuditRecord.conversation_id == message.conversation_id,
+        ).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
         assert audit is not None
         assert audit.business_reply_type == 'clarification'
         assert audit.allowed is True
@@ -235,7 +285,6 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
     finally:
         db.close()
 
-
 def test_webchat_runtime_contract_blocks_declared_unsupported_tracking_claim(monkeypatch):
     _ensure_schema_and_user()
     client = TestClient(app)
@@ -243,22 +292,25 @@ def test_webchat_runtime_contract_blocks_declared_unsupported_tracking_claim(mon
     sent = _send(client, conversation_id, visitor_token, 'Please track my parcel.', 'osr-audit-nofact-live-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
-    monkeypatch.setattr(webchat_ai_service, '_maybe_lookup_tracking_fact', lambda **_kwargs: None)
-
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_intent': 'tracking',
-            'ai_decision_next_action': 'reply',
-            'ai_decision_policy_ok': False,
-            'ai_decision_policy_violation_codes': 'tracking_status_without_trusted_fact',
-        }
-        return 'Your parcel is out for delivery.'
-
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(conversation_ai_service, 'lookup_tracking_fact', _no_tracking_fact)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: _runtime_result(
+            reply=None,
+            intent='tracking',
+            ok=False,
+            error_code='ai_decision_policy_blocked',
+            runtime_trace={
+                'ai_decision_intent': 'tracking',
+                'ai_decision_next_action': 'reply',
+                'ai_decision_policy_ok': False,
+                'ai_decision_policy_violation_codes': 'tracking_status_without_trusted_fact',
+            },
+        ),
+    )
 
     _run_ai_turn(ai_turn_id, worker='osr-audit-nofact-live-worker')
 
@@ -267,18 +319,23 @@ def test_webchat_runtime_contract_blocks_declared_unsupported_tracking_claim(mon
         conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
         assert conversation is not None
         assert db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == 'agent').count() == 0
-        audit = db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == conversation.ticket_id, RuntimeDecisionAuditRecord.conversation_id == conversation.id).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
+        audit = db.query(RuntimeDecisionAuditRecord).filter(
+            RuntimeDecisionAuditRecord.ticket_id.is_(None),
+            RuntimeDecisionAuditRecord.conversation_id == conversation.id,
+        ).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
         assert audit is not None
         assert audit.business_reply_type == 'no_answer'
         assert audit.next_action == 'block'
         assert audit.allowed is True
         assert audit.violations_json in (None, [])
-        context = db.query(CaseContextRecord).filter(CaseContextRecord.ticket_id == conversation.ticket_id, CaseContextRecord.conversation_id == conversation.id).first()
+        context = db.query(CaseContextRecord).filter(
+            CaseContextRecord.ticket_id.is_(None),
+            CaseContextRecord.conversation_id == conversation.id,
+        ).first()
         assert context is not None
         assert context.issue_type == 'tracking'
     finally:
         db.close()
-
 
 def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeypatch):
     _ensure_schema_and_user()
@@ -287,24 +344,27 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
     sent = _send(client, conversation_id, visitor_token, 'Hello', 'osr-audit-failure-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
-
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'general_support',
-            'ai_decision_next_action': 'ask_clarifying_question',
-        }
-        return 'Hello, how can I help?'
+    monkeypatch.setattr(conversation_ai_service, 'lookup_tracking_fact', _no_tracking_fact)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: _runtime_result(
+            reply='Hello, how can I help?',
+            intent='general_support',
+            runtime_trace={
+                'ai_decision_policy_ok': True,
+                'ai_decision_intent': 'general_support',
+                'ai_decision_next_action': 'ask_clarifying_question',
+            },
+        ),
+    )
 
     def raising_audit(db, **_kwargs):
         db.add(RuntimeDecisionAuditRecord(next_action='reply', decision_json={}))
         db.flush()
 
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
     monkeypatch.setattr(webchat_ai_orchestration_service, 'audit_completed_webchat_ai_turn', raising_audit)
 
     _run_ai_turn(ai_turn_id, worker='osr-audit-failure-worker')
@@ -316,7 +376,10 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
         job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
         assert job is not None
         assert getattr(job.status, 'value', job.status) == 'done'
-        assert db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).count() == 0
+        assert db.query(RuntimeDecisionAuditRecord).filter(
+            RuntimeDecisionAuditRecord.ticket_id.is_(None),
+            RuntimeDecisionAuditRecord.conversation_id == message.conversation_id,
+        ).count() == 0
         assert db.query(WebchatMessage).filter(WebchatMessage.id == message.id).first().body == 'Hello, how can I help?'
     finally:
         db.close()

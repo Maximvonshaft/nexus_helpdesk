@@ -5,13 +5,17 @@ from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect, text
-from sqlalchemy.orm import object_session
 
 from app.db import Base, SessionLocal, engine
-from app.enums import ConversationState, UserRole
+from app.enums import UserRole
 from app.main import app
-from app.models import BackgroundJob, Ticket, TicketOutboundMessage, User
+from app.models import BackgroundJob, Ticket, User
+from app.models_osr import CaseContextRecord, RuntimeDecisionAuditRecord
+from app.models_webchat_debug import WebchatAIDebugRun, WebchatAITestFinding
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_webchat_ai_reply_jobs
+from app.services.tracking_fact_schema import TrackingFactResult
+from app.services.webchat_debug_bundle_service import build_ai_debug_bundle, create_test_finding
+from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult
 from app.utils.time import utc_now
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage  # noqa: F401
 
@@ -309,6 +313,46 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
         db.close()
 
 
+def _patch_ticketless_dependencies(monkeypatch, conversation_ai_service) -> None:
+    monkeypatch.setattr(
+        conversation_ai_service,
+        "lookup_tracking_fact",
+        lambda **_kwargs: TrackingFactResult(
+            ok=False,
+            tool_status="skipped",
+            pii_redacted=True,
+            failure_reason="missing_tracking_number",
+        ),
+    )
+
+
+def _runtime_reply(
+    *,
+    reply: str,
+    intent: str = "general_support",
+    handoff_required: bool = False,
+    handoff_reason: str | None = None,
+    recommended_agent_action: str | None = None,
+    elapsed_ms: int = 21,
+    runtime_trace: dict | None = None,
+) -> WebchatRuntimeReplyResult:
+    return WebchatRuntimeReplyResult(
+        ok=True,
+        ai_generated=True,
+        reply_source="private_ai_runtime",
+        reply=reply,
+        intent=intent,
+        tracking_number=None,
+        handoff_required=handoff_required,
+        handoff_reason=handoff_reason,
+        recommended_agent_action=recommended_agent_action,
+        ticket_creation_queued=False,
+        elapsed_ms=elapsed_ms,
+        runtime_trace=runtime_trace,
+        tool_calls=[],
+    )
+
+
 def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     _ensure_schema_and_user()
     _clear_webchat_ai_jobs()
@@ -318,31 +362,29 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     sent = _send(client, conversation_id, visitor_token, 'Hello', 'turn-runtime-dispatch-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
+    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 21
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            "latency_class": "trusted_tracking_fact",
-            "prompt_profile": "trusted_tracking_fact",
-            "prompt_chars": 1709,
-            "elapsed_ms": 10017,
-            "model": "qwen2.5:3b",
-            "chat_mode": "direct",
-            "request_shape": "question",
-            "endpoint": "https://apis.speedaf.com/open-api/mcp/order/query?appCode=SHOULD_NOT_PERSIST",
-            "authorization": "Bearer SHOULD_NOT_PERSIST",
-            "prompt": "customer text SHOULD_NOT_PERSIST",
-            "tracking_number": "CH020000129135",
-        }
-        return 'Hi, how can I help you today?'
+    def fake_run_runtime(**_kwargs):
+        return _runtime_reply(
+            reply='Hi, how can I help you today?',
+            runtime_trace={
+                "latency_class": "trusted_tracking_fact",
+                "prompt_profile": "trusted_tracking_fact",
+                "prompt_chars": 1709,
+                "elapsed_ms": 10017,
+                "model": "qwen2.5:3b",
+                "chat_mode": "direct",
+                "request_shape": "question",
+                "endpoint": "https://apis.speedaf.com/open-api/mcp/order/query?appCode=SHOULD_NOT_PERSIST",
+                "authorization": "Bearer SHOULD_NOT_PERSIST",
+                "prompt": "customer text SHOULD_NOT_PERSIST",
+                "tracking_number": "CH020000129135",
+            },
+        )
 
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(conversation_ai_service, '_run_runtime', fake_run_runtime)
 
     db = SessionLocal()
     try:
@@ -371,6 +413,7 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     try:
         turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
         assert turn is not None
+        assert turn.ticket_id is None
         assert turn.status == 'completed'
         assert turn.reply_message_id is not None
         trace = json.loads(turn.runtime_trace_json or '{}')
@@ -381,14 +424,45 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         trace_text = json.dumps(trace, ensure_ascii=False)
         assert "SHOULD_NOT_PERSIST" not in trace_text
         assert "CH020000129135" not in trace_text
-        assert db.query(WebchatMessage).filter(WebchatMessage.ai_turn_id == ai_turn_id, WebchatMessage.direction == 'agent').count() == 1
-        outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == turn.ticket_id).order_by(TicketOutboundMessage.id.desc()).first()
-        assert outbound is not None
-        assert outbound.runtime_contract_version == 'nexus.ai_reply.v3'
-        assert outbound.runtime_reply_type == 'clarifying_question'
-        contract_payload = json.loads(outbound.runtime_contract_payload_json or '{}')
-        assert contract_payload['grounding']['used_sources'] == []
-        assert contract_payload['grounding']['unsupported_claims'] == []
+        message = db.query(WebchatMessage).filter(
+            WebchatMessage.ai_turn_id == ai_turn_id,
+            WebchatMessage.direction == 'agent',
+        ).one()
+        assert message.ticket_id is None
+        metadata = json.loads(message.metadata_json or '{}')
+        assert metadata['ticketless_conversation'] is True
+        metadata_text = json.dumps(metadata, ensure_ascii=False)
+        assert "SHOULD_NOT_PERSIST" not in metadata_text
+        assert "CH020000129135" not in metadata_text
+
+        audit = db.query(RuntimeDecisionAuditRecord).filter(
+            RuntimeDecisionAuditRecord.conversation_id == turn.conversation_id,
+            RuntimeDecisionAuditRecord.ticket_id.is_(None),
+        ).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
+        assert audit is not None
+        context = db.query(CaseContextRecord).filter(
+            CaseContextRecord.conversation_id == turn.conversation_id,
+            CaseContextRecord.ticket_id.is_(None),
+        ).order_by(CaseContextRecord.id.desc()).first()
+        assert context is not None
+
+        bundle, debug_run = build_ai_debug_bundle(db, turn=turn)
+        assert bundle['ticket_id'] is None
+        assert debug_run.ticket_id is None
+        finding = create_test_finding(
+            db,
+            run=debug_run,
+            current_user_id=None,
+            finding_type='other',
+            tester_note='Ticketless AI audit remains inspectable.',
+        )
+        assert finding.ticket_id is None
+        assert db.query(WebchatAIDebugRun).filter(
+            WebchatAIDebugRun.ai_turn_id == turn.id,
+        ).count() == 1
+        assert db.query(WebchatAITestFinding).filter(
+            WebchatAITestFinding.debug_run_id == debug_run.id,
+        ).count() == 1
     finally:
         db.close()
 
@@ -408,26 +482,23 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
     )
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
+    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
-
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 19
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = False
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = None
-        webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = None
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'tracking_missing_number',
-            'ai_decision_next_action': 'ask_clarifying_question',
-        }
-        return 'Share the parcel number when you are ready and I will check the latest tracking details.'
-
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: _runtime_reply(
+            reply='Share the parcel number when you are ready and I will check the latest tracking details.',
+            intent='tracking_missing_number',
+            elapsed_ms=19,
+            runtime_trace={
+                'ai_decision_policy_ok': True,
+                'ai_decision_intent': 'tracking_missing_number',
+                'ai_decision_next_action': 'ask_clarifying_question',
+            },
+        ),
+    )
 
     db = SessionLocal()
     try:
@@ -456,6 +527,7 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
     try:
         turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
         assert turn is not None
+        assert turn.ticket_id is None
         assert turn.status == 'completed'
         assert turn.status_reason is None
     finally:
@@ -471,29 +543,30 @@ def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
     sent = _send(client, conversation_id, visitor_token, 'I need a human to review this', 'turn-runtime-handoff-1')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
+    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
-
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 34
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = True
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = 'customer_requested_human'
-        webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = 'Human agent should review the customer request.'
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'handoff_request',
-            'ai_decision_next_action': 'request_handoff',
-        }
-        return 'I will connect this conversation to a support agent.'
-
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(
+        conversation_ai_service,
+        '_run_runtime',
+        lambda **_kwargs: _runtime_reply(
+            reply='I will connect this conversation to a support agent.',
+            intent='handoff_request',
+            handoff_required=True,
+            handoff_reason='customer_requested_human',
+            recommended_agent_action='Human agent should review the customer request.',
+            elapsed_ms=34,
+            runtime_trace={
+                'ai_decision_policy_ok': True,
+                'ai_decision_intent': 'handoff_request',
+                'ai_decision_next_action': 'request_handoff',
+            },
+        ),
+    )
 
     db = SessionLocal()
     try:
+        ticket_count_before = db.query(Ticket).count()
         job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
         assert job is not None
         job.next_run_at = None
@@ -504,20 +577,17 @@ def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
 
         turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
         assert turn is not None
+        assert turn.ticket_id is None
         assert turn.status == 'completed'
         assert db.query(WebchatMessage).filter(WebchatMessage.ai_turn_id == ai_turn_id, WebchatMessage.direction == 'agent').count() == 1
         conversation = db.query(WebchatConversation).filter(WebchatConversation.id == turn.conversation_id).first()
         assert conversation is not None
+        assert conversation.ticket_id is None
         assert conversation.handoff_status == 'requested'
-        ticket = db.query(Ticket).filter(Ticket.id == turn.ticket_id).first()
-        assert ticket is not None
-        assert ticket.conversation_state == ConversationState.human_review_required
-        assert ticket.required_action == 'Human agent should review the customer request.'
-        assert db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.conversation_id == conversation.id).count() == 1
-        outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == turn.ticket_id).order_by(TicketOutboundMessage.id.desc()).first()
-        assert outbound is not None
-        assert outbound.runtime_contract_version == 'nexus.ai_reply.v3'
-        assert outbound.runtime_reply_type == 'handoff_notice'
+        handoff = db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.conversation_id == conversation.id).one()
+        assert handoff.ticket_id is None
+        assert handoff.recommended_agent_action == 'Human agent should review the customer request.'
+        assert db.query(Ticket).count() == ticket_count_before
     finally:
         db.close()
 
@@ -531,26 +601,29 @@ def test_ai_turn_runtime_human_takeover_during_generation_suppresses_ai_reply(mo
     sent = _send(client, conversation_id, visitor_token, 'I need a human to review this', 'turn-runtime-human-takeover-race')
     ai_turn_id = sent['ai_turn_id']
 
-    from app.services import webchat_ai_orchestration_service, webchat_ai_service
+    from app.services import conversation_ai_service, webchat_ai_orchestration_service
+    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
 
-    def fake_generate_ai_reply(**kwargs):
-        conversation = kwargs['conversation']
+    db = SessionLocal()
+
+    def fake_run_runtime(**_kwargs):
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id,
+        ).one()
         conversation.handoff_status = 'accepted'
         conversation.active_agent_id = 98765
         conversation.ai_suspended = True
         conversation.ai_suspended_by = 98765
         conversation.ai_suspended_reason = 'handoff_accepted'
-        object_session(conversation).flush()
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 34
-        webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = False
-        return 'This AI reply must not be written after human takeover.'
+        db.flush()
+        return _runtime_reply(
+            reply='This AI reply must not be written after human takeover.',
+            elapsed_ms=34,
+        )
 
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+    monkeypatch.setattr(conversation_ai_service, '_run_runtime', fake_run_runtime)
 
-    db = SessionLocal()
     try:
         job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
         assert job is not None
