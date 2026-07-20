@@ -331,6 +331,19 @@ def ensure_voice_ticket_for_public_conversation(
             detail="webchat conversation not found",
         )
     _validate_token(conversation, visitor_token)
+    tenant = _relational_tenant(db)
+    control = ensure_conversation_control(db, conversation=conversation)
+    _assert_resume_scope(
+        db,
+        conversation=conversation,
+        control=control,
+        tenant=tenant,
+    )
+    customer = (
+        db.get(Customer, control.customer_id)
+        if control.customer_id is not None
+        else None
+    )
     if conversation.ticket_id is not None:
         ticket = db.get(Ticket, conversation.ticket_id)
         if ticket is None:
@@ -339,12 +352,6 @@ def ensure_voice_ticket_for_public_conversation(
                 detail="webchat voice ticket relationship is invalid",
             )
     else:
-        control = ensure_conversation_control(db, conversation=conversation)
-        customer = (
-            db.get(Customer, control.customer_id)
-            if control.customer_id is not None
-            else None
-        )
         context = CaseContext(
             conversation_id=conversation.id,
             ticket_id=None,
@@ -368,6 +375,14 @@ def ensure_voice_ticket_for_public_conversation(
             issue_type="voice_support",
         )
         ticket = result.ticket
+    if tenant is not None:
+        if ticket.tenant_id is None:
+            stamp_runtime_tenant(ticket, tenant.id)
+        elif ticket.tenant_id != tenant.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="webchat_tenant_relationship_conflict",
+            )
     db.query(WebchatVoiceSession).filter(
         WebchatVoiceSession.conversation_id == conversation.id,
         WebchatVoiceSession.ticket_id.is_(None),
