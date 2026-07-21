@@ -79,7 +79,7 @@ def _setup_db(tmp_path):
     Base.metadata.create_all(engine)
     db_session = TestingSession()
     author = _user(db_session, role=UserRole.admin, suffix="_author")
-    reviewer = _user(db_session, role=UserRole.manager, suffix="_reviewer")
+    reviewer = _user(db_session, role=UserRole.admin, suffix="_reviewer")
     agent = _user(db_session, role=UserRole.agent, suffix="_agent")
     db_session.commit()
     return engine, db_session, author, reviewer, agent
