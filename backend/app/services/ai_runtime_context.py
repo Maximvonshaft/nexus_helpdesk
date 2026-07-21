@@ -81,7 +81,10 @@ def build_agent_context(
     )
     return sanitize_runtime_context(
         {
-            "context_version": "nexus.agent_context.v2",
+            # The v1 contract was additive and already allowed new bounded keys.
+            # Keep its stable version so existing consumers do not need a
+            # needless compatibility branch for memory and bulletin context.
+            "context_version": "nexus.agent_context.v1",
             "tenant_key": tenant_key,
             "channel_context": {
                 "market_id": market_id,
