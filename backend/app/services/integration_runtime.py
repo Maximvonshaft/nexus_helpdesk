@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -53,14 +54,17 @@ def list_integration_catalog(
     market_id: int | None = None,
     channel: str | None = None,
     language: str | None = None,
+    release_snapshot: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    rows = resolve_published_agent_configs(
-        db,
-        config_type=INTEGRATION,
-        market_id=market_id,
-        channel=channel,
-        language=language,
-    )
+    rows = _released_integrations(release_snapshot)
+    if rows is None:
+        rows = resolve_published_agent_configs(
+            db,
+            config_type=INTEGRATION,
+            market_id=market_id,
+            channel=channel,
+            language=language,
+        )
     return [
         {
             **row.safe_summary(),
@@ -70,6 +74,7 @@ def list_integration_catalog(
                 {
                     "key": item.get("key"),
                     "description": item.get("description"),
+                    "mode": item.get("mode"),
                     "method": item.get("method"),
                     "risk_level": item.get("risk_level"),
                     "requires_confirmation": item.get("requires_confirmation"),
@@ -93,6 +98,7 @@ def execute_integration_operation(
     channel: str | None = None,
     language: str | None = None,
     dry_run: bool = False,
+    release_snapshot: dict[str, Any] | None = None,
 ) -> IntegrationCallResult:
     integration = _resolve_integration(
         db,
@@ -100,11 +106,12 @@ def execute_integration_operation(
         market_id=market_id,
         channel=channel,
         language=language,
+        release_snapshot=release_snapshot,
     )
     operation_row = _operation(integration, operation)
-    method = str(operation_row.get("method") or "GET").upper()
-    is_write = method not in {"GET"}
-    if is_write != bool(expected_write):
+    mode = str(operation_row.get("mode") or "").strip().lower()
+    is_write = mode == "write"
+    if mode not in {"read", "write"} or is_write != bool(expected_write):
         return IntegrationCallResult(
             False,
             integration.resource_key,
@@ -114,9 +121,18 @@ def execute_integration_operation(
             "integration_operation_classification_mismatch",
         )
     if operation_row.get("enabled") is False:
-        return IntegrationCallResult(False, integration.resource_key, operation, "blocked", {}, "integration_operation_disabled")
+        return IntegrationCallResult(
+            False,
+            integration.resource_key,
+            operation,
+            "blocked",
+            {},
+            "integration_operation_disabled",
+        )
     payload = dict(arguments or {})
-    validator = Draft202012Validator(operation_row.get("input_schema") or {"type": "object"})
+    validator = Draft202012Validator(
+        operation_row.get("input_schema") or {"type": "object", "additionalProperties": False}
+    )
     errors = sorted(validator.iter_errors(payload), key=lambda item: list(item.path))
     if errors:
         return IntegrationCallResult(
@@ -134,21 +150,49 @@ def execute_integration_operation(
             operation,
             "validated",
             {
-                "method": method,
+                "mode": mode,
+                "method": operation_row.get("method"),
                 "endpoint_path": operation_row.get("path"),
-                "credential_configured": bool(_credential_value(integration.content.get("credential_ref"))),
+                "credential_configured": bool(
+                    _credential_value(integration.content.get("credential_ref"))
+                ),
             },
         )
     try:
         response, http_status = _call(integration, operation_row, payload)
     except TimeoutError:
-        return IntegrationCallResult(False, integration.resource_key, operation, "failed", {}, "integration_timeout")
+        return IntegrationCallResult(
+            False, integration.resource_key, operation, "failed", {}, "integration_timeout"
+        )
     except urllib.error.HTTPError as exc:
-        return IntegrationCallResult(False, integration.resource_key, operation, "failed", {}, f"integration_http_{exc.code}", exc.code)
+        return IntegrationCallResult(
+            False,
+            integration.resource_key,
+            operation,
+            "failed",
+            {},
+            f"integration_http_{exc.code}",
+            exc.code,
+        )
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as exc:
-        return IntegrationCallResult(False, integration.resource_key, operation, "failed", {}, f"integration_transport_{type(exc).__name__}")
+        return IntegrationCallResult(
+            False,
+            integration.resource_key,
+            operation,
+            "failed",
+            {},
+            f"integration_transport_{type(exc).__name__}",
+        )
     projected = _project_result(response, operation_row.get("result_allowlist") or [])
-    return IntegrationCallResult(True, integration.resource_key, operation, "executed", projected, None, http_status)
+    return IntegrationCallResult(
+        True,
+        integration.resource_key,
+        operation,
+        "executed",
+        projected,
+        None,
+        http_status,
+    )
 
 
 def _resolve_integration(
@@ -158,15 +202,18 @@ def _resolve_integration(
     market_id: int | None,
     channel: str | None,
     language: str | None,
+    release_snapshot: dict[str, Any] | None,
 ) -> ResolvedAgentConfig:
     key = str(integration_key or "").strip().lower()
-    rows = resolve_published_agent_configs(
-        db,
-        config_type=INTEGRATION,
-        market_id=market_id,
-        channel=channel,
-        language=language,
-    )
+    rows = _released_integrations(release_snapshot)
+    if rows is None:
+        rows = resolve_published_agent_configs(
+            db,
+            config_type=INTEGRATION,
+            market_id=market_id,
+            channel=channel,
+            language=language,
+        )
     row = next(
         (
             item
@@ -179,6 +226,37 @@ def _resolve_integration(
     if row is None:
         raise HTTPException(status_code=404, detail="integration_not_found")
     return row
+
+
+def _released_integrations(
+    release_snapshot: dict[str, Any] | None,
+) -> list[ResolvedAgentConfig] | None:
+    if not isinstance(release_snapshot, dict) or release_snapshot.get("source") != "deployment":
+        return None
+    resolved = release_snapshot.get("resolved")
+    if not isinstance(resolved, dict):
+        raise RuntimeError("agent_release_resolved_resources_missing")
+    resources = resolved.get("resources")
+    if not isinstance(resources, list):
+        raise RuntimeError("agent_release_resources_invalid")
+    output: list[ResolvedAgentConfig] = []
+    for item in resources:
+        if not isinstance(item, dict) or item.get("config_type") != INTEGRATION:
+            continue
+        content = item.get("content")
+        if not isinstance(content, dict):
+            raise RuntimeError("agent_release_integration_content_invalid")
+        output.append(
+            ResolvedAgentConfig(
+                resource_id=int(item.get("id") or 0),
+                resource_key=str(item.get("resource_key") or ""),
+                config_type=INTEGRATION,
+                content=content,
+                version=int(item.get("version") or 0),
+                scope_rank=100,
+            )
+        )
+    return output
 
 
 def _operation(integration: ResolvedAgentConfig, operation: str) -> dict[str, Any]:
@@ -202,7 +280,9 @@ def _call(
     arguments: dict[str, Any],
 ) -> tuple[Any, int]:
     content = integration.content
-    base_url = require_http_endpoint(str(content.get("base_url") or ""), label="integration base URL").rstrip("/")
+    base_url = require_http_endpoint(
+        str(content.get("base_url") or ""), label="integration base URL"
+    ).rstrip("/")
     path = str(operation.get("path") or "")
     endpoint = require_http_endpoint(f"{base_url}{path}", label="integration endpoint")
     _enforce_host(endpoint, content.get("host_allowlist") or [])
@@ -252,9 +332,7 @@ def _call(
 
 def _credential_value(reference: Any) -> str | None:
     ref = str(reference or "").strip().lower()
-    if not ref:
-        return None
-    if not _CREDENTIAL_RE.fullmatch(ref):
+    if not ref or not _CREDENTIAL_RE.fullmatch(ref):
         return None
     suffix = re.sub(r"[^A-Z0-9]+", "_", ref.upper()).strip("_")
     file_path = str(os.getenv(f"NEXUS_CREDENTIAL_{suffix}_FILE") or "").strip()
@@ -265,8 +343,7 @@ def _credential_value(reference: Any) -> str | None:
                 return credential_file.read().strip() or None
         except OSError:
             return None
-    app_env = str(os.getenv("APP_ENV") or "development").strip().lower()
-    if app_env == "production":
+    if str(os.getenv("APP_ENV") or "development").strip().lower() == "production":
         return None
     return inline or None
 
@@ -278,9 +355,19 @@ def _enforce_host(endpoint: str, allowlist: list[str]) -> None:
     if not hostname or hostname not in allowed:
         raise ValueError("integration_host_not_allowlisted")
     try:
-        socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        records = socket.getaddrinfo(
+            hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
     except socket.gaierror as exc:
         raise ValueError("integration_host_unresolvable") from exc
+    if not records:
+        raise ValueError("integration_host_unresolvable")
+    for record in records:
+        address = ipaddress.ip_address(record[4][0])
+        if not address.is_global:
+            raise ValueError("integration_private_address_forbidden")
 
 
 def _flat_query(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -288,7 +375,9 @@ def _flat_query(arguments: dict[str, Any]) -> dict[str, Any]:
     for key, value in list(arguments.items())[:100]:
         if value is None or isinstance(value, (str, int, float, bool)):
             output[str(key)[:120]] = value
-        elif isinstance(value, list) and all(isinstance(item, (str, int, float, bool)) for item in value[:50]):
+        elif isinstance(value, list) and all(
+            isinstance(item, (str, int, float, bool)) for item in value[:50]
+        ):
             output[str(key)[:120]] = value[:50]
         else:
             raise ValueError("integration_get_arguments_must_be_scalar")
@@ -319,12 +408,12 @@ def _sanitize(value: Any, *, depth: int = 0) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        return value[:2000]
+        return value[:4000]
     if isinstance(value, list):
-        return [_sanitize(item, depth=depth + 1) for item in value[:30]]
+        return [_sanitize(item, depth=depth + 1) for item in value[:100]]
     if isinstance(value, dict):
         return {
-            str(key)[:120]: _sanitize(item, depth=depth + 1)
+            str(key)[:100]: _sanitize(item, depth=depth + 1)
             for key, item in list(value.items())[:100]
             if str(key).strip().lower() not in _SECRET_KEYS
         }
