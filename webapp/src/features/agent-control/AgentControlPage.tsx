@@ -23,7 +23,7 @@ export type AgentControlTab = 'overview' | 'persona' | 'playbooks' | 'tools' | '
 
 export function AgentControlPage({ canManage }: { canManage: boolean }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
-  const [tenantKey, setTenantKey] = useState('default')
+  const [tenantKey, setTenantKey] = useState('')
   const [environment, setEnvironment] = useState<'test' | 'staging' | 'production'>('production')
   const [marketId, setMarketId] = useState('')
   const [channel, setChannel] = useState('webchat')
@@ -41,7 +41,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
       caseType,
     ],
     queryFn: () => agentControlApi.snapshot({
-      tenantKey,
+      tenantKey: tenantKey || undefined,
       environment,
       marketId: Number.isFinite(parsedMarketId) ? parsedMarketId : null,
       channel,
@@ -53,6 +53,9 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
   })
 
   useEffect(() => { document.title = 'Agent 控制面 · Nexus OSR' }, [])
+  useEffect(() => {
+    if (!tenantKey && snapshot.data?.tenant_key) setTenantKey(snapshot.data.tenant_key)
+  }, [snapshot.data?.tenant_key, tenantKey])
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
@@ -112,7 +115,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
           {tab === 'overview' ? (
             <OverviewPanel
               snapshot={snapshot.data}
-              tenantKey={tenantKey}
+              tenantKey={tenantKey || snapshot.data.tenant_key}
               setTenantKey={setTenantKey}
               environment={environment}
               setEnvironment={setEnvironment}
@@ -131,7 +134,9 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
           {tab === 'persona' ? (
             <PersonaPanel
               snapshot={snapshot.data}
+              tenantKey={tenantKey || snapshot.data.tenant_key}
               canManage={canManage && snapshot.data.capabilities.can_manage}
+              canDeploy={snapshot.data.capabilities.can_deploy}
             />
           ) : null}
           {tab === 'playbooks' ? (
@@ -144,7 +149,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
             <ToolsIntegrationsPanel
               snapshot={snapshot.data}
               canManage={canManage && snapshot.data.capabilities.can_manage}
-              tenantKey={tenantKey}
+              tenantKey={tenantKey || snapshot.data.tenant_key}
             />
           ) : null}
           {tab === 'runtime' ? (
