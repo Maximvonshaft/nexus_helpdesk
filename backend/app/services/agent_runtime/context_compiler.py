@@ -76,13 +76,7 @@ def compile_agent_context(
     num_ctx: int,
     max_output_chars: int,
 ) -> CompiledAgentContext:
-    """Compile a valid, priority-aware context without tail truncation.
-
-    Agent turns and read-only Specialist turns share this one budget compiler and
-    Provider transport. The compiler never slices a serialized JSON document.
-    Mandatory runtime facts remain valid under pressure; optional sections are
-    bounded or omitted as complete JSON values.
-    """
+    """Compile valid priority-aware JSON without serialized tail truncation."""
 
     if request.output_contract == _SPECIALIST_CONTRACT:
         return _compile_specialist_context(
@@ -110,18 +104,52 @@ def _compile_parent_agent_context(
     budget_chars = _budget_chars(max_prompt_chars, num_ctx, max_output_chars)
     data_budget = max(512, budget_chars - len(_AGENT_INSTRUCTION))
 
-    release = _release_identity(metadata.get("agent_release_snapshot"))
-    mandatory = {
-        "customer_message": _clean_text(request.body, 4000),
+    # Immutable Release identity and customer language are execution authority,
+    # not optional prompt decoration. They are inserted in full and never passed
+    # through the generic bounding function.
+    payload: dict[str, Any] = {
         "language": _clean_text(
             metadata.get("customer_language") or metadata.get("language") or "auto",
             64,
         ),
-        "agent_release": release,
-        "runtime_policy": _safe_value(metadata.get("agent_runtime_policy")),
-        "channel_context": _safe_value(metadata.get("channel_context")),
-        "tool_observations": _safe_value(metadata.get("tool_observations")),
+        "agent_release": _release_identity(metadata.get("agent_release_snapshot")),
     }
+    section_chars: dict[str, int] = {
+        key: _json_chars(value) for key, value in payload.items()
+    }
+    omitted: list[str] = []
+    authority_chars = _json_chars(payload)
+    if authority_chars + 128 > data_budget:
+        raise RuntimeError("agent_context_mandatory_budget_exceeded")
+
+    variable_budget = max(256, data_budget - authority_chars - 64)
+    variable = (
+        (
+            "runtime_policy",
+            _safe_value(metadata.get("agent_runtime_policy")),
+            0.07,
+            64,
+        ),
+        (
+            "channel_context",
+            _safe_value(metadata.get("channel_context")),
+            0.08,
+            64,
+        ),
+        ("customer_message", _clean_text(request.body, 4000), 0.25, 128),
+        (
+            "tool_observations",
+            _safe_value(metadata.get("tool_observations")),
+            0.60,
+            192,
+        ),
+    )
+    for key, value, weight, minimum in variable:
+        allocation = max(minimum, int(variable_budget * weight))
+        bounded = _bounded_json_value(value, allocation)
+        payload[key] = bounded
+        section_chars[key] = _json_chars(bounded)
+
     optional = (
         ("persona", metadata.get("persona_context"), 0.08),
         ("playbooks", metadata.get("agent_playbooks"), 0.16),
@@ -130,32 +158,12 @@ def _compile_parent_agent_context(
         ("session_checkpoint", metadata.get("agent_session_checkpoint"), 0.06),
         ("recent_conversation", request.recent_context, 0.12),
     )
-
-    payload: dict[str, Any] = {}
-    section_chars: dict[str, int] = {}
-    omitted: list[str] = []
-
-    mandatory_budget = max(384, int(data_budget * 0.48))
-    mandatory_weights = {
-        "customer_message": 0.23,
-        "language": 0.02,
-        "agent_release": 0.07,
-        "runtime_policy": 0.05,
-        "channel_context": 0.04,
-        "tool_observations": 0.59,
-    }
-    for key, value in mandatory.items():
-        allocation = max(64, int(mandatory_budget * mandatory_weights[key]))
-        bounded = _bounded_json_value(value, allocation)
-        payload[key] = bounded
-        section_chars[key] = _json_chars(bounded)
-
     remaining = max(0, data_budget - _json_chars(payload) - 64)
     for key, value, share in optional:
         if value in (None, [], {}, ""):
             omitted.append(key)
             continue
-        allocation = max(96, min(remaining, int(data_budget * share)))
+        allocation = min(remaining, max(96, int(data_budget * share)))
         if allocation < 96:
             omitted.append(key)
             continue
@@ -186,13 +194,21 @@ def _compile_parent_agent_context(
                 omitted.append(key)
             prompt = _AGENT_INSTRUCTION + _json(payload)
 
+    # Compact content-bearing sections from lowest to highest runtime authority.
+    # Release identity and language are never included in this list.
     if len(prompt) > budget_chars:
-        for key in ("tool_observations", "customer_message", "channel_context"):
+        for key in (
+            "customer_message",
+            "channel_context",
+            "runtime_policy",
+            "tool_observations",
+        ):
             if len(prompt) <= budget_chars:
                 break
             current = payload.get(key)
+            minimum = 192 if key == "tool_observations" else 64
             target = max(
-                64,
+                minimum,
                 _json_chars(current) - (len(prompt) - budget_chars) - 64,
             )
             payload[key] = _bounded_json_value(current, target)
@@ -202,9 +218,15 @@ def _compile_parent_agent_context(
     if len(prompt) > budget_chars:
         raise RuntimeError("agent_context_mandatory_budget_exceeded")
 
+    source_values = {
+        "runtime_policy": metadata.get("agent_runtime_policy"),
+        "channel_context": metadata.get("channel_context"),
+        "customer_message": request.body,
+        "tool_observations": metadata.get("tool_observations"),
+    }
     compacted = bool(omitted) or any(
         section_chars.get(key, 0) < _json_chars(_safe_value(value))
-        for key, value in mandatory.items()
+        for key, value in source_values.items()
     )
     return _compiled(
         prompt,
@@ -238,16 +260,14 @@ def _compile_specialist_context(
     references = metadata.get("agent_specialist_evidence_refs")
     if not isinstance(references, list):
         references = []
-    evidence_refs = []
+    evidence_refs: list[str] = []
     for raw in references[:20]:
         cleaned = _clean_text(raw, 160)
         if cleaned and cleaned not in evidence_refs:
             evidence_refs.append(cleaned)
 
-    payload = {
+    payload: dict[str, Any] = {
         "specialist": specialist,
-        "task": _bounded_json_value(_clean_text(request.body, 6000), int(data_budget * 0.72)),
-        "evidence_refs": _bounded_json_value(evidence_refs, int(data_budget * 0.16)),
         "agent_release": _release_identity(metadata.get("agent_release_snapshot")),
         "constraints": {
             "read_only": True,
@@ -256,13 +276,25 @@ def _compile_specialist_context(
             "action_claims_allowed": False,
         },
     }
+    authority_chars = _json_chars(payload)
+    if authority_chars + 256 > data_budget:
+        raise RuntimeError("agent_specialist_context_budget_exceeded")
+    remaining = data_budget - authority_chars - 64
+    payload["task"] = _bounded_json_value(
+        _clean_text(request.body, 6000),
+        max(192, int(remaining * 0.78)),
+    )
+    payload["evidence_refs"] = _bounded_json_value(
+        evidence_refs,
+        max(96, int(remaining * 0.20)),
+    )
     section_chars = {key: _json_chars(value) for key, value in payload.items()}
     omitted: list[str] = []
     prompt = _SPECIALIST_INSTRUCTION + _json(payload)
     if len(prompt) > budget_chars:
         payload["task"] = _bounded_json_value(
             payload["task"],
-            max(256, _json_chars(payload["task"]) - (len(prompt) - budget_chars) - 64),
+            max(192, _json_chars(payload["task"]) - (len(prompt) - budget_chars) - 64),
         )
         section_chars["task"] = _json_chars(payload["task"])
         prompt = _SPECIALIST_INSTRUCTION + _json(payload)
@@ -322,22 +354,22 @@ def _release_identity(value: Any) -> dict[str, Any]:
     deployment = value.get("deployment") if isinstance(value.get("deployment"), dict) else {}
     release = value.get("release") if isinstance(value.get("release"), dict) else {}
     return {
-        "source": value.get("source"),
-        "tenant_key": value.get("tenant_key"),
+        "source": _clean_text(value.get("source"), 32) or None,
+        "tenant_key": _clean_text(value.get("tenant_key"), 80) or None,
         "definition": {
             "id": definition.get("id"),
-            "definition_key": definition.get("definition_key"),
+            "definition_key": _clean_text(definition.get("definition_key"), 160) or None,
         },
         "deployment": {
             "id": deployment.get("id"),
-            "environment": deployment.get("environment"),
-            "scope_key": deployment.get("scope_key"),
-            "canary": deployment.get("canary"),
+            "environment": _clean_text(deployment.get("environment"), 24) or None,
+            "scope_key": _clean_text(deployment.get("scope_key"), 320) or None,
+            "canary": deployment.get("canary") is True,
         },
         "release": {
             "id": release.get("id"),
             "version": release.get("version"),
-            "manifest_sha256": release.get("manifest_sha256"),
+            "manifest_sha256": _clean_text(release.get("manifest_sha256"), 64) or None,
         },
     }
 
