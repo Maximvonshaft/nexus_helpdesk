@@ -12,10 +12,19 @@ RETIRED_PATHS = (
     ROOT / "backend/app/services/webchat_runtime_output_parser.py",
     ROOT / "backend/app/services/webchat_ai_decision_runtime/service.py",
     ROOT / "backend/app/services/provider_runtime/webchat_runtime_dispatcher.py",
+    ROOT / "backend/app/services/webchat_osr_audit_service.py",
+    ROOT / "backend/app/services/nexus_osr/runtime_bridge.py",
+    ROOT / "backend/app/services/nexus_osr/tool_execution_facade.py",
+    ROOT / "backend/app/services/nexus_osr/escalation_orchestration_service.py",
     ROOT / "backend/scripts/run_domain_runtime_eval.py",
     ROOT / "backend/tests/test_runtime_context_guard.py",
     ROOT / "backend/tests/test_webchat_osr_audit_integration.py",
     ROOT / "backend/tests/test_ticketless_voice_ticket_binding.py",
+    ROOT / "backend/tests/test_nexus_osr_runtime_bridge.py",
+    ROOT / "backend/tests/test_nexus_osr_tool_execution_facade.py",
+    ROOT / "backend/tests/test_nexus_osr_release_integration.py",
+    ROOT / "backend/tests/test_nexus_osr_escalation_orchestration.py",
+    ROOT / "backend/tests/test_nexus_osr_queue_escalation_entrypoint.py",
     ROOT / "scripts/probe_domain_webchat_shadow_trace_e2e.py",
     ROOT / "scripts/probe_domain_webchat_shadow_trace_e2e.sh",
     ROOT / "docs/architecture/DOMAIN_INTELLIGENCE_RUNTIME.md",
@@ -30,6 +39,9 @@ RUNTIME_PATHS = (
     ROOT / "backend/app/services/webchat_ai_service.py",
     ROOT / "backend/app/services/conversation_ai_service.py",
     ROOT / "backend/app/services/webchat_runtime_ai_service.py",
+)
+TOOL_GOVERNANCE_PATHS = (
+    ROOT / "backend/app/services/nexus_osr",
 )
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
@@ -61,6 +73,22 @@ FORBIDDEN_RUNTIME_CONTENT = (
     '"assistant_name": "Speedy"',
     '"brand": "Speedaf"',
 )
+FORBIDDEN_TOOL_GOVERNANCE_CONTENT = (
+    "OSRToolExecutionFacade",
+    "OSRToolExecutionMode",
+    "default_handlers",
+    "ticket_create_handler",
+    "handoff_request_handler",
+    "evaluate_runtime_decision",
+    "EvidenceType",
+    "EvidenceSource",
+    "TRACKING_STATUS_ANSWER",
+    "KNOWLEDGE_ANSWER",
+    "COMPLAINT_ESCALATION",
+    "COMPENSATION_ESCALATION",
+    "tracking_status_without_mcp_current_status",
+    "knowledge_answer_without_customer_visible_knowledge",
+)
 ARCHITECTURE_PATHS = (
     ROOT / "docs/architecture/conversation-first-agent-routing.md",
 )
@@ -78,6 +106,22 @@ def _python_files(path: Path):
         yield from path.rglob("*.py")
 
 
+def _scan_markers(
+    *,
+    roots: tuple[Path, ...],
+    markers: tuple[str, ...],
+    failures: list[str],
+) -> None:
+    for root in roots:
+        for path in _python_files(root):
+            text = path.read_text(encoding="utf-8")
+            for marker in markers:
+                if marker in text:
+                    failures.append(
+                        f"{path.relative_to(ROOT)}: contains retired marker {marker}"
+                    )
+
+
 def main() -> int:
     failures: list[str] = []
     for path in RETIRED_PATHS:
@@ -85,14 +129,16 @@ def main() -> int:
             failures.append(
                 f"retired path still exists: {path.relative_to(ROOT)}"
             )
-    for root in RUNTIME_PATHS:
-        for path in _python_files(root):
-            text = path.read_text(encoding="utf-8")
-            for marker in FORBIDDEN_RUNTIME_CONTENT:
-                if marker in text:
-                    failures.append(
-                        f"{path.relative_to(ROOT)}: contains retired marker {marker}"
-                    )
+    _scan_markers(
+        roots=RUNTIME_PATHS,
+        markers=FORBIDDEN_RUNTIME_CONTENT,
+        failures=failures,
+    )
+    _scan_markers(
+        roots=TOOL_GOVERNANCE_PATHS,
+        markers=FORBIDDEN_TOOL_GOVERNANCE_CONTENT,
+        failures=failures,
+    )
     for path in ARCHITECTURE_PATHS:
         text = path.read_text(encoding="utf-8")
         for marker in FORBIDDEN_ARCHITECTURE_CONTENT:
