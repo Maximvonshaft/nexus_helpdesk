@@ -18,10 +18,6 @@ down_revision = "20260720_0067"
 branch_labels = None
 depends_on = None
 
-_RESOURCE_PROVENANCE = "migration_0068_agent_control_resources"
-_POLICY_PROVENANCE = "migration_0068_agent_control_tool_policies"
-_LEGACY_PROVENANCE = "migration_0068_legacy_ai_configs"
-
 
 def _playbook(name: str, description: str, tools: list[str], instructions: list[str], priority: int) -> dict[str, Any]:
     return {
@@ -40,73 +36,105 @@ def _playbook(name: str, description: str, tools: list[str], instructions: list[
 
 _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
     (
-        "agent.playbook.shipment-tracking", "playbook", "Shipment tracking",
+        "agent.playbook.shipment-tracking",
+        "playbook",
+        "Shipment tracking",
         _playbook(
-            "shipment_tracking", "Query current shipment facts and event history.",
+            "shipment_tracking",
+            "Query current shipment facts and event history.",
             ["speedaf.order.query", "speedaf.express.track.query", "speedaf.order.waybillCode.query"],
             [
                 "Query a shipment Tool before stating current status, ETA, outcome, customs state or route progress.",
                 "Use Tool observations as the source of truth; never invent missing facts or expose raw payloads or PII.",
-            ], 10,
+            ],
+            10,
         ),
     ),
     (
-        "agent.playbook.approved-knowledge", "playbook", "Approved knowledge",
+        "agent.playbook.approved-knowledge",
+        "playbook",
+        "Approved knowledge",
         _playbook(
-            "approved_knowledge", "Answer from approved customer-visible knowledge.",
+            "approved_knowledge",
+            "Answer from approved customer-visible knowledge.",
             ["knowledge.search"],
             [
                 "Search approved knowledge for company-specific, market-specific or current internal facts.",
                 "Answer only from returned customer-visible evidence and state when no approved answer exists.",
-            ], 20,
+            ],
+            20,
         ),
     ),
     (
-        "agent.playbook.human-handoff", "playbook", "Human handoff",
+        "agent.playbook.human-handoff",
+        "playbook",
+        "Human handoff",
         _playbook(
-            "human_handoff", "Request governed human support.",
+            "human_handoff",
+            "Request governed human support.",
             ["support.availability", "handoff.request.create"],
             [
                 "Request handoff when explicitly requested or when legal, privacy, compensation or authority boundaries require it.",
                 "Never claim a person accepted the case unless a committed Tool observation states it.",
-            ], 30,
+            ],
+            30,
         ),
     ),
     (
-        "agent.playbook.delivery-followup", "playbook", "Delivery follow-up",
+        "agent.playbook.delivery-followup",
+        "playbook",
+        "Delivery follow-up",
         _playbook(
-            "delivery_followup", "Create a governed delivery follow-up work order.",
+            "delivery_followup",
+            "Create a governed delivery follow-up work order.",
             ["speedaf.workOrder.create"],
             [
                 "Create a work order only for an explicit follow-up or expedition request with required data.",
                 "Never claim success until a committed Tool observation confirms it.",
-            ], 40,
+            ],
+            40,
         ),
     ),
     (
-        "agent.playbook.case-operations", "playbook", "Case operations",
+        "agent.playbook.case-operations",
+        "playbook",
+        "Case operations",
         _playbook(
-            "case_operations", "Perform governed case and confirmed customer operations.",
-            ["ticket.create", "timeline.event.create", "speedaf.order.cancel.request", "speedaf.order.updateAddress.request", "speedaf.voice.callback"],
+            "case_operations",
+            "Perform governed case and confirmed customer operations.",
+            [
+                "ticket.create",
+                "timeline.event.create",
+                "speedaf.order.cancel.request",
+                "speedaf.order.updateAddress.request",
+                "speedaf.voice.callback",
+            ],
             [
                 "Use write Tools only for explicit customer requests and respect every confirmation requirement.",
                 "Never state that a write action succeeded until a committed Tool observation confirms it.",
-            ], 50,
+            ],
+            50,
         ),
     ),
     (
-        "agent.playbook.customer-continuity", "playbook", "Customer continuity",
+        "agent.playbook.customer-continuity",
+        "playbook",
+        "Customer continuity",
         _playbook(
-            "customer_continuity", "Use governed long-term customer facts.",
+            "customer_continuity",
+            "Use governed long-term customer facts.",
             ["customer.memory.read", "customer.memory.write"],
             [
                 "Use customer memory only when it materially improves the current task and never as authority for current external facts.",
                 "Write only explicitly confirmed permitted facts; never store credentials, payment data, raw transcripts, health data or government identifiers.",
-            ], 60,
+            ],
+            60,
         ),
     ),
     (
-        "agent.runtime.default", "runtime_policy", "Default Agent runtime policy",
+        "agent.runtime.default",
+        "runtime_policy",
+        "Default Agent runtime policy",
         {
             "schema_version": "nexus.agent_runtime_policy.v1",
             "max_tool_rounds": 3,
@@ -117,7 +145,9 @@ _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
         },
     ),
     (
-        "agent.model.private-default", "model_profile", "Private Agent model",
+        "agent.model.private-default",
+        "model_profile",
+        "Private Agent model",
         {
             "schema_version": "nexus.agent_model_profile.v1",
             "provider": "private_ai_runtime",
@@ -138,7 +168,9 @@ _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
         },
     ),
     (
-        "agent.memory.default", "memory_policy", "Default customer memory policy",
+        "agent.memory.default",
+        "memory_policy",
+        "Default customer memory policy",
         {
             "schema_version": "nexus.customer_memory_policy.v1",
             "injection_enabled": True,
@@ -146,8 +178,21 @@ _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
             "require_explicit_consent": True,
             "max_facts": 12,
             "retention_days": 180,
-            "allowed_keys": ["preferred_language", "preferred_contact_channel", "delivery_instructions", "accessibility_preference", "communication_preference"],
-            "prohibited_categories": ["credential", "payment_card", "government_identifier", "health", "biometric", "raw_transcript"],
+            "allowed_keys": [
+                "preferred_language",
+                "preferred_contact_channel",
+                "delivery_instructions",
+                "accessibility_preference",
+                "communication_preference",
+            ],
+            "prohibited_categories": [
+                "credential",
+                "payment_card",
+                "government_identifier",
+                "health",
+                "biometric",
+                "raw_transcript",
+            ],
             "enabled": True,
         },
     ),
@@ -159,7 +204,17 @@ _DEFAULT_TOOL_POLICIES = (
     ("customer.memory.read", "low", False, False),
     ("customer.memory.write", "high", True, False),
 )
-_LEGACY_CONFIG_TYPES = ("persona", "knowledge", "sop", "policy", "rule", "rules", "status_dictionary", "channel_policy", "support_runtime")
+_LEGACY_CONFIG_TYPES = (
+    "persona",
+    "knowledge",
+    "sop",
+    "policy",
+    "rule",
+    "rules",
+    "status_dictionary",
+    "channel_policy",
+    "support_runtime",
+)
 
 
 def upgrade() -> None:
@@ -186,89 +241,185 @@ def upgrade() -> None:
         sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_customer_memory_confidence_range"),
         sa.CheckConstraint("sensitivity IN ('standard', 'restricted')", name="ck_customer_memory_sensitivity"),
     )
-    for name, columns in (
-        ("ix_customer_memory_facts_tenant_key", ["tenant_key"]),
-        ("ix_customer_memory_facts_customer_id", ["customer_id"]),
-        ("ix_customer_memory_facts_memory_key", ["memory_key"]),
-        ("ix_customer_memory_facts_is_active", ["is_active"]),
-        ("ix_customer_memory_facts_expires_at", ["expires_at"]),
-        ("ix_customer_memory_runtime_lookup", ["tenant_key", "customer_id", "is_active", "expires_at"]),
-    ):
-        op.create_index(name, "customer_memory_facts", columns)
-
-    op.create_table(_RESOURCE_PROVENANCE, sa.Column("resource_key", sa.String(length=120), primary_key=True), sa.Column("resource_id", sa.Integer(), nullable=False), sa.Column("version_id", sa.Integer(), nullable=False))
-    op.create_table(_POLICY_PROVENANCE, sa.Column("tool_name", sa.String(length=160), primary_key=True), sa.Column("country_code", sa.String(length=16), primary_key=True), sa.Column("channel", sa.String(length=40), primary_key=True))
-    op.create_table(_LEGACY_PROVENANCE, sa.Column("resource_id", sa.Integer(), primary_key=True), sa.Column("was_active", sa.Boolean(), nullable=False))
+    op.create_index("ix_customer_memory_facts_tenant_key", "customer_memory_facts", ["tenant_key"])
+    op.create_index("ix_customer_memory_facts_customer_id", "customer_memory_facts", ["customer_id"])
+    op.create_index("ix_customer_memory_facts_memory_key", "customer_memory_facts", ["memory_key"])
+    op.create_index("ix_customer_memory_facts_is_active", "customer_memory_facts", ["is_active"])
+    op.create_index("ix_customer_memory_facts_expires_at", "customer_memory_facts", ["expires_at"])
+    op.create_index(
+        "ix_customer_memory_runtime_lookup",
+        "customer_memory_facts",
+        ["tenant_key", "customer_id", "is_active", "expires_at"],
+    )
 
     bind = op.get_bind()
     now = datetime.now(timezone.utc)
     resources = sa.table(
         "ai_config_resources",
-        sa.column("id", sa.Integer()), sa.column("resource_key", sa.String()), sa.column("config_type", sa.String()),
-        sa.column("name", sa.String()), sa.column("description", sa.Text()), sa.column("scope_type", sa.String()),
-        sa.column("scope_value", sa.String()), sa.column("market_id", sa.Integer()), sa.column("is_active", sa.Boolean()),
-        sa.column("draft_summary", sa.Text()), sa.column("draft_content_json", sa.JSON()), sa.column("published_summary", sa.Text()),
-        sa.column("published_content_json", sa.JSON()), sa.column("published_version", sa.Integer()), sa.column("published_at", sa.DateTime(timezone=True)),
-        sa.column("created_by", sa.Integer()), sa.column("updated_by", sa.Integer()), sa.column("published_by", sa.Integer()),
-        sa.column("created_at", sa.DateTime(timezone=True)), sa.column("updated_at", sa.DateTime(timezone=True)),
+        sa.column("id", sa.Integer()),
+        sa.column("resource_key", sa.String()),
+        sa.column("config_type", sa.String()),
+        sa.column("name", sa.String()),
+        sa.column("description", sa.Text()),
+        sa.column("scope_type", sa.String()),
+        sa.column("scope_value", sa.String()),
+        sa.column("market_id", sa.Integer()),
+        sa.column("is_active", sa.Boolean()),
+        sa.column("draft_summary", sa.Text()),
+        sa.column("draft_content_json", sa.JSON()),
+        sa.column("published_summary", sa.Text()),
+        sa.column("published_content_json", sa.JSON()),
+        sa.column("published_version", sa.Integer()),
+        sa.column("published_at", sa.DateTime(timezone=True)),
+        sa.column("created_by", sa.Integer()),
+        sa.column("updated_by", sa.Integer()),
+        sa.column("published_by", sa.Integer()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
+        sa.column("updated_at", sa.DateTime(timezone=True)),
     )
     versions = sa.table(
-        "ai_config_versions", sa.column("id", sa.Integer()), sa.column("resource_id", sa.Integer()),
-        sa.column("version", sa.Integer()), sa.column("snapshot_json", sa.JSON()), sa.column("summary", sa.Text()),
-        sa.column("notes", sa.Text()), sa.column("published_by", sa.Integer()), sa.column("published_at", sa.DateTime(timezone=True)),
+        "ai_config_versions",
+        sa.column("id", sa.Integer()),
+        sa.column("resource_id", sa.Integer()),
+        sa.column("version", sa.Integer()),
+        sa.column("snapshot_json", sa.JSON()),
+        sa.column("summary", sa.Text()),
+        sa.column("notes", sa.Text()),
+        sa.column("published_by", sa.Integer()),
+        sa.column("published_at", sa.DateTime(timezone=True)),
     )
+
     for resource_key, config_type, name, content in _DEFAULT_RESOURCES:
-        if bind.execute(sa.select(resources.c.id).where(resources.c.resource_key == resource_key)).scalar_one_or_none() is not None:
+        existing = bind.execute(
+            sa.select(resources.c.id).where(resources.c.resource_key == resource_key)
+        ).scalar_one_or_none()
+        if existing is not None:
             raise RuntimeError(f"migration_0068_resource_conflict:{resource_key}")
         summary = str(content.get("description") or name)
-        bind.execute(sa.insert(resources).values(
-            resource_key=resource_key, config_type=config_type, name=name, description=summary,
-            scope_type="global", scope_value=None, market_id=None, is_active=True,
-            draft_summary=summary, draft_content_json=content, published_summary=summary,
-            published_content_json=content, published_version=1, published_at=now,
-            created_by=None, updated_by=None, published_by=None, created_at=now, updated_at=now,
-        ))
-        resource_id = bind.execute(sa.select(resources.c.id).where(resources.c.resource_key == resource_key)).scalar_one()
-        bind.execute(sa.insert(versions).values(resource_id=resource_id, version=1, snapshot_json=content, summary=summary, notes="Seed canonical Agent control plane", published_by=None, published_at=now))
-        version_id = bind.execute(sa.select(versions.c.id).where(versions.c.resource_id == resource_id, versions.c.version == 1)).scalar_one()
-        bind.execute(sa.text(f"INSERT INTO {_RESOURCE_PROVENANCE} (resource_key, resource_id, version_id) VALUES (:key, :resource_id, :version_id)"), {"key": resource_key, "resource_id": resource_id, "version_id": version_id})
+        bind.execute(
+            sa.insert(resources).values(
+                resource_key=resource_key,
+                config_type=config_type,
+                name=name,
+                description=summary,
+                scope_type="global",
+                scope_value=None,
+                market_id=None,
+                is_active=True,
+                draft_summary=summary,
+                draft_content_json=content,
+                published_summary=summary,
+                published_content_json=content,
+                published_version=1,
+                published_at=now,
+                created_by=None,
+                updated_by=None,
+                published_by=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        resource_id = bind.execute(
+            sa.select(resources.c.id).where(resources.c.resource_key == resource_key)
+        ).scalar_one()
+        bind.execute(
+            sa.insert(versions).values(
+                resource_id=resource_id,
+                version=1,
+                snapshot_json=content,
+                summary=summary,
+                notes="Seed canonical Agent control plane",
+                published_by=None,
+                published_at=now,
+            )
+        )
 
-    placeholders = ", ".join(f":t{i}" for i, _ in enumerate(_LEGACY_CONFIG_TYPES))
-    params = {f"t{i}": value for i, value in enumerate(_LEGACY_CONFIG_TYPES)}
-    legacy_rows = bind.execute(sa.text(f"SELECT id, is_active FROM ai_config_resources WHERE config_type IN ({placeholders})"), params).mappings().all()
-    for row in legacy_rows:
-        bind.execute(sa.text(f"INSERT INTO {_LEGACY_PROVENANCE} (resource_id, was_active) VALUES (:id, :active)"), {"id": row["id"], "active": bool(row["is_active"])})
-    if legacy_rows:
-        bind.execute(sa.text(f"UPDATE ai_config_resources SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE config_type IN ({placeholders})"), params)
+    bind.execute(
+        sa.update(resources)
+        .where(resources.c.config_type.in_(_LEGACY_CONFIG_TYPES))
+        .values(is_active=False, updated_at=now)
+    )
 
     for tool_name, risk_level, customer_confirmation, human_confirmation in _DEFAULT_TOOL_POLICIES:
-        exists = bind.execute(sa.text("SELECT COUNT(*) FROM tool_execution_policies WHERE tool_name = :tool_name AND country_code = 'GLOBAL' AND channel = 'all'"), {"tool_name": tool_name}).scalar_one()
-        if int(exists or 0):
+        existing = bind.execute(
+            sa.text(
+                "SELECT COUNT(*) FROM tool_execution_policies "
+                "WHERE tool_name = :tool_name AND country_code = 'GLOBAL' AND channel = 'all'"
+            ),
+            {"tool_name": tool_name},
+        ).scalar_one()
+        if int(existing or 0):
             raise RuntimeError(f"migration_0068_tool_policy_conflict:{tool_name}")
-        bind.execute(sa.text(f"INSERT INTO {_POLICY_PROVENANCE} (tool_name, country_code, channel) VALUES (:tool_name, 'GLOBAL', 'all')"), {"tool_name": tool_name})
-        bind.execute(sa.text("""
-            INSERT INTO tool_execution_policies
-                (tool_name, country_code, channel, enabled, ai_auto_executable, risk_level,
-                 requires_tracking_number, requires_contact, requires_customer_confirmation,
-                 requires_human_confirmation, audit_level, created_at, updated_at)
-            VALUES (:tool_name, 'GLOBAL', 'all', true, true, :risk_level, false, false,
-                    :customer_confirmation, :human_confirmation, 'detailed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """), {"tool_name": tool_name, "risk_level": risk_level, "customer_confirmation": customer_confirmation, "human_confirmation": human_confirmation})
+        bind.execute(
+            sa.text(
+                """
+                INSERT INTO tool_execution_policies
+                    (tool_name, country_code, channel, enabled, ai_auto_executable, risk_level,
+                     requires_tracking_number, requires_contact, requires_customer_confirmation,
+                     requires_human_confirmation, audit_level, created_at, updated_at)
+                VALUES (:tool_name, 'GLOBAL', 'all', true, true, :risk_level, false, false,
+                        :customer_confirmation, :human_confirmation, 'detailed',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            ),
+            {
+                "tool_name": tool_name,
+                "risk_level": risk_level,
+                "customer_confirmation": customer_confirmation,
+                "human_confirmation": human_confirmation,
+            },
+        )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    for row in bind.execute(sa.text(f"SELECT resource_id, was_active FROM {_LEGACY_PROVENANCE}")).mappings().all():
-        bind.execute(sa.text("UPDATE ai_config_resources SET is_active = :active, updated_at = CURRENT_TIMESTAMP WHERE id = :id"), {"id": row["resource_id"], "active": bool(row["was_active"])})
-    bind.execute(sa.text(f"DELETE FROM tool_execution_policies WHERE (tool_name, country_code, channel) IN (SELECT tool_name, country_code, channel FROM {_POLICY_PROVENANCE})"))
-    bind.execute(sa.text(f"DELETE FROM ai_config_versions WHERE id IN (SELECT version_id FROM {_RESOURCE_PROVENANCE})"))
-    bind.execute(sa.text(f"DELETE FROM ai_config_resources WHERE id IN (SELECT resource_id FROM {_RESOURCE_PROVENANCE})"))
-    op.drop_table(_LEGACY_PROVENANCE)
-    op.drop_table(_POLICY_PROVENANCE)
-    op.drop_table(_RESOURCE_PROVENANCE)
-    for name in (
-        "ix_customer_memory_runtime_lookup", "ix_customer_memory_facts_expires_at", "ix_customer_memory_facts_is_active",
-        "ix_customer_memory_facts_memory_key", "ix_customer_memory_facts_customer_id", "ix_customer_memory_facts_tenant_key",
-    ):
-        op.drop_index(name, table_name="customer_memory_facts")
+    resource_keys = tuple(item[0] for item in _DEFAULT_RESOURCES)
+    resource_ids = [
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                "SELECT id FROM ai_config_resources WHERE resource_key IN "
+                f"({', '.join(f':key{i}' for i in range(len(resource_keys)))})"
+            ),
+            {f"key{i}": key for i, key in enumerate(resource_keys)},
+        ).all()
+    ]
+    if resource_ids:
+        bind.execute(
+            sa.text(
+                "DELETE FROM ai_config_versions WHERE resource_id IN "
+                f"({', '.join(f':id{i}' for i in range(len(resource_ids)))})"
+            ),
+            {f"id{i}": value for i, value in enumerate(resource_ids)},
+        )
+        bind.execute(
+            sa.text(
+                "DELETE FROM ai_config_resources WHERE id IN "
+                f"({', '.join(f':id{i}' for i in range(len(resource_ids)))})"
+            ),
+            {f"id{i}": value for i, value in enumerate(resource_ids)},
+        )
+    bind.execute(
+        sa.text(
+            "DELETE FROM tool_execution_policies WHERE country_code = 'GLOBAL' "
+            "AND channel = 'all' AND tool_name IN "
+            f"({', '.join(f':tool{i}' for i in range(len(_DEFAULT_TOOL_POLICIES)))})"
+        ),
+        {f"tool{i}": item[0] for i, item in enumerate(_DEFAULT_TOOL_POLICIES)},
+    )
+    placeholders = ", ".join(f":type{i}" for i in range(len(_LEGACY_CONFIG_TYPES)))
+    bind.execute(
+        sa.text(
+            "UPDATE ai_config_resources SET is_active = true, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE config_type IN ({placeholders})"
+        ),
+        {f"type{i}": value for i, value in enumerate(_LEGACY_CONFIG_TYPES)},
+    )
+
+    op.drop_index("ix_customer_memory_runtime_lookup", table_name="customer_memory_facts")
+    op.drop_index("ix_customer_memory_facts_expires_at", table_name="customer_memory_facts")
+    op.drop_index("ix_customer_memory_facts_is_active", table_name="customer_memory_facts")
+    op.drop_index("ix_customer_memory_facts_memory_key", table_name="customer_memory_facts")
+    op.drop_index("ix_customer_memory_facts_customer_id", table_name="customer_memory_facts")
+    op.drop_index("ix_customer_memory_facts_tenant_key", table_name="customer_memory_facts")
     op.drop_table("customer_memory_facts")
