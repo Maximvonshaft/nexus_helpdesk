@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func
@@ -47,11 +46,25 @@ _EVENT_FIELDS: dict[str, frozenset[str]] = {
         {"deployment_id", "release_id", "release_version", "release_digest", "canary"}
     ),
     "context_compiled": frozenset(
-        {"budget_chars", "prompt_chars", "estimated_tokens", "compacted", "omitted_sections", "digest"}
+        {
+            "budget_chars",
+            "prompt_chars",
+            "estimated_tokens",
+            "compacted",
+            "omitted_sections",
+            "digest",
+        }
     ),
     "provider_started": frozenset({"provider", "round_index", "effective_timeout_ms"}),
     "provider_completed": frozenset(
-        {"provider", "round_index", "elapsed_ms", "model", "usage", "contract_repair_applied"}
+        {
+            "provider",
+            "round_index",
+            "elapsed_ms",
+            "model",
+            "usage",
+            "contract_repair_applied",
+        }
     ),
     "provider_failed": frozenset(
         {"provider", "round_index", "elapsed_ms", "error_code", "retryable"}
@@ -67,10 +80,14 @@ _EVENT_FIELDS: dict[str, frozenset[str]] = {
     ),
     "clarification_requested": frozenset({"round_index", "intent"}),
     "handoff_committed": frozenset({"round_index", "reason_code"}),
-    "reply_finalized": frozenset({"round_index", "intent", "handoff_required", "reply_chars"}),
+    "reply_finalized": frozenset(
+        {"round_index", "intent", "handoff_required", "reply_chars"}
+    ),
     "fallback_used": frozenset({"error_code", "elapsed_ms"}),
     "run_failed": frozenset({"error_code", "elapsed_ms"}),
-    "run_completed": frozenset({"status", "final_action", "elapsed_ms", "round_count"}),
+    "run_completed": frozenset(
+        {"status", "final_action", "elapsed_ms", "round_count"}
+    ),
     "session_checkpoint_loaded": frozenset(
         {"checkpoint_id", "checkpoint_version", "estimated_tokens", "release_id"}
     ),
@@ -86,24 +103,30 @@ _EVENT_FIELDS: dict[str, frozenset[str]] = {
     ),
 }
 
-_FORBIDDEN_KEY_MARKERS = (
-    "prompt",
-    "thought",
-    "reasoning",
-    "secret",
-    "token",
-    "password",
-    "authorization",
-    "cookie",
-    "arguments",
-    "raw_payload",
-    "result_payload",
-    "phone",
-    "email",
-    "address",
-    "tracking_number",
-    "waybill",
+# Top-level event fields are already closed by _EVENT_FIELDS. Nested payloads use
+# exact/suffix blocking so safe metrics such as prompt_chars and reply_chars are
+# retained while actual content-bearing fields remain impossible to persist.
+_FORBIDDEN_EXACT_KEYS = frozenset(
+    {
+        "prompt",
+        "thought",
+        "reasoning",
+        "secret",
+        "token",
+        "password",
+        "authorization",
+        "cookie",
+        "arguments",
+        "raw_payload",
+        "result_payload",
+        "phone",
+        "email",
+        "address",
+        "tracking_number",
+        "waybill",
+    }
 )
+_FORBIDDEN_SUFFIXES = tuple(f"_{key}" for key in _FORBIDDEN_EXACT_KEYS)
 
 
 def start_agent_run(
@@ -128,6 +151,8 @@ def start_agent_run(
     if existing is not None:
         if existing.session_id != session_id or existing.tenant_key != tenant_key:
             raise RuntimeError("agent_run_idempotency_conflict")
+        if existing.status != "running":
+            raise RuntimeError("agent_run_already_terminal")
         return existing
     if fork_kind not in {None, "playground", "replay"}:
         raise RuntimeError("agent_run_fork_kind_invalid")
@@ -206,9 +231,6 @@ def append_agent_event(
         raise RuntimeError("agent_run_event_type_invalid")
     if run.id is None:
         db.flush()
-    # Lock the run row to make sequence allocation authoritative under concurrent
-    # event producers. The Agent loop is serial today, but the contract remains
-    # correct when specialists are introduced.
     locked = (
         db.query(AgentRun)
         .filter(AgentRun.id == run.id)
@@ -253,35 +275,127 @@ def finish_agent_run(
     error_code: str | None = None,
     round_count: int = 0,
 ) -> AgentRun:
+    """Atomically persist checkpoint, terminal event and terminal lifecycle state."""
+
     if status not in {"succeeded", "fallback", "failed", "cancelled"}:
         raise RuntimeError("agent_run_terminal_status_invalid")
+    if run.status != "running":
+        if (
+            run.status == status
+            and run.final_action == _optional_token(final_action, 80)
+            and run.error_code == _optional_token(error_code, 160)
+        ):
+            return run
+        raise RuntimeError("agent_run_terminal_conflict")
+
     run.status = status
     run.final_action = _optional_token(final_action, 80)
     run.error_code = _optional_token(error_code, 160)
     run.elapsed_ms = max(0, min(int(elapsed_ms or 0), 3_600_000))
     run.completed_at = utc_now()
-    event_type = "run_failed" if status == "failed" else "run_completed"
-    append_agent_event(
-        db,
-        run=run,
-        event_type=event_type,
-        safe_payload={
-            "status": status,
-            "final_action": run.final_action,
-            "elapsed_ms": run.elapsed_ms,
-            "error_code": run.error_code,
-            "round_count": max(0, min(int(round_count or 0), 100)),
-        },
-        status=status,
-        duration_ms=run.elapsed_ms,
-    )
-    db.flush()
+
+    try:
+        if run.release_id is not None and status in {"succeeded", "fallback"}:
+            _persist_terminal_checkpoint(
+                db,
+                run=run,
+                status=status,
+                round_count=round_count,
+            )
+        event_type = "run_failed" if status == "failed" else "run_completed"
+        append_agent_event(
+            db,
+            run=run,
+            event_type=event_type,
+            safe_payload={
+                "status": status,
+                "final_action": run.final_action,
+                "elapsed_ms": run.elapsed_ms,
+                "error_code": run.error_code,
+                "round_count": max(0, min(int(round_count or 0), 100)),
+            },
+            status=status,
+            duration_ms=run.elapsed_ms,
+        )
+        db.flush()
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise RuntimeError("agent_run_terminal_commit_failed") from exc
+
     record_agent_run(
         status=status,
         final_action=run.final_action,
         elapsed_ms=run.elapsed_ms,
     )
     return run
+
+
+def _persist_terminal_checkpoint(
+    db: Session,
+    *,
+    run: AgentRun,
+    status: str,
+    round_count: int,
+) -> None:
+    from .session_checkpoints import (
+        build_checkpoint_summary,
+        load_session_checkpoint,
+        save_session_checkpoint,
+    )
+
+    events = (
+        db.query(AgentRunEvent)
+        .filter(AgentRunEvent.run_id == run.id)
+        .order_by(AgentRunEvent.sequence.asc())
+        .all()
+    )
+    latest_intent: str | None = None
+    handoff_required = False
+    tool_outcomes: list[dict[str, Any]] = []
+    for event in events:
+        payload = event.safe_payload_json if isinstance(event.safe_payload_json, dict) else {}
+        if event.event_type in {"reply_finalized", "clarification_requested"}:
+            candidate = str(payload.get("intent") or "").strip()
+            if candidate:
+                latest_intent = candidate[:120]
+            handoff_required = handoff_required or payload.get("handoff_required") is True
+        if event.event_type in {"tool_completed", "tool_failed"}:
+            tool_outcomes.append(
+                {
+                    "tool_name": payload.get("tool_name"),
+                    "status": payload.get("status"),
+                    "ok": event.event_type == "tool_completed",
+                    "error_code": payload.get("error_code"),
+                }
+            )
+    prior = load_session_checkpoint(
+        db,
+        tenant_key=run.tenant_key,
+        session_id=run.session_id,
+        release_id=int(run.release_id),
+    )
+    summary = build_checkpoint_summary(
+        intent=latest_intent,
+        final_action=run.final_action,
+        run_status=status,
+        round_count=round_count,
+        handoff_required=handoff_required,
+        tool_calls=tool_outcomes,
+        prior_checkpoint=prior,
+    )
+    checkpoint = save_session_checkpoint(db, run=run, summary=summary)
+    append_agent_event(
+        db,
+        run=run,
+        event_type="session_checkpoint_saved",
+        safe_payload={
+            "checkpoint_id": checkpoint.id,
+            "checkpoint_version": checkpoint.version,
+            "estimated_tokens": checkpoint.estimated_tokens,
+            "release_id": checkpoint.release_id,
+        },
+    )
 
 
 def agent_run_payload(row: AgentRun) -> dict[str, Any]:
@@ -325,7 +439,7 @@ def _event_payload(event_type: str, value: dict[str, Any]) -> dict[str, Any]:
     output: dict[str, Any] = {}
     for raw_key, raw_value in list(value.items())[:80]:
         key = str(raw_key or "").strip()
-        if key not in allowed or _forbidden_key(key):
+        if key not in allowed:
             continue
         safe = _safe_value(raw_value)
         if safe is not None:
@@ -370,8 +484,8 @@ def _safe_value(value: Any, *, depth: int = 0) -> Any:
 
 
 def _forbidden_key(value: str) -> bool:
-    lowered = value.lower()
-    return any(marker in lowered for marker in _FORBIDDEN_KEY_MARKERS)
+    lowered = value.strip().lower()
+    return lowered in _FORBIDDEN_EXACT_KEYS or lowered.endswith(_FORBIDDEN_SUFFIXES)
 
 
 def _required_text(value: Any, limit: int, error: str) -> str:
