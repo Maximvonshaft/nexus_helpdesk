@@ -43,7 +43,6 @@ def validate_ai_decision(
     customer_confirmation_granted: bool = False,
     human_confirmation_granted: bool = False,
     enforce_confirmation_requirements: bool = True,
-    **_legacy: Any,
 ) -> PolicyGateResult:
     """Validate generic Agent output and server-owned Tool authority.
 
@@ -56,11 +55,7 @@ def validate_ai_decision(
     warnings: list[str] = []
     checked_tools: list[str] = []
     allowed_high_risk = set(allowed_high_risk_write_tools or set())
-    permissions = (
-        None
-        if granted_permissions is None
-        else set(granted_permissions)
-    )
+    permissions = None if granted_permissions is None else set(granted_permissions)
     trusted_confirmation = bool(
         customer_confirmation_granted or human_confirmation_granted
     )
@@ -99,9 +94,7 @@ def validate_ai_decision(
             allow_high_risk_write_execution=allow_high_risk_write_execution,
             allowed_high_risk=allowed_high_risk,
             permissions=permissions,
-            enforce_confirmation_requirements=(
-                enforce_confirmation_requirements
-            ),
+            enforce_confirmation_requirements=enforce_confirmation_requirements,
             violations=violations,
             warnings=warnings,
         )
@@ -210,8 +203,5 @@ def _validate_contract_authority(
                     risk_level="high",
                 )
             )
-    elif (
-        contract.is_write_tool
-        and contract.allowed_auto_execution_mode == "policy_gated"
-    ):
+    elif contract.is_write_tool and contract.allowed_auto_execution_mode == "policy_gated":
         warnings.append(f"policy_gated_write:{contract.name}")
