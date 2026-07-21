@@ -172,13 +172,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
               />
               <RunExplorerPanel
                 tenantKey={tenantKey || snapshot.data.tenant_key}
-                scope={{
-                  environment: snapshot.data.scope.environment,
-                  market_id: snapshot.data.scope.market_id,
-                  channel: snapshot.data.scope.channel,
-                  language: snapshot.data.scope.language,
-                  case_type: snapshot.data.scope.case_type,
-                }}
+                scope={snapshot.data.scope}
                 canExecute={snapshot.data.capabilities.can_deploy}
               />
             </Stack>
