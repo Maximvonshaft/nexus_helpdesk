@@ -1,4 +1,4 @@
-export type AgentConfigType = 'playbook' | 'integration' | 'model_profile' | 'runtime_policy' | 'memory_policy'
+export type AgentConfigType = 'playbook' | 'integration' | 'model_profile' | 'runtime_policy'
 
 export interface AgentConfigResource {
   id: number
@@ -6,7 +6,7 @@ export interface AgentConfigResource {
   config_type: AgentConfigType
   name: string
   description?: string | null
-  scope_type: string
+  scope_type: 'global' | 'market' | 'channel'
   scope_value?: string | null
   market_id?: number | null
   is_active: boolean
@@ -17,6 +17,48 @@ export interface AgentConfigResource {
   published_version: number
   published_at?: string | null
   created_at: string
+  updated_at: string
+}
+
+export interface AgentDefinition {
+  id: number
+  tenant_key: string
+  definition_key: string
+  name: string
+  purpose?: string | null
+  owner_team_id?: number | null
+  is_active: boolean
+  draft_manifest: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentRelease {
+  id: number
+  definition_id: number
+  version: number
+  status: 'approved' | 'canary' | 'active' | 'retired'
+  manifest: Record<string, unknown>
+  manifest_sha256: string
+  validation?: Record<string, unknown> | null
+  created_at: string
+  approved_at?: string | null
+}
+
+export interface AgentDeployment {
+  id: number
+  tenant_key: string
+  environment: 'test' | 'staging' | 'production'
+  scope_key: string
+  market_id?: number | null
+  channel?: string | null
+  language?: string | null
+  case_type?: string | null
+  active_release_id: number
+  canary_release_id?: number | null
+  canary_percent: number
+  is_active: boolean
+  activated_at: string
   updated_at: string
 }
 
@@ -90,6 +132,7 @@ export interface AgentIntegrationSummary {
   operations: Array<{
     key: string
     description: string
+    mode: 'read' | 'write'
     method: string
     risk_level: string
     requires_confirmation: boolean
@@ -100,7 +143,18 @@ export interface AgentIntegrationSummary {
 export interface AgentControlSnapshot {
   generated_at: number
   tenant_key: string
-  scope: { market_id?: number | null; channel: string; language?: string | null }
+  scope: {
+    environment: 'test' | 'staging' | 'production'
+    market_id?: number | null
+    channel: string
+    language?: string | null
+    case_type?: string | null
+  }
+  definitions: AgentDefinition[]
+  releases: AgentRelease[]
+  deployments: AgentDeployment[]
+  resolved_agent: Record<string, unknown>
+  resolved_agent_digest: string
   personas: AgentPersona[]
   persona_total: number
   resources: AgentConfigResource[]
@@ -108,13 +162,17 @@ export interface AgentControlSnapshot {
   tools: AgentToolContract[]
   tool_policies: AgentToolPolicy[]
   integrations: AgentIntegrationSummary[]
-  memory_policy: Record<string, unknown>
-  capabilities: { can_manage: boolean; playground_model_execution: boolean }
+  capabilities: {
+    can_manage: boolean
+    can_deploy: boolean
+    playground_model_execution: boolean
+  }
 }
 
 export interface AgentPlaygroundResult {
+  agent_release?: Record<string, unknown> | null
+  agent_release_digest?: string | null
   persona?: Record<string, unknown> | null
-  customer_memory?: Record<string, unknown> | null
   active_bulletins?: Array<Record<string, unknown>>
   playbooks: AgentPlaybookProjection[]
   tools: Array<Record<string, unknown>>
@@ -126,22 +184,4 @@ export interface AgentPlaygroundResult {
   tool_calls?: Array<Record<string, unknown>>
   runtime_trace?: Record<string, unknown>
   error_code?: string | null
-}
-
-export interface CustomerMemoryFact {
-  id: number
-  tenant_key: string
-  customer_id: number
-  memory_key: string
-  value_text: string
-  source_type: string
-  source_reference?: string | null
-  consent_basis?: string | null
-  confidence: number
-  sensitivity: string
-  is_active: boolean
-  expires_at?: string | null
-  last_confirmed_at?: string | null
-  created_at: string
-  updated_at: string
 }
