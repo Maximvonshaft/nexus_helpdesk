@@ -14,6 +14,16 @@ from .agent_control_config import (
     validate_agent_config_content,
     validate_scope,
 )
+from .agent_resource_authority import (
+    AI_CONFIG_RESOURCE,
+    actor_tenant_key,
+    bind_resource,
+    ensure_resource_manageable,
+    ensure_resource_visible,
+    manageable_resource_ids,
+    session_actor,
+    visible_resource_ids,
+)
 from .agent_tool_contracts import bootstrap_agent_tool_contracts
 
 bootstrap_agent_tool_contracts()
@@ -35,6 +45,29 @@ def validate_config_shape(config_type: str, scope_type: str) -> None:
 
 def list_admin_resources(db: Session, *, config_type: Optional[str] = None):
     query = db.query(AIConfigResource).filter(AIConfigResource.config_type.in_(VALID_CONFIG_TYPES))
+    allowed = manageable_resource_ids(db, resource_type=AI_CONFIG_RESOURCE)
+    if allowed is not None:
+        if not allowed:
+            return []
+        query = query.filter(AIConfigResource.id.in_(allowed))
+    if config_type:
+        if config_type not in VALID_CONFIG_TYPES:
+            return []
+        query = query.filter(AIConfigResource.config_type == config_type)
+    return query.order_by(AIConfigResource.config_type.asc(), AIConfigResource.name.asc()).all()
+
+
+def list_visible_resources(db: Session, *, config_type: Optional[str] = None):
+    query = db.query(AIConfigResource).filter(AIConfigResource.config_type.in_(VALID_CONFIG_TYPES))
+    allowed = visible_resource_ids(
+        db,
+        resource_type=AI_CONFIG_RESOURCE,
+        include_global_templates=True,
+    )
+    if allowed is not None:
+        if not allowed:
+            return []
+        query = query.filter(AIConfigResource.id.in_(allowed))
     if config_type:
         if config_type not in VALID_CONFIG_TYPES:
             return []
@@ -54,6 +87,18 @@ def list_published_resources(
         AIConfigResource.is_active.is_(True),
         AIConfigResource.published_version > 0,
     )
+    actor = session_actor(db)
+    if actor is not None:
+        allowed = visible_resource_ids(
+            db,
+            resource_type=AI_CONFIG_RESOURCE,
+            actor=actor,
+            include_global_templates=True,
+        )
+        if allowed is not None:
+            if not allowed:
+                return []
+            query = query.filter(AIConfigResource.id.in_(allowed))
     if config_type:
         if config_type not in VALID_CONFIG_TYPES:
             return []
@@ -66,7 +111,8 @@ def list_published_resources(
 
 
 def create_resource(db: Session, payload, actor):
-    key = normalize_resource_key(payload.resource_key)
+    tenant_key = actor_tenant_key(db, actor)
+    key = _tenant_resource_key(tenant_key, payload.resource_key)
     validate_config_shape(payload.config_type, payload.scope_type)
     scope_type, scope_value = validate_scope(payload.scope_type, payload.scope_value)
     content = validate_agent_config_content(payload.config_type, payload.draft_content_json or {})
@@ -95,15 +141,33 @@ def create_resource(db: Session, payload, actor):
     )
     db.add(row)
     db.flush()
+    bind_resource(
+        db,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=row.id,
+        tenant_key=tenant_key,
+        actor_id=getattr(actor, "id", None),
+        is_global_template=(
+            getattr(actor, "tenant_id", None) is None and tenant_key == "default"
+        ),
+    )
     return row
 
 
 def update_resource(db: Session, row: AIConfigResource, payload, actor):
+    ensure_resource_manageable(
+        db,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=row.id,
+        actor=actor,
+    )
     if row.config_type not in VALID_CONFIG_TYPES:
         raise HTTPException(status_code=409, detail="legacy_ai_config_is_retired")
     values = payload.model_dump(exclude_unset=True)
     if "resource_key" in values and values["resource_key"] is not None:
-        values["resource_key"] = normalize_resource_key(values["resource_key"])
+        values["resource_key"] = _tenant_resource_key(
+            actor_tenant_key(db, actor), values["resource_key"]
+        )
         existing = db.query(AIConfigResource).filter(
             AIConfigResource.resource_key == values["resource_key"],
             AIConfigResource.id != row.id,
@@ -147,6 +211,12 @@ def publish_resource(
     *,
     notes: Optional[str] = None,
 ):
+    ensure_resource_manageable(
+        db,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=row.id,
+        actor=actor,
+    )
     if row.config_type not in VALID_CONFIG_TYPES:
         raise HTTPException(status_code=409, detail="legacy_ai_config_is_retired")
     validate_scope(row.scope_type, row.scope_value)
@@ -173,6 +243,11 @@ def publish_resource(
 
 
 def list_versions(db: Session, resource_id: int):
+    ensure_resource_visible(
+        db,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=resource_id,
+    )
     return (
         db.query(AIConfigVersion)
         .filter(AIConfigVersion.resource_id == resource_id)
@@ -189,6 +264,12 @@ def rollback_resource(
     *,
     notes: Optional[str] = None,
 ):
+    ensure_resource_manageable(
+        db,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=row.id,
+        actor=actor,
+    )
     if row.config_type not in VALID_CONFIG_TYPES:
         raise HTTPException(status_code=409, detail="legacy_ai_config_is_retired")
     target = db.query(AIConfigVersion).filter(
@@ -215,6 +296,7 @@ def _ensure_singleton_scope_available(
 ) -> None:
     if config_type not in SINGLETON_TYPES:
         return
+    allowed = manageable_resource_ids(db, resource_type=AI_CONFIG_RESOURCE)
     query = db.query(AIConfigResource).filter(
         AIConfigResource.config_type == config_type,
         AIConfigResource.scope_type == scope_type,
@@ -222,6 +304,10 @@ def _ensure_singleton_scope_available(
         if market_id is None
         else AIConfigResource.market_id == market_id,
     )
+    if allowed is not None:
+        if not allowed:
+            return
+        query = query.filter(AIConfigResource.id.in_(allowed))
     if scope_value is None:
         query = query.filter(AIConfigResource.scope_value.is_(None))
     else:
@@ -230,3 +316,13 @@ def _ensure_singleton_scope_available(
         query = query.filter(AIConfigResource.id != exclude_id)
     if query.first() is not None:
         raise HTTPException(status_code=409, detail="singleton_agent_config_scope_conflict")
+
+
+def _tenant_resource_key(tenant_key: str, value: str) -> str:
+    cleaned = normalize_resource_key(value)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="resource_key_invalid")
+    if tenant_key == "default":
+        return cleaned[:120]
+    prefix = f"{tenant_key}."
+    return (cleaned if cleaned.startswith(prefix) else f"{prefix}{cleaned}")[:120]
