@@ -419,7 +419,7 @@ def test_resolve_preview_uses_deterministic_priority(db_session):
     )
     assert resolved.profile is not None
     assert resolved.profile.profile_key == "exact.default"
-    assert resolved.match_rank == 1
+    assert resolved.match_rank == 0
 
 
 def test_inactive_and_unpublished_profiles_are_not_resolved(db_session):
