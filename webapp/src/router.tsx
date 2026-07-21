@@ -4,6 +4,7 @@ import { Route as LoginRoute } from '@/routes/login'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as KnowledgeRoute } from '@/routes/knowledge'
+import { Route as AgentControlRoute } from '@/routes/agent-control'
 import { Route as ChannelsRoute } from '@/routes/channels'
 import { Route as RuntimeRoute } from '@/routes/runtime'
 import { Route as ControlTowerRoute } from '@/routes/control-tower'
@@ -16,6 +17,7 @@ const routeTree = RootRoute.addChildren([
   IndexRoute,
   WorkspaceRoute,
   KnowledgeRoute,
+  AgentControlRoute,
   ChannelsRoute,
   RuntimeRoute,
   ControlTowerRoute,
