@@ -7,6 +7,8 @@ import type {
   AgentPersona,
   AgentPlaygroundResult,
   AgentRelease,
+  PersonaReview,
+  PersonaReviewList,
 } from '@/lib/types'
 
 export interface AgentConfigDraft {
@@ -99,7 +101,7 @@ export const agentControlApi = {
     language?: string | null
     caseType?: string | null
   }) => apiRequest<AgentControlSnapshot>(`/api/agent-control/snapshot${queryString({
-    tenant_key: scope?.tenantKey || 'default',
+    tenant_key: scope?.tenantKey || undefined,
     environment: scope?.environment || 'production',
     market_id: scope?.marketId,
     channel: scope?.channel || 'webchat',
@@ -117,12 +119,12 @@ export const agentControlApi = {
     tenantKey: string,
     payload: Partial<Omit<AgentDefinitionDraft, 'tenant_key' | 'definition_key'>> & { is_active?: boolean },
   ) => apiRequest<AgentDefinition>(
-    `/api/agent-control/definitions/${id}${queryString({ tenant_key: tenantKey })}`,
+    `/api/agent-control/definitions/${id}${queryString({ tenant_key: tenantKey || undefined })}`,
     { method: 'PUT', body: JSON.stringify(payload) },
   ),
   releaseDefinition: (id: number, tenantKey: string) =>
     apiRequest<AgentRelease>(
-      `/api/agent-control/definitions/${id}/releases${queryString({ tenant_key: tenantKey })}`,
+      `/api/agent-control/definitions/${id}/releases${queryString({ tenant_key: tenantKey || undefined })}`,
       { method: 'POST' },
     ),
   deployRelease: (payload: AgentDeploymentDraft) =>
@@ -135,9 +137,9 @@ export const agentControlApi = {
       '/api/agent-control/resolve',
       { method: 'POST', body: JSON.stringify(payload) },
     ),
-  runs: (tenantKey = 'default', limit = 50) =>
+  runs: (tenantKey?: string, limit = 50) =>
     apiRequest<Array<Record<string, unknown>>>(
-      `/api/agent-control/runs${queryString({ tenant_key: tenantKey, limit })}`,
+      `/api/agent-control/runs${queryString({ tenant_key: tenantKey || undefined, limit })}`,
     ),
 
   playground: (payload: AgentScopeDraft & {
@@ -181,8 +183,31 @@ export const agentControlApi = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
-  publishPersona: (id: number, notes?: string) =>
-    apiRequest<Record<string, unknown>>(`/api/persona-profiles/${id}/publish`, {
+  personaReviews: (profileId?: number, status?: PersonaReview['status']) =>
+    apiRequest<PersonaReviewList>(`/api/persona-profiles/reviews${queryString({
+      profile_id: profileId,
+      status,
+      limit: 100,
+    })}`),
+  submitPersonaReview: (
+    id: number,
+    payload: { notes?: string | null; release_window_start?: string | null; release_window_end?: string | null },
+  ) => apiRequest<PersonaReview>(`/api/persona-profiles/${id}/submit-review`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  approvePersonaReview: (id: number, decisionNote?: string) =>
+    apiRequest<PersonaReview>(`/api/persona-profiles/reviews/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ decision_note: decisionNote || null }),
+    }),
+  rejectPersonaReview: (id: number, decisionNote?: string) =>
+    apiRequest<PersonaReview>(`/api/persona-profiles/reviews/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ decision_note: decisionNote || null }),
+    }),
+  publishPersonaReview: (id: number, notes?: string) =>
+    apiRequest<Record<string, unknown>>(`/api/persona-profiles/reviews/${id}/publish`, {
       method: 'POST',
       body: JSON.stringify({ notes: notes || null }),
     }),
