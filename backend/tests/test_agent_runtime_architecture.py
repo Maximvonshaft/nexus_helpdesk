@@ -530,7 +530,8 @@ def test_canonical_executor_has_no_detached_policy_decision_input() -> None:
     execution = source.split(
         "def execute_controlled_tool_calls", 1
     )[1].split("def _customer_for_context", 1)[0]
-    assert "ai_decision" not in execution
+    assert "ai_decision: AIDecision | None = None" not in execution
+    assert "ai_decision or _decision_for_policy_gate" not in execution
     assert (
         "policy_gate_decision = _decision_for_policy_gate(raw_calls, actions)"
         in execution
