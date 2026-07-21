@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -51,6 +52,37 @@ def _provider_request() -> ProviderRequest:
         body="hello",
         output_contract="nexus.agent_turn.v1",
         timeout_ms=1000,
+    )
+
+
+def _bind_release(monkeypatch) -> None:
+    snapshot = {
+        "source": "deployment",
+        "tenant_key": "tenant-1",
+        "release": {
+            "id": 1,
+            "version": 1,
+            "manifest_sha256": "a" * 64,
+        },
+        "deployment": {"id": 1, "environment": "production"},
+        "manifest": {"integrations": [], "knowledge": []},
+        "resolved": {"allowed_tools": []},
+    }
+    resolved = SimpleNamespace(
+        snapshot=snapshot,
+        digest="b" * 64,
+        deployment=SimpleNamespace(id=1),
+        release=SimpleNamespace(id=1),
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "resolve_agent_release",
+        lambda *_args, **_kwargs: resolved,
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "record_run_snapshot",
+        lambda *_args, **_kwargs: None,
     )
 
 
@@ -113,7 +145,9 @@ def test_authoritative_audit_query_failure_is_fail_closed():
 
 
 @pytest.mark.asyncio
-async def test_successful_provider_result_without_durable_audit_becomes_visible_fallback(monkeypatch):
+async def test_successful_provider_result_without_durable_audit_becomes_visible_fallback(
+    monkeypatch,
+):
     route = AsyncMock(
         return_value=ProviderResult(
             ok=True,
@@ -126,13 +160,34 @@ async def test_successful_provider_result_without_durable_audit_becomes_visible_
                 "handoff_required": False,
                 "tool_calls": [],
             },
-            raw_payload_safe_summary={"traffic": {"path": "canary_authoritative"}},
+            raw_payload_safe_summary={
+                "traffic": {"path": "canary_authoritative"}
+            },
         )
     )
+    _bind_release(monkeypatch)
     monkeypatch.setattr(agent_runtime.ProviderRuntimeRouter, "route", route)
-    monkeypatch.setattr(agent_runtime, "_authoritative_provider_audit_exists", lambda *args, **kwargs: False)
-    monkeypatch.setattr(agent_runtime, "_runtime_policy", lambda *args, **kwargs: {"max_tool_rounds": 3, "allow_high_risk_writes": False, "allowed_tools": [], "provider_timeout_ms": 15000, "enabled": True})
-    monkeypatch.setattr(agent_runtime, "prompt_playbook_catalog", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        agent_runtime,
+        "_authoritative_provider_audit_exists",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "_runtime_policy",
+        lambda *args, **kwargs: {
+            "max_tool_rounds": 3,
+            "allow_high_risk_writes": False,
+            "allowed_tools": [],
+            "provider_timeout_ms": 15000,
+            "enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "prompt_playbook_catalog",
+        lambda *args, **kwargs: [],
+    )
 
     result = await agent_runtime.run_agent_with_db(
         _AuditSession(),
@@ -151,6 +206,10 @@ async def test_successful_provider_result_without_durable_audit_becomes_visible_
     assert result.ai_generated is False
     assert result.reply
     assert result.error_code == "provider_runtime_audit_unavailable"
-    assert result.raw_payload_safe_summary["error_code"] == "provider_runtime_audit_unavailable"
-    assert result.raw_payload_safe_summary["rounds"][0]["error_code"] == "provider_runtime_audit_unavailable"
+    assert result.raw_payload_safe_summary["error_code"] == (
+        "provider_runtime_audit_unavailable"
+    )
+    assert result.raw_payload_safe_summary["rounds"][0]["error_code"] == (
+        "provider_runtime_audit_unavailable"
+    )
     route.assert_awaited_once()
