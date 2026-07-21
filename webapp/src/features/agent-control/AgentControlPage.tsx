@@ -10,10 +10,9 @@ import {
   Typography,
 } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
 import { agentControlApi } from '@/lib/agentControlApi'
-import { KnowledgePage } from '@/features/knowledge/KnowledgePage'
 import { OverviewPanel } from './OverviewPanel'
 import { PersonaPanel } from './PersonaPanel'
 import { PlaybookPanel } from './PlaybookPanel'
@@ -23,7 +22,7 @@ import { MemoryPanel } from './MemoryPanel'
 
 type AgentControlTab = 'overview' | 'persona' | 'knowledge' | 'playbooks' | 'tools' | 'runtime' | 'memory'
 
-export function AgentControlPage({ canManage }: { canManage: boolean }) {
+export function AgentControlPage({ canManage, knowledgePage }: { canManage: boolean; knowledgePage: ReactNode }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
   const [tenantKey, setTenantKey] = useState('default')
   const [channel, setChannel] = useState('webchat')
@@ -75,7 +74,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
         <Box sx={{ mt: 2 }}>
           {tab === 'overview' ? <OverviewPanel snapshot={snapshot.data} tenantKey={tenantKey} setTenantKey={setTenantKey} channel={channel} setChannel={setChannel} language={language} setLanguage={setLanguage} /> : null}
           {tab === 'persona' ? <PersonaPanel snapshot={snapshot.data} canManage={canManage} /> : null}
-          {tab === 'knowledge' ? <KnowledgePage canManage={canManage} /> : null}
+          {tab === 'knowledge' ? knowledgePage : null}
           {tab === 'playbooks' ? <PlaybookPanel snapshot={snapshot.data} canManage={canManage} /> : null}
           {tab === 'tools' ? <ToolsIntegrationsPanel snapshot={snapshot.data} canManage={canManage} tenantKey={tenantKey} /> : null}
           {tab === 'runtime' ? <RuntimePanel snapshot={snapshot.data} canManage={canManage} /> : null}
