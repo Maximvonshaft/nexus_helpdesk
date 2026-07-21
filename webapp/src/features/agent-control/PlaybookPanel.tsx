@@ -164,7 +164,23 @@ export function PlaybookPanel({ snapshot, canManage }: { snapshot: AgentControlS
           <TextField label="适用渠道" helperText="每行一个；留空表示全部渠道" multiline minRows={2} disabled={!canManage} value={draft.channels} onChange={(event) => setDraft((current) => ({ ...current, channels: event.target.value }))} />
           <TextField label="适用语言" helperText="每行一个；留空表示全部语言" multiline minRows={2} disabled={!canManage} value={draft.languages} onChange={(event) => setDraft((current) => ({ ...current, languages: event.target.value }))} />
           <TextField label="执行指令" required helperText="每行一条明确、可验证的执行约束" multiline minRows={8} disabled={!canManage} value={draft.instructions} onChange={(event) => setDraft((current) => ({ ...current, instructions: event.target.value }))} />
-          <TextField select label="允许使用的工具" SelectProps={{ multiple: true, renderValue: (selectedTools) => <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{(selectedTools as string[]).map((tool) => <Chip key={tool} size="small" label={tool} />)}</Stack> }} disabled={!canManage} value={draft.tools} onChange={(event) => setDraft((current) => ({ ...current, tools: typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value }))}>
+          <TextField
+            select
+            label="允许使用的工具"
+            slotProps={{
+              select: {
+                multiple: true,
+                renderValue: (selectedTools: unknown) => (
+                  <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                    {(selectedTools as string[]).map((tool) => <Chip key={tool} size="small" label={tool} />)}
+                  </Stack>
+                ),
+              },
+            }}
+            disabled={!canManage}
+            value={draft.tools}
+            onChange={(event) => setDraft((current) => ({ ...current, tools: typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value }))}
+          >
             {snapshot.tools.map((tool) => <MenuItem key={tool.name} value={tool.name}>{tool.name} · {tool.classification} · {tool.risk_level}</MenuItem>)}
           </TextField>
           <TextField label="版本摘要" multiline minRows={2} disabled={!canManage} value={draft.draft_summary} onChange={(event) => setDraft((current) => ({ ...current, draft_summary: event.target.value }))} />
