@@ -7,11 +7,17 @@ import { useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
 
 const LazyAgentControlPage = lazy(() => import('@/features/agent-control/lazy'))
+const LazyKnowledgePage = lazy(() => import('@/features/knowledge/lazy'))
 
 function AgentControlCapabilityPage() {
   const session = useSession()
   const canManage = Boolean(session.data?.capabilities?.includes('ai_config.manage'))
-  return <LazyAgentControlPage canManage={canManage} />
+  return (
+    <LazyAgentControlPage
+      canManage={canManage}
+      knowledgePage={<LazyKnowledgePage canManage={canManage} />}
+    />
+  )
 }
 
 function KnowledgeRoutePage() {
