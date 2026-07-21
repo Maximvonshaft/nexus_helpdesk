@@ -76,12 +76,18 @@ def released_knowledge_evidence() -> tuple[dict[str, Any], ...] | None:
         snapshot_json = row.get("snapshot")
         if not key or version <= 0 or not isinstance(snapshot_json, dict):
             raise RuntimeError("agent_release_knowledge_reference_invalid")
+        runtime_snapshot = dict(snapshot_json)
+        # A Release may bind a version whose snapshot was captured immediately
+        # before the mutable KnowledgeItem transitioned from draft to active.
+        # The version and Release reference prove publication; later mutable item
+        # lifecycle must not invalidate historical replay or atomic rollback.
+        runtime_snapshot["status"] = "active"
         output.append(
             {
                 "id": int(row.get("id") or 0),
                 "item_key": key,
                 "version": version,
-                "snapshot": snapshot_json,
+                "snapshot": runtime_snapshot,
             }
         )
     return tuple(output)
