@@ -28,6 +28,23 @@ function json(route: Route, body: unknown, status = 200) {
   })
 }
 
+function agentControlSnapshot() {
+  return {
+    generated_at: Date.now() / 1000,
+    tenant_key: 'default',
+    scope: { market_id: null, channel: 'webchat', language: null },
+    personas: [],
+    persona_total: 0,
+    resources: [],
+    resolved_playbooks: [],
+    tools: [],
+    tool_policies: [],
+    integrations: [],
+    memory_policy: {},
+    capabilities: { can_manage: true, playground_model_execution: true },
+  }
+}
+
 function knowledgeItem(id: number, title: string) {
   return {
     id,
@@ -56,6 +73,15 @@ async function seedSession(page: Page) {
   await page.addInitScript(([key, token]) => sessionStorage.setItem(key, token), [TOKEN_KEY, 'operator-token'])
 }
 
+async function openKnowledgeTab(page: Page) {
+  await page.goto('/knowledge')
+  await expect(page).toHaveURL(/\/knowledge$/)
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: 'Agent 配置' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1, name: 'Agent 配置' })).toBeVisible()
+  await page.getByRole('tab', { name: '知识', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+}
+
 test('Knowledge uses operator language and guards an unsaved draft', async ({ page }) => {
   await seedSession(page)
   const first = knowledgeItem(1, '末派失败')
@@ -63,6 +89,7 @@ test('Knowledge uses operator language and guards an unsaved draft', async ({ pa
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/auth/me') return json(route, authUser)
+    if (url.pathname === '/api/agent-control/snapshot') return json(route, agentControlSnapshot())
     if (url.pathname === '/api/lite/knowledge-studio') {
       return json(route, { kpis: [{ key: 'active', label: '已上线', value: 2, hint: '', tone: 'success' }] })
     }
@@ -72,11 +99,7 @@ test('Knowledge uses operator language and guards an unsaved draft', async ({ pa
     return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
   })
 
-  await page.goto('/knowledge')
-
-  await expect(page).toHaveURL(/\/knowledge$/)
-  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '知识与流程' })).toHaveAttribute('aria-current', 'page')
-  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+  await openKnowledgeTab(page)
   await expect(page.getByRole('textbox', { name: '标准答案与处理步骤', exact: true })).toBeVisible()
   await expect(page.getByText('AI 应该知道的答案')).toHaveCount(0)
   await expect(page.getByText('让 AI 组织语言')).toHaveCount(0)
@@ -94,6 +117,7 @@ test('Knowledge retrieval test explains whether the current service can use the 
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/auth/me') return json(route, authUser)
+    if (url.pathname === '/api/agent-control/snapshot') return json(route, agentControlSnapshot())
     if (url.pathname === '/api/lite/knowledge-studio') return json(route, { kpis: [] })
     if (url.pathname === '/api/knowledge-items' && route.request().method() === 'GET') return json(route, { items: [first], total: 1 })
     if (url.pathname === '/api/knowledge-items/retrieve-test') {
@@ -112,7 +136,7 @@ test('Knowledge retrieval test explains whether the current service can use the 
     return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
   })
 
-  await page.goto('/knowledge')
+  await openKnowledgeTab(page)
   const searchTest = page.getByRole('complementary', { name: '搜索测试和发布状态' })
   await searchTest.getByRole('textbox', { name: '客户问题', exact: true }).fill('包裹派送失败怎么办')
   await searchTest.getByRole('button', { name: '测试搜索' }).click()
