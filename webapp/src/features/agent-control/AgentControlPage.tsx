@@ -17,6 +17,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { OverviewPanel } from './OverviewPanel'
 import { PersonaPanel } from './PersonaPanel'
 import { PlaybookPanel } from './PlaybookPanel'
+import { RunExplorerPanel } from './RunExplorerPanel'
 import { ToolsIntegrationsPanel } from './ToolsIntegrationsPanel'
 import { RuntimePanel } from './RuntimePanel'
 
@@ -164,10 +165,13 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
             />
           ) : null}
           {tab === 'diagnostics' ? (
-            <DiagnosticsPanel
-              snapshot={snapshot.data}
-              tenantKey={tenantKey || snapshot.data.tenant_key}
-            />
+            <Stack spacing={2}>
+              <DiagnosticsPanel
+                snapshot={snapshot.data}
+                tenantKey={tenantKey || snapshot.data.tenant_key}
+              />
+              <RunExplorerPanel tenantKey={tenantKey || snapshot.data.tenant_key} />
+            </Stack>
           ) : null}
         </Box>
       )}
