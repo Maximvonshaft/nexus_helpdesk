@@ -238,7 +238,6 @@ def _ai_reply_contract_fields(
     handoff_required: bool,
     runtime_trace: dict[str, Any] | None,
     reply_type: str | None = None,
-    **_legacy: Any,
 ) -> dict[str, Any]:
     trace = runtime_trace if isinstance(runtime_trace, dict) else {}
     decision = trace.get("ai_decision") if isinstance(trace.get("ai_decision"), dict) else {}
