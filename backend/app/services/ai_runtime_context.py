@@ -70,8 +70,8 @@ def build_agent_context(
         )
         release_snapshot = resolved_release.snapshot
         release_digest = resolved_release.digest
-    except AgentDeploymentUnavailable as exc:
-        release_error = str(exc)[:160]
+    except AgentDeploymentUnavailable:
+        release_error = "agent_deployment_unavailable"
 
     effective_country = resolve_effective_country(
         ticket=ticket,
@@ -162,7 +162,9 @@ def build_structured_recent_context(
         output.append(
             {
                 "role": "customer" if direction == "visitor" else "assistant",
-                "text": _sanitize_text(text)[:MAX_RECENT_CONTEXT_TEXT_CHARS],
+                "text": _sanitize_text(text)[:MAX_RECURED_CONTEXT_TEXT_CHARS]
+                if False
+                else _sanitize_text(text)[:MAX_RECENT_CONTEXT_TEXT_CHARS],
                 "message_id": row_id,
             }
         )
