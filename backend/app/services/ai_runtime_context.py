@@ -5,10 +5,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..models_control_plane import PersonaProfile
 from ..webchat_models import WebchatMessage
 from . import persona_service
+from .agent_release_service import record_run_snapshot, resolve_agent_release
 from .bulletin_service import list_active_bulletins
-from .customer_memory_service import runtime_memory_context
 from .effective_country import effective_country_payload, resolve_effective_country
 
 MAX_STRUCTURED_RECENT_CONTEXT = 12
@@ -44,11 +45,46 @@ def build_agent_context(
     conversation: Any = None,
     customer: Any = None,
     channel_payload: dict[str, Any] | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    environment: str = "production",
+    case_type: str | None = None,
 ) -> dict[str, Any]:
-    """Build the canonical sanitized Agent context without pre-running domain Tools."""
+    """Build the canonical sanitized Agent context from one immutable release.
 
-    profile, match_rank = persona_service.resolve_preview(
+    The resolver is shared by production and Playground. A run never reads a
+    moving set of latest resources after the release has been selected.
+    """
+
+    cohort_key = str(
+        session_id
+        or getattr(conversation, "public_id", None)
+        or getattr(conversation, "id", None)
+        or request_id
+        or "anonymous"
+    )
+    resolved_release = resolve_agent_release(
         db,
+        tenant_key=tenant_key,
+        environment=environment,
+        market_id=market_id,
+        channel=channel_key,
+        language=language,
+        case_type=case_type,
+        cohort_key=cohort_key,
+    )
+    if request_id and session_id:
+        record_run_snapshot(
+            db,
+            request_id=request_id,
+            session_id=session_id,
+            tenant_key=tenant_key,
+            resolved=resolved_release,
+        )
+
+    profile, match_rank = _persona_for_release(
+        db,
+        resolved_release.snapshot,
         market_id=market_id,
         channel=channel_key,
         language=language,
@@ -65,14 +101,6 @@ def build_agent_context(
         conversation=conversation,
         current_body=body,
     )
-    memory = runtime_memory_context(
-        db,
-        tenant_key=tenant_key,
-        customer_id=getattr(customer, "id", None),
-        market_id=market_id,
-        channel=channel_key,
-        language=language,
-    )
     bulletins = _active_bulletin_context(
         db,
         market_id=market_id,
@@ -81,20 +109,19 @@ def build_agent_context(
     )
     return sanitize_runtime_context(
         {
-            # The v1 contract was additive and already allowed new bounded keys.
-            # Keep its stable version so existing consumers do not need a
-            # needless compatibility branch for memory and bulletin context.
-            "context_version": "nexus.agent_context.v1",
+            "context_version": "nexus.agent_context.v2",
             "tenant_key": tenant_key,
             "channel_context": {
                 "market_id": market_id,
                 "channel": channel_key,
                 "language": language,
                 "audience_scope": audience_scope,
+                "case_type": case_type,
                 **effective_country_payload(effective_country),
             },
+            "agent_release_snapshot": resolved_release.snapshot,
+            "agent_release_digest": resolved_release.digest,
             "persona_context": _persona_context(profile, match_rank),
-            "customer_memory": memory,
             "active_bulletins": bulletins,
             "recent_conversation": recent,
             "agent_execution_context": {
@@ -137,7 +164,12 @@ def build_structured_recent_context(
         direction = str(getattr(row, "direction", "") or "").strip().lower()
         if not text:
             continue
-        if not skipped_current and current and direction == "visitor" and " ".join(text.split()) == current:
+        if (
+            not skipped_current
+            and current
+            and direction == "visitor"
+            and " ".join(text.split()) == current
+        ):
             skipped_current = True
             continue
         output.append(
@@ -151,21 +183,61 @@ def build_structured_recent_context(
 
 
 def sanitize_runtime_context(value: Any, *, depth: int = 0) -> Any:
-    if depth > 6:
+    if depth > 7:
         return "[TRUNCATED]"
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
         return _sanitize_text(value)[:4000]
     if isinstance(value, (list, tuple, set)):
-        return [sanitize_runtime_context(item, depth=depth + 1) for item in list(value)[:30]]
+        return [sanitize_runtime_context(item, depth=depth + 1) for item in list(value)[:60]]
     if isinstance(value, dict):
         return {
             str(key)[:100]: sanitize_runtime_context(item, depth=depth + 1)
-            for key, item in list(value.items())[:60]
+            for key, item in list(value.items())[:100]
             if str(key).strip().lower() not in _SECRET_KEYS
         }
     return str(value)[:200]
+
+
+def _persona_for_release(
+    db: Session,
+    snapshot: dict[str, Any],
+    *,
+    market_id: int | None,
+    channel: str | None,
+    language: str | None,
+) -> tuple[PersonaProfile | None, int | None]:
+    if snapshot.get("source") != "deployment":
+        return persona_service.resolve_preview(
+            db,
+            market_id=market_id,
+            channel=channel,
+            language=language,
+        )
+    manifest = snapshot.get("manifest") if isinstance(snapshot.get("manifest"), dict) else {}
+    reference = manifest.get("persona")
+    if reference is None:
+        return None, None
+    if not isinstance(reference, dict):
+        raise RuntimeError("agent_release_persona_reference_invalid")
+    key = str(reference.get("profile_key") or "").strip().lower()
+    try:
+        version = int(reference.get("version"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("agent_release_persona_version_invalid") from exc
+    row = (
+        db.query(PersonaProfile)
+        .filter(
+            PersonaProfile.profile_key == key,
+            PersonaProfile.is_active.is_(True),
+            PersonaProfile.published_version == version,
+        )
+        .one_or_none()
+    )
+    if row is None:
+        raise RuntimeError("agent_release_persona_unavailable")
+    return row, 100
 
 
 def _active_bulletin_context(
