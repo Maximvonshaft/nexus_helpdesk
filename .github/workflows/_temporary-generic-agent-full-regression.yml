@@ -19,6 +19,8 @@ jobs:
     if: github.event.pull_request.number == 793 && github.event.pull_request.head.ref == 'refactor/generic-agent-runtime-final-b7e41d'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
+    outputs:
+      failure_summary_b64: ${{ steps.failure-summary.outputs.summary_b64 }}
     steps:
       - name: Checkout exact branch head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -45,12 +47,38 @@ jobs:
           python -m compileall -q backend/app
           python scripts/ci/check_agent_runtime_residue.py
       - name: Run complete backend regression
+        id: backend
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
           mkdir -p /tmp/generic-agent-full-evidence
           python -m pytest -q backend/tests \
             2>&1 | tee /tmp/generic-agent-full-evidence/pytest.log
+      - name: Capture bounded backend failure summary
+        id: failure-summary
+        if: steps.backend.outcome == 'failure'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          log_path = Path('/tmp/generic-agent-full-evidence/pytest.log')
+          text = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else 'pytest log missing'
+          lines = text.splitlines()
+          start = 0
+          for index, line in enumerate(lines):
+              if ' short test summary info ' in line or line.startswith('= FAILURES =') or line.startswith('= ERRORS ='):
+                  start = index
+          bounded = '\n'.join(lines[start:][-400:])
+          if not bounded.strip():
+              bounded = '\n'.join(lines[-400:]) or 'pytest produced no readable failure output'
+          encoded = base64.b64encode(bounded.encode('utf-8')).decode('ascii')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
+              handle.write(f'summary_b64={encoded}\n')
+          PY
       - name: Upload backend evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -59,6 +87,9 @@ jobs:
           path: /tmp/generic-agent-full-evidence
           if-no-files-found: warn
           retention-days: 7
+      - name: Enforce backend regression success
+        if: steps.backend.outcome == 'failure'
+        run: exit 1
       - name: Commit clean candidate
         shell: bash
         run: |
@@ -78,3 +109,23 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'refactor(agent): enforce one governed generic runtime'
           git push origin HEAD:refactor/generic-agent-runtime-final-b7e41d
+
+  failure-summary:
+    if: always() && needs.verify.outputs.failure_summary_b64 != ''
+    needs: verify
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Print bounded backend failure summary
+        env:
+          FAILURE_SUMMARY_B64: ${{ needs.verify.outputs.failure_summary_b64 }}
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+
+          encoded = os.environ.get('FAILURE_SUMMARY_B64', '')
+          print(base64.b64decode(encoded).decode('utf-8', errors='replace'))
+          PY
