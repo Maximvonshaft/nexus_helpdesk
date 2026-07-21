@@ -8,6 +8,10 @@ _CURRENT_AGENT_RELEASE: ContextVar[dict[str, Any] | None] = ContextVar(
     "nexus_current_agent_release",
     default=None,
 )
+_CURRENT_AGENT_TOOL_HANDLERS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "nexus_current_agent_tool_handlers",
+    default=None,
+)
 
 
 @contextmanager
@@ -21,9 +25,35 @@ def bind_agent_release_snapshot(
         _CURRENT_AGENT_RELEASE.reset(token)
 
 
+@contextmanager
+def bind_agent_tool_handlers(
+    handlers: dict[str, Any] | None,
+) -> Iterator[None]:
+    """Bind request-local Agent Tool handlers for the canonical executor.
+
+    The handler map is contextual rather than global so concurrent Agent runs do
+    not mutate module state or leak tenant/release resources across requests.
+    """
+
+    token = _CURRENT_AGENT_TOOL_HANDLERS.set(
+        dict(handlers) if isinstance(handlers, dict) else None
+    )
+    try:
+        yield
+    finally:
+        _CURRENT_AGENT_TOOL_HANDLERS.reset(token)
+
+
 def current_agent_release_snapshot() -> dict[str, Any] | None:
     value = _CURRENT_AGENT_RELEASE.get()
     return value if isinstance(value, dict) else None
+
+
+def current_agent_tool_handler(tool_name: str) -> Any | None:
+    handlers = _CURRENT_AGENT_TOOL_HANDLERS.get()
+    if not isinstance(handlers, dict):
+        return None
+    return handlers.get(str(tool_name or "").strip())
 
 
 def released_knowledge_evidence() -> tuple[dict[str, Any], ...] | None:
