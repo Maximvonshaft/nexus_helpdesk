@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass, field
@@ -17,7 +18,10 @@ from ..provider_runtime.output_contracts import AGENT_TURN_OUTPUT_CONTRACT
 from ..provider_runtime.router import ProviderRuntimeRouter
 from ..provider_runtime.schemas import ProviderRequest
 from ..webchat_ai_decision_runtime.schemas import AIDecision
-from ..webchat_ai_decision_runtime.tool_registry import get_tool_contract, prompt_tool_catalog
+from ..webchat_ai_decision_runtime.tool_registry import (
+    get_tool_contract,
+    prompt_tool_catalog,
+)
 from .playbook_registry import prompt_playbook_catalog
 from .terminal_reply import customer_visible_fallback
 from .tool_adapter import (
@@ -28,6 +32,7 @@ from .tool_adapter import (
 )
 
 bootstrap_agent_tool_contracts()
+_RUNTIME_VERSION = "nexus.agent_runtime.v4"
 
 
 @dataclass(frozen=True)
@@ -196,7 +201,7 @@ async def run_agent_with_db(
     for round_index in range(max_rounds + 1):
         round_metadata = {
             **metadata,
-            "agent_runtime_version": "nexus.agent_runtime.v3",
+            "agent_runtime_version": _RUNTIME_VERSION,
             "agent_round": round_index,
             "agent_playbooks": playbooks,
             "agent_tools": tools,
@@ -373,7 +378,13 @@ async def run_agent_with_db(
             )
 
         try:
-            observations = execute_agent_tool_calls(
+            # Canonical Tool execution is synchronous because it owns a
+            # transactional SQLAlchemy Session and legacy provider clients. Move
+            # the complete, sequential unit to one worker thread so external I/O
+            # cannot block the async Agent/ASGI event loop. The Session is never
+            # accessed concurrently and execution is awaited before continuing.
+            observations = await asyncio.to_thread(
+                execute_agent_tool_calls,
                 db,
                 calls=decision.tool_calls,
                 context=execution_context,
@@ -518,6 +529,7 @@ def _record_tool_observations(
             "status": observation.status,
             "ok": observation.ok,
             "error_code": observation.error_code,
+            "elapsed_ms": observation.elapsed_ms,
         }
         for call, observation in zip(decision.tool_calls, observations)
     )
@@ -734,7 +746,7 @@ def _safe_summary(
     )
     summary: dict[str, Any] = {
         "agent_runtime": True,
-        "agent_runtime_version": "nexus.agent_runtime.v3",
+        "agent_runtime_version": _RUNTIME_VERSION,
         "agent_release_id": release.get("id"),
         "agent_release_version": release.get("version"),
         "agent_deployment_id": deployment.get("id"),
@@ -752,6 +764,7 @@ def _safe_summary(
             "allow_high_risk_writes": bool(
                 (policy or {}).get("allow_high_risk_writes")
             ),
+            "provider_timeout_ms": (policy or {}).get("provider_timeout_ms"),
         },
         "elapsed_ms": state.elapsed_ms,
     }
