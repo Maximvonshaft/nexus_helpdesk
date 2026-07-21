@@ -305,7 +305,7 @@ async def fork_agent_run(
             detail="agent_fork_exact_release_not_resolved",
         )
 
-    read_tools = _read_only_tools()
+    read_tools = _read_only_tools(context.get("agent_release_snapshot"))
     permissions = sorted(
         {
             permission
@@ -437,12 +437,21 @@ def _context_release_identity(context: dict[str, Any]) -> tuple[int, str] | None
     return release_id, manifest_sha
 
 
-def _read_only_tools() -> set[str]:
-    return {
+def _read_only_tools(release_snapshot: Any | None = None) -> set[str]:
+    read_tools = {
         name
         for name in executable_tool_names()
         if (contract := get_tool_contract(name)) is not None and contract.is_read_tool
     }
+    if release_snapshot is None:
+        return read_tools
+    if not isinstance(release_snapshot, dict):
+        return set()
+    resolved = release_snapshot.get("resolved")
+    allowed = resolved.get("allowed_tools") if isinstance(resolved, dict) else None
+    if not isinstance(allowed, list):
+        return set()
+    return read_tools & {str(item) for item in allowed if str(item)}
 
 
 def _requested_specialists(values: list[str]) -> list[str]:
