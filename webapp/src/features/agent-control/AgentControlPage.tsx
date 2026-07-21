@@ -30,11 +30,30 @@ export function AgentControlPage({
 }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
   const [tenantKey, setTenantKey] = useState('default')
+  const [environment, setEnvironment] = useState<'test' | 'staging' | 'production'>('production')
+  const [marketId, setMarketId] = useState('')
   const [channel, setChannel] = useState('webchat')
   const [language, setLanguage] = useState('')
+  const [caseType, setCaseType] = useState('')
+  const parsedMarketId = marketId.trim() ? Number(marketId) : null
   const snapshot = useQuery({
-    queryKey: ['agentControlSnapshot', tenantKey, channel, language],
-    queryFn: () => agentControlApi.snapshot({ tenantKey, channel, language: language || null }),
+    queryKey: [
+      'agentControlSnapshot',
+      tenantKey,
+      environment,
+      parsedMarketId,
+      channel,
+      language,
+      caseType,
+    ],
+    queryFn: () => agentControlApi.snapshot({
+      tenantKey,
+      environment,
+      marketId: Number.isFinite(parsedMarketId) ? parsedMarketId : null,
+      channel,
+      language: language || null,
+      caseType: caseType || null,
+    }),
     refetchInterval: 30_000,
     retry: false,
   })
@@ -43,7 +62,14 @@ export function AgentControlPage({
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between' }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{
+          alignItems: { xs: 'stretch', sm: 'flex-start' },
+          justifyContent: 'space-between',
+        }}
+      >
         <Box>
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             <PsychologyRoundedIcon color="primary" aria-hidden="true" />
@@ -60,7 +86,13 @@ export function AgentControlPage({
       </Stack>
 
       <Paper variant="outlined" sx={{ mt: 2.5, overflow: 'hidden' }}>
-        <Tabs value={tab} onChange={(_, next: AgentControlTab) => setTab(next)} variant="scrollable" scrollButtons="auto" aria-label="Agent 控制面分类">
+        <Tabs
+          value={tab}
+          onChange={(_, next: AgentControlTab) => setTab(next)}
+          variant="scrollable"
+          scrollButtons="auto"
+          aria-label="Agent 控制面分类"
+        >
           <Tab value="overview" label="定义、发布与测试" />
           <Tab value="persona" label="人格" />
           <Tab value="knowledge" label="知识" />
@@ -71,17 +103,64 @@ export function AgentControlPage({
       </Paper>
 
       {snapshot.isError ? (
-        <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取 Agent 控制面" error={snapshot.error} fallback="请检查控制面服务" /></Box>
+        <Box sx={{ mt: 2 }}>
+          <OperatorErrorNotice
+            title="无法读取 Agent 控制面"
+            error={snapshot.error}
+            fallback="请检查控制面服务"
+          />
+        </Box>
       ) : snapshot.isLoading || !snapshot.data ? (
-        <Stack sx={{ minHeight: 320, alignItems: 'center', justifyContent: 'center' }}><CircularProgress /></Stack>
+        <Stack sx={{ minHeight: 320, alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress />
+        </Stack>
       ) : (
         <Box sx={{ mt: 2 }}>
-          {tab === 'overview' ? <OverviewPanel snapshot={snapshot.data} tenantKey={tenantKey} setTenantKey={setTenantKey} channel={channel} setChannel={setChannel} language={language} setLanguage={setLanguage} canManage={canManage} /> : null}
-          {tab === 'persona' ? <PersonaPanel snapshot={snapshot.data} canManage={canManage} /> : null}
+          {tab === 'overview' ? (
+            <OverviewPanel
+              snapshot={snapshot.data}
+              tenantKey={tenantKey}
+              setTenantKey={setTenantKey}
+              environment={environment}
+              setEnvironment={setEnvironment}
+              marketId={marketId}
+              setMarketId={setMarketId}
+              channel={channel}
+              setChannel={setChannel}
+              language={language}
+              setLanguage={setLanguage}
+              caseType={caseType}
+              setCaseType={setCaseType}
+              canManage={canManage && snapshot.data.capabilities.can_manage}
+              canDeploy={snapshot.data.capabilities.can_deploy}
+            />
+          ) : null}
+          {tab === 'persona' ? (
+            <PersonaPanel
+              snapshot={snapshot.data}
+              canManage={canManage && snapshot.data.capabilities.can_manage}
+            />
+          ) : null}
           {tab === 'knowledge' ? knowledgePage : null}
-          {tab === 'playbooks' ? <PlaybookPanel snapshot={snapshot.data} canManage={canManage} /> : null}
-          {tab === 'tools' ? <ToolsIntegrationsPanel snapshot={snapshot.data} canManage={canManage} tenantKey={tenantKey} /> : null}
-          {tab === 'runtime' ? <RuntimePanel snapshot={snapshot.data} canManage={canManage} /> : null}
+          {tab === 'playbooks' ? (
+            <PlaybookPanel
+              snapshot={snapshot.data}
+              canManage={canManage && snapshot.data.capabilities.can_manage}
+            />
+          ) : null}
+          {tab === 'tools' ? (
+            <ToolsIntegrationsPanel
+              snapshot={snapshot.data}
+              canManage={canManage && snapshot.data.capabilities.can_manage}
+              tenantKey={tenantKey}
+            />
+          ) : null}
+          {tab === 'runtime' ? (
+            <RuntimePanel
+              snapshot={snapshot.data}
+              canManage={canManage && snapshot.data.capabilities.can_manage}
+            />
+          ) : null}
         </Box>
       )}
     </Box>
