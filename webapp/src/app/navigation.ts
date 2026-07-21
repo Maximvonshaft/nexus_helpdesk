@@ -1,6 +1,6 @@
-export type AppRouteKey = 'workspace' | 'knowledge' | 'channels' | 'runtime' | 'control-tower' | 'administration' | 'account'
+export type AppRouteKey = 'workspace' | 'knowledge' | 'agent-control' | 'channels' | 'runtime' | 'control-tower' | 'administration' | 'account'
 export type AppNavigationRouteKey = Exclude<AppRouteKey, 'account'>
-export type AppCanonicalPath = '/workspace' | '/knowledge' | '/channels' | '/runtime' | '/control-tower' | '/administration'
+export type AppCanonicalPath = '/workspace' | '/knowledge' | '/agent-control' | '/channels' | '/runtime' | '/control-tower' | '/administration'
 
 export interface AppNavigationItem {
   key: AppNavigationRouteKey
@@ -22,10 +22,18 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'knowledge',
-    label: '知识与流程',
+    label: '知识库',
     canonicalRoute: '/knowledge',
     currentHref: '/knowledge',
     capabilityAny: ['ai_config.read', 'ai_config.manage'],
+    status: 'canonical',
+  },
+  {
+    key: 'agent-control',
+    label: 'Agent 控制',
+    canonicalRoute: '/agent-control',
+    currentHref: '/agent-control',
+    capabilityAny: ['ai_config.read', 'ai_config.manage', 'runtime.manage'],
     status: 'canonical',
   },
   {

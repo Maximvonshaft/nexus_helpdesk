@@ -15,6 +15,7 @@ from ..api.admin_provider_runtime import router as admin_provider_runtime_router
 from ..api.admin_queue import router as admin_queue_router
 from ..api.admin_tenant_query_scope import enforce_admin_tenant_query_scope
 from ..api.admin_whatsapp_native import router as admin_whatsapp_native_router
+from ..api.agent_control import router as agent_control_router
 from ..api.auth import router as auth_router
 from ..api.canonical_integration import router as integration_router
 from ..api.canonical_osr_admin import router as osr_admin_router
@@ -80,6 +81,7 @@ def register_api_routers(app: FastAPI) -> None:
         operator_queue_router,
         outbound_channels_router,
         auth_router,
+        agent_control_router,
         channel_control_router,
         files_router,
         integration_router,

@@ -56,6 +56,13 @@ async function seedSession(page: Page) {
   await page.addInitScript(([key, token]) => sessionStorage.setItem(key, token), [TOKEN_KEY, 'operator-token'])
 }
 
+async function openKnowledge(page: Page) {
+  await page.goto('/knowledge')
+  await expect(page).toHaveURL(/\/knowledge$/)
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '知识库' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+}
+
 test('Knowledge uses operator language and guards an unsaved draft', async ({ page }) => {
   await seedSession(page)
   const first = knowledgeItem(1, '末派失败')
@@ -72,11 +79,7 @@ test('Knowledge uses operator language and guards an unsaved draft', async ({ pa
     return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
   })
 
-  await page.goto('/knowledge')
-
-  await expect(page).toHaveURL(/\/knowledge$/)
-  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '知识与流程' })).toHaveAttribute('aria-current', 'page')
-  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+  await openKnowledge(page)
   await expect(page.getByRole('textbox', { name: '标准答案与处理步骤', exact: true })).toBeVisible()
   await expect(page.getByText('AI 应该知道的答案')).toHaveCount(0)
   await expect(page.getByText('让 AI 组织语言')).toHaveCount(0)
@@ -112,7 +115,7 @@ test('Knowledge retrieval test explains whether the current service can use the 
     return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
   })
 
-  await page.goto('/knowledge')
+  await openKnowledge(page)
   const searchTest = page.getByRole('complementary', { name: '搜索测试和发布状态' })
   await searchTest.getByRole('textbox', { name: '客户问题', exact: true }).fill('包裹派送失败怎么办')
   await searchTest.getByRole('button', { name: '测试搜索' }).click()

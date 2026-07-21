@@ -15,6 +15,7 @@ from app import models_control_plane  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.models import User  # noqa: E402
+from app.models_control_plane import KnowledgeItemVersion  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.nexus_osr.tool_execution_policy_seed import seed_default_tool_execution_policies  # noqa: E402
@@ -91,6 +92,31 @@ def _business_fact(session, admin, **overrides):
     }
     data.update(overrides)
     return _create(session, admin, **data)
+
+
+def _release_snapshot(session, item) -> dict:
+    version = (
+        session.query(KnowledgeItemVersion)
+        .filter(
+            KnowledgeItemVersion.item_id == item.id,
+            KnowledgeItemVersion.version == item.published_version,
+        )
+        .one()
+    )
+    return {
+        "source": "deployment",
+        "release": {"id": 1, "version": 1},
+        "resolved": {
+            "knowledge": [
+                {
+                    "id": item.id,
+                    "item_key": item.item_key,
+                    "version": version.version,
+                    "snapshot": version.snapshot_json,
+                }
+            ]
+        },
+    }
 
 
 def test_chinese_query_retrieves_approved_business_fact_above_generic_document(db_session):
@@ -246,12 +272,13 @@ def test_generic_runtime_context_does_not_prefetch_knowledge(db_session):
         language="zh",
     )
 
-    assert context["context_version"] == "nexus.agent_context.v1"
+    assert context["context_version"] == "nexus.agent_context.v2"
+    assert context["agent_release_error"] == "agent_deployment_unavailable"
     assert "knowledge_context" not in context
     assert "locked_facts" not in str(context)
 
 
-def test_knowledge_search_tool_returns_safe_observation(db_session):
+def test_knowledge_search_tool_returns_safe_release_bound_observation(db_session):
     admin = _user(db_session)
     fact = _business_fact(
         db_session,
@@ -273,6 +300,7 @@ def test_knowledge_search_tool_returns_safe_observation(db_session):
         language="zh",
         allowed_tools=frozenset({"knowledge.search"}),
         granted_permissions=frozenset({"knowledge:read"}),
+        release_snapshot=_release_snapshot(db_session, fact),
     )
 
     observations = execute_agent_tool_calls(

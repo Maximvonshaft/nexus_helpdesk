@@ -6,19 +6,22 @@ import { RouteLoadingState } from '@/app/OperatorPresentation'
 import { useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
 
-const LazyKnowledgePage = lazy(() => import('@/features/knowledge/lazy'))
+const LazyAgentControlPage = lazy(() => import('@/features/agent-control/lazy'))
 
-function KnowledgeCapabilityPage() {
+function AgentControlCapabilityPage() {
   const session = useSession()
   const canManage = Boolean(session.data?.capabilities?.includes('ai_config.manage'))
-  return <LazyKnowledgePage canManage={canManage} />
+  return <LazyAgentControlPage canManage={canManage} />
 }
 
-function KnowledgeRoutePage() {
+function AgentControlRoutePage() {
   return (
-    <AuthenticatedAppPage activeRoute="knowledge" requiredAny={['ai_config.read', 'ai_config.manage']}>
-      <Suspense fallback={<RouteLoadingState label="正在加载知识库…" />}>
-        <KnowledgeCapabilityPage />
+    <AuthenticatedAppPage
+      activeRoute="agent-control"
+      requiredAny={['ai_config.read', 'ai_config.manage', 'runtime.manage']}
+    >
+      <Suspense fallback={<RouteLoadingState label="正在加载 Agent 控制面…" />}>
+        <AgentControlCapabilityPage />
       </Suspense>
     </AuthenticatedAppPage>
   )
@@ -26,9 +29,9 @@ function KnowledgeRoutePage() {
 
 export const Route = createRoute({
   getParentRoute: () => RootRoute,
-  path: '/knowledge',
+  path: '/agent-control',
   beforeLoad: () => {
     if (!getSupportToken()) throw redirect({ to: '/login' })
   },
-  component: KnowledgeRoutePage,
+  component: AgentControlRoutePage,
 })

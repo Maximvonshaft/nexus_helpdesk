@@ -1,15 +1,19 @@
-"""Public governed tool-execution authority.
+"""Public governed Tool-execution authority.
 
-The private core owns the single executor, handler registry, policy, audit and
-idempotency implementation. This module is only the stable public import path.
+The private core remains the only executor, policy, audit and idempotency
+implementation. Agent extensions bind request-local handlers through the
+canonical ``ControlledActionExecutor`` and never mutate this module or its
+private core.
 """
-
 from __future__ import annotations
 
+from ..agent_tool_contracts import bootstrap_agent_tool_contracts
 from . import tool_execution_service_core as _core
-from .tool_execution_service_core import *  # noqa: F401,F403
 
-_production_handlers = _core._production_handlers
+bootstrap_agent_tool_contracts()
+
+from .tool_execution_service_core import *  # noqa: E402,F401,F403
+
 _availability_customer_summary = _core._availability_customer_summary
 
 

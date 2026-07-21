@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ..agent_runtime.execution_scope import current_agent_tool_handler
 from .case_context import CaseContext
 from .policies import ToolExecutionPolicy, ToolPolicyDecision
 from .runtime_decision_contract import RuntimeToolAction
@@ -50,11 +51,14 @@ class ActionExecutionResult:
 
 
 class ControlledActionExecutor:
-    """Policy-gated dispatcher used only by the canonical Tool Executor Core.
+    """The single policy-gated canonical Tool dispatcher.
 
-    It validates server-owned Tool policy and delegates to the production handler
-    map supplied by `tool_execution_service_core`. It contains no fallback,
-    in-memory, test-only, or future duplicate handlers.
+    Core handlers are supplied by ``tool_execution_service_core``. Agent-only
+    extensions are bound through a request-local ContextVar and resolved here,
+    so no public module mutates the private executor or creates a second
+    dispatcher. Request-local handlers intentionally take precedence for tools
+    such as ``knowledge.search`` whose candidates are constrained by an
+    immutable Agent Release.
     """
 
     def __init__(
@@ -141,7 +145,9 @@ class ControlledActionExecutor:
                     "Human confirmation is required before this Tool can execute."
                 ),
             )
-        handler = self._handlers.get(request.action.tool_name)
+        handler = current_agent_tool_handler(request.action.tool_name)
+        if handler is None:
+            handler = self._handlers.get(request.action.tool_name)
         if handler is None:
             return ActionExecutionResult(
                 ok=False,

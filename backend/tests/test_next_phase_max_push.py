@@ -61,6 +61,21 @@ def make_user(db_session, username, role, team):
     return row
 
 
+def _playbook(name: str, instruction: str) -> dict:
+    return {
+        'schema_version': 'nexus.agent_playbook.v1',
+        'name': name,
+        'display_name': name.replace('_', ' ').title(),
+        'description': f'{name} business handling playbook',
+        'tools': [],
+        'instructions': [instruction],
+        'priority': 100,
+        'channels': [],
+        'languages': [],
+        'enabled': True,
+    }
+
+
 def test_ai_config_can_be_created_published_and_read_via_lookups(db_session):
     team = make_team(db_session)
     admin = make_user(db_session, 'admin-next', UserRole.admin, team)
@@ -68,51 +83,54 @@ def test_ai_config_can_be_created_published_and_read_via_lookups(db_session):
     db_session.add(market)
     db_session.commit()
 
+    content = _playbook('support_tone', 'Use a clear and concise support tone.')
     created = admin_api.create_ai_config(
         AIConfigResourceCreate(
-            resource_key='support-persona',
-            config_type='persona',
-            name='客服人格',
+            resource_key='support-playbook',
+            config_type='playbook',
+            name='客服业务剧本',
             scope_type='global',
-            draft_summary='统一客服语气',
-            draft_content_json={'tone': 'clear'},
+            draft_summary='统一客服处理语气',
+            draft_content_json=content,
         ),
         db_session,
         admin,
     )
     published = admin_api.publish_ai_config(created.id, AIConfigPublishRequest(notes='initial publish'), db_session, admin)
-    rows = lookups_api.list_ai_configs(config_type='persona', market_id=None, db=db_session, current_user=admin)
+    rows = lookups_api.list_ai_configs(config_type='playbook', market_id=None, db=db_session, current_user=admin)
 
     assert published.version == 1
     assert rows and rows[0].published_version == 1
-    assert rows[0].published_content_json == {'tone': 'clear'}
+    assert rows[0].published_content_json == content
 
 
 def test_ai_config_rollback_creates_new_published_version(db_session):
     team = make_team(db_session)
     admin = make_user(db_session, 'admin-roll', UserRole.admin, team)
+    first = _playbook('delay_handling', 'Follow the first approved delay workflow.')
+    second = _playbook('delay_handling', 'Follow the revised approved delay workflow.')
     created = admin_api.create_ai_config(
         AIConfigResourceCreate(
-            resource_key='delay-sop',
-            config_type='sop',
+            resource_key='delay-playbook',
+            config_type='playbook',
             name='延误处理',
-            scope_type='case_type',
-            scope_value='Delivery Delay',
+            scope_type='channel',
+            scope_value='webchat',
             draft_summary='第一版',
-            draft_content_json={'steps': ['a']},
+            draft_content_json=first,
         ),
         db_session,
         admin,
     )
     admin_api.publish_ai_config(created.id, AIConfigPublishRequest(notes='v1'), db_session, admin)
-    admin_api.update_ai_config(created.id, AIConfigResourceUpdate(draft_summary='第二版', draft_content_json={'steps': ['b']}), db_session, admin)
+    admin_api.update_ai_config(created.id, AIConfigResourceUpdate(draft_summary='第二版', draft_content_json=second), db_session, admin)
     admin_api.publish_ai_config(created.id, AIConfigPublishRequest(notes='v2'), db_session, admin)
 
     rolled = admin_api.rollback_ai_config(created.id, 1, AIConfigPublishRequest(notes='rollback'), db_session, admin)
     resource = db_session.query(AIConfigResource).filter(AIConfigResource.id == created.id).one()
 
     assert rolled.version == 3
-    assert resource.published_content_json == {'steps': ['a']}
+    assert resource.published_content_json == first
     assert resource.published_summary == '第一版'
 
 
@@ -123,10 +141,10 @@ def test_ai_config_management_is_limited_to_admin_or_manager(db_session):
     with pytest.raises(HTTPException) as exc:
         admin_api.create_ai_config(
             AIConfigResourceCreate(
-                resource_key='lead-policy',
-                config_type='policy',
-                name='lead policy',
-                draft_content_json={'approve': False},
+                resource_key='lead-playbook',
+                config_type='playbook',
+                name='lead playbook',
+                draft_content_json=_playbook('lead_playbook', 'This write must remain unauthorized.'),
             ),
             db_session,
             lead,

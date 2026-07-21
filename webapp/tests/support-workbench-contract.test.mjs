@@ -30,6 +30,7 @@ test('router exposes only the owned canonical route files', () => {
   assert.deepEqual(actual, [
     'account.tsx',
     'administration.tsx',
+    'agent-control.tsx',
     'channels.tsx',
     'control-tower.tsx',
     'index.tsx',

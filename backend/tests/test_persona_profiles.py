@@ -31,6 +31,7 @@ from app.schemas_control_plane import (  # noqa: E402
     PersonaResolvePreviewRequest,
     PersonaRollbackRequest,
 )
+from app.services import persona_service  # noqa: E402
 
 
 @pytest.fixture()
@@ -61,6 +62,22 @@ def _user(session, role: UserRole, username: str) -> User:
     return row
 
 
+def _content(tone: str = "clear and concise") -> dict:
+    return {
+        "schema_version": "nexus.persona.v1",
+        "brand_name": "Nexus",
+        "assistant_name": "Nora",
+        "role_label": "Customer support assistant",
+        "identity_statement": "Nora provides approved Nexus customer support.",
+        "identity_answer_rule": "State the approved brand and support scope.",
+        "tone": tone,
+        "handoff_boundary": "Escalate legal, compensation and explicit human requests.",
+        "capabilities": ["delivery guidance"],
+        "guardrails": ["Do not invent live shipment facts."],
+        "disallowed_identity_claims": ["Do not claim to be a human."],
+    }
+
+
 def _create_payload(**overrides) -> PersonaProfileCreate:
     data = {
         "profile_key": "default.whatsapp.en",
@@ -70,38 +87,87 @@ def _create_payload(**overrides) -> PersonaProfileCreate:
         "language": "en",
         "is_active": True,
         "draft_summary": "Clear and concise",
-        "draft_content_json": {"tone": "clear", "style": "concise"},
+        "draft_content_json": _content(),
     }
     data.update(overrides)
     return PersonaProfileCreate(**data)
 
 
+def _publish_service(db_session, profile, actor, notes="approved fixture"):
+    return persona_service.publish_profile(
+        db_session,
+        persona_service.get_profile_or_404(db_session, profile.id),
+        actor,
+        notes=notes,
+    )
+
+
 def test_agent_cannot_create_update_publish_or_rollback(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
     agent = _user(db_session, UserRole.agent, "agent")
-    profile = create_persona_profile(_create_payload(profile_key="protected.persona"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(profile_key="protected.persona"), db_session, admin
+    )
 
     with pytest.raises(HTTPException) as create_exc:
-        create_persona_profile(_create_payload(profile_key="agent.create"), db_session, agent)
+        create_persona_profile(
+            _create_payload(profile_key="agent.create"), db_session, agent
+        )
     assert create_exc.value.status_code == 403
 
     with pytest.raises(HTTPException) as update_exc:
-        update_persona_profile(profile.id, PersonaProfileUpdate(name="Agent Update"), db_session, agent)
+        update_persona_profile(
+            profile.id,
+            PersonaProfileUpdate(name="Agent Update"),
+            db_session,
+            agent,
+        )
     assert update_exc.value.status_code == 403
 
     with pytest.raises(HTTPException) as publish_exc:
-        publish_persona_profile(profile.id, PersonaPublishRequest(notes="try"), db_session, agent)
+        publish_persona_profile(
+            profile.id,
+            PersonaPublishRequest(notes="try"),
+            db_session,
+            agent,
+        )
     assert publish_exc.value.status_code == 403
 
-    publish_persona_profile(profile.id, PersonaPublishRequest(notes="admin publish"), db_session, admin)
+    _publish_service(db_session, profile, admin)
     with pytest.raises(HTTPException) as rollback_exc:
-        rollback_persona_profile(profile.id, PersonaRollbackRequest(version=1, notes="try"), db_session, agent)
+        rollback_persona_profile(
+            profile.id,
+            PersonaRollbackRequest(version=1, notes="try"),
+            db_session,
+            agent,
+        )
     assert rollback_exc.value.status_code == 403
+
+
+def test_direct_publish_requires_approved_review(db_session):
+    admin = _user(db_session, UserRole.admin, "admin-publish")
+    profile = create_persona_profile(
+        _create_payload(profile_key="governed.publish"),
+        db_session,
+        admin,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        publish_persona_profile(
+            profile.id,
+            PersonaPublishRequest(notes="bypass"),
+            db_session,
+            admin,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "persona_publish_requires_approved_review"
 
 
 def test_admin_can_create_profile(db_session):
     admin = _user(db_session, UserRole.admin, "admin-persona")
-    profile = create_persona_profile(_create_payload(profile_key="admin.persona"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(profile_key="admin.persona"), db_session, admin
+    )
 
     assert profile.profile_key == "admin.persona"
     assert profile.created_by == admin.id
@@ -111,10 +177,14 @@ def test_admin_can_create_profile(db_session):
 
 def test_duplicate_profile_key_returns_409(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    create_persona_profile(_create_payload(profile_key="duplicate.persona"), db_session, admin)
+    create_persona_profile(
+        _create_payload(profile_key="duplicate.persona"), db_session, admin
+    )
 
     with pytest.raises(HTTPException) as exc:
-        create_persona_profile(_create_payload(profile_key="duplicate.persona"), db_session, admin)
+        create_persona_profile(
+            _create_payload(profile_key="duplicate.persona"), db_session, admin
+        )
     assert exc.value.status_code == 409
 
 
@@ -123,7 +193,10 @@ def test_invalid_profile_key_fails_validation():
         PersonaProfileCreate(profile_key="Bad Key", name="Invalid")
 
 
-@pytest.mark.parametrize("alias", ["", " ", "global", "GLOBAL", "all", "any", "*", "none", "null"])
+@pytest.mark.parametrize(
+    "alias",
+    ["", " ", "global", "GLOBAL", "all", "any", "*", "none", "null"],
+)
 def test_persona_language_global_aliases_store_as_null(alias):
     payload = PersonaProfileCreate(
         profile_key="global.language.alias",
@@ -131,14 +204,22 @@ def test_persona_language_global_aliases_store_as_null(alias):
         channel="website",
         language=alias,
         draft_summary="Global language support persona",
-        draft_content_json={"tone": "concise"},
+        draft_content_json=_content(),
     )
     assert payload.language is None
 
 
 def test_update_persona_language_global_alias_stores_null(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    profile = create_persona_profile(_create_payload(profile_key="language.global", channel="website", language="en"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(
+            profile_key="language.global",
+            channel="website",
+            language="en",
+        ),
+        db_session,
+        admin,
+    )
 
     updated = update_persona_profile(
         profile.id,
@@ -152,12 +233,23 @@ def test_update_persona_language_global_alias_stores_null(db_session):
 
 def test_list_and_get_profiles_work(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    create_persona_profile(_create_payload(profile_key="b.persona", name="B Persona"), db_session, admin)
-    created = create_persona_profile(_create_payload(profile_key="a.persona", name="A Persona"), db_session, admin)
+    create_persona_profile(
+        _create_payload(profile_key="b.persona", name="B Persona"),
+        db_session,
+        admin,
+    )
+    created = create_persona_profile(
+        _create_payload(profile_key="a.persona", name="A Persona"),
+        db_session,
+        admin,
+    )
 
     listing = list_persona_profiles(db=db_session, current_user=admin)
     assert listing.total == 2
-    assert [item.profile_key for item in listing.profiles] == ["a.persona", "b.persona"]
+    assert [item.profile_key for item in listing.profiles] == [
+        "a.persona",
+        "b.persona",
+    ]
 
     detail = get_persona_profile(created.id, db_session, admin)
     assert detail.id == created.id
@@ -167,15 +259,17 @@ def test_list_and_get_profiles_work(db_session):
 
 def test_update_draft_works_without_touching_published_fields(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    profile = create_persona_profile(_create_payload(profile_key="updatable.persona"), db_session, admin)
-    publish_persona_profile(profile.id, PersonaPublishRequest(notes="publish v1"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(profile_key="updatable.persona"), db_session, admin
+    )
+    _publish_service(db_session, profile, admin, notes="v1 fixture")
 
     updated = update_persona_profile(
         profile.id,
         PersonaProfileUpdate(
             name="Updated Persona",
             draft_summary="Updated draft",
-            draft_content_json={"tone": "warm"},
+            draft_content_json=_content("warm"),
         ),
         db_session,
         admin,
@@ -187,34 +281,43 @@ def test_update_draft_works_without_touching_published_fields(db_session):
     assert updated.published_summary == "Clear and concise"
 
 
-def test_publish_empty_draft_returns_400(db_session):
+def test_publish_empty_draft_returns_400_at_service_boundary(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
     profile = create_persona_profile(
-        _create_payload(profile_key="empty.draft", draft_summary=None, draft_content_json={}),
+        _create_payload(
+            profile_key="empty.draft",
+            draft_summary=None,
+            draft_content_json={},
+        ),
         db_session,
         admin,
     )
 
     with pytest.raises(HTTPException) as exc:
-        publish_persona_profile(profile.id, PersonaPublishRequest(notes="empty"), db_session, admin)
+        _publish_service(db_session, profile, admin)
     assert exc.value.status_code == 400
 
 
-def test_publish_valid_draft_creates_and_increments_versions(db_session):
+def test_approved_publish_service_creates_and_increments_versions(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    profile = create_persona_profile(_create_payload(profile_key="publish.persona"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(profile_key="publish.persona"), db_session, admin
+    )
 
-    v1 = publish_persona_profile(profile.id, PersonaPublishRequest(notes="v1"), db_session, admin)
+    v1 = _publish_service(db_session, profile, admin, notes="v1")
     assert v1.version == 1
     assert v1.summary == "Clear and concise"
 
     update_persona_profile(
         profile.id,
-        PersonaProfileUpdate(draft_summary="Second summary", draft_content_json={"tone": "formal"}),
+        PersonaProfileUpdate(
+            draft_summary="Second summary",
+            draft_content_json=_content("formal"),
+        ),
         db_session,
         admin,
     )
-    v2 = publish_persona_profile(profile.id, PersonaPublishRequest(notes="v2"), db_session, admin)
+    v2 = _publish_service(db_session, profile, admin, notes="v2")
     assert v2.version == 2
 
     detail = get_persona_profile(profile.id, db_session, admin)
@@ -224,77 +327,121 @@ def test_publish_valid_draft_creates_and_increments_versions(db_session):
 
 def test_rollback_to_previous_version_works(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    profile = create_persona_profile(_create_payload(profile_key="rollback.persona"), db_session, admin)
-    publish_persona_profile(profile.id, PersonaPublishRequest(notes="v1"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(profile_key="rollback.persona"), db_session, admin
+    )
+    _publish_service(db_session, profile, admin, notes="v1")
     update_persona_profile(
         profile.id,
-        PersonaProfileUpdate(draft_summary="Second summary", draft_content_json={"tone": "formal"}),
+        PersonaProfileUpdate(
+            draft_summary="Second summary",
+            draft_content_json=_content("formal"),
+        ),
         db_session,
         admin,
     )
-    publish_persona_profile(profile.id, PersonaPublishRequest(notes="v2"), db_session, admin)
+    _publish_service(db_session, profile, admin, notes="v2")
 
-    rollback = rollback_persona_profile(profile.id, PersonaRollbackRequest(version=1, notes="rollback"), db_session, admin)
+    rollback = rollback_persona_profile(
+        profile.id,
+        PersonaRollbackRequest(version=1, notes="rollback"),
+        db_session,
+        admin,
+    )
     assert rollback.version == 3
 
     detail = get_persona_profile(profile.id, db_session, admin)
     assert detail.published_version == 3
     assert detail.published_summary == "Clear and concise"
-    assert detail.published_content_json == {"tone": "clear", "style": "concise"}
+    assert detail.published_content_json == _content()
 
 
 def test_rollback_missing_version_returns_404(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    profile = create_persona_profile(_create_payload(profile_key="missing.rollback"), db_session, admin)
+    profile = create_persona_profile(
+        _create_payload(profile_key="missing.rollback"), db_session, admin
+    )
 
     with pytest.raises(HTTPException) as exc:
-        rollback_persona_profile(profile.id, PersonaRollbackRequest(version=99, notes="missing"), db_session, admin)
+        rollback_persona_profile(
+            profile.id,
+            PersonaRollbackRequest(version=99, notes="missing"),
+            db_session,
+            admin,
+        )
     assert exc.value.status_code == 404
 
 
 def test_resolve_preview_uses_deterministic_priority(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
     global_profile = create_persona_profile(
-        _create_payload(profile_key="global.default", channel=None, language=None, draft_summary="global"),
+        _create_payload(
+            profile_key="global.default",
+            channel=None,
+            language=None,
+            draft_summary="global",
+        ),
         db_session,
         admin,
     )
     channel_profile = create_persona_profile(
-        _create_payload(profile_key="channel.default", channel="whatsapp", language=None, draft_summary="channel"),
+        _create_payload(
+            profile_key="channel.default",
+            channel="whatsapp",
+            language=None,
+            draft_summary="channel",
+        ),
         db_session,
         admin,
     )
     exact_profile = create_persona_profile(
-        _create_payload(profile_key="exact.default", market_id=1, channel="whatsapp", language="en", draft_summary="exact"),
+        _create_payload(
+            profile_key="exact.default",
+            market_id=1,
+            channel="whatsapp",
+            language="en",
+            draft_summary="exact",
+        ),
         db_session,
         admin,
     )
     for profile in (global_profile, channel_profile, exact_profile):
-        publish_persona_profile(profile.id, PersonaPublishRequest(notes="publish"), db_session, admin)
+        _publish_service(db_session, profile, admin)
 
     resolved = resolve_persona_preview(
-        PersonaResolvePreviewRequest(market_id=1, channel="whatsapp", language="en"),
+        PersonaResolvePreviewRequest(
+            market_id=1,
+            channel="whatsapp",
+            language="en",
+        ),
         db_session,
         admin,
     )
     assert resolved.profile is not None
     assert resolved.profile.profile_key == "exact.default"
-    assert resolved.match_rank == 1
+    assert resolved.match_rank == 0
 
 
 def test_inactive_and_unpublished_profiles_are_not_resolved(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
     inactive = create_persona_profile(
-        _create_payload(profile_key="inactive.persona", is_active=False, channel="whatsapp"),
+        _create_payload(
+            profile_key="inactive.persona",
+            is_active=False,
+            channel="whatsapp",
+        ),
         db_session,
         admin,
     )
     unpublished = create_persona_profile(
-        _create_payload(profile_key="unpublished.persona", channel="whatsapp"),
+        _create_payload(
+            profile_key="unpublished.persona",
+            channel="whatsapp",
+        ),
         db_session,
         admin,
     )
-    publish_persona_profile(inactive.id, PersonaPublishRequest(notes="inactive publish"), db_session, admin)
+    _publish_service(db_session, inactive, admin)
 
     resolved = resolve_persona_preview(
         PersonaResolvePreviewRequest(channel="whatsapp"),

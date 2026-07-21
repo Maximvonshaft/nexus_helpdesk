@@ -49,6 +49,39 @@ function knowledgeItem(id: number, title: string, status = 'active') {
   }
 }
 
+function agentControlSnapshot() {
+  return {
+    generated_at: Date.now() / 1000,
+    tenant_key: 'default',
+    scope: {
+      environment: 'production',
+      market_id: null,
+      channel: 'webchat',
+      language: null,
+      case_type: null,
+    },
+    definitions: [],
+    releases: [],
+    deployments: [],
+    resolved_agent: null,
+    resolved_agent_digest: null,
+    resolution_error: 'agent_deployment_not_found',
+    personas: [],
+    persona_total: 0,
+    knowledge: [],
+    resources: [],
+    resolved_playbooks: [],
+    tools: [],
+    tool_policies: [],
+    integrations: [],
+    capabilities: {
+      can_manage: true,
+      can_deploy: true,
+      playground_model_execution: true,
+    },
+  }
+}
+
 async function fulfillApi(route: Route) {
   const url = new URL(route.request().url())
   const path = url.pathname
@@ -59,6 +92,7 @@ async function fulfillApi(route: Route) {
   })
 
   if (path === '/api/auth/me') return json(authUser())
+  if (path === '/api/agent-control/snapshot') return json(agentControlSnapshot())
   if (path === '/api/admin/operator-queue/my-scopes') {
     return json({
       items: [{ tenant_key: 'default', tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' }],
@@ -222,6 +256,11 @@ async function mockAuthenticatedConsole(page: Page) {
   await page.route('**/api/**', fulfillApi)
 }
 
+async function openKnowledge(page: Page) {
+  await page.goto('/knowledge')
+  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+}
+
 test('login page renders', async ({ page }) => {
   await page.goto('/login')
   await expect(page.getByRole('heading', { level: 1, name: '登录' })).toBeVisible()
@@ -260,9 +299,12 @@ test('legacy support entry redirects into the canonical workspace', async ({ pag
 test('canonical supporting routes render in one application shell', async ({ page }) => {
   await mockAuthenticatedConsole(page)
 
-  await page.goto('/knowledge')
-  await expect(page.getByRole('heading', { level: 1, name: '知识与流程' })).toBeVisible()
+  await openKnowledge(page)
   await expect(page.getByRole('button', { name: /Delivery status/ })).toBeVisible()
+
+  await page.goto('/agent-control')
+  await expect(page.getByRole('heading', { level: 1, name: 'Agent 控制面' })).toBeVisible()
+  await expect(page.getByText('未找到匹配当前范围的 Agent Deployment。')).toBeVisible()
 
   await page.goto('/channels')
   await expect(page.getByRole('heading', { level: 1, name: '渠道管理' })).toBeVisible()
@@ -322,7 +364,7 @@ test('mobile workspace navigation and primary controls meet the 44px target floo
 
 test('knowledge editing protects drafts and requires an explicit publication review', async ({ page }) => {
   await mockAuthenticatedConsole(page)
-  await page.goto('/knowledge')
+  await openKnowledge(page)
 
   const title = page.getByRole('textbox', { name: '知识标题', exact: true })
   await expect(title).toHaveValue('Delivery status')

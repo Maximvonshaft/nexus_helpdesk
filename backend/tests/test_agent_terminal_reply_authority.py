@@ -17,11 +17,14 @@ def test_terminal_reply_localization_is_deterministic() -> None:
 
 def test_terminal_reply_has_one_physical_authority() -> None:
     authority = ROOT / "backend/app/services/agent_runtime/terminal_reply.py"
+    runtime = ROOT / "backend/app/services/agent_runtime/runtime.py"
     assert authority.exists()
+    assert runtime.exists()
     assert not (ROOT / "backend/app/services/agent_runtime/fallback.py").exists()
+    assert not (ROOT / "backend/app/services/agent_runtime/service.py").exists()
 
     for relative in (
-        "backend/app/services/agent_runtime/service.py",
+        "backend/app/services/agent_runtime/runtime.py",
         "backend/app/services/webchat_runtime_ai_service.py",
         "backend/app/services/webchat_ai_service.py",
         "backend/app/services/conversation_ai_service.py",
@@ -31,20 +34,13 @@ def test_terminal_reply_has_one_physical_authority() -> None:
         assert "customer_visible_runtime_fallback" not in source
         assert "def _localized_fallback(" not in source
 
-    wrapper = (
-        ROOT / "backend/app/services/webchat_runtime_ai_service.py"
-    ).read_text(encoding="utf-8")
+    wrapper = (ROOT / "backend/app/services/webchat_runtime_ai_service.py").read_text(encoding="utf-8")
     assert "def _fallback(" not in wrapper
 
 
 def test_ticketless_runtime_cannot_end_with_blank_agent_output() -> None:
-    source = (
-        ROOT / "backend/app/services/conversation_ai_service.py"
-    ).read_text(encoding="utf-8")
-    terminal_section = source.split(
-        "safe_runtime_trace = sanitized_ai_turn_runtime_trace(",
-        1,
-    )[1].split("message = WebchatMessage(", 1)[0]
+    source = (ROOT / "backend/app/services/conversation_ai_service.py").read_text(encoding="utf-8")
+    terminal_section = source.split("safe_runtime_trace = sanitized_ai_turn_runtime_trace(", 1)[1].split("message = WebchatMessage(", 1)[0]
 
     assert '"status": "failed_no_public_reply"' not in terminal_section
     assert "customer_visible_fallback" in terminal_section
@@ -53,13 +49,8 @@ def test_ticketless_runtime_cannot_end_with_blank_agent_output() -> None:
 
 
 def test_handoff_terminal_truth_comes_from_committed_observation() -> None:
-    source = (
-        ROOT / "backend/app/services/agent_runtime/service.py"
-    ).read_text(encoding="utf-8")
-    final_turn = source.split(
-        'if decision.next_action != "call_tool":',
-        1,
-    )[1].split("if round_index >= max_rounds:", 1)[0]
+    source = (ROOT / "backend/app/services/agent_runtime/runtime.py").read_text(encoding="utf-8")
+    final_turn = source.split('if decision.next_action != "call_tool":', 1)[1].split("if round_index >= max_rounds:", 1)[0]
 
     assert "handoff_committed = _committed_handoff_observed(state)" in final_turn
     assert "handoff_required=handoff_committed" in final_turn

@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from ..agent_tool_contracts import bootstrap_agent_tool_contracts
 from ..webchat_ai_decision_runtime.tool_registry import get_tool_contract
 from .tool_adapter import executable_tool_names
 
+bootstrap_agent_tool_contracts()
 
 _DEFAULT_PUBLIC_WEBCHAT_TOOLS = frozenset(
     {
@@ -15,16 +17,15 @@ _DEFAULT_PUBLIC_WEBCHAT_TOOLS = frozenset(
         "speedaf.express.track.query",
         "speedaf.order.waybillCode.query",
         "handoff.request.create",
+        "customer.memory.read",
     }
 )
-
-# This is an explicit compile-time principal policy, not a projection from Tool
-# contracts. Production may replace it through the separate permissions setting.
 _DEFAULT_PUBLIC_WEBCHAT_PERMISSIONS = frozenset(
     {
         "knowledge:read",
         "webchat:handoff:create",
         "speedaf:tracking:read",
+        "customer:memory:read",
     }
 )
 
@@ -51,9 +52,8 @@ def resolve_webchat_agent_access() -> WebchatAgentAccessPolicy:
         contract = get_tool_contract(name)
         if contract is None:
             continue
-        # Public WebChat does not carry a server-issued confirmation artifact
-        # into Agent execution. Confirmation-required Tools remain available to
-        # controlled callers, but must never be exposed to this principal.
+        # Public WebChat has no server-issued confirmation artifact. All
+        # confirmation-required Tools stay unavailable even if misconfigured.
         if contract.confirmation_required:
             continue
         if not set(contract.required_permissions).issubset(granted_permissions):
