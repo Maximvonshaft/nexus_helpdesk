@@ -12,10 +12,6 @@ from ..models import Customer, Ticket, TicketEvent
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
 from .background_jobs import enqueue_speedaf_work_order_create_job
-from .customer_memory_service import (
-    list_customer_memory,
-    upsert_customer_memory,
-)
 from .integration_runtime import execute_integration_operation
 from .nexus_osr.controlled_action_executor import (
     ActionExecutionRequest,
@@ -32,80 +28,28 @@ def build_agent_tool_handlers(
     ticket: Ticket | None,
     customer: Customer | None,
 ) -> dict[str, ActionHandler]:
-    def memory_read(request: ActionExecutionRequest) -> ActionExecutionResult:
-        if customer is None:
-            return _failure(request, "customer_required")
-        try:
-            rows = list_customer_memory(
-                db,
-                tenant_key=str(request.audit_context.get("tenant_id") or ""),
-                customer_id=customer.id,
-            )
-        except HTTPException as exc:
-            return _failure(request, _detail(exc))
-        safe_rows = [
-            {
-                "key": row["memory_key"],
-                "value": str(row["value_text"])[:1000],
-                "confidence": row["confidence"],
-                "expires_at": row["expires_at"].isoformat() if row.get("expires_at") else None,
-            }
-            for row in rows
-            if row.get("is_active") and row.get("sensitivity") == "standard"
-        ][:20]
-        return ActionExecutionResult(
-            True,
-            request.action.tool_name,
-            "executed",
-            summary={"facts": safe_rows, "count": len(safe_rows)},
-            case_context=request.case_context,
-        )
-
-    def memory_write(request: ActionExecutionRequest) -> ActionExecutionResult:
-        if customer is None:
-            return _failure(request, "customer_required")
-        arguments = request.action.arguments
-        try:
-            row = upsert_customer_memory(
-                db,
-                tenant_key=str(request.audit_context.get("tenant_id") or ""),
-                customer_id=customer.id,
-                memory_key=str(arguments.get("memory_key") or ""),
-                value_text=str(arguments.get("value") or ""),
-                consent_basis=str(arguments.get("consent_basis") or ""),
-                source_type="customer",
-                source_reference=(
-                    f"conversation:{conversation.id}" if conversation is not None else None
-                ),
-                actor_id=None,
-                market_id=getattr(ticket, "market_id", None),
-                channel=request.channel,
-            )
-        except HTTPException as exc:
-            return _failure(request, _detail(exc))
-        return ActionExecutionResult(
-            True,
-            request.action.tool_name,
-            "executed",
-            summary={"memory_id": row.id, "memory_key": row.memory_key, "expires_at": row.expires_at},
-            customer_visible_summary=None,
-            case_context=request.case_context,
-        )
-
     def integration_read(request: ActionExecutionRequest) -> ActionExecutionResult:
         return _integration(request, expected_write=False)
 
     def integration_write(request: ActionExecutionRequest) -> ActionExecutionResult:
         return _integration(request, expected_write=True)
 
-    def _integration(request: ActionExecutionRequest, *, expected_write: bool) -> ActionExecutionResult:
+    def _integration(
+        request: ActionExecutionRequest,
+        *,
+        expected_write: bool,
+    ) -> ActionExecutionResult:
         arguments = request.action.arguments
         try:
             result = execute_integration_operation(
                 db,
                 integration_key=str(arguments.get("integration_key") or ""),
                 operation=str(arguments.get("operation") or ""),
-                arguments=(arguments.get("arguments") if isinstance(arguments.get("arguments"), dict) else {}),
+                arguments=(
+                    arguments.get("arguments")
+                    if isinstance(arguments.get("arguments"), dict)
+                    else {}
+                ),
                 expected_write=expected_write,
                 market_id=getattr(ticket, "market_id", None),
                 channel=request.channel,
@@ -128,9 +72,13 @@ def build_agent_tool_handlers(
         if not _enabled("SPEEDAF_WORK_ORDER_CREATE_ENABLED"):
             return _failure(request, "speedaf_work_order_create_disabled")
         arguments = request.action.arguments
-        tracking_number = str(arguments.get("tracking_number") or ticket.tracking_number or "").strip().upper()
+        tracking_number = str(
+            arguments.get("tracking_number") or ticket.tracking_number or ""
+        ).strip().upper()
         work_order_type = str(arguments.get("work_order_type") or "WT0103-05").strip()[:32]
-        description = " ".join(str(arguments.get("description") or "Delivery follow-up requested.").split())[:200]
+        description = " ".join(
+            str(arguments.get("description") or "Delivery follow-up requested.").split()
+        )[:200]
         caller_id = str(
             getattr(customer, "phone", None)
             or ticket.preferred_reply_contact
@@ -159,7 +107,11 @@ def build_agent_tool_handlers(
                 new_value="queued",
                 note="Speedaf delivery follow-up work order queued by the Agent.",
                 payload_json=json.dumps(
-                    {"job_id": job.id, "work_order_type": work_order_type, "source": "agent_tool"},
+                    {
+                        "job_id": job.id,
+                        "work_order_type": work_order_type,
+                        "source": "agent_tool",
+                    },
                     separators=(",", ":"),
                 ),
                 created_at=utc_now(),
@@ -169,14 +121,16 @@ def build_agent_tool_handlers(
             True,
             request.action.tool_name,
             "queued",
-            summary={"job_id": job.id, "dedupe_key": job.dedupe_key, "work_order_type": work_order_type},
+            summary={
+                "job_id": job.id,
+                "dedupe_key": job.dedupe_key,
+                "work_order_type": work_order_type,
+            },
             customer_visible_summary="The delivery follow-up request was queued.",
             case_context=request.case_context,
         )
 
     return {
-        "customer.memory.read": memory_read,
-        "customer.memory.write": memory_write,
         "integration.read": integration_read,
         "integration.write": integration_write,
         "speedaf.workOrder.create": work_order_create,
@@ -185,8 +139,6 @@ def build_agent_tool_handlers(
 
 def extension_executable_tool_names() -> tuple[str, ...]:
     return (
-        "customer.memory.read",
-        "customer.memory.write",
         "integration.read",
         "integration.write",
         "speedaf.workOrder.create",
