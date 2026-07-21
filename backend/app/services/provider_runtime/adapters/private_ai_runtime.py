@@ -23,7 +23,11 @@ from ...runtime_endpoint_policy import (
     require_http_endpoint,
     safe_url_path,
 )
-from ..output_contracts import OutputContracts
+from ..output_contracts import (
+    AGENT_SPECIALIST_OUTPUT_CONTRACT,
+    AGENT_TURN_OUTPUT_CONTRACT,
+    OutputContracts,
+)
 from ..registry import ProviderAdapter
 from ..schemas import ProviderCapabilities, ProviderRequest, ProviderResult
 
@@ -61,7 +65,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
         structured_output=True,
         tool_execution=True,
         handoff_decision=True,
-        safety_level="agent_turn_structured_json",
+        safety_level="agent_turn_and_specialist_structured_json",
     )
 
     async def generate(
@@ -76,6 +80,16 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             return _failure(
                 _empty_profile(),
                 "private_ai_runtime_release_profile_required",
+                started,
+                retryable=False,
+            )
+        if request.output_contract not in {
+            AGENT_TURN_OUTPUT_CONTRACT,
+            AGENT_SPECIALIST_OUTPUT_CONTRACT,
+        }:
+            return _failure(
+                profile,
+                "private_ai_runtime_output_contract_unsupported",
                 started,
                 retryable=False,
             )
@@ -106,7 +120,11 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 retryable=False,
             )
         prompt = compiled.prompt
-        payload = _build_payload(profile, prompt=prompt)
+        payload = _build_payload(
+            profile,
+            prompt=prompt,
+            contract_name=request.output_contract,
+        )
         try:
             response_payload = await asyncio.to_thread(
                 _post_json,
@@ -176,13 +194,14 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
 
         repaired = False
         try:
-            decision = _normalize_agent_turn(
+            structured = _normalize_structured_output(
                 response_payload,
+                contract_name=request.output_contract,
                 max_output_chars=profile.max_output_chars,
             )
-            decision = OutputContracts.validate_and_parse(
+            structured = OutputContracts.validate_and_parse(
                 request.output_contract,
-                json.dumps(decision, ensure_ascii=False),
+                json.dumps(structured, ensure_ascii=False),
             )
         except Exception as exc:
             repair_prompt = _build_repair_prompt(
@@ -191,7 +210,11 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 prompt=prompt,
                 reason=type(exc).__name__,
             )
-            repair_payload = _build_payload(profile, prompt=repair_prompt)
+            repair_payload = _build_payload(
+                profile,
+                prompt=repair_prompt,
+                contract_name=request.output_contract,
+            )
             try:
                 repair_response = await asyncio.to_thread(
                     _post_json,
@@ -200,13 +223,14 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                     repair_payload,
                     token,
                 )
-                decision = _normalize_agent_turn(
+                structured = _normalize_structured_output(
                     repair_response,
+                    contract_name=request.output_contract,
                     max_output_chars=profile.max_output_chars,
                 )
-                decision = OutputContracts.validate_and_parse(
+                structured = OutputContracts.validate_and_parse(
                     request.output_contract,
-                    json.dumps(decision, ensure_ascii=False),
+                    json.dumps(structured, ensure_ascii=False),
                 )
                 response_payload = repair_response
                 repaired = True
@@ -246,7 +270,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 "runtime_usage": _safe_runtime_usage(response_payload),
                 "context_compilation": compiled.safe_summary(),
             },
-            structured_output=decision,
+            structured_output=structured,
             error_code=None,
             retryable=False,
             fallback_allowed=True,
@@ -277,8 +301,12 @@ def _resolve_profile(db: Session, request: ProviderRequest) -> _Profile:
         request_shape=str(content.get("request_shape") or "ollama_chat").strip().lower(),
         model=str(content.get("model") or "").strip(),
         timeout_seconds=min(configured_timeout, request_timeout),
-        max_prompt_chars=_bounded_int(content.get("max_prompt_chars"), 12000, 2000, 30000),
-        max_output_chars=_bounded_int(content.get("max_output_chars"), 4000, 500, 8000),
+        max_prompt_chars=_bounded_int(
+            content.get("max_prompt_chars"), 12000, 2000, 30000
+        ),
+        max_output_chars=_bounded_int(
+            content.get("max_output_chars"), 4000, 500, 8000
+        ),
         keep_alive=str(content.get("keep_alive") or "24h")[:32],
         num_predict=_bounded_int(content.get("num_predict"), 512, 96, 2048),
         num_ctx=_bounded_int(content.get("num_ctx"), 8192, 1024, 32768),
@@ -314,7 +342,9 @@ def _released_model_profile(
     if not isinstance(content, dict):
         raise RuntimeError("agent_release_model_profile_invalid")
     release = release_snapshot.get("release")
-    release_id = _optional_int(release.get("id")) if isinstance(release, dict) else None
+    release_id = (
+        _optional_int(release.get("id")) if isinstance(release, dict) else None
+    )
     return (
         content,
         str(row.get("resource_key") or ""),
@@ -400,12 +430,18 @@ def _profile_token(profile: _Profile) -> str | None:
         ).strip()
         if credential_file:
             return _read_file(credential_file)
-        if str(os.getenv("APP_ENV") or "development").strip().lower() != "production":
+        if (
+            str(os.getenv("APP_ENV") or "development").strip().lower()
+            != "production"
+        ):
             return credential_inline or None
         return None
     if profile.token_file:
         return _read_file(profile.token_file)
-    if str(os.getenv("APP_ENV") or "development").strip().lower() != "production":
+    if (
+        str(os.getenv("APP_ENV") or "development").strip().lower()
+        != "production"
+    ):
         return profile.inline_token or None
     return None
 
@@ -426,21 +462,32 @@ def _build_repair_prompt(
     prompt: str,
     reason: str,
 ) -> str:
-    del request
     repair = (
         "Repair response format only. Return one valid JSON object matching "
-        "nexus.agent_turn.v1 without markdown or explanations. "
-        f"Validation reason: {reason}. Original task:\n{prompt}"
+        f"{request.output_contract} without markdown, prose wrappers or hidden "
+        f"reasoning. Validation reason: {reason}. Original task:\n{prompt}"
     )
     return repair[: profile.max_prompt_chars]
 
 
-def _build_payload(profile: _Profile, *, prompt: str) -> dict[str, Any]:
-    system = (
-        "You are a tool-using enterprise Agent. Follow Business Playbooks and "
-        "Tool contracts. Never fabricate facts or action outcomes. Return strict "
-        "JSON only."
-    )
+def _build_payload(
+    profile: _Profile,
+    *,
+    prompt: str,
+    contract_name: str = AGENT_TURN_OUTPUT_CONTRACT,
+) -> dict[str, Any]:
+    if contract_name == AGENT_SPECIALIST_OUTPUT_CONTRACT:
+        system = (
+            "You are a read-only enterprise specialist. Return strict JSON for "
+            "the requested specialist contract. Never call Tools, address the "
+            "customer, claim an action occurred or reveal hidden reasoning."
+        )
+    else:
+        system = (
+            "You are a tool-using enterprise Agent. Follow Business Playbooks "
+            "and Tool contracts. Never fabricate facts or action outcomes. "
+            "Return strict JSON only."
+        )
     if profile.request_shape == "messages":
         return {
             "model": profile.model,
@@ -488,7 +535,10 @@ def _post_json(
     payload: dict[str, Any],
     token: str,
 ) -> dict[str, Any]:
-    endpoint = require_http_endpoint(endpoint, label="Private AI runtime endpoint")
+    endpoint = require_http_endpoint(
+        endpoint,
+        label="Private AI runtime endpoint",
+    )
     request = urllib.request.Request(
         endpoint,
         data=json.dumps(
@@ -550,9 +600,10 @@ def _failure(
     )
 
 
-def _normalize_agent_turn(
+def _normalize_structured_output(
     payload: dict[str, Any],
     *,
+    contract_name: str,
     max_output_chars: int,
 ) -> dict[str, Any]:
     candidate: Any = payload
@@ -576,37 +627,67 @@ def _normalize_agent_turn(
             break
     choices = candidate.get("choices") if isinstance(candidate, dict) else None
     if isinstance(choices, list) and choices:
-        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        message = (
+            choices[0].get("message")
+            if isinstance(choices[0], dict)
+            else None
+        )
         if isinstance(message, dict) and isinstance(message.get("content"), str):
             candidate = _parse_json_text(message["content"])
     message = candidate.get("message") if isinstance(candidate, dict) else None
     if isinstance(message, dict) and isinstance(message.get("content"), str):
         candidate = _parse_json_text(message["content"])
     if not isinstance(candidate, dict):
-        raise ValueError("agent_turn_not_object")
-    if isinstance(candidate.get("customer_reply"), str):
-        candidate["customer_reply"] = candidate["customer_reply"][:max_output_chars]
+        raise ValueError("structured_output_not_object")
+    if (
+        contract_name == AGENT_TURN_OUTPUT_CONTRACT
+        and isinstance(candidate.get("customer_reply"), str)
+    ):
+        candidate["customer_reply"] = candidate["customer_reply"][
+            :max_output_chars
+        ]
     return candidate
+
+
+def _normalize_agent_turn(
+    payload: dict[str, Any],
+    *,
+    max_output_chars: int,
+) -> dict[str, Any]:
+    return _normalize_structured_output(
+        payload,
+        contract_name=AGENT_TURN_OUTPUT_CONTRACT,
+        max_output_chars=max_output_chars,
+    )
 
 
 def _parse_json_text(value: str) -> dict[str, Any]:
     text = str(value or "").strip()
     if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"^```(?:json)?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
         text = re.sub(r"\s*```$", "", text)
     try:
         decoded = json.loads(text)
     except json.JSONDecodeError:
-        raise ValueError("agent_turn_json_missing") from None
+        raise ValueError("structured_output_json_missing") from None
     if not isinstance(decoded, dict):
-        raise ValueError("agent_turn_not_object")
+        raise ValueError("structured_output_not_object")
     return decoded
 
 
 def _safe_runtime_usage(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
-    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    usage = (
+        payload.get("usage")
+        if isinstance(payload.get("usage"), dict)
+        else {}
+    )
     for key in (
         "prompt_eval_count",
         "eval_count",
