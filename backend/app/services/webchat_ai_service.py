@@ -265,7 +265,7 @@ def _ai_reply_contract_fields(
 def _reply_type(result: WebchatRuntimeReplyResult, body: str) -> str:
     if result.handoff_required:
         return "handoff_notice"
-    if result.intent in {"unclear", "tracking_missing_number", "request_information"} or body.rstrip().endswith(("?", "？")):
+    if body.rstrip().endswith(("?", "？")):
         return "clarifying_question"
     return "answer"
 
