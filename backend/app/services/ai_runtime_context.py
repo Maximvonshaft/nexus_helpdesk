@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from ..webchat_models import WebchatMessage
 from . import persona_service
+from .bulletin_service import list_active_bulletins
+from .customer_memory_service import runtime_memory_context
 from .effective_country import effective_country_payload, resolve_effective_country
 
 MAX_STRUCTURED_RECENT_CONTEXT = 12
@@ -43,7 +45,7 @@ def build_agent_context(
     customer: Any = None,
     channel_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build generic Agent context without pre-running domain retrieval or tools."""
+    """Build the canonical sanitized Agent context without pre-running domain Tools."""
 
     profile, match_rank = persona_service.resolve_preview(
         db,
@@ -63,9 +65,23 @@ def build_agent_context(
         conversation=conversation,
         current_body=body,
     )
+    memory = runtime_memory_context(
+        db,
+        tenant_key=tenant_key,
+        customer_id=getattr(customer, "id", None),
+        market_id=market_id,
+        channel=channel_key,
+        language=language,
+    )
+    bulletins = _active_bulletin_context(
+        db,
+        market_id=market_id,
+        country_code=effective_country.country,
+        channel=channel_key,
+    )
     return sanitize_runtime_context(
         {
-            "context_version": "nexus.agent_context.v1",
+            "context_version": "nexus.agent_context.v2",
             "tenant_key": tenant_key,
             "channel_context": {
                 "market_id": market_id,
@@ -75,6 +91,8 @@ def build_agent_context(
                 **effective_country_payload(effective_country),
             },
             "persona_context": _persona_context(profile, match_rank),
+            "customer_memory": memory,
+            "active_bulletins": bulletins,
             "recent_conversation": recent,
             "agent_execution_context": {
                 "conversation_id": getattr(conversation, "id", None),
@@ -147,6 +165,33 @@ def sanitize_runtime_context(value: Any, *, depth: int = 0) -> Any:
     return str(value)[:200]
 
 
+def _active_bulletin_context(
+    db: Session,
+    *,
+    market_id: int | None,
+    country_code: str | None,
+    channel: str | None,
+) -> list[dict[str, Any]]:
+    rows = list_active_bulletins(
+        db,
+        market_id=market_id,
+        country_code=country_code,
+        channel=channel,
+    )
+    return [
+        {
+            "title": str(row.title or "")[:240],
+            "summary": str(row.summary or row.body or "")[:1200],
+            "category": str(row.category or "")[:80] or None,
+            "severity": str(row.severity or "")[:40] or None,
+            "starts_at": row.starts_at.isoformat() if row.starts_at else None,
+            "ends_at": row.ends_at.isoformat() if row.ends_at else None,
+        }
+        for row in rows
+        if row.auto_inject_to_ai and row.audience in {"customer", "both", "all"}
+    ][:5]
+
+
 def _persona_context(profile: Any, match_rank: Any) -> dict[str, Any] | None:
     if (
         profile is None
@@ -155,11 +200,7 @@ def _persona_context(profile: Any, match_rank: Any) -> dict[str, Any] | None:
     ):
         return None
     raw_content = getattr(profile, "published_content_json", None)
-    content = (
-        sanitize_runtime_context(dict(raw_content))
-        if isinstance(raw_content, dict)
-        else {}
-    )
+    content = sanitize_runtime_context(dict(raw_content)) if isinstance(raw_content, dict) else {}
     nested = content.get("identity_context")
     identity_source = dict(nested) if isinstance(nested, dict) else {}
     for field in (
@@ -180,14 +221,10 @@ def _persona_context(profile: Any, match_rank: Any) -> dict[str, Any] | None:
     return {
         "profile_key": str(getattr(profile, "profile_key", "") or "")[:160],
         "name": str(getattr(profile, "name", "") or "")[:240],
-        "summary": _sanitize_text(
-            str(getattr(profile, "published_summary", "") or "")
-        )[:1200],
+        "summary": _sanitize_text(str(getattr(profile, "published_summary", "") or ""))[:1200],
         "content_json": content,
         "identity_context": identity if isinstance(identity, dict) else {},
-        "published_version": int(
-            getattr(profile, "published_version", 0) or 0
-        ),
+        "published_version": int(getattr(profile, "published_version", 0) or 0),
         "match_rank": match_rank,
     }
 
