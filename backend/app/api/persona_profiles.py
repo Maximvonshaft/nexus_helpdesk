@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import time
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -23,9 +25,14 @@ from ..schemas_control_plane import (
     PersonaResolvePreviewRequest,
     PersonaRollbackRequest,
 )
-from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import persona_service
+from ..services.agent_release_service import authoritative_tenant_key
 from ..services.ai_runtime_context import build_agent_context
+from ..services.permissions import (
+    ensure_can_manage_ai_configs,
+    ensure_can_manage_runtime,
+    ensure_can_read_ai_configs,
+)
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
@@ -38,8 +45,13 @@ def _profile_out(row) -> PersonaProfileOut:
 
 
 def _detail_out(db: Session, row) -> PersonaProfileDetailOut:
-    versions = [PersonaProfileVersionOut.model_validate(item) for item in persona_service.list_versions(db, row.id)]
-    return PersonaProfileDetailOut.model_validate(row).model_copy(update={"versions": versions})
+    versions = [
+        PersonaProfileVersionOut.model_validate(item)
+        for item in persona_service.list_versions(db, row.id)
+    ]
+    return PersonaProfileDetailOut.model_validate(row).model_copy(
+        update={"versions": versions}
+    )
 
 
 def _review_out(row) -> PersonaProfileReviewOut:
@@ -69,7 +81,10 @@ def list_persona_profiles(
         limit=limit,
         offset=offset,
     )
-    return PersonaProfileListOut(profiles=[_profile_out(row) for row in rows], total=total)
+    return PersonaProfileListOut(
+        profiles=[_profile_out(row) for row in rows],
+        total=total,
+    )
 
 
 @router.post("", response_model=PersonaProfileOut)
@@ -98,7 +113,10 @@ def resolve_persona_preview(
         channel=payload.channel,
         language=payload.language,
     )
-    return PersonaResolvePreviewOut(profile=_profile_out(row) if row else None, match_rank=score)
+    return PersonaResolvePreviewOut(
+        profile=_profile_out(row) if row else None,
+        match_rank=score,
+    )
 
 
 @router.post("/runtime-evidence", response_model=PersonaRuntimeEvidenceOut)
@@ -108,40 +126,82 @@ def get_persona_runtime_evidence(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant_key = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=payload.tenant_key,
+        allow_platform_default=True,
+    )
+    request_id = f"persona-evidence-{current_user.id}-{time.time_ns()}"
+    session_id = f"persona-evidence:{current_user.id}"
     runtime_context = build_agent_context(
         db,
-        tenant_key=payload.tenant_key,
+        tenant_key=tenant_key,
         channel_key=payload.channel or "webchat",
         body=payload.body,
         market_id=payload.market_id,
         language=payload.language,
         audience_scope=payload.audience_scope or "customer",
+        request_id=request_id,
+        session_id=session_id,
+        environment="production",
     )
     persona_context = runtime_context.get("persona_context")
-    matched_profile_key = persona_context.get("profile_key") if isinstance(persona_context, dict) else None
-    match_rank = persona_context.get("match_rank") if isinstance(persona_context, dict) else None
+    matched_profile_key = (
+        persona_context.get("profile_key")
+        if isinstance(persona_context, dict)
+        else None
+    )
+    match_rank = (
+        persona_context.get("match_rank")
+        if isinstance(persona_context, dict)
+        else None
+    )
     matched_expected = None
     if payload.expected_profile_key:
         matched_expected = matched_profile_key == payload.expected_profile_key
-    identity_context = persona_context.get("identity_context") if isinstance(persona_context, dict) else {}
-    content_json = persona_context.get("content_json") if isinstance(persona_context, dict) else {}
+    identity_context = (
+        persona_context.get("identity_context")
+        if isinstance(persona_context, dict)
+        else {}
+    )
+    content_json = (
+        persona_context.get("content_json")
+        if isinstance(persona_context, dict)
+        else {}
+    )
     return PersonaRuntimeEvidenceOut(
         generated_at=utc_now(),
         matched_profile_key=matched_profile_key,
         match_rank=match_rank,
         expected_profile_key=payload.expected_profile_key,
         matched_expected=matched_expected,
-        persona_context=persona_context if isinstance(persona_context, dict) else None,
+        persona_context=(
+            persona_context if isinstance(persona_context, dict) else None
+        ),
         runtime_context=runtime_context,
         evidence={
-            "runtime_contract": "build_agent_context",
+            "runtime_contract": "AgentDeployment->AgentRelease->build_agent_context",
             "context_version": runtime_context.get("context_version"),
-            "metadata_filters": runtime_context.get("metadata_filters"),
+            "release_digest": runtime_context.get("agent_release_digest"),
+            "release_error": runtime_context.get("agent_release_error"),
             "identity_ready": bool(identity_context),
-            "brand_name": identity_context.get("brand_name") if isinstance(identity_context, dict) else None,
-            "assistant_name": identity_context.get("assistant_name") if isinstance(identity_context, dict) else None,
-            "guardrail_count": len(content_json.get("guardrails") or []) if isinstance(content_json, dict) and isinstance(content_json.get("guardrails"), list) else 0,
-            "knowledge_hits": runtime_context.get("knowledge_context", {}).get("total_matches") if isinstance(runtime_context.get("knowledge_context"), dict) else None,
+            "brand_name": (
+                identity_context.get("brand_name")
+                if isinstance(identity_context, dict)
+                else None
+            ),
+            "assistant_name": (
+                identity_context.get("assistant_name")
+                if isinstance(identity_context, dict)
+                else None
+            ),
+            "guardrail_count": (
+                len(content_json.get("guardrails") or [])
+                if isinstance(content_json, dict)
+                and isinstance(content_json.get("guardrails"), list)
+                else 0
+            ),
         },
     )
 
@@ -156,8 +216,17 @@ def list_persona_reviews(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
-    rows, total = persona_service.list_reviews(db, profile_id=profile_id, status=status, limit=limit, offset=offset)
-    return PersonaProfileReviewListOut(reviews=[_review_out(row) for row in rows], total=total)
+    rows, total = persona_service.list_reviews(
+        db,
+        profile_id=profile_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return PersonaProfileReviewListOut(
+        reviews=[_review_out(row) for row in rows],
+        total=total,
+    )
 
 
 @router.post("/reviews/{review_id}/approve", response_model=PersonaProfileReviewOut)
@@ -167,7 +236,7 @@ def approve_persona_review(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     review = persona_service.get_review_or_404(db, review_id)
     with managed_session(db):
         review = persona_service.approve_review(db, review, payload, current_user)
@@ -182,7 +251,7 @@ def reject_persona_review(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     review = persona_service.get_review_or_404(db, review_id)
     with managed_session(db):
         review = persona_service.reject_review(db, review, payload, current_user)
@@ -197,10 +266,15 @@ def publish_approved_persona_review(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     review = persona_service.get_review_or_404(db, review_id)
     with managed_session(db):
-        version_row = persona_service.publish_approved_review(db, review, current_user, notes=payload.notes)
+        version_row = persona_service.publish_approved_review(
+            db,
+            review,
+            current_user,
+            notes=payload.notes,
+        )
     db.refresh(version_row)
     return PersonaProfileVersionOut.model_validate(version_row)
 
@@ -253,12 +327,12 @@ def publish_persona_profile(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
-    row = persona_service.get_profile_or_404(db, profile_id)
-    with managed_session(db):
-        version_row = persona_service.publish_profile(db, row, current_user, notes=payload.notes)
-    db.refresh(version_row)
-    return PersonaProfileVersionOut.model_validate(version_row)
+    del profile_id, payload
+    ensure_can_manage_runtime(current_user, db)
+    raise HTTPException(
+        status_code=409,
+        detail="persona_publish_requires_approved_review",
+    )
 
 
 @router.post("/{profile_id}/rollback", response_model=PersonaProfileVersionOut)
@@ -268,9 +342,15 @@ def rollback_persona_profile(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     row = persona_service.get_profile_or_404(db, profile_id)
     with managed_session(db):
-        version_row = persona_service.rollback_profile(db, row, version=payload.version, actor=current_user, notes=payload.notes)
+        version_row = persona_service.rollback_profile(
+            db,
+            row,
+            version=payload.version,
+            actor=current_user,
+            notes=payload.notes,
+        )
     db.refresh(version_row)
     return PersonaProfileVersionOut.model_validate(version_row)
