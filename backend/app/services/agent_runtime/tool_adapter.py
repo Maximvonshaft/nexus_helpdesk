@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ...db import SessionLocal
 from ...models import Customer, Ticket
 from ...webchat_models import WebchatConversation
 from ..agent_tool_handlers import (
@@ -78,6 +79,49 @@ def execute_agent_tool_calls(
     calls: list[AIDecisionToolCall],
     context: AgentExecutionContext,
     allow_high_risk_writes: bool = False,
+) -> list[ToolObservation]:
+    """Execute one canonical Tool transaction in the calling worker thread.
+
+    Production callers invoke this function through ``asyncio.to_thread``. A
+    SQLAlchemy Session is not thread-safe, so the worker owns a fresh Session and
+    commits the complete governed Tool unit before any observation is returned to
+    the model. Lightweight test doubles keep using the supplied object so unit
+    contracts remain deterministic without creating a parallel executor.
+    """
+
+    if isinstance(db, Session):
+        worker_db = SessionLocal()
+        try:
+            observations = _execute_with_db(
+                worker_db,
+                calls=calls,
+                context=context,
+                allow_high_risk_writes=allow_high_risk_writes,
+            )
+            worker_db.commit()
+            return observations
+        except Exception:
+            try:
+                worker_db.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            worker_db.close()
+    return _execute_with_db(
+        db,
+        calls=calls,
+        context=context,
+        allow_high_risk_writes=allow_high_risk_writes,
+    )
+
+
+def _execute_with_db(
+    db: Session,
+    *,
+    calls: list[AIDecisionToolCall],
+    context: AgentExecutionContext,
+    allow_high_risk_writes: bool,
 ) -> list[ToolObservation]:
     case_context = CaseContext(
         conversation_id=context.conversation_id,
