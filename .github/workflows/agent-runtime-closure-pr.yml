@@ -1,0 +1,84 @@
+name: Agent Runtime Closure PR Trigger
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-runtime-closure-patch
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.pull_request.head.sha, 'closure-patch') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout current PR branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: feat/agent-runtime-operating-system
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Extract and apply the single closure patch authority
+        shell: bash
+        run: |
+          awk '
+            /^          python - <<'\''PY'\''$/ {capture=1; next}
+            /^          PY$/ {capture=0}
+            capture {sub(/^          /, ""); print}
+          ' .github/workflows/agent-runtime-closure-patch.yml > /tmp/apply_agent_runtime_closure.py
+          test -s /tmp/apply_agent_runtime_closure.py
+          python /tmp/apply_agent_runtime_closure.py
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+
+      - name: Run focused closure regression
+        working-directory: backend
+        env:
+          APP_ENV: test
+          PYTHONPATH: .
+          PROVIDER_RUNTIME_ENABLED: 'false'
+          PROVIDER_RUNTIME_TRAFFIC_MODE: control
+          PROVIDER_RUNTIME_KILL_SWITCH: 'true'
+          PROVIDER_RUNTIME_CANARY_PERCENT: '0'
+          PRIVATE_AI_RUNTIME_ENABLED: 'false'
+        run: |
+          python -m compileall -q app
+          python -m pytest -q \
+            tests/test_agent_playbook_runtime_architecture.py \
+            tests/test_agent_runtime_operating_system_residue.py \
+            tests/test_agent_progressive_integration_discovery.py \
+            tests/test_provider_runtime_router.py \
+            tests/test_provider_runtime_bounded_audit_boundary.py \
+            tests/test_agent_runtime_correctness_convergence.py \
+            tests/test_agent_session_specialist_fork.py
+
+      - name: Commit closure patch and remove temporary workflows
+        shell: bash
+        run: |
+          git config user.name "nexus-closure-bot"
+          git config user.email "nexus-closure-bot@users.noreply.github.com"
+          git rm .github/workflows/agent-runtime-closure-patch.yml
+          git rm .github/workflows/agent-runtime-closure-pr.yml
+          git add backend/app backend/tests
+          git diff --cached --check
+          git commit -m "[closure-patch] Close Agent Runtime review blockers"
+          git push origin HEAD:feat/agent-runtime-operating-system
