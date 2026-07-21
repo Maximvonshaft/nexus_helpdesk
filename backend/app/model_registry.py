@@ -64,7 +64,7 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_osr": "case_contexts",
     "app.models_webchat_debug": "webchat_ai_debug_runs",
     "app.models_operations_dispatch": "operations_dispatch_outbox",
-    "app.models_agent_control": "customer_memory_facts",
+    "app.models_agent_control": "agent_definitions",
 }
 
 
