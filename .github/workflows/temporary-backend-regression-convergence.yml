@@ -1,6 +1,7 @@
 name: Temporary Backend Regression Convergence
 
 # One-shot self-deleting workflow. Accepted Head must not contain this file.
+# Execution nonce: canonical-backend-regression-20260721-0915
 on:
   push:
     branches:
