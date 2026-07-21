@@ -240,12 +240,14 @@ async def fork_agent_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Run a read-only fork only when the original immutable snapshot matches.
+    """Run a read-only fork only when the immutable Release identity matches.
 
     Requested Specialists are instructions to the parent Agent. Actual delegation
-    may occur only through the canonical ``specialist.delegate`` Tool, its release
-    Playbook exposure, policy gate and Provider Router. This API never executes a
-    second Specialist path directly.
+    may occur only through the canonical ``specialist.delegate`` Tool, its Release
+    Playbook exposure, policy gate and Provider Router. A Run snapshot hash also
+    contains cohort-specific evidence, so Replay compares the immutable Release ID
+    and manifest SHA rather than falsely requiring a new session to reproduce the
+    old cohort hash.
     """
 
     ensure_capability(
@@ -273,6 +275,9 @@ async def fork_agent_run(
     snapshot = _snapshot_for_run(db, parent)
     if snapshot is None:
         raise HTTPException(status_code=409, detail="agent_run_snapshot_unavailable")
+    expected_release = _snapshot_release_identity(snapshot)
+    if expected_release is None:
+        raise HTTPException(status_code=409, detail="agent_run_release_evidence_invalid")
     requested_specialists = _requested_specialists(payload.specialists)
 
     fork_session_id = (
@@ -293,7 +298,8 @@ async def fork_agent_run(
         case_type=payload.case_type,
     )
     resolved_digest = str(context.get("agent_release_digest") or "")
-    if resolved_digest != snapshot.snapshot_sha256:
+    resolved_release = _context_release_identity(context)
+    if resolved_release != expected_release:
         raise HTTPException(
             status_code=409,
             detail="agent_fork_exact_release_not_resolved",
@@ -326,7 +332,7 @@ async def fork_agent_run(
         "channel_context": channel_context,
         "agent_allowed_tools": sorted(read_tools),
         "agent_execution_context": execution_context,
-        "agent_release_digest": snapshot.snapshot_sha256,
+        "agent_release_digest": resolved_digest,
         "agent_parent_run_id": parent.id,
         "agent_fork_kind": payload.fork_kind,
         "agent_trace_id": parent.trace_id,
@@ -336,8 +342,10 @@ async def fork_agent_run(
     preview: dict[str, Any] = {
         "parent_run": agent_run_payload(parent),
         "snapshot_id": snapshot.id,
-        "snapshot_sha256": snapshot.snapshot_sha256,
-        "resolved_digest": resolved_digest,
+        "source_snapshot_sha256": snapshot.snapshot_sha256,
+        "resolved_run_digest": resolved_digest,
+        "exact_release_id": expected_release[0],
+        "exact_release_manifest_sha256": expected_release[1],
         "fork_kind": payload.fork_kind,
         "read_tools": sorted(read_tools),
         "requested_specialists": requested_specialists,
@@ -394,6 +402,39 @@ def _snapshot_for_run(db: Session, run: AgentRun) -> AgentRunSnapshot | None:
         .filter(AgentRunSnapshot.request_id == run.request_id)
         .one_or_none()
     )
+
+
+def _snapshot_release_identity(
+    snapshot: AgentRunSnapshot,
+) -> tuple[int, str] | None:
+    value = snapshot.snapshot_json if isinstance(snapshot.snapshot_json, dict) else {}
+    release = value.get("release") if isinstance(value.get("release"), dict) else {}
+    release_id = snapshot.release_id or release.get("id")
+    manifest_sha = str(release.get("manifest_sha256") or "").strip().lower()
+    try:
+        parsed_id = int(release_id)
+    except (TypeError, ValueError):
+        return None
+    if parsed_id <= 0 or len(manifest_sha) != 64:
+        return None
+    return parsed_id, manifest_sha
+
+
+def _context_release_identity(context: dict[str, Any]) -> tuple[int, str] | None:
+    snapshot = context.get("agent_release_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    release = snapshot.get("release")
+    if not isinstance(release, dict):
+        return None
+    try:
+        release_id = int(release.get("id"))
+    except (TypeError, ValueError):
+        return None
+    manifest_sha = str(release.get("manifest_sha256") or "").strip().lower()
+    if release_id <= 0 or len(manifest_sha) != 64:
+        return None
+    return release_id, manifest_sha
 
 
 def _read_only_tools() -> set[str]:
