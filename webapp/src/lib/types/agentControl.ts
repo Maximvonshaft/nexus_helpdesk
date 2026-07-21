@@ -80,6 +80,21 @@ export interface AgentPersona {
   updated_at: string
 }
 
+export interface AgentKnowledgeSummary {
+  id: number
+  item_key: string
+  title: string
+  summary?: string | null
+  tenant_id: string
+  market_id?: number | null
+  channel?: string | null
+  language?: string | null
+  published_version: number
+  indexed_version: number
+  visibility: string
+  risk_level: string
+}
+
 export interface AgentPlaybookProjection {
   name: string
   display_name: string
@@ -153,10 +168,12 @@ export interface AgentControlSnapshot {
   definitions: AgentDefinition[]
   releases: AgentRelease[]
   deployments: AgentDeployment[]
-  resolved_agent: Record<string, unknown>
-  resolved_agent_digest: string
+  resolved_agent: Record<string, unknown> | null
+  resolved_agent_digest: string | null
+  resolution_error?: string | null
   personas: AgentPersona[]
   persona_total: number
+  knowledge: AgentKnowledgeSummary[]
   resources: AgentConfigResource[]
   resolved_playbooks: AgentPlaybookProjection[]
   tools: AgentToolContract[]
@@ -172,6 +189,7 @@ export interface AgentControlSnapshot {
 export interface AgentPlaygroundResult {
   agent_release?: Record<string, unknown> | null
   agent_release_digest?: string | null
+  resolution_error?: string | null
   persona?: Record<string, unknown> | null
   active_bulletins?: Array<Record<string, unknown>>
   playbooks: AgentPlaybookProjection[]
