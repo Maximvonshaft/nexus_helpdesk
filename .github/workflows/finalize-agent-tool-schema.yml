@@ -1,0 +1,195 @@
+name: Finalize Agent Tool Schema Authority
+
+on:
+  push:
+    branches:
+      - refactor/generic-agent-runtime-final-b7e41d
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-agent-tool-schema-authority
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact branch Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refactor/generic-agent-runtime-final-b7e41d
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Patch raw-schema authority and regression
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          core_path = Path("backend/app/services/nexus_osr/tool_execution_service_core.py")
+          core = core_path.read_text(encoding="utf-8")
+          old_call = "policy_gate_decision = ai_decision or _decision_for_policy_gate(raw_calls, actions)"
+          if old_call not in core:
+              raise SystemExit("expected policy gate call not found")
+          core = core.replace(
+              old_call,
+              "policy_gate_decision = ai_decision or _decision_for_policy_gate(raw_calls)",
+              1,
+          )
+          start = core.index("def _decision_for_policy_gate(")
+          end = core.index("\ndef _blocked_by_registry(", start)
+          replacement = '''def _decision_for_policy_gate(
+              raw_calls: list[dict[str, Any]],
+          ) -> AIDecision:
+              """Build the Policy Gate decision from raw model arguments.
+
+              RuntimeToolAction arguments are bounded for execution and audit safety only
+              after the unmodified model proposal has been validated against the canonical
+              Tool Registry JSON Schema. Forbidden or unknown fields must fail closed rather
+              than disappear during argument bounding.
+              """
+
+              policy_calls: list[AIDecisionToolCall] = []
+              tool_names: list[str] = []
+              for data in raw_calls:
+                  tool_name = canonical_tool_name(
+                      data.get("tool_name") or data.get("name") or data.get("tool")
+                  )
+                  if not tool_name:
+                      continue
+                  raw_arguments = (
+                      data.get("arguments")
+                      if isinstance(data.get("arguments"), dict)
+                      else {}
+                  )
+                  tool_names.append(tool_name)
+                  policy_calls.append(
+                      AIDecisionToolCall.model_construct(
+                          tool_name=tool_name,
+                          arguments=dict(raw_arguments),
+                          idempotency_key=None,
+                          requires_confirmation=bool(
+                              data.get("requires_confirmation")
+                          ),
+                      )
+                  )
+              handoff_required = "handoff.request.create" in tool_names
+              return AIDecision.model_construct(
+                  customer_reply=None,
+                  intent=(
+                      "handoff_request"
+                      if handoff_required
+                      else "general_support"
+                  ),
+                  confidence=1.0,
+                  risk_level="medium" if policy_calls else "low",
+                  next_action="call_tool",
+                  handoff_required=handoff_required,
+                  handoff_reason=(
+                      "customer_requested_human"
+                      if handoff_required
+                      else None
+                  ),
+                  tool_calls=policy_calls,
+                  evidence_used=[],
+                  safety_notes=[],
+              )
+
+          '''
+          core = core[:start] + replacement + core[end + 1 :]
+          core_path.write_text(core, encoding="utf-8")
+
+          test_path = Path("backend/tests/test_nexus_osr_tool_execution_service.py")
+          tests = test_path.read_text(encoding="utf-8")
+          test_name = "test_canonical_executor_validates_raw_arguments_before_bounding"
+          if test_name not in tests:
+              tests += '''\n\ndef test_canonical_executor_validates_raw_arguments_before_bounding(db_session):
+              add_policy(db_session, "knowledge.search", risk_level="low")
+              conversation = make_conversation(
+                  db_session,
+                  public_id="raw_schema_validation_wc",
+              )
+              secret = "must-not-be-silently-discarded-or-persisted"
+
+              result = execute_controlled_tool_calls(
+                  db_session,
+                  tool_calls=[
+                      {
+                          "tool_name": "knowledge.search",
+                          "arguments": {
+                              "query": "approved policy",
+                              "raw_payload": {"token": secret},
+                          },
+                      }
+                  ],
+                  case_context=CaseContext(
+                      conversation_id=conversation.id,
+                      channel="webchat",
+                      country_code="ME",
+                  ),
+                  conversation=conversation,
+                  channel="webchat",
+                  country_code="ME",
+                  options=GovernedToolExecutionOptions(
+                      allowed_tool_names=frozenset({"knowledge.search"}),
+                      granted_permissions=frozenset({"knowledge:read"}),
+                  ),
+              )[0]
+
+              assert result.ok is False
+              assert result.status == "blocked"
+              assert result.error_code == "tool_input_schema_invalid"
+              log = (
+                  db_session.query(ToolCallLog)
+                  .filter(ToolCallLog.tool_name == "knowledge.search")
+                  .one()
+              )
+              persisted = " ".join(
+                  value or ""
+                  for value in (
+                      log.input_summary,
+                      log.output_summary,
+                      log.error_message,
+                  )
+              )
+              assert secret not in persisted
+          '''
+          test_path.write_text(tests, encoding="utf-8")
+
+          docs_path = Path("docs/architecture/generic-agent-skill-runtime.md")
+          docs = docs_path.read_text(encoding="utf-8")
+          old = "5. Validate Tool registration, input schema, availability, permission, confirmation, and write-risk policy."
+          new = "5. Validate the raw model Tool arguments against Tool registration and JSON Schema, then validate availability, permission, confirmation, and write-risk policy before any execution-time bounding."
+          if old not in docs:
+              raise SystemExit("expected architecture validation statement not found")
+          docs_path.write_text(docs.replace(old, new, 1), encoding="utf-8")
+
+          workflow = Path(".github/workflows/finalize-agent-tool-schema.yml")
+          workflow.unlink()
+          PY
+
+      - name: Run focused verification
+        shell: bash
+        run: |
+          python -m compileall -q backend/app/services/nexus_osr backend/app/services/webchat_ai_decision_runtime
+          PYTHONPATH=backend pytest -q \
+            backend/tests/test_agent_tool_schema_and_access_authority.py \
+            backend/tests/test_nexus_osr_tool_execution_service.py \
+            backend/tests/test_agent_runtime_architecture.py \
+            backend/tests/test_agent_runtime_residue.py
+          python scripts/ci/check_agent_runtime_residue.py
+          python scripts/verify_repository.py
+
+      - name: Commit clean exact Head
+        shell: bash
+        run: |
+          git config user.name "Nexus Canonical Delivery"
+          git config user.email "actions@users.noreply.github.com"
+          test ! -e .github/workflows/finalize-agent-tool-schema.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "Enforce raw Tool schema validation before execution bounding"
+          git push origin HEAD:refactor/generic-agent-runtime-final-b7e41d
