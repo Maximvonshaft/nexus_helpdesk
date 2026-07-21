@@ -10,11 +10,23 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import AIConfigResource, Team, Tenant
-from ..models_agent_control import AgentDefinition, AgentDeployment, AgentRelease, AgentRunSnapshot
+from ..models_agent_control import (
+    AgentDefinition,
+    AgentDeployment,
+    AgentRelease,
+    AgentRunSnapshot,
+)
 from ..models_control_plane import KnowledgeItem
 from ..models_osr import ToolExecutionPolicyRecord
 from ..services import persona_service
-from ..services.agent_control_config import CANONICAL_AGENT_CONFIG_TYPES, safe_resource_payload
+from ..services.agent_control_config import (
+    CANONICAL_AGENT_CONFIG_TYPES,
+    safe_resource_payload,
+)
+from ..services.agent_integration_service import (
+    execute_integration_operation,
+    list_integration_catalog,
+)
 from ..services.agent_release_service import (
     RELEASE_SCHEMA,
     AgentDeploymentUnavailable,
@@ -30,19 +42,30 @@ from ..services.agent_runtime.tool_adapter import executable_tool_names
 from ..services.agent_tool_contracts import bootstrap_agent_tool_contracts
 from ..services.ai_runtime.schemas import RuntimeAIProviderRequest
 from ..services.ai_runtime_context import build_agent_context
-from ..services.integration_runtime import execute_integration_operation, list_integration_catalog
 from ..services.permissions import (
     ensure_can_manage_ai_configs,
     ensure_can_manage_runtime,
     ensure_can_read_ai_configs,
 )
-from ..services.webchat_ai_decision_runtime.tool_registry import get_tool_contract, safe_registry_summary
+from ..services.webchat_ai_decision_runtime.tool_registry import (
+    get_tool_contract,
+    safe_registry_summary,
+)
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
 bootstrap_agent_tool_contracts()
 router = APIRouter(prefix="/api/agent-control", tags=["agent-control"])
 _KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,119}$")
+_SAFE_RESOLUTION_ERRORS = {
+    "agent_deployment_not_found": "agent_deployment_not_found",
+    "ambiguous_agent_deployment_scope": "ambiguous_agent_deployment_scope",
+    "agent_deployment_release_unavailable": "agent_deployment_release_unavailable",
+    "agent_deployment_release_retired": "agent_deployment_release_retired",
+    "agent_release_digest_mismatch": "agent_release_digest_mismatch",
+    "agent_release_validation_mismatch": "agent_release_validation_mismatch",
+    "agent_definition_unavailable": "agent_definition_unavailable",
+}
 
 
 class AgentDefinitionCreate(BaseModel):
@@ -155,8 +178,8 @@ def agent_control_snapshot(
         )
         resolved_snapshot = resolved.snapshot
         resolved_digest = resolved.digest
-    except AgentDeploymentUnavailable as exc:
-        resolution_error = str(exc)[:160]
+    except AgentDeploymentUnavailable:
+        resolution_error = "agent_deployment_unavailable"
 
     resources = (
         db.query(AIConfigResource)
@@ -336,7 +359,6 @@ def release_agent_definition(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    # Authoring and production artifact creation are intentionally separated.
     ensure_can_manage_runtime(current_user, db)
     tenant = authoritative_tenant_key(
         db, current_user, requested=tenant_key, allow_platform_default=True
@@ -361,7 +383,11 @@ def deploy_agent_release(
     release = db.get(AgentRelease, payload.release_id)
     if release is None:
         raise HTTPException(status_code=404, detail="agent_release_not_found")
-    canary = db.get(AgentRelease, payload.canary_release_id) if payload.canary_release_id else None
+    canary = (
+        db.get(AgentRelease, payload.canary_release_id)
+        if payload.canary_release_id
+        else None
+    )
     if payload.canary_release_id and canary is None:
         raise HTTPException(status_code=404, detail="agent_canary_release_not_found")
     with managed_session(db):
@@ -403,8 +429,11 @@ def resolve_agent_configuration(
             case_type=payload.case_type,
             cohort_key=payload.cohort_key,
         )
-    except AgentDeploymentUnavailable as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AgentDeploymentUnavailable:
+        raise HTTPException(
+            status_code=409,
+            detail="agent_deployment_unavailable",
+        ) from None
     return {"digest": resolved.digest, "snapshot": resolved.snapshot}
 
 
@@ -438,7 +467,7 @@ async def agent_playground(
         return {
             "agent_release": None,
             "agent_release_digest": None,
-            "resolution_error": release_error or "agent_deployment_not_found",
+            "resolution_error": _safe_resolution_error(release_error),
             "persona": None,
             "active_bulletins": context.get("active_bulletins"),
             "playbooks": [],
@@ -544,8 +573,11 @@ def test_integration(
             case_type=payload.case_type,
             cohort_key=payload.cohort_key,
         )
-    except AgentDeploymentUnavailable as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AgentDeploymentUnavailable:
+        raise HTTPException(
+            status_code=409,
+            detail="agent_deployment_unavailable",
+        ) from None
     catalog = list_integration_catalog(
         db,
         market_id=payload.market_id,
@@ -616,7 +648,11 @@ def list_agent_run_snapshots(
     ]
 
 
-def _definition_or_404(db: Session, definition_id: int, tenant_key: str) -> AgentDefinition:
+def _definition_or_404(
+    db: Session,
+    definition_id: int,
+    tenant_key: str,
+) -> AgentDefinition:
     row = (
         db.query(AgentDefinition)
         .filter(
@@ -630,7 +666,11 @@ def _definition_or_404(db: Session, definition_id: int, tenant_key: str) -> Agen
     return row
 
 
-def _ensure_owner_team_tenant(db: Session, team_id: int | None, tenant_key: str) -> None:
+def _ensure_owner_team_tenant(
+    db: Session,
+    team_id: int | None,
+    tenant_key: str,
+) -> None:
     if team_id is None:
         return
     team = db.get(Team, team_id)
@@ -640,7 +680,10 @@ def _ensure_owner_team_tenant(db: Session, team_id: int | None, tenant_key: str)
         return
     tenant = db.get(Tenant, team.tenant_id) if team.tenant_id else None
     if tenant is None or tenant.tenant_key != tenant_key:
-        raise HTTPException(status_code=403, detail="cross_tenant_agent_owner_team_forbidden")
+        raise HTTPException(
+            status_code=403,
+            detail="cross_tenant_agent_owner_team_forbidden",
+        )
 
 
 def _definition_payload(row: AgentDefinition) -> dict[str, Any]:
@@ -776,6 +819,11 @@ def _can_deploy(current_user, db: Session) -> bool:
     except HTTPException:
         return False
     return True
+
+
+def _safe_resolution_error(value: Any) -> str:
+    key = str(value or "").strip()
+    return _SAFE_RESOLUTION_ERRORS.get(key, "agent_deployment_unavailable")
 
 
 def _clean(value: Any) -> str | None:
