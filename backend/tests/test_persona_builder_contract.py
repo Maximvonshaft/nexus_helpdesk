@@ -239,14 +239,14 @@ def test_persona_builder_separates_authoring_preview_from_runtime_deployment(tmp
     assert payload["facts"]["dedicated_runtime_evidence_endpoint"] == "implemented"
     assert any(
         item["matched_profile_key"] == exact.profile_key
-        and item["match_rank"] == 1
+        and item["match_rank"] == 0
         for item in payload["simulation_scenarios"]
     )
 
     assert preview.status_code == 200, preview.text
     preview_payload = preview.json()
     assert preview_payload["profile"]["profile_key"] == exact.profile_key
-    assert preview_payload["match_rank"] == 1
+    assert preview_payload["match_rank"] == 0
 
     assert runtime_evidence.status_code == 200, runtime_evidence.text
     runtime_payload = runtime_evidence.json()
