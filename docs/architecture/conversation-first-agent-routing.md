@@ -106,7 +106,9 @@ The model proposes Tools. The server validates registration, JSON input schema, 
 
 Conversation is the primary runtime identity. Ticket is optional context.
 
-- Ticketless Agent turns, messages, events, handoffs, OSR decisions, Case Context records, Debug Runs, Test Findings, and voice sessions persist with `ticket_id = NULL`.
+- Ticketless Agent turns, messages, events, handoffs, Debug Runs, Test Findings, and voice sessions persist with `ticket_id = NULL`.
+- An ordinary final reply is audited through the durable `WebchatAITurn`, sanitized runtime trace, Provider Runtime audit, customer-visible message, and conversation event. Nexus does not write a parallel OSR reply-decision record for the same outcome.
+- Tool execution additionally persists the canonical `ToolCallLog`, sanitized Tool governance audit, and Case Context; these records may remain ticketless when the conversation has no Ticket.
 - Ticket-backed and ticketless text paths use the same bounded Generic Agent loop.
 - Runtime generation rechecks the server-owned conversation state immediately before creating a public Agent message. A human takeover or superseding customer message suppresses the stale reply.
 - Runtime traces, Tool observations, and customer-visible message metadata are sanitized before persistence.
@@ -127,14 +129,14 @@ The delivered foundation includes:
 - aggregate availability and governed ticket tools;
 - one canonical frontend presence control;
 - session-first, ticket-optional voice control;
-- ticketless OSR audit, Case Context, Debug Bundle, and Test Finding support.
+- ticketless Agent-turn trace, Debug Bundle, Test Finding, and Tool-specific Case Context and audit support.
 
 ## Verification contract
 
 The acceptance suite must prove at least these business outcomes:
 
 1. Creating and using text WebChat does not create a ticket.
-2. Ticketless Agent replies are persisted, audited, redacted, and visible in the debug bundle.
+2. Ticketless Agent replies are persisted with sanitized runtime evidence and remain visible in the debug bundle; Tool calls additionally persist redacted Tool audit and Case Context without requiring a Ticket.
 3. A human takeover during Agent generation prevents the stale reply from being committed.
 4. A ticketless handoff can enter the unified queue and be assigned according to online state, heartbeat, capacity, scope, and FIFO order.
 5. Closing one accepted conversation releases one slot and assigns the next eligible request.
