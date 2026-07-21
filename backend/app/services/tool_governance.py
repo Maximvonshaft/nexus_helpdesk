@@ -16,6 +16,7 @@ from ..tool_models import ToolCallLog, ToolRegistry
 from ..utils.time import utc_now
 from .error_sanitizer import redact_sensitive_error_text
 from .observability import record_tool_call_metric
+from .webchat_ai_decision_runtime.tool_registry import get_tool_contract
 
 LOGGER = logging.getLogger("nexusdesk")
 
@@ -34,22 +35,11 @@ READ_TOOLS = {
     "attachments_fetch",
     "events_poll",
     "events_wait",
-    "support_knowledge_retrieve",
-    "speedaf_lookup",
-    "speedaf_query_waybills",
-    "tracking_fact_lookup",
     "speedaf.order.query",
     "speedaf.order.waybillCode.query",
-    "speedaf.order.waybill_code.query",
 }
 WRITE_TOOLS = {
     "messages_send",
-    "speedaf_create_work_order",
-    "speedaf_cancel_order",
-    "speedaf_update_address",
-    "speedaf.work_order.create",
-    "speedaf.order.cancel",
-    "speedaf.order.update_address",
 }
 EXTERNAL_SEND_TOOLS = {"messages_send"}
 SYSTEM_TOOLS = {"speedaf.voice.callback"}
@@ -93,6 +83,14 @@ def _enforcement_mode() -> str:
 
 def classify_tool_type(tool_name: str) -> str:
     normalized = (tool_name or "").strip()
+    contract = get_tool_contract(normalized)
+    if contract is not None:
+        if contract.classification == "read":
+            return "read_only"
+        if contract.classification == "write":
+            return "write_action"
+        if contract.classification == "system":
+            return "system"
     lowered = normalized.lower()
     if normalized in EXTERNAL_SEND_TOOLS or lowered.endswith(".send") or lowered.endswith("_send"):
         return "external_send"
@@ -102,7 +100,7 @@ def classify_tool_type(tool_name: str) -> str:
         return "system"
     if normalized in READ_TOOLS:
         return "read_only"
-    return "read_only"
+    return "unknown"
 
 
 def _risk_for_tool_type(tool_type: str) -> str:
@@ -112,10 +110,14 @@ def _risk_for_tool_type(tool_type: str) -> str:
         return "high"
     if tool_type == "system":
         return "medium"
+    if tool_type == "unknown":
+        return "high"
     return "low"
 
 
 def _retry_policy_for_type(tool_type: str) -> str:
+    if tool_type == "unknown":
+        return "never"
     if tool_type in {"external_send", "write_action"}:
         return "no_auto_retry_without_idempotency"
     return "read_retry_allowed"
@@ -147,10 +149,24 @@ def evaluate_tool_call_policy(
     required = _required_capability(tool_name, resolved_type)
     audit_only = mode != "enforce"
 
+    # Unknown Tools are never silently downgraded to read-only. Registration is
+    # part of the authority boundary, independent of rollout/audit mode.
+    if resolved_type == "unknown":
+        return ToolPolicyDecision(
+            False,
+            mode,
+            tool_name,
+            resolved_type,
+            risk_level,
+            "unknown_tool_not_registered",
+            None,
+            False,
+        )
+
     if mode == "off":
         return ToolPolicyDecision(True, mode, tool_name, resolved_type, risk_level, "governance_off", required, True)
 
-    if resolved_type == "read_only" or resolved_type == "system":
+    if resolved_type in {"read_only", "system"}:
         return ToolPolicyDecision(True, mode, tool_name, resolved_type, risk_level, "read_or_system_allowed", required, audit_only)
 
     is_external_send = resolved_type == "external_send"

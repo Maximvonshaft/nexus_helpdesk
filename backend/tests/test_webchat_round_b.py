@@ -9,7 +9,6 @@ from app.enums import UserRole
 from app.models import BackgroundJob, User
 from app.services import background_jobs
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB
-from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
@@ -73,16 +72,6 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
     monkeypatch.setattr(
         conversation_ai_service,
-        'lookup_tracking_fact',
-        lambda **_kwargs: TrackingFactResult(
-            ok=False,
-            tool_status='skipped',
-            pii_redacted=True,
-            failure_reason='missing_tracking_number',
-        ),
-    )
-    monkeypatch.setattr(
-        conversation_ai_service,
         '_run_runtime',
         lambda **_kwargs: WebchatRuntimeReplyResult(
             ok=True,
@@ -90,11 +79,9 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
             reply_source='private_ai_runtime',
             reply='I can help with shipment questions, delivery updates, and general support requests.',
             intent='general_support',
-            tracking_number=None,
             handoff_required=False,
             handoff_reason=None,
             recommended_agent_action=None,
-            ticket_creation_queued=False,
             elapsed_ms=18,
             runtime_trace={
                 'ai_decision_policy_ok': True,

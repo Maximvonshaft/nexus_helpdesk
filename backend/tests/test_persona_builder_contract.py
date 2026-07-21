@@ -24,7 +24,7 @@ from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 from app.schemas_control_plane import PersonaProfileCreate, PersonaProfileUpdate  # noqa: E402
 from app.services import persona_service  # noqa: E402
-from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
+from app.services.ai_runtime_context import build_agent_context  # noqa: E402
 
 
 def _headers(user: User) -> dict[str, str]:
@@ -158,7 +158,7 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
                 "expected_profile_key": exact.profile_key,
             },
         )
-        runtime_context = build_webchat_runtime_context(
+        runtime_context = build_agent_context(
             db_session,
             tenant_key="default",
             channel_key="webchat",
@@ -215,9 +215,9 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert runtime_evidence_payload["match_rank"] == 1
     assert runtime_evidence_payload["expected_profile_key"] == exact.profile_key
     assert runtime_evidence_payload["matched_expected"] is True
-    assert runtime_evidence_payload["runtime_context"]["context_version"] == "nexus.webchat_runtime_context"
+    assert runtime_evidence_payload["runtime_context"]["context_version"] == "nexus.agent_context.v1"
     assert runtime_evidence_payload["persona_context"]["identity_context"]["brand_name"] == "Nexus Express"
-    assert runtime_evidence_payload["evidence"]["runtime_contract"] == "build_webchat_runtime_context"
+    assert runtime_evidence_payload["evidence"]["runtime_contract"] == "build_agent_context"
     assert runtime_evidence_payload["evidence"]["brand_name"] == "Nexus Express"
     assert runtime_evidence_payload["evidence"]["assistant_name"] == "Nora"
     assert runtime_evidence_payload["evidence"]["guardrail_count"] >= 2

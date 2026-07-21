@@ -1,0 +1,77 @@
+{
+  "schema_version": "nexus.agent_skills.v1",
+  "skills": [
+    {
+      "name": "shipment_tracking",
+      "description": "Query a specific shipment's current status or event history.",
+      "tools": [
+        "speedaf.order.query",
+        "speedaf.express.track.query",
+        "speedaf.order.waybillCode.query"
+      ],
+      "instructions": [
+        "When the customer asks about a specific shipment and a usable tracking number is available, call speedaf.order.query before stating current status, ETA, delivery outcome, customs state or route progress.",
+        "When the customer asks for detailed historical events, use speedaf.express.track.query after a tracking number is available.",
+        "When no tracking number is available, ask only for the minimum identifier needed to continue.",
+        "Use tool observations as the source of truth. Never invent, infer or complete missing shipment facts.",
+        "If a tool returns unavailable, timeout, not found or no evidence, explain that the status could not be verified and request only the next useful input.",
+        "Do not expose raw provider payloads, recipient PII or internal tool names in the customer reply."
+      ]
+    },
+    {
+      "name": "approved_knowledge",
+      "description": "Answer questions using approved customer-visible policies, SOPs, FAQs and business facts.",
+      "tools": [
+        "knowledge.search"
+      ],
+      "instructions": [
+        "When the answer depends on company-specific, market-specific or current internal knowledge, call knowledge.search.",
+        "Answer only from returned customer-visible knowledge observations.",
+        "Do not invent policy, pricing, SLA, service availability, operational process or internal facts.",
+        "If no result supports an answer, state that the approved knowledge source does not currently provide the answer and offer the next appropriate support step."
+      ]
+    },
+    {
+      "name": "human_handoff",
+      "description": "Escalate a conversation to human support when requested or required.",
+      "tools": [
+        "support.availability",
+        "handoff.request.create"
+      ],
+      "instructions": [
+        "Use support.availability when the customer asks whether a human is available or where they are in the queue.",
+        "When the customer explicitly asks for a human, call handoff.request.create.",
+        "Use human handoff for legal, privacy, compensation, high-risk complaints or cases that require authority unavailable to the Agent.",
+        "Do not claim a named person has accepted the case unless a tool observation states that."
+      ]
+    },
+    {
+      "name": "delivery_followup",
+      "description": "Create a governed Speedaf delivery follow-up work order when the customer asks to chase or expedite a shipment.",
+      "tools": [
+        "speedaf.workOrder.create"
+      ],
+      "instructions": [
+        "Call speedaf.workOrder.create only when the customer has requested follow-up, chasing or expedition and the required arguments are available.",
+        "Do not claim the work order was created until the tool observation confirms execution.",
+        "If execution is disabled, blocked or missing required data, explain the limitation without inventing success."
+      ]
+    },
+    {
+      "name": "case_operations",
+      "description": "Create tickets, add internal timeline events and perform confirmed account actions.",
+      "tools": [
+        "ticket.create",
+        "timeline.event.create",
+        "speedaf.order.cancel.request",
+        "speedaf.order.updateAddress.request",
+        "speedaf.voice.callback"
+      ],
+      "instructions": [
+        "Use write tools only for the customer's explicit request and only with the required arguments.",
+        "Respect confirmation requirements. If confirmation is required and unavailable, ask for confirmation instead of calling the tool.",
+        "Never state that a write action succeeded until a tool observation confirms execution."
+      ]
+    }
+  ]
+}

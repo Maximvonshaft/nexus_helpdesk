@@ -14,9 +14,6 @@ class RuntimeAIProviderRequest:
     body: str
     recent_context: list[dict[str, Any]] | None = None
     request_id: str | None = None
-    tracking_fact_summary: str | None = None
-    tracking_fact_metadata: dict[str, Any] | None = None
-    tracking_fact_evidence_present: bool = False
     market_id: int | None = None
     language: str | None = None
     metadata: dict[str, Any] | None = None
@@ -31,10 +28,10 @@ class RuntimeAIProviderResult:
     raw_payload_safe_summary: dict[str, Any] | None
     reply: str | None
     intent: str | None
-    tracking_number: str | None
     handoff_required: bool
     handoff_reason: str | None
     recommended_agent_action: str | None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_intents: list[ToolIntent] = field(default_factory=list)
     elapsed_ms: int = 0
     error_code: str | None = None
@@ -58,10 +55,10 @@ class RuntimeAIProviderResult:
             raw_payload_safe_summary=safe_summary,
             reply=None,
             intent=None,
-            tracking_number=None,
             handoff_required=False,
             handoff_reason=None,
             recommended_agent_action=None,
+            tool_calls=[],
             tool_intents=[],
             elapsed_ms=elapsed_ms,
             error_code=error_code,

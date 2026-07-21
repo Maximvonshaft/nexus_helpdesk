@@ -286,7 +286,7 @@ def test_worker_processes_whatsapp_admin_reply_pending_row_with_native_sidecar(d
     assert processed.provider_status == "whatsapp_native_sent"
 
 
-def test_whatsapp_runtime_failure_records_null_reply_without_customer_visible_fallback(db_session, monkeypatch):
+def test_whatsapp_runtime_failure_queues_customer_visible_fallback(db_session, monkeypatch):
     ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
     turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
@@ -298,11 +298,9 @@ def test_whatsapp_runtime_failure_records_null_reply_without_customer_visible_fa
             reply_source=None,
             reply=None,
             intent=None,
-            tracking_number=None,
             handoff_required=False,
             handoff_reason=None,
             recommended_agent_action=None,
-            ticket_creation_queued=False,
             elapsed_ms=8,
             error_code="all_providers_failed",
         )
@@ -316,36 +314,45 @@ def test_whatsapp_runtime_failure_records_null_reply_without_customer_visible_fa
         visitor_message_id=message.id,
     )
 
-    assert result["status"] == "null_reply"
-    assert result["message_id"] is None
-    assert turn.status == "failed"
-    assert conversation.ai_suspended is False
-    assert ticket.conversation_state == ConversationState.human_review_required
-    assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
-    assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == 0
+    assert result["status"] == "done"
+    assert result["fallback"] is True
+    assert result["fallback_reason"] == "all_providers_failed"
+    assert turn.status == "completed"
+    agent_message = db_session.query(WebchatMessage).filter(
+        WebchatMessage.conversation_id == conversation.id,
+        WebchatMessage.direction == "agent",
+    ).one()
+    assert agent_message.body
+    outbound = db_session.query(TicketOutboundMessage).filter(
+        TicketOutboundMessage.ticket_id == ticket.id
+    ).one()
+    assert outbound.status == MessageStatus.pending
+    assert outbound.body == agent_message.body
 
 
 def test_whatsapp_ai_reply_queues_native_outbound(db_session, monkeypatch):
     ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
-    message.body = "Can you help me check this parcel later?"
+    message.body = "Can you help me check this later?"
     message.body_text = message.body
     turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
     monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
 
-    def fake_generate_ai_reply(**_kwargs):
-        webchat_ai_service._LAST_AI_REPLY_SOURCE = "private_ai_runtime"
-        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
-        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 42
-        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
-        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
-        webchat_ai_service._LAST_RUNTIME_TRACE = {
-            "ai_decision_policy_ok": True,
-            "ai_decision_intent": "general_support",
-            "ai_decision_next_action": "reply",
-        }
-        return "Hi, I can help check that with the information available here."
+    async def fake_generate_webchat_runtime_reply(**_kwargs):
+        return WebchatRuntimeReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="private_ai_runtime",
+            reply="Hi, I can help with the information available here.",
+            intent="general_support",
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            elapsed_ms=42,
+            runtime_trace={"agent_runtime": True},
+            tool_calls=[],
+        )
 
-    monkeypatch.setattr(webchat_ai_service, "_generate_ai_reply", fake_generate_ai_reply)
+    monkeypatch.setattr(webchat_ai_service, "generate_webchat_runtime_reply", fake_generate_webchat_runtime_reply)
 
     result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
         db_session,
@@ -357,24 +364,20 @@ def test_whatsapp_ai_reply_queues_native_outbound(db_session, monkeypatch):
     assert result["status"] == "done"
     assert result["fallback"] is False
     assert turn.status == "completed"
-
-    agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").one()
+    agent_message = db_session.query(WebchatMessage).filter(
+        WebchatMessage.conversation_id == conversation.id,
+        WebchatMessage.direction == "agent",
+    ).one()
     assert agent_message.delivery_status == "queued"
-
-    outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
+    outbound = db_session.query(TicketOutboundMessage).filter(
+        TicketOutboundMessage.ticket_id == ticket.id
+    ).one()
     assert outbound.channel == SourceChannel.whatsapp
     assert outbound.status == MessageStatus.pending
     assert outbound.provider_status == "whatsapp_ai_reply_queued"
-    assert outbound.body == "Hi, I can help check that with the information available here."
+    assert outbound.body == "Hi, I can help with the information available here."
     assert outbound.max_retries == message_dispatch.settings.outbox_max_retries
     assert outbound.provider_message_id == f"nexusdesk-outbound-{outbound.id}"
-
-    event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).one()
-    payload = json.loads(event.payload_json)
-    assert payload["external_send"] is True
-    assert payload["reply_channel"] == SourceChannel.whatsapp.value
-    assert payload["outbound_message_id"] == outbound.id
-    assert payload["webchat_message_id"] == agent_message.id
 
 
 def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, monkeypatch):
@@ -395,11 +398,9 @@ def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, m
             reply_source="private_ai_runtime",
             reply="您好！请问有什么可以帮您？",
             intent="general_support",
-            tracking_number=None,
             handoff_required=False,
             handoff_reason=None,
             recommended_agent_action=None,
-            ticket_creation_queued=False,
             elapsed_ms=37,
         )
 
@@ -426,47 +427,6 @@ def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, m
     assert outbound.status == MessageStatus.pending
     assert outbound.body == "您好！请问有什么可以帮您？"
     assert outbound.provider_status == "whatsapp_ai_reply_queued"
-
-
-def test_whatsapp_ai_runtime_failure_records_null_reply_without_outbound(db_session, monkeypatch):
-    ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
-    turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
-    monkeypatch.setattr(webchat_ai_orchestration_service.settings, "webchat_ai_auto_reply_mode", "runtime")
-
-    async def fake_generate_webchat_runtime_reply(**_kwargs):
-        return WebchatRuntimeReplyResult(
-            ok=False,
-            ai_generated=False,
-            reply_source=None,
-            reply=None,
-            intent=None,
-            tracking_number=None,
-            handoff_required=False,
-            handoff_reason=None,
-            recommended_agent_action=None,
-            ticket_creation_queued=False,
-            elapsed_ms=12,
-            error_code="all_providers_failed",
-            retry_after_ms=1500,
-        )
-
-    monkeypatch.setattr(webchat_ai_service, "generate_webchat_runtime_reply", fake_generate_webchat_runtime_reply)
-
-    result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
-        db_session,
-        conversation_id=conversation.id,
-        ticket_id=ticket.id,
-        visitor_message_id=message.id,
-    )
-
-    assert result["status"] == "null_reply"
-    assert result["message_id"] is None
-    assert result["fallback_reason"] == "all_providers_failed"
-    assert turn.status == "failed"
-    assert conversation.ai_suspended is False
-    assert ticket.conversation_state == ConversationState.human_review_required
-    assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
-    assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == 0
 
 
 def test_request_handoff_creates_traceable_queue_and_suspends_ai(db_session):

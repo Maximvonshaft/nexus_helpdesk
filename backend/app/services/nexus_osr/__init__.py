@@ -1,43 +1,26 @@
-"""Nexus Operations Service Runtime foundation.
+"""Canonical Nexus Tool governance primitives.
 
-This package contains product-level runtime contracts and policy primitives for
-Nexus OSR.  The modules are intentionally framework-light so WebChat, WhatsApp,
-operator workbench, and future channels can share the same decision contracts.
+The Generic Agent Runtime proposes Tools. This package owns the single
+server-side execution policy, Case Context, idempotency, audit, and production
+handler dispatch used by all callers.
 """
 
-from .runtime_decision_contract import (
-    BusinessReplyType,
-    EvidenceSource,
-    EvidenceType,
-    RuntimeDecision,
-    RuntimeDecisionEvaluation,
-    RuntimeDecisionViolation,
-    evaluate_runtime_decision,
-)
 from .case_context import CaseContext, CaseContextStatus
-from .policies import (
-    EscalationDecision,
-    EscalationPolicy,
-    HumanAvailabilityDecision,
-    HumanHoursPolicy,
-    ToolExecutionPolicy,
-    ToolPolicyDecision,
+from .controlled_action_executor import (
+    ActionExecutionRequest,
+    ActionExecutionResult,
+    ControlledActionExecutor,
 )
+from .policies import ToolExecutionPolicy, ToolPolicyDecision
+from .runtime_decision_contract import RuntimeToolAction
 
 __all__ = [
-    "BusinessReplyType",
+    "ActionExecutionRequest",
+    "ActionExecutionResult",
     "CaseContext",
     "CaseContextStatus",
-    "EscalationDecision",
-    "EscalationPolicy",
-    "EvidenceSource",
-    "EvidenceType",
-    "HumanAvailabilityDecision",
-    "HumanHoursPolicy",
-    "RuntimeDecision",
-    "RuntimeDecisionEvaluation",
-    "RuntimeDecisionViolation",
+    "ControlledActionExecutor",
+    "RuntimeToolAction",
     "ToolExecutionPolicy",
     "ToolPolicyDecision",
-    "evaluate_runtime_decision",
 ]

@@ -1,11 +1,17 @@
-"""WebChat AI decision runtime.
+"""Canonical Agent decision schema and Tool-authority policy boundary."""
 
-This package is the policy/tool boundary for public WebChat replies.  The AI may
-propose customer text and next actions; the backend validates evidence, tool
-contracts, idempotency, redaction, and audit before anything is executed.
-"""
+from .policy_gate import PolicyGateResult, PolicyViolation, validate_ai_decision
+from .schemas import AIDecision, AIDecisionEvidence, AIDecisionToolCall
+from .tool_registry import ToolContract, get_tool_contract, registered_tool_names
 
-from .schemas import AIDecision, AIDecisionToolCall
-from .service import build_ai_decision_trace, decision_from_provider_result
-
-__all__ = ["AIDecision", "AIDecisionToolCall", "build_ai_decision_trace", "decision_from_provider_result"]
+__all__ = [
+    "AIDecision",
+    "AIDecisionEvidence",
+    "AIDecisionToolCall",
+    "PolicyGateResult",
+    "PolicyViolation",
+    "ToolContract",
+    "get_tool_contract",
+    "registered_tool_names",
+    "validate_ai_decision",
+]

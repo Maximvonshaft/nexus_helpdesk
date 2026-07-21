@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from .case_context import CaseContext
 from .policies import ToolExecutionPolicy, ToolPolicyDecision
@@ -23,7 +23,13 @@ class ActionExecutionRequest:
 
     @property
     def has_tracking_number(self) -> bool:
-        return bool(self.case_context and (self.case_context.tracking_number_hash or self.case_context.safe_tracking_reference))
+        return bool(
+            self.case_context
+            and (
+                self.case_context.tracking_number_hash
+                or self.case_context.safe_tracking_reference
+            )
+        )
 
     @property
     def has_contact(self) -> bool:
@@ -44,12 +50,11 @@ class ActionExecutionResult:
 
 
 class ControlledActionExecutor:
-    """Policy-gated execution harness for Nexus OSR actions.
+    """Policy-gated dispatcher used only by the canonical Tool Executor Core.
 
-    This class does not directly know about WebChat, WhatsApp, SQLAlchemy, or MCP.
-    It validates the action against product policy and delegates the actual side
-    effect to a registered handler. The handler is where repository-specific
-    ticket/MCP/WhatsApp integrations should be connected.
+    It validates server-owned Tool policy and delegates to the production handler
+    map supplied by `tool_execution_service_core`. It contains no fallback,
+    in-memory, test-only, or future duplicate handlers.
     """
 
     def __init__(
@@ -61,7 +66,9 @@ class ControlledActionExecutor:
     ):
         self._policies = dict(policies)
         self._handlers = dict(handlers)
-        self._allowed_high_risk_write_tools = set(allowed_high_risk_write_tools or set())
+        self._allowed_high_risk_write_tools = set(
+            allowed_high_risk_write_tools or set()
+        )
 
     def execute(self, request: ActionExecutionRequest) -> ActionExecutionResult:
         policy = self._policies.get(request.action.tool_name)
@@ -71,7 +78,7 @@ class ControlledActionExecutor:
                 tool_name=request.action.tool_name,
                 status="blocked",
                 error_code="tool_policy_missing",
-                error_message="No ToolExecutionPolicy is configured for this tool.",
+                error_message="No ToolExecutionPolicy is configured for this Tool.",
             )
         policy_decision = policy.evaluate(
             channel=request.channel,
@@ -89,18 +96,26 @@ class ControlledActionExecutor:
                 error_message=policy_decision.reason,
                 summary={"missing_requirements": policy_decision.missing_requirements},
             )
-        if str(policy.risk_level or "").lower() == "high" and policy.tool_name not in self._allowed_high_risk_write_tools:
+        if (
+            str(policy.risk_level or "").lower() == "high"
+            and policy.tool_name not in self._allowed_high_risk_write_tools
+        ):
             return ActionExecutionResult(
                 ok=False,
                 tool_name=request.action.tool_name,
                 status="blocked",
                 policy_decision=policy_decision,
                 error_code="high_risk_write_tool_blocked",
-                error_message="High-risk write tools require explicit test or operator configuration before execution.",
+                error_message=(
+                    "High-risk write Tools require explicit server configuration "
+                    "before execution."
+                ),
             )
         if (
             policy_decision.requires_customer_confirmation
-            and not bool(request.audit_context.get("customer_confirmation_granted"))
+            and not bool(
+                request.audit_context.get("customer_confirmation_granted")
+            )
         ):
             return ActionExecutionResult(
                 ok=False,
@@ -108,7 +123,9 @@ class ControlledActionExecutor:
                 status="confirmation_required",
                 policy_decision=policy_decision,
                 error_code="customer_confirmation_required",
-                error_message="Customer confirmation is required before this action can execute.",
+                error_message=(
+                    "Customer confirmation is required before this Tool can execute."
+                ),
             )
         if (
             policy_decision.requires_human_confirmation
@@ -120,7 +137,9 @@ class ControlledActionExecutor:
                 status="confirmation_required",
                 policy_decision=policy_decision,
                 error_code="human_confirmation_required",
-                error_message="Human confirmation is required before this action can execute.",
+                error_message=(
+                    "Human confirmation is required before this Tool can execute."
+                ),
             )
         handler = self._handlers.get(request.action.tool_name)
         if handler is None:
@@ -130,7 +149,9 @@ class ControlledActionExecutor:
                 status="blocked",
                 policy_decision=policy_decision,
                 error_code="tool_handler_missing",
-                error_message="No controlled action handler is registered for this tool.",
+                error_message=(
+                    "No production handler is registered for this canonical Tool."
+                ),
             )
         result = handler(request)
         return ActionExecutionResult(
@@ -144,48 +165,3 @@ class ControlledActionExecutor:
             error_code=result.error_code,
             error_message=result.error_message,
         )
-
-
-def ticket_create_handler(request: ActionExecutionRequest) -> ActionExecutionResult:
-    """Framework-light ticket.create handler for tests and future integration.
-
-    The production integration should replace this with a handler that creates or
-    reuses a real Ticket row. This handler still encodes the product contract:
-    it requires a CaseContext, marks the ticket as created, and returns a safe
-    customer-visible summary.
-    """
-
-    if request.case_context is None:
-        return ActionExecutionResult(False, request.action.tool_name, "failed", error_code="case_context_required")
-    ticket_id = request.action.arguments.get("ticket_id") or request.idempotency_key or "pending-ticket"
-    next_context = request.case_context.mark_ticket_created(ticket_id)
-    return ActionExecutionResult(
-        ok=True,
-        tool_name=request.action.tool_name,
-        status="executed",
-        summary={"ticket_id": ticket_id, "idempotency_key": request.idempotency_key},
-        customer_visible_summary="A support ticket has been created for follow-up.",
-        case_context=next_context,
-    )
-
-
-def handoff_request_handler(request: ActionExecutionRequest) -> ActionExecutionResult:
-    if request.case_context is None:
-        return ActionExecutionResult(False, request.action.tool_name, "failed", error_code="case_context_required")
-    reason = request.action.arguments.get("reason") or "human_review_required"
-    next_context = request.case_context.mark_handoff_requested(summary=str(reason))
-    return ActionExecutionResult(
-        ok=True,
-        tool_name=request.action.tool_name,
-        status="executed",
-        summary={"reason": reason},
-        customer_visible_summary="I will connect this case to a human support agent.",
-        case_context=next_context,
-    )
-
-
-def default_handlers() -> dict[str, ActionHandler]:
-    return {
-        "ticket.create": ticket_create_handler,
-        "handoff.request.create": handoff_request_handler,
-    }

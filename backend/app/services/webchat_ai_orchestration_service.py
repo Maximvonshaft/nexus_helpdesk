@@ -9,9 +9,17 @@ from sqlalchemy.orm import Session
 from ..enums import EventType
 from ..models import Ticket, TicketEvent
 from ..settings import get_settings
-from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage
+from ..webchat_models import (
+    WebchatAITurn,
+    WebchatConversation,
+    WebchatEvent,
+    WebchatMessage,
+)
 from .conversation_ai_service import process_ticketless_ai_reply
-from .webchat_ai_service import AI_AUTHOR_LABEL, process_webchat_ai_reply_job as _run_ticket_reply
+from .webchat_ai_service import (
+    AI_AUTHOR_LABEL,
+    process_webchat_ai_reply_job as _run_ticket_reply,
+)
 from .webchat_ai_turn_service import (
     AI_TURN_OPEN_STATUSES,
     cancel_open_ai_turns_for_handoff,
@@ -22,8 +30,6 @@ from .webchat_ai_turn_service import (
     mark_ai_turn_processing,
     suppress_stale_reply_if_needed,
 )
-from .webchat_osr_audit_service import audit_completed_webchat_ai_turn
-
 
 settings = get_settings()
 LOGGER = logging.getLogger("nexusdesk")
@@ -104,43 +110,6 @@ def _agent_reply_exists(
     )
 
 
-def _audit_runtime_turn_non_blocking(
-    db: Session,
-    *,
-    conversation: WebchatConversation,
-    ticket: Ticket | None,
-    visitor_message: WebchatMessage,
-    turn: WebchatAITurn | None,
-    result: dict[str, Any],
-) -> dict[str, Any] | None:
-    if turn is None:
-        return None
-    try:
-        with db.begin_nested():
-            return audit_completed_webchat_ai_turn(
-                db,
-                conversation=conversation,
-                ticket=ticket,
-                visitor_message=visitor_message,
-                turn=turn,
-                result=result,
-            )
-    except Exception as exc:  # pragma: no cover - audit must never block replies
-        LOGGER.warning(
-            "webchat_runtime_audit_failed_non_blocking",
-            extra={
-                "event_payload": {
-                    "conversation_id": conversation.id,
-                    "ticket_id": getattr(ticket, "id", None),
-                    "visitor_message_id": visitor_message.id,
-                    "ai_turn_id": turn.id,
-                    "error_type": type(exc).__name__,
-                }
-            },
-        )
-        return None
-
-
 def _complete_turn(
     db: Session,
     *,
@@ -150,19 +119,12 @@ def _complete_turn(
     turn: WebchatAITurn | None,
     result: dict[str, Any],
 ) -> None:
+    del ticket, visitor_message
     if turn is None:
         return
     complete_ai_turn_with_reply(
         db,
         conversation=conversation,
-        turn=turn,
-        result=result,
-    )
-    _audit_runtime_turn_non_blocking(
-        db,
-        conversation=conversation,
-        ticket=ticket,
-        visitor_message=visitor_message,
         turn=turn,
         result=result,
     )

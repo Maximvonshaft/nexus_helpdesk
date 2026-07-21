@@ -24,6 +24,37 @@ class ToolExecutionPolicySeed:
 
 DEFAULT_TOOL_EXECUTION_POLICY_SEEDS: tuple[ToolExecutionPolicySeed, ...] = (
     ToolExecutionPolicySeed(
+        tool_name="knowledge.search",
+        enabled=True,
+        ai_auto_executable=True,
+        risk_level="low",
+        audit_level="standard",
+    ),
+    ToolExecutionPolicySeed(
+        tool_name="speedaf.order.query",
+        enabled=True,
+        ai_auto_executable=True,
+        risk_level="medium",
+        requires_tracking_number=True,
+        audit_level="standard",
+    ),
+    ToolExecutionPolicySeed(
+        tool_name="speedaf.express.track.query",
+        enabled=True,
+        ai_auto_executable=True,
+        risk_level="medium",
+        requires_tracking_number=True,
+        audit_level="standard",
+    ),
+    ToolExecutionPolicySeed(
+        tool_name="speedaf.order.waybillCode.query",
+        enabled=True,
+        ai_auto_executable=True,
+        risk_level="medium",
+        requires_contact=True,
+        audit_level="standard",
+    ),
+    ToolExecutionPolicySeed(
         tool_name="support.availability",
         enabled=True,
         ai_auto_executable=True,

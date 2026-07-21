@@ -12,8 +12,8 @@ from app.main import app
 from app.models import BackgroundJob, Ticket, User
 from app.models_osr import CaseContextRecord, RuntimeDecisionAuditRecord
 from app.models_webchat_debug import WebchatAIDebugRun, WebchatAITestFinding
+from app.services.agent_runtime.terminal_reply import customer_visible_fallback
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_webchat_ai_reply_jobs
-from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_debug_bundle_service import build_ai_debug_bundle, create_test_finding
 from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult
 from app.utils.time import utc_now
@@ -95,58 +95,36 @@ def _clear_webchat_ai_jobs() -> None:
         db.close()
 
 
-def test_v3_conversational_answer_records_customer_context_source():
+
+def test_v3_reply_contract_records_customer_and_tool_sources():
     from app.enums import SourceChannel
     from app.services.webchat_ai_service import _ai_reply_contract_fields
 
     fields = _ai_reply_contract_fields(
-        body='Your request has been received.',
+        body="The approved answer.",
         channel=SourceChannel.web_chat,
         handoff_required=False,
-        fact_evidence_present=False,
-        tracking_fact=None,
-        grounding_applied=False,
-        grounding_source=None,
         runtime_trace={
-            'ai_decision_policy_ok': True,
-            'ai_decision_intent': 'general_support',
-            'ai_decision_confidence': 0.9,
+            "ai_decision": {"confidence": 0.9},
+            "executed_tools": [
+                {
+                    "tool_name": "knowledge.search",
+                    "ok": True,
+                    "status": "executed",
+                }
+            ],
         },
+        reply_type="answer",
     )
 
-    assert fields['contract_version'] == 'nexus.ai_reply.v3'
-    assert fields['reply_type'] == 'answer'
-    assert fields['used_sources'] == ['context:customer_message']
-    assert fields['unsupported_claims'] == []
-    assert fields['confidence'] == 0.9
-
-
-def test_v3_answer_uses_runtime_evidence_and_declared_policy_violations():
-    from app.enums import SourceChannel
-    from app.services.webchat_ai_service import _ai_reply_contract_fields
-
-    fields = _ai_reply_contract_fields(
-        body='The parcel is out for delivery.',
-        channel=SourceChannel.web_chat,
-        handoff_required=False,
-        fact_evidence_present=False,
-        tracking_fact=None,
-        grounding_applied=False,
-        grounding_source=None,
-        runtime_trace={
-            'ai_decision_policy_ok': False,
-            'ai_decision_policy_violation_codes': 'tracking_status_without_trusted_fact',
-            'ai_decision_intent': 'tracking',
-            'ai_decision_next_action': 'reply',
-            'ai_decision_used_sources': ['speedaf.order.query:lookup-42'],
-            'ai_decision_confidence': 0.25,
-        },
-    )
-
-    assert fields['used_sources'] == ['speedaf.order.query:lookup-42']
-    assert fields['unsupported_claims'] == ['tracking_status_without_trusted_fact']
-    assert fields['confidence'] == 0.25
-    assert 'runtime:provider_generation' not in fields['used_sources']
+    assert fields["contract_version"] == "nexus.ai_reply.v3"
+    assert fields["reply_type"] == "answer"
+    assert fields["used_sources"] == [
+        "context:customer_message",
+        "tool:knowledge.search",
+    ]
+    assert fields["unsupported_claims"] == []
+    assert fields["confidence"] == 0.9
 
 
 def test_webchat_ai_turn_is_created_and_public_poll_reports_pending():
@@ -314,17 +292,7 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
 
 
 def _patch_ticketless_dependencies(monkeypatch, conversation_ai_service) -> None:
-    monkeypatch.setattr(
-        conversation_ai_service,
-        "lookup_tracking_fact",
-        lambda **_kwargs: TrackingFactResult(
-            ok=False,
-            tool_status="skipped",
-            pii_redacted=True,
-            failure_reason="missing_tracking_number",
-        ),
-    )
-
+    del monkeypatch, conversation_ai_service
 
 def _runtime_reply(
     *,
@@ -342,11 +310,9 @@ def _runtime_reply(
         reply_source="private_ai_runtime",
         reply=reply,
         intent=intent,
-        tracking_number=None,
         handoff_required=handoff_required,
         handoff_reason=handoff_reason,
         recommended_agent_action=recommended_agent_action,
-        ticket_creation_queued=False,
         elapsed_ms=elapsed_ms,
         runtime_trace=runtime_trace,
         tool_calls=[],
@@ -370,8 +336,8 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         return _runtime_reply(
             reply='Hi, how can I help you today?',
             runtime_trace={
-                "latency_class": "trusted_tracking_fact",
-                "prompt_profile": "trusted_tracking_fact",
+                "latency_class": "agent_runtime",
+                "prompt_profile": "generic_agent",
                 "prompt_chars": 1709,
                 "elapsed_ms": 10017,
                 "model": "qwen2.5:3b",
@@ -380,7 +346,6 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
                 "endpoint": "https://apis.speedaf.com/open-api/mcp/order/query?appCode=SHOULD_NOT_PERSIST",
                 "authorization": "Bearer SHOULD_NOT_PERSIST",
                 "prompt": "customer text SHOULD_NOT_PERSIST",
-                "tracking_number": "CH020000129135",
             },
         )
 
@@ -417,8 +382,8 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         assert turn.status == 'completed'
         assert turn.reply_message_id is not None
         trace = json.loads(turn.runtime_trace_json or '{}')
-        assert trace["latency_class"] == "trusted_tracking_fact"
-        assert trace["prompt_profile"] == "trusted_tracking_fact"
+        assert trace["latency_class"] == "agent_runtime"
+        assert trace["prompt_profile"] == "generic_agent"
         assert trace["prompt_chars"] == 1709
         assert trace["model"] == "qwen2.5:3b"
         trace_text = json.dumps(trace, ensure_ascii=False)
@@ -467,7 +432,7 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         db.close()
 
 
-def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
+def test_clarifying_question_runtime_reply_is_not_suppressed(monkeypatch):
     _ensure_schema_and_user()
     _clear_webchat_ai_jobs()
     client = TestClient(app)
@@ -477,8 +442,8 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
         client,
         conversation_id,
         visitor_token,
-        'Please help me track my parcel. I will provide the tracking number.',
-        'turn-runtime-track-missing-1',
+        'I need help, but I have not shared the required reference yet.',
+        'turn-runtime-clarify-1',
     )
     ai_turn_id = sent['ai_turn_id']
 
@@ -489,12 +454,12 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
         conversation_ai_service,
         '_run_runtime',
         lambda **_kwargs: _runtime_reply(
-            reply='Share the parcel number when you are ready and I will check the latest tracking details.',
-            intent='tracking_missing_number',
+            reply='Please share the required reference when you are ready, and I will continue.',
+            intent='missing_information',
             elapsed_ms=19,
             runtime_trace={
                 'ai_decision_policy_ok': True,
-                'ai_decision_intent': 'tracking_missing_number',
+                'ai_decision_intent': 'missing_information',
                 'ai_decision_next_action': 'ask_clarifying_question',
             },
         ),
@@ -506,7 +471,7 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
         assert job is not None
         job.next_run_at = None
         db.commit()
-        processed = dispatch_pending_webchat_ai_reply_jobs(db, worker_id='turn-runtime-track-missing-worker')
+        processed = dispatch_pending_webchat_ai_reply_jobs(db, worker_id='turn-runtime-clarify-worker')
         assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
         db.commit()
     finally:
@@ -520,7 +485,7 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
     payload = polled.json()
     agent_messages = [msg for msg in payload['messages'] if msg['author_label'] == 'AI Assistant']
     assert agent_messages
-    assert agent_messages[-1]['body'] == 'Share the parcel number when you are ready and I will check the latest tracking details.'
+    assert agent_messages[-1]['body'] == 'Please share the required reference when you are ready, and I will continue.'
     assert payload['ai_pending'] is False
 
     db = SessionLocal()
@@ -534,32 +499,42 @@ def test_tracking_missing_number_runtime_reply_is_not_suppressed(monkeypatch):
         db.close()
 
 
-def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
+def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(monkeypatch):
     _ensure_schema_and_user()
     _clear_webchat_ai_jobs()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
 
-    sent = _send(client, conversation_id, visitor_token, 'I need a human to review this', 'turn-runtime-handoff-1')
-    ai_turn_id = sent['ai_turn_id']
+    sent = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "I need a human to review this",
+        "turn-runtime-handoff-without-tool-1",
+    )
+    ai_turn_id = sent["ai_turn_id"]
 
     from app.services import conversation_ai_service, webchat_ai_orchestration_service
-    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
-    monkeypatch.setattr(webchat_ai_orchestration_service.settings, 'webchat_ai_auto_reply_mode', 'runtime')
+
+    monkeypatch.setattr(
+        webchat_ai_orchestration_service.settings,
+        "webchat_ai_auto_reply_mode",
+        "runtime",
+    )
     monkeypatch.setattr(
         conversation_ai_service,
-        '_run_runtime',
+        "_run_runtime",
         lambda **_kwargs: _runtime_reply(
-            reply='I will connect this conversation to a support agent.',
-            intent='handoff_request',
+            reply="I will connect this conversation to a support agent.",
+            intent="handoff_request",
             handoff_required=True,
-            handoff_reason='customer_requested_human',
-            recommended_agent_action='Human agent should review the customer request.',
+            handoff_reason="customer_requested_human",
+            recommended_agent_action="Human agent should review the customer request.",
             elapsed_ms=34,
             runtime_trace={
-                'ai_decision_policy_ok': True,
-                'ai_decision_intent': 'handoff_request',
-                'ai_decision_next_action': 'request_handoff',
+                "agent_runtime": True,
+                "next_action": "reply",
+                "executed_tools": [],
             },
         ),
     )
@@ -567,26 +542,56 @@ def test_ai_turn_runtime_handoff_still_writes_ai_reply(monkeypatch):
     db = SessionLocal()
     try:
         ticket_count_before = db.query(Ticket).count()
-        job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
-        assert job is not None
+        job = (
+            db.query(BackgroundJob)
+            .filter(
+                BackgroundJob.dedupe_key
+                == f"webchat-ai-turn:{ai_turn_id}"
+            )
+            .one()
+        )
         job.next_run_at = None
         db.commit()
-        processed = dispatch_pending_webchat_ai_reply_jobs(db, worker_id='turn-runtime-handoff-worker')
+        processed = dispatch_pending_webchat_ai_reply_jobs(
+            db,
+            worker_id="turn-runtime-handoff-without-tool-worker",
+        )
         assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
         db.commit()
 
-        turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
+        turn = db.get(WebchatAITurn, ai_turn_id)
         assert turn is not None
         assert turn.ticket_id is None
-        assert turn.status == 'completed'
-        assert db.query(WebchatMessage).filter(WebchatMessage.ai_turn_id == ai_turn_id, WebchatMessage.direction == 'agent').count() == 1
-        conversation = db.query(WebchatConversation).filter(WebchatConversation.id == turn.conversation_id).first()
+        assert turn.status == "completed"
+        assert turn.status_reason is None
+        message = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.ai_turn_id == ai_turn_id,
+                WebchatMessage.direction == "agent",
+            )
+            .one()
+        )
+        assert message.body == customer_visible_fallback(
+            "en",
+            "I need a human to review this",
+        )
+        metadata = json.loads(message.metadata_json or "{}")
+        assert metadata["fallback"] is True
+        assert metadata["fallback_reason"] == "handoff_tool_side_effect_missing"
+        assert metadata["runtime_handoff_required"] is False
+        conversation = db.get(WebchatConversation, turn.conversation_id)
         assert conversation is not None
         assert conversation.ticket_id is None
-        assert conversation.handoff_status == 'requested'
-        handoff = db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.conversation_id == conversation.id).one()
-        assert handoff.ticket_id is None
-        assert handoff.recommended_agent_action == 'Human agent should review the customer request.'
+        assert conversation.current_handoff_request_id is None
+        assert (
+            db.query(WebchatHandoffRequest)
+            .filter(
+                WebchatHandoffRequest.conversation_id == conversation.id
+            )
+            .count()
+            == 0
+        )
         assert db.query(Ticket).count() == ticket_count_before
     finally:
         db.close()
@@ -686,52 +691,6 @@ def test_reconciler_times_out_stale_bridge_calling_turn():
         db.close()
 
 
-def test_runtime_result_blocks_locked_fact_grounding_conflict_before_write():
-    from app.services.ai_runtime.schemas import RuntimeAIProviderResult
-    from app.services.webchat_runtime_ai_service import _result_from_provider
-
-    provider_result = RuntimeAIProviderResult(
-        ok=True,
-        ai_generated=True,
-        reply_source='private_ai_runtime',
-        raw_provider='private_ai_runtime',
-        raw_payload_safe_summary={
-            'output_contract_repair_applied': True,
-            'output_contract_repair_reason': 'locked_fact_grounding_conflict',
-            'model': 'qwen2.5:3b',
-            'chat_mode': 'direct',
-        },
-        reply='Sure, we provide domestic to domestic delivery services within Switzerland.',
-        intent='other',
-        tracking_number=None,
-        handoff_required=False,
-        handoff_reason=None,
-        recommended_agent_action=None,
-        elapsed_ms=9000,
-    )
-
-    result = _result_from_provider(
-        provider_result,
-        runtime_context={
-            'knowledge_context': {
-                'locked_facts': [
-                    {
-                        'item_key': 'nexus.support.customer.kb.ch.service.availability',
-                        'answer': 'Switzerland domestic-to-domestic service is currently unavailable. 瑞士目前暂未开通本对本业务。',
-                        'source': {'item_key': 'nexus.support.customer.kb.ch.service.availability'},
-                    }
-                ]
-            }
-        },
-        body='Do you provide domestic to domestic delivery in Switzerland?',
-    )
-
-    assert result.ok is False
-    assert result.reply is None
-    assert result.error_code == 'locked_fact_grounding_conflict'
-    assert result.runtime_trace['grounding_validation'] == 'fail'
-
-
 def test_failed_ai_turn_persists_safe_runtime_trace():
     from app.services.webchat_ai_turn_service import complete_ai_turn_with_reply
 
@@ -763,8 +722,7 @@ def test_failed_ai_turn_persists_safe_runtime_trace():
                     "ai_decision_policy_violation_codes": "raw_tracking_exposed",
                     "ai_decision_checked_tools": "speedaf.order.query",
                     "ai_decision_intent": "tracking",
-                    "tracking_number": "CH020000129135",
-                    "authorization": "Bearer SHOULD_NOT_PERSIST",
+                        "authorization": "Bearer SHOULD_NOT_PERSIST",
                 },
             },
         )
@@ -784,65 +742,3 @@ def test_failed_ai_turn_persists_safe_runtime_trace():
         assert "SHOULD_NOT_PERSIST" not in trace_text
     finally:
         db.close()
-
-
-def test_runtime_result_allows_trusted_tracking_followup_with_unrelated_locked_fact():
-    from app.services.ai_runtime.schemas import RuntimeAIProviderResult
-    from app.services.tracking_fact_schema import hash_tracking_number
-    from app.services.webchat_runtime_ai_service import _result_from_provider
-
-    tracking_number = 'CH020000007813'
-    provider_result = RuntimeAIProviderResult(
-        ok=True,
-        ai_generated=True,
-        reply_source='private_ai_runtime',
-        raw_provider='private_ai_runtime',
-        raw_payload_safe_summary={'model': 'qwen2.5:3b', 'chat_mode': 'direct'},
-        reply='Your parcel ending 007813 has been delivered. If the recipient cannot find it, please check with reception or the delivery contact point, then ask us for human review.',
-        intent='tracking',
-        tracking_number=tracking_number,
-        handoff_required=False,
-        handoff_reason=None,
-        recommended_agent_action=None,
-        elapsed_ms=9000,
-    )
-
-    result = _result_from_provider(
-        provider_result,
-        tracking_fact_metadata={
-            'pii_redacted': True,
-            'tool_status': 'success',
-            'tracking_number_hash': hash_tracking_number(tracking_number),
-            'tracking_number_suffix': '7813',
-        },
-        tracking_number=tracking_number,
-        runtime_context={
-            'knowledge_context': {
-                'locked_facts': [
-                    {
-                        'item_key': 'nexus.support.customer.kb.ch.service.availability',
-                        'answer': 'Switzerland domestic-to-domestic service is currently unavailable.',
-                        'source': {'item_key': 'nexus.support.customer.kb.ch.service.availability'},
-                    }
-                ]
-            }
-        },
-        body='The recipient says they did not receive it. What should we do?',
-    )
-
-    assert result.ok is True
-    assert result.reply.startswith('Your parcel ending 007813')
-
-
-def test_latency_class_uses_unified_runtime_for_customer_messages():
-    from app.services.webchat_runtime_ai_service import _latency_class_for_request
-
-    assert _latency_class_for_request(body='Please check CH020000007813', evidence_present=True) == 'trusted_tracking_fact'
-    assert _latency_class_for_request(body='nigh', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='你好', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='hello latency smoke 1783325498843', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='CH020000129135', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='1783325498843', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='tracking 1783325498843', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='Please check CH020000007813', evidence_present=False) == 'unified_ai_runtime'
-    assert _latency_class_for_request(body='瑞士本地到本地现在支持寄送吗？', evidence_present=False) == 'unified_ai_runtime'

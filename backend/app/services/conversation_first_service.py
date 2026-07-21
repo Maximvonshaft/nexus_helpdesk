@@ -6,14 +6,10 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..enums import SourceChannel, TicketPriority
 from ..models import Customer, Tenant, Ticket
 from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
-from ..voice_models import WebchatVoiceSession
 from ..webchat_models import WebchatConversation
-from .nexus_osr.auto_ticket_service import create_or_reuse_ticket_from_case_context
-from .nexus_osr.case_context import CaseContext
 from .tenant_authority import stamp_runtime_tenant, tenant_runtime_authority_mode
 from .webchat_service import (
     MAX_FIELD_CHARS,
@@ -310,88 +306,3 @@ def create_or_resume_conversation(
             "supports_after_id": True,
         },
     }
-
-def ensure_voice_ticket_for_public_conversation(
-    db: Session,
-    *,
-    conversation_public_id: str,
-    visitor_token: str | None,
-) -> Ticket:
-    """Lazily bind explicit voice initiation to the canonical Ticket control plane."""
-
-    query = db.query(WebchatConversation).filter(
-        WebchatConversation.public_id == conversation_public_id
-    )
-    if db.bind and db.bind.dialect.name.startswith("postgresql"):
-        query = query.with_for_update()
-    conversation = query.first()
-    if conversation is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="webchat conversation not found",
-        )
-    _validate_token(conversation, visitor_token)
-    tenant = _relational_tenant(db)
-    control = ensure_conversation_control(db, conversation=conversation)
-    _assert_resume_scope(
-        db,
-        conversation=conversation,
-        control=control,
-        tenant=tenant,
-    )
-    customer = (
-        db.get(Customer, control.customer_id)
-        if control.customer_id is not None
-        else None
-    )
-    if conversation.ticket_id is not None:
-        ticket = db.get(Ticket, conversation.ticket_id)
-        if ticket is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="webchat voice ticket relationship is invalid",
-            )
-    else:
-        context = CaseContext(
-            conversation_id=conversation.id,
-            ticket_id=None,
-            channel=conversation.channel_key,
-            country_code=control.country_code,
-            issue_type="voice_support",
-        ).with_inbound_message(
-            "Customer initiated a live voice support session.",
-            channel=conversation.channel_key,
-            country_code=control.country_code,
-        )
-        result = create_or_reuse_ticket_from_case_context(
-            db,
-            case_context=context,
-            customer=customer,
-            conversation=conversation,
-            source_channel=SourceChannel.web_chat,
-            title="Live voice support",
-            description="Customer initiated a live voice support session.",
-            priority=TicketPriority.medium,
-            issue_type="voice_support",
-        )
-        ticket = result.ticket
-    if tenant is not None:
-        if ticket.tenant_id is None:
-            stamp_runtime_tenant(ticket, tenant.id)
-        elif ticket.tenant_id != tenant.id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="webchat_tenant_relationship_conflict",
-            )
-    db.query(WebchatVoiceSession).filter(
-        WebchatVoiceSession.conversation_id == conversation.id,
-        WebchatVoiceSession.ticket_id.is_(None),
-    ).update(
-        {WebchatVoiceSession.ticket_id: ticket.id},
-        synchronize_session=False,
-    )
-    conversation.ticket_id = ticket.id
-    conversation.updated_at = utc_now()
-    db.flush()
-    return ticket
-

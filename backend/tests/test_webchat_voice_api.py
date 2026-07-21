@@ -21,6 +21,8 @@ from app.db import Base, SessionLocal, engine
 from app.enums import ConversationState, JobStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
 from app.main import app
 from app.models import AdminAuditLog, BackgroundJob, Ticket, TicketEvent, TicketInternalNote, User, UserCapabilityOverride
+from app.models_agent_routing import ConversationControl
+from app.operator_models import OperatorQueueScopeGrant
 from app.services import webchat_rate_limit as webchat_rate_limit_service
 from app.services.background_jobs import SPEEDAF_VOICE_CALLBACK_JOB, process_background_job
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
@@ -120,6 +122,45 @@ def _create_webchat_conversation(
         db.close()
 
 
+def _authorize_ticketless_voice_scope(
+    conversation_id: str,
+    *,
+    user_id: int = 9202,
+    country_code: str = "ME",
+) -> None:
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id
+        ).one()
+        control = db.query(ConversationControl).filter(
+            ConversationControl.conversation_id == conversation.id
+        ).one()
+        control.country_code = country_code
+        grant = db.query(OperatorQueueScopeGrant).filter(
+            OperatorQueueScopeGrant.user_id == user_id,
+            OperatorQueueScopeGrant.tenant_key == control.tenant_key,
+            OperatorQueueScopeGrant.country_code == country_code,
+            OperatorQueueScopeGrant.channel_key == control.channel_key,
+        ).first()
+        if grant is None:
+            db.add(
+                OperatorQueueScopeGrant(
+                    user_id=user_id,
+                    tenant_key=control.tenant_key,
+                    country_code=country_code,
+                    channel_key=control.channel_key,
+                    enabled=True,
+                    granted_by=user_id,
+                )
+            )
+        else:
+            grant.enabled = True
+        db.commit()
+    finally:
+        db.close()
+
+
 def _create_voice_session(client: TestClient, *, name: str = "Voice Visitor") -> tuple[str, str, int, str]:
     conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, name=name)
     assert ticket_id is not None
@@ -192,13 +233,14 @@ def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
     assert "unit_key" not in response.text
 
 
-def test_public_create_voice_session_lazily_binds_canonical_ticket():
+def test_public_create_voice_session_remains_ticketless():
     client = TestClient(app)
     conversation_id, visitor_token, ticket_id = _create_webchat_conversation(
         client,
         create_ticket=False,
     )
     assert ticket_id is None
+    _authorize_ticketless_voice_scope(conversation_id)
 
     created = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",
@@ -234,14 +276,14 @@ def test_public_create_voice_session_lazily_binds_canonical_ticket():
             .filter(WebchatConversation.public_id == conversation_id)
             .one()
         )
-        assert row.ticket_id is not None
-        assert conversation.ticket_id == row.ticket_id
+        assert row.ticket_id is None
+        assert conversation.ticket_id is None
         assert row.provider == "mock"
         events = (
             db.query(WebchatEvent)
             .filter(
                 WebchatEvent.conversation_id == row.conversation_id,
-                WebchatEvent.ticket_id == row.ticket_id,
+                WebchatEvent.ticket_id.is_(None),
             )
             .all()
         )
@@ -250,6 +292,89 @@ def test_public_create_voice_session_lazily_binds_canonical_ticket():
         assert "voice.session.ringing" in event_types
     finally:
         db.close()
+
+
+
+
+def test_ticketless_session_can_be_accepted_and_ended_without_ticket_creation():
+    client = TestClient(app)
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(
+        client,
+        name="Ticketless Voice Visitor",
+        create_ticket=False,
+    )
+    assert ticket_id is None
+    _authorize_ticketless_voice_scope(conversation_id)
+
+    created = client.post(
+        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={},
+    )
+    assert created.status_code == 200, created.text
+    voice_session_id = created.json()["voice_session_id"]
+
+    accepted = client.post(
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+    assert accepted.status_code == 200, accepted.text
+    ended = client.post(
+        f"/api/webchat/admin/voice/{voice_session_id}/end",
+        headers=_admin_headers(9202),
+    )
+    assert ended.status_code == 200, ended.text
+
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id
+        ).one()
+        session = db.query(WebchatVoiceSession).filter(
+            WebchatVoiceSession.public_id == voice_session_id
+        ).one()
+        assert conversation.ticket_id is None
+        assert session.ticket_id is None
+        final_message = db.query(WebchatMessage).filter(
+            WebchatMessage.conversation_id == conversation.id,
+            WebchatMessage.client_message_id == f"voice-call-ended:{voice_session_id}",
+        ).one()
+        assert final_message.ticket_id is None
+    finally:
+        db.close()
+
+
+
+
+
+def test_ticketless_voice_rejects_missing_scope_before_session_creation():
+    client = TestClient(app)
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(
+        client,
+        name="Unscoped Voice Visitor",
+        create_ticket=False,
+    )
+    assert ticket_id is None
+
+    response = client.post(
+        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "conversation_scope_unavailable"
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id
+        ).one()
+        assert db.query(WebchatVoiceSession).filter(
+            WebchatVoiceSession.conversation_id == conversation.id
+        ).count() == 0
+    finally:
+        db.close()
+
 
 def test_public_create_voice_session_rejects_invalid_token():
     client = TestClient(app)
@@ -267,6 +392,7 @@ def test_public_create_voice_session_rejects_invalid_token():
 def test_public_create_voice_session_returns_existing_active_session():
     client = TestClient(app)
     conversation_id, visitor_token, _ticket_id = _create_webchat_conversation(client, create_ticket=False)
+    _authorize_ticketless_voice_scope(conversation_id)
 
     first = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",
@@ -289,7 +415,7 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
 
     accepted = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9202),
     )
     assert accepted.status_code == 200, accepted.text
@@ -298,7 +424,7 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     assert accepted.json().get("participant_token")
 
     accepted_again = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9202),
     )
     assert accepted_again.status_code == 200, accepted_again.text
@@ -307,7 +433,7 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     assert accepted_again.json().get("participant_token")
 
     second_accept = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9203),
     )
     assert second_accept.status_code == 409
@@ -316,12 +442,12 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
 
     _set_voice_session_duration_fixture(voice_session_id)
     ended = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        f"/api/webchat/admin/voice/{voice_session_id}/end",
         headers=_admin_headers(9202),
     )
     assert ended.status_code == 200, ended.text
     ended_again = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        f"/api/webchat/admin/voice/{voice_session_id}/end",
         headers=_admin_headers(9202),
     )
     assert ended_again.status_code == 200, ended_again.text
@@ -361,13 +487,13 @@ def test_admin_voice_action_records_call_control_command_timeline_and_audit():
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Action Command Visitor")
 
     accepted = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9202),
     )
     assert accepted.status_code == 200, accepted.text
 
     keypad = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        f"/api/webchat/admin/voice/{voice_session_id}/actions",
         headers=_admin_headers(9202),
         json={"action_type": "keypad", "digits": "123456#", "note": "DTMF menu option"},
     )
@@ -382,14 +508,14 @@ def test_admin_voice_action_records_call_control_command_timeline_and_audit():
     assert "123456#" not in keypad.text
 
     transfer = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        f"/api/webchat/admin/voice/{voice_session_id}/actions",
         headers=_admin_headers(9202),
         json={"action_type": "transfer", "target": "tier-2-voice", "note": "Escalate to specialist queue"},
     )
     assert transfer.status_code == 200, transfer.text
 
     action_list = client.get(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions?limit=5",
+        f"/api/webchat/admin/voice/{voice_session_id}/actions?limit=5",
         headers=_admin_headers(9202),
     )
     assert action_list.status_code == 200, action_list.text
@@ -435,7 +561,7 @@ def test_admin_voice_action_requires_control_capability_even_when_ticket_visible
         db.close()
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        f"/api/webchat/admin/voice/{voice_session_id}/actions",
         headers=_admin_headers(9204),
         json={"action_type": "mute"},
     )
@@ -449,7 +575,7 @@ def test_admin_voice_note_writes_internal_note_timeline_webchat_event_and_audit(
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Call Note Visitor")
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
+        f"/api/webchat/admin/voice/{voice_session_id}/notes",
         headers=_admin_headers(9202),
         json={"body": "  Customer verified name and requested a callback after delivery scan.  ", "source": "operator_workbench"},
     )
@@ -510,7 +636,7 @@ def test_admin_voice_note_requires_voice_capability_even_when_ticket_visible():
         db.close()
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
+        f"/api/webchat/admin/voice/{voice_session_id}/notes",
         headers=_admin_headers(9204),
         json={"body": "visible ticket but no voice permission"},
     )
@@ -585,7 +711,7 @@ def test_admin_voice_evidence_returns_redacted_transcript_ai_turns_and_actions()
         db.close()
 
     response = client.get(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence?limit=20",
+        f"/api/webchat/admin/voice/{voice_session_id}/evidence?limit=20",
         headers=_admin_headers(9202),
     )
 
@@ -623,7 +749,7 @@ def test_admin_voice_speedaf_callback_queues_and_worker_submits_without_leaking_
         },
     }
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        f"/api/webchat/admin/voice/{voice_session_id}/speedaf/callback",
         headers=_admin_headers(9202),
         json=body,
     )
@@ -674,7 +800,7 @@ def test_admin_voice_speedaf_callback_queues_and_worker_submits_without_leaking_
         assert safe_job_payload["action"]["waybill_suffix"] == "2345"
 
     duplicate = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        f"/api/webchat/admin/voice/{voice_session_id}/speedaf/callback",
         headers=_admin_headers(9202),
         json=body,
     )
@@ -705,7 +831,7 @@ def test_admin_voice_speedaf_callback_requires_speedaf_write_capability(monkeypa
 
     try:
         response = client.post(
-            f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+            f"/api/webchat/admin/voice/{voice_session_id}/speedaf/callback",
             headers=_admin_headers(9202),
             json={
                 "action": {
@@ -736,7 +862,7 @@ def test_speedaf_voice_callback_non_retryable_failure_does_not_replay(monkeypatc
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Speedaf Callback Nonretry Visitor")
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        f"/api/webchat/admin/voice/{voice_session_id}/speedaf/callback",
         headers=_admin_headers(9202),
         json={
             "callSessionId": "call-session-nonretry",
@@ -785,7 +911,7 @@ def test_admin_voice_speedaf_callback_disabled_by_default():
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Disabled Speedaf Callback Visitor")
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        f"/api/webchat/admin/voice/{voice_session_id}/speedaf/callback",
         headers=_admin_headers(9202),
         json={
             "action": {
@@ -813,7 +939,7 @@ def test_admin_voice_evidence_requires_voice_capability_even_when_ticket_visible
         db.close()
 
     response = client.get(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence",
+        f"/api/webchat/admin/voice/{voice_session_id}/evidence",
         headers=_admin_headers(9204),
     )
 
@@ -827,7 +953,7 @@ def test_expired_ringing_session_accept_marks_missed_without_agent_token():
     _set_voice_session_state(voice_session_id, expires_delta=timedelta(seconds=-1))
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9202),
     )
 
@@ -896,7 +1022,7 @@ def test_terminal_voice_sessions_cannot_be_accepted(terminal_status: str, detail
     _set_voice_session_state(voice_session_id, status=terminal_status)
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9202),
     )
 
@@ -910,11 +1036,11 @@ def test_end_ringing_session_is_cancelled_and_idempotent_with_single_final_messa
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Cancel Visitor")
 
     first = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        f"/api/webchat/admin/voice/{voice_session_id}/end",
         headers=_admin_headers(9202),
     )
     second = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        f"/api/webchat/admin/voice/{voice_session_id}/end",
         headers=_admin_headers(9202),
     )
 
@@ -984,7 +1110,7 @@ def test_livekit_provider_create_accept_end_without_external_api(monkeypatch):
     assert created_rooms == [payload["provider_room_name"]]
 
     accepted = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9202),
     )
     assert accepted.status_code == 200, accepted.text
@@ -995,7 +1121,7 @@ def test_livekit_provider_create_accept_end_without_external_api(monkeypatch):
     assert accepted_payload["participant_token"].startswith("fake_livekit_token::agent_")
 
     ended = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        f"/api/webchat/admin/voice/{voice_session_id}/end",
         headers=_admin_headers(9202),
     )
     assert ended.status_code == 200, ended.text
@@ -1025,7 +1151,7 @@ def test_admin_voice_endpoint_requires_ticket_visibility():
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9204),
     )
 
@@ -1044,7 +1170,7 @@ def test_admin_voice_accept_requires_voice_capability_even_when_ticket_visible()
         db.close()
 
     response = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        f"/api/webchat/admin/voice/{voice_session_id}/accept",
         headers=_admin_headers(9204),
     )
 
@@ -1065,7 +1191,7 @@ def test_admin_voice_end_requires_auth():
     client = TestClient(app)
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
 
-    response = client.post(f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end")
+    response = client.post(f"/api/webchat/admin/voice/{voice_session_id}/end")
 
     assert response.status_code == 401
 

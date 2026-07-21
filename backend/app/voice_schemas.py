@@ -34,10 +34,10 @@ class WebchatVoiceNoteRequest(BaseModel):
 
 class WebchatVoiceNoteResponse(BaseModel):
     ok: bool = True
-    ticket_id: int
+    ticket_id: int | None = None
     voice_session_id: str
     note_id: int
-    ticket_event_id: int
+    ticket_event_id: int | None = None
     webchat_event_id: int
     audit_id: int
     created_at: str
@@ -75,7 +75,7 @@ class WebchatVoiceActionRead(BaseModel):
 
 class WebchatVoiceActionResponse(BaseModel):
     ok: bool = True
-    ticket_id: int
+    ticket_id: int | None = None
     voice_session_id: str
     action: WebchatVoiceActionRead
 
@@ -132,7 +132,7 @@ class WebchatVoiceAIActionRead(BaseModel):
 
 class WebchatVoiceEvidenceResponse(BaseModel):
     ok: bool = True
-    ticket_id: int
+    ticket_id: int | None = None
     voice_session_id: str
     status: str
     provider: str
@@ -181,7 +181,7 @@ class SpeedafVoiceCallbackRequest(BaseModel):
 
 class SpeedafVoiceCallbackResponse(BaseModel):
     ok: bool = True
-    ticket_id: int
+    ticket_id: int | None = None
     voice_session_id: str
     status: str
     message: str
@@ -215,7 +215,7 @@ class WebchatVoiceSessionList(BaseModel):
 
 
 class WebchatVoiceIncomingSessionRead(WebchatVoiceSessionRead):
-    ticket_id: int
+    ticket_id: int | None = None
     ticket_no: str | None = None
     ticket_title: str | None = None
     conversation_id: str | None = None

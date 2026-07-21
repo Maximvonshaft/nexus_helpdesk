@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..enums import EventType
 from ..models import Ticket, TicketInternalNote, User
+from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceParticipant, WebchatVoiceSession, WebchatVoiceSessionAction, WebchatVoiceTranscriptSegment
 from ..webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
@@ -350,14 +351,6 @@ def _active_session_for_conversation(db: Session, conversation_id: int) -> Webch
     return db.query(WebchatVoiceSession).filter(WebchatVoiceSession.conversation_id == conversation_id, WebchatVoiceSession.status.in_(list(ACTIVE_STATUSES))).order_by(WebchatVoiceSession.id.desc()).first()
 
 
-def _ensure_ticket_visible_for_session(db: Session, current_user: User, session: WebchatVoiceSession) -> Ticket:
-    ticket = db.query(Ticket).filter(Ticket.id == session.ticket_id).first()
-    if ticket is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
-    ensure_ticket_visible(current_user, ticket, db)
-    return ticket
-
-
 def _ensure_voice_session_visible(
     db: Session,
     current_user: User,
@@ -374,6 +367,28 @@ def _ensure_voice_session_visible(
     return None
 
 
+def _load_voice_session_context(
+    db: Session,
+    voice_session_public_id: str,
+) -> tuple[WebchatVoiceSession, WebchatConversation]:
+    session = _load_voice_session(db, voice_session_public_id)
+    conversation = db.get(WebchatConversation, session.conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat conversation not found")
+    return session, conversation
+
+
+def _visible_voice_session_context(
+    db: Session,
+    *,
+    voice_session_public_id: str,
+    current_user: User,
+) -> tuple[WebchatVoiceSession, WebchatConversation, Ticket | None]:
+    session, conversation = _load_voice_session_context(db, voice_session_public_id)
+    ticket = _ensure_voice_session_visible(db, current_user, session, conversation)
+    return session, conversation, ticket
+
+
 def _issue_token(session: WebchatVoiceSession, participant_type: str, suffix: str) -> tuple[str, int, str]:
     config = load_webchat_voice_runtime_config()
     provider = _provider_for_name(session.provider, config)
@@ -388,6 +403,17 @@ def create_public_voice_session(db: Session, *, conversation_public_id: str, vis
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WebChat voice is disabled")
     conversation = _load_public_conversation(db, conversation_public_id)
     _validate_public_conversation_token(conversation, visitor_token)
+    if conversation.ticket_id is None:
+        control = (
+            db.query(ConversationControl)
+            .filter(ConversationControl.conversation_id == conversation.id)
+            .first()
+        )
+        if control is None or not control.country_code:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="conversation_scope_unavailable",
+            )
     enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=f"{conversation.public_id}:voice")
     active = _active_session_for_conversation(db, conversation.id)
     if active is not None and _mark_missed_if_expired(db, session=active):
@@ -476,16 +502,16 @@ def list_admin_voice_sessions(db: Session, *, ticket_id: int, current_user: User
 def list_admin_voice_evidence(
     db: Session,
     *,
-    ticket_id: int,
     voice_session_public_id: str,
     current_user: User,
     limit: int = 50,
 ) -> dict[str, Any]:
     ensure_can_read_webcall_voice(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, _ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
     safe_limit = max(1, min(int(limit or 50), 100))
     segments = (
         db.query(WebchatVoiceTranscriptSegment)
@@ -510,7 +536,7 @@ def list_admin_voice_evidence(
     )
     return {
         "ok": True,
-        "ticket_id": ticket_id,
+        "ticket_id": session.ticket_id,
         "voice_session_id": session.public_id,
         "status": session.status,
         "provider": session.provider,
@@ -577,20 +603,23 @@ def list_admin_voice_evidence(
 def list_admin_voice_actions(
     db: Session,
     *,
-    ticket_id: int,
     voice_session_public_id: str,
     current_user: User,
     limit: int = 20,
 ) -> dict[str, Any]:
     ensure_can_read_webcall_voice(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, _ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
     safe_limit = max(1, min(int(limit or 20), 50))
     actions = (
         db.query(WebchatVoiceSessionAction)
-        .filter(WebchatVoiceSessionAction.voice_session_id == session.id)
+        .filter(
+            WebchatVoiceSessionAction.voice_session_id == session.id,
+            WebchatVoiceSessionAction.action_type != "note",
+        )
         .order_by(WebchatVoiceSessionAction.id.desc())
         .limit(safe_limit)
         .all()
@@ -601,7 +630,6 @@ def list_admin_voice_actions(
 def record_admin_voice_action(
     db: Session,
     *,
-    ticket_id: int,
     voice_session_public_id: str,
     current_user: User,
     action_type: str,
@@ -610,10 +638,11 @@ def record_admin_voice_action(
     note: str | None = None,
 ) -> dict[str, Any]:
     ensure_can_control_webcall_voice(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
 
     requested = (action_type or "").strip().lower()
     if requested not in CALL_CONTROL_ACTIONS:
@@ -634,7 +663,7 @@ def record_admin_voice_action(
     action = WebchatVoiceSessionAction(
         voice_session_id=session.id,
         conversation_id=session.conversation_id,
-        ticket_id=ticket_id,
+        ticket_id=session.ticket_id,
         actor_user_id=current_user.id,
         action_type=requested,
         status="recorded",
@@ -655,20 +684,22 @@ def record_admin_voice_action(
         "provider_reason": provider_reason,
         "payload": safe_payload,
     }
-    ticket_event = log_event(
-        db,
-        ticket_id=ticket_id,
-        actor_id=current_user.id,
-        event_type=EventType.field_updated,
-        field_name="webcall.voice.action",
-        new_value=requested,
-        note="WebCall session action recorded",
-        payload=event_payload,
-    )
+    ticket_event = None
+    if ticket is not None:
+        ticket_event = log_event(
+            db,
+            ticket_id=ticket.id,
+            actor_id=current_user.id,
+            event_type=EventType.field_updated,
+            field_name="webcall.voice.action",
+            new_value=requested,
+            note="WebCall session action recorded",
+            payload=event_payload,
+        )
     webchat_event = _write_voice_event(
         db,
         conversation_id=session.conversation_id,
-        ticket_id=ticket_id,
+        ticket_id=session.ticket_id,
         event_type="voice.session.action_recorded",
         payload={**event_payload, "actor_user_id": current_user.id},
     )
@@ -679,16 +710,16 @@ def record_admin_voice_action(
         target_type="webchat_voice_session_action",
         target_id=action.id,
         old_value=None,
-        new_value={**event_payload, "ticket_id": ticket_id},
+        new_value={**event_payload, "ticket_id": session.ticket_id},
     )
-    action.ticket_event_id = ticket_event.id
+    action.ticket_event_id = ticket_event.id if ticket_event is not None else None
     action.webchat_event_id = webchat_event.id
     action.audit_id = audit.id
     session.updated_at = now
     db.flush()
     return {
         "ok": True,
-        "ticket_id": ticket_id,
+        "ticket_id": session.ticket_id,
         "voice_session_id": session.public_id,
         "action": _serialize_session_action(action),
     }
@@ -752,7 +783,6 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
 def save_admin_voice_note(
     db: Session,
     *,
-    ticket_id: int,
     voice_session_public_id: str,
     current_user: User,
     body: str,
@@ -760,40 +790,75 @@ def save_admin_voice_note(
 ) -> dict[str, Any]:
     ensure_can_read_webcall_voice(current_user, db)
     ensure_can_write_internal_note(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
     normalized_body = (body or "").strip()
     if not normalized_body:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="voice note body is required")
 
     now = utc_now()
-    note = TicketInternalNote(ticket_id=ticket_id, author_id=current_user.id, body=normalized_body, created_at=now, updated_at=now)
-    db.add(note)
+    source_value = (source or "webcall_operator_workbench").strip() or "webcall_operator_workbench"
+    note_record = WebchatVoiceSessionAction(
+        voice_session_id=session.id,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        actor_user_id=current_user.id,
+        action_type="note",
+        status="recorded",
+        provider_status="not_applicable",
+        provider_reason="internal_note",
+        payload_json=json.dumps({"body": normalized_body, "source": source_value}, ensure_ascii=False),
+        created_at=now,
+    )
+    db.add(note_record)
     db.flush()
-    payload = {
+
+    ticket_note = None
+    ticket_event = None
+    if ticket is not None:
+        ticket_note = TicketInternalNote(
+            ticket_id=ticket.id,
+            author_id=current_user.id,
+            body=normalized_body,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(ticket_note)
+        db.flush()
+        ticket_event = log_event(
+            db,
+            ticket_id=ticket.id,
+            actor_id=current_user.id,
+            event_type=EventType.internal_note_added,
+            note="WebCall call note saved",
+            payload={
+                "voice_session_id": session.public_id,
+                "note_id": ticket_note.id,
+                "voice_note_id": note_record.id,
+                "source": source_value,
+                "provider": session.provider,
+                "status": session.status,
+            },
+        )
+
+    safe_payload = {
         "voice_session_id": session.public_id,
-        "note_id": note.id,
-        "source": (source or "webcall_operator_workbench").strip() or "webcall_operator_workbench",
+        "voice_note_id": note_record.id,
+        "ticket_note_id": ticket_note.id if ticket_note is not None else None,
+        "source": source_value,
         "provider": session.provider,
         "status": session.status,
+        "body_length": len(normalized_body),
     }
-
-    ticket_event = log_event(
-        db,
-        ticket_id=ticket_id,
-        actor_id=current_user.id,
-        event_type=EventType.internal_note_added,
-        note="WebCall call note saved",
-        payload=payload,
-    )
     webchat_event = _write_voice_event(
         db,
         conversation_id=session.conversation_id,
-        ticket_id=ticket_id,
+        ticket_id=session.ticket_id,
         event_type="voice.session.note_saved",
-        payload={**payload, "author_id": current_user.id},
+        payload={**safe_payload, "author_id": current_user.id},
     )
     audit = log_admin_audit(
         db,
@@ -802,25 +867,27 @@ def save_admin_voice_note(
         target_type="webchat_voice_session",
         target_id=session.id,
         old_value=None,
-        new_value={**payload, "ticket_id": ticket_id},
+        new_value={**safe_payload, "ticket_id": session.ticket_id},
     )
+    note_record.ticket_event_id = ticket_event.id if ticket_event is not None else None
+    note_record.webchat_event_id = webchat_event.id
+    note_record.audit_id = audit.id
     db.flush()
     return {
         "ok": True,
-        "ticket_id": ticket_id,
+        "ticket_id": session.ticket_id,
         "voice_session_id": session.public_id,
-        "note_id": note.id,
-        "ticket_event_id": ticket_event.id,
+        "note_id": ticket_note.id if ticket_note is not None else note_record.id,
+        "ticket_event_id": ticket_event.id if ticket_event is not None else None,
         "webchat_event_id": webchat_event.id,
         "audit_id": audit.id,
-        "created_at": note.created_at.isoformat(),
+        "created_at": note_record.created_at.isoformat(),
     }
 
 
 def queue_speedaf_voice_callback(
     db: Session,
     *,
-    ticket_id: int,
     voice_session_public_id: str,
     current_user: User,
     call_session_id: str | None,
@@ -832,10 +899,17 @@ def queue_speedaf_voice_callback(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="speedaf_voice_callback_disabled")
     ensure_can_control_webcall_voice(current_user, db)
     ensure_can_send_speedaf_voice_callback(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="formal_ticket_required_for_voice_business_action",
+        )
+    ticket_id = ticket.id
 
     waybill_code = " ".join(str(action.get("waybillCode") or "").strip().split()).upper()
     action_name = " ".join(str(action.get("action") or "").strip().split())[:32]
@@ -969,12 +1043,18 @@ def queue_speedaf_voice_callback(
     }
 
 
-def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User) -> dict[str, Any]:
+def accept_admin_voice_session(
+    db: Session,
+    *,
+    voice_session_public_id: str,
+    current_user: User,
+) -> dict[str, Any]:
     ensure_can_accept_webcall_voice(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, _ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
     now = utc_now()
     if _mark_missed_if_expired(db, session=session, now=now):
         db.flush()
@@ -993,25 +1073,53 @@ def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_pub
     session.active_at = session.active_at or now
     session.updated_at = now
     value, ttl, identity = _issue_token(session, "agent", str(current_user.id))
-    existing = db.query(WebchatVoiceParticipant).filter(WebchatVoiceParticipant.voice_session_id == session.id, WebchatVoiceParticipant.provider_identity == identity).first()
+    existing = db.query(WebchatVoiceParticipant).filter(
+        WebchatVoiceParticipant.voice_session_id == session.id,
+        WebchatVoiceParticipant.provider_identity == identity,
+    ).first()
     if existing is None:
-        db.add(WebchatVoiceParticipant(voice_session_id=session.id, participant_type="agent", user_id=current_user.id, provider_identity=identity, status="invited", created_at=now))
+        db.add(WebchatVoiceParticipant(
+            voice_session_id=session.id,
+            participant_type="agent",
+            user_id=current_user.id,
+            provider_identity=identity,
+            status="invited",
+            created_at=now,
+        ))
     if first_accept:
-        _write_voice_event(db, conversation_id=session.conversation_id, ticket_id=session.ticket_id, event_type="voice.session.accepted", payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id})
+        _write_voice_event(
+            db,
+            conversation_id=session.conversation_id,
+            ticket_id=session.ticket_id,
+            event_type="voice.session.accepted",
+            payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id},
+        )
         _emit_voice_observability(session, "voice.session.accepted")
-        _write_voice_event(db, conversation_id=session.conversation_id, ticket_id=session.ticket_id, event_type="voice.session.active", payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id})
+        _write_voice_event(
+            db,
+            conversation_id=session.conversation_id,
+            ticket_id=session.ticket_id,
+            event_type="voice.session.active",
+            payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id},
+        )
         _emit_voice_observability(session, "voice.session.active")
     db.flush()
     return _serialize_session(session, participant_token=value, expires_in_seconds=ttl, participant_identity=identity)
 
 
-
-def reject_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User, reason: str | None = None) -> dict[str, Any]:
+def reject_admin_voice_session(
+    db: Session,
+    *,
+    voice_session_public_id: str,
+    current_user: User,
+    reason: str | None = None,
+) -> dict[str, Any]:
     ensure_can_reject_webcall_voice(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, _ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
     now = utc_now()
     if _mark_missed_if_expired(db, session=session, now=now):
         db.flush()
@@ -1040,12 +1148,19 @@ def reject_admin_voice_session(db: Session, *, ticket_id: int, voice_session_pub
     db.flush()
     return {"ok": True, "status": session.status, "voice_session_id": session.public_id, "accepted_by_user_id": session.accepted_by_user_id}
 
-def end_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User) -> dict[str, Any]:
+
+def end_admin_voice_session(
+    db: Session,
+    *,
+    voice_session_public_id: str,
+    current_user: User,
+) -> dict[str, Any]:
     ensure_can_end_webcall_voice(current_user, db)
-    session = _load_voice_session(db, voice_session_public_id)
-    if session.ticket_id != ticket_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
-    _ensure_ticket_visible_for_session(db, current_user, session)
+    session, _conversation, _ticket = _visible_voice_session_context(
+        db,
+        voice_session_public_id=voice_session_public_id,
+        current_user=current_user,
+    )
     _end_voice_session(db, session=session, ended_by_user_id=current_user.id)
     return {"ok": True, "status": session.status, "voice_session_id": session.public_id, "accepted_by_user_id": session.accepted_by_user_id}
 

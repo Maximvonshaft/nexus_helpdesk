@@ -113,10 +113,10 @@ def case_context_with_tracking_and_contact(conversation: WebchatConversation | N
     return ctx.with_contact_method(channel="whatsapp", value="+382 67123456", source="webchat_form")
 
 
-def test_runtime_tool_calls_convert_to_runtime_tool_actions_and_redact_arguments():
+def test_runtime_tool_calls_preserve_bounded_execution_arguments():
     actions = runtime_tool_actions_from_tool_calls([
         {
-            "name": "speedaf_create_work_order",
+            "tool_name": "speedaf.workOrder.create",
             "arguments": {
                 "tracking_number": "CH1234567890",
                 "phone": "+382 67123456",
@@ -131,11 +131,11 @@ def test_runtime_tool_calls_convert_to_runtime_tool_actions_and_redact_arguments
     action = actions[0]
     assert action.tool_name == "speedaf.workOrder.create"
     assert action.requires_confirmation is True
-    serialized = str(action.arguments)
-    assert "CH1234567890" not in serialized
-    assert "+382" not in serialized
-    assert "123 Unsafe Street" not in serialized
-    assert "secret-value" not in serialized
+    assert action.arguments["tracking_number"] == "CH1234567890"
+    assert action.arguments["phone"] == "+382 67123456"
+    assert action.arguments["address"] == "123 Unsafe Street"
+    assert "raw_payload" not in action.arguments
+    assert "secret-value" not in str(action.arguments)
 
 
 def test_disabled_policy_blocks_and_writes_safe_audit(db_session):
@@ -406,3 +406,142 @@ def test_policy_gate_blocks_unknown_tool_before_execution(db_session):
     assert result.error_code == "unknown_tool_blocked"
     assert db_session.query(ToolCallLog).count() == 1
     assert db_session.query(RuntimeDecisionAuditRecord).count() == 1
+
+
+def test_explicit_empty_tool_allowlist_fails_closed(db_session):
+    conversation = make_conversation(db_session, public_id="empty_allowlist_wc")
+    result = execute_controlled_tool_calls(
+        db_session,
+        tool_calls=[{"tool_name": "timeline.event.create"}],
+        case_context=CaseContext(
+            conversation_id=conversation.id,
+            channel="webchat",
+            country_code="ME",
+        ),
+        conversation=conversation,
+        channel="webchat",
+        country_code="ME",
+        options=GovernedToolExecutionOptions(
+            allowed_tool_names=frozenset(),
+            granted_permissions=frozenset(),
+        ),
+    )[0]
+
+    assert result.ok is False
+    assert result.status == "blocked"
+    assert result.error_code in {"tool_not_available", "tool_permission_denied"}
+    assert db_session.query(TicketEvent).count() == 0
+
+
+def test_server_idempotency_is_scoped_to_writes_and_ignores_model_keys():
+    from app.services.nexus_osr import tool_execution_service_core as core
+
+    context = CaseContext(
+        conversation_id="conversation-1",
+        ticket_id="ticket-1",
+        channel="website",
+        country_code="CH",
+    )
+    read_action = runtime_tool_actions_from_tool_calls(
+        [
+            {
+                "tool_name": "speedaf.order.query",
+                "arguments": {"tracking_number": "CH111111123456"},
+                "idempotency_key": "model-controlled-read-key",
+            }
+        ]
+    )[0]
+    assert core._idempotency_key_for_action(
+        read_action,
+        case_context=context,
+        tenant_id="tenant-1",
+        channel="website",
+        country_code="CH",
+    ) is None
+
+    first = runtime_tool_actions_from_tool_calls(
+        [
+            {
+                "tool_name": "ticket.create",
+                "arguments": {"description": "first request"},
+                "idempotency_key": "same-model-key",
+            }
+        ]
+    )[0]
+    same = runtime_tool_actions_from_tool_calls(
+        [
+            {
+                "tool_name": "ticket.create",
+                "arguments": {"description": "first request"},
+                "idempotency_key": "different-model-key",
+            }
+        ]
+    )[0]
+    second = runtime_tool_actions_from_tool_calls(
+        [
+            {
+                "tool_name": "ticket.create",
+                "arguments": {"description": "second request"},
+                "idempotency_key": "same-model-key",
+            }
+        ]
+    )[0]
+
+    def key(action):
+        return core._idempotency_key_for_action(
+            action,
+            case_context=context,
+            tenant_id="tenant-1",
+            channel="website",
+            country_code="CH",
+        )
+
+    assert key(first) == key(same)
+    assert key(first) != key(second)
+    assert "same-model-key" not in str(key(first))
+    assert "first request" not in str(key(first))
+
+
+def test_execution_argument_bounding_stops_nested_payloads():
+    nested = {"level": {"level": {"level": {"level": {"level": {"level": "too deep"}}}}}}
+    action = runtime_tool_actions_from_tool_calls(
+        [{"tool_name": "timeline.event.create", "arguments": nested}]
+    )[0]
+
+    assert "too deep" not in str(action.arguments)
+    assert "[truncated]" in str(action.arguments)
+
+
+
+def test_executor_rejects_raw_additional_properties_before_argument_bounding(
+    db_session,
+):
+    add_policy(db_session, "knowledge.search", risk_level="low")
+    secret = "raw-value-must-never-reach-handler-or-audit"
+
+    result = execute_controlled_tool_calls(
+        db_session,
+        tool_calls=[
+            {
+                "tool_name": "knowledge.search",
+                "arguments": {
+                    "query": "approved policy",
+                    "raw_payload": {"token": secret},
+                },
+            }
+        ],
+        case_context=CaseContext(channel="webchat", country_code="ME"),
+        channel="webchat",
+        country_code="ME",
+        options=GovernedToolExecutionOptions(
+            allowed_tool_names=frozenset({"knowledge.search"}),
+            granted_permissions=frozenset({"knowledge:read"}),
+        ),
+    )[0]
+
+    assert result.ok is False
+    assert result.status == "blocked"
+    assert result.error_code == "tool_input_schema_invalid"
+    assert "additionalProperties" in (result.error_message or "")
+    log = db_session.query(ToolCallLog).one()
+    assert secret not in f"{log.input_summary} {log.output_summary} {log.error_message}"
