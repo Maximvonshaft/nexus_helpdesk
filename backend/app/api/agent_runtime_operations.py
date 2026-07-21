@@ -21,7 +21,6 @@ from ..services.agent_runtime.run_events import (
     agent_run_payload,
 )
 from ..services.agent_runtime.runtime import run_agent_with_db
-from ..services.agent_runtime.specialist_service import run_read_only_specialists
 from ..services.agent_runtime.tool_adapter import executable_tool_names
 from ..services.ai_runtime.schemas import RuntimeAIProviderRequest
 from ..services.ai_runtime_context import build_agent_context
@@ -34,6 +33,15 @@ from ..services.webchat_ai_decision_runtime.tool_registry import get_tool_contra
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/agent-control", tags=["agent-control"])
+_ALLOWED_SPECIALISTS = frozenset(
+    {
+        "knowledge_researcher",
+        "policy_reviewer",
+        "case_summarizer",
+        "translation_reviewer",
+        "data_analyst",
+    }
+)
 
 
 class MCPDoctorRequest(BaseModel):
@@ -49,13 +57,6 @@ class MCPDoctorRequest(BaseModel):
     cohort_key: str = Field(
         default="operator-mcp-doctor", min_length=1, max_length=160
     )
-
-
-class SpecialistReviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    tenant_key: str | None = Field(default=None, max_length=80)
-    specialists: list[str] = Field(min_length=1, max_length=3)
 
 
 class AgentRunForkRequest(BaseModel):
@@ -232,44 +233,6 @@ def list_agent_run_events(
     }
 
 
-@router.post("/runs/{run_id}/specialists")
-def review_agent_run_with_specialists(
-    run_id: int,
-    payload: SpecialistReviewRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Produce read-only evidence reviews from content-safe persisted facts."""
-
-    ensure_capability(
-        current_user,
-        CAP_AI_CONFIG_READ,
-        db,
-        message="Agent configuration read capability required",
-    )
-    tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=payload.tenant_key,
-        allow_platform_default=True,
-    )
-    parent = _run_or_404(db, run_id=run_id, tenant_key=tenant)
-    try:
-        results = run_read_only_specialists(
-            db,
-            parent_run=parent,
-            specialists=payload.specialists,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
-    return {
-        "parent_run": agent_run_payload(parent),
-        "specialists": results,
-        "read_only": True,
-        "customer_visible": False,
-    }
-
-
 @router.post("/runs/{run_id}/fork")
 async def fork_agent_run(
     run_id: int,
@@ -277,7 +240,13 @@ async def fork_agent_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Run a read-only fork only when the original immutable snapshot matches."""
+    """Run a read-only fork only when the original immutable snapshot matches.
+
+    Requested Specialists are instructions to the parent Agent. Actual delegation
+    may occur only through the canonical ``specialist.delegate`` Tool, its release
+    Playbook exposure, policy gate and Provider Router. This API never executes a
+    second Specialist path directly.
+    """
 
     ensure_capability(
         current_user,
@@ -304,6 +273,7 @@ async def fork_agent_run(
     snapshot = _snapshot_for_run(db, parent)
     if snapshot is None:
         raise HTTPException(status_code=409, detail="agent_run_snapshot_unavailable")
+    requested_specialists = _requested_specialists(payload.specialists)
 
     fork_session_id = (
         f"{payload.fork_kind}:{parent.id}:{current_user.id}:"
@@ -329,15 +299,6 @@ async def fork_agent_run(
             detail="agent_fork_exact_release_not_resolved",
         )
 
-    try:
-        specialist_results = run_read_only_specialists(
-            db,
-            parent_run=parent,
-            specialists=payload.specialists,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
-
     read_tools = _read_only_tools()
     permissions = sorted(
         {
@@ -357,8 +318,9 @@ async def fork_agent_run(
         }
     )
     channel_context = dict(context.get("channel_context") or {})
-    if specialist_results:
-        channel_context["specialist_evidence"] = specialist_results
+    if requested_specialists:
+        channel_context["requested_specialists"] = requested_specialists
+        channel_context["specialist_delegation_tool"] = "specialist.delegate"
     runtime_context = {
         **context,
         "channel_context": channel_context,
@@ -378,7 +340,8 @@ async def fork_agent_run(
         "resolved_digest": resolved_digest,
         "fork_kind": payload.fork_kind,
         "read_tools": sorted(read_tools),
-        "specialists": specialist_results,
+        "requested_specialists": requested_specialists,
+        "specialist_delegate_available": "specialist.delegate" in read_tools,
         "model_executed": False,
     }
     if not payload.execute_model:
@@ -439,3 +402,14 @@ def _read_only_tools() -> set[str]:
         for name in executable_tool_names()
         if (contract := get_tool_contract(name)) is not None and contract.is_read_tool
     }
+
+
+def _requested_specialists(values: list[str]) -> list[str]:
+    output: list[str] = []
+    for raw in values:
+        name = str(raw or "").strip().lower()
+        if name not in _ALLOWED_SPECIALISTS:
+            raise HTTPException(status_code=400, detail="agent_specialist_not_allowed")
+        if name not in output:
+            output.append(name)
+    return output[:3]
