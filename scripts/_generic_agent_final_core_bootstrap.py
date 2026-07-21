@@ -4,6 +4,14 @@ from pathlib import Path
 
 path = Path("scripts/_generic_agent_final_core.py")
 text = path.read_text(encoding="utf-8")
+text = text.replace(
+    'match = re.search(rf"^def {re.escape(name)}\\(", text, flags=re.MULTILINE)',
+    'match = re.search(rf"^(?:async\\s+)?def {re.escape(name)}\\(", text, flags=re.MULTILINE)',
+)
+text = text.replace(
+    'next_match = re.search(r"^def [A-Za-z0-9_]+\\(", text[match.end():], flags=re.MULTILINE)',
+    'next_match = re.search(r"^(?:async\\s+)?def [A-Za-z0-9_]+\\(", text[match.end():], flags=re.MULTILINE)',
+)
 start_marker = 'existing_start, existing_end = function_bounds(core, "_existing_executed_log")\n'
 end_marker = 'write(core_path, core)\n'
 start = text.find(start_marker)
