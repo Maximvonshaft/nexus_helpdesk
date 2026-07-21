@@ -33,6 +33,7 @@ RUNTIME_PATHS = (
 )
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
+    "tracking_missing_number",
     "shipment_status_without_evidence",
     "_contains_live_shipment_conclusion",
     "_maybe_lookup_tracking_fact",
