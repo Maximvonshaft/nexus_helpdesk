@@ -38,7 +38,7 @@ def test_final_tool_audit_write_sanitizes_every_json_field(tmp_path):
     raw_tracking = "CH1234567890"
     raw_phone = "+382 67123456"
     raw_email = "customer@example.test"
-    raw_secret = "sk-proj-PERSISTSECRET123456789"
+    raw_secret = "synthetic-credential-marker"
     raw_group = "120363999999999999@g.us"
     raw_address = "221 Baker Street"
 
