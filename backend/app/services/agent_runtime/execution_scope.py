@@ -26,7 +26,7 @@ def current_agent_release_snapshot() -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def released_knowledge_versions() -> frozenset[tuple[str, int]] | None:
+def released_knowledge_evidence() -> tuple[dict[str, Any], ...] | None:
     snapshot = current_agent_release_snapshot()
     if snapshot is None or snapshot.get("source") != "deployment":
         return None
@@ -34,7 +34,7 @@ def released_knowledge_versions() -> frozenset[tuple[str, int]] | None:
     rows = resolved.get("knowledge") if isinstance(resolved, dict) else None
     if not isinstance(rows, list):
         raise RuntimeError("agent_release_knowledge_evidence_invalid")
-    output: set[tuple[str, int]] = set()
+    output: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             raise RuntimeError("agent_release_knowledge_reference_invalid")
@@ -43,7 +43,22 @@ def released_knowledge_versions() -> frozenset[tuple[str, int]] | None:
             version = int(row.get("version"))
         except (TypeError, ValueError) as exc:
             raise RuntimeError("agent_release_knowledge_version_invalid") from exc
-        if not key or version <= 0:
+        snapshot_json = row.get("snapshot")
+        if not key or version <= 0 or not isinstance(snapshot_json, dict):
             raise RuntimeError("agent_release_knowledge_reference_invalid")
-        output.add((key, version))
-    return frozenset(output)
+        output.append(
+            {
+                "id": int(row.get("id") or 0),
+                "item_key": key,
+                "version": version,
+                "snapshot": snapshot_json,
+            }
+        )
+    return tuple(output)
+
+
+def released_knowledge_versions() -> frozenset[tuple[str, int]] | None:
+    rows = released_knowledge_evidence()
+    if rows is None:
+        return None
+    return frozenset((str(row["item_key"]), int(row["version"])) for row in rows)
