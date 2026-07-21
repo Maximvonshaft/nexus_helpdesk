@@ -13,7 +13,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .health import ProviderRuntimeHealth
-from .output_contracts import AGENT_TURN_OUTPUT_CONTRACT, OutputContracts
+from .output_contracts import (
+    AGENT_SPECIALIST_OUTPUT_CONTRACT,
+    AGENT_TURN_OUTPUT_CONTRACT,
+    OutputContracts,
+)
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
 from .traffic_selection import (
@@ -35,6 +39,7 @@ _CONFIGURATION_ERROR_CODES = frozenset(
         "provider_runtime_primary_provider_invalid",
         "provider_runtime_fallback_provider_invalid",
         "provider_runtime_output_contract_invalid",
+        "provider_runtime_output_contract_mismatch",
         "provider_runtime_timeout_ms_invalid",
     }
 )
@@ -128,7 +133,10 @@ class ProviderRuntimeRouter:
         try:
             kill_switch = effective_kill_switch(raw["kill_switch"])
         except (TypeError, ValueError) as exc:
-            return self._reject_configuration(request, _configuration_error_code(exc))
+            return self._reject_configuration(
+                request,
+                _configuration_error_code(exc),
+            )
 
         if kill_switch:
             traffic = select_provider_traffic(
@@ -159,7 +167,10 @@ class ProviderRuntimeRouter:
                 request.timeout_ms or config["timeout_ms"]
             )
         except (RuntimeError, TypeError, ValueError) as exc:
-            return self._reject_configuration(request, _configuration_error_code(exc))
+            return self._reject_configuration(
+                request,
+                _configuration_error_code(exc),
+            )
 
         if traffic.path == ProviderTrafficPath.CONTROL:
             summary = _traffic_summary(traffic)
@@ -189,11 +200,12 @@ class ProviderRuntimeRouter:
                 summary,
                 "provider_runtime_output_contract_invalid",
             )
-            return _unavailable("provider_runtime_output_contract_invalid", summary)
+            return _unavailable(
+                "provider_runtime_output_contract_invalid",
+                summary,
+            )
 
         request.output_contract = output_contract
-        # Routing configuration is the safety ceiling. An immutable Agent Runtime
-        # Policy can tighten this value but can never widen the Provider boundary.
         request.timeout_ms = min(requested_timeout_ms, config["timeout_ms"])
         providers = _dedupe_providers(
             [config["primary_provider"], *config["fallbacks"]]
@@ -238,13 +250,16 @@ class ProviderRuntimeRouter:
                 safe_summary = _traffic_summary(
                     traffic,
                     {
-                        **_bounded_provider_summary(result.raw_payload_safe_summary),
+                        **_bounded_provider_summary(
+                            result.raw_payload_safe_summary
+                        ),
                         "provider_error_category": error_code,
                         "effective_timeout_ms": request.timeout_ms,
                     },
                 )
                 health_event = ProviderRuntimeHealth.record_failure(
-                    provider_name, error_code
+                    provider_name,
+                    error_code,
                 )
                 if health_event:
                     safe_summary["provider_health"] = health_event
@@ -268,7 +283,10 @@ class ProviderRuntimeRouter:
                     raise ValueError("provider_output_missing")
                 parsed = OutputContracts.validate_and_parse(
                     output_contract,
-                    json.dumps(result.structured_output, ensure_ascii=False),
+                    json.dumps(
+                        result.structured_output,
+                        ensure_ascii=False,
+                    ),
                 )
             except Exception:
                 safe_summary = _traffic_summary(
@@ -279,7 +297,8 @@ class ProviderRuntimeRouter:
                     },
                 )
                 health_event = ProviderRuntimeHealth.record_failure(
-                    provider_name, "provider_output_invalid"
+                    provider_name,
+                    "provider_output_invalid",
                 )
                 if health_event:
                     safe_summary["provider_health"] = health_event
@@ -298,7 +317,9 @@ class ProviderRuntimeRouter:
             safe_summary = _traffic_summary(
                 traffic,
                 {
-                    **_bounded_provider_summary(result.raw_payload_safe_summary),
+                    **_bounded_provider_summary(
+                        result.raw_payload_safe_summary
+                    ),
                     "effective_timeout_ms": request.timeout_ms,
                 },
             )
@@ -330,11 +351,15 @@ class ProviderRuntimeRouter:
             "all_providers_failed",
         )
         return _unavailable(
-            "all_providers_failed", summary, elapsed_ms=last_elapsed_ms
+            "all_providers_failed",
+            summary,
+            elapsed_ms=last_elapsed_ms,
         )
 
     def _reject_configuration(
-        self, request: ProviderRequest, reason: str
+        self,
+        request: ProviderRequest,
+        reason: str,
     ) -> ProviderResult:
         summary = {
             "traffic": {
@@ -353,10 +378,16 @@ class ProviderRuntimeRouter:
             summary,
             reason,
         )
-        return _unavailable("provider_runtime_configuration_invalid", summary)
+        return _unavailable(
+            "provider_runtime_configuration_invalid",
+            summary,
+        )
 
 
 def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
+    requested_contract = str(
+        request.output_contract or AGENT_TURN_OUTPUT_CONTRACT
+    ).strip()
     rule = db.execute(
         text(
             """
@@ -378,7 +409,9 @@ def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
         return {
             "primary_provider": "private_ai_runtime",
             "fallback_providers": [],
-            "output_contract": AGENT_TURN_OUTPUT_CONTRACT,
+            "output_contract": requested_contract,
+            "requested_output_contract": requested_contract,
+            "rule_found": False,
             "timeout_ms": 15000,
             "kill_switch": False,
             "canary_percent": 0,
@@ -387,6 +420,8 @@ def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
         "primary_provider": rule["primary_provider"],
         "fallback_providers": rule["fallback_providers"],
         "output_contract": rule["output_contract"],
+        "requested_output_contract": requested_contract,
+        "rule_found": True,
         "timeout_ms": rule["timeout_ms"],
         "kill_switch": rule["kill_switch"],
         "canary_percent": rule["canary_percent"],
@@ -410,11 +445,21 @@ def _effective_configuration(raw: dict[str, Any]) -> dict[str, Any]:
     if any(provider not in _APPROVED_PROVIDERS for provider in fallbacks):
         raise ValueError("provider_runtime_fallback_provider_invalid")
 
-    output_contract = (
-        os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
-        or str(raw["output_contract"] or "").strip()
-    )
-    if not output_contract:
+    requested_contract = str(
+        raw.get("requested_output_contract") or AGENT_TURN_OUTPUT_CONTRACT
+    ).strip()
+    configured_contract = str(raw.get("output_contract") or "").strip()
+    if requested_contract == AGENT_SPECIALIST_OUTPUT_CONTRACT:
+        if raw.get("rule_found") and configured_contract != requested_contract:
+            raise ValueError("provider_runtime_output_contract_mismatch")
+        output_contract = requested_contract
+    else:
+        output_contract = (
+            os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
+            or configured_contract
+            or requested_contract
+        )
+    if not output_contract or not OutputContracts.get_schema(output_contract):
         raise ValueError("provider_runtime_output_contract_invalid")
 
     timeout_value = os.getenv("PROVIDER_RUNTIME_TIMEOUT_MS")
@@ -452,14 +497,26 @@ def _coerce_fallbacks(value: Any) -> list[str]:
     if value in (None, "", []):
         return []
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
+        return [
+            str(item).strip()
+            for item in value
+            if str(item).strip()
+        ]
     if isinstance(value, str):
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
-            return [item.strip() for item in value.split(",") if item.strip()]
+            return [
+                item.strip()
+                for item in value.split(",")
+                if item.strip()
+            ]
         if isinstance(parsed, list):
-            return [str(item).strip() for item in parsed if str(item).strip()]
+            return [
+                str(item).strip()
+                for item in parsed
+                if str(item).strip()
+            ]
     raise ValueError("provider_runtime_fallback_provider_invalid")
 
 
@@ -482,16 +539,32 @@ def _bounded_provider_error_code(value: Any) -> str:
         return "provider_timeout"
     if "_http_" in candidate:
         return "provider_http_error"
-    if any(marker in candidate for marker in ("network", "url_error", "connection")):
+    if any(
+        marker in candidate
+        for marker in ("network", "url_error", "connection")
+    ):
         return "provider_network_error"
     if any(
         marker in candidate
-        for marker in ("disabled", "missing", "invalid", "forbidden", "requires")
+        for marker in (
+            "disabled",
+            "missing",
+            "invalid",
+            "forbidden",
+            "requires",
+        )
     ):
         return "provider_configuration_error"
     if any(
         marker in candidate
-        for marker in ("bad", "empty", "contract", "response", "json", "schema")
+        for marker in (
+            "bad",
+            "empty",
+            "contract",
+            "response",
+            "json",
+            "schema",
+        )
     ):
         return "provider_output_invalid"
     return "provider_call_failed"
@@ -503,7 +576,10 @@ def _bounded_provider_summary(raw: Any) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for key in _SAFE_PROVIDER_STRING_KEYS:
         value = raw.get(key)
-        if isinstance(value, str) and _SAFE_PROVIDER_TOKEN.fullmatch(value.strip()):
+        if (
+            isinstance(value, str)
+            and _SAFE_PROVIDER_TOKEN.fullmatch(value.strip())
+        ):
             safe[key] = value.strip()
     for key in _SAFE_PROVIDER_SCALAR_KEYS:
         value = raw.get(key)
@@ -522,7 +598,11 @@ def _bounded_provider_summary(raw: Any) -> dict[str, Any]:
     return safe
 
 
-def _bounded_numeric_map(value: Any, *, depth: int = 0) -> dict[str, Any]:
+def _bounded_numeric_map(
+    value: Any,
+    *,
+    depth: int = 0,
+) -> dict[str, Any]:
     if not isinstance(value, dict) or depth > 2:
         return {}
     safe: dict[str, Any] = {}
@@ -556,7 +636,13 @@ def _bounded_safe_structure(value: Any, *, depth: int = 0) -> Any:
         return [
             item
             for raw in value[:32]
-            if (item := _bounded_safe_structure(raw, depth=depth + 1)) is not None
+            if (
+                item := _bounded_safe_structure(
+                    raw,
+                    depth=depth + 1,
+                )
+            )
+            is not None
         ]
     if isinstance(value, dict):
         output: dict[str, Any] = {}
@@ -564,7 +650,10 @@ def _bounded_safe_structure(value: Any, *, depth: int = 0) -> Any:
             key = str(raw_key).strip()[:80]
             if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", key):
                 continue
-            item = _bounded_safe_structure(raw_item, depth=depth + 1)
+            item = _bounded_safe_structure(
+                raw_item,
+                depth=depth + 1,
+            )
             if item is not None:
                 output[key] = item
         return output
@@ -587,7 +676,10 @@ def _unavailable(
     elapsed_ms: int = 0,
 ) -> ProviderResult:
     result = ProviderResult.unavailable(
-        "router", error_code, elapsed_ms, fallback_allowed=False
+        "router",
+        error_code,
+        elapsed_ms,
+        fallback_allowed=False,
     )
     result.raw_payload_safe_summary = summary
     return result
