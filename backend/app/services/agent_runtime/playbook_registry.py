@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..agent_control_config import PLAYBOOK, resolve_published_agent_configs
+from ..agent_control_config import PLAYBOOK
 from ..agent_tool_contracts import bootstrap_agent_tool_contracts
 
 bootstrap_agent_tool_contracts()
@@ -55,36 +55,8 @@ def load_playbooks(
     language: str | None = None,
     release_snapshot: dict[str, Any] | None = None,
 ) -> tuple[PlaybookDefinition, ...]:
-    released = _released_playbooks(release_snapshot)
-    if released is not None:
-        rows = released
-    else:
-        resolved = resolve_published_agent_configs(
-            db,
-            config_type=PLAYBOOK,
-            market_id=market_id,
-            channel=channel,
-            language=language,
-        )
-        rows = [
-            PlaybookDefinition(
-                resource_id=item.resource_id,
-                resource_key=item.resource_key,
-                name=str(item.content.get("name") or ""),
-                display_name=str(
-                    item.content.get("display_name") or item.content.get("name") or ""
-                ),
-                description=str(item.content.get("description") or ""),
-                tools=tuple(str(name) for name in item.content.get("tools") or []),
-                instructions=tuple(
-                    str(text) for text in item.content.get("instructions") or []
-                ),
-                priority=int(item.content.get("priority") or 100),
-                published_version=item.version,
-                scope_rank=item.scope_rank,
-            )
-            for item in resolved
-        ]
+    del db, market_id, channel, language
+    rows = _released_playbooks(release_snapshot)
     rows.sort(key=lambda item: (-item.scope_rank, item.priority, item.resource_key))
     return tuple(rows)
 
@@ -137,9 +109,9 @@ def all_playbook_tool_names(
 
 def _released_playbooks(
     release_snapshot: dict[str, Any] | None,
-) -> list[PlaybookDefinition] | None:
+) -> list[PlaybookDefinition]:
     if not isinstance(release_snapshot, dict) or release_snapshot.get("source") != "deployment":
-        return None
+        raise RuntimeError("agent_release_snapshot_required_for_playbooks")
     resolved = release_snapshot.get("resolved")
     if not isinstance(resolved, dict):
         raise RuntimeError("agent_release_resolved_resources_missing")
