@@ -29,7 +29,7 @@ from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read
 from ..services import knowledge_service
 from ..services.knowledge_studio_service import run_conflict_check
 from ..services.knowledge_retrieval_service import retrieve_published_chunks
-from ..services.ai_runtime_context import build_webchat_runtime_context
+from ..services.ai_runtime_context import build_agent_context
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
@@ -230,7 +230,7 @@ def test_knowledge_runtime_context(
 ):
     ensure_can_read_ai_configs(current_user, db)
     return KnowledgeRuntimeContextTestOut(
-        context=build_webchat_runtime_context(
+        context=build_agent_context(
             db,
             tenant_key=payload.tenant_key,
             channel_key=payload.channel or "website",

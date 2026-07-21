@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.db import Base, engine
+from app.db import Base, SessionLocal, engine
+from app.models_agent_routing import ConversationControl
+from app.webchat_models import WebchatConversation
 from app.main import app
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceProviderError
@@ -81,6 +83,18 @@ def test_livekit_room_is_closed_when_token_issuance_fails(monkeypatch):
 
     client = TestClient(app, raise_server_exceptions=False)
     conversation_id, visitor_token = _create_webchat_conversation(client)
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(
+            WebchatConversation.public_id == conversation_id
+        ).one()
+        control = db.query(ConversationControl).filter(
+            ConversationControl.conversation_id == conversation.id
+        ).one()
+        control.country_code = "ME"
+        db.commit()
+    finally:
+        db.close()
 
     response = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",

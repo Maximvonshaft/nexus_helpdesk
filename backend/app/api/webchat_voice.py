@@ -5,18 +5,28 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..unit_of_work import managed_session
-from ..voice_schemas import SpeedafVoiceCallbackRequest, SpeedafVoiceCallbackResponse, WebchatVoiceActionList, WebchatVoiceActionRequest, WebchatVoiceActionResponse, WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
+from ..voice_schemas import (
+    SpeedafVoiceCallbackRequest,
+    SpeedafVoiceCallbackResponse,
+    WebchatVoiceActionList,
+    WebchatVoiceActionRequest,
+    WebchatVoiceActionResponse,
+    WebchatVoiceCreateRequest,
+    WebchatVoiceEvidenceResponse,
+    WebchatVoiceNoteRequest,
+    WebchatVoiceNoteResponse,
+    WebchatVoiceRejectRequest,
+)
 from ..webchat_voice_config import load_webchat_voice_runtime_config
-from ..services.conversation_first_service import ensure_voice_ticket_for_public_conversation
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
     accept_admin_voice_session,
     create_public_voice_session,
     end_admin_voice_session,
+    end_public_voice_session,
     list_admin_incoming_voice_sessions,
     list_admin_voice_actions,
     list_admin_voice_evidence,
-    end_public_voice_session,
     list_admin_voice_sessions,
     queue_speedaf_voice_callback,
     record_admin_voice_action,
@@ -44,11 +54,6 @@ def create_voice_session(
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
-        ensure_voice_ticket_for_public_conversation(
-            db,
-            conversation_public_id=conversation_id,
-            visitor_token=visitor_token,
-        )
         return create_public_voice_session(
             db,
             conversation_public_id=conversation_id,
@@ -85,40 +90,6 @@ def list_ticket_voice_sessions(
     return list_admin_voice_sessions(db, ticket_id=ticket_id, current_user=current_user)
 
 
-@router.get("/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence", response_model=WebchatVoiceEvidenceResponse)
-def read_ticket_voice_evidence(
-    ticket_id: int,
-    voice_session_id: str,
-    limit: int = 50,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-) -> dict:
-    return list_admin_voice_evidence(
-        db,
-        ticket_id=ticket_id,
-        voice_session_public_id=voice_session_id,
-        current_user=current_user,
-        limit=limit,
-    )
-
-
-@router.get("/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionList)
-def list_ticket_voice_actions(
-    ticket_id: int,
-    voice_session_id: str,
-    limit: int = 20,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-) -> dict:
-    return list_admin_voice_actions(
-        db,
-        ticket_id=ticket_id,
-        voice_session_public_id=voice_session_id,
-        current_user=current_user,
-        limit=limit,
-    )
-
-
 @router.get("/admin/voice/sessions")
 def list_incoming_voice_sessions(
     status: str = "ringing",
@@ -127,12 +98,46 @@ def list_incoming_voice_sessions(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return list_admin_incoming_voice_sessions(db, current_user=current_user, status_filter=status, limit=limit)
+        return list_admin_incoming_voice_sessions(
+            db,
+            current_user=current_user,
+            status_filter=status,
+            limit=limit,
+        )
 
 
-@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept")
-def accept_ticket_voice_session(
-    ticket_id: int,
+@router.get("/admin/voice/{voice_session_id}/evidence", response_model=WebchatVoiceEvidenceResponse)
+def read_voice_evidence(
+    voice_session_id: str,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    return list_admin_voice_evidence(
+        db,
+        voice_session_public_id=voice_session_id,
+        current_user=current_user,
+        limit=limit,
+    )
+
+
+@router.get("/admin/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionList)
+def read_voice_actions(
+    voice_session_id: str,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    return list_admin_voice_actions(
+        db,
+        voice_session_public_id=voice_session_id,
+        current_user=current_user,
+        limit=limit,
+    )
+
+
+@router.post("/admin/voice/{voice_session_id}/accept")
+def accept_voice_session(
     voice_session_id: str,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -140,7 +145,6 @@ def accept_ticket_voice_session(
     try:
         result = accept_admin_voice_session(
             db,
-            ticket_id=ticket_id,
             voice_session_public_id=voice_session_id,
             current_user=current_user,
         )
@@ -157,9 +161,8 @@ def accept_ticket_voice_session(
         raise
 
 
-@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject")
-def reject_ticket_voice_session(
-    ticket_id: int,
+@router.post("/admin/voice/{voice_session_id}/reject")
+def reject_voice_session(
     voice_session_id: str,
     payload: WebchatVoiceRejectRequest | None = None,
     db: Session = Depends(get_db),
@@ -168,16 +171,14 @@ def reject_ticket_voice_session(
     with managed_session(db):
         return reject_admin_voice_session(
             db,
-            ticket_id=ticket_id,
             voice_session_public_id=voice_session_id,
             current_user=current_user,
             reason=payload.reason if payload else None,
         )
 
 
-@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes", response_model=WebchatVoiceNoteResponse)
-def save_ticket_voice_note(
-    ticket_id: int,
+@router.post("/admin/voice/{voice_session_id}/notes", response_model=WebchatVoiceNoteResponse)
+def save_voice_note(
     voice_session_id: str,
     payload: WebchatVoiceNoteRequest,
     db: Session = Depends(get_db),
@@ -186,7 +187,6 @@ def save_ticket_voice_note(
     with managed_session(db):
         return save_admin_voice_note(
             db,
-            ticket_id=ticket_id,
             voice_session_public_id=voice_session_id,
             current_user=current_user,
             body=payload.body,
@@ -194,9 +194,8 @@ def save_ticket_voice_note(
         )
 
 
-@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionResponse)
-def create_ticket_voice_action(
-    ticket_id: int,
+@router.post("/admin/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionResponse)
+def create_voice_action(
     voice_session_id: str,
     payload: WebchatVoiceActionRequest,
     db: Session = Depends(get_db),
@@ -205,7 +204,6 @@ def create_ticket_voice_action(
     with managed_session(db):
         return record_admin_voice_action(
             db,
-            ticket_id=ticket_id,
             voice_session_public_id=voice_session_id,
             current_user=current_user,
             action_type=payload.action_type,
@@ -215,9 +213,8 @@ def create_ticket_voice_action(
         )
 
 
-@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback", response_model=SpeedafVoiceCallbackResponse)
-def queue_ticket_voice_speedaf_callback(
-    ticket_id: int,
+@router.post("/admin/voice/{voice_session_id}/speedaf/callback", response_model=SpeedafVoiceCallbackResponse)
+def queue_voice_speedaf_callback(
     voice_session_id: str,
     payload: SpeedafVoiceCallbackRequest,
     request: Request,
@@ -227,7 +224,6 @@ def queue_ticket_voice_speedaf_callback(
     with managed_session(db):
         return queue_speedaf_voice_callback(
             db,
-            ticket_id=ticket_id,
             voice_session_public_id=voice_session_id,
             current_user=current_user,
             call_session_id=payload.callSessionId,
@@ -237,15 +233,18 @@ def queue_ticket_voice_speedaf_callback(
         )
 
 
-@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/end")
-def end_ticket_voice_session(
-    ticket_id: int,
+@router.post("/admin/voice/{voice_session_id}/end")
+def end_voice_session(
     voice_session_id: str,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return end_admin_voice_session(db, ticket_id=ticket_id, voice_session_public_id=voice_session_id, current_user=current_user)
+        return end_admin_voice_session(
+            db,
+            voice_session_public_id=voice_session_id,
+            current_user=current_user,
+        )
 
 
 @router.get("/voice/runtime-config")

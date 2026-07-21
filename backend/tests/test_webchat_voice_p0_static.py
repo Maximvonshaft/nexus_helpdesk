@@ -28,7 +28,7 @@ def test_backend_p0_routes_and_metrics_are_present():
     assert "reject_admin_voice_session" in service
     assert "voice.session.rejected" in service
     assert '"/admin/voice/sessions"' in api
-    assert '"/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject"' in api
+    assert '"/admin/voice/{voice_session_id}/reject"' in api
 
 
 def test_canonical_workspace_provides_text_fallback_while_widget_owns_live_voice():

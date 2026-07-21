@@ -185,6 +185,48 @@ PY
   CONV_ID="$(python3 -c 'import json;print(json.load(open("'"$OUT"'/sensitive/init.json"))["conversation_id"])')"
   VISITOR_TOKEN="$(python3 -c 'import json;print(json.load(open("'"$OUT"'/sensitive/init.json"))["visitor_token"])')"
 
+  "${DC[@]}" run --rm --no-deps -T app python - <<PY > "$OUT/e2e/scope_setup.json" 2>"$OUT/e2e/scope_setup.stderr"
+import json
+from app.db import SessionLocal
+from app.models_agent_routing import ConversationControl
+from app.operator_models import OperatorQueueScopeGrant
+from app.webchat_models import WebchatConversation
+with SessionLocal() as db:
+    conversation = db.query(WebchatConversation).filter(
+        WebchatConversation.public_id == "$CONV_ID"
+    ).one()
+    control = db.query(ConversationControl).filter(
+        ConversationControl.conversation_id == conversation.id
+    ).one()
+    control.country_code = control.country_code or "ME"
+    grant = db.query(OperatorQueueScopeGrant).filter(
+        OperatorQueueScopeGrant.user_id == int("$ADMIN_USER_ID"),
+        OperatorQueueScopeGrant.tenant_key == control.tenant_key,
+        OperatorQueueScopeGrant.country_code == control.country_code,
+        OperatorQueueScopeGrant.channel_key == control.channel_key,
+    ).first()
+    if grant is None:
+        grant = OperatorQueueScopeGrant(
+            user_id=int("$ADMIN_USER_ID"),
+            tenant_key=control.tenant_key,
+            country_code=control.country_code,
+            channel_key=control.channel_key,
+            enabled=True,
+            granted_by=int("$ADMIN_USER_ID"),
+        )
+        db.add(grant)
+    else:
+        grant.enabled = True
+    db.commit()
+    print(json.dumps({
+        "conversation_id": conversation.public_id,
+        "ticket_id": conversation.ticket_id,
+        "tenant_key": control.tenant_key,
+        "country_code": control.country_code,
+        "channel_key": control.channel_key,
+    }, ensure_ascii=False))
+PY
+
   curl -sS -m 45 "$APP_BASE/api/webchat/conversations/$CONV_ID/voice/sessions" \
     -H 'Content-Type: application/json' \
     -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" \
@@ -207,36 +249,40 @@ PY
   if [ -z "$VOICE_ID" ] || [ "$PROVIDER" != "livekit" ]; then
     add_reason NO_GO "synthetic create voice did not return livekit voice_session_id"
   else
-    TICKET_ID="$("${DC[@]}" run --rm --no-deps -T app python - <<PY 2>/dev/null | tail -n1
-from app.db import SessionLocal
-from app.webchat_models import WebchatConversation
-with SessionLocal() as db:
-    c = db.query(WebchatConversation).filter(WebchatConversation.public_id == "$CONV_ID").first()
-    print(c.ticket_id)
-PY
-)"
-    curl -sS -m 45 "$APP_BASE/api/webchat/admin/tickets/$TICKET_ID/voice/$VOICE_ID/accept" \
+    curl -sS -m 45 "$APP_BASE/api/webchat/admin/voice/$VOICE_ID/accept" \
       -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -X POST \
       > "$OUT/sensitive/accept_voice.json"
-    curl -sS -m 45 "$APP_BASE/api/webchat/admin/tickets/$TICKET_ID/voice/$VOICE_ID/end" \
+    curl -sS -m 45 "$APP_BASE/api/webchat/admin/voice/$VOICE_ID/end" \
       -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -X POST \
       > "$OUT/e2e/end_voice.json"
     "${DC[@]}" run --rm --no-deps -T app python - <<PY > "$OUT/e2e/evidence_verify.json" 2>"$OUT/e2e/evidence_verify.stderr"
 import json
 from app.db import SessionLocal
 from app.voice_models import WebchatVoiceSession
-from app.webchat_models import WebchatMessage, WebchatEvent
+from app.webchat_models import WebchatConversation, WebchatMessage, WebchatEvent
 with SessionLocal() as db:
-    s = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == "$VOICE_ID").first()
-    messages = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == int("$TICKET_ID"), WebchatMessage.message_type == "voice_call").all()
-    events = db.query(WebchatEvent).filter(WebchatEvent.ticket_id == int("$TICKET_ID"), WebchatEvent.event_type.like("voice.%")).order_by(WebchatEvent.id.asc()).all()
+    conversation = db.query(WebchatConversation).filter(
+        WebchatConversation.public_id == "$CONV_ID"
+    ).one()
+    session = db.query(WebchatVoiceSession).filter(
+        WebchatVoiceSession.public_id == "$VOICE_ID"
+    ).one()
+    messages = db.query(WebchatMessage).filter(
+        WebchatMessage.conversation_id == conversation.id,
+        WebchatMessage.message_type == "voice_call",
+    ).all()
+    events = db.query(WebchatEvent).filter(
+        WebchatEvent.conversation_id == conversation.id,
+        WebchatEvent.event_type.like("voice.%"),
+    ).order_by(WebchatEvent.id.asc()).all()
     print(json.dumps({
-        "ticket_id": int("$TICKET_ID"),
-        "voice_session_id": "$VOICE_ID",
-        "provider": s.provider if s else None,
-        "status": s.status if s else None,
+        "ticket_id": session.ticket_id,
+        "conversation_id": conversation.public_id,
+        "voice_session_id": session.public_id,
+        "provider": session.provider,
+        "status": session.status,
         "voice_call_message_count": len(messages),
-        "voice_events": [e.event_type for e in events],
+        "voice_events": [event.event_type for event in events],
     }, ensure_ascii=False, indent=2))
 PY
     cat "$OUT/e2e/evidence_verify.json"

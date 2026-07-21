@@ -128,6 +128,7 @@ REQUIRED_PATHS = (
     "config/architecture/compatibility-lifecycle.v1.json",
     CURRENT_COMPATIBILITY_REGISTRY,
     "scripts/ci/check_legacy_surface_registry.py",
+    "scripts/ci/check_agent_runtime_residue.py",
     "scripts/qualification/service_authority.py",
     "scripts/qualification/route_authority.py",
     "scripts/qualification/database_capacity.py",
@@ -518,6 +519,7 @@ def static_failures() -> list[str]:
     failures.extend(_compatibility_failures())
     failures.extend(_qualification_failures("scripts/qualification/service_authority.py"))
     failures.extend(_qualification_failures("scripts/ci/check_legacy_surface_registry.py"))
+    failures.extend(_qualification_failures("scripts/ci/check_agent_runtime_residue.py"))
     failures.extend(_migration_authority_failures())
     failures.extend(_retired_persistence_failures())
     failures.extend(_frontend_failures())

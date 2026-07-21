@@ -770,17 +770,17 @@ def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_con
     assert queue_item["visitor_label"] == "Voice Visitor"
     assert "participant_token" not in queue_item
 
-    accepted_call = client.post(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/accept", headers=headers)
+    accepted_call = client.post(f"/api/webchat/admin/voice/{voice_session_id}/accept", headers=headers)
     assert accepted_call.status_code == 200, accepted_call.text
     assert accepted_call.json()["participant_token"]
     recorded_action = client.post(
-        f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/actions",
+        f"/api/webchat/admin/voice/{voice_session_id}/actions",
         headers=headers,
         json={"action_type": "hold", "note": "Hold requested from WebCall operator contract"},
     )
     assert recorded_action.status_code == 200, recorded_action.text
     assert recorded_action.json()["action"]["provider_reason"] == "provider_adapter_pending"
-    action_history = client.get(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/actions?limit=5", headers=headers)
+    action_history = client.get(f"/api/webchat/admin/voice/{voice_session_id}/actions?limit=5", headers=headers)
     assert action_history.status_code == 200, action_history.text
     assert action_history.json()["items"][0]["action_type"] == "hold"
 
@@ -806,7 +806,7 @@ def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_con
     assert resumed_ai.status_code == 200, resumed_ai.text
     assert resumed_ai.json()["status"] == "resumed_ai"
 
-    ended_call = client.post(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/end", headers=headers)
+    ended_call = client.post(f"/api/webchat/admin/voice/{voice_session_id}/end", headers=headers)
     assert ended_call.status_code == 200, ended_call.text
     timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=40", headers=headers)
     assert timeline.status_code == 200, timeline.text
@@ -846,9 +846,9 @@ def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, d
     assert queue_item["ticket_id"] == ticket_id
     assert "participant_token" not in queue_item
 
-    accepted = client.post(f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept", headers=headers)
+    accepted = client.post(f"/api/webchat/admin/voice/{voice_session_id}/accept", headers=headers)
     assert accepted.status_code == 200, accepted.text
-    ended = client.post(f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end", headers=headers)
+    ended = client.post(f"/api/webchat/admin/voice/{voice_session_id}/end", headers=headers)
     assert ended.status_code == 200, ended.text
 
     timeline = client.get(f"/api/tickets/{ticket_id}/timeline?limit=20", headers=headers)

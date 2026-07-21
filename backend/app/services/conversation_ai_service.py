@@ -6,19 +6,25 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..models import Customer
+from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
-from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage
-from .agent_routing_service import request_handoff
-from .ai_runtime_context import build_webchat_runtime_context
+from ..webchat_models import (
+    WebchatAITurn,
+    WebchatConversation,
+    WebchatEvent,
+    WebchatMessage,
+)
+from .agent_runtime.access_policy import resolve_webchat_agent_access
+from .agent_runtime.terminal_reply import customer_visible_fallback
+from .ai_runtime_context import build_agent_context
 from .customer_language import resolve_conversation_language
 from .customer_visible_policy import evaluate_customer_visible_policy
-from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from .webchat_ai_turn_service import (
     sanitized_ai_turn_runtime_trace,
     suppress_stale_reply_if_needed,
 )
 from .webchat_runtime_ai_service import generate_webchat_runtime_reply
-
 
 AI_AUTHOR_LABEL = "AI Assistant"
 MAX_HISTORY_MESSAGES = 12
@@ -62,10 +68,13 @@ def _history(
         if row.id == visitor_message.id:
             continue
         text = (row.body_text or row.body or "").strip()
-        if not text:
-            continue
-        role = "customer" if row.direction == "visitor" else "ai"
-        recent.append({"role": role, "text": text[:500]})
+        if text:
+            recent.append(
+                {
+                    "role": "customer" if row.direction == "visitor" else "assistant",
+                    "text": text[:1000],
+                }
+            )
     return rows, recent
 
 
@@ -74,7 +83,7 @@ def _run_runtime(**kwargs: Any):
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(generate_webchat_runtime_reply(**kwargs))
-    raise RuntimeError("webchat_ai_runtime_event_loop_running")
+    raise RuntimeError("webchat_agent_runtime_event_loop_running")
 
 
 def _language_hint(text: str, rows: list[WebchatMessage]) -> str | None:
@@ -97,14 +106,15 @@ def process_ticketless_ai_reply(
     turn: WebchatAITurn | None,
 ) -> dict[str, Any]:
     if conversation.ticket_id is not None:
-        raise RuntimeError("ticketless_ai_service_received_ticket_backed_conversation")
+        raise RuntimeError(
+            "ticketless_ai_service_received_ticket_backed_conversation"
+        )
     if (conversation.channel_key or "").strip().lower() == "whatsapp":
         return {
             "status": "failed_no_public_reply",
             "reason": "ticketless_whatsapp_not_enabled",
             "reply_source": "conversation_first_guard",
         }
-
     existing = (
         db.query(WebchatMessage.id)
         .filter(
@@ -127,68 +137,88 @@ def process_ticketless_ai_reply(
         conversation=conversation,
         visitor_message=visitor_message,
     )
-    tracking_number = extract_tracking_number(visitor_message.body)
-    if tracking_number:
-        conversation.last_tracking_number = tracking_number
-    elif conversation.last_tracking_number:
-        tracking_number = conversation.last_tracking_number
-    tracking_fact = lookup_tracking_fact(
-        tracking_number=tracking_number,
-        conversation_id=conversation.id,
-        ticket_id=None,
-        request_id=f"webchat-{conversation.public_id}-{visitor_message.id}",
+    control = (
+        db.query(ConversationControl)
+        .filter(ConversationControl.conversation_id == conversation.id)
+        .first()
     )
-    tracking_summary = (
-        tracking_fact.prompt_summary()
-        if tracking_fact.fact_evidence_present and tracking_fact.pii_redacted
+    language = _language_hint(visitor_message.body or "", rows)
+    access = resolve_webchat_agent_access()
+    customer = (
+        db.get(Customer, control.customer_id)
+        if control is not None and control.customer_id is not None
         else None
     )
-    tracking_metadata = tracking_fact.metadata_payload()
-    tracking_metadata.pop("fact_evidence_present", None)
-    language = _language_hint(visitor_message.body or "", rows)
-    runtime_context = build_webchat_runtime_context(
+    runtime_context = build_agent_context(
         db,
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
         body=visitor_message.body or "",
+        market_id=None,
         language=language,
-        tracking_number=tracking_number,
-        tracking_fact_evidence_present=bool(tracking_summary),
         ticket=None,
         conversation=conversation,
-        customer=None,
-        channel_payload=tracking_metadata,
+        customer=customer,
     )
+    execution_context = dict(runtime_context.get("agent_execution_context") or {})
+    execution_context.update(
+        {
+            "conversation_id": conversation.id,
+            "ticket_id": None,
+            "customer_id": control.customer_id if control is not None else None,
+            "country_code": control.country_code if control is not None else None,
+            "ai_turn_id": turn.id if turn else None,
+            "granted_permissions": sorted(access.granted_permissions),
+            "actor_capabilities": sorted(access.actor_capabilities),
+        }
+    )
+    runtime_context["agent_allowed_tools"] = list(access.allowed_tools)
+    runtime_context["agent_execution_context"] = execution_context
     result = _run_runtime(
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
         session_id=(
             conversation.runtime_session_id
-            or f"webchat:{conversation.tenant_key}:{conversation.channel_key}:{conversation.public_id}"
+            or (
+                f"webchat:{conversation.tenant_key}:"
+                f"{conversation.channel_key}:{conversation.public_id}"
+            )
         ),
         body=visitor_message.body or "",
         recent_context=recent_context,
-        request_id=f"webchat-ai-job-{conversation.public_id}-{visitor_message.id}",
-        tracking_fact_summary=tracking_summary,
-        tracking_fact_metadata=tracking_metadata,
-        tracking_fact_evidence_present=bool(tracking_summary),
+        request_id=(
+            f"webchat-ai-job-{conversation.public_id}-"
+            f"{visitor_message.id}"
+        ),
         market_id=None,
         language=language,
         runtime_context=runtime_context,
     )
-    safe_runtime_trace = sanitized_ai_turn_runtime_trace(result.runtime_trace)
-    if not result.ok or not result.ai_generated or not result.reply:
-        return {
-            "status": "failed_no_public_reply",
-            "reason": result.error_code or "ai_runtime_no_reply",
-            "reply_source": result.reply_source,
-            "runtime_trace": safe_runtime_trace,
-            "bridge_elapsed_ms": result.elapsed_ms,
-        }
+    safe_runtime_trace = sanitized_ai_turn_runtime_trace(
+        result.runtime_trace
+    )
+    fallback_reason = result.error_code if not result.ai_generated else None
+    reply_source = result.reply_source or "agent_runtime"
+    handoff_required = bool(result.handoff_required)
+    if not result.ok or not result.reply:
+        fallback_reason = result.error_code or "agent_runtime_no_reply"
+        reply_source = "agent_runtime:fallback"
+        handoff_required = False
+        policy = evaluate_customer_visible_policy(
+            customer_visible_fallback(language, visitor_message.body or "")
+        )
+    else:
+        policy = evaluate_customer_visible_policy(result.reply)
+        if not policy.allowed or not policy.normalized_body.strip():
+            fallback_reason = "customer_visible_policy_blocked"
+            reply_source = "agent_runtime:fallback"
+            handoff_required = False
+            policy = evaluate_customer_visible_policy(
+                customer_visible_fallback(language, visitor_message.body or "")
+            )
+    if not policy.allowed or not policy.normalized_body.strip():
+        raise RuntimeError("customer_visible_fallback_rejected")
 
-    # Runtime generation can take long enough for a human to accept the handoff
-    # or for a newer customer message to supersede this turn. Refresh the
-    # server-owned conversation state before writing any public AI message.
     if suppress_stale_reply_if_needed(
         db,
         conversation=conversation,
@@ -203,15 +233,16 @@ def process_ticketless_ai_reply(
             "bridge_elapsed_ms": result.elapsed_ms,
         }
 
-    policy = evaluate_customer_visible_policy(result.reply)
-    if not policy.allowed or not policy.normalized_body.strip():
-        return {
-            "status": "failed_no_public_reply",
-            "reason": "customer_visible_policy_blocked",
-            "reply_source": result.reply_source,
-            "runtime_trace": safe_runtime_trace,
-            "bridge_elapsed_ms": result.elapsed_ms,
-        }
+    db.expire(conversation)
+    if handoff_required and not conversation.current_handoff_request_id:
+        fallback_reason = "handoff_tool_side_effect_missing"
+        reply_source = "agent_runtime:fallback"
+        handoff_required = False
+        policy = evaluate_customer_visible_policy(
+            customer_visible_fallback(language, visitor_message.body or "")
+        )
+        if not policy.allowed or not policy.normalized_body.strip():
+            raise RuntimeError("customer_visible_fallback_rejected")
 
     message = WebchatMessage(
         conversation_id=conversation.id,
@@ -222,16 +253,15 @@ def process_ticketless_ai_reply(
         message_type="text",
         metadata_json=json.dumps(
             {
-                "generated_by": "webchat_ai",
-                "reply_source": result.reply_source,
+                "generated_by": "agent_runtime",
+                "reply_source": reply_source,
                 "runtime_trace": safe_runtime_trace,
-                "rag_trace": result.rag_trace,
                 "tool_calls": result.tool_calls or [],
-                "fact_evidence_present": bool(tracking_summary),
-                "runtime_handoff_required": bool(result.handoff_required),
+                "runtime_handoff_required": handoff_required,
                 "language": language,
                 "ticketless_conversation": True,
-                **tracking_metadata,
+                "fallback": bool(fallback_reason) or not result.ai_generated,
+                "fallback_reason": fallback_reason,
             },
             ensure_ascii=False,
             default=str,
@@ -240,7 +270,10 @@ def process_ticketless_ai_reply(
         delivery_status="sent",
         author_label=AI_AUTHOR_LABEL,
         safety_level=policy.level,
-        safety_reasons_json=json.dumps(policy.reasons, ensure_ascii=False),
+        safety_reasons_json=json.dumps(
+            policy.reasons,
+            ensure_ascii=False,
+        ),
         created_at=utc_now(),
     )
     db.add(message)
@@ -258,31 +291,13 @@ def process_ticketless_ai_reply(
     )
     conversation.updated_at = utc_now()
     conversation.last_seen_at = utc_now()
-
-    if result.handoff_required:
-        request_handoff(
-            db,
-            conversation=conversation,
-            source="ai_runtime",
-            trigger_type="runtime_handoff",
-            reason_code=(
-                result.handoff_reason or "ai_runtime_requested_handoff"
-            )[:160],
-            reason_text=result.handoff_reason,
-            recommended_agent_action=result.recommended_agent_action,
-            trigger_message_id=visitor_message.id,
-            ai_turn_id=turn.id if turn else None,
-            requested_by_actor_type="ai_runtime",
-        )
-
     db.flush()
     return {
         "status": "done",
         "message_id": message.id,
-        "reply_source": result.reply_source,
-        "fallback_reason": None,
-        "fact_evidence_present": bool(tracking_summary),
+        "reply_source": reply_source,
+        "fallback_reason": fallback_reason,
         "bridge_elapsed_ms": result.elapsed_ms,
         "runtime_trace": safe_runtime_trace,
-        "runtime_handoff_required": bool(result.handoff_required),
+        "runtime_handoff_required": handoff_required,
     }

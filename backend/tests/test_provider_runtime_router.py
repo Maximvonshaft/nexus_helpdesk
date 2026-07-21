@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.services import provider_runtime as provider_runtime_module
+from app.services.provider_runtime.output_contracts import AGENT_TURN_OUTPUT_CONTRACT
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
@@ -17,6 +18,7 @@ class DummyAdapter(ProviderAdapter):
         self.calls = 0
 
     async def generate(self, db, req):
+        del db, req
         self.calls += 1
         return self._result
 
@@ -45,6 +47,7 @@ def _mock_db(rule: dict | None):
     mock_rule.mappings.return_value.first.return_value = rule
 
     def mock_db_execute(stmt, params=None, *args, **kwargs):
+        del params, args, kwargs
         query = str(stmt).lower()
         if "insert into provider_runtime_audit_logs" in query:
             return Mock()
@@ -61,9 +64,9 @@ def _request(*, request_id: str = "req1", session_id: str = "s1") -> ProviderReq
         tenant_key="tk1",
         channel_key="c1",
         session_id=session_id,
-        scenario="webchat_runtime_reply",
+        scenario="agent_turn",
         body="hello",
-        output_contract="nexus.webchat_runtime_reply",
+        output_contract=AGENT_TURN_OUTPUT_CONTRACT,
         timeout_ms=1000,
     )
 
@@ -72,7 +75,7 @@ def _rule(*, canary_percent: object = 100, kill_switch: object = False, timeout_
     return {
         "primary_provider": "private_ai_runtime",
         "fallback_providers": [],
-        "output_contract": "nexus.webchat_runtime_reply",
+        "output_contract": AGENT_TURN_OUTPUT_CONTRACT,
         "timeout_ms": timeout_ms,
         "kill_switch": kill_switch,
         "canary_percent": canary_percent,
@@ -86,10 +89,10 @@ def _success_result() -> ProviderResult:
         elapsed_ms=100,
         structured_output={
             "customer_reply": "hi",
-            "language": "en",
-            "intent": "greeting",
+            "intent": "general_support",
+            "next_action": "reply",
             "handoff_required": False,
-            "ticket_should_create": False,
+            "tool_calls": [],
         },
     )
 
@@ -129,7 +132,7 @@ async def test_persisted_full_percent_without_explicit_mode_is_control(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_full_canary_executes_once_and_returns_authoritative_result(monkeypatch):
+async def test_full_canary_executes_once_and_returns_authoritative_agent_turn(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=100))
     adapter = _register_adapter()
@@ -139,6 +142,7 @@ async def test_full_canary_executes_once_and_returns_authoritative_result(monkey
     assert result.ok is True
     assert result.provider == "private_ai_runtime"
     assert result.structured_output["customer_reply"] == "hi"
+    assert result.structured_output["next_action"] == "reply"
     traffic = result.raw_payload_safe_summary["traffic"]
     assert traffic["path"] == "canary_authoritative"
     assert traffic["authoritative"] is True
@@ -146,27 +150,15 @@ async def test_full_canary_executes_once_and_returns_authoritative_result(monkey
 
 
 @pytest.mark.asyncio
-async def test_zero_percent_canary_never_calls_provider(monkeypatch):
-    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+@pytest.mark.parametrize("mode", ["canary"])
+async def test_zero_percent_never_calls_provider(monkeypatch, mode):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", mode)
     db = _mock_db(_rule(canary_percent=0))
     adapter = _register_adapter()
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
     assert result.error_code == "provider_canary_control_path"
-    assert adapter.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_zero_percent_shadow_never_calls_provider(monkeypatch):
-    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
-    db = _mock_db(_rule(canary_percent=0))
-    adapter = _register_adapter()
-
-    result = await ProviderRuntimeRouter(db).route(_request())
-
-    assert result.error_code == "provider_canary_control_path"
-    assert result.raw_payload_safe_summary["traffic"]["configured_mode"] == "shadow"
     assert adapter.calls == 0
 
 
@@ -214,22 +206,8 @@ async def test_kill_switch_precedes_invalid_lower_configuration(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shadow_executes_but_never_returns_candidate_authority(monkeypatch):
-    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
-    db = _mock_db(_rule(canary_percent=100))
-    adapter = _register_adapter()
-
-    result = await ProviderRuntimeRouter(db).route(_request())
-
-    assert result.ok is False
-    assert result.error_code == "provider_shadow_only"
-    assert result.structured_output is None
-    assert result.raw_payload_safe_summary["traffic"]["path"] == "shadow_only"
-    assert result.raw_payload_safe_summary["traffic"]["authoritative"] is False
-    assert adapter.calls == 1
 
 
-@pytest.mark.asyncio
 async def test_invalid_canary_configuration_fails_closed(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=10))
@@ -295,7 +273,7 @@ async def test_parse_reject_returns_no_customer_reply(monkeypatch):
             ok=True,
             provider="private_ai_runtime",
             elapsed_ms=100,
-            structured_output={"customer_reply": "hi"},
+            structured_output={"customer_reply": None, "next_action": "reply"},
         )
     )
 
@@ -312,13 +290,21 @@ async def test_canary_bucket_is_stable_when_request_id_changes(monkeypatch):
     db_b = _mock_db(_rule(canary_percent=25))
     adapter = _register_adapter()
 
-    first = await ProviderRuntimeRouter(db_a).route(
-        _request(request_id="request-a", session_id="stable-session")
-    )
-    second = await ProviderRuntimeRouter(db_b).route(
-        _request(request_id="request-b", session_id="stable-session")
-    )
+    first = await ProviderRuntimeRouter(db_a).route(_request(request_id="request-a", session_id="stable-session"))
+    second = await ProviderRuntimeRouter(db_b).route(_request(request_id="request-b", session_id="stable-session"))
 
     assert first.error_code == second.error_code
     assert first.raw_payload_safe_summary["traffic"]["bucket"] == second.raw_payload_safe_summary["traffic"]["bucket"]
     assert adapter.calls in {0, 2}
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_fails_configuration_before_provider_execution(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
+    db = _mock_db(_rule(canary_percent=100))
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.error_code == "provider_runtime_configuration_invalid"
+    assert adapter.calls == 0

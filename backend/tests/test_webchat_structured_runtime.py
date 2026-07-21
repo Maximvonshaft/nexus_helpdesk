@@ -16,7 +16,6 @@ from app.services.outbound_semantics import (
     outbound_ui_label,
 )
 from app.settings import get_settings
-from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, parse_runtime_reply_provider_output
 from app.webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 from app.webchat_schemas import WebChatActionSubmitRequest, WebChatCardAction, WebChatCardPayload
 
@@ -102,29 +101,6 @@ def _insert_retired_action_card(public_id: str) -> dict:
         return {"id": message.id, "payload_json": payload}
     finally:
         db.close()
-
-
-def test_runtime_parser_cleans_mixed_waybill_label():
-    for raw, expected in (
-        ("您的包裹的waybill号运单尾号 129135已经提供了，但目前还没有找到有效的验证结果。", "运单尾号 129135"),
-        ("请确认一下这个waybill号码是否完整且正确。", "这个运单号是否完整"),
-        ("我看到您的包裹Waybill的最后几位是运单尾号 129135。", "包裹运单的最后几位"),
-    ):
-        parsed = parse_runtime_reply_provider_output(
-            {
-                "customer_reply": raw,
-                "language": "zh",
-                "intent": "tracking_unresolved",
-                "handoff_required": False,
-                "ticket_should_create": False,
-            },
-            evidence_present=False,
-        )
-
-        assert "waybill号" not in parsed.reply
-        assert "waybill号码" not in parsed.reply
-        assert "Waybill" not in parsed.reply
-        assert expected in parsed.reply
 
 
 def _insert_legacy_handoff_card(public_id: str) -> dict:
@@ -346,30 +322,6 @@ def test_webchat_action_submit_rejects_unsafe_ids():
         with pytest.raises(ValueError):
             WebChatActionSubmitRequest(message_id=1, card_id='card_handoff_abc123', action_id=unsafe_action, action_type='handoff_request')
     assert WebChatActionSubmitRequest(message_id=1, card_id='card_handoff_abc123', action_id='request_handoff', action_type='handoff_request')
-
-
-def test_runtime_parser_allows_shipment_outcome_only_with_tracking_evidence():
-    payload = {
-        "customer_reply": "Your parcel ending 007813 has been delivered.",
-        "intent": "tracking",
-        "tracking_number": None,
-        "handoff_required": False,
-    }
-
-    with pytest.raises(RuntimeReplyParseError):
-        parse_runtime_reply_provider_output(payload, evidence_present=False)
-
-    parsed = parse_runtime_reply_provider_output(payload, evidence_present=True)
-    assert parsed.reply.startswith("Your parcel ending")
-
-    refund_payload = {
-        "customer_reply": "Your refund has been approved and processed.",
-        "intent": "tracking",
-        "tracking_number": None,
-        "handoff_required": False,
-    }
-    with pytest.raises(RuntimeReplyParseError):
-        parse_runtime_reply_provider_output(refund_payload, evidence_present=True)
 
 
 def test_explicit_human_text_does_not_generate_local_handoff_card_or_ack():

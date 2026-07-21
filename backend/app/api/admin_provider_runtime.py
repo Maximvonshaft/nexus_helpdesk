@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.provider_runtime_status import get_provider_runtime_status
-from ..services.provider_runtime.output_contracts import WEBCHAT_RUNTIME_OUTPUT_CONTRACT
+from ..services.provider_runtime.output_contracts import AGENT_TURN_OUTPUT_CONTRACT
 from ..services.runtime_permissions import ensure_can_manage_runtime, ensure_can_read_runtime
 from .deps import get_current_user
 
@@ -18,10 +18,10 @@ from .deps import get_current_user
 router = APIRouter(prefix="/api/admin/provider-runtime", tags=["admin-provider-runtime"])
 
 _ALLOWED_PRIMARY_PROVIDERS = {"private_ai_runtime"}
-_WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
+_AGENT_TURN_SCENARIO = "agent_turn"
 
 
-class WebchatRuntimeRoutingUpdate(BaseModel):
+class AgentTurnRoutingUpdate(BaseModel):
     tenant_id: str = Field(default="default", min_length=1, max_length=36)
     channel_key: str = Field(default="website", min_length=1, max_length=100)
     primary_provider: str = Field(default="private_ai_runtime", min_length=1, max_length=100)
@@ -91,9 +91,9 @@ def provider_runtime_audit_recent(
     return {"items": items, "total": len(items)}
 
 
-@router.patch("/routing/webchat-runtime")
-def update_webchat_runtime_routing(
-    payload: WebchatRuntimeRoutingUpdate,
+@router.patch("/routing/agent-turn")
+def update_agent_turn_routing(
+    payload: AgentTurnRoutingUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -113,17 +113,17 @@ def update_webchat_runtime_routing(
     """), {
         "tenant_id": payload.tenant_id,
         "channel_key": payload.channel_key,
-        "scenario": _WEBCHAT_RUNTIME_SCENARIO,
+        "scenario": _AGENT_TURN_SCENARIO,
     }).mappings().first()
 
     params = {
         "id": existing["id"] if existing else str(uuid.uuid4()),
         "tenant_id": payload.tenant_id,
         "channel_key": payload.channel_key,
-        "scenario": _WEBCHAT_RUNTIME_SCENARIO,
+        "scenario": _AGENT_TURN_SCENARIO,
         "primary_provider": payload.primary_provider,
         "fallback_providers": json.dumps(payload.fallback_providers, separators=(",", ":")),
-        "output_contract": WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
+        "output_contract": AGENT_TURN_OUTPUT_CONTRACT,
         "timeout_ms": payload.timeout_ms,
         "canary_percent": payload.canary_percent,
         "kill_switch": payload.kill_switch,
