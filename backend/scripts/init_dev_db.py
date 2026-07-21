@@ -8,10 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.auth_service import hash_password
 from app.db import Base, SessionLocal, engine
 from app.enums import TicketPriority, UserRole
-from app.models import AIConfigResource, Customer, Market, MarketBulletin, Tag, Team, User
+from app.models import Customer, Market, MarketBulletin, Tag, Team, User
 from app.schemas import CustomerInput, TicketCreate
 from app.services.sla_service import seed_default_sla_policies
-from app.services.ai_config_service import publish_resource
 from app.services.ticket_service import create_ticket
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
@@ -86,76 +85,10 @@ def seed_data() -> None:
                 creator,
             )
             db.commit()
-        if not db.query(AIConfigResource).count():
-            creator = db.query(User).filter(User.username == 'admin').first() or db.query(User).filter(User.username == 'ops').first()
-            resources = [
-                AIConfigResource(
-                    resource_key='customer-service-persona',
-                    config_type='persona',
-                    name='客服品牌语气',
-                    description='统一客服语气、边界和升级原则。',
-                    scope_type='global',
-                    draft_summary='统一礼貌、直接、以解决问题为主的客服语气。',
-                    draft_content_json={
-                        'tone': 'professional_warm',
-                        'brand_voice': ['礼貌', '直接', '不夸张承诺'],
-                        'escalation_rule': '涉及赔付、退款、清关争议时主动转人工审批',
-                    },
-                    created_by=creator.id if creator else None,
-                    updated_by=creator.id if creator else None,
-                ),
-                AIConfigResource(
-                    resource_key='operator-knowledge-core',
-                    config_type='knowledge',
-                    name='客服知识核心包',
-                    description='把公告、常见问题和时效口径沉淀为统一知识。',
-                    scope_type='global',
-                    draft_summary='客服统一引用的知识核心包。',
-                    draft_content_json={
-                        'sources': ['公告', 'FAQ', '市场规则'],
-                        'priority': ['市场公告优先', '工单证据优先', '不要编造未确认信息'],
-                    },
-                    created_by=creator.id if creator else None,
-                    updated_by=creator.id if creator else None,
-                ),
-                AIConfigResource(
-                    resource_key='delivery-delay-sop',
-                    config_type='sop',
-                    name='延误工单处理SOP',
-                    description='用于延误类工单的标准动作。',
-                    scope_type='case_type',
-                    scope_value='Delivery Delay',
-                    market_id=markets['PH'].id,
-                    draft_summary='延误工单先核对轨迹，再统一回复，再决定是否升级。',
-                    draft_content_json={
-                        'steps': ['核对轨迹', '核对公告口径', '给客户一次清晰回复', '超过阈值则升级主管'],
-                        'close_rule': '客户确认收到并且问题解决后才允许关单',
-                    },
-                    created_by=creator.id if creator else None,
-                    updated_by=creator.id if creator else None,
-                ),
-                AIConfigResource(
-                    resource_key='customer-reply-policy',
-                    config_type='policy',
-                    name='智能回复执行边界',
-                    description='约束智能助手哪些动作能自动做，哪些必须审批。',
-                    scope_type='global',
-                    draft_summary='默认只允许建议，不允许高风险承诺自动执行。',
-                    draft_content_json={
-                        'allow_auto_reply': True,
-                        'forbid_claims': ['已退款', '已赔付', '已重新发货'],
-                        'approval_required': ['退款', '赔付', '改地址', '清关争议处理'],
-                    },
-                    created_by=creator.id if creator else None,
-                    updated_by=creator.id if creator else None,
-                ),
-            ]
-            db.add_all(resources)
-            db.flush()
-            for resource in resources:
-                publish_resource(db, resource, creator, notes='seed default published config')
-            db.commit()
 
+        # Canonical Agent resources are seeded exclusively by Alembic migrations.
+        # Development bootstrap must not recreate retired persona/knowledge/SOP/
+        # policy rows or introduce a second configuration authority.
         if not db.query(MarketBulletin).count():
             creator = db.query(User).filter(User.username == 'admin').first() or db.query(User).filter(User.username == 'lead').first()
             db.add(MarketBulletin(
