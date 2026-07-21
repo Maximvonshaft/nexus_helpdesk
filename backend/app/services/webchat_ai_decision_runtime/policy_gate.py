@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from jsonschema import Draft202012Validator, SchemaError
+
 from ..customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
-from .schemas import AIDecision
+from .schemas import AIDecision, AIDecisionToolCall
 from .tool_registry import ToolContract, get_tool_contract
 
 
@@ -87,6 +89,10 @@ def validate_ai_decision(
                 )
             )
             continue
+        schema_violation = _validate_tool_input_schema(call, contract)
+        if schema_violation is not None:
+            violations.append(schema_violation)
+            continue
         _validate_contract_authority(
             contract,
             trusted_confirmation=trusted_confirmation,
@@ -105,6 +111,43 @@ def validate_ai_decision(
         violations=tuple(violations),
         warnings=tuple(warnings),
         checked_tools=tuple(checked_tools),
+    )
+
+
+def _validate_tool_input_schema(
+    call: AIDecisionToolCall,
+    contract: ToolContract,
+) -> PolicyViolation | None:
+    """Fail closed on malformed model arguments without echoing raw values."""
+
+    try:
+        Draft202012Validator.check_schema(contract.input_schema)
+        errors = sorted(
+            Draft202012Validator(contract.input_schema).iter_errors(call.arguments),
+            key=lambda error: tuple(str(item) for item in error.absolute_path),
+        )
+    except SchemaError:
+        return PolicyViolation(
+            code="tool_contract_schema_invalid",
+            message="The registered Tool input schema is invalid.",
+            tool_name=contract.name,
+            risk_level="high",
+        )
+    if not errors:
+        return None
+    error = errors[0]
+    path = "$" + "".join(
+        f"[{item}]" if isinstance(item, int) else f".{item}"
+        for item in error.absolute_path
+    )
+    return PolicyViolation(
+        code="tool_input_schema_invalid",
+        message=(
+            "The Tool arguments do not match the registered input schema "
+            f"at {path}; validator={error.validator}."
+        ),
+        tool_name=contract.name,
+        risk_level=contract.risk_level,
     )
 
 
