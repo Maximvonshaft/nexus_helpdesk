@@ -1,0 +1,474 @@
+name: Temporary Agent Terminal Authority Finalizer
+
+# One-shot self-deleting workflow. The accepted Head must not contain this file.
+on:
+  push:
+    branches:
+      - refactor/generic-agent-runtime-final-b7e41d
+    paths:
+      - .github/workflows/temporary-agent-terminal-authority.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-agent-terminal-authority
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout latest convergence Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refactor/generic-agent-runtime-final-b7e41d
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Converge terminal and handoff authority
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+          AGENT = ROOT / "backend/app/services/agent_runtime/service.py"
+          TERMINAL = ROOT / "backend/app/services/agent_runtime/terminal_reply.py"
+          RETIRED_FALLBACK = ROOT / "backend/app/services/agent_runtime/fallback.py"
+          WRAPPER = ROOT / "backend/app/services/webchat_runtime_ai_service.py"
+          TICKET = ROOT / "backend/app/services/webchat_ai_service.py"
+          TICKETLESS = ROOT / "backend/app/services/conversation_ai_service.py"
+          ARCH_TESTS = ROOT / "backend/tests/test_agent_runtime_architecture.py"
+          AUTHORITY_TESTS = ROOT / "backend/tests/test_agent_terminal_reply_authority.py"
+          RESIDUE = ROOT / "scripts/ci/check_agent_runtime_residue.py"
+          GENERIC_ARCH = ROOT / "docs/architecture/generic-agent-skill-runtime.md"
+          CONVERSATION_ARCH = ROOT / "docs/architecture/conversation-first-agent-routing.md"
+          WORKFLOW = ROOT / ".github/workflows/temporary-agent-terminal-authority.yml"
+
+          def add_after(text: str, anchor: str, addition: str, *, label: str) -> str:
+              if addition in text:
+                  return text
+              if text.count(anchor) != 1:
+                  raise RuntimeError(f"{label}: expected one anchor, found {text.count(anchor)}")
+              return text.replace(anchor, anchor + addition, 1)
+
+          TERMINAL.write_text(
+              '''from __future__ import annotations
+
+
+def customer_visible_fallback(language: str | None, body: str | None) -> str:
+    """Return the sole deterministic customer-visible terminal fallback."""
+
+    hint = str(language or "").strip().lower()
+    customer_body = str(body or "")
+    if hint.startswith("zh") or any("\\u4e00" <= char <= "\\u9fff" for char in customer_body):
+        return "抱歉，我暂时无法完成这次处理。请稍后重试，或者告诉我是否需要转人工客服。"
+    if hint.startswith("de"):
+        return "Entschuldigung, ich konnte diese Anfrage gerade nicht abschließen. Bitte versuchen Sie es erneut oder bitten Sie um menschlichen Support."
+    return "Sorry, I could not complete that request right now. Please try again or ask for human support."
+''',
+              encoding="utf-8",
+          )
+          RETIRED_FALLBACK.unlink(missing_ok=True)
+
+          agent = AGENT.read_text(encoding="utf-8")
+          agent = agent.replace(
+              "from .fallback import customer_visible_runtime_fallback\n",
+              "",
+          )
+          agent = agent.replace(
+              "customer_visible_runtime_fallback",
+              "customer_visible_fallback",
+          )
+          agent = add_after(
+              agent,
+              "from .skill_registry import prompt_skill_catalog\n",
+              "from .terminal_reply import customer_visible_fallback\n",
+              label="Agent terminal import",
+          )
+          start = agent.index('        if decision.next_action != "call_tool":\n')
+          end = agent.index('        if round_index >= max_rounds:\n', start)
+          agent = agent[:start] + '''        if decision.next_action != "call_tool":
+              handoff_committed = _committed_handoff_observed(state)
+              handoff_requested = (
+                  decision.next_action == "request_handoff"
+                  or decision.handoff_required
+              )
+              if handoff_requested and not handoff_committed:
+                  state.traces.append(
+                      AgentRoundTrace(
+                          round_index=round_index,
+                          next_action=decision.next_action,
+                          provider=result.provider,
+                          elapsed_ms=result.elapsed_ms,
+                          error_code="handoff_tool_side_effect_missing",
+                      )
+                  )
+                  return _fallback_result(
+                      request,
+                      state=state,
+                      error_code="handoff_tool_side_effect_missing",
+                      elapsed_ms=state.elapsed_ms,
+                  )
+              state.traces.append(
+                  AgentRoundTrace(
+                      round_index=round_index,
+                      next_action=decision.next_action,
+                      provider=result.provider,
+                      elapsed_ms=result.elapsed_ms,
+                  )
+              )
+              effective_handoff_reason = None
+              if handoff_committed:
+                  effective_handoff_reason = (
+                      decision.handoff_reason or "handoff_requested"
+                  )
+              return RuntimeAIProviderResult(
+                  ok=True,
+                  ai_generated=True,
+                  reply_source=result.provider,
+                  raw_provider=result.raw_provider or result.provider,
+                  raw_payload_safe_summary=_safe_summary(
+                      state,
+                      decision=decision,
+                      provider_summary=result.raw_payload_safe_summary,
+                  ),
+                  reply=decision.customer_reply,
+                  intent=decision.intent,
+                  handoff_required=handoff_committed,
+                  handoff_reason=effective_handoff_reason,
+                  recommended_agent_action=(
+                      "Review the conversation and take over."
+                      if handoff_committed
+                      else None
+                  ),
+                  tool_calls=list(state.executed_calls),
+                  elapsed_ms=state.elapsed_ms,
+                  error_code=None,
+                  retry_after_ms=None,
+              )
+
+''' + agent[end:]
+          if "def _committed_handoff_observed(" not in agent:
+              anchor = "\ndef _failed_tool_observations(\n"
+              helper = '''
+def _committed_handoff_observed(state: AgentRunState) -> bool:
+    """Derive handoff truth only from a committed canonical Tool Observation."""
+
+    return any(
+        observation.tool_name == "handoff.request.create"
+        and observation.ok
+        and observation.status in {"executed", "duplicate"}
+        for observation in state.observations
+    )
+
+'''
+              if agent.count(anchor) != 1:
+                  raise RuntimeError("Committed handoff helper anchor missing")
+              agent = agent.replace(anchor, helper + anchor, 1)
+          agent = agent.replace(
+              "reply = _localized_fallback(request.language, request.body)",
+              "reply = customer_visible_fallback(request.language, request.body)",
+          )
+          if "def _localized_fallback(" in agent:
+              start = agent.index("\ndef _localized_fallback(")
+              end = agent.index("\ndef _safe_summary(", start)
+              agent = agent[:start] + agent[end:]
+          AGENT.write_text(agent, encoding="utf-8")
+
+          for path, anchor, import_line in (
+              (
+                  WRAPPER,
+                  "from .agent_runtime.service import run_agent\n",
+                  "from .agent_runtime.terminal_reply import customer_visible_fallback\n",
+              ),
+              (
+                  TICKET,
+                  "from .agent_runtime.access_policy import resolve_webchat_agent_access\n",
+                  "from .agent_runtime.terminal_reply import customer_visible_fallback\n",
+              ),
+              (
+                  TICKETLESS,
+                  "from .agent_runtime.access_policy import resolve_webchat_agent_access\n",
+                  "from .agent_runtime.terminal_reply import customer_visible_fallback\n",
+              ),
+          ):
+              text = path.read_text(encoding="utf-8")
+              text = text.replace(
+                  "from .agent_runtime.fallback import customer_visible_runtime_fallback\n",
+                  "",
+              )
+              text = text.replace(
+                  "customer_visible_runtime_fallback",
+                  "customer_visible_fallback",
+              )
+              text = add_after(
+                  text,
+                  anchor,
+                  import_line,
+                  label=f"{path.name} terminal import",
+              )
+              text = text.replace(
+                  "reply=_fallback(language, body)",
+                  "reply=customer_visible_fallback(language, body)",
+              )
+              text = text.replace(
+                  '_localized_fallback(language, visitor_message.body or "")',
+                  'customer_visible_fallback(language, visitor_message.body or "")',
+              )
+              if path == WRAPPER and "\ndef _fallback(" in text:
+                  text = text[: text.index("\ndef _fallback(")].rstrip() + "\n"
+              if path == TICKET and "\ndef _localized_fallback(" in text:
+                  old_start = text.index("\ndef _localized_fallback(")
+                  old_end = text.index("\ndef _is_whatsapp_conversation(", old_start)
+                  text = text[:old_start] + text[old_end:]
+              path.write_text(text, encoding="utf-8")
+
+          arch_tests = ARCH_TESTS.read_text(encoding="utf-8")
+          if "test_model_only_handoff_final_fails_closed" not in arch_tests:
+              arch_tests += '''
+
+@pytest.mark.asyncio
+async def test_model_only_handoff_final_fails_closed(monkeypatch) -> None:
+    async def route(_self, _request):
+        return ProviderResult(
+            ok=True,
+            provider="private_ai_runtime",
+            raw_provider="private_ai_runtime",
+            reply_source="private_ai_runtime",
+            elapsed_ms=3,
+            structured_output={
+                "customer_reply": "I will connect you to a human.",
+                "intent": "human_handoff",
+                "next_action": "request_handoff",
+                "handoff_required": True,
+                "handoff_reason": "customer_requested_human",
+                "tool_calls": [],
+            },
+            raw_payload_safe_summary={"model": "test"},
+        )
+
+    monkeypatch.setattr(agent_service.ProviderRuntimeRouter, "route", route)
+    monkeypatch.setattr(
+        agent_service,
+        "_authoritative_provider_audit_exists",
+        lambda *_args, **_kwargs: True,
+    )
+    result = await agent_service._run_agent_with_db(
+        _Db(),
+        request=RuntimeAIProviderRequest(
+            tenant_key="tenant",
+            channel_key="website",
+            session_id="session",
+            body="I need a human.",
+            request_id="request-handoff-without-tool",
+            metadata={},
+        ),
+        started=0.0,
+    )
+
+    assert result.ai_generated is False
+    assert result.handoff_required is False
+    assert result.error_code == "handoff_tool_side_effect_missing"
+    assert result.reply
+
+
+@pytest.mark.asyncio
+async def test_committed_handoff_observation_is_terminal_authority(monkeypatch) -> None:
+    outputs = [
+        {
+            "customer_reply": None,
+            "intent": "human_handoff",
+            "next_action": "call_tool",
+            "handoff_required": False,
+            "tool_calls": [
+                {
+                    "tool_name": "handoff.request.create",
+                    "arguments": {"reason": "customer_requested_human"},
+                }
+            ],
+        },
+        {
+            "customer_reply": "A human handoff has been requested.",
+            "intent": "human_handoff",
+            "next_action": "reply",
+            "handoff_required": False,
+            "tool_calls": [],
+        },
+    ]
+
+    async def route(_self, _request):
+        return ProviderResult(
+            ok=True,
+            provider="private_ai_runtime",
+            raw_provider="private_ai_runtime",
+            reply_source="private_ai_runtime",
+            elapsed_ms=3,
+            structured_output=outputs.pop(0),
+            raw_payload_safe_summary={"model": "test"},
+        )
+
+    def execute(_db, *, calls, context, allow_high_risk_writes=False):
+        del calls, context, allow_high_risk_writes
+        return [
+            ToolObservation(
+                tool_name="handoff.request.create",
+                ok=True,
+                status="executed",
+                result={"handoff_request_id": 1, "status": "requested"},
+            )
+        ]
+
+    monkeypatch.setattr(agent_service.ProviderRuntimeRouter, "route", route)
+    monkeypatch.setattr(
+        agent_service,
+        "_authoritative_provider_audit_exists",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(agent_service, "execute_agent_tool_calls", execute)
+    result = await agent_service._run_agent_with_db(
+        _Db(),
+        request=RuntimeAIProviderRequest(
+            tenant_key="tenant",
+            channel_key="website",
+            session_id="session",
+            body="I need a human.",
+            request_id="request-committed-handoff",
+            metadata={
+                "agent_allowed_tools": ["handoff.request.create"],
+                "agent_execution_context": {
+                    "granted_permissions": ["webchat:handoff:create"]
+                },
+            },
+        ),
+        started=0.0,
+    )
+
+    assert result.ai_generated is True
+    assert result.handoff_required is True
+    assert result.handoff_reason == "handoff_requested"
+    assert result.error_code is None
+'''
+          ARCH_TESTS.write_text(arch_tests, encoding="utf-8")
+
+          AUTHORITY_TESTS.write_text(
+              '''from __future__ import annotations
+
+from pathlib import Path
+
+from app.services.agent_runtime.terminal_reply import customer_visible_fallback
+
+
+def test_terminal_reply_localization_is_deterministic() -> None:
+    assert customer_visible_fallback("zh-CN", "hello").startswith("抱歉")
+    assert customer_visible_fallback("de-DE", "hello").startswith("Entschuldigung")
+    assert customer_visible_fallback("en", "hello").startswith("Sorry")
+
+
+def test_terminal_reply_has_one_physical_authority() -> None:
+    root = Path(__file__).resolve().parents[2]
+    authority = root / "backend/app/services/agent_runtime/terminal_reply.py"
+    assert authority.exists()
+    assert not (root / "backend/app/services/agent_runtime/fallback.py").exists()
+    for relative in (
+        "backend/app/services/agent_runtime/service.py",
+        "backend/app/services/webchat_runtime_ai_service.py",
+        "backend/app/services/webchat_ai_service.py",
+        "backend/app/services/conversation_ai_service.py",
+    ):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "customer_visible_fallback" in source
+        assert "customer_visible_runtime_fallback" not in source
+        assert "def _localized_fallback(" not in source
+    wrapper = (
+        root / "backend/app/services/webchat_runtime_ai_service.py"
+    ).read_text(encoding="utf-8")
+    assert "def _fallback(" not in wrapper
+''',
+              encoding="utf-8",
+          )
+
+          residue = RESIDUE.read_text(encoding="utf-8")
+          retired = '    ROOT / "backend/app/services/agent_runtime/fallback.py",\n'
+          if retired not in residue:
+              anchor = '    ROOT / "backend/app/services/domain_intelligence",\n'
+              residue = residue.replace(anchor, retired + anchor, 1)
+          for marker in (
+              '    "customer_visible_runtime_fallback",\n',
+              '    "from .agent_runtime.fallback",\n',
+              '    "handoff_required=decision.handoff_required",\n',
+          ):
+              if marker not in residue:
+                  residue = residue.replace(
+                      '    "**_legacy",\n',
+                      '    "**_legacy",\n' + marker,
+                      1,
+                  )
+          RESIDUE.write_text(residue, encoding="utf-8")
+
+          generic = GENERIC_ARCH.read_text(encoding="utf-8")
+          generic = generic.replace(
+              "9. Always emit one customer-visible final response, including a deterministic fallback when the model or Tool infrastructure is unavailable.",
+              "9. Always emit one customer-visible final response, including a deterministic fallback when model output, Tool infrastructure, or customer-visible policy validation is unavailable. A handoff terminal state is valid only when a committed handoff Tool Observation exists.",
+          )
+          if "- committed Tool side-effect authority for terminal handoff state" not in generic:
+              generic = generic.replace(
+                  "- customer-visible terminal response\n",
+                  "- customer-visible terminal response\n- committed Tool side-effect authority for terminal handoff state\n",
+              )
+          GENERIC_ARCH.write_text(generic, encoding="utf-8")
+
+          conversation = CONVERSATION_ARCH.read_text(encoding="utf-8")
+          if "accepted customer message never ends in a blank response" not in conversation:
+              conversation = conversation.replace(
+                  "- Provider/runtime failure still produces one deterministic customer-visible terminal response.\n",
+                  "- Provider/runtime failure still produces one deterministic customer-visible terminal response.\n"
+                  "- Missing or rejected model text is replaced by the canonical customer-visible Runtime fallback; an accepted customer message never ends in a blank response.\n"
+                  "- `handoff_required` is projected only from a committed `handoff.request.create` Tool Observation, never from a model flag alone.\n",
+              )
+          CONVERSATION_ARCH.write_text(conversation, encoding="utf-8")
+
+          WORKFLOW.unlink(missing_ok=True)
+          PY
+
+      - name: Run focused terminal and architecture regression
+        shell: bash
+        env:
+          PYTHONPATH: backend
+          APP_ENV: test
+          AUTO_INIT_DB: "false"
+          SEED_DEMO_DATA: "false"
+          ALLOW_DEV_AUTH: "false"
+          PROVIDER_RUNTIME_ENABLED: "false"
+          PRIVATE_AI_RUNTIME_ENABLED: "false"
+          WEBCHAT_AI_ENABLED: "false"
+        run: |
+          test ! -e .github/workflows/temporary-agent-terminal-authority.yml
+          test ! -e backend/app/services/agent_runtime/fallback.py
+          git diff --check
+          python -m compileall -q \
+            backend/app/services/agent_runtime \
+            backend/app/services/conversation_ai_service.py \
+            backend/app/services/webchat_ai_service.py \
+            backend/app/services/webchat_runtime_ai_service.py
+          pytest -q \
+            backend/tests/test_agent_runtime_architecture.py \
+            backend/tests/test_agent_terminal_reply_authority.py \
+            backend/tests/test_agent_tool_schema_and_access_authority.py \
+            backend/tests/test_nexus_osr_tool_execution_service.py \
+            backend/tests/test_webchat_ai_turn_runtime.py \
+            backend/tests/test_agent_runtime_residue.py
+          python scripts/ci/check_agent_runtime_residue.py
+          python scripts/verify_repository.py
+
+      - name: Commit clean terminal authority Head
+        shell: bash
+        run: |
+          git config user.name "Nexus Canonical Delivery"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Enforce committed Agent terminal authority"
+          git pull --rebase origin refactor/generic-agent-runtime-final-b7e41d
+          git push origin HEAD:refactor/generic-agent-runtime-final-b7e41d
