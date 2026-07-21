@@ -63,14 +63,19 @@ def list_customer_memory(
     customer_id: int,
     include_inactive: bool = False,
 ) -> list[dict[str, Any]]:
-    _customer_or_404(db, tenant_key=tenant_key, customer_id=customer_id)
+    normalized_tenant = _tenant(tenant_key)
+    _customer_or_404(db, tenant_key=normalized_tenant, customer_id=customer_id)
     query = db.query(CustomerMemoryFact).filter(
-        CustomerMemoryFact.tenant_key == _tenant(tenant_key),
+        CustomerMemoryFact.tenant_key == normalized_tenant,
         CustomerMemoryFact.customer_id == customer_id,
     )
     if not include_inactive:
         query = query.filter(CustomerMemoryFact.is_active.is_(True))
-    return [_out(row) for row in query.order_by(CustomerMemoryFact.memory_key.asc()).all()]
+    return [
+        item
+        for row in query.order_by(CustomerMemoryFact.memory_key.asc()).all()
+        if (item := _out(row)) is not None
+    ]
 
 
 def runtime_memory_context(
@@ -90,11 +95,12 @@ def runtime_memory_context(
     )
     if not customer_id or not policy.get("enabled") or not policy.get("injection_enabled"):
         return {"enabled": False, "facts": [], "count": 0}
+    normalized_tenant = _tenant(tenant_key)
     now = utc_now()
     rows = (
         db.query(CustomerMemoryFact)
         .filter(
-            CustomerMemoryFact.tenant_key == _tenant(tenant_key),
+            CustomerMemoryFact.tenant_key == normalized_tenant,
             CustomerMemoryFact.customer_id == customer_id,
             CustomerMemoryFact.is_active.is_(True),
             CustomerMemoryFact.sensitivity == "standard",
@@ -146,8 +152,8 @@ def upsert_customer_memory(
     channel: str | None = None,
     language: str | None = None,
 ) -> CustomerMemoryFact:
-    customer = _customer_or_404(db, tenant_key=tenant_key, customer_id=customer_id)
-    del customer
+    normalized_tenant = _tenant(tenant_key)
+    _customer_or_404(db, tenant_key=normalized_tenant, customer_id=customer_id)
     policy = resolve_memory_policy(db, market_id=market_id, channel=channel, language=language)
     if not policy.get("enabled") or not policy.get("write_enabled"):
         raise HTTPException(status_code=409, detail="customer_memory_write_disabled")
@@ -167,7 +173,7 @@ def upsert_customer_memory(
     row = (
         db.query(CustomerMemoryFact)
         .filter(
-            CustomerMemoryFact.tenant_key == _tenant(tenant_key),
+            CustomerMemoryFact.tenant_key == normalized_tenant,
             CustomerMemoryFact.customer_id == customer_id,
             CustomerMemoryFact.memory_key == key,
         )
@@ -176,7 +182,7 @@ def upsert_customer_memory(
     old = _out(row) if row else None
     if row is None:
         row = CustomerMemoryFact(
-            tenant_key=_tenant(tenant_key),
+            tenant_key=normalized_tenant,
             customer_id=customer_id,
             memory_key=key,
             value_text=value,
@@ -215,11 +221,12 @@ def deactivate_customer_memory(
     memory_id: int,
     actor_id: int | None,
 ) -> CustomerMemoryFact:
+    normalized_tenant = _tenant(tenant_key)
     row = (
         db.query(CustomerMemoryFact)
         .filter(
             CustomerMemoryFact.id == memory_id,
-            CustomerMemoryFact.tenant_key == _tenant(tenant_key),
+            CustomerMemoryFact.tenant_key == normalized_tenant,
             CustomerMemoryFact.customer_id == customer_id,
         )
         .first()
@@ -250,11 +257,12 @@ def forget_customer_memory(
     customer_id: int,
     actor_id: int | None,
 ) -> int:
-    _customer_or_404(db, tenant_key=tenant_key, customer_id=customer_id)
+    normalized_tenant = _tenant(tenant_key)
+    _customer_or_404(db, tenant_key=normalized_tenant, customer_id=customer_id)
     rows = (
         db.query(CustomerMemoryFact)
         .filter(
-            CustomerMemoryFact.tenant_key == _tenant(tenant_key),
+            CustomerMemoryFact.tenant_key == normalized_tenant,
             CustomerMemoryFact.customer_id == customer_id,
         )
         .all()
@@ -279,9 +287,8 @@ def _customer_or_404(db: Session, *, tenant_key: str, customer_id: int) -> Custo
     customer = db.get(Customer, customer_id)
     if customer is None:
         raise HTTPException(status_code=404, detail="customer_not_found")
-    normalized = _tenant(tenant_key)
     customer_tenant_key = getattr(getattr(customer, "tenant", None), "tenant_key", None)
-    if customer_tenant_key and customer_tenant_key != normalized:
+    if customer_tenant_key and customer_tenant_key != tenant_key:
         raise HTTPException(status_code=404, detail="customer_not_found")
     return customer
 
@@ -310,7 +317,7 @@ def _out(row: CustomerMemoryFact | None) -> dict[str, Any] | None:
 
 def _tenant(value: str) -> str:
     cleaned = str(value or "").strip().lower()
-    if not cleaned or cleaned == "default":
+    if not cleaned:
         raise HTTPException(status_code=400, detail="tenant_key_required")
     return cleaned[:80]
 
