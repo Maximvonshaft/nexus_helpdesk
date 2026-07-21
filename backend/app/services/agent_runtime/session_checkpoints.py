@@ -55,13 +55,9 @@ def load_session_checkpoint(
     session_id: str,
     release_id: int,
 ) -> AgentSessionCheckpoint | None:
+    """Read the latest non-expired checkpoint without mutating context state."""
+
     now = utc_now()
-    _deactivate_expired(
-        db,
-        tenant_key=tenant_key,
-        session_id=session_id,
-        now=now,
-    )
     return (
         db.query(AgentSessionCheckpoint)
         .filter(
@@ -192,28 +188,6 @@ def build_checkpoint_summary(
             ),
         }
     )
-
-
-def _deactivate_expired(
-    db: Session,
-    *,
-    tenant_key: str,
-    session_id: str,
-    now,
-) -> None:
-    rows = (
-        db.query(AgentSessionCheckpoint)
-        .filter(
-            AgentSessionCheckpoint.tenant_key == tenant_key,
-            AgentSessionCheckpoint.session_id == session_id,
-            AgentSessionCheckpoint.is_active.is_(True),
-            AgentSessionCheckpoint.expires_at <= now,
-        )
-        .all()
-    )
-    for row in rows:
-        row.is_active = False
-        row.deactivated_at = now
 
 
 def _safe_summary(value: Any) -> dict[str, Any]:
