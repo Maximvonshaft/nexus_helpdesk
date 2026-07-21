@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RETIRED_PATHS = (
+    ROOT / "backend/app/services/agent_runtime/fallback.py",
     ROOT / "backend/app/services/domain_intelligence",
     ROOT / "backend/app/domain_packs",
     ROOT / "backend/app/services/knowledge_grounding_service.py",
@@ -52,6 +53,9 @@ TOOL_GOVERNANCE_PATHS = (
 )
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
+    "customer_visible_runtime_fallback",
+    "from .agent_runtime.fallback",
+    "from .fallback import customer_visible_runtime_fallback",
     "def _fallback(language:",
     "def _localized_fallback(",
     "arguments=dict(action.arguments),\n                idempotency_key=None",
