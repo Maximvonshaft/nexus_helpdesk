@@ -55,6 +55,16 @@ export interface AgentDeploymentDraft {
   case_type?: string | null
 }
 
+export interface AgentScopeDraft {
+  tenant_key?: string
+  environment?: 'test' | 'staging' | 'production'
+  market_id?: number | null
+  channel?: string
+  language?: string | null
+  case_type?: string | null
+  cohort_key?: string
+}
+
 export interface ToolPolicyDraft {
   tool_name: string
   country_code: string
@@ -120,33 +130,18 @@ export const agentControlApi = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
-  resolve: (payload: {
-    tenant_key?: string
-    environment?: 'test' | 'staging' | 'production'
-    market_id?: number | null
-    channel?: string
-    language?: string | null
-    case_type?: string | null
-    cohort_key?: string
-  }) => apiRequest<{ digest: string; snapshot: Record<string, unknown> }>(
-    '/api/agent-control/resolve',
-    { method: 'POST', body: JSON.stringify(payload) },
-  ),
+  resolve: (payload: AgentScopeDraft) =>
+    apiRequest<{ digest: string; snapshot: Record<string, unknown> }>(
+      '/api/agent-control/resolve',
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
   runs: (tenantKey = 'default', limit = 50) =>
     apiRequest<Array<Record<string, unknown>>>(
       `/api/agent-control/runs${queryString({ tenant_key: tenantKey, limit })}`,
     ),
 
-  playground: (payload: {
-    tenant_key?: string
-    environment?: 'test' | 'staging' | 'production'
+  playground: (payload: AgentScopeDraft & {
     body: string
-    market_id?: number | null
-    channel?: string
-    language?: string | null
-    case_type?: string | null
-    cohort_key?: string
-    customer_id?: number | null
     execute_model?: boolean
   }) => apiRequest<AgentPlaygroundResult>('/api/agent-control/playground', {
     method: 'POST',
@@ -215,13 +210,10 @@ export const agentControlApi = {
       body: JSON.stringify(payload),
     }),
 
-  testIntegration: (payload: {
+  testIntegration: (payload: AgentScopeDraft & {
     integration_key: string
     operation: string
     arguments?: Record<string, unknown>
-    market_id?: number | null
-    channel?: string
-    language?: string | null
   }) => apiRequest<Record<string, unknown>>('/api/agent-control/integrations/test', {
     method: 'POST',
     body: JSON.stringify(payload),
