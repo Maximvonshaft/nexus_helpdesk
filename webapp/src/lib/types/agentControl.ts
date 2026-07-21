@@ -18,6 +18,9 @@ export interface AgentConfigResource {
   published_at?: string | null
   created_at: string
   updated_at: string
+  tenant_key?: string | null
+  is_global_template?: boolean
+  can_manage?: boolean
 }
 
 export interface AgentDefinition {
@@ -37,7 +40,7 @@ export interface AgentRelease {
   id: number
   definition_id: number
   version: number
-  status: 'approved' | 'canary' | 'active' | 'retired'
+  status: 'approved' | 'retired'
   manifest: Record<string, unknown>
   manifest_sha256: string
   validation?: Record<string, unknown> | null
@@ -78,6 +81,36 @@ export interface AgentPersona {
   published_version: number
   published_at?: string | null
   updated_at: string
+  tenant_key?: string | null
+  is_global_template?: boolean
+  can_manage?: boolean
+}
+
+export interface PersonaReview {
+  id: number
+  profile_id: number
+  review_version: number
+  status: 'pending' | 'approved' | 'rejected' | 'published'
+  snapshot_json: Record<string, unknown>
+  summary?: string | null
+  notes?: string | null
+  requested_by?: number | null
+  requested_at: string
+  reviewed_by?: number | null
+  reviewed_at?: string | null
+  decision_note?: string | null
+  release_window_start?: string | null
+  release_window_end?: string | null
+  published_by?: number | null
+  published_version?: number | null
+  published_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaReviewList {
+  reviews: PersonaReview[]
+  total: number
 }
 
 export interface AgentKnowledgeSummary {
@@ -91,8 +124,9 @@ export interface AgentKnowledgeSummary {
   language?: string | null
   published_version: number
   indexed_version: number
-  visibility: string
-  risk_level: string
+  status: string
+  visibility?: string
+  risk_level?: string
 }
 
 export interface AgentPlaybookProjection {
