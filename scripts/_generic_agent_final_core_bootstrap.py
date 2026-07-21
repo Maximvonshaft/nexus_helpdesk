@@ -53,15 +53,19 @@ final_tests_path = Path("scripts/_generic_agent_final_tests.py")
 final_tests = final_tests_path.read_text(encoding="utf-8")
 last_mile_hook = '''
 
-last_mile_path = ROOT / "scripts/_generic_agent_last_mile.py"
-exec(
-    compile(
-        last_mile_path.read_text(encoding="utf-8"),
-        str(last_mile_path),
-        "exec",
+for finalizer_name in (
+    "_generic_agent_last_mile.py",
+    "_generic_agent_last_two.py",
+):
+    finalizer_path = ROOT / "scripts" / finalizer_name
+    exec(
+        compile(
+            finalizer_path.read_text(encoding="utf-8"),
+            str(finalizer_path),
+            "exec",
+        )
     )
-)
-last_mile_path.unlink()
+    finalizer_path.unlink()
 '''
-if "last_mile_path = ROOT / \"scripts/_generic_agent_last_mile.py\"" not in final_tests:
+if "for finalizer_name in (" not in final_tests:
     final_tests_path.write_text(final_tests.rstrip() + last_mile_hook + "\n", encoding="utf-8")
