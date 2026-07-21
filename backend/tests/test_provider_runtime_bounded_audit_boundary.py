@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import app.services.agent_runtime.service as agent_service
+import app.services.agent_runtime.runtime as agent_runtime
 from app.services.ai_runtime.schemas import RuntimeAIProviderRequest
 from app.services.provider_runtime.router import (
     _bounded_provider_error_code,
@@ -77,7 +77,6 @@ def test_provider_summary_keeps_only_bounded_structural_diagnostics():
             "raw_payload": {"customer_reply": "secret"},
         }
     )
-
     assert summary["provider"] == "private_ai_runtime"
     assert summary["endpoint_path"] == "/api/chat"
     assert summary["prompt_chars"] == 512
@@ -89,8 +88,7 @@ def test_provider_summary_keeps_only_bounded_structural_diagnostics():
 def test_authoritative_audit_requires_exact_round_request_and_provider():
     db = _AuditSession(row=(1,))
     request = _provider_request()
-
-    assert agent_service._authoritative_provider_audit_exists(
+    assert agent_runtime._authoritative_provider_audit_exists(
         db,
         request=request,
         provider="private_ai_runtime",
@@ -106,8 +104,7 @@ def test_authoritative_audit_requires_exact_round_request_and_provider():
 
 def test_authoritative_audit_query_failure_is_fail_closed():
     db = _AuditSession(fail=True)
-
-    assert agent_service._authoritative_provider_audit_exists(
+    assert agent_runtime._authoritative_provider_audit_exists(
         db,
         request=_provider_request(),
         provider="private_ai_runtime",
@@ -132,14 +129,12 @@ async def test_successful_provider_result_without_durable_audit_becomes_visible_
             raw_payload_safe_summary={"traffic": {"path": "canary_authoritative"}},
         )
     )
-    monkeypatch.setattr(agent_service.ProviderRuntimeRouter, "route", route)
-    monkeypatch.setattr(
-        agent_service,
-        "_authoritative_provider_audit_exists",
-        lambda *args, **kwargs: False,
-    )
+    monkeypatch.setattr(agent_runtime.ProviderRuntimeRouter, "route", route)
+    monkeypatch.setattr(agent_runtime, "_authoritative_provider_audit_exists", lambda *args, **kwargs: False)
+    monkeypatch.setattr(agent_runtime, "_runtime_policy", lambda *args, **kwargs: {"max_tool_rounds": 3, "allow_high_risk_writes": False, "allowed_tools": [], "provider_timeout_ms": 15000, "enabled": True})
+    monkeypatch.setattr(agent_runtime, "prompt_playbook_catalog", lambda *args, **kwargs: [])
 
-    result = await agent_service._run_agent_with_db(
+    result = await agent_runtime.run_agent_with_db(
         _AuditSession(),
         request=RuntimeAIProviderRequest(
             tenant_key="tenant-1",
@@ -152,7 +147,6 @@ async def test_successful_provider_result_without_durable_audit_becomes_visible_
         ),
         started=time.monotonic(),
     )
-
     assert result.ok is True
     assert result.ai_generated is False
     assert result.reply
