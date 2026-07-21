@@ -80,8 +80,9 @@ def bootstrap_agent_tool_contracts() -> None:
             name="specialist.delegate",
             classification="read",
             description=(
-                "Delegate one bounded read-only analysis task to an approved "
-                "specialist and return structured evidence to the parent Agent."
+                "Delegate the current case to one approved read-only specialist "
+                "for a server-defined objective and return structured evidence "
+                "to the parent Agent."
             ),
             input_schema=registry._schema(
                 {
@@ -95,10 +96,15 @@ def bootstrap_agent_tool_contracts() -> None:
                             "data_analyst",
                         ],
                     },
-                    "task": {
+                    "objective": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 3000,
+                        "enum": [
+                            "investigate_current_request",
+                            "check_policy_consistency",
+                            "summarize_current_case",
+                            "review_current_translation",
+                            "analyze_available_data",
+                        ],
                     },
                     "evidence_refs": {
                         "type": "array",
@@ -110,18 +116,19 @@ def bootstrap_agent_tool_contracts() -> None:
                         },
                     },
                 },
-                required=("specialist", "task"),
+                required=("specialist", "objective"),
             ),
             idempotency_key_strategy=(
-                "sha256(tenant,session,specialist,task,evidence_refs,release)"
+                "sha256(tenant,session,specialist,objective,evidence_refs,release)"
             ),
             risk_level="medium",
             allowed_auto_execution_mode="policy_gated",
             controlled_action_required=True,
             customer_visible_result=False,
             redaction_requirements=(
-                "no_raw_task_in_audit",
+                "server_generated_task_only",
                 "no_hidden_reasoning",
+                "no_customer_identifier",
                 "no_secret",
                 "evidence_refs_only",
                 "bounded_response",
