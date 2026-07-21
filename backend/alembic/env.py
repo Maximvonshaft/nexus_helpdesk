@@ -67,6 +67,29 @@ def _include_object(object_, name, type_, reflected, compare_to):
     return True
 
 
+def _register_postgresql_json_adapters(connection) -> None:
+    """Make raw Alembic text binds use the same JSON contract as typed SQLAlchemy inserts.
+
+    Some historical migrations use ``sa.text`` for deterministic RETURNING
+    statements and bind Python dictionaries into JSON columns. Psycopg 3 does
+    not guess that untyped dictionaries are JSON. Registering the standard
+    per-connection JSONB dumper at the migration boundary avoids one-off string
+    serialization and keeps structured values structured.
+    """
+
+    if connection.dialect.name != 'postgresql':
+        return
+    driver_connection = connection.connection.driver_connection
+    adapters = getattr(driver_connection, 'adapters', None)
+    if adapters is None:
+        return
+    try:
+        from psycopg.types.json import JsonbDumper
+    except ImportError as exc:  # pragma: no cover - production PostgreSQL requires psycopg
+        raise RuntimeError('psycopg_json_adapter_unavailable') from exc
+    adapters.register_dumper(dict, JsonbDumper)
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option('sqlalchemy.url')
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True, compare_type=_compare_type, include_object=_include_object)
@@ -81,6 +104,7 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        _register_postgresql_json_adapters(connection)
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=_compare_type, include_object=_include_object)
         with context.begin_transaction():
             context.run_migrations()
