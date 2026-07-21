@@ -11,7 +11,10 @@ from ..enums import EventType
 from ..models import Customer, Ticket, TicketEvent
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
-from .agent_integration_service import execute_integration_operation
+from .agent_integration_service import (
+    execute_integration_operation,
+    list_integration_catalog,
+)
 from .agent_runtime.execution_scope import current_agent_release_snapshot
 from .agent_runtime.specialist_runtime import run_specialist_sync
 from .background_jobs import enqueue_speedaf_work_order_create_job
@@ -99,6 +102,82 @@ def build_agent_tool_handlers(
             ),
             case_context=request.case_context,
             error_code=None if hits else "knowledge_not_found",
+        )
+
+    def integration_search(request: ActionExecutionRequest) -> ActionExecutionResult:
+        arguments = request.action.arguments
+        keywords = _integration_keywords(arguments.get("keywords"))
+        mode = str(arguments.get("mode") or "all").strip().lower()
+        limit = max(1, min(int(arguments.get("limit") or 8), 20))
+        if not keywords or mode not in {"read", "write", "all"}:
+            return _failure(request, "integration_search_arguments_invalid")
+        snapshot = current_agent_release_snapshot()
+        if not isinstance(snapshot, dict):
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_integration",
+            )
+        try:
+            catalog = list_integration_catalog(
+                db,
+                market_id=getattr(ticket, "market_id", None),
+                channel=request.channel,
+                release_snapshot=snapshot,
+            )
+        except RuntimeError:
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_integration",
+            )
+        matches: list[dict[str, Any]] = []
+        for integration in catalog:
+            integration_key = str(integration.get("resource_key") or "")[:160]
+            integration_name = str(integration.get("name") or "")[:160]
+            for operation in integration.get("operations") or []:
+                if not isinstance(operation, dict) or operation.get("enabled") is False:
+                    continue
+                operation_mode = str(operation.get("mode") or "").lower()
+                if operation_mode not in {"read", "write"}:
+                    continue
+                if mode != "all" and operation_mode != mode:
+                    continue
+                operation_key = str(operation.get("key") or "")[:160]
+                description = str(operation.get("description") or "")[:600]
+                searchable = " ".join(
+                    (integration_key, integration_name, operation_key, description)
+                ).lower()
+                score = sum(1 for keyword in keywords if keyword in searchable)
+                if score <= 0:
+                    continue
+                matches.append(
+                    {
+                        "integration_key": integration_key,
+                        "operation": operation_key,
+                        "description": description,
+                        "mode": operation_mode,
+                        "risk_level": str(operation.get("risk_level") or "medium")[:20],
+                        "requires_confirmation": bool(
+                            operation.get("requires_confirmation")
+                        ),
+                        "score": score,
+                    }
+                )
+        matches.sort(
+            key=lambda item: (
+                -int(item["score"]),
+                str(item["integration_key"]),
+                str(item["operation"]),
+            )
+        )
+        selected = matches[:limit]
+        return ActionExecutionResult(
+            ok=bool(selected),
+            tool_name=request.action.tool_name,
+            status="executed" if selected else "no_results",
+            summary={"matches": selected, "count": len(selected)},
+            customer_visible_summary=None,
+            case_context=request.case_context,
+            error_code=None if selected else "integration_search_no_results",
         )
 
     def integration_read(request: ActionExecutionRequest) -> ActionExecutionResult:
@@ -279,6 +358,7 @@ def build_agent_tool_handlers(
 
     return {
         "knowledge.search": knowledge_search,
+        "integration.search": integration_search,
         "integration.read": integration_read,
         "integration.write": integration_write,
         "specialist.delegate": specialist_delegate,
@@ -288,11 +368,23 @@ def build_agent_tool_handlers(
 
 def extension_executable_tool_names() -> tuple[str, ...]:
     return (
+        "integration.search",
         "integration.read",
         "integration.write",
         "specialist.delegate",
         "speedaf.workOrder.create",
     )
+
+
+def _integration_keywords(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for raw in value[:8]:
+        cleaned = str(raw or "").strip().lower()[:80]
+        if cleaned and cleaned not in output:
+            output.append(cleaned)
+    return output
 
 
 def _specialist_task(
@@ -360,9 +452,4 @@ def _detail(exc: HTTPException) -> str:
 
 
 def _enabled(name: str) -> bool:
-    return str(os.getenv(name) or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
