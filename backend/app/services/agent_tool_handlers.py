@@ -14,6 +14,7 @@ from ..webchat_models import WebchatConversation
 from .agent_runtime.execution_scope import current_agent_release_snapshot
 from .background_jobs import enqueue_speedaf_work_order_create_job
 from .integration_runtime import execute_integration_operation
+from .knowledge_release_retrieval import retrieve_release_published_chunks
 from .nexus_osr.controlled_action_executor import (
     ActionExecutionRequest,
     ActionExecutionResult,
@@ -29,6 +30,47 @@ def build_agent_tool_handlers(
     ticket: Ticket | None,
     customer: Customer | None,
 ) -> dict[str, ActionHandler]:
+    """Build request-local handlers consumed by the one canonical executor."""
+
+    def knowledge_search(request: ActionExecutionRequest) -> ActionExecutionResult:
+        query = str(request.action.arguments.get("query") or "").strip()
+        limit = max(1, min(int(request.action.arguments.get("limit") or 5), 8))
+        retrieval = retrieve_release_published_chunks(
+            db,
+            q=query,
+            tenant_id=str(request.audit_context.get("tenant_id") or "default"),
+            market_id=getattr(ticket, "market_id", None),
+            channel=request.channel,
+            audience_scope="customer",
+            language=None,
+            limit=limit,
+        )
+        if retrieval is None:
+            return _failure(request, "agent_release_snapshot_required_for_knowledge")
+        hits: list[dict[str, Any]] = []
+        for hit in retrieval.hits[:limit]:
+            answer = str(hit.direct_answer or hit.text or "").strip()
+            if answer:
+                hits.append(
+                    {
+                        "source_id": str(hit.item_key)[:180],
+                        "title": str(hit.title)[:180],
+                        "answer": answer[:1200],
+                        "answer_mode": hit.answer_mode,
+                    }
+                )
+        return ActionExecutionResult(
+            ok=bool(hits),
+            tool_name=request.action.tool_name,
+            status="executed" if hits else "no_results",
+            summary={"query": query[:240], "hits": hits, "count": len(hits)},
+            customer_visible_summary=(
+                None if hits else "No approved knowledge result was found."
+            ),
+            case_context=request.case_context,
+            error_code=None if hits else "knowledge_not_found",
+        )
+
     def integration_read(request: ActionExecutionRequest) -> ActionExecutionResult:
         return _integration(request, expected_write=False)
 
@@ -58,6 +100,8 @@ def build_agent_tool_handlers(
             )
         except HTTPException as exc:
             return _failure(request, _detail(exc))
+        except RuntimeError:
+            return _failure(request, "agent_release_snapshot_required_for_integration")
         return ActionExecutionResult(
             result.ok,
             request.action.tool_name,
@@ -133,6 +177,7 @@ def build_agent_tool_handlers(
         )
 
     return {
+        "knowledge.search": knowledge_search,
         "integration.read": integration_read,
         "integration.write": integration_write,
         "speedaf.workOrder.create": work_order_create,
