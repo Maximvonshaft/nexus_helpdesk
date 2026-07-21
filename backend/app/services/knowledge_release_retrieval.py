@@ -276,6 +276,7 @@ def _item_projection(evidence: dict[str, Any]) -> Any:
         answer_mode=str(snapshot.get("answer_mode") or "guided_answer"),
         fact_question=snapshot.get("fact_question"),
         fact_answer=snapshot.get("fact_answer"),
+        fact_aliases_json=list(snapshot.get("fact_aliases_json") or []),
         citation_metadata_json=snapshot.get("citation_metadata_json") or {},
     )
 
