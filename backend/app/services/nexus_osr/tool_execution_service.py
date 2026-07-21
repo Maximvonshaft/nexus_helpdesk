@@ -1,15 +1,50 @@
-"""Public governed tool-execution authority.
+"""Public governed Tool-execution authority.
 
-The private core owns the single executor, handler registry, policy, audit and
-idempotency implementation. This module is only the stable public import path.
+The private core remains the only executor, policy, audit and idempotency
+implementation. Configurable Agent extensions register contracts and production
+handlers into that authority; they do not create a parallel dispatcher.
 """
 
 from __future__ import annotations
 
+from ..agent_tool_contracts import bootstrap_agent_tool_contracts
+from ..agent_tool_handlers import (
+    build_agent_tool_handlers,
+    extension_executable_tool_names,
+)
 from . import tool_execution_service_core as _core
-from .tool_execution_service_core import *  # noqa: F401,F403
 
-_production_handlers = _core._production_handlers
+bootstrap_agent_tool_contracts()
+_ORIGINAL_PRODUCTION_HANDLERS = _core._production_handlers
+
+
+def _production_handlers(db, *, conversation, ticket, customer):
+    handlers = _ORIGINAL_PRODUCTION_HANDLERS(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        customer=customer,
+    )
+    extensions = build_agent_tool_handlers(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        customer=customer,
+    )
+    overlap = set(handlers) & set(extensions)
+    if overlap:
+        raise RuntimeError(f"duplicate canonical Tool handlers: {sorted(overlap)}")
+    handlers.update(extensions)
+    return handlers
+
+
+_core._production_handlers = _production_handlers
+_core._EXECUTABLE_TOOL_NAMES = tuple(
+    sorted(set(_core._EXECUTABLE_TOOL_NAMES) | set(extension_executable_tool_names()))
+)
+
+from .tool_execution_service_core import *  # noqa: E402,F401,F403
+
 _availability_customer_summary = _core._availability_customer_summary
 
 
