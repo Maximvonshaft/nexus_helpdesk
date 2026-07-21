@@ -410,8 +410,8 @@ def resolve_agent_release(
         raise AgentDeploymentUnavailable("agent_deployment_release_retired")
     if manifest_digest(release.manifest_json) != release.manifest_sha256:
         raise AgentDeploymentUnavailable("agent_release_digest_mismatch")
-    validation = _json_object(release.validation_json)
-    if validation.get("manifest_sha256") != release.manifest_sha256:
+    resolved_components = _json_object(release.validation_json)
+    if resolved_components.get("manifest_sha256") != release.manifest_sha256:
         raise AgentDeploymentUnavailable("agent_release_validation_mismatch")
     definition = db.get(AgentDefinition, release.definition_id)
     if definition is None or not definition.is_active:
@@ -438,7 +438,7 @@ def resolve_agent_release(
             "manifest_sha256": release.manifest_sha256,
         },
         "manifest": _json_object(release.manifest_json),
-        "validation": validation,
+        "resolved": resolved_components,
     }
     return ResolvedAgentRelease(deployment, release, snapshot, manifest_digest(snapshot))
 
