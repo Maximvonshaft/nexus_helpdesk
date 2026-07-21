@@ -5,12 +5,12 @@ from sqlalchemy.orm import Session
 from ..auth_service import load_authenticated_user_for_token
 from ..db import get_db
 from ..models import User
+from ..services.agent_resource_authority import bind_session_actor
 from ..services.credential_policy_service import password_change_required
 from ..services.permissions import CAP_USER_MANAGE, resolve_capabilities
 from ..settings import get_settings
 
 bearer = HTTPBearer(auto_error=False)
-SESSION_ACTOR_KEY = "nexus_authenticated_user"
 
 
 def _resolve_authenticated_user(
@@ -27,10 +27,7 @@ def _resolve_authenticated_user(
 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    # The request-scoped Session is the canonical service boundary. Downstream
-    # services use this identity for tenant/resource authority instead of
-    # accepting a caller-supplied tenant field or duplicating route checks.
-    db.info[SESSION_ACTOR_KEY] = user
+    bind_session_actor(db, user)
     return user
 
 
