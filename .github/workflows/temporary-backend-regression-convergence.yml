@@ -31,6 +31,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           root = Path.cwd()
           tool_tests = root / "backend/tests/test_nexus_osr_tool_execution_service.py"
@@ -84,28 +85,20 @@ jobs:
           tool_tests.write_text(text, encoding="utf-8")
 
           text = turn_tests.read_text(encoding="utf-8")
-          retired_block = '''        audit = db.query(RuntimeDecisionAuditRecord).filter(
-              RuntimeDecisionAuditRecord.conversation_id == turn.conversation_id,
-              RuntimeDecisionAuditRecord.ticket_id.is_(None),
-          ).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
-          assert audit is not None
-          context = db.query(CaseContextRecord).filter(
-              CaseContextRecord.conversation_id == turn.conversation_id,
-              CaseContextRecord.ticket_id.is_(None),
-          ).order_by(CaseContextRecord.id.desc()).first()
-          assert context is not None
-
-          '''
-          text = replace_once(
-              text,
-              retired_block,
-              '''        # Direct final replies are audited by the Agent turn trace and
-          # Provider Runtime. RuntimeDecisionAuditRecord and CaseContextRecord are
-          # reserved for governed Tool decisions/context, not a parallel reply audit.
-
-          ''',
-              "retired direct reply audit expectation",
+          pattern = re.compile(
+              r"\n        audit = db\.query\(RuntimeDecisionAuditRecord\)\.filter\(\n"
+              r".*?"
+              r"        assert context is not None\n",
+              re.DOTALL,
           )
+          replacement = (
+              "\n        # Direct final replies are audited by the Agent turn trace and\n"
+              "        # Provider Runtime. RuntimeDecisionAuditRecord and CaseContextRecord are\n"
+              "        # reserved for governed Tool decisions/context, not a parallel reply audit.\n"
+          )
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise RuntimeError(f"retired direct reply audit expectation: expected 1 match, found {count}")
           text = text.replace(
               "Ticketless AI audit remains inspectable.",
               "Ticketless Agent turn remains inspectable.",
