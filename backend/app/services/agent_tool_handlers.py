@@ -11,6 +11,7 @@ from ..enums import EventType
 from ..models import Customer, Ticket, TicketEvent
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
+from .agent_runtime.execution_scope import current_agent_release_snapshot
 from .background_jobs import enqueue_speedaf_work_order_create_job
 from .integration_runtime import execute_integration_operation
 from .nexus_osr.controlled_action_executor import (
@@ -53,6 +54,7 @@ def build_agent_tool_handlers(
                 expected_write=expected_write,
                 market_id=getattr(ticket, "market_id", None),
                 channel=request.channel,
+                release_snapshot=current_agent_release_snapshot(),
             )
         except HTTPException as exc:
             return _failure(request, _detail(exc))
