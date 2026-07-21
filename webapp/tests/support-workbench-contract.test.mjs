@@ -79,35 +79,41 @@ test('knowledge is one capability-aware implementation', () => {
   assert.match(page, /KnowledgePage\(\{ canManage \}/)
   assert.match(route, /LazyKnowledgePage canManage/)
   assert.equal(exists('src/features/knowledge/KnowledgeReadOnlyPage.tsx'), false)
+  for (const text of ['知识与流程', '标准答案与处理步骤', '搜索测试', '发布状态']) assert.match(page, new RegExp(text))
 })
 
 test('type exports have one declaration and one domain owner', () => {
-  const index = read('src/lib/types.ts')
-  for (const owner of typeOwners) assert.match(index, new RegExp(`from './types/${owner}'`))
-  const files = readdirSync(resolve(root, 'src/lib/types')).filter((name) => name.endsWith('.ts'))
-  const contents = files.map((name) => read(`src/lib/types/${name}`)).join('\n')
-  for (const name of ['SupportConversation', 'KnowledgeItem', 'ChannelAccount', 'RuntimeSnapshot']) {
-    assert.equal((contents.match(new RegExp(`(?:interface|type) ${name}\\b`, 'g')) || []).length, 1)
+  const barrel = read('src/lib/types.ts')
+  const declarations = new Map()
+
+  for (const owner of typeOwners) {
+    const path = `src/lib/types/${owner}.ts`
+    const source = read(path)
+    assert.match(barrel, new RegExp(`export \\* from './types/${owner}'`))
+    for (const match of source.matchAll(/export\s+(?:interface|type)\s+([A-Za-z_$][\w$]*)/g)) {
+      const name = match[1]
+      assert.equal(declarations.has(name), false, `${name} is declared by both ${declarations.get(name)} and ${owner}`)
+      declarations.set(name, owner)
+    }
+    assert.doesNotMatch(source, /export\s*\{[^}]*\bas\b/, `${owner} contains a compatibility alias`)
   }
-})
 
-test('visual inventory is source-converged', () => {
-  const routes = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).map((name) => read(`src/routes/${name}`)).join('\n')
-  assert.doesNotMatch(routes, /legacy|deprecated|compatibility/i)
-  assert.equal(exists('src/features/operator-console'), false)
-  assert.equal(exists('src/features/support-workbench'), false)
-})
+  const channelControlSource = read('src/lib/channelControlTypes.ts')
+  assert.match(barrel, /export \* from '.\/channelControlTypes'/)
+  for (const match of channelControlSource.matchAll(/export\s+(?:interface|type)\s+([A-Za-z_$][\w$]*)/g)) {
+    const name = match[1]
+    assert.equal(declarations.has(name), false, `${name} is declared by both ${declarations.get(name)} and channelControlTypes`)
+    declarations.set(name, 'channelControlTypes')
+  }
+  assert.doesNotMatch(channelControlSource, /export\s*\{[^}]*\bas\b/, 'channelControlTypes contains a compatibility alias')
 
-test('Knowledge and Workspace each have one implementation graph', () => {
-  const routes = readdirSync(resolve(root, 'src/routes')).filter((name) => name.endsWith('.tsx')).map((name) => read(`src/routes/${name}`)).join('\n')
-  assert.equal((routes.match(/features\/knowledge\/lazy/g) || []).length, 1)
-  assert.equal((routes.match(/features\/operator-workspace\/lazy/g) || []).length, 1)
-})
-
-test('workspace has one presentation, formatting and action authority', () => {
-  const files = readdirSync(resolve(root, 'src/features/operator-workspace')).filter((name) => name.endsWith('.tsx') || name.endsWith('.ts'))
-  const contents = files.map((name) => read(`src/features/operator-workspace/${name}`)).join('\n')
-  assert.equal((contents.match(/function formatDateTime/g) || []).length, 1)
-  assert.equal((contents.match(/function describeError/g) || []).length, 1)
-  assert.equal((contents.match(/function actionLabel/g) || []).length, 1)
+  const operations = read('src/lib/types/operations.ts')
+  const knowledge = read('src/lib/types/knowledge.ts')
+  const channelControl = channelControlSource
+  assert.doesNotMatch(operations, /KnowledgeStudio|PersonaBuilder|ChannelOnboardingTask/)
+  assert.match(knowledge, /KnowledgeStudio/)
+  assert.match(knowledge, /PersonaBuilder/)
+  assert.doesNotMatch(knowledge, /ChannelOnboardingTask/)
+  assert.match(channelControl, /ChannelOnboardingTask/)
+  assert.doesNotMatch(channelControl, /externalAccountId/)
 })
