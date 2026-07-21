@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ...db import SessionLocal
-from ..agent_control_config import RUNTIME_POLICY, resolve_singleton_agent_config
+from ..agent_control_config import RUNTIME_POLICY
 from ..agent_release_service import record_run_snapshot, resolve_agent_release
 from ..agent_tool_contracts import bootstrap_agent_tool_contracts
 from ..ai_runtime.schemas import RuntimeAIProviderRequest, RuntimeAIProviderResult
@@ -85,7 +85,9 @@ async def run_agent_with_db(
     started = started if started is not None else time.monotonic()
     metadata = dict(request.metadata or {})
     state = AgentRunState()
-    run_request_id = str(request.request_id or f"agent-{request.session_id}-{time.time_ns()}")[:160]
+    run_request_id = str(
+        request.request_id or f"agent-{request.session_id}-{time.time_ns()}"
+    )[:160]
 
     try:
         resolved_release = resolve_agent_release(
@@ -131,20 +133,42 @@ async def run_agent_with_db(
             elapsed_ms=state.elapsed_ms,
         )
 
-    policy = _runtime_policy(db, request, release_snapshot=release_snapshot)
+    try:
+        policy = _runtime_policy(db, request, release_snapshot=release_snapshot)
+        release_playbooks = prompt_playbook_catalog(
+            db,
+            market_id=request.market_id,
+            channel=request.channel_key,
+            language=request.language,
+            release_snapshot=release_snapshot,
+        )
+    except Exception as exc:
+        state.elapsed_ms = _elapsed(started)
+        state.traces.append(
+            AgentRoundTrace(
+                round_index=0,
+                next_action=None,
+                error_code=f"agent_release_contract_failed:{type(exc).__name__}",
+            )
+        )
+        return _fallback_result(
+            request,
+            state=state,
+            error_code="agent_release_contract_failed",
+            elapsed_ms=state.elapsed_ms,
+            release_snapshot=release_snapshot,
+        )
+
     hard_round_ceiling = _int_env(
-        "NEXUS_AGENT_MAX_TOOL_ROUNDS", 6, minimum=1, maximum=6
+        "NEXUS_AGENT_MAX_TOOL_ROUNDS",
+        6,
+        minimum=1,
+        maximum=6,
     )
     max_rounds = min(int(policy.get("max_tool_rounds") or 3), hard_round_ceiling)
     allow_high_risk_writes = bool(policy.get("allow_high_risk_writes")) and _env_bool(
-        "NEXUS_AGENT_HIGH_RISK_WRITES_ENABLED", False
-    )
-    release_playbooks = prompt_playbook_catalog(
-        db,
-        market_id=request.market_id,
-        channel=request.channel_key,
-        language=request.language,
-        release_snapshot=release_snapshot,
+        "NEXUS_AGENT_HIGH_RISK_WRITES_ENABLED",
+        False,
     )
     available_tools = _available_tools(
         metadata,
@@ -268,7 +292,8 @@ async def run_agent_with_db(
         if decision.next_action != "call_tool":
             handoff_committed = _committed_handoff_observed(state)
             handoff_requested = (
-                decision.next_action == "request_handoff" or decision.handoff_required
+                decision.next_action == "request_handoff"
+                or decision.handoff_required
             )
             if handoff_requested and not handoff_committed:
                 state.traces.append(
@@ -426,33 +451,16 @@ def _runtime_policy(
     *,
     release_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    released = _released_resource(release_snapshot, RUNTIME_POLICY)
-    if released is not None:
-        return released
-    resolved = resolve_singleton_agent_config(
-        db,
-        config_type=RUNTIME_POLICY,
-        market_id=request.market_id,
-        channel=request.channel_key,
-        language=request.language,
-    )
-    if resolved is None:
-        return {
-            "max_tool_rounds": 3,
-            "allow_high_risk_writes": False,
-            "allowed_tools": [],
-            "provider_timeout_ms": 15000,
-            "enabled": True,
-        }
-    return dict(resolved.content)
+    del db, request
+    return _released_resource(release_snapshot, RUNTIME_POLICY)
 
 
 def _released_resource(
     release_snapshot: dict[str, Any],
     config_type: str,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     if release_snapshot.get("source") != "deployment":
-        return None
+        raise RuntimeError("agent_release_snapshot_required")
     resolved = release_snapshot.get("resolved")
     resources = resolved.get("resources") if isinstance(resolved, dict) else None
     if not isinstance(resources, list):
@@ -629,19 +637,20 @@ def _available_tools(
         executable &= {
             str(item).strip() for item in configured if str(item).strip()
         }
-    if release_snapshot.get("source") == "deployment":
-        playbook_tools = {
-            str(name)
-            for playbook in playbooks
-            for name in (playbook.get("tools") or [])
-            if str(name)
-        }
-        executable &= playbook_tools
-        manifest = release_snapshot.get("manifest")
-        if not isinstance(manifest, dict) or not manifest.get("integrations"):
-            executable -= {"integration.read", "integration.write"}
-        if not isinstance(manifest, dict) or not manifest.get("knowledge"):
-            executable.discard("knowledge.search")
+    if release_snapshot.get("source") != "deployment":
+        raise RuntimeError("agent_release_snapshot_required")
+    playbook_tools = {
+        str(name)
+        for playbook in playbooks
+        for name in (playbook.get("tools") or [])
+        if str(name)
+    }
+    executable &= playbook_tools
+    manifest = release_snapshot.get("manifest")
+    if not isinstance(manifest, dict) or not manifest.get("integrations"):
+        executable -= {"integration.read", "integration.write"}
+    if not isinstance(manifest, dict) or not manifest.get("knowledge"):
+        executable.discard("knowledge.search")
     execution = (
         metadata.get("agent_execution_context")
         if isinstance(metadata.get("agent_execution_context"), dict)
