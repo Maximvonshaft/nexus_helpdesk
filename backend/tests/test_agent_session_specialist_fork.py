@@ -6,130 +6,95 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.api import agent_runtime_operations as operations
 from app.api.agent_runtime_operations import AgentRunForkRequest
-from app.db import Base
-from app.models_agent_control import AgentRunSnapshot
-from app.services.agent_runtime import tool_adapter
-from app.services.agent_runtime.run_events import (
-    append_agent_event,
-    finish_agent_run,
-    start_agent_run,
-)
-from app.services.agent_runtime.specialist_service import run_read_only_specialists
+from app.services.agent_runtime import specialist_runtime, tool_adapter
 from app.services.agent_runtime.tool_adapter import AgentExecutionContext
+from app.services.agent_tool_contracts import bootstrap_agent_tool_contracts
 from app.services.ai_runtime.schemas import RuntimeAIProviderResult
+from app.services.provider_runtime.schemas import ProviderResult
 from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_contract
 
 
-@pytest.fixture()
-def db_session(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'agent-specialists.db'}",
-        connect_args={"check_same_thread": False},
-        future=True,
-    )
-    SessionFactory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    Base.metadata.create_all(engine)
-    db = SessionFactory()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
-def test_read_only_specialists_use_only_safe_run_and_release_evidence(db_session) -> None:
-    run = start_agent_run(
-        db_session,
-        request_id="specialist-parent",
-        session_id="specialist-session",
-        tenant_key="tenant-a",
-        channel="webchat",
-        environment="production",
-        runtime_version="nexus.agent_runtime.v4",
-    )
-    run.release_id = 7
-    run.release_digest = "a" * 64
-    db_session.add(
-        AgentRunSnapshot(
-            request_id=run.request_id,
-            session_id=run.session_id,
-            tenant_key=run.tenant_key,
-            deployment_id=3,
-            release_id=7,
-            snapshot_sha256="b" * 64,
-            snapshot_json={
-                "resolved": {
-                    "knowledge": [
-                        {"item_key": "shipping.status", "version": 2},
-                    ]
+def _release_snapshot() -> dict:
+    return {
+        "source": "deployment",
+        "tenant_key": "tenant-a",
+        "release": {"id": 7, "version": 2, "manifest_sha256": "a" * 64},
+        "resolved": {
+            "resources": [
+                {
+                    "config_type": "runtime_policy",
+                    "content": {"provider_timeout_ms": 5000},
                 }
+            ]
+        },
+    }
+
+
+def test_specialist_delegate_is_one_canonical_read_only_tool_contract() -> None:
+    bootstrap_agent_tool_contracts()
+    contract = get_tool_contract("specialist.delegate")
+    assert contract is not None
+    assert contract.is_read_tool is True
+    assert contract.controlled_action_required is True
+    assert contract.customer_visible_result is False
+    assert contract.risk_level == "medium"
+
+
+@pytest.mark.asyncio
+async def test_specialist_runtime_uses_canonical_provider_router(monkeypatch) -> None:
+    captured = {}
+
+    async def route(_self, request):
+        captured["request"] = request
+        return ProviderResult(
+            ok=True,
+            provider="private_ai_runtime",
+            raw_provider="private_ai_runtime",
+            reply_source="private_ai_runtime",
+            elapsed_ms=4,
+            structured_output={
+                "specialist": "case_summarizer",
+                "summary": "The bounded evidence is consistent.",
+                "findings": [
+                    {
+                        "claim": "A safe event reference is available.",
+                        "confidence": 1.0,
+                        "evidence_refs": ["agent_run_event:12"],
+                    }
+                ],
+                "risks": [],
+                "recommended_action": "Return evidence to the parent Agent.",
+                "needs_human_review": False,
             },
-            source="deployment",
+            raw_payload_safe_summary={"provider": "private_ai_runtime"},
         )
+
+    monkeypatch.setattr(
+        specialist_runtime.ProviderRuntimeRouter,
+        "route",
+        route,
     )
-    append_agent_event(
-        db_session,
-        run=run,
-        event_type="tool_failed",
-        safe_payload={
-            "tool_name": "knowledge.search",
-            "round_index": 0,
-            "status": "failed",
-            "elapsed_ms": 12,
-            "error_code": "knowledge_not_found",
-        },
-    )
-    append_agent_event(
-        db_session,
-        run=run,
-        event_type="reply_finalized",
-        safe_payload={
-            "round_index": 1,
-            "intent": "shipment_tracking",
-            "handoff_required": False,
-            "reply_chars": 90,
-        },
-    )
-    finish_agent_run(
-        db_session,
-        run=run,
-        status="fallback",
-        final_action="fallback",
-        elapsed_ms=40,
-        error_code="knowledge_not_found",
-        round_count=2,
+    result = await specialist_runtime.run_specialist(
+        None,
+        release_snapshot=_release_snapshot(),
+        tenant_key="tenant-a",
+        channel_key="webchat",
+        session_id="session-a",
+        request_id="specialist-request",
+        specialist="case_summarizer",
+        task="Summarize only the supplied evidence.",
+        evidence_refs=["agent_run_event:12"],
     )
 
-    results = run_read_only_specialists(
-        db_session,
-        parent_run=run,
-        specialists=[
-            "knowledge_researcher",
-            "policy_reviewer",
-            "case_summarizer",
-        ],
-    )
-    assert [item["specialist"] for item in results] == [
-        "knowledge_researcher",
-        "policy_reviewer",
-        "case_summarizer",
-    ]
-    assert results[0]["findings"][0]["evidence_refs"]
-    assert results[1]["needs_human_review"] is True
-    rendered = str(results).lower()
-    for forbidden in (
-        "customer_message",
-        "customer_reply",
-        "tool_arguments",
-        "tracking_number",
-        "hidden reasoning",
-    ):
-        assert forbidden not in rendered
+    assert result.ok is True
+    assert result.evidence["specialist"] == "case_summarizer"
+    assert captured["request"].scenario == "agent_specialist"
+    assert captured["request"].output_contract == "nexus.agent_specialist.v1"
+    assert captured["request"].metadata["agent_release_snapshot"]["release"]["id"] == 7
 
 
 def test_tool_worker_owns_a_fresh_sqlalchemy_session(monkeypatch, tmp_path) -> None:
@@ -173,7 +138,10 @@ def test_tool_worker_owns_a_fresh_sqlalchemy_session(monkeypatch, tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_exact_snapshot_fork_is_read_only_and_parent_linked(monkeypatch) -> None:
+async def test_exact_snapshot_fork_is_read_only_parent_linked_and_requests_canonical_specialist(
+    monkeypatch,
+) -> None:
+    bootstrap_agent_tool_contracts()
     parent = SimpleNamespace(
         id=10,
         request_id="parent-request",
@@ -219,19 +187,6 @@ async def test_exact_snapshot_fork_is_read_only_and_parent_linked(monkeypatch) -
             "channel_context": {},
         },
     )
-    monkeypatch.setattr(
-        operations,
-        "run_read_only_specialists",
-        lambda *_args, **_kwargs: [
-            {
-                "specialist": "case_summarizer",
-                "summary": "Safe evidence.",
-                "findings": [],
-                "risks": [],
-                "needs_human_review": False,
-            }
-        ],
-    )
     captured = {}
 
     async def run_agent(_db, *, request):
@@ -269,15 +224,22 @@ async def test_exact_snapshot_fork_is_read_only_and_parent_linked(monkeypatch) -
 
     request = captured["request"]
     assert result["agent_run_id"] == 11
+    assert result["requested_specialists"] == ["case_summarizer"]
     assert request.metadata["agent_parent_run_id"] == 10
     assert request.metadata["agent_fork_kind"] == "replay"
     assert request.metadata["agent_release_digest"] == "d" * 64
-    assert request.metadata["channel_context"]["specialist_evidence"]
+    assert request.metadata["channel_context"]["requested_specialists"] == [
+        "case_summarizer"
+    ]
+    assert request.metadata["channel_context"]["specialist_delegation_tool"] == (
+        "specialist.delegate"
+    )
     assert all(
         get_tool_contract(name) is not None
         and get_tool_contract(name).is_read_tool
         for name in request.metadata["agent_allowed_tools"]
     )
+    assert "integration.write" not in request.metadata["agent_allowed_tools"]
 
 
 @pytest.mark.asyncio
