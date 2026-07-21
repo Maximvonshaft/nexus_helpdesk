@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .tool_registry import get_tool_contract
@@ -29,6 +30,31 @@ class AIDecisionToolCall(BaseModel):
         if not cleaned or get_tool_contract(cleaned) is None:
             raise ValueError("tool_name must reference a registered canonical Tool")
         return cleaned
+
+    @model_validator(mode="after")
+    def _validate_registered_input_schema(self) -> "AIDecisionToolCall":
+        contract = get_tool_contract(self.tool_name)
+        if contract is None:
+            raise ValueError("tool_name must reference a registered canonical Tool")
+        try:
+            Draft202012Validator.check_schema(contract.input_schema)
+            errors = sorted(
+                Draft202012Validator(contract.input_schema).iter_errors(self.arguments),
+                key=lambda error: tuple(str(item) for item in error.absolute_path),
+            )
+        except SchemaError as exc:
+            raise ValueError("registered Tool input schema is invalid") from exc
+        if errors:
+            error = errors[0]
+            path = "$" + "".join(
+                f"[{item}]" if isinstance(item, int) else f".{item}"
+                for item in error.absolute_path
+            )
+            raise ValueError(
+                "Tool arguments do not match the registered input schema "
+                f"at {path}; validator={error.validator}"
+            )
+        return self
 
 
 class AIDecisionEvidence(BaseModel):
