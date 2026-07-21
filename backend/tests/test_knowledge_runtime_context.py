@@ -183,7 +183,7 @@ def test_runtime_context_is_release_gated_and_does_not_prefetch_knowledge(db_ses
     assert context["agent_release_snapshot"] is None
     assert context["agent_release_error"] == "agent_deployment_unavailable"
     assert context["persona_context"] is None
-    assert context["session_checkpoint"] is None
+    assert "session_checkpoint" not in context
     assert context["channel_context"]["channel"] == "website"
     assert "knowledge_context" not in context
     assert "rag_trace" not in context

@@ -257,7 +257,7 @@ def test_persona_builder_separates_authoring_preview_from_runtime_deployment(tmp
     assert runtime_payload["runtime_context"]["context_version"] == (
         "nexus.agent_context.v3"
     )
-    assert runtime_payload["runtime_context"]["session_checkpoint"] is None
+    assert "session_checkpoint" not in runtime_payload["runtime_context"]
     assert runtime_payload["persona_context"] is None
     assert runtime_payload["evidence"]["runtime_contract"] == (
         "AgentDeployment->AgentRelease->build_agent_context"
@@ -268,7 +268,7 @@ def test_persona_builder_separates_authoring_preview_from_runtime_deployment(tmp
     assert runtime_payload["evidence"]["identity_ready"] is False
 
     assert runtime_context["context_version"] == "nexus.agent_context.v3"
-    assert runtime_context["session_checkpoint"] is None
+    assert "session_checkpoint" not in runtime_context
     assert runtime_context["persona_context"] is None
     assert runtime_context["agent_release_snapshot"] is None
     assert runtime_context["agent_release_error"] == (
