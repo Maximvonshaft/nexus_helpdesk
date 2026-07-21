@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -53,8 +52,6 @@ async def run_specialist(
 
     started = time.monotonic()
     specialist_name = _specialist_name(specialist)
-    # The Specialist boundary never receives raw identifiers. Reuse the canonical
-    # CaseContext redactor so email, phone and waybill handling cannot diverge.
     task_text = redact_case_text(task, limit=3000)
     if not task_text:
         return _failure(
@@ -125,34 +122,19 @@ def run_specialist_sync(
     db: Session,
     **kwargs: Any,
 ) -> SpecialistExecutionResult:
-    """Join the async Provider call without creating an unobserved background task."""
+    """Run only inside the canonical synchronous Tool worker transaction.
+
+    ``specialist.delegate`` executes in the worker-owned Tool transaction created
+    by ``tool_adapter``. Calling this bridge from an async event loop would require
+    sharing the worker Session with another thread, which SQLAlchemy does not
+    support. Fail closed rather than creating a second execution path.
+    """
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(run_specialist(db, **kwargs))
-
-    output: list[SpecialistExecutionResult] = []
-    failure: list[BaseException] = []
-
-    def target() -> None:
-        try:
-            output.append(asyncio.run(run_specialist(db, **kwargs)))
-        except BaseException as exc:  # pragma: no cover - re-raised on caller thread
-            failure.append(exc)
-
-    thread = threading.Thread(
-        target=target,
-        name="nexus-specialist-joined",
-        daemon=False,
-    )
-    thread.start()
-    thread.join()
-    if failure:
-        raise failure[0]
-    if not output:
-        raise RuntimeError("specialist_joined_execution_missing")
-    return output[0]
+    raise RuntimeError("specialist_sync_called_from_event_loop")
 
 
 def _runtime_timeout(release_snapshot: dict[str, Any]) -> int:
