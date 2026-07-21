@@ -22,7 +22,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'knowledge',
-    label: '知识与流程',
+    label: 'Agent 配置',
     canonicalRoute: '/knowledge',
     currentHref: '/knowledge',
     capabilityAny: ['ai_config.read', 'ai_config.manage'],
