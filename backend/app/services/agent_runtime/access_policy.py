@@ -15,8 +15,6 @@ _DEFAULT_PUBLIC_WEBCHAT_TOOLS = frozenset(
         "speedaf.express.track.query",
         "speedaf.order.waybillCode.query",
         "handoff.request.create",
-        "ticket.create",
-        "timeline.event.create",
     }
 )
 
@@ -27,8 +25,6 @@ _DEFAULT_PUBLIC_WEBCHAT_PERMISSIONS = frozenset(
         "knowledge:read",
         "webchat:handoff:create",
         "speedaf:tracking:read",
-        "ticket:create",
-        "timeline:event:create",
     }
 )
 
@@ -54,6 +50,11 @@ def resolve_webchat_agent_access() -> WebchatAgentAccessPolicy:
     for name in sorted(requested_tools & executable):
         contract = get_tool_contract(name)
         if contract is None:
+            continue
+        # Public WebChat does not carry a server-issued confirmation artifact
+        # into Agent execution. Confirmation-required Tools remain available to
+        # controlled callers, but must never be exposed to this principal.
+        if contract.confirmation_required:
             continue
         if not set(contract.required_permissions).issubset(granted_permissions):
             continue
