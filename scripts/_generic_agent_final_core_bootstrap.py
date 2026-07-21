@@ -48,3 +48,20 @@ replacement = '''core = replace_function(
 write(core_path, core)
 '''
 path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+
+final_tests_path = Path("scripts/_generic_agent_final_tests.py")
+final_tests = final_tests_path.read_text(encoding="utf-8")
+last_mile_hook = '''
+
+last_mile_path = ROOT / "scripts/_generic_agent_last_mile.py"
+exec(
+    compile(
+        last_mile_path.read_text(encoding="utf-8"),
+        str(last_mile_path),
+        "exec",
+    )
+)
+last_mile_path.unlink()
+'''
+if "last_mile_path = ROOT / \"scripts/_generic_agent_last_mile.py\"" not in final_tests:
+    final_tests_path.write_text(final_tests.rstrip() + last_mile_hook + "\n", encoding="utf-8")
