@@ -7,6 +7,10 @@ from sqlalchemy.orm import Session
 
 from ..webchat_models import WebchatMessage
 from .agent_release_service import AgentDeploymentUnavailable, resolve_agent_release
+from .agent_runtime.session_checkpoints import (
+    checkpoint_prompt_projection,
+    load_session_checkpoint,
+)
 from .bulletin_service import list_active_bulletins
 from .effective_country import effective_country_payload, resolve_effective_country
 
@@ -18,8 +22,15 @@ _SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
 )
 _SECRET_KEYS = {
-    "token", "secret", "password", "authorization", "cookie",
-    "credential", "api_key", "raw_payload", "provider_payload",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+    "credential",
+    "api_key",
+    "raw_payload",
+    "provider_payload",
 }
 
 
@@ -43,8 +54,9 @@ def build_agent_context(
 ) -> dict[str, Any]:
     """Build one bounded context from the same deployment resolver as Runtime.
 
-    This function never writes run evidence. The canonical Runtime records the
-    immutable snapshot inside the transaction that actually performs the run.
+    This function is read-only. The canonical Runtime records immutable run
+    evidence and persists the next expiring Session checkpoint only after an
+    actual execution reaches a terminal state.
     """
 
     cohort_key = str(
@@ -57,6 +69,7 @@ def build_agent_context(
     release_snapshot: dict[str, Any] | None = None
     release_digest: str | None = None
     release_error: str | None = None
+    checkpoint = None
     try:
         resolved_release = resolve_agent_release(
             db,
@@ -70,6 +83,12 @@ def build_agent_context(
         )
         release_snapshot = resolved_release.snapshot
         release_digest = resolved_release.digest
+        checkpoint = load_session_checkpoint(
+            db,
+            tenant_key=tenant_key,
+            session_id=cohort_key,
+            release_id=resolved_release.release.id,
+        )
     except AgentDeploymentUnavailable:
         release_error = "agent_deployment_unavailable"
 
@@ -93,7 +112,7 @@ def build_agent_context(
     )
     return sanitize_runtime_context(
         {
-            "context_version": "nexus.agent_context.v2",
+            "context_version": "nexus.agent_context.v3",
             "tenant_key": tenant_key,
             "channel_context": {
                 "market_id": market_id,
@@ -108,6 +127,7 @@ def build_agent_context(
             "agent_release_snapshot": release_snapshot,
             "agent_release_digest": release_digest,
             "agent_release_error": release_error,
+            "agent_session_checkpoint": checkpoint_prompt_projection(checkpoint),
             "persona_context": _persona_context_from_release(release_snapshot),
             "active_bulletins": bulletins,
             "recent_conversation": recent,
@@ -177,7 +197,10 @@ def sanitize_runtime_context(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, str):
         return _sanitize_text(value)[:8000]
     if isinstance(value, (list, tuple, set)):
-        return [sanitize_runtime_context(item, depth=depth + 1) for item in list(value)[:300]]
+        return [
+            sanitize_runtime_context(item, depth=depth + 1)
+            for item in list(value)[:300]
+        ]
     if isinstance(value, dict):
         return {
             str(key)[:160]: sanitize_runtime_context(item, depth=depth + 1)
@@ -187,7 +210,9 @@ def sanitize_runtime_context(value: Any, *, depth: int = 0) -> Any:
     return str(value)[:200]
 
 
-def _persona_context_from_release(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+def _persona_context_from_release(
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     if not isinstance(snapshot, dict) or snapshot.get("source") != "deployment":
         return None
     resolved = snapshot.get("resolved")
@@ -206,14 +231,23 @@ def _persona_context_from_release(snapshot: dict[str, Any] | None) -> dict[str, 
     if isinstance(nested, dict):
         identity_source.update(nested)
     for field in (
-        "brand_name", "assistant_name", "role_label", "identity_statement",
-        "identity_answer_rule", "handoff_boundary", "tone", "capabilities",
-        "guardrails", "disallowed_identity_claims",
+        "brand_name",
+        "assistant_name",
+        "role_label",
+        "identity_statement",
+        "identity_answer_rule",
+        "handoff_boundary",
+        "tone",
+        "capabilities",
+        "guardrails",
+        "disallowed_identity_claims",
     ):
         if isinstance(content, dict) and field in content:
             identity_source[field] = content[field]
     return {
-        "profile_key": str(persona.get("profile_key") or evidence_snapshot.get("profile_key") or "")[:160],
+        "profile_key": str(
+            persona.get("profile_key") or evidence_snapshot.get("profile_key") or ""
+        )[:160],
         "name": str(evidence_snapshot.get("name") or "")[:240],
         "summary": _sanitize_text(str(evidence_snapshot.get("summary") or ""))[:1200],
         "content_json": content,
@@ -251,7 +285,9 @@ def _active_bulletin_context(
 
 
 def _row_text(row: Any) -> str:
-    return str(getattr(row, "body_text", None) or getattr(row, "body", None) or "").strip()
+    return str(
+        getattr(row, "body_text", None) or getattr(row, "body", None) or ""
+    ).strip()
 
 
 def _sanitize_text(value: str) -> str:
