@@ -9,6 +9,8 @@ from ..agent_control_config import PLAYBOOK
 from ..agent_tool_contracts import bootstrap_agent_tool_contracts
 
 bootstrap_agent_tool_contracts()
+_INTEGRATION_INVOKE_TOOLS = frozenset({"integration.read", "integration.write"})
+_INTEGRATION_SEARCH_TOOL = "integration.search"
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,10 @@ def _released_playbooks(
     resources = resolved.get("resources")
     if not isinstance(resources, list):
         raise RuntimeError("agent_release_resources_invalid")
+    manifest = release_snapshot.get("manifest")
+    integrations_bound = bool(
+        isinstance(manifest, dict) and manifest.get("integrations")
+    )
     rows: list[PlaybookDefinition] = []
     for item in resources:
         if not isinstance(item, dict) or item.get("config_type") != PLAYBOOK:
@@ -125,6 +131,9 @@ def _released_playbooks(
         content = item.get("content")
         if not isinstance(content, dict):
             raise RuntimeError("agent_release_playbook_content_invalid")
+        tools = [str(name) for name in content.get("tools") or []]
+        if integrations_bound and _INTEGRATION_INVOKE_TOOLS.intersection(tools):
+            tools = list(dict.fromkeys([*tools, _INTEGRATION_SEARCH_TOOL]))
         rows.append(
             PlaybookDefinition(
                 resource_id=int(item.get("id") or 0),
@@ -132,7 +141,7 @@ def _released_playbooks(
                 name=str(content.get("name") or ""),
                 display_name=str(content.get("display_name") or content.get("name") or ""),
                 description=str(content.get("description") or ""),
-                tools=tuple(str(name) for name in content.get("tools") or []),
+                tools=tuple(tools),
                 instructions=tuple(str(text) for text in content.get("instructions") or []),
                 priority=int(content.get("priority") or 100),
                 published_version=int(item.get("version") or 0),
