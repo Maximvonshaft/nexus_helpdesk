@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..models import Customer
 from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
 from ..webchat_models import (
@@ -15,10 +15,10 @@ from ..webchat_models import (
     WebchatEvent,
     WebchatMessage,
 )
-from .agent_runtime.tool_adapter import executable_tool_names
+from .agent_runtime.access_policy import resolve_webchat_agent_access
+from .ai_runtime_context import build_agent_context
 from .customer_language import resolve_conversation_language
 from .customer_visible_policy import evaluate_customer_visible_policy
-from .webchat_ai_decision_runtime.tool_registry import get_tool_contract
 from .webchat_ai_turn_service import (
     sanitized_ai_turn_runtime_trace,
     suppress_stale_reply_if_needed,
@@ -97,36 +97,6 @@ def _language_hint(text: str, rows: list[WebchatMessage]) -> str | None:
     ).language
 
 
-def _allowed_tools() -> list[str]:
-    executable = set(executable_tool_names())
-    configured = os.getenv("WEBCHAT_AGENT_ALLOWED_TOOLS")
-    if configured is not None:
-        requested = {
-            item.strip() for item in configured.split(",") if item.strip()
-        }
-    else:
-        requested = {
-            "knowledge.search",
-            "support.availability",
-            "speedaf.order.query",
-            "speedaf.express.track.query",
-            "speedaf.order.waybillCode.query",
-            "handoff.request.create",
-            "ticket.create",
-            "timeline.event.create",
-        }
-    return sorted(executable & requested)
-
-
-def _permissions(names: list[str]) -> list[str]:
-    values: set[str] = set()
-    for name in names:
-        contract = get_tool_contract(name)
-        if contract is not None:
-            values.update(contract.required_permissions)
-    return sorted(values)
-
-
 def process_ticketless_ai_reply(
     db: Session,
     *,
@@ -172,8 +142,37 @@ def process_ticketless_ai_reply(
         .first()
     )
     language = _language_hint(visitor_message.body or "", rows)
-    allowed_tools = _allowed_tools()
-    permissions = _permissions(allowed_tools)
+    access = resolve_webchat_agent_access()
+    customer = (
+        db.get(Customer, control.customer_id)
+        if control is not None and control.customer_id is not None
+        else None
+    )
+    runtime_context = build_agent_context(
+        db,
+        tenant_key=conversation.tenant_key,
+        channel_key=conversation.channel_key,
+        body=visitor_message.body or "",
+        market_id=None,
+        language=language,
+        ticket=None,
+        conversation=conversation,
+        customer=customer,
+    )
+    execution_context = dict(runtime_context.get("agent_execution_context") or {})
+    execution_context.update(
+        {
+            "conversation_id": conversation.id,
+            "ticket_id": None,
+            "customer_id": control.customer_id if control is not None else None,
+            "country_code": control.country_code if control is not None else None,
+            "ai_turn_id": turn.id if turn else None,
+            "granted_permissions": sorted(access.granted_permissions),
+            "actor_capabilities": sorted(access.actor_capabilities),
+        }
+    )
+    runtime_context["agent_allowed_tools"] = list(access.allowed_tools)
+    runtime_context["agent_execution_context"] = execution_context
     result = _run_runtime(
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
@@ -192,27 +191,7 @@ def process_ticketless_ai_reply(
         ),
         market_id=None,
         language=language,
-        runtime_context={
-            "agent_allowed_tools": allowed_tools,
-            "agent_execution_context": {
-                "conversation_id": conversation.id,
-                "ticket_id": None,
-                "customer_id": (
-                    control.customer_id if control is not None else None
-                ),
-                "country_code": (
-                    control.country_code if control is not None else None
-                ),
-                "ai_turn_id": turn.id if turn else None,
-                "granted_permissions": permissions,
-                "actor_capabilities": permissions,
-            },
-            "persona_context": {
-                "assistant_name": "Speedy",
-                "brand": "Speedaf",
-                "role": "customer support assistant",
-            },
-        },
+        runtime_context=runtime_context,
     )
     safe_runtime_trace = sanitized_ai_turn_runtime_trace(
         result.runtime_trace

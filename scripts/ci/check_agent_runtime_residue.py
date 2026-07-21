@@ -13,6 +13,9 @@ RETIRED_PATHS = (
     ROOT / "backend/app/services/webchat_ai_decision_runtime/service.py",
     ROOT / "backend/app/services/provider_runtime/webchat_runtime_dispatcher.py",
     ROOT / "backend/scripts/run_domain_runtime_eval.py",
+    ROOT / "backend/tests/test_runtime_context_guard.py",
+    ROOT / "backend/tests/test_webchat_osr_audit_integration.py",
+    ROOT / "backend/tests/test_ticketless_voice_ticket_binding.py",
     ROOT / "scripts/probe_domain_webchat_shadow_trace_e2e.py",
     ROOT / "scripts/probe_domain_webchat_shadow_trace_e2e.sh",
     ROOT / "docs/architecture/DOMAIN_INTELLIGENCE_RUNTIME.md",
@@ -38,6 +41,9 @@ FORBIDDEN_RUNTIME_CONTENT = (
     "locked_fact_grounding_conflict",
     "tracking_status_without_trusted_fact",
     "nexus.webchat_runtime_reply",
+    "webchat_runtime_reply=True",
+    "webchat_runtime_reply: bool",
+    "_WEBCHAT_RUNTIME_SCENARIO",
     "DomainRegistry",
     "DomainPack",
     "build_webchat_domain_shadow_trace",
@@ -49,6 +55,9 @@ FORBIDDEN_RUNTIME_CONTENT = (
     "speedaf_create_work_order",
     "speedaf_cancel_order",
     "speedaf_update_address",
+    "_permissions_for_tools",
+    '"assistant_name": "Speedy"',
+    '"brand": "Speedaf"',
 )
 
 

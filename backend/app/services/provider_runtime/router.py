@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .health import ProviderRuntimeHealth
-from .output_contracts import OutputContracts, WEBCHAT_RUNTIME_OUTPUT_CONTRACT
+from .output_contracts import OutputContracts, AGENT_TURN_OUTPUT_CONTRACT
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
 from .traffic_selection import (
@@ -167,8 +167,7 @@ class ProviderRuntimeRouter:
         request.output_contract = output_contract
         request.timeout_ms = config["timeout_ms"]
         providers = _dedupe_providers([config["primary_provider"], *config["fallbacks"]])
-        shadow_only = traffic.path == ProviderTrafficPath.SHADOW_ONLY
-        operation = "shadow_generate" if shadow_only else "generate"
+        operation = "generate"
         last_elapsed_ms = 0
 
         for provider_name in providers:
@@ -224,7 +223,7 @@ class ProviderRuntimeRouter:
                     error_code,
                 )
                 if not result.fallback_allowed:
-                    return _shadow_result(traffic, result.elapsed_ms, safe_summary) if shadow_only else result
+                    return result
                 continue
 
             try:
@@ -241,7 +240,7 @@ class ProviderRuntimeRouter:
                     safe_summary["provider_health"] = health_event
                 self._write_audit(
                     request,
-                    "shadow_parse_reject" if shadow_only else "parse_reject",
+                    "parse_reject",
                     "failed",
                     provider_name,
                     result.elapsed_ms,
@@ -259,13 +258,11 @@ class ProviderRuntimeRouter:
             self._write_audit(
                 request,
                 operation,
-                "shadow_ok" if shadow_only else "ok",
+                "ok",
                 provider_name,
                 result.elapsed_ms,
                 safe_summary,
             )
-            if shadow_only:
-                return _shadow_result(traffic, result.elapsed_ms, safe_summary)
             return result
 
         summary = _traffic_summary(traffic)
@@ -278,8 +275,6 @@ class ProviderRuntimeRouter:
             summary,
             "all_providers_failed",
         )
-        if shadow_only:
-            return _shadow_result(traffic, last_elapsed_ms, summary)
         return _unavailable("all_providers_failed", summary, elapsed_ms=last_elapsed_ms)
 
     def _reject_configuration(self, request: ProviderRequest, reason: str) -> ProviderResult:
@@ -313,7 +308,7 @@ def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
         return {
             "primary_provider": "private_ai_runtime",
             "fallback_providers": [],
-            "output_contract": WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
+            "output_contract": AGENT_TURN_OUTPUT_CONTRACT,
             "timeout_ms": 15000,
             "kill_switch": False,
             "canary_percent": 0,
@@ -459,22 +454,4 @@ def _traffic_summary(traffic: ProviderTrafficSelection, additional: dict[str, An
 def _unavailable(error_code: str, summary: dict[str, Any], *, elapsed_ms: int = 0) -> ProviderResult:
     result = ProviderResult.unavailable("router", error_code, elapsed_ms, fallback_allowed=False)
     result.raw_payload_safe_summary = summary
-    return result
-
-
-def _shadow_result(
-    traffic: ProviderTrafficSelection,
-    elapsed_ms: int,
-    summary: dict[str, Any],
-) -> ProviderResult:
-    result = ProviderResult.unavailable(
-        "router",
-        "provider_shadow_only",
-        elapsed_ms,
-        fallback_allowed=False,
-    )
-    result.raw_payload_safe_summary = _traffic_summary(
-        traffic,
-        {**summary, "shadow_candidate_executed": True},
-    )
     return result

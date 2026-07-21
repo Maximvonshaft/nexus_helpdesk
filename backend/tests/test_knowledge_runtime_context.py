@@ -19,7 +19,7 @@ from app.enums import ConversationState, TicketPriority, TicketSource, TicketSta
 from app.models import Market, Ticket, User  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest, PersonaProfileCreate, PersonaPublishRequest  # noqa: E402
 from app.services import knowledge_service, persona_service  # noqa: E402
-from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
+from app.services.ai_runtime_context import build_agent_context  # noqa: E402
 from app.services.knowledge_retrieval_service import search_published_chunks  # noqa: E402
 from app.services.knowledge_runtime import runtime as knowledge_runtime  # noqa: E402
 from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
@@ -162,7 +162,7 @@ def test_publish_indexes_chunks_and_retrieval_respects_metadata_filters(db_sessi
     assert [hit.item_key for hit in hits] == ["website.address"]
 
 
-def test_runtime_context_includes_published_persona_and_safe_knowledge(db_session):
+def test_runtime_context_projects_persona_and_channel_without_pre_model_retrieval(db_session):
     admin = _user(db_session)
     profile = persona_service.create_profile(
         db_session,
@@ -171,16 +171,20 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
             name="Default Website English",
             channel="website",
             language="en",
-            draft_summary="Be concise and never invent tracking status.",
+            draft_summary="Use approved Skills and Tools.",
             draft_content_json={"tone": "concise"},
         ),
         admin,
     )
     persona_service.publish_profile(db_session, profile, admin, notes="publish")
-    item = knowledge_service.create_item(db_session, _knowledge_payload(item_key="runtime.address", channel="website"), admin)
+    item = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(item_key="runtime.address", channel="website"),
+        admin,
+    )
     knowledge_service.publish_item(db_session, item, admin, notes="publish")
 
-    context = build_webchat_runtime_context(
+    context = build_agent_context(
         db_session,
         tenant_key="default",
         channel_key="website",
@@ -188,21 +192,37 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
         body="Can I change my delivery address?",
     )
 
+    assert context["context_version"] == "nexus.agent_context.v1"
     assert context["persona_context"]["profile_key"] == "default.website.en"
-    assert context["knowledge_context"]["retrieval"] == "hybrid_rag"
-    assert context["rag_trace"]["retrieval"] == "hybrid_rag"
-    assert context["knowledge_context"]["hits"][0]["item_key"] == "runtime.address"
-    assert context["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
-    assert "tracking_fact_evidence_present=true" in context["safety_policy"]["tracking_truth_boundary"]
+    assert context["persona_context"]["identity_context"]
+    assert context["channel_context"]["channel"] == "website"
+    assert "knowledge_context" not in context
+    assert "rag_trace" not in context
+    assert "safety_policy" not in context
+    assert "conversation_state" not in context
+
+    hits, total = search_published_chunks(
+        db_session,
+        q="change delivery address",
+        channel="website",
+        audience_scope="customer",
+        limit=5,
+    )
+    assert total == 1
+    assert [hit.item_key for hit in hits] == ["runtime.address"]
 
 
-def test_webchat_runtime_context_uses_effective_country_not_global(db_session):
-    admin = _user(db_session)
-    ch_market = Market(code="CH", name="Switzerland", country_code="CH", is_active=True)
+def test_runtime_context_uses_effective_country_in_generic_channel_context(db_session):
+    ch_market = Market(
+        code="CH",
+        name="Switzerland",
+        country_code="CH",
+        is_active=True,
+    )
     db_session.add(ch_market)
     db_session.flush()
     ticket = Ticket(
-        ticket_no="T-CH-COUNTRY",
+        ticket_no="T-CH-GENERIC-CONTEXT",
         title="Swiss customer",
         description="Swiss customer",
         source=TicketSource.user_message,
@@ -214,274 +234,45 @@ def test_webchat_runtime_context_uses_effective_country_not_global(db_session):
         conversation_state=ConversationState.ai_active,
     )
     db_session.add(ticket)
-    item = knowledge_service.create_item(
-        db_session,
-        _knowledge_payload(
-            item_key="ch.country.policy",
-            title="Swiss policy",
-            channel="website",
-            country_scope="CH",
-            draft_body="Swiss delivery support uses local Switzerland policy.",
-            draft_normalized_text="Swiss delivery support uses local Switzerland policy.",
-        ),
-        admin,
-    )
-    knowledge_service.publish_item(db_session, item, admin, notes="publish")
+    db_session.flush()
 
-    context = build_webchat_runtime_context(
+    context = build_agent_context(
         db_session,
         tenant_key="default",
         channel_key="website",
         language="en",
-        body="Swiss delivery support policy",
+        body="Please help with the current request.",
         market_id=ch_market.id,
         ticket=ticket,
         channel_payload={"order_destination_country": "CH"},
     )
 
-    assert context["metadata_filters"]["effective_country"] == "CH"
-    assert context["metadata_filters"]["country_source"] == "order_destination_country"
-    assert context["rag_trace"]["effective_country"] == "CH"
-    assert context["rag_trace"]["country_source"] == "order_destination_country"
-    assert context["rag_trace"]["filters"]["country_scope"] == "CH"
-    assert context["knowledge_context"]["hits"][0]["metadata"]["country_scope"] == "CH"
+    channel = context["channel_context"]
+    assert channel["effective_country"] == "CH"
+    assert channel["country_source"] == "order_destination_country"
+    assert "knowledge_context" not in context
 
 
-def test_runtime_context_expands_tracking_no_evidence_query_to_waybill_rules(db_session):
-    admin = _user(db_session)
-    item = knowledge_service.create_item(
-        db_session,
-        _knowledge_payload(
-            item_key="ch.waybill.format",
-            title="瑞士 Speedaf 运单号格式与输错提醒",
-            channel="website",
-            language="zh",
-            knowledge_kind="business_fact",
-            fact_question="客户输入瑞士 Speedaf 运单号查不到怎么办？",
-            fact_answer="请客户核对运单号是否完整；瑞士 Speedaf 运单号通常为 CH 开头，后接 12 位数字。在没有可信查单结果时，不得判断或编造物流状态。",
-            fact_aliases_json=["CH运单号格式", "运单号查不到", "waybill not found", "wrong tracking number"],
-            fact_status="approved",
-            answer_mode="guided_answer",
-            draft_body="瑞士 Speedaf 运单号通常为 CH 开头，后接 12 位数字。查不到时请客户核对单号，不得判断物流状态。",
-            draft_normalized_text="瑞士 Speedaf 运单号 CH 12 位数字 运单号查不到 核对单号",
-        ),
-        admin,
-    )
-    knowledge_service.publish_item(db_session, item, admin, notes="publish")
+def test_runtime_context_has_no_retired_tracking_prefetch_parameters(db_session):
+    import inspect
 
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        language="zh",
-        body="CH1200000011425",
-        tracking_number="CH1200000011425",
-        tracking_fact_evidence_present=False,
+    signature = inspect.signature(build_agent_context)
+    assert "tracking_number" not in signature.parameters
+    assert "tracking_fact_evidence_present" not in signature.parameters
+    assert not any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
     )
 
-    knowledge = context["knowledge_context"]
-    assert "运单号格式" in knowledge["retrieval_query"]
-    assert knowledge["query_expansion_terms"]
-    assert knowledge["hits"][0]["item_key"] == "ch.waybill.format"
-    assert knowledge["hits"][0]["metadata"]["knowledge_kind"] == "business_fact"
-    assert context["conversation_state"] == {
-        "tracking_reference_present": True,
-        "safe_tracking_reference": "parcel ending 011425",
-        "tracking_fact_evidence_present": False,
-    }
-    assert "CH1200000011425" not in str(context["conversation_state"])
-
-
-def test_runtime_context_does_not_expand_plain_numeric_smoke_text_to_waybill_rules(db_session):
-    context = build_webchat_runtime_context(
+    context = build_agent_context(
         db_session,
         tenant_key="default",
         channel_key="website",
         language="en",
-        body="hello latency smoke 1783325498843",
-        tracking_number=None,
-        tracking_fact_evidence_present=False,
+        body="Reference CH1200000011425",
     )
-
-    knowledge = context["knowledge_context"]
-    assert "tracking lookup failed" not in knowledge["retrieval_query"]
-    assert knowledge["query_expansion_terms"] == []
-
-
-def test_runtime_context_does_not_expand_plain_alphanumeric_reference_to_waybill_rules(db_session):
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        language="zh",
-        body="你好，生产知识闭环暗号 mr9864yr 是什么？",
-        tracking_number=None,
-        tracking_fact_evidence_present=False,
-    )
-
-    knowledge = context["knowledge_context"]
-    assert "tracking lookup failed" not in knowledge["retrieval_query"]
-    assert "waybill not found" not in knowledge["retrieval_query"]
-    assert knowledge["query_expansion_terms"] == []
-
-
-def test_runtime_context_expands_embedded_ch_waybill_identifier_without_live_status(db_session):
-    admin = _user(db_session)
-    item = knowledge_service.create_item(
-        db_session,
-        _knowledge_payload(
-            item_key="ch.embedded.waybill.format",
-            title="CH 运单格式",
-            channel="website",
-            language="zh",
-            knowledge_kind="business_fact",
-            fact_question="CH 运单号格式",
-            fact_answer="CH 运单号通常为 CH 开头，后接数字。",
-            fact_aliases_json=["CH tracking number format", "waybill format"],
-            fact_status="approved",
-            answer_mode="guided_answer",
-            draft_body="CH 运单号通常为 CH 开头，后接数字。",
-            draft_normalized_text="CH tracking number format waybill format 运单号格式",
-        ),
-        admin,
-    )
-    knowledge_service.publish_item(db_session, item, admin, notes="publish")
-
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        language="zh",
-        body="请帮我看看 CH020000129135",
-        tracking_number=None,
-        tracking_fact_evidence_present=False,
-    )
-
-    knowledge = context["knowledge_context"]
-    assert "tracking lookup failed" in knowledge["retrieval_query"]
-    assert knowledge["query_expansion_terms"]
-    assert knowledge["hits"][0]["item_key"] == "ch.embedded.waybill.format"
-
-
-def test_runtime_context_includes_persona_identity_context_without_description(db_session):
-    admin = _user(db_session)
-    profile = persona_service.create_profile(
-        db_session,
-        PersonaProfileCreate(
-            profile_key="identity.website.zh",
-            name="Identity Website Chinese",
-            description=None,
-            channel="website",
-            language="zh",
-            draft_summary="Identity contract only.",
-            draft_content_json={
-                "brand_name": "猴王山",
-                "assistant_name": "悟空客服",
-                "identity_statement": "我是猴王山的悟空客服，可以协助处理客户服务问题。",
-                "capabilities": ["回答常见问题", "转人工"],
-                "disallowed_identity_claims": ["NexusDesk"],
-            },
-        ),
-        admin,
-    )
-    persona_service.publish_profile(db_session, profile, admin, notes="publish")
-
-    context = build_webchat_runtime_context(
-        db_session,
-        tenant_key="default",
-        channel_key="website",
-        language="zh",
-        body="你是谁",
-    )
-
-    identity = context["persona_context"]["identity_context"]
-    assert context["persona_context"]["profile_key"] == "identity.website.zh"
-    assert context["persona_context"]["content_json"]["brand_name"] == "猴王山"
-    assert identity["brand_name"] == "猴王山"
-    assert identity["assistant_name"] == "悟空客服"
-    assert identity["identity_statement"] == "我是猴王山的悟空客服，可以协助处理客户服务问题。"
-    assert identity["capabilities"] == ["回答常见问题", "转人工"]
-
-
-def test_knowledge_runtime_excludes_probe_knowledge_and_reports_trace(db_session):
-    admin = _user(db_session)
-    real = knowledge_service.create_item(
-        db_session,
-        _knowledge_payload(item_key="production.address", title="Address Change Policy", channel="website", priority=5, draft_body="客户可以在发出前申请改地址。", draft_normalized_text="客户 可以 发出 前 申请 改地址"),
-        admin,
-    )
-    probe = knowledge_service.create_item(
-        db_session,
-        _knowledge_payload(item_key="probe.address", title="[PROBE] Switzerland Address Change Fee", channel="website", priority=1),
-        admin,
-    )
-    probe.citation_metadata_json = {"probe_category": "static_kb_boundary", "seed_source": "probe_seed_v3"}
-    knowledge_service.publish_item(db_session, real, admin, notes="publish")
-    knowledge_service.publish_item(db_session, probe, admin, notes="publish")
-
-    result = retrieve_knowledge(
-        db_session,
-        query="我想改地址",
-        tenant_key="default",
-        channel="website",
-        audience_scope="customer",
-        limit=5,
-    )
-
-    assert result.trace["retrieval"] == "hybrid_rag"
-    assert "structured_exact" in result.trace["retrieval_methods"] or "fts" in result.trace["retrieval_methods"]
-    assert [hit.item_key for hit in result.hits] == ["production.address"]
-    assert "[PROBE]" not in str(result.trace)
-
-
-def test_knowledge_runtime_fails_closed_when_vector_fallback_is_disabled(monkeypatch, db_session):
-    admin = _user(db_session)
-    item = knowledge_service.create_item(
-        db_session,
-        _knowledge_payload(
-            item_key="production.vector.required",
-            title="Address Change Policy",
-            channel="website",
-            priority=5,
-            draft_body="Customers can change delivery address before dispatch only.",
-            draft_normalized_text="change delivery address before dispatch",
-        ),
-        admin,
-    )
-    knowledge_service.publish_item(db_session, item, admin, notes="publish")
-
-    monkeypatch.setattr(
-        knowledge_runtime,
-        "get_settings",
-        lambda: SimpleNamespace(
-            knowledge_embeddings_enabled=True,
-            knowledge_embedding_provider="openai_compatible",
-            knowledge_embedding_dim=1536,
-            knowledge_embedding_model="text-embedding-3-small",
-            knowledge_embedding_base_url="https://embedding.example/v1",
-            knowledge_embedding_api_key="not-used",
-            knowledge_embedding_api_key_file=None,
-            knowledge_embedding_timeout_seconds=5,
-            knowledge_vector_fallback_allowed=False,
-        ),
-    )
-    monkeypatch.setattr(
-        knowledge_runtime,
-        "get_embedding_provider",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("embedding_provider_unreachable")),
-    )
-
-    result = retrieve_knowledge(
-        db_session,
-        query="change delivery address",
-        tenant_key="default",
-        channel="website",
-        audience_scope="customer",
-        limit=5,
-    )
-
-    assert result.hits == []
-    assert result.no_answer_reason == "vector_retrieval_unavailable"
-    assert result.trace["evidence_selected"] == []
-    assert result.trace["vector"]["fallback_allowed"] is False
-    assert result.trace["vector"]["degraded_reason"] == "RuntimeError"
+    serialized = str(context)
+    assert "knowledge_context" not in context
+    assert "conversation_state" not in context
+    assert "tracking_fact_evidence_present" not in serialized
+    assert "locked_facts" not in serialized

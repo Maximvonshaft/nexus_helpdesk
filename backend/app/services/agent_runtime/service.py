@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ...db import SessionLocal
 from ..ai_runtime.schemas import RuntimeAIProviderRequest, RuntimeAIProviderResult
-from ..provider_runtime.output_contracts import WEBCHAT_RUNTIME_OUTPUT_CONTRACT
+from ..provider_runtime.output_contracts import AGENT_TURN_OUTPUT_CONTRACT
 from ..provider_runtime.router import ProviderRuntimeRouter
 from ..provider_runtime.schemas import ProviderRequest
 from ..webchat_ai_decision_runtime.schemas import AIDecision
@@ -111,7 +111,7 @@ async def _run_agent_with_db(
             scenario="agent_turn",
             body=request.body,
             recent_context=request.recent_context,
-            output_contract=WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
+            output_contract=AGENT_TURN_OUTPUT_CONTRACT,
             timeout_ms=15000,
             metadata=round_metadata,
         )
@@ -228,39 +228,67 @@ async def _run_agent_with_db(
                 elapsed_ms=state.elapsed_ms,
             )
 
-        observations = execute_agent_tool_calls(
-            db,
-            calls=decision.tool_calls,
-            context=execution_context,
-            allow_high_risk_writes=allow_high_risk_writes,
-        )
+        try:
+            observations = execute_agent_tool_calls(
+                db,
+                calls=decision.tool_calls,
+                context=execution_context,
+                allow_high_risk_writes=allow_high_risk_writes,
+            )
+        except Exception:
+            _safe_rollback(db)
+            observations = _failed_tool_observations(
+                decision,
+                error_code="tool_execution_failed",
+            )
+            state.elapsed_ms = _elapsed(started)
+            _record_tool_observations(
+                state,
+                round_index=round_index,
+                decision=decision,
+                observations=observations,
+                provider=result.provider,
+                elapsed_ms=result.elapsed_ms,
+                error_code="tool_execution_failed",
+            )
+            return _fallback_result(
+                request,
+                state=state,
+                error_code="tool_execution_failed",
+                elapsed_ms=state.elapsed_ms,
+            )
         try:
             db.commit()
         except Exception:
-            db.rollback()
-        state.executed_calls.extend(
-            {
-                "round": round_index,
-                "tool_name": call.tool_name,
-                "status": observation.status,
-                "ok": observation.ok,
-                "error_code": observation.error_code,
-            }
-            for call, observation in zip(decision.tool_calls, observations)
-        )
-        state.traces.append(
-            AgentRoundTrace(
+            _safe_rollback(db)
+            observations = _failed_tool_observations(
+                decision,
+                error_code="tool_transaction_commit_failed",
+            )
+            state.elapsed_ms = _elapsed(started)
+            _record_tool_observations(
+                state,
                 round_index=round_index,
-                next_action="call_tool",
-                tool_names=tuple(call.tool_name for call in decision.tool_calls),
-                observation_statuses=tuple(
-                    item.status for item in observations
-                ),
+                decision=decision,
+                observations=observations,
                 provider=result.provider,
                 elapsed_ms=result.elapsed_ms,
+                error_code="tool_transaction_commit_failed",
             )
+            return _fallback_result(
+                request,
+                state=state,
+                error_code="tool_transaction_commit_failed",
+                elapsed_ms=state.elapsed_ms,
+            )
+        _record_tool_observations(
+            state,
+            round_index=round_index,
+            decision=decision,
+            observations=observations,
+            provider=result.provider,
+            elapsed_ms=result.elapsed_ms,
         )
-        state.observations.extend(observations)
 
     return _fallback_result(
         request,
@@ -268,6 +296,64 @@ async def _run_agent_with_db(
         error_code="agent_loop_exhausted",
         elapsed_ms=_elapsed(started),
     )
+
+
+def _failed_tool_observations(
+    decision: AIDecision,
+    *,
+    error_code: str,
+) -> list[ToolObservation]:
+    return [
+        ToolObservation(
+            tool_name=call.tool_name,
+            ok=False,
+            status="failed",
+            result={},
+            error_code=error_code,
+        )
+        for call in decision.tool_calls
+    ]
+
+
+def _record_tool_observations(
+    state: AgentRunState,
+    *,
+    round_index: int,
+    decision: AIDecision,
+    observations: list[ToolObservation],
+    provider: str | None,
+    elapsed_ms: int,
+    error_code: str | None = None,
+) -> None:
+    state.executed_calls.extend(
+        {
+            "round": round_index,
+            "tool_name": call.tool_name,
+            "status": observation.status,
+            "ok": observation.ok,
+            "error_code": observation.error_code,
+        }
+        for call, observation in zip(decision.tool_calls, observations)
+    )
+    state.traces.append(
+        AgentRoundTrace(
+            round_index=round_index,
+            next_action="call_tool",
+            tool_names=tuple(call.tool_name for call in decision.tool_calls),
+            observation_statuses=tuple(item.status for item in observations),
+            provider=provider,
+            elapsed_ms=elapsed_ms,
+            error_code=error_code,
+        )
+    )
+    state.observations.extend(observations)
+
+
+def _safe_rollback(db: Session) -> None:
+    try:
+        db.rollback()
+    except Exception:
+        pass
 
 
 def _authoritative_provider_audit_exists(

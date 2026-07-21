@@ -24,7 +24,7 @@ def test_classify_tool_type_read_write_and_system():
     assert tool_governance.classify_tool_type("messages_read") == "read_only"
     assert tool_governance.classify_tool_type("messages_send") == "external_send"
     assert tool_governance.classify_tool_type("external_provider.send") == "external_send"
-    assert tool_governance.classify_tool_type("unknown_future_tool") == "read_only"
+    assert tool_governance.classify_tool_type("unknown_future_tool") == "unknown"
 
 
 def test_safe_summary_redacts_sensitive_and_text_payloads():
@@ -112,3 +112,13 @@ def test_governance_off_allows_everything(monkeypatch):
     assert decision.allowed is True
     assert decision.mode == "off"
     assert decision.reason_code == "governance_off"
+
+
+def test_unknown_tool_fails_closed_in_every_mode(monkeypatch):
+    for mode in ("off", "audit_only", "enforce"):
+        monkeypatch.setenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", mode)
+        decision = tool_governance.evaluate_tool_call_policy(tool_name="unknown_future_tool")
+        assert decision.allowed is False
+        assert decision.tool_type == "unknown"
+        assert decision.reason_code == "unknown_tool_not_registered"
+        assert decision.audit_only is False

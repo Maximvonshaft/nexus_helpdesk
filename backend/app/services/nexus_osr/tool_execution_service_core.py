@@ -59,7 +59,7 @@ class GovernedToolExecutionOptions:
     allowed_high_risk_write_tools: frozenset[str] = frozenset()
     customer_confirmation_granted: bool = False
     human_confirmation_granted: bool = False
-    allowed_tool_names: frozenset[str] = frozenset()
+    allowed_tool_names: frozenset[str] | None = None
     granted_permissions: frozenset[str] = frozenset()
 
 
@@ -82,7 +82,7 @@ def runtime_tool_actions_from_tool_calls(
         actions.append(
             RuntimeToolAction(
                 tool_name=tool_name,
-                arguments=_safe_tool_arguments(arguments),
+                arguments=_bounded_execution_arguments(arguments),
                 requires_confirmation=bool(data.get("requires_confirmation")),
                 executed=False,
             )
@@ -133,7 +133,7 @@ def execute_controlled_tool_calls(
         allowed_high_risk_write_tools=set(options.allowed_high_risk_write_tools),
         granted_permissions=(
             set(options.granted_permissions)
-            if options.allowed_tool_names
+            if options.allowed_tool_names is not None
             else None
         ),
         customer_confirmation_granted=options.customer_confirmation_granted,
@@ -152,25 +152,37 @@ def execute_controlled_tool_calls(
                 country_code=country_code,
                 conversation=conversation,
                 ticket=ticket,
-                idempotency_key=_idempotency_key_for_action(raw_calls, action),
+                idempotency_key=_idempotency_key_for_action(
+                    action,
+                    case_context=case_context,
+                    tenant_id=tenant_id,
+                    channel=channel,
+                    country_code=country_code,
+                ),
             )
             for action in actions
         ]
 
     results: list[ActionExecutionResult] = []
     for action in actions:
-        idempotency_key = _idempotency_key_for_action(raw_calls, action)
+        idempotency_key = _idempotency_key_for_action(
+            action,
+            case_context=case_context,
+            tenant_id=tenant_id,
+            channel=channel,
+            country_code=country_code,
+        )
         contract = get_tool_contract(action.tool_name)
         registry_error = None
         if contract is None:
             registry_error = "unknown_tool"
         elif (
-            options.allowed_tool_names
+            options.allowed_tool_names is not None
             and action.tool_name not in options.allowed_tool_names
         ):
             registry_error = "tool_not_available"
         elif (
-            options.allowed_tool_names
+            options.allowed_tool_names is not None
             and not set(contract.required_permissions).issubset(
                 options.granted_permissions
             )
@@ -770,10 +782,7 @@ def _decision_for_policy_gate(
             AIDecisionToolCall.model_construct(
                 tool_name=action.tool_name,
                 arguments=dict(action.arguments),
-                idempotency_key=_idempotency_key_for_action(
-                    raw_calls,
-                    action,
-                ),
+                idempotency_key=None,
                 requires_confirmation=action.requires_confirmation,
             )
             for action in actions
@@ -986,7 +995,7 @@ def _audit_tool_decision(
         tool_actions=[
             RuntimeToolAction(
                 tool_name=action.tool_name,
-                arguments=action.arguments,
+                arguments=_safe_tool_arguments(action.arguments),
                 requires_confirmation=action.requires_confirmation,
                 executed=result.ok and result.status == "executed",
                 result_source_id=_result_source_id(result),
@@ -1029,8 +1038,10 @@ def _existing_executed_log(
         ToolCallLog.status == "executed",
     )
     if conversation is not None:
+        # Conversation remains the stable idempotency scope when ticket.create
+        # transitions the case from ticketless to ticket-backed.
         query = query.filter(ToolCallLog.webchat_conversation_id == conversation.id)
-    if ticket is not None:
+    elif ticket is not None:
         query = query.filter(ToolCallLog.ticket_id == ticket.id)
     return query.order_by(ToolCallLog.id.desc()).first()
 
@@ -1045,21 +1056,90 @@ def _tool_call_dict(item: Any) -> dict[str, Any]:
 
 
 def _idempotency_key_for_action(
-    raw_calls: list[dict[str, Any]],
     action: RuntimeToolAction,
+    *,
+    case_context: CaseContext,
+    tenant_id: str,
+    channel: str | None,
+    country_code: str | None,
 ) -> str | None:
-    for item in raw_calls:
-        tool_name = canonical_tool_name(
-            item.get("tool_name") or item.get("name") or item.get("tool")
-        )
-        if tool_name == action.tool_name:
-            raw_key = item.get("idempotency_key")
-            if raw_key:
-                return redact_case_text(raw_key, limit=160)
-    seed = _summary_json(
-        {"tool_name": action.tool_name, "arguments": action.arguments}
+    contract = get_tool_contract(action.tool_name)
+    if contract is None or not contract.is_write_tool:
+        # Reads execute against current state and return a fresh Observation.
+        return None
+    conversation_scope = str(case_context.conversation_id or "")[:160]
+    ticket_scope = (
+        ""
+        if conversation_scope
+        else str(case_context.ticket_id or "")[:160]
     )
-    return _sha256(seed)
+    canonical = json.dumps(
+        {
+            "tenant_id": str(tenant_id or "default")[:120],
+            "channel": str(channel or "")[:80],
+            "country_code": str(country_code or "")[:16],
+            "conversation_id": conversation_scope,
+            "ticket_id": ticket_scope,
+            "tool_name": action.tool_name,
+            "arguments": action.arguments,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return _sha256(canonical)
+
+
+def _bounded_execution_arguments(
+    value: dict[str, Any],
+    *,
+    depth: int = 0,
+) -> dict[str, Any]:
+    if depth >= 5:
+        return {"truncated": "[truncated]"}
+    output: dict[str, Any] = {}
+    for raw_key, item in list((value or {}).items())[:80]:
+        key = str(raw_key)[:80]
+        lowered = key.lower()
+        if any(
+            token in lowered
+            for token in (
+                "token",
+                "secret",
+                "password",
+                "authorization",
+                "api_key",
+            )
+        ):
+            continue
+        if lowered in {
+            "raw",
+            "raw_payload",
+            "provider_payload",
+            "request",
+            "response",
+        }:
+            continue
+        output[key] = _bounded_execution_value(item, depth=depth + 1)
+    return output
+
+
+def _bounded_execution_value(value: Any, *, depth: int) -> Any:
+    if depth >= 5:
+        return "[truncated]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:4000]
+    if isinstance(value, dict):
+        return _bounded_execution_arguments(value, depth=depth)
+    if isinstance(value, (list, tuple)):
+        return [
+            _bounded_execution_value(item, depth=depth + 1)
+            for item in list(value)[:50]
+        ]
+    return str(value)[:1000]
 
 
 def _safe_tool_arguments(value: dict[str, Any]) -> dict[str, Any]:

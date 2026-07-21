@@ -38,7 +38,6 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
     name = _PROVIDER_NAME
     capabilities = ProviderCapabilities(
         agent_turn=True,
-        webchat_runtime_reply=True,
         structured_output=True,
         tool_execution=True,
         handoff_decision=True,

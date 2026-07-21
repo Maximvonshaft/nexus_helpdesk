@@ -93,6 +93,7 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         required_permissions=("speedaf:tracking:read",),
         idempotency_key_strategy="sha256(tenant,session,tracking_number,request_id)",
         risk_level="medium",
+        allowed_auto_execution_mode="policy_gated",
         redaction_requirements=("hash_waybill", "suffix_only", "no_recipient_pii", "no_raw_tool_payload"),
     ),
     "speedaf.express.track.query": ToolContract(
@@ -103,6 +104,7 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         required_permissions=("speedaf:tracking:read",),
         idempotency_key_strategy="sha256(tenant,session,tracking_number,request_id)",
         risk_level="medium",
+        allowed_auto_execution_mode="policy_gated",
         redaction_requirements=("hash_waybill", "suffix_only", "no_recipient_pii", "no_raw_track_payload"),
     ),
     "speedaf.order.waybillCode.query": ToolContract(
@@ -119,6 +121,7 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         required_permissions=("speedaf:tracking:read",),
         idempotency_key_strategy="sha256(tenant,session,caller_id,country_code)",
         risk_level="medium",
+        allowed_auto_execution_mode="policy_gated",
         redaction_requirements=("hash_caller_id", "suffix_only_candidates", "no_raw_waybill"),
     ),
     "handoff.request.create": ToolContract(

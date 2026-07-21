@@ -25,7 +25,7 @@ from ..schemas_control_plane import (
 )
 from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import persona_service
-from ..services.ai_runtime_context import build_webchat_runtime_context
+from ..services.ai_runtime_context import build_agent_context
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
@@ -108,7 +108,7 @@ def get_persona_runtime_evidence(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
-    runtime_context = build_webchat_runtime_context(
+    runtime_context = build_agent_context(
         db,
         tenant_key=payload.tenant_key,
         channel_key=payload.channel or "webchat",
@@ -134,7 +134,7 @@ def get_persona_runtime_evidence(
         persona_context=persona_context if isinstance(persona_context, dict) else None,
         runtime_context=runtime_context,
         evidence={
-            "runtime_contract": "build_webchat_runtime_context",
+            "runtime_contract": "build_agent_context",
             "context_version": runtime_context.get("context_version"),
             "metadata_filters": runtime_context.get("metadata_filters"),
             "identity_ready": bool(identity_context),

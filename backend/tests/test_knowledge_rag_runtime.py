@@ -22,7 +22,7 @@ from app.services.agent_runtime.tool_adapter import (  # noqa: E402
     AgentExecutionContext,
     execute_agent_tool_calls,
 )
-from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
+from app.services.ai_runtime_context import build_agent_context  # noqa: E402
 from app.services.knowledge_retrieval_service import retrieve_published_chunks  # noqa: E402
 from app.services.webchat_ai_decision_runtime.schemas import AIDecisionToolCall  # noqa: E402
 
@@ -238,7 +238,7 @@ def test_generic_runtime_context_does_not_prefetch_knowledge(db_session):
         fact_aliases_json=["瑞士海运多久", "瑞士海运时效"],
     )
 
-    context = build_webchat_runtime_context(
+    context = build_agent_context(
         db_session,
         tenant_key="default",
         channel_key="website",

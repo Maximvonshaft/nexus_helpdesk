@@ -122,12 +122,12 @@ def test_admin_reject_ringing_call_is_idempotent_and_writes_evidence():
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Reject Visitor")
 
     first = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject",
+        f"/api/webchat/admin/voice/{voice_session_id}/reject",
         headers=_admin_headers(9301),
         json={"reason": "agent unavailable"},
     )
     second = client.post(
-        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject",
+        f"/api/webchat/admin/voice/{voice_session_id}/reject",
         headers=_admin_headers(9301),
         json={},
     )
@@ -154,9 +154,9 @@ def test_admin_reject_ringing_call_is_idempotent_and_writes_evidence():
 def test_ticket_timeline_contains_voice_call_after_end():
     client = TestClient(app)
     _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Timeline Visitor")
-    accepted = client.post(f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept", headers=_admin_headers(9302))
+    accepted = client.post(f"/api/webchat/admin/voice/{voice_session_id}/accept", headers=_admin_headers(9302))
     assert accepted.status_code == 200, accepted.text
-    ended = client.post(f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end", headers=_admin_headers(9302))
+    ended = client.post(f"/api/webchat/admin/voice/{voice_session_id}/end", headers=_admin_headers(9302))
     assert ended.status_code == 200, ended.text
 
     timeline = client.get(f"/api/tickets/{ticket_id}/timeline", headers=_admin_headers(9302))

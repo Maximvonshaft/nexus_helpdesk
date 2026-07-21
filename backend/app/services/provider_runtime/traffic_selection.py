@@ -13,7 +13,7 @@ TRAFFIC_SELECTION_SCHEMA = "nexus.provider_runtime.traffic_selection.v1"
 TRAFFIC_MODE_ENV = "PROVIDER_RUNTIME_TRAFFIC_MODE"
 RUNTIME_ENABLED_ENV = "PROVIDER_RUNTIME_ENABLED"
 ALLOWED_CANARY_PERCENTS = frozenset({0, 1, 5, 25, 100})
-_VALID_MODES = frozenset({"control", "shadow", "canary", "full"})
+_VALID_MODES = frozenset({"control", "canary", "full"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _BUCKET_CONTRACT = "sha256(tenant_id,tenant_key,channel_key,session_id,scenario)%100"
@@ -22,7 +22,6 @@ _BUCKET_CONTRACT = "sha256(tenant_id,tenant_key,channel_key,session_id,scenario)
 class ProviderTrafficPath(StrEnum):
     CONTROL = "control"
     CANARY_AUTHORITATIVE = "canary_authoritative"
-    SHADOW_ONLY = "shadow_only"
     KILL_SWITCH = "kill_switch"
 
 
@@ -228,17 +227,6 @@ def select_provider_traffic(
             execute_candidate=False,
             authoritative=False,
             reason="traffic_percent_zero" if percent == 0 else "bucket_not_selected",
-        )
-
-    if mode == "shadow":
-        return ProviderTrafficSelection(
-            configured_mode=mode,
-            path=ProviderTrafficPath.SHADOW_ONLY,
-            canary_percent=percent,
-            bucket=bucket,
-            execute_candidate=True,
-            authoritative=False,
-            reason="shadow_bucket_selected",
         )
 
     return ProviderTrafficSelection(

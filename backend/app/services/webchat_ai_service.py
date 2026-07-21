@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from datetime import timedelta
 from typing import Any
@@ -15,14 +14,14 @@ from ..models import Ticket, TicketEvent
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
-from .agent_runtime.tool_adapter import executable_tool_names
+from .agent_runtime.access_policy import resolve_webchat_agent_access
+from .ai_runtime_context import build_agent_context
 from .ai_reply_contract import AI_REPLY_CONTRACT, build_ai_reply_contract
 from .customer_language import resolve_conversation_language
 from .customer_visible_message_service import create_customer_visible_message
 from .customer_visible_policy import evaluate_customer_visible_policy
 from .sla_service import evaluate_sla, update_first_response
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event, suppress_stale_reply_if_needed
-from .webchat_ai_decision_runtime.tool_registry import get_tool_contract
 from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
 
 LOGGER = logging.getLogger("nexusdesk")
@@ -66,28 +65,32 @@ def process_webchat_ai_reply_job(
     total_messages = db.query(WebchatMessage.id).filter(WebchatMessage.conversation_id == conversation.id).count()
     session_policy = _webchat_session_policy(conversation, history_rows, total_messages)
     language = _language_hint(visitor_message.body, history_rows=history_rows)
-    runtime_context = {
-        "agent_allowed_tools": _webchat_allowed_tools(),
-        "agent_execution_context": {
+    access = resolve_webchat_agent_access()
+    runtime_context = build_agent_context(
+        db,
+        tenant_key=conversation.tenant_key,
+        channel_key=conversation.channel_key,
+        body=visitor_message.body or "",
+        market_id=getattr(ticket, "market_id", None),
+        language=language,
+        ticket=ticket,
+        conversation=conversation,
+        customer=getattr(ticket, "customer", None),
+    )
+    execution_context = dict(runtime_context.get("agent_execution_context") or {})
+    execution_context.update(
+        {
             "conversation_id": conversation.id,
             "ticket_id": ticket.id,
             "customer_id": getattr(ticket, "customer_id", None),
             "country_code": getattr(ticket, "country_code", None),
             "ai_turn_id": ai_turn_id,
-            "granted_permissions": _permissions_for_tools(_webchat_allowed_tools()),
-            "actor_capabilities": _permissions_for_tools(_webchat_allowed_tools()),
-        },
-        "channel_context": {
-            "market_id": getattr(ticket, "market_id", None),
-            "channel": conversation.channel_key,
-            "country_code": getattr(ticket, "country_code", None),
-        },
-        "persona_context": {
-            "assistant_name": "Speedy",
-            "brand": "Speedaf",
-            "role": "customer support assistant",
-        },
-    }
+            "granted_permissions": sorted(access.granted_permissions),
+            "actor_capabilities": sorted(access.actor_capabilities),
+        }
+    )
+    runtime_context["agent_allowed_tools"] = list(access.allowed_tools)
+    runtime_context["agent_execution_context"] = execution_context
     result = _run_runtime_reply_sync(
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
@@ -356,44 +359,6 @@ def _localized_fallback(language: str | None, body: str) -> str:
     if language == "de":
         return "Entschuldigung, ich konnte diese Anfrage gerade nicht abschließen. Bitte versuchen Sie es erneut oder bitten Sie um menschlichen Support."
     return "Sorry, I could not complete that request right now. Please try again or ask for human support."
-
-
-def _webchat_allowed_tools() -> list[str]:
-    executable = set(executable_tool_names())
-    configured = os.getenv("WEBCHAT_AGENT_ALLOWED_TOOLS")
-    if configured is not None:
-        requested = {item.strip() for item in configured.split(",") if item.strip()}
-    else:
-        requested = {
-            "knowledge.search",
-            "speedaf.order.query",
-            "speedaf.express.track.query",
-            "speedaf.order.waybillCode.query",
-            "handoff.request.create",
-            "ticket.create",
-            "timeline.event.create",
-        }
-        if _env_bool("NEXUS_AGENT_HIGH_RISK_WRITES_ENABLED", False) and _env_bool(
-            "WEBCHAT_AI_AUTO_WORK_ORDER_ENABLED", False
-        ):
-            requested.add("speedaf.workOrder.create")
-    return sorted(executable & requested)
-
-
-
-def _permissions_for_tools(names: list[str]) -> list[str]:
-    permissions: set[str] = set()
-    for name in names:
-        contract = get_tool_contract(name)
-        if contract is not None:
-            permissions.update(contract.required_permissions)
-    return sorted(permissions)
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _is_whatsapp_conversation(conversation: WebchatConversation) -> bool:

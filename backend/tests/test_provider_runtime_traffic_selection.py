@@ -19,9 +19,9 @@ def _request(*, session_id: str = "session-1", request_id: str = "request-1") ->
         tenant_key="tenant-key",
         channel_key="webchat",
         session_id=session_id,
-        scenario="webchat_runtime_reply",
+        scenario="agent_turn",
         body="hello",
-        output_contract="nexus.webchat_runtime_reply",
+        output_contract="nexus.agent_turn.v1",
         timeout_ms=1000,
     )
 
@@ -153,19 +153,6 @@ def test_zero_percent_canary_never_executes_candidate():
     assert selection.execute_candidate is False
 
 
-def test_zero_percent_shadow_never_executes_candidate():
-    selection = select_provider_traffic(
-        _request(),
-        canary_percent=0,
-        kill_switch=False,
-        configured_mode_value="shadow",
-        runtime_enabled_value=True,
-    )
-    assert selection.path == ProviderTrafficPath.CONTROL
-    assert selection.execute_candidate is False
-    assert selection.authoritative is False
-
-
 def test_full_canary_is_authoritative():
     selection = select_provider_traffic(
         _request(),
@@ -204,14 +191,12 @@ def test_full_mode_rejects_partial_percentage():
         )
 
 
-def test_full_shadow_executes_without_authority():
-    selection = select_provider_traffic(
-        _request(),
-        canary_percent=100,
-        kill_switch=False,
-        configured_mode_value="shadow",
-        runtime_enabled_value=True,
-    )
-    assert selection.path == ProviderTrafficPath.SHADOW_ONLY
-    assert selection.execute_candidate is True
-    assert selection.authoritative is False
+def test_shadow_mode_is_rejected():
+    with pytest.raises(ValueError, match="provider_runtime_traffic_mode_invalid"):
+        select_provider_traffic(
+            _request(),
+            canary_percent=100,
+            kill_switch=False,
+            configured_mode_value="shadow",
+            runtime_enabled_value=True,
+        )

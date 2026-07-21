@@ -4,6 +4,11 @@ import json
 
 import pytest
 
+from app.services.ai_reply_contract import (
+    build_ai_reply_contract,
+    contract_validation_args_from_payload,
+    validate_ai_reply_contract,
+)
 from app.services.provider_runtime.output_contracts import (
     AGENT_TURN_OUTPUT_CONTRACT,
     OutputContracts,
@@ -156,30 +161,23 @@ def test_platform_security_blocks_internal_reasoning_and_secrets():
 
 
 def test_signed_customer_reply_contract_remains_independent_transport_envelope():
-    payload = {
-        "reply": {"type": "answer", "text": "Approved answer"},
-        "language": "en",
-        "intent": "general_support",
-        "tracking_number": None,
-        "handoff_required": False,
-        "handoff_reason": None,
-        "recommended_agent_action": None,
-        "ticket_should_create": False,
-        "internal_summary": None,
-        "risk_flags": [],
-        "runtime_trace_id": "trace-12345678901234567890123456789012",
-        "contract_version": "nexus.ai_reply.v3",
-        "runtime_signature": "a" * 64,
-        "safety_status": "passed",
-        "origin": "provider_runtime",
-        "customer_visible": True,
-        "grounding": {
-            "used_sources": ["context:customer_message"],
-            "unsupported_claims": [],
-            "conflicts": [],
-        },
-        "risk": {"confidence": 0.8},
-        "channel": "web_chat",
-    }
-    parsed = OutputContracts.validate_and_parse("nexus.ai_reply.v3", json.dumps(payload))
-    assert parsed["reply"]["text"] == "Approved answer"
+    body = "Approved answer"
+    contract = build_ai_reply_contract(
+        body=body,
+        runtime_trace={"request_id": "trace-12345678901234567890123456789012"},
+        reply_type="answer",
+        used_sources=["context:customer_message"],
+        unsupported_claims=[],
+        conflicts=[],
+        confidence=0.8,
+        channel="web_chat",
+    )
+    payload = contract.payload_dict(body=body)
+
+    assert validate_ai_reply_contract(
+        body=body,
+        **contract_validation_args_from_payload(payload),
+    ) is None
+    assert payload["reply"]["text"] == body
+    with pytest.raises(ValueError, match="Unsupported output contract"):
+        OutputContracts.validate_and_parse("nexus.ai_reply.v3", json.dumps(payload))

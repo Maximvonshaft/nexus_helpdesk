@@ -6,10 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ProviderCapabilities(BaseModel):
-    # webchat_runtime_reply remains as a compatibility capability name.
-    # Both fields describe the same generic Agent-turn protocol.
     agent_turn: bool = False
-    webchat_runtime_reply: bool = False
     structured_output: bool = False
     streaming: bool = False
     tool_execution: bool = False

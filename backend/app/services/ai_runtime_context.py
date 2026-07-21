@@ -29,7 +29,7 @@ _SECRET_KEYS = {
 }
 
 
-def build_webchat_runtime_context(
+def build_agent_context(
     db: Session,
     *,
     tenant_key: str,
@@ -42,7 +42,6 @@ def build_webchat_runtime_context(
     conversation: Any = None,
     customer: Any = None,
     channel_payload: dict[str, Any] | None = None,
-    **_legacy: Any,
 ) -> dict[str, Any]:
     """Build generic Agent context without pre-running domain retrieval or tools."""
 
@@ -130,24 +129,6 @@ def build_structured_recent_context(
     return output[-limit:]
 
 
-def build_runtime_context_guard(
-    *,
-    structured_recent_context: list[dict[str, Any]] | None,
-    **_legacy: Any,
-) -> dict[str, Any]:
-    """Compatibility projection for observability; no domain answer policy."""
-
-    recent = [item for item in structured_recent_context or [] if isinstance(item, dict)]
-    return {
-        "context_guard": {
-            "recent_context_count": len(recent),
-            "customer_message_count": sum(1 for item in recent if item.get("role") == "customer"),
-            "assistant_message_count": sum(1 for item in recent if item.get("role") == "assistant"),
-            "business_truth_policy": "owned_by_skills_and_tool_observations",
-        }
-    }
-
-
 def sanitize_runtime_context(value: Any, *, depth: int = 0) -> Any:
     if depth > 6:
         return "[TRUNCATED]"
@@ -167,9 +148,21 @@ def sanitize_runtime_context(value: Any, *, depth: int = 0) -> Any:
 
 
 def _persona_context(profile: Any, match_rank: Any) -> dict[str, Any] | None:
-    if profile is None:
+    if (
+        profile is None
+        or not bool(getattr(profile, "is_active", False))
+        or int(getattr(profile, "published_version", 0) or 0) <= 0
+    ):
         return None
-    fields = (
+    raw_content = getattr(profile, "published_content_json", None)
+    content = (
+        sanitize_runtime_context(dict(raw_content))
+        if isinstance(raw_content, dict)
+        else {}
+    )
+    nested = content.get("identity_context")
+    identity_source = dict(nested) if isinstance(nested, dict) else {}
+    for field in (
         "brand_name",
         "assistant_name",
         "role_label",
@@ -180,13 +173,23 @@ def _persona_context(profile: Any, match_rank: Any) -> dict[str, Any] | None:
         "capabilities",
         "guardrails",
         "disallowed_identity_claims",
-    )
-    identity = {
-        field: getattr(profile, field, None)
-        for field in fields
-        if getattr(profile, field, None) not in (None, "", [], {})
+    ):
+        if field in content:
+            identity_source[field] = content[field]
+    identity = sanitize_runtime_context(identity_source)
+    return {
+        "profile_key": str(getattr(profile, "profile_key", "") or "")[:160],
+        "name": str(getattr(profile, "name", "") or "")[:240],
+        "summary": _sanitize_text(
+            str(getattr(profile, "published_summary", "") or "")
+        )[:1200],
+        "content_json": content,
+        "identity_context": identity if isinstance(identity, dict) else {},
+        "published_version": int(
+            getattr(profile, "published_version", 0) or 0
+        ),
+        "match_rank": match_rank,
     }
-    return {"match_rank": match_rank, "identity_context": identity}
 
 
 def _row_text(row: Any) -> str:

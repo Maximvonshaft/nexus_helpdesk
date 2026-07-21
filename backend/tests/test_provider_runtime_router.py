@@ -150,7 +150,7 @@ async def test_full_canary_executes_once_and_returns_authoritative_agent_turn(mo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["canary", "shadow"])
+@pytest.mark.parametrize("mode", ["canary"])
 async def test_zero_percent_never_calls_provider(monkeypatch, mode):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", mode)
     db = _mock_db(_rule(canary_percent=0))
@@ -206,22 +206,8 @@ async def test_kill_switch_precedes_invalid_lower_configuration(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shadow_executes_but_never_returns_candidate_authority(monkeypatch):
-    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
-    db = _mock_db(_rule(canary_percent=100))
-    adapter = _register_adapter()
-
-    result = await ProviderRuntimeRouter(db).route(_request())
-
-    assert result.ok is False
-    assert result.error_code == "provider_shadow_only"
-    assert result.structured_output is None
-    assert result.raw_payload_safe_summary["traffic"]["path"] == "shadow_only"
-    assert result.raw_payload_safe_summary["traffic"]["authoritative"] is False
-    assert adapter.calls == 1
 
 
-@pytest.mark.asyncio
 async def test_invalid_canary_configuration_fails_closed(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     db = _mock_db(_rule(canary_percent=10))
@@ -310,3 +296,15 @@ async def test_canary_bucket_is_stable_when_request_id_changes(monkeypatch):
     assert first.error_code == second.error_code
     assert first.raw_payload_safe_summary["traffic"]["bucket"] == second.raw_payload_safe_summary["traffic"]["bucket"]
     assert adapter.calls in {0, 2}
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_fails_configuration_before_provider_execution(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
+    db = _mock_db(_rule(canary_percent=100))
+    adapter = _register_adapter()
+
+    result = await ProviderRuntimeRouter(db).route(_request())
+
+    assert result.error_code == "provider_runtime_configuration_invalid"
+    assert adapter.calls == 0
