@@ -59,6 +59,14 @@ FORBIDDEN_RUNTIME_CONTENT = (
     '"assistant_name": "Speedy"',
     '"brand": "Speedaf"',
 )
+ARCHITECTURE_PATHS = (
+    ROOT / "docs/architecture/conversation-first-agent-routing.md",
+)
+FORBIDDEN_ARCHITECTURE_CONTENT = (
+    "lazily creates or reuses the ticket required by the ticket-backed voice authority",
+    "lazy ticket creation only when the existing voice workflow is initiated",
+    "Initiating voice creates or reuses the necessary ticket",
+)
 
 
 def _python_files(path: Path):
@@ -83,6 +91,13 @@ def main() -> int:
                     failures.append(
                         f"{path.relative_to(ROOT)}: contains retired marker {marker}"
                     )
+    for path in ARCHITECTURE_PATHS:
+        text = path.read_text(encoding="utf-8")
+        for marker in FORBIDDEN_ARCHITECTURE_CONTENT:
+            if marker in text:
+                failures.append(
+                    f"{path.relative_to(ROOT)}: contains retired architecture marker {marker}"
+                )
     if failures:
         print("\n".join(failures))
         return 1
