@@ -378,10 +378,16 @@ class ProviderRuntimeRouter:
             summary,
             reason,
         )
-        return _unavailable(
-            "provider_runtime_configuration_invalid",
-            summary,
+        error_code = (
+            reason
+            if reason
+            in {
+                "provider_runtime_output_contract_invalid",
+                "provider_runtime_output_contract_mismatch",
+            }
+            else "provider_runtime_configuration_invalid"
         )
+        return _unavailable(error_code, summary)
 
 
 def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:

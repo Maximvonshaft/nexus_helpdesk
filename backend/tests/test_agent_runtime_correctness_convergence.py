@@ -172,7 +172,10 @@ async def test_release_runtime_timeout_can_tighten_but_not_widen_provider_ceilin
 ) -> None:
     monkeypatch.setattr(provider_runtime_module, "_BOOTSTRAPPED", True)
     monkeypatch.setattr(ProviderRegistry, "_factories", {})
+    monkeypatch.setenv("PROVIDER_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "100")
     adapter = _CapturingAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 

@@ -115,7 +115,7 @@ def test_tool_worker_owns_a_fresh_sqlalchemy_session(monkeypatch, tmp_path) -> N
     )
     outer = Session(bind=engine, future=True)
     worker = Mock(spec=Session)
-    monkeypatch.setattr(tool_adapter, "SessionLocal", lambda: worker)
+    monkeypatch.setattr(tool_adapter, "_worker_session", lambda _db: worker)
     observed = {}
 
     def execute_with_db(db, **kwargs):

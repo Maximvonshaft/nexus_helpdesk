@@ -260,7 +260,7 @@ async def test_unknown_output_contract_never_reaches_registered_adapter(monkeypa
 
     assert result.error_code == "provider_runtime_output_contract_invalid"
     assert result.fallback_allowed is False
-    assert result.raw_payload_safe_summary["traffic"]["path"] == "canary_authoritative"
+    assert result.raw_payload_safe_summary["traffic"]["path"] == "blocked"
     assert adapter.calls == 0
 
 

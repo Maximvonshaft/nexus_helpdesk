@@ -79,7 +79,6 @@ async def run_agent(request: RuntimeAIProviderRequest) -> RuntimeAIProviderResul
     db = SessionLocal()
     try:
         result = await run_agent_with_db(db, request=request, started=started)
-        db.commit()
         return result
     except Exception:
         _safe_rollback(db)
@@ -425,39 +424,6 @@ async def run_agent_with_db(
                     request=request,
                     state=state,
                     error_code="tool_execution_failed",
-                    elapsed_ms=state.elapsed_ms,
-                    release_snapshot=release_snapshot,
-                )
-            try:
-                db.commit()
-            except Exception:
-                _safe_rollback(db)
-                observations = _failed_tool_observations(
-                    decision,
-                    error_code="tool_transaction_commit_failed",
-                )
-                state.elapsed_ms = _elapsed(started)
-                _record_tool_observations(
-                    state,
-                    round_index=round_index,
-                    decision=decision,
-                    observations=observations,
-                    provider=result.provider,
-                    elapsed_ms=result.elapsed_ms,
-                    error_code="tool_transaction_commit_failed",
-                )
-                _record_tool_events(
-                    db,
-                    run=run,
-                    observations=observations,
-                    round_index=round_index,
-                )
-                return _terminal_fallback(
-                    db,
-                    run=run,
-                    request=request,
-                    state=state,
-                    error_code="tool_transaction_commit_failed",
                     elapsed_ms=state.elapsed_ms,
                     release_snapshot=release_snapshot,
                 )
@@ -916,10 +882,24 @@ def _available_tools(
         for name in (playbook.get("tools") or [])
         if str(name)
     }
-    executable &= playbook_tools
     manifest = release_snapshot.get("manifest")
-    if not isinstance(manifest, dict) or not manifest.get("integrations"):
-        executable -= {"integration.read", "integration.write"}
+    integrations_bound = bool(
+        isinstance(manifest, dict) and manifest.get("integrations")
+    )
+    integration_invocation_tools = {"integration.read", "integration.write"}
+    if integrations_bound and playbook_tools.intersection(
+        integration_invocation_tools
+    ):
+        playbook_tools.add("integration.search")
+        if executable.intersection(integration_invocation_tools):
+            executable.add("integration.search")
+    executable &= playbook_tools
+    if not integrations_bound:
+        executable -= {
+            "integration.search",
+            "integration.read",
+            "integration.write",
+        }
     if not isinstance(manifest, dict) or not manifest.get("knowledge"):
         executable.discard("knowledge.search")
     execution = (

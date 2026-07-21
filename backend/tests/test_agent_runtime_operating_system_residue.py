@@ -68,6 +68,25 @@ def test_retired_agent_paths_and_customer_memory_cannot_return() -> None:
         assert forbidden not in application
 
 
+def test_canonical_runtime_has_no_retired_outer_tool_commit_failure() -> None:
+    source = (
+        BACKEND / "app/services/agent_runtime/runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "tool_transaction_commit_failed" not in source
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in {
+            "run_agent",
+            "run_agent_with_db",
+        }:
+            assert not any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "commit"
+                for child in ast.walk(node)
+            )
+
+
 def test_prompt_compiler_is_the_only_parent_and_specialist_budget_authority() -> None:
     adapter_path = (
         BACKEND

@@ -181,6 +181,18 @@ def execute_integration_operation(
             {},
             "integration_write_confirmation_contract_missing",
         )
+    result_allowlist = operation_row.get("result_allowlist")
+    if not isinstance(result_allowlist, list) or not any(
+        str(item or "").strip() for item in result_allowlist
+    ):
+        return IntegrationCallResult(
+            False,
+            integration.resource_key,
+            operation,
+            "blocked",
+            {},
+            "integration_result_projection_required",
+        )
     payload = dict(arguments or {})
     validator = Draft202012Validator(
         operation_row.get("input_schema")
@@ -257,7 +269,7 @@ def execute_integration_operation(
             {},
             f"integration_transport_{type(exc).__name__}",
         )
-    projected = _project_result(response, operation_row.get("result_allowlist") or [])
+    projected = _project_result(response, result_allowlist)
     return IntegrationCallResult(
         True,
         integration.resource_key,
@@ -817,8 +829,6 @@ def _flat_query(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _project_result(value: Any, allowlist: list[str]) -> dict[str, Any]:
     source = value if isinstance(value, dict) else {"value": value}
-    if not allowlist:
-        return _sanitize(source)
     output: dict[str, Any] = {}
     for raw_path in allowlist[:100]:
         path = [part for part in str(raw_path or "").split(".") if part]
