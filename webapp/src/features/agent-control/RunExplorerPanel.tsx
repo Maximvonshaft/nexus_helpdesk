@@ -109,7 +109,21 @@ export function RunExplorerPanel({ tenantKey }: { tenantKey: string }) {
                 >
                   <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between' }}>
                     <Typography variant="subtitle2">Run #{run.id}</Typography>
-                    <Chip size="small" color={statusColor(run.status)} label={run.status} />
+                    <Chip
+                      size="small"
+                      color={
+                        run.status === 'succeeded'
+                          ? 'success'
+                          : run.status === 'fallback'
+                            ? 'warning'
+                            : run.status === 'failed'
+                              ? 'error'
+                              : run.status === 'running'
+                                ? 'info'
+                                : 'default'
+                      }
+                      label={run.status}
+                    />
                   </Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
                     Release {run.release_id ?? '未解析'} · {run.elapsed_ms} ms
@@ -177,12 +191,4 @@ export function RunExplorerPanel({ tenantKey }: { tenantKey: string }) {
       </Box>
     </Paper>
   )
-}
-
-function statusColor(status: AgentRun['status']): 'default' | 'success' | 'warning' | 'error' | 'info' {
-  if (status === 'succeeded') return 'success'
-  if (status === 'fallback') return 'warning'
-  if (status === 'failed') return 'error'
-  if (status === 'running') return 'info'
-  return 'default'
 }
