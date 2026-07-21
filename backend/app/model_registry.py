@@ -44,6 +44,7 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_webchat_debug",
     "app.models_operations_dispatch",
     "app.models_agent_control",
+    "app.models_agent_runtime",
 )
 
 # There are currently no optional production model plugins. Future plugins must
@@ -65,6 +66,7 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_webchat_debug": "webchat_ai_debug_runs",
     "app.models_operations_dispatch": "operations_dispatch_outbox",
     "app.models_agent_control": "agent_definitions",
+    "app.models_agent_runtime": "agent_session_checkpoints",
 }
 
 
