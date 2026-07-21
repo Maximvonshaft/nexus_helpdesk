@@ -84,6 +84,21 @@ def _bind_release(monkeypatch) -> None:
         "record_run_snapshot",
         lambda *_args, **_kwargs: None,
     )
+    run = SimpleNamespace(
+        id=1,
+        trace_id="trace-1",
+        tenant_key="tenant-1",
+        session_id="session-1",
+        request_id="request-1",
+        release_id=1,
+        status="running",
+        final_action=None,
+        error_code=None,
+    )
+    monkeypatch.setattr(agent_runtime, "start_agent_run", lambda *_args, **_kwargs: run)
+    monkeypatch.setattr(agent_runtime, "bind_agent_run_release", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_runtime, "append_agent_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_runtime, "finish_agent_run", lambda *_args, **_kwargs: run)
 
 
 def test_provider_error_codes_are_bounded_categories():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass, field
@@ -17,8 +18,18 @@ from ..provider_runtime.output_contracts import AGENT_TURN_OUTPUT_CONTRACT
 from ..provider_runtime.router import ProviderRuntimeRouter
 from ..provider_runtime.schemas import ProviderRequest
 from ..webchat_ai_decision_runtime.schemas import AIDecision
-from ..webchat_ai_decision_runtime.tool_registry import get_tool_contract, prompt_tool_catalog
+from ..webchat_ai_decision_runtime.tool_registry import (
+    get_tool_contract,
+    prompt_tool_catalog,
+)
+from .observability import record_agent_fallback, record_agent_tool
 from .playbook_registry import prompt_playbook_catalog
+from .run_events import (
+    append_agent_event,
+    bind_agent_run_release,
+    finish_agent_run,
+    start_agent_run,
+)
 from .terminal_reply import customer_visible_fallback
 from .tool_adapter import (
     AgentExecutionContext,
@@ -28,6 +39,7 @@ from .tool_adapter import (
 )
 
 bootstrap_agent_tool_contracts()
+_RUNTIME_VERSION = "nexus.agent_runtime.v4"
 
 
 @dataclass(frozen=True)
@@ -67,7 +79,6 @@ async def run_agent(request: RuntimeAIProviderRequest) -> RuntimeAIProviderResul
     db = SessionLocal()
     try:
         result = await run_agent_with_db(db, request=request, started=started)
-        db.commit()
         return result
     except Exception:
         _safe_rollback(db)
@@ -88,12 +99,27 @@ async def run_agent_with_db(
     run_request_id = str(
         request.request_id or f"agent-{request.session_id}-{time.time_ns()}"
     )[:160]
+    environment = str(metadata.get("agent_environment") or "production")[:24]
+    run = start_agent_run(
+        db,
+        request_id=run_request_id,
+        session_id=request.session_id,
+        tenant_key=request.tenant_key,
+        channel=request.channel_key,
+        environment=environment,
+        runtime_version=_RUNTIME_VERSION,
+        parent_run_id=_optional_int(metadata.get("agent_parent_run_id")),
+        fork_kind=_optional_fork_kind(metadata.get("agent_fork_kind")),
+        trace_id=_optional_text(metadata.get("agent_trace_id")),
+    )
+    metadata["agent_run_id"] = run.id
+    metadata["agent_trace_id"] = run.trace_id
 
     try:
         resolved_release = resolve_agent_release(
             db,
             tenant_key=request.tenant_key,
-            environment=str(metadata.get("agent_environment") or "production"),
+            environment=environment,
             market_id=request.market_id,
             channel=request.channel_key,
             language=request.language,
@@ -107,6 +133,7 @@ async def run_agent_with_db(
         supplied_digest = _optional_text(metadata.get("agent_release_digest"))
         if supplied_digest and supplied_digest != resolved_release.digest:
             raise RuntimeError("agent_release_context_mismatch")
+        bind_agent_run_release(db, run=run, resolved=resolved_release)
         record_run_snapshot(
             db,
             request_id=run_request_id,
@@ -126,8 +153,10 @@ async def run_agent_with_db(
                 error_code=f"agent_release_resolution_failed:{type(exc).__name__}",
             )
         )
-        return _fallback_result(
-            request,
+        return _terminal_fallback(
+            db,
+            run=run,
+            request=request,
             state=state,
             error_code="agent_release_resolution_failed",
             elapsed_ms=state.elapsed_ms,
@@ -151,8 +180,10 @@ async def run_agent_with_db(
                 error_code=f"agent_release_contract_failed:{type(exc).__name__}",
             )
         )
-        return _fallback_result(
-            request,
+        return _terminal_fallback(
+            db,
+            run=run,
+            request=request,
             state=state,
             error_code="agent_release_contract_failed",
             elapsed_ms=state.elapsed_ms,
@@ -193,256 +224,461 @@ async def run_agent_with_db(
     )
     timeout_ms = int(policy.get("provider_timeout_ms") or 15000)
 
-    for round_index in range(max_rounds + 1):
-        round_metadata = {
-            **metadata,
-            "agent_runtime_version": "nexus.agent_runtime.v3",
-            "agent_round": round_index,
-            "agent_playbooks": playbooks,
-            "agent_tools": tools,
-            "agent_runtime_policy": {
-                "max_tool_rounds": max_rounds,
-                "allow_high_risk_writes": allow_high_risk_writes,
-                "provider_timeout_ms": timeout_ms,
-            },
-            "tool_observations": [
-                item.prompt_projection() for item in state.observations
-            ],
-            "customer_language": (
-                request.language
-                or metadata.get("customer_language")
-                or metadata.get("language")
-            ),
-        }
-        provider_request = ProviderRequest(
-            request_id=_round_request_id(run_request_id, round_index),
-            tenant_id=request.tenant_key,
-            tenant_key=request.tenant_key,
-            channel_key=request.channel_key,
-            session_id=request.session_id,
-            scenario="agent_turn",
-            body=request.body,
-            recent_context=request.recent_context,
-            output_contract=AGENT_TURN_OUTPUT_CONTRACT,
-            timeout_ms=timeout_ms,
-            metadata=round_metadata,
-        )
-        result = await ProviderRuntimeRouter(db).route(provider_request)
-        state.elapsed_ms = _elapsed(started)
-        if not result.ok or not result.structured_output:
-            state.traces.append(
-                AgentRoundTrace(
-                    round_index=round_index,
-                    next_action=None,
-                    provider=result.provider,
-                    elapsed_ms=result.elapsed_ms,
-                    error_code=result.error_code or "provider_unavailable",
-                )
+    try:
+        for round_index in range(max_rounds + 1):
+            round_metadata = {
+                **metadata,
+                "agent_runtime_version": _RUNTIME_VERSION,
+                "agent_round": round_index,
+                "agent_playbooks": playbooks,
+                "agent_tools": tools,
+                "agent_runtime_policy": {
+                    "max_tool_rounds": max_rounds,
+                    "allow_high_risk_writes": allow_high_risk_writes,
+                    "provider_timeout_ms": timeout_ms,
+                },
+                "tool_observations": [
+                    item.prompt_projection() for item in state.observations
+                ],
+                "customer_language": (
+                    request.language
+                    or metadata.get("customer_language")
+                    or metadata.get("language")
+                ),
+            }
+            provider_request = ProviderRequest(
+                request_id=_round_request_id(run_request_id, round_index),
+                tenant_id=request.tenant_key,
+                tenant_key=request.tenant_key,
+                channel_key=request.channel_key,
+                session_id=request.session_id,
+                scenario="agent_turn",
+                body=request.body,
+                recent_context=request.recent_context,
+                output_contract=AGENT_TURN_OUTPUT_CONTRACT,
+                timeout_ms=timeout_ms,
+                metadata=round_metadata,
             )
-            return _fallback_result(
-                request,
-                state=state,
-                error_code=result.error_code or "provider_unavailable",
-                elapsed_ms=state.elapsed_ms,
-                release_snapshot=release_snapshot,
-            )
-
-        if not _authoritative_provider_audit_exists(
-            db,
-            request=provider_request,
-            provider=result.provider,
-        ):
-            state.traces.append(
-                AgentRoundTrace(
-                    round_index=round_index,
-                    next_action=None,
-                    provider=result.provider,
-                    elapsed_ms=result.elapsed_ms,
-                    error_code="provider_runtime_audit_unavailable",
-                )
-            )
-            return _fallback_result(
-                request,
-                state=state,
-                error_code="provider_runtime_audit_unavailable",
-                elapsed_ms=state.elapsed_ms,
-                release_snapshot=release_snapshot,
-            )
-
-        try:
-            decision = AIDecision.model_validate(result.structured_output)
-        except Exception as exc:
-            state.traces.append(
-                AgentRoundTrace(
-                    round_index=round_index,
-                    next_action=None,
-                    provider=result.provider,
-                    elapsed_ms=result.elapsed_ms,
-                    error_code=f"invalid_agent_turn:{type(exc).__name__}",
-                )
-            )
-            return _fallback_result(
-                request,
-                state=state,
-                error_code="invalid_agent_turn",
-                elapsed_ms=state.elapsed_ms,
-                release_snapshot=release_snapshot,
-            )
-
-        if decision.next_action != "call_tool":
-            handoff_committed = _committed_handoff_observed(state)
-            handoff_requested = (
-                decision.next_action == "request_handoff"
-                or decision.handoff_required
-            )
-            if handoff_requested and not handoff_committed:
+            result = await ProviderRuntimeRouter(db).route(provider_request)
+            state.elapsed_ms = _elapsed(started)
+            if not result.ok or not result.structured_output:
                 state.traces.append(
                     AgentRoundTrace(
                         round_index=round_index,
-                        next_action=decision.next_action,
+                        next_action=None,
                         provider=result.provider,
                         elapsed_ms=result.elapsed_ms,
-                        error_code="handoff_tool_side_effect_missing",
+                        error_code=result.error_code or "provider_unavailable",
                     )
                 )
-                return _fallback_result(
-                    request,
+                return _terminal_fallback(
+                    db,
+                    run=run,
+                    request=request,
                     state=state,
-                    error_code="handoff_tool_side_effect_missing",
+                    error_code=result.error_code or "provider_unavailable",
                     elapsed_ms=state.elapsed_ms,
                     release_snapshot=release_snapshot,
                 )
-            state.traces.append(
-                AgentRoundTrace(
-                    round_index=round_index,
-                    next_action=decision.next_action,
-                    provider=result.provider,
-                    elapsed_ms=result.elapsed_ms,
+
+            if not _authoritative_provider_audit_exists(
+                db,
+                request=provider_request,
+                provider=result.provider,
+            ):
+                state.traces.append(
+                    AgentRoundTrace(
+                        round_index=round_index,
+                        next_action=None,
+                        provider=result.provider,
+                        elapsed_ms=result.elapsed_ms,
+                        error_code="provider_runtime_audit_unavailable",
+                    )
                 )
-            )
-            return RuntimeAIProviderResult(
-                ok=True,
-                ai_generated=True,
-                reply_source=result.provider,
-                raw_provider=result.raw_provider or result.provider,
-                raw_payload_safe_summary=_safe_summary(
-                    state,
+                return _terminal_fallback(
+                    db,
+                    run=run,
+                    request=request,
+                    state=state,
+                    error_code="provider_runtime_audit_unavailable",
+                    elapsed_ms=state.elapsed_ms,
+                    release_snapshot=release_snapshot,
+                )
+
+            try:
+                decision = AIDecision.model_validate(result.structured_output)
+            except Exception as exc:
+                state.traces.append(
+                    AgentRoundTrace(
+                        round_index=round_index,
+                        next_action=None,
+                        provider=result.provider,
+                        elapsed_ms=result.elapsed_ms,
+                        error_code=f"invalid_agent_turn:{type(exc).__name__}",
+                    )
+                )
+                return _terminal_fallback(
+                    db,
+                    run=run,
+                    request=request,
+                    state=state,
+                    error_code="invalid_agent_turn",
+                    elapsed_ms=state.elapsed_ms,
+                    release_snapshot=release_snapshot,
+                )
+
+            if decision.next_action != "call_tool":
+                return _terminal_decision(
+                    db,
+                    run=run,
+                    request=request,
+                    state=state,
                     decision=decision,
-                    provider_summary=result.raw_payload_safe_summary,
+                    provider_result=result,
+                    round_index=round_index,
                     playbooks=playbooks,
                     tools=tools,
                     policy=policy,
                     release_snapshot=release_snapshot,
-                ),
-                reply=decision.customer_reply,
-                intent=decision.intent,
-                handoff_required=handoff_committed,
-                handoff_reason=(
-                    decision.handoff_reason or "handoff_requested"
-                    if handoff_committed
-                    else None
-                ),
-                recommended_agent_action=(
-                    "Review the conversation and take over."
-                    if handoff_committed
-                    else None
-                ),
-                tool_calls=list(state.executed_calls),
-                elapsed_ms=state.elapsed_ms,
-                error_code=None,
-                retry_after_ms=None,
-            )
+                )
 
-        if round_index >= max_rounds:
-            state.traces.append(
-                AgentRoundTrace(
+            if round_index >= max_rounds:
+                state.traces.append(
+                    AgentRoundTrace(
+                        round_index=round_index,
+                        next_action="call_tool",
+                        tool_names=tuple(
+                            call.tool_name for call in decision.tool_calls
+                        ),
+                        provider=result.provider,
+                        elapsed_ms=result.elapsed_ms,
+                        error_code="max_tool_rounds_exceeded",
+                    )
+                )
+                return _terminal_fallback(
+                    db,
+                    run=run,
+                    request=request,
+                    state=state,
+                    error_code="max_tool_rounds_exceeded",
+                    elapsed_ms=state.elapsed_ms,
+                    release_snapshot=release_snapshot,
+                )
+
+            tool_names = [call.tool_name for call in decision.tool_calls]
+            append_agent_event(
+                db,
+                run=run,
+                event_type="tool_requested",
+                round_index=round_index,
+                safe_payload={
+                    "tool_names": tool_names,
+                    "round_index": round_index,
+                    "call_count": len(tool_names),
+                },
+            )
+            for tool_name in tool_names:
+                append_agent_event(
+                    db,
+                    run=run,
+                    event_type="tool_started",
                     round_index=round_index,
-                    next_action="call_tool",
-                    tool_names=tuple(call.tool_name for call in decision.tool_calls),
+                    safe_payload={
+                        "tool_name": tool_name,
+                        "round_index": round_index,
+                    },
+                )
+            try:
+                observations = await asyncio.to_thread(
+                    execute_agent_tool_calls,
+                    db,
+                    calls=decision.tool_calls,
+                    context=execution_context,
+                    allow_high_risk_writes=allow_high_risk_writes,
+                )
+            except Exception:
+                _safe_rollback(db)
+                observations = _failed_tool_observations(
+                    decision,
+                    error_code="tool_execution_failed",
+                )
+                state.elapsed_ms = _elapsed(started)
+                _record_tool_observations(
+                    state,
+                    round_index=round_index,
+                    decision=decision,
+                    observations=observations,
                     provider=result.provider,
                     elapsed_ms=result.elapsed_ms,
-                    error_code="max_tool_rounds_exceeded",
+                    error_code="tool_execution_failed",
                 )
+                _record_tool_events(
+                    db,
+                    run=run,
+                    observations=observations,
+                    round_index=round_index,
+                )
+                return _terminal_fallback(
+                    db,
+                    run=run,
+                    request=request,
+                    state=state,
+                    error_code="tool_execution_failed",
+                    elapsed_ms=state.elapsed_ms,
+                    release_snapshot=release_snapshot,
+                )
+            _record_tool_observations(
+                state,
+                round_index=round_index,
+                decision=decision,
+                observations=observations,
+                provider=result.provider,
+                elapsed_ms=result.elapsed_ms,
             )
-            return _fallback_result(
-                request,
-                state=state,
-                error_code="max_tool_rounds_exceeded",
-                elapsed_ms=state.elapsed_ms,
-                release_snapshot=release_snapshot,
-            )
-
-        try:
-            observations = execute_agent_tool_calls(
+            _record_tool_events(
                 db,
-                calls=decision.tool_calls,
-                context=execution_context,
-                allow_high_risk_writes=allow_high_risk_writes,
-            )
-        except Exception:
-            _safe_rollback(db)
-            observations = _failed_tool_observations(
-                decision,
-                error_code="tool_execution_failed",
-            )
-            state.elapsed_ms = _elapsed(started)
-            _record_tool_observations(
-                state,
-                round_index=round_index,
-                decision=decision,
+                run=run,
                 observations=observations,
-                provider=result.provider,
-                elapsed_ms=result.elapsed_ms,
-                error_code="tool_execution_failed",
-            )
-            return _fallback_result(
-                request,
-                state=state,
-                error_code="tool_execution_failed",
-                elapsed_ms=state.elapsed_ms,
-                release_snapshot=release_snapshot,
-            )
-        try:
-            db.commit()
-        except Exception:
-            _safe_rollback(db)
-            observations = _failed_tool_observations(
-                decision,
-                error_code="tool_transaction_commit_failed",
-            )
-            state.elapsed_ms = _elapsed(started)
-            _record_tool_observations(
-                state,
                 round_index=round_index,
-                decision=decision,
-                observations=observations,
-                provider=result.provider,
-                elapsed_ms=result.elapsed_ms,
-                error_code="tool_transaction_commit_failed",
             )
-            return _fallback_result(
-                request,
-                state=state,
-                error_code="tool_transaction_commit_failed",
-                elapsed_ms=state.elapsed_ms,
-                release_snapshot=release_snapshot,
-            )
-        _record_tool_observations(
-            state,
-            round_index=round_index,
-            decision=decision,
-            observations=observations,
-            provider=result.provider,
-            elapsed_ms=result.elapsed_ms,
-        )
 
-    return _fallback_result(
+        return _terminal_fallback(
+            db,
+            run=run,
+            request=request,
+            state=state,
+            error_code="agent_loop_exhausted",
+            elapsed_ms=_elapsed(started),
+            release_snapshot=release_snapshot,
+        )
+    except Exception as exc:
+        state.elapsed_ms = _elapsed(started)
+        try:
+            finish_agent_run(
+                db,
+                run=run,
+                status="failed",
+                final_action="runtime_exception",
+                elapsed_ms=state.elapsed_ms,
+                error_code=f"agent_runtime_exception:{type(exc).__name__}",
+                round_count=len(state.traces),
+            )
+        except Exception:
+            _safe_rollback(db)
+        raise
+
+
+def _terminal_decision(
+    db: Session,
+    *,
+    run,
+    request: RuntimeAIProviderRequest,
+    state: AgentRunState,
+    decision: AIDecision,
+    provider_result,
+    round_index: int,
+    playbooks: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    policy: dict[str, Any],
+    release_snapshot: dict[str, Any],
+) -> RuntimeAIProviderResult:
+    handoff_committed = _committed_handoff_observed(state)
+    handoff_requested = (
+        decision.next_action == "request_handoff" or decision.handoff_required
+    )
+    if handoff_requested and not handoff_committed:
+        state.traces.append(
+            AgentRoundTrace(
+                round_index=round_index,
+                next_action=decision.next_action,
+                provider=provider_result.provider,
+                elapsed_ms=provider_result.elapsed_ms,
+                error_code="handoff_tool_side_effect_missing",
+            )
+        )
+        return _terminal_fallback(
+            db,
+            run=run,
+            request=request,
+            state=state,
+            error_code="handoff_tool_side_effect_missing",
+            elapsed_ms=state.elapsed_ms,
+            release_snapshot=release_snapshot,
+        )
+    state.traces.append(
+        AgentRoundTrace(
+            round_index=round_index,
+            next_action=decision.next_action,
+            provider=provider_result.provider,
+            elapsed_ms=provider_result.elapsed_ms,
+        )
+    )
+    if decision.next_action == "ask_clarifying_question":
+        append_agent_event(
+            db,
+            run=run,
+            event_type="clarification_requested",
+            round_index=round_index,
+            safe_payload={
+                "round_index": round_index,
+                "intent": decision.intent,
+            },
+        )
+    if handoff_committed:
+        append_agent_event(
+            db,
+            run=run,
+            event_type="handoff_committed",
+            round_index=round_index,
+            safe_payload={
+                "round_index": round_index,
+                "reason_code": decision.handoff_reason or "handoff_requested",
+            },
+        )
+    append_agent_event(
+        db,
+        run=run,
+        event_type="reply_finalized",
+        round_index=round_index,
+        safe_payload={
+            "round_index": round_index,
+            "intent": decision.intent,
+            "handoff_required": handoff_committed,
+            "reply_chars": len(str(decision.customer_reply or "")),
+        },
+    )
+    result = RuntimeAIProviderResult(
+        ok=True,
+        ai_generated=True,
+        reply_source=provider_result.provider,
+        raw_provider=provider_result.raw_provider or provider_result.provider,
+        raw_payload_safe_summary=_safe_summary(
+            state,
+            decision=decision,
+            provider_summary=provider_result.raw_payload_safe_summary,
+            playbooks=playbooks,
+            tools=tools,
+            policy=policy,
+            release_snapshot=release_snapshot,
+            run_id=run.id,
+            trace_id=run.trace_id,
+        ),
+        reply=decision.customer_reply,
+        intent=decision.intent,
+        handoff_required=handoff_committed,
+        handoff_reason=(
+            decision.handoff_reason or "handoff_requested"
+            if handoff_committed
+            else None
+        ),
+        recommended_agent_action=(
+            "Review the conversation and take over."
+            if handoff_committed
+            else None
+        ),
+        tool_calls=list(state.executed_calls),
+        elapsed_ms=state.elapsed_ms,
+        error_code=None,
+        retry_after_ms=None,
+    )
+    finish_agent_run(
+        db,
+        run=run,
+        status="succeeded",
+        final_action=decision.next_action,
+        elapsed_ms=state.elapsed_ms,
+        round_count=len(state.traces),
+    )
+    return result
+
+
+def _terminal_fallback(
+    db: Session,
+    *,
+    run,
+    request: RuntimeAIProviderRequest,
+    state: AgentRunState,
+    error_code: str,
+    elapsed_ms: int,
+    release_snapshot: dict[str, Any] | None = None,
+) -> RuntimeAIProviderResult:
+    result = _fallback_result(
         request,
         state=state,
-        error_code="agent_loop_exhausted",
-        elapsed_ms=_elapsed(started),
+        error_code=error_code,
+        elapsed_ms=elapsed_ms,
         release_snapshot=release_snapshot,
+        run_id=run.id,
+        trace_id=run.trace_id,
     )
+    append_agent_event(
+        db,
+        run=run,
+        event_type="fallback_used",
+        safe_payload={"error_code": error_code, "elapsed_ms": elapsed_ms},
+        duration_ms=elapsed_ms,
+        status="fallback",
+    )
+    finish_agent_run(
+        db,
+        run=run,
+        status="fallback",
+        final_action="fallback",
+        elapsed_ms=elapsed_ms,
+        error_code=error_code,
+        round_count=len(state.traces),
+    )
+    record_agent_fallback(error_code)
+    return result
+
+
+def _record_tool_events(
+    db: Session,
+    *,
+    run,
+    observations: list[ToolObservation],
+    round_index: int,
+) -> None:
+    for observation in observations:
+        allowed = observation.status not in {
+            "blocked",
+            "confirmation_required",
+            "failed",
+        }
+        append_agent_event(
+            db,
+            run=run,
+            event_type="tool_authorized",
+            round_index=round_index,
+            safe_payload={
+                "tool_name": observation.tool_name,
+                "round_index": round_index,
+                "status": "allowed" if allowed else observation.status,
+            },
+            status="allowed" if allowed else observation.status,
+        )
+        event_type = "tool_completed" if observation.ok else "tool_failed"
+        append_agent_event(
+            db,
+            run=run,
+            event_type=event_type,
+            round_index=round_index,
+            safe_payload={
+                "tool_name": observation.tool_name,
+                "round_index": round_index,
+                "status": observation.status,
+                "elapsed_ms": observation.elapsed_ms,
+                "ok": observation.ok,
+                "error_code": observation.error_code,
+            },
+            status=observation.status,
+            duration_ms=observation.elapsed_ms,
+        )
+        record_agent_tool(
+            tool_name=observation.tool_name,
+            status=observation.status,
+            elapsed_ms=observation.elapsed_ms,
+        )
 
 
 def _runtime_policy(
@@ -518,6 +754,7 @@ def _record_tool_observations(
             "status": observation.status,
             "ok": observation.ok,
             "error_code": observation.error_code,
+            "elapsed_ms": observation.elapsed_ms,
         }
         for call, observation in zip(decision.tool_calls, observations)
     )
@@ -645,10 +882,24 @@ def _available_tools(
         for name in (playbook.get("tools") or [])
         if str(name)
     }
-    executable &= playbook_tools
     manifest = release_snapshot.get("manifest")
-    if not isinstance(manifest, dict) or not manifest.get("integrations"):
-        executable -= {"integration.read", "integration.write"}
+    integrations_bound = bool(
+        isinstance(manifest, dict) and manifest.get("integrations")
+    )
+    integration_invocation_tools = {"integration.read", "integration.write"}
+    if integrations_bound and playbook_tools.intersection(
+        integration_invocation_tools
+    ):
+        playbook_tools.add("integration.search")
+        if executable.intersection(integration_invocation_tools):
+            executable.add("integration.search")
+    executable &= playbook_tools
+    if not integrations_bound:
+        executable -= {
+            "integration.search",
+            "integration.read",
+            "integration.write",
+        }
     if not isinstance(manifest, dict) or not manifest.get("knowledge"):
         executable.discard("knowledge.search")
     execution = (
@@ -685,6 +936,8 @@ def _fallback_result(
     error_code: str,
     elapsed_ms: int,
     release_snapshot: dict[str, Any] | None = None,
+    run_id: int | None = None,
+    trace_id: str | None = None,
 ) -> RuntimeAIProviderResult:
     reply = customer_visible_fallback(request.language, request.body)
     return RuntimeAIProviderResult(
@@ -696,6 +949,8 @@ def _fallback_result(
             state,
             error_code=error_code,
             release_snapshot=release_snapshot,
+            run_id=run_id,
+            trace_id=trace_id,
         ),
         reply=reply,
         intent="runtime_unavailable",
@@ -719,6 +974,8 @@ def _safe_summary(
     tools: list[dict[str, Any]] | None = None,
     policy: dict[str, Any] | None = None,
     release_snapshot: dict[str, Any] | None = None,
+    run_id: int | None = None,
+    trace_id: str | None = None,
 ) -> dict[str, Any]:
     release = (
         release_snapshot.get("release")
@@ -734,7 +991,9 @@ def _safe_summary(
     )
     summary: dict[str, Any] = {
         "agent_runtime": True,
-        "agent_runtime_version": "nexus.agent_runtime.v3",
+        "agent_runtime_version": _RUNTIME_VERSION,
+        "agent_run_id": run_id,
+        "agent_trace_id": trace_id,
         "agent_release_id": release.get("id"),
         "agent_release_version": release.get("version"),
         "agent_deployment_id": deployment.get("id"),
@@ -752,6 +1011,7 @@ def _safe_summary(
             "allow_high_risk_writes": bool(
                 (policy or {}).get("allow_high_risk_writes")
             ),
+            "provider_timeout_ms": (policy or {}).get("provider_timeout_ms"),
         },
         "elapsed_ms": state.elapsed_ms,
     }
@@ -779,6 +1039,11 @@ def _optional_int(value: Any) -> int | None:
 def _optional_text(value: Any) -> str | None:
     cleaned = str(value or "").strip().lower()
     return cleaned or None
+
+
+def _optional_fork_kind(value: Any) -> str | None:
+    cleaned = str(value or "").strip().lower()
+    return cleaned if cleaned in {"playground", "replay"} else None
 
 
 def _string_set(value: Any) -> frozenset[str]:

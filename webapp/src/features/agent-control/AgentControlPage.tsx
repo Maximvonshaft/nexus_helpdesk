@@ -13,13 +13,15 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
 import { agentControlApi } from '@/lib/agentControlApi'
+import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { OverviewPanel } from './OverviewPanel'
 import { PersonaPanel } from './PersonaPanel'
 import { PlaybookPanel } from './PlaybookPanel'
+import { RunExplorerPanel } from './RunExplorerPanel'
 import { ToolsIntegrationsPanel } from './ToolsIntegrationsPanel'
 import { RuntimePanel } from './RuntimePanel'
 
-export type AgentControlTab = 'overview' | 'persona' | 'playbooks' | 'tools' | 'runtime'
+export type AgentControlTab = 'overview' | 'persona' | 'playbooks' | 'tools' | 'runtime' | 'diagnostics'
 
 export function AgentControlPage({ canManage }: { canManage: boolean }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
@@ -73,7 +75,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
             <Typography component="h1" variant="h1">Agent 控制面</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            统一管理 Agent 定义、不可变发布、渠道部署、人格、业务剧本、工具、模型与运行策略；知识继续由唯一知识库维护，并在 Agent Definition 中按版本绑定。
+            统一管理 Agent 定义、不可变发布、渠道部署、人格、业务剧本、工具、模型、运行策略和运行诊断；知识继续由唯一知识库维护，并在 Agent Definition 中按版本绑定。
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -95,6 +97,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
           <Tab value="playbooks" label="业务剧本" />
           <Tab value="tools" label="工具与集成" />
           <Tab value="runtime" label="模型与运行" />
+          <Tab value="diagnostics" label="运行诊断" />
         </Tabs>
       </Paper>
 
@@ -160,6 +163,19 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
               snapshot={snapshot.data}
               canManage={canManage && snapshot.data.capabilities.can_manage}
             />
+          ) : null}
+          {tab === 'diagnostics' ? (
+            <Stack spacing={2}>
+              <DiagnosticsPanel
+                snapshot={snapshot.data}
+                tenantKey={tenantKey || snapshot.data.tenant_key}
+              />
+              <RunExplorerPanel
+                tenantKey={tenantKey || snapshot.data.tenant_key}
+                scope={snapshot.data.scope}
+                canExecute={snapshot.data.capabilities.can_deploy}
+              />
+            </Stack>
           ) : null}
         </Box>
       )}

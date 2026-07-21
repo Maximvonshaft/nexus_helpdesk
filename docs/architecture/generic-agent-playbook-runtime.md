@@ -8,29 +8,30 @@ The core runtime must not contain logistics-, knowledge-, finance-, HR- or repor
 
 ## Canonical flow
 
-1. Build the sanitized Agent context: published Persona, channel scope, recent conversation, governed customer memory and active bulletins.
-2. Resolve published Business Playbooks from `AIConfigResource` for the current market, channel and language.
-3. Intersect Playbook Tools with the runtime policy, caller permissions, registered production handlers and `ToolExecutionPolicy`.
-4. Ask the selected model profile for one `nexus.agent_turn.v1` object.
+1. Build the sanitized Agent context from the immutable Release, published Persona, channel scope, recent conversation, active bulletins and the content-safe Session checkpoint.
+2. Resolve published Business Playbooks from the exact `AgentRelease` selected by `AgentDeployment`.
+3. Intersect Playbook Tools with the Release runtime policy, caller permissions, registered production handlers and `ToolExecutionPolicy`.
+4. Ask the selected Release-bound model profile for one `nexus.agent_turn.v1` object.
 5. Validate raw Tool arguments against the canonical Tool contract and JSON Schema.
 6. Validate availability, permission, confirmation, write-risk and execution policy.
-7. Execute through the one canonical Tool Executor.
-8. Commit the Tool transaction before treating the observation as successful.
-9. Return bounded, redacted observations to the model and repeat for the configured bounded number of rounds.
+7. Execute through the one canonical Tool Executor and its worker-owned transaction.
+8. Return bounded, redacted committed observations to the model and repeat for the configured bounded number of rounds.
+9. Persist content-safe append-only Run events and an expiring Session checkpoint.
 10. Emit one customer-visible final response through the single terminal reply authority.
 
 ## Configuration authorities
 
 | Concern | Authority |
 |---|---|
+| Agent authoring and release | `AgentDefinition`, `AgentRelease`, `AgentDeployment` |
+| Exact run evidence | `AgentRunSnapshot`, `AgentRun`, `AgentRunEvent` |
+| Expiring session summary | `AgentSessionCheckpoint` |
 | Persona | `PersonaProfile` and `PersonaProfileVersion` |
 | Knowledge | `KnowledgeItem`, published chunks and `knowledge.search` |
 | Business Playbook | versioned `AIConfigResource(config_type=playbook)` |
 | Enterprise integration | versioned `AIConfigResource(config_type=integration)` |
 | Model inference profile | versioned `AIConfigResource(config_type=model_profile)` |
 | Runtime policy | versioned `AIConfigResource(config_type=runtime_policy)` |
-| Customer memory policy | versioned `AIConfigResource(config_type=memory_policy)` |
-| Customer memory facts | `CustomerMemoryFact` |
 | Tool contract | canonical `TOOL_CONTRACTS` |
 | Tool execution policy | `ToolExecutionPolicyRecord` |
 | Tool execution | `nexus_osr/tool_execution_service_core.py` |
@@ -51,9 +52,9 @@ Playbooks cannot register a new executor. Every referenced Tool must already exi
 
 ## Tool and integration boundary
 
-An enterprise integration is a published HTTP or MCP-over-HTTP manifest. It contains an exact base URL, host allowlist, credential reference, bounded timeout and response size, and a list of strongly typed operations. Operations are validated with Draft 2020-12 JSON Schema. Responses are bounded and projected through an explicit allowlist before becoming Tool observations.
+An enterprise integration is a published HTTP or MCP-over-HTTP manifest. It contains an exact base URL, host allowlist, credential reference, bounded timeout and response size, and a list of strongly typed operations. Operations are validated with Draft 2020-12 JSON Schema. Responses require an explicit projection allowlist before becoming Tool observations.
 
-Secrets are never stored in control-plane JSON. Production resolves credential references only from Secret Files. Integration calls still pass through canonical Tool contracts, permissions, confirmations, `ToolExecutionPolicy`, idempotency and audit.
+Secrets are never stored in control-plane JSON. Production resolves credential references only from Secret Files. Integration calls still pass through canonical Tool contracts, permissions, confirmations, `ToolExecutionPolicy`, idempotency and audit. Progressive discovery searches only operations frozen into the current Release and never exposes unmanaged MCP Tools automatically.
 
 ## Model and runtime boundary
 
@@ -61,9 +62,9 @@ Published model profiles configure model name, endpoint reference, request shape
 
 Frontend configuration cannot weaken deployment hard limits. High-risk writes additionally require the deployment safety switch, Tool permission, execution policy and required confirmation artifacts.
 
-## Memory boundary
+## Session checkpoint boundary
 
-Long-term memory stores bounded customer facts, not transcripts. Every fact has a source, consent basis, confidence, sensitivity, expiry and audit trail. Only active, unexpired, standard-sensitivity facts may enter the Agent context. Credentials, payment data, government identifiers, health information, biometrics and raw transcripts are prohibited. Operators can correct, deactivate or physically forget all facts for a customer.
+A Session checkpoint is an expiring, Release-bound summary of content-safe operational evidence. It may retain the last intent, terminal action, run status, bounded Tool outcome metadata and handoff state. It never stores raw customer messages, customer-visible replies, prompts, hidden reasoning, credentials, Tool arguments/results or customer identifiers. A checkpoint cannot grant Tool access or replace immutable Release evidence.
 
 ## Prohibited architecture
 
@@ -73,9 +74,9 @@ The following must not return:
 - keyword lists that decide whether model text is factually allowed;
 - business-domain branches in the Runtime loop;
 - pre-model domain API calls selected by application heuristics;
-- parallel Tool registries, executors or HTTP transports;
+- parallel Tool registries, executors, Specialist runtimes or HTTP transports;
 - secrets inside published configuration JSON;
-- customer memory without consent, provenance, expiry and deletion;
+- long-term customer-fact memory or transcript persistence inside the Agent runtime;
 - silent failure after an accepted customer message.
 
 ## Extension rule

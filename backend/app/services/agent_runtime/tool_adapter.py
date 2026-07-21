@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from ...models import Customer, Ticket
 from ...webchat_models import WebchatConversation
@@ -59,6 +59,7 @@ class ToolObservation:
             "status": self.status,
             "result": self.result,
             "error_code": self.error_code,
+            "elapsed_ms": self.elapsed_ms,
         }
 
 
@@ -77,6 +78,62 @@ def execute_agent_tool_calls(
     calls: list[AIDecisionToolCall],
     context: AgentExecutionContext,
     allow_high_risk_writes: bool = False,
+) -> list[ToolObservation]:
+    """Execute one canonical Tool transaction in the calling worker thread.
+
+    A SQLAlchemy Session is not thread-safe. The worker therefore owns a fresh
+    Session bound to the exact same authoritative Engine/Connection pool as the
+    caller. It never falls back to a process-global Session factory that could
+    point at another test, tenant or deployment database.
+    """
+
+    if isinstance(db, Session):
+        worker_db = _worker_session(db)
+        try:
+            observations = _execute_with_db(
+                worker_db,
+                calls=calls,
+                context=context,
+                allow_high_risk_writes=allow_high_risk_writes,
+            )
+            worker_db.commit()
+            return observations
+        except Exception:
+            try:
+                worker_db.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            worker_db.close()
+    return _execute_with_db(
+        db,
+        calls=calls,
+        context=context,
+        allow_high_risk_writes=allow_high_risk_writes,
+    )
+
+
+def _worker_session(db: Session) -> Session:
+    bind = db.get_bind()
+    if bind is None:
+        raise RuntimeError("agent_tool_worker_database_bind_unavailable")
+    factory = sessionmaker(
+        bind=bind,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    return factory()
+
+
+def _execute_with_db(
+    db: Session,
+    *,
+    calls: list[AIDecisionToolCall],
+    context: AgentExecutionContext,
+    allow_high_risk_writes: bool,
 ) -> list[ToolObservation]:
     case_context = CaseContext(
         conversation_id=context.conversation_id,
@@ -137,6 +194,7 @@ def execute_agent_tool_calls(
             status=result.status,
             result=dict(result.summary or {}),
             error_code=result.error_code,
+            elapsed_ms=max(0, int(result.elapsed_ms or 0)),
         )
         for result in results
     ]

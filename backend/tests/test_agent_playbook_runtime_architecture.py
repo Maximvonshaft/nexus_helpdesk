@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import time
 from pathlib import Path
@@ -144,6 +145,21 @@ def _bind_release_runtime(monkeypatch) -> None:
         "record_run_snapshot",
         lambda *_args, **_kwargs: None,
     )
+    run = SimpleNamespace(
+        id=1,
+        trace_id="trace-1",
+        tenant_key="tenant",
+        session_id="session",
+        request_id="request",
+        release_id=1,
+        status="running",
+        final_action=None,
+        error_code=None,
+    )
+    monkeypatch.setattr(agent_runtime, "start_agent_run", lambda *_args, **_kwargs: run)
+    monkeypatch.setattr(agent_runtime, "bind_agent_run_release", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_runtime, "append_agent_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_runtime, "finish_agent_run", lambda *_args, **_kwargs: run)
     monkeypatch.setattr(
         agent_runtime,
         "_runtime_policy",
@@ -249,83 +265,26 @@ async def test_agent_loop_executes_tool_then_returns_final_reply(monkeypatch) ->
     assert result.tool_calls[0]["tool_name"] == "speedaf.order.query"
 
 
-class _FailingCommitDb(_Db):
-    def __init__(self) -> None:
-        self.rolled_back = False
-
-    def commit(self) -> None:
-        raise RuntimeError("commit failed")
-
-    def rollback(self) -> None:
-        self.rolled_back = True
-
-
-@pytest.mark.asyncio
-async def test_agent_loop_fails_closed_when_tool_transaction_does_not_commit(
-    monkeypatch,
-) -> None:
-    async def route(_self, _request):
-        return ProviderResult(
-            ok=True,
-            provider="private_ai_runtime",
-            raw_provider="private_ai_runtime",
-            reply_source="private_ai_runtime",
-            elapsed_ms=3,
-            structured_output={
-                "customer_reply": None,
-                "intent": "shipment_tracking",
-                "next_action": "call_tool",
-                "handoff_required": False,
-                "tool_calls": [
-                    {
-                        "tool_name": "speedaf.order.query",
-                        "arguments": {"tracking_number": "CH020000129135"},
-                    }
-                ],
-            },
-            raw_payload_safe_summary={"model": "test"},
+def test_canonical_runtime_leaves_tool_transaction_commit_to_worker() -> None:
+    source = (
+        ROOT / "backend/app/services/agent_runtime/runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "tool_transaction_commit_failed" not in source
+    tree = ast.parse(source)
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"run_agent", "run_agent_with_db"}
+    }
+    assert set(functions) == {"run_agent", "run_agent_with_db"}
+    for function in functions.values():
+        assert not any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "commit"
+            for node in ast.walk(function)
         )
-
-    def execute(_db, *, calls, context, allow_high_risk_writes=False):
-        del calls, context, allow_high_risk_writes
-        return [
-            ToolObservation(
-                tool_name="speedaf.order.query",
-                ok=True,
-                status="executed",
-                result={},
-            )
-        ]
-
-    db = _FailingCommitDb()
-    _bind_release_runtime(monkeypatch)
-    monkeypatch.setattr(agent_runtime.ProviderRuntimeRouter, "route", route)
-    monkeypatch.setattr(
-        agent_runtime,
-        "_authoritative_provider_audit_exists",
-        lambda *_args, **_kwargs: True,
-    )
-    monkeypatch.setattr(agent_runtime, "execute_agent_tool_calls", execute)
-    result = await agent_runtime.run_agent_with_db(
-        db,
-        request=RuntimeAIProviderRequest(
-            tenant_key="tenant",
-            channel_key="website",
-            session_id="session",
-            body="Where is CH020000129135?",
-            request_id="request",
-            metadata={
-                "agent_allowed_tools": ["speedaf.order.query"],
-                "agent_execution_context": {
-                    "granted_permissions": ["speedaf:tracking:read"]
-                },
-            },
-        ),
-        started=time.monotonic(),
-    )
-    assert db.rolled_back is True
-    assert result.ai_generated is False
-    assert result.error_code == "tool_transaction_commit_failed"
 
 
 def test_public_agent_access_policy_does_not_derive_grants_from_visible_tools(

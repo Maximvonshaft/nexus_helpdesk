@@ -10,9 +10,13 @@ from sqlalchemy.orm import Session
 from ..enums import EventType
 from ..models import Customer, Ticket, TicketEvent
 from ..utils.time import utc_now
-from ..webchat_models import WebchatConversation
-from .agent_integration_service import execute_integration_operation
+from ..webchat_models import WebchatConversation, WebchatMessage
+from .agent_integration_service import (
+    execute_integration_operation,
+    list_integration_catalog,
+)
 from .agent_runtime.execution_scope import current_agent_release_snapshot
+from .agent_runtime.specialist_runtime import run_specialist_sync
 from .background_jobs import enqueue_speedaf_work_order_create_job
 from .knowledge_release_retrieval import retrieve_release_published_chunks
 from .nexus_osr.controlled_action_executor import (
@@ -21,6 +25,32 @@ from .nexus_osr.controlled_action_executor import (
     ActionHandler,
 )
 from .speedaf.status_map import is_auto_work_order_type_allowed
+
+_SPECIALIST_OBJECTIVES = {
+    "investigate_current_request": (
+        "Investigate the current customer request using only the supplied case "
+        "context and evidence references. Identify supported facts, uncertainty "
+        "and what the parent Agent should verify next."
+    ),
+    "check_policy_consistency": (
+        "Check whether the current case and proposed handling are consistent "
+        "with the available enterprise policy evidence. Surface conflicts and "
+        "human-review boundaries."
+    ),
+    "summarize_current_case": (
+        "Produce a concise operational case summary for the parent Agent, "
+        "separating known facts, unresolved points and recommended next review."
+    ),
+    "review_current_translation": (
+        "Review the current customer-language text for meaning preservation, "
+        "tone and ambiguity. Do not reproduce identifiers or provide a customer "
+        "reply; provide evidence to the parent Agent only."
+    ),
+    "analyze_available_data": (
+        "Analyze the bounded data visible in the current case, identify patterns "
+        "and limitations, and return evidence without inventing missing values."
+    ),
+}
 
 
 def build_agent_tool_handlers(
@@ -46,7 +76,10 @@ def build_agent_tool_handlers(
             limit=limit,
         )
         if retrieval is None:
-            return _failure(request, "agent_release_snapshot_required_for_knowledge")
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_knowledge",
+            )
         hits: list[dict[str, Any]] = []
         for hit in retrieval.hits[:limit]:
             answer = str(hit.direct_answer or hit.text or "").strip()
@@ -69,6 +102,82 @@ def build_agent_tool_handlers(
             ),
             case_context=request.case_context,
             error_code=None if hits else "knowledge_not_found",
+        )
+
+    def integration_search(request: ActionExecutionRequest) -> ActionExecutionResult:
+        arguments = request.action.arguments
+        keywords = _integration_keywords(arguments.get("keywords"))
+        mode = str(arguments.get("mode") or "all").strip().lower()
+        limit = max(1, min(int(arguments.get("limit") or 8), 20))
+        if not keywords or mode not in {"read", "write", "all"}:
+            return _failure(request, "integration_search_arguments_invalid")
+        snapshot = current_agent_release_snapshot()
+        if not isinstance(snapshot, dict):
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_integration",
+            )
+        try:
+            catalog = list_integration_catalog(
+                db,
+                market_id=getattr(ticket, "market_id", None),
+                channel=request.channel,
+                release_snapshot=snapshot,
+            )
+        except RuntimeError:
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_integration",
+            )
+        matches: list[dict[str, Any]] = []
+        for integration in catalog:
+            integration_key = str(integration.get("resource_key") or "")[:160]
+            integration_name = str(integration.get("name") or "")[:160]
+            for operation in integration.get("operations") or []:
+                if not isinstance(operation, dict) or operation.get("enabled") is False:
+                    continue
+                operation_mode = str(operation.get("mode") or "").lower()
+                if operation_mode not in {"read", "write"}:
+                    continue
+                if mode != "all" and operation_mode != mode:
+                    continue
+                operation_key = str(operation.get("key") or "")[:160]
+                description = str(operation.get("description") or "")[:600]
+                searchable = " ".join(
+                    (integration_key, integration_name, operation_key, description)
+                ).lower()
+                score = sum(1 for keyword in keywords if keyword in searchable)
+                if score <= 0:
+                    continue
+                matches.append(
+                    {
+                        "integration_key": integration_key,
+                        "operation": operation_key,
+                        "description": description,
+                        "mode": operation_mode,
+                        "risk_level": str(operation.get("risk_level") or "medium")[:20],
+                        "requires_confirmation": bool(
+                            operation.get("requires_confirmation")
+                        ),
+                        "score": score,
+                    }
+                )
+        matches.sort(
+            key=lambda item: (
+                -int(item["score"]),
+                str(item["integration_key"]),
+                str(item["operation"]),
+            )
+        )
+        selected = matches[:limit]
+        return ActionExecutionResult(
+            ok=bool(selected),
+            tool_name=request.action.tool_name,
+            status="executed" if selected else "no_results",
+            summary={"matches": selected, "count": len(selected)},
+            customer_visible_summary=None,
+            case_context=request.case_context,
+            error_code=None if selected else "integration_search_no_results",
         )
 
     def integration_read(request: ActionExecutionRequest) -> ActionExecutionResult:
@@ -101,11 +210,74 @@ def build_agent_tool_handlers(
         except HTTPException as exc:
             return _failure(request, _detail(exc))
         except RuntimeError:
-            return _failure(request, "agent_release_snapshot_required_for_integration")
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_integration",
+            )
         return ActionExecutionResult(
             result.ok,
             request.action.tool_name,
             result.status,
+            summary=result.safe_summary(),
+            customer_visible_summary=None,
+            case_context=request.case_context,
+            error_code=result.error_code,
+        )
+
+    def specialist_delegate(
+        request: ActionExecutionRequest,
+    ) -> ActionExecutionResult:
+        arguments = request.action.arguments
+        specialist = str(arguments.get("specialist") or "").strip().lower()
+        objective = str(arguments.get("objective") or "").strip().lower()
+        objective_instruction = _SPECIALIST_OBJECTIVES.get(objective)
+        if objective_instruction is None:
+            return _failure(request, "specialist_objective_invalid")
+        release_snapshot = current_agent_release_snapshot()
+        if not isinstance(release_snapshot, dict):
+            return _failure(
+                request,
+                "agent_release_snapshot_required_for_specialist",
+            )
+        task = _specialist_task(
+            db,
+            objective_instruction=objective_instruction,
+            conversation=conversation,
+            ticket=ticket,
+        )
+        evidence_refs = arguments.get("evidence_refs")
+        if not isinstance(evidence_refs, list):
+            evidence_refs = []
+        session_id = str(
+            getattr(conversation, "public_id", None)
+            or getattr(conversation, "id", None)
+            or getattr(ticket, "id", None)
+            or "specialist"
+        )[:160]
+        request_id = str(
+            request.idempotency_key
+            or f"specialist:{session_id}:{specialist}:{objective}"
+        )[:160]
+        try:
+            result = run_specialist_sync(
+                db,
+                release_snapshot=release_snapshot,
+                tenant_key=str(
+                    request.audit_context.get("tenant_id") or "default"
+                )[:80],
+                channel_key=str(request.channel or "webchat")[:40],
+                session_id=session_id,
+                request_id=request_id,
+                specialist=specialist,
+                task=task,
+                evidence_refs=[str(item)[:160] for item in evidence_refs[:20]],
+            )
+        except (RuntimeError, ValueError):
+            return _failure(request, "specialist_execution_failed")
+        return ActionExecutionResult(
+            ok=result.ok,
+            tool_name=request.action.tool_name,
+            status=result.status,
             summary=result.safe_summary(),
             customer_visible_summary=None,
             case_context=request.case_context,
@@ -121,9 +293,14 @@ def build_agent_tool_handlers(
         tracking_number = str(
             arguments.get("tracking_number") or ticket.tracking_number or ""
         ).strip().upper()
-        work_order_type = str(arguments.get("work_order_type") or "WT0103-05").strip()[:32]
+        work_order_type = str(
+            arguments.get("work_order_type") or "WT0103-05"
+        ).strip()[:32]
         description = " ".join(
-            str(arguments.get("description") or "Delivery follow-up requested.").split()
+            str(
+                arguments.get("description")
+                or "Delivery follow-up requested."
+            ).split()
         )[:200]
         caller_id = str(
             getattr(customer, "phone", None)
@@ -135,7 +312,10 @@ def build_agent_tool_handlers(
         if not caller_id:
             return _failure(request, "customer_contact_required")
         if not is_auto_work_order_type_allowed(work_order_type):
-            return _failure(request, "speedaf_work_order_type_not_allowed")
+            return _failure(
+                request,
+                "speedaf_work_order_type_not_allowed",
+            )
         job = enqueue_speedaf_work_order_create_job(
             db,
             ticket_id=ticket.id,
@@ -178,21 +358,78 @@ def build_agent_tool_handlers(
 
     return {
         "knowledge.search": knowledge_search,
+        "integration.search": integration_search,
         "integration.read": integration_read,
         "integration.write": integration_write,
+        "specialist.delegate": specialist_delegate,
         "speedaf.workOrder.create": work_order_create,
     }
 
 
 def extension_executable_tool_names() -> tuple[str, ...]:
     return (
+        "integration.search",
         "integration.read",
         "integration.write",
+        "specialist.delegate",
         "speedaf.workOrder.create",
     )
 
 
-def _failure(request: ActionExecutionRequest, error_code: str) -> ActionExecutionResult:
+def _integration_keywords(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for raw in value[:8]:
+        cleaned = str(raw or "").strip().lower()[:80]
+        if cleaned and cleaned not in output:
+            output.append(cleaned)
+    return output
+
+
+def _specialist_task(
+    db: Session,
+    *,
+    objective_instruction: str,
+    conversation: WebchatConversation | None,
+    ticket: Ticket | None,
+) -> str:
+    current_request = ""
+    if conversation is not None:
+        row = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.direction == "visitor",
+            )
+            .order_by(
+                WebchatMessage.created_at.desc(),
+                WebchatMessage.id.desc(),
+            )
+            .first()
+        )
+        if row is not None:
+            current_request = " ".join(
+                str(row.body_text or "").split()
+            )[:2000]
+    ticket_context = {
+        "ticket_present": ticket is not None,
+        "status": str(getattr(ticket, "status", "") or "")[:40] or None,
+        "priority": str(getattr(ticket, "priority", "") or "")[:40] or None,
+        "issue_type": str(getattr(ticket, "issue_type", "") or "")[:120] or None,
+        "market_id": getattr(ticket, "market_id", None),
+    }
+    return (
+        f"{objective_instruction}\n"
+        f"Current request: {current_request or 'No current customer text is available.'}\n"
+        f"Bounded case metadata: {json.dumps(ticket_context, ensure_ascii=False, separators=(',', ':'))}"
+    )[:3000]
+
+
+def _failure(
+    request: ActionExecutionRequest,
+    error_code: str,
+) -> ActionExecutionResult:
     return ActionExecutionResult(
         False,
         request.action.tool_name,
@@ -206,7 +443,11 @@ def _failure(request: ActionExecutionRequest, error_code: str) -> ActionExecutio
 def _detail(exc: HTTPException) -> str:
     detail: Any = exc.detail
     if isinstance(detail, dict):
-        detail = detail.get("error_code") or detail.get("detail") or "request_failed"
+        detail = (
+            detail.get("error_code")
+            or detail.get("detail")
+            or "request_failed"
+        )
     return str(detail or "request_failed")[:120]
 
 
