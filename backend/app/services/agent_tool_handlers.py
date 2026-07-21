@@ -11,9 +11,9 @@ from ..enums import EventType
 from ..models import Customer, Ticket, TicketEvent
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
+from .agent_integration_service import execute_integration_operation
 from .agent_runtime.execution_scope import current_agent_release_snapshot
 from .background_jobs import enqueue_speedaf_work_order_create_job
-from .integration_runtime import execute_integration_operation
 from .knowledge_release_retrieval import retrieve_release_published_chunks
 from .nexus_osr.controlled_action_executor import (
     ActionExecutionRequest,
