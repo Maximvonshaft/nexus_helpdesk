@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -16,15 +17,14 @@ PLAYBOOK = "playbook"
 INTEGRATION = "integration"
 MODEL_PROFILE = "model_profile"
 RUNTIME_POLICY = "runtime_policy"
-MEMORY_POLICY = "memory_policy"
 CANONICAL_AGENT_CONFIG_TYPES = {
     PLAYBOOK,
     INTEGRATION,
     MODEL_PROFILE,
     RUNTIME_POLICY,
-    MEMORY_POLICY,
 }
-SINGLETON_TYPES = {MODEL_PROFILE, RUNTIME_POLICY, MEMORY_POLICY}
+SINGLETON_TYPES = {MODEL_PROFILE, RUNTIME_POLICY}
+SUPPORTED_SCOPE_TYPES = {"global", "market", "channel"}
 SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,159}$")
 SECRET_FIELD_FRAGMENTS = (
     "password",
@@ -68,9 +68,21 @@ def validate_agent_config_content(config_type: str, content: Any) -> dict[str, A
         return _validate_integration(content)
     if config_type == MODEL_PROFILE:
         return _validate_model_profile(content)
-    if config_type == RUNTIME_POLICY:
-        return _validate_runtime_policy(content)
-    return _validate_memory_policy(content)
+    return _validate_runtime_policy(content)
+
+
+def validate_scope(scope_type: str, scope_value: str | None) -> tuple[str, str | None]:
+    normalized_type = str(scope_type or "global").strip().lower()
+    if normalized_type not in SUPPORTED_SCOPE_TYPES:
+        raise HTTPException(status_code=400, detail="unsupported_agent_config_scope")
+    normalized_value = _optional_text(scope_value, 160)
+    if normalized_type == "global":
+        if normalized_value is not None:
+            raise HTTPException(status_code=400, detail="global_agent_config_scope_value_forbidden")
+        return normalized_type, None
+    if normalized_value is None:
+        raise HTTPException(status_code=400, detail="agent_config_scope_value_required")
+    return normalized_type, normalized_value.lower()
 
 
 def resolve_published_agent_configs(
@@ -87,6 +99,7 @@ def resolve_published_agent_configs(
         AIConfigResource.config_type == config_type,
         AIConfigResource.is_active.is_(True),
         AIConfigResource.published_version > 0,
+        AIConfigResource.scope_type.in_(SUPPORTED_SCOPE_TYPES),
     )
     if market_id is not None:
         query = query.filter(
@@ -150,6 +163,8 @@ def resolve_singleton_agent_config(
         channel=channel,
         language=language,
     )
+    if len(rows) > 1 and rows[0].scope_rank == rows[1].scope_rank:
+        raise RuntimeError(f"ambiguous_{config_type}_scope")
     return rows[0] if rows else None
 
 
@@ -197,10 +212,10 @@ def _scope_rank(
             return -1
         rank += 8
     elif scope_type == "market":
-        if not scope_value or scope_value not in {str(market_id or ""), "global"}:
+        if market_id is None or scope_value != str(market_id):
             return -1
         rank += 8
-    elif scope_type not in {"global", "team", "case_type"}:
+    elif scope_type != "global":
         return -1
     channels = _string_list(content.get("channels"), max_items=30, max_chars=40)
     if channels:
@@ -223,7 +238,10 @@ def _validate_playbook(content: dict[str, Any]) -> dict[str, Any]:
     tools = _string_list(content.get("tools"), max_items=40, max_chars=160)
     unknown = [name for name in tools if get_tool_contract(name) is None]
     if unknown:
-        raise HTTPException(status_code=400, detail={"error_code": "unknown_playbook_tools", "tools": unknown})
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "unknown_playbook_tools", "tools": unknown},
+        )
     instructions = _string_list(content.get("instructions"), max_items=50, max_chars=1600)
     if not instructions:
         raise HTTPException(status_code=400, detail="playbook_instructions_required")
@@ -249,45 +267,75 @@ def _validate_integration(content: dict[str, Any]) -> dict[str, Any]:
     credential_ref = _optional_key(content.get("credential_ref"), "credential_ref")
     host_allowlist = _string_list(content.get("host_allowlist"), max_items=20, max_chars=253)
     parsed = urlparse(base_url)
-    if host_allowlist and (parsed.hostname or "").lower() not in {item.lower() for item in host_allowlist}:
+    hostname = (parsed.hostname or "").lower()
+    if _is_forbidden_literal_host(hostname):
+        raise HTTPException(status_code=400, detail="integration_private_endpoint_forbidden")
+    allowed_hosts = {item.lower() for item in host_allowlist}
+    if allowed_hosts and hostname not in allowed_hosts:
         raise HTTPException(status_code=400, detail="integration_host_not_allowlisted")
-    operations: list[dict[str, Any]] = []
+
     raw_operations = content.get("operations")
     if not isinstance(raw_operations, list) or not raw_operations:
         raise HTTPException(status_code=400, detail="integration_operations_required")
+    operations: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for raw in raw_operations[:50]:
         if not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="integration_operation_must_be_object")
-        method = str(raw.get("method") or "GET").strip().upper()
+        key = _safe_key(raw.get("key"), "integration_operation_key")
+        if key in seen:
+            raise HTTPException(status_code=400, detail="duplicate_integration_operation")
+        seen.add(key)
+        mode = _enum(raw.get("mode"), {"read", "write"}, "")
+        method = str(raw.get("method") or ("POST" if kind == "mcp_http" else "GET")).strip().upper()
         if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise HTTPException(status_code=400, detail="integration_method_not_allowed")
+        if kind == "http":
+            if mode == "read" and method != "GET":
+                raise HTTPException(status_code=400, detail="read_integration_requires_get")
+            if mode == "write" and method == "GET":
+                raise HTTPException(status_code=400, detail="write_integration_requires_mutating_method")
+        else:
+            method = "POST"
         path = str(raw.get("path") or "").strip()
         if not path.startswith("/") or ".." in path or "://" in path:
             raise HTTPException(status_code=400, detail="integration_path_invalid")
         schema = raw.get("input_schema") or {"type": "object", "additionalProperties": False}
         if not isinstance(schema, dict) or schema.get("type") != "object":
             raise HTTPException(status_code=400, detail="integration_input_schema_invalid")
+        risk_level = _enum(raw.get("risk_level"), {"low", "medium", "high"}, "medium")
+        requires_confirmation = bool(raw.get("requires_confirmation"))
+        if mode == "write" and not requires_confirmation:
+            raise HTTPException(status_code=400, detail="integration_write_requires_confirmation")
         operations.append(
             {
-                "key": _safe_key(raw.get("key"), "integration_operation_key"),
-                "description": _required_text(raw.get("description"), "integration_operation_description", 600),
+                "key": key,
+                "description": _required_text(
+                    raw.get("description"), "integration_operation_description", 600
+                ),
+                "mode": mode,
                 "method": method,
                 "path": path[:500],
                 "input_schema": schema,
-                "result_allowlist": _string_list(raw.get("result_allowlist"), max_items=100, max_chars=120),
-                "risk_level": _enum(raw.get("risk_level"), {"low", "medium", "high"}, "medium"),
-                "requires_confirmation": bool(raw.get("requires_confirmation")),
+                "result_allowlist": _string_list(
+                    raw.get("result_allowlist"), max_items=100, max_chars=120
+                ),
+                "risk_level": risk_level,
+                "requires_confirmation": requires_confirmation,
                 "enabled": raw.get("enabled") is not False,
             }
         )
     return {
         "schema_version": "nexus.agent_integration.v1",
+        "name": _optional_text(content.get("name"), 160),
         "kind": kind,
         "base_url": base_url,
         "credential_ref": credential_ref,
-        "host_allowlist": host_allowlist or [parsed.hostname or ""],
+        "host_allowlist": sorted(allowed_hosts or {hostname}),
         "timeout_seconds": _bounded_int(content.get("timeout_seconds"), 12, 1, 30),
-        "max_response_bytes": _bounded_int(content.get("max_response_bytes"), 128000, 1000, 1000000),
+        "max_response_bytes": _bounded_int(
+            content.get("max_response_bytes"), 128000, 1000, 1000000
+        ),
         "operations": operations,
         "enabled": content.get("enabled") is not False,
     }
@@ -303,7 +351,11 @@ def _validate_model_profile(content: dict[str, Any]) -> dict[str, Any]:
         "endpoint_url": endpoint_url,
         "credential_ref": _optional_key(content.get("credential_ref"), "credential_ref"),
         "request_path": _safe_path(content.get("request_path") or "/api/chat"),
-        "request_shape": _enum(content.get("request_shape"), {"system_input", "messages", "ollama_chat", "question"}, "ollama_chat"),
+        "request_shape": _enum(
+            content.get("request_shape"),
+            {"system_input", "messages", "ollama_chat", "question"},
+            "ollama_chat",
+        ),
         "model": _required_text(content.get("model"), "model_name", 200),
         "temperature": _bounded_float(content.get("temperature"), 0.1, 0, 2),
         "top_p": _bounded_float(content.get("top_p"), 0.85, 0, 1),
@@ -321,27 +373,18 @@ def _validate_runtime_policy(content: dict[str, Any]) -> dict[str, Any]:
     tools = _string_list(content.get("allowed_tools"), max_items=100, max_chars=160)
     unknown = [name for name in tools if get_tool_contract(name) is None]
     if unknown:
-        raise HTTPException(status_code=400, detail={"error_code": "unknown_runtime_tools", "tools": unknown})
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "unknown_runtime_tools", "tools": unknown},
+        )
     return {
         "schema_version": "nexus.agent_runtime_policy.v1",
         "max_tool_rounds": _bounded_int(content.get("max_tool_rounds"), 3, 1, 6),
         "allow_high_risk_writes": bool(content.get("allow_high_risk_writes")),
         "allowed_tools": tools,
-        "provider_timeout_ms": _bounded_int(content.get("provider_timeout_ms"), 15000, 1000, 30000),
-        "enabled": content.get("enabled") is not False,
-    }
-
-
-def _validate_memory_policy(content: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "schema_version": "nexus.customer_memory_policy.v1",
-        "injection_enabled": content.get("injection_enabled") is not False,
-        "write_enabled": bool(content.get("write_enabled")),
-        "require_explicit_consent": content.get("require_explicit_consent") is not False,
-        "max_facts": _bounded_int(content.get("max_facts"), 12, 0, 50),
-        "retention_days": _bounded_int(content.get("retention_days"), 180, 1, 3650),
-        "allowed_keys": [_safe_key(item, "memory_key") for item in _string_list(content.get("allowed_keys"), max_items=100, max_chars=120)],
-        "prohibited_categories": _string_list(content.get("prohibited_categories"), max_items=50, max_chars=80),
+        "provider_timeout_ms": _bounded_int(
+            content.get("provider_timeout_ms"), 15000, 1000, 30000
+        ),
         "enabled": content.get("enabled") is not False,
     }
 
@@ -350,8 +393,17 @@ def _reject_secret_fields(value: Any, *, path: str = "") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = str(key).strip().lower()
-            if any(fragment in normalized for fragment in SECRET_FIELD_FRAGMENTS) and normalized != "credential_ref":
-                raise HTTPException(status_code=400, detail={"error_code": "secret_value_not_allowed", "field": f"{path}.{key}".strip(".")})
+            if (
+                any(fragment in normalized for fragment in SECRET_FIELD_FRAGMENTS)
+                and normalized != "credential_ref"
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error_code": "secret_value_not_allowed",
+                        "field": f"{path}.{key}".strip("."),
+                    },
+                )
             _reject_secret_fields(item, path=f"{path}.{key}".strip("."))
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -361,9 +413,17 @@ def _reject_secret_fields(value: Any, *, path: str = "") -> None:
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): ("[credential-reference]" if str(key).lower() == "credential_ref" and item else _safe_projection(item))
+            str(key): (
+                "[credential-reference]"
+                if str(key).lower() == "credential_ref" and item
+                else _safe_projection(item)
+            )
             for key, item in value.items()
-            if not any(fragment in str(key).lower() for fragment in SECRET_FIELD_FRAGMENTS if fragment != "credential_ref")
+            if not any(
+                fragment in str(key).lower()
+                for fragment in SECRET_FIELD_FRAGMENTS
+                if fragment != "credential_ref"
+            )
         }
     if isinstance(value, list):
         return [_safe_projection(item) for item in value[:100]]
@@ -416,8 +476,20 @@ def _required_http_url(value: Any, label: str) -> str:
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=400, detail=f"{label}_invalid")
     if parsed.username or parsed.password or parsed.fragment:
-        raise HTTPException(status_code=400, detail=f"{label}_credentials_or_fragment_forbidden")
+        raise HTTPException(
+            status_code=400, detail=f"{label}_credentials_or_fragment_forbidden"
+        )
     return cleaned
+
+
+def _is_forbidden_literal_host(hostname: str) -> bool:
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return not address.is_global
 
 
 def _safe_path(value: Any) -> str:
@@ -428,7 +500,7 @@ def _safe_path(value: Any) -> str:
 
 
 def _enum(value: Any, allowed: Iterable[str], default: str) -> str:
-    cleaned = str(value or default).strip().lower()
+    cleaned = str(value if value not in (None, "") else default).strip().lower()
     if cleaned not in set(allowed):
         raise HTTPException(status_code=400, detail="enum_value_not_allowed")
     return cleaned
