@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from logging.config import fileConfig
 
 from alembic import context
@@ -67,27 +68,38 @@ def _include_object(object_, name, type_, reflected, compare_to):
     return True
 
 
-def _register_postgresql_json_adapters(connection) -> None:
-    """Make raw Alembic text binds use the same JSON contract as typed SQLAlchemy inserts.
+def _register_migration_json_adapters(connection) -> None:
+    """Support historical raw JSON binds at the Alembic connection boundary.
 
-    Some historical migrations use ``sa.text`` for deterministic RETURNING
-    statements and bind Python dictionaries into JSON columns. Psycopg 3 does
-    not guess that untyped dictionaries are JSON. Registering the standard
-    per-connection JSONB dumper at the migration boundary avoids one-off string
-    serialization and keeps structured values structured.
+    Typed SQLAlchemy inserts remain preferred. Historical deterministic text
+    migrations bind dictionaries directly, so each supported migration dialect
+    receives the standard JSON adapter without changing runtime database
+    behavior or serializing values in individual migrations.
     """
 
-    if connection.dialect.name != 'postgresql':
+    if connection.dialect.name == 'postgresql':
+        driver_connection = connection.connection.driver_connection
+        adapters = getattr(driver_connection, 'adapters', None)
+        if adapters is None:
+            return
+        try:
+            from psycopg.types.json import JsonbDumper
+        except ImportError as exc:  # pragma: no cover - PostgreSQL requires psycopg
+            raise RuntimeError('psycopg_json_adapter_unavailable') from exc
+        adapters.register_dumper(dict, JsonbDumper)
         return
-    driver_connection = connection.connection.driver_connection
-    adapters = getattr(driver_connection, 'adapters', None)
-    if adapters is None:
-        return
-    try:
-        from psycopg.types.json import JsonbDumper
-    except ImportError as exc:  # pragma: no cover - production PostgreSQL requires psycopg
-        raise RuntimeError('psycopg_json_adapter_unavailable') from exc
-    adapters.register_dumper(dict, JsonbDumper)
+    if connection.dialect.name == 'sqlite':
+        import sqlite3
+
+        sqlite3.register_adapter(
+            dict,
+            lambda value: json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(',', ':'),
+                sort_keys=True,
+            ),
+        )
 
 
 def run_migrations_offline() -> None:
@@ -104,7 +116,7 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        _register_postgresql_json_adapters(connection)
+        _register_migration_json_adapters(connection)
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=_compare_type, include_object=_include_object)
         with context.begin_transaction():
             context.run_migrations()
