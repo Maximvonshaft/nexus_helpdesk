@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from jsonschema import Draft202012Validator
 from sqlalchemy.orm import Session
 
-from .agent_control_config import INTEGRATION, ResolvedAgentConfig, resolve_published_agent_configs
+from .agent_control_config import INTEGRATION, ResolvedAgentConfig
 from .runtime_endpoint_policy import require_http_endpoint
 
 _CREDENTIAL_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,159}$")
@@ -56,15 +56,8 @@ def list_integration_catalog(
     language: str | None = None,
     release_snapshot: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    del db, market_id, channel, language
     rows = _released_integrations(release_snapshot)
-    if rows is None:
-        rows = resolve_published_agent_configs(
-            db,
-            config_type=INTEGRATION,
-            market_id=market_id,
-            channel=channel,
-            language=language,
-        )
     return [
         {
             **row.safe_summary(),
@@ -100,12 +93,9 @@ def execute_integration_operation(
     dry_run: bool = False,
     release_snapshot: dict[str, Any] | None = None,
 ) -> IntegrationCallResult:
+    del db, market_id, channel, language
     integration = _resolve_integration(
-        db,
         integration_key=integration_key,
-        market_id=market_id,
-        channel=channel,
-        language=language,
         release_snapshot=release_snapshot,
     )
     operation_row = _operation(integration, operation)
@@ -128,6 +118,15 @@ def execute_integration_operation(
             "blocked",
             {},
             "integration_operation_disabled",
+        )
+    if is_write and not operation_row.get("requires_confirmation"):
+        return IntegrationCallResult(
+            False,
+            integration.resource_key,
+            operation,
+            "blocked",
+            {},
+            "integration_write_confirmation_contract_missing",
         )
     payload = dict(arguments or {})
     validator = Draft202012Validator(
@@ -196,24 +195,12 @@ def execute_integration_operation(
 
 
 def _resolve_integration(
-    db: Session,
     *,
     integration_key: str,
-    market_id: int | None,
-    channel: str | None,
-    language: str | None,
     release_snapshot: dict[str, Any] | None,
 ) -> ResolvedAgentConfig:
     key = str(integration_key or "").strip().lower()
     rows = _released_integrations(release_snapshot)
-    if rows is None:
-        rows = resolve_published_agent_configs(
-            db,
-            config_type=INTEGRATION,
-            market_id=market_id,
-            channel=channel,
-            language=language,
-        )
     row = next(
         (
             item
@@ -224,15 +211,15 @@ def _resolve_integration(
         None,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="integration_not_found")
+        raise HTTPException(status_code=404, detail="integration_not_found_in_agent_release")
     return row
 
 
 def _released_integrations(
     release_snapshot: dict[str, Any] | None,
-) -> list[ResolvedAgentConfig] | None:
+) -> list[ResolvedAgentConfig]:
     if not isinstance(release_snapshot, dict) or release_snapshot.get("source") != "deployment":
-        return None
+        raise RuntimeError("agent_release_snapshot_required_for_integrations")
     resolved = release_snapshot.get("resolved")
     if not isinstance(resolved, dict):
         raise RuntimeError("agent_release_resolved_resources_missing")
