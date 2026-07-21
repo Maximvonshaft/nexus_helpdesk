@@ -32,6 +32,7 @@ RUNTIME_PATHS = (
     ROOT / "backend/app/services/webchat_runtime_ai_service.py",
 )
 FORBIDDEN_RUNTIME_CONTENT = (
+    "**_legacy",
     "shipment_status_without_evidence",
     "_contains_live_shipment_conclusion",
     "_maybe_lookup_tracking_fact",
