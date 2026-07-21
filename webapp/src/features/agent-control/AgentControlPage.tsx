@@ -114,7 +114,10 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
         <Box sx={{ mt: 2 }}>
           {tab === 'overview' ? (
             <OverviewPanel
-              snapshot={snapshot.data}
+              snapshot={{
+                ...snapshot.data,
+                resolution_error: deploymentResolutionMessage(snapshot.data.resolution_error),
+              }}
               tenantKey={tenantKey || snapshot.data.tenant_key}
               setTenantKey={setTenantKey}
               environment={environment}
@@ -162,4 +165,14 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
       )}
     </Box>
   )
+}
+
+function deploymentResolutionMessage(value?: string | null) {
+  if (!value) return null
+  if (
+    value === 'agent_deployment_not_found'
+    || value === 'agent_deployment_unavailable'
+  ) return '未找到匹配当前范围的 Agent Deployment。'
+  if (value === 'ambiguous_agent_deployment_scope') return '当前范围命中了多个 Agent Deployment，请收敛作用域。'
+  return '当前 Agent Deployment 暂不可用，请检查已发布 Release 和部署范围。'
 }
