@@ -1,4 +1,4 @@
-"""add canonical Agent control plane and governed customer memory
+"""add canonical Agent definition, release, deployment and run evidence
 
 Revision ID: 20260721_0068
 Revises: 20260720_0067
@@ -7,6 +7,8 @@ Create Date: 2026-07-21
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,7 +21,13 @@ branch_labels = None
 depends_on = None
 
 
-def _playbook(name: str, description: str, tools: list[str], instructions: list[str], priority: int) -> dict[str, Any]:
+def _playbook(
+    name: str,
+    description: str,
+    tools: list[str],
+    instructions: list[str],
+    priority: int,
+) -> dict[str, Any]:
     return {
         "schema_version": "nexus.agent_playbook.v1",
         "name": name,
@@ -42,7 +50,11 @@ _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
         _playbook(
             "shipment_tracking",
             "Query current shipment facts and event history.",
-            ["speedaf.order.query", "speedaf.express.track.query", "speedaf.order.waybillCode.query"],
+            [
+                "speedaf.order.query",
+                "speedaf.express.track.query",
+                "speedaf.order.waybillCode.query",
+            ],
             [
                 "Query a shipment Tool before stating current status, ETA, outcome, customs state or route progress.",
                 "Use Tool observations as the source of truth; never invent missing facts or expose raw payloads or PII.",
@@ -117,21 +129,6 @@ _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
         ),
     ),
     (
-        "agent.playbook.customer-continuity",
-        "playbook",
-        "Customer continuity",
-        _playbook(
-            "customer_continuity",
-            "Use governed long-term customer facts.",
-            ["customer.memory.read", "customer.memory.write"],
-            [
-                "Use customer memory only when it materially improves the current task and never as authority for current external facts.",
-                "Write only explicitly confirmed permitted facts; never store credentials, payment data, raw transcripts, health data or government identifiers.",
-            ],
-            60,
-        ),
-    ),
-    (
         "agent.runtime.default",
         "runtime_policy",
         "Default Agent runtime policy",
@@ -167,43 +164,13 @@ _DEFAULT_RESOURCES: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
             "enabled": True,
         },
     ),
-    (
-        "agent.memory.default",
-        "memory_policy",
-        "Default customer memory policy",
-        {
-            "schema_version": "nexus.customer_memory_policy.v1",
-            "injection_enabled": True,
-            "write_enabled": False,
-            "require_explicit_consent": True,
-            "max_facts": 12,
-            "retention_days": 180,
-            "allowed_keys": [
-                "preferred_language",
-                "preferred_contact_channel",
-                "delivery_instructions",
-                "accessibility_preference",
-                "communication_preference",
-            ],
-            "prohibited_categories": [
-                "credential",
-                "payment_card",
-                "government_identifier",
-                "health",
-                "biometric",
-                "raw_transcript",
-            ],
-            "enabled": True,
-        },
-    ),
 )
 
 _DEFAULT_TOOL_POLICIES = (
     ("integration.read", "medium", False, False),
     ("integration.write", "high", True, False),
-    ("customer.memory.read", "low", False, False),
-    ("customer.memory.write", "high", True, False),
 )
+
 _LEGACY_CONFIG_TYPES = (
     "persona",
     "knowledge",
@@ -217,39 +184,168 @@ _LEGACY_CONFIG_TYPES = (
 )
 
 
+def _digest(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _release_manifest() -> dict[str, Any]:
+    return {
+        "schema_version": "nexus.agent_release.v1",
+        "persona": None,
+        "playbooks": [
+            {"resource_key": key, "version": 1}
+            for key, config_type, _name, _content in _DEFAULT_RESOURCES
+            if config_type == "playbook"
+        ],
+        "integrations": [],
+        "model_profile": {"resource_key": "agent.model.private-default", "version": 1},
+        "runtime_policy": {"resource_key": "agent.runtime.default", "version": 1},
+        "knowledge": [],
+        "metadata": {"origin": "migration_0068"},
+    }
+
+
 def upgrade() -> None:
     op.create_table(
-        "customer_memory_facts",
+        "agent_definitions",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("tenant_key", sa.String(length=80), nullable=False),
-        sa.Column("customer_id", sa.Integer(), sa.ForeignKey("customers.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("memory_key", sa.String(length=120), nullable=False),
-        sa.Column("value_text", sa.Text(), nullable=False),
-        sa.Column("source_type", sa.String(length=40), nullable=False, server_default="operator"),
-        sa.Column("source_reference", sa.String(length=200), nullable=True),
-        sa.Column("consent_basis", sa.String(length=80), nullable=True),
-        sa.Column("confidence", sa.Float(), nullable=False, server_default="1"),
-        sa.Column("sensitivity", sa.String(length=20), nullable=False, server_default="standard"),
+        sa.Column("definition_key", sa.String(length=120), nullable=False),
+        sa.Column("name", sa.String(length=160), nullable=False),
+        sa.Column("purpose", sa.Text(), nullable=True),
+        sa.Column("owner_team_id", sa.Integer(), sa.ForeignKey("teams.id"), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_confirmed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("draft_manifest_json", sa.JSON(), nullable=False),
         sa.Column("created_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("updated_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.UniqueConstraint("tenant_key", "customer_id", "memory_key", name="uq_customer_memory_fact_scope_key"),
-        sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_customer_memory_confidence_range"),
-        sa.CheckConstraint("sensitivity IN ('standard', 'restricted')", name="ck_customer_memory_sensitivity"),
+        sa.UniqueConstraint("tenant_key", "definition_key", name="uq_agent_definition_tenant_key"),
+        sa.CheckConstraint("length(trim(tenant_key)) > 0", name="ck_agent_definition_tenant_nonempty"),
+        sa.CheckConstraint("length(trim(definition_key)) > 0", name="ck_agent_definition_key_nonempty"),
     )
-    op.create_index("ix_customer_memory_facts_tenant_key", "customer_memory_facts", ["tenant_key"])
-    op.create_index("ix_customer_memory_facts_customer_id", "customer_memory_facts", ["customer_id"])
-    op.create_index("ix_customer_memory_facts_memory_key", "customer_memory_facts", ["memory_key"])
-    op.create_index("ix_customer_memory_facts_is_active", "customer_memory_facts", ["is_active"])
-    op.create_index("ix_customer_memory_facts_expires_at", "customer_memory_facts", ["expires_at"])
+    op.create_index("ix_agent_definitions_tenant_key", "agent_definitions", ["tenant_key"])
+    op.create_index("ix_agent_definitions_definition_key", "agent_definitions", ["definition_key"])
+    op.create_index("ix_agent_definitions_name", "agent_definitions", ["name"])
+    op.create_index("ix_agent_definitions_owner_team_id", "agent_definitions", ["owner_team_id"])
+    op.create_index("ix_agent_definitions_is_active", "agent_definitions", ["is_active"])
+    op.create_index("ix_agent_definitions_created_by", "agent_definitions", ["created_by"])
+    op.create_index("ix_agent_definitions_updated_by", "agent_definitions", ["updated_by"])
+    op.create_index("ix_agent_definitions_created_at", "agent_definitions", ["created_at"])
+    op.create_index("ix_agent_definitions_updated_at", "agent_definitions", ["updated_at"])
     op.create_index(
-        "ix_customer_memory_runtime_lookup",
-        "customer_memory_facts",
-        ["tenant_key", "customer_id", "is_active", "expires_at"],
+        "ix_agent_definitions_tenant_active", "agent_definitions", ["tenant_key", "is_active"]
+    )
+
+    op.create_table(
+        "agent_releases",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column(
+            "definition_id",
+            sa.Integer(),
+            sa.ForeignKey("agent_definitions.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("version", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(length=24), nullable=False, server_default="approved"),
+        sa.Column("manifest_json", sa.JSON(), nullable=False),
+        sa.Column("manifest_sha256", sa.String(length=64), nullable=False),
+        sa.Column("validation_json", sa.JSON(), nullable=True),
+        sa.Column("created_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column("approved_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
+        sa.UniqueConstraint("definition_id", "version", name="uq_agent_release_definition_version"),
+        sa.CheckConstraint(
+            "status IN ('approved', 'canary', 'active', 'retired')",
+            name="ck_agent_release_status",
+        ),
+    )
+    op.create_index("ix_agent_releases_definition_id", "agent_releases", ["definition_id"])
+    op.create_index("ix_agent_releases_version", "agent_releases", ["version"])
+    op.create_index("ix_agent_releases_status", "agent_releases", ["status"])
+    op.create_index("ix_agent_releases_manifest_sha256", "agent_releases", ["manifest_sha256"])
+    op.create_index("ix_agent_releases_created_by", "agent_releases", ["created_by"])
+    op.create_index("ix_agent_releases_approved_by", "agent_releases", ["approved_by"])
+    op.create_index("ix_agent_releases_created_at", "agent_releases", ["created_at"])
+    op.create_index("ix_agent_releases_approved_at", "agent_releases", ["approved_at"])
+    op.create_index(
+        "ix_agent_releases_definition_status", "agent_releases", ["definition_id", "status"]
+    )
+
+    op.create_table(
+        "agent_deployments",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("tenant_key", sa.String(length=80), nullable=False),
+        sa.Column("environment", sa.String(length=24), nullable=False, server_default="production"),
+        sa.Column("scope_key", sa.String(length=320), nullable=False),
+        sa.Column("market_id", sa.Integer(), sa.ForeignKey("markets.id"), nullable=True),
+        sa.Column("channel", sa.String(length=40), nullable=True),
+        sa.Column("language", sa.String(length=24), nullable=True),
+        sa.Column("case_type", sa.String(length=80), nullable=True),
+        sa.Column("active_release_id", sa.Integer(), sa.ForeignKey("agent_releases.id"), nullable=False),
+        sa.Column("canary_release_id", sa.Integer(), sa.ForeignKey("agent_releases.id"), nullable=True),
+        sa.Column("canary_percent", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("activated_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column("activated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("tenant_key", "environment", "scope_key", name="uq_agent_deployment_scope"),
+        sa.CheckConstraint("canary_percent >= 0 AND canary_percent <= 100", name="ck_agent_canary_percent"),
+        sa.CheckConstraint(
+            "environment IN ('test', 'staging', 'production')", name="ck_agent_environment"
+        ),
+    )
+    for column in (
+        "tenant_key",
+        "environment",
+        "market_id",
+        "channel",
+        "language",
+        "case_type",
+        "active_release_id",
+        "canary_release_id",
+        "is_active",
+        "activated_by",
+        "activated_at",
+        "updated_at",
+    ):
+        op.create_index(f"ix_agent_deployments_{column}", "agent_deployments", [column])
+    op.create_index(
+        "ix_agent_deployments_lookup",
+        "agent_deployments",
+        ["tenant_key", "environment", "is_active"],
+    )
+
+    op.create_table(
+        "agent_run_snapshots",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("request_id", sa.String(length=160), nullable=False),
+        sa.Column("session_id", sa.String(length=160), nullable=False),
+        sa.Column("tenant_key", sa.String(length=80), nullable=False),
+        sa.Column("deployment_id", sa.Integer(), sa.ForeignKey("agent_deployments.id"), nullable=True),
+        sa.Column("release_id", sa.Integer(), sa.ForeignKey("agent_releases.id"), nullable=True),
+        sa.Column("snapshot_sha256", sa.String(length=64), nullable=False),
+        sa.Column("snapshot_json", sa.JSON(), nullable=False),
+        sa.Column("source", sa.String(length=24), nullable=False, server_default="deployment"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("request_id", name="uq_agent_run_snapshot_request"),
+    )
+    for column in (
+        "request_id",
+        "session_id",
+        "tenant_key",
+        "deployment_id",
+        "release_id",
+        "snapshot_sha256",
+        "created_at",
+    ):
+        op.create_index(f"ix_agent_run_snapshots_{column}", "agent_run_snapshots", [column])
+    op.create_index(
+        "ix_agent_run_snapshots_tenant_session",
+        "agent_run_snapshots",
+        ["tenant_key", "session_id", "created_at"],
     )
 
     bind = op.get_bind()
@@ -279,7 +375,6 @@ def upgrade() -> None:
     )
     versions = sa.table(
         "ai_config_versions",
-        sa.column("id", sa.Integer()),
         sa.column("resource_id", sa.Integer()),
         sa.column("version", sa.Integer()),
         sa.column("snapshot_json", sa.JSON()),
@@ -289,6 +384,7 @@ def upgrade() -> None:
         sa.column("published_at", sa.DateTime(timezone=True)),
     )
 
+    resource_evidence: list[dict[str, Any]] = []
     for resource_key, config_type, name, content in _DEFAULT_RESOURCES:
         existing = bind.execute(
             sa.select(resources.c.id).where(resources.c.resource_key == resource_key)
@@ -333,6 +429,15 @@ def upgrade() -> None:
                 published_at=now,
             )
         )
+        resource_evidence.append(
+            {
+                "id": resource_id,
+                "resource_key": resource_key,
+                "config_type": config_type,
+                "version": 1,
+                "content": content,
+            }
+        )
 
     bind.execute(
         sa.update(resources)
@@ -370,6 +475,60 @@ def upgrade() -> None:
             },
         )
 
+    manifest = _release_manifest()
+    definition_result = bind.execute(
+        sa.text(
+            """
+            INSERT INTO agent_definitions
+                (tenant_key, definition_key, name, purpose, owner_team_id, is_active,
+                 draft_manifest_json, created_by, updated_by, created_at, updated_at)
+            VALUES
+                ('default', 'default-support-agent', 'Default support Agent',
+                 'Canonical platform fallback for governed customer support.', NULL, true,
+                 :manifest, NULL, NULL, :now, :now)
+            RETURNING id
+            """
+        ),
+        {"manifest": manifest, "now": now},
+    )
+    definition_id = definition_result.scalar_one()
+    validation = {"resources": resource_evidence, "knowledge": [], "persona": None}
+    release_result = bind.execute(
+        sa.text(
+            """
+            INSERT INTO agent_releases
+                (definition_id, version, status, manifest_json, manifest_sha256,
+                 validation_json, created_by, approved_by, created_at, approved_at)
+            VALUES
+                (:definition_id, 1, 'active', :manifest, :digest,
+                 :validation, NULL, NULL, :now, :now)
+            RETURNING id
+            """
+        ),
+        {
+            "definition_id": definition_id,
+            "manifest": manifest,
+            "digest": _digest(manifest),
+            "validation": validation,
+            "now": now,
+        },
+    )
+    release_id = release_result.scalar_one()
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO agent_deployments
+                (tenant_key, environment, scope_key, market_id, channel, language, case_type,
+                 active_release_id, canary_release_id, canary_percent, is_active,
+                 activated_by, activated_at, updated_at)
+            VALUES
+                ('default', 'production', '*|*|*|*', NULL, NULL, NULL, NULL,
+                 :release_id, NULL, 0, true, NULL, :now, :now)
+            """
+        ),
+        {"release_id": release_id, "now": now},
+    )
+
 
 def downgrade() -> None:
     bind = op.get_bind()
@@ -384,6 +543,23 @@ def downgrade() -> None:
             {f"key{i}": key for i, key in enumerate(resource_keys)},
         ).all()
     ]
+
+    bind.execute(sa.text("DELETE FROM agent_run_snapshots"))
+    bind.execute(sa.text("DELETE FROM agent_deployments WHERE tenant_key = 'default'"))
+    bind.execute(
+        sa.text(
+            "DELETE FROM agent_releases WHERE definition_id IN "
+            "(SELECT id FROM agent_definitions WHERE tenant_key = 'default' "
+            "AND definition_key = 'default-support-agent')"
+        )
+    )
+    bind.execute(
+        sa.text(
+            "DELETE FROM agent_definitions WHERE tenant_key = 'default' "
+            "AND definition_key = 'default-support-agent'"
+        )
+    )
+
     if resource_ids:
         bind.execute(
             sa.text(
@@ -399,6 +575,7 @@ def downgrade() -> None:
             ),
             {f"id{i}": value for i, value in enumerate(resource_ids)},
         )
+
     bind.execute(
         sa.text(
             "DELETE FROM tool_execution_policies WHERE country_code = 'GLOBAL' "
@@ -416,10 +593,70 @@ def downgrade() -> None:
         {f"type{i}": value for i, value in enumerate(_LEGACY_CONFIG_TYPES)},
     )
 
-    op.drop_index("ix_customer_memory_runtime_lookup", table_name="customer_memory_facts")
-    op.drop_index("ix_customer_memory_facts_expires_at", table_name="customer_memory_facts")
-    op.drop_index("ix_customer_memory_facts_is_active", table_name="customer_memory_facts")
-    op.drop_index("ix_customer_memory_facts_memory_key", table_name="customer_memory_facts")
-    op.drop_index("ix_customer_memory_facts_customer_id", table_name="customer_memory_facts")
-    op.drop_index("ix_customer_memory_facts_tenant_key", table_name="customer_memory_facts")
-    op.drop_table("customer_memory_facts")
+    op.drop_index("ix_agent_run_snapshots_tenant_session", table_name="agent_run_snapshots")
+    for column in reversed(
+        (
+            "request_id",
+            "session_id",
+            "tenant_key",
+            "deployment_id",
+            "release_id",
+            "snapshot_sha256",
+            "created_at",
+        )
+    ):
+        op.drop_index(f"ix_agent_run_snapshots_{column}", table_name="agent_run_snapshots")
+    op.drop_table("agent_run_snapshots")
+
+    op.drop_index("ix_agent_deployments_lookup", table_name="agent_deployments")
+    for column in reversed(
+        (
+            "tenant_key",
+            "environment",
+            "market_id",
+            "channel",
+            "language",
+            "case_type",
+            "active_release_id",
+            "canary_release_id",
+            "is_active",
+            "activated_by",
+            "activated_at",
+            "updated_at",
+        )
+    ):
+        op.drop_index(f"ix_agent_deployments_{column}", table_name="agent_deployments")
+    op.drop_table("agent_deployments")
+
+    op.drop_index("ix_agent_releases_definition_status", table_name="agent_releases")
+    for column in reversed(
+        (
+            "definition_id",
+            "version",
+            "status",
+            "manifest_sha256",
+            "created_by",
+            "approved_by",
+            "created_at",
+            "approved_at",
+        )
+    ):
+        op.drop_index(f"ix_agent_releases_{column}", table_name="agent_releases")
+    op.drop_table("agent_releases")
+
+    op.drop_index("ix_agent_definitions_tenant_active", table_name="agent_definitions")
+    for column in reversed(
+        (
+            "tenant_key",
+            "definition_key",
+            "name",
+            "owner_team_id",
+            "is_active",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        )
+    ):
+        op.drop_index(f"ix_agent_definitions_{column}", table_name="agent_definitions")
+    op.drop_table("agent_definitions")
