@@ -10,7 +10,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
 import { agentControlApi } from '@/lib/agentControlApi'
 import { OverviewPanel } from './OverviewPanel'
@@ -19,15 +19,9 @@ import { PlaybookPanel } from './PlaybookPanel'
 import { ToolsIntegrationsPanel } from './ToolsIntegrationsPanel'
 import { RuntimePanel } from './RuntimePanel'
 
-export type AgentControlTab = 'overview' | 'persona' | 'knowledge' | 'playbooks' | 'tools' | 'runtime'
+export type AgentControlTab = 'overview' | 'persona' | 'playbooks' | 'tools' | 'runtime'
 
-export function AgentControlPage({
-  canManage,
-  knowledgePage,
-}: {
-  canManage: boolean
-  knowledgePage: ReactNode
-}) {
+export function AgentControlPage({ canManage }: { canManage: boolean }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
   const [tenantKey, setTenantKey] = useState('default')
   const [environment, setEnvironment] = useState<'test' | 'staging' | 'production'>('production')
@@ -76,7 +70,7 @@ export function AgentControlPage({
             <Typography component="h1" variant="h1">Agent 控制面</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            统一管理 Agent 定义、不可变发布、渠道部署、人格、知识、业务剧本、工具、模型与运行策略。生产运行只消费已部署的 Agent Release。
+            统一管理 Agent 定义、不可变发布、渠道部署、人格、业务剧本、工具、模型与运行策略；知识继续由唯一知识库维护，并在 Agent Definition 中按版本绑定。
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -95,7 +89,6 @@ export function AgentControlPage({
         >
           <Tab value="overview" label="定义、发布与测试" />
           <Tab value="persona" label="人格" />
-          <Tab value="knowledge" label="知识" />
           <Tab value="playbooks" label="业务剧本" />
           <Tab value="tools" label="工具与集成" />
           <Tab value="runtime" label="模型与运行" />
@@ -141,7 +134,6 @@ export function AgentControlPage({
               canManage={canManage && snapshot.data.capabilities.can_manage}
             />
           ) : null}
-          {tab === 'knowledge' ? knowledgePage : null}
           {tab === 'playbooks' ? (
             <PlaybookPanel
               snapshot={snapshot.data}
