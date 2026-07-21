@@ -18,9 +18,10 @@ jobs:
   verify:
     if: github.event.pull_request.number == 793 && github.event.pull_request.head.ref == 'refactor/generic-agent-runtime-final-b7e41d'
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 75
     outputs:
-      failure_summary_b64: ${{ steps.failure-summary.outputs.summary_b64 }}
+      backend_failures_b64: ${{ steps.backend-summary.outputs.summary_b64 }}
+      frontend_failures_b64: ${{ steps.frontend-summary.outputs.summary_b64 }}
     steps:
       - name: Checkout exact branch head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -35,17 +36,36 @@ jobs:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Install exact backend dependencies
-        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
-      - name: Apply canonical runtime convergence
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install exact dependencies
         run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          npm --prefix webapp ci --ignore-scripts --no-audit --no-fund
+      - name: Build final candidate tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           git rev-parse HEAD > /tmp/generic-agent-full-start-sha
           python scripts/_generic_agent_full_regression_fix.py
           python scripts/_generic_agent_authority_fix.py
           python scripts/_generic_agent_execution_args_fix.py
           python scripts/_generic_agent_execution_depth_fix.py
+          python scripts/_generic_agent_regression_migration_fix.py
+          git rm -f scripts/_generic_agent_full_regression_fix.py
+          git rm -f scripts/_generic_agent_authority_fix.py
+          git rm -f scripts/_generic_agent_execution_args_fix.py
+          git rm -f scripts/_generic_agent_execution_depth_fix.py
+          git rm -f scripts/_generic_agent_regression_migration_fix.py
+          git rm -f .github/workflows/_temporary-generic-agent-full-regression.yml
+          test -z "$(find .github/workflows -maxdepth 1 -type f -name '_temporary-*' -print)"
           python -m compileall -q backend/app
           python scripts/ci/check_agent_runtime_residue.py
+          git diff --check
       - name: Run complete backend regression
         id: backend
         continue-on-error: true
@@ -55,8 +75,8 @@ jobs:
           mkdir -p /tmp/generic-agent-full-evidence
           python -m pytest -q backend/tests \
             2>&1 | tee /tmp/generic-agent-full-evidence/pytest.log
-      - name: Capture bounded backend failure summary
-        id: failure-summary
+      - name: Capture backend failure identifiers
+        id: backend-summary
         if: steps.backend.outcome == 'failure'
         shell: bash
         run: |
@@ -65,21 +85,80 @@ jobs:
           import os
           from pathlib import Path
 
-          log_path = Path('/tmp/generic-agent-full-evidence/pytest.log')
-          text = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else 'pytest log missing'
-          lines = text.splitlines()
-          start = 0
-          for index, line in enumerate(lines):
-              if ' short test summary info ' in line or line.startswith('= FAILURES =') or line.startswith('= ERRORS ='):
-                  start = index
-          bounded = '\n'.join(lines[start:][-400:])
-          if not bounded.strip():
-              bounded = '\n'.join(lines[-400:]) or 'pytest produced no readable failure output'
-          encoded = base64.b64encode(bounded.encode('utf-8')).decode('ascii')
+          path = Path('/tmp/generic-agent-full-evidence/pytest.log')
+          lines = path.read_text(encoding='utf-8', errors='replace').splitlines() if path.exists() else []
+          failed = [line for line in lines if line.startswith(('FAILED ', 'ERROR '))]
+          totals = [line for line in lines if ' failed' in line and ' passed' in line and line.startswith('=')]
+          summary = '\n'.join([*failed[-150:], *totals[-1:]]) or 'backend regression failed without a short-summary identifier'
+          encoded = base64.b64encode(summary.encode('utf-8')).decode('ascii')
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
               handle.write(f'summary_b64={encoded}\n')
           PY
-      - name: Upload backend evidence
+      - name: Run frontend architecture
+        id: frontend-architecture
+        continue-on-error: true
+        working-directory: webapp
+        run: npm run architecture
+      - name: Run frontend lint
+        id: frontend-lint
+        continue-on-error: true
+        working-directory: webapp
+        run: npm run lint
+      - name: Run frontend typecheck
+        id: frontend-typecheck
+        continue-on-error: true
+        working-directory: webapp
+        run: npm run typecheck
+      - name: Run frontend unit contracts
+        id: frontend-test
+        continue-on-error: true
+        working-directory: webapp
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test 2>&1 | tee /tmp/generic-agent-full-evidence/frontend-test.log
+      - name: Build frontend production bundle
+        id: frontend-build
+        continue-on-error: true
+        working-directory: webapp
+        run: npm run build
+      - name: Capture frontend failure stages
+        id: frontend-summary
+        if: steps.frontend-architecture.outcome == 'failure' || steps.frontend-lint.outcome == 'failure' || steps.frontend-typecheck.outcome == 'failure' || steps.frontend-test.outcome == 'failure' || steps.frontend-build.outcome == 'failure'
+        shell: bash
+        env:
+          ARCHITECTURE: ${{ steps.frontend-architecture.outcome }}
+          LINT: ${{ steps.frontend-lint.outcome }}
+          TYPECHECK: ${{ steps.frontend-typecheck.outcome }}
+          TEST: ${{ steps.frontend-test.outcome }}
+          BUILD: ${{ steps.frontend-build.outcome }}
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          stages = {
+              'architecture': os.environ['ARCHITECTURE'],
+              'lint': os.environ['LINT'],
+              'typecheck': os.environ['TYPECHECK'],
+              'test': os.environ['TEST'],
+              'build': os.environ['BUILD'],
+          }
+          lines = [f'{name}: {state}' for name, state in stages.items()]
+          test_log = Path('/tmp/generic-agent-full-evidence/frontend-test.log')
+          if test_log.exists() and stages['test'] == 'failure':
+              raw = test_log.read_text(encoding='utf-8', errors='replace').splitlines()
+              relevant = [
+                  line for line in raw
+                  if 'FAIL' in line or 'AssertionError' in line or 'Error:' in line
+              ]
+              lines.extend(relevant[-40:])
+          encoded = base64.b64encode('\n'.join(lines).encode('utf-8')).decode('ascii')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
+              handle.write(f'summary_b64={encoded}\n')
+          PY
+      - name: Upload bounded verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -87,8 +166,8 @@ jobs:
           path: /tmp/generic-agent-full-evidence
           if-no-files-found: warn
           retention-days: 7
-      - name: Enforce backend regression success
-        if: steps.backend.outcome == 'failure'
+      - name: Enforce complete regression success
+        if: steps.backend.outcome == 'failure' || steps.frontend-architecture.outcome == 'failure' || steps.frontend-lint.outcome == 'failure' || steps.frontend-typecheck.outcome == 'failure' || steps.frontend-test.outcome == 'failure' || steps.frontend-build.outcome == 'failure'
         run: exit 1
       - name: Commit clean candidate
         shell: bash
@@ -97,13 +176,7 @@ jobs:
           start_sha="$(cat /tmp/generic-agent-full-start-sha)"
           git fetch --no-tags origin refactor/generic-agent-runtime-final-b7e41d
           test "$(git rev-parse origin/refactor/generic-agent-runtime-final-b7e41d)" = "$start_sha"
-          git rm -f scripts/_generic_agent_full_regression_fix.py
-          git rm -f scripts/_generic_agent_authority_fix.py
-          git rm -f scripts/_generic_agent_execution_args_fix.py
-          git rm -f scripts/_generic_agent_execution_depth_fix.py
-          git rm -f .github/workflows/_temporary-generic-agent-full-regression.yml
           git add -A
-          test -z "$(find .github/workflows -maxdepth 1 -type f -name '_temporary-*' -print)"
           git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -111,21 +184,28 @@ jobs:
           git push origin HEAD:refactor/generic-agent-runtime-final-b7e41d
 
   failure-summary:
-    if: always() && needs.verify.outputs.failure_summary_b64 != ''
+    if: always() && (needs.verify.outputs.backend_failures_b64 != '' || needs.verify.outputs.frontend_failures_b64 != '')
     needs: verify
     permissions:
       contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Print bounded backend failure summary
+      - name: Print bounded failure identifiers
         env:
-          FAILURE_SUMMARY_B64: ${{ needs.verify.outputs.failure_summary_b64 }}
+          BACKEND_FAILURES_B64: ${{ needs.verify.outputs.backend_failures_b64 }}
+          FRONTEND_FAILURES_B64: ${{ needs.verify.outputs.frontend_failures_b64 }}
         run: |
           python - <<'PY'
           import base64
           import os
 
-          encoded = os.environ.get('FAILURE_SUMMARY_B64', '')
-          print(base64.b64decode(encoded).decode('utf-8', errors='replace'))
+          for label, name in (
+              ('BACKEND', 'BACKEND_FAILURES_B64'),
+              ('FRONTEND', 'FRONTEND_FAILURES_B64'),
+          ):
+              encoded = os.environ.get(name, '')
+              if encoded:
+                  print(f'[{label}]')
+                  print(base64.b64decode(encoded).decode('utf-8', errors='replace'))
           PY
