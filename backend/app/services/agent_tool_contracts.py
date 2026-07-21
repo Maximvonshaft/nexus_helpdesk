@@ -6,43 +6,12 @@ _BOOTSTRAPPED = False
 
 
 def bootstrap_agent_tool_contracts() -> None:
-    """Register configurable Agent extensions in the one canonical Tool Registry."""
+    """Register configurable integrations in the one canonical Tool Registry."""
 
     global _BOOTSTRAPPED
     if _BOOTSTRAPPED:
         return
     contracts = {
-        "customer.memory.read": registry.ToolContract(
-            name="customer.memory.read",
-            classification="read",
-            description="Read governed long-term facts for the current customer.",
-            input_schema=registry._schema({}),
-            required_permissions=("customer:memory:read",),
-            idempotency_key_strategy="sha256(tenant,customer,memory_policy_version)",
-            risk_level="low",
-            redaction_requirements=("no_secret", "no_restricted_memory", "no_raw_transcript"),
-        ),
-        "customer.memory.write": registry.ToolContract(
-            name="customer.memory.write",
-            classification="write",
-            description="Save one explicitly confirmed, policy-permitted customer fact.",
-            input_schema=registry._schema(
-                {
-                    "memory_key": {"type": "string", "minLength": 1, "maxLength": 120},
-                    "value": {"type": "string", "minLength": 1, "maxLength": 2000},
-                    "consent_basis": {"type": "string", "minLength": 1, "maxLength": 80},
-                },
-                required=("memory_key", "value", "consent_basis"),
-            ),
-            required_permissions=("customer:memory:write",),
-            idempotency_key_strategy="sha256(tenant,customer,memory_key,value)",
-            risk_level="high",
-            redaction_requirements=("no_secret", "no_sensitive_category", "bounded_value"),
-            confirmation_required=True,
-            allowed_auto_execution_mode="confirmation_required",
-            controlled_action_required=True,
-            customer_visible_result=False,
-        ),
         "integration.read": registry.ToolContract(
             name="integration.read",
             classification="read",
