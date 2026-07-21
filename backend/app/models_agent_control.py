@@ -12,6 +12,31 @@ from .utils.time import utc_now
 UTCDateTime = DateTime(timezone=True)
 
 
+class AgentResourceBinding(Base):
+    """Canonical tenant ownership for legacy heterogeneous Agent resources.
+
+    PersonaProfile and AIConfigResource predate relational tenancy. This binding
+    is the single migration and authorization authority; request payloads and
+    mutable JSON content never decide resource ownership.
+    """
+
+    __tablename__ = "agent_resource_bindings"
+    __table_args__ = (
+        UniqueConstraint("resource_type", "resource_id", name="uq_agent_resource_binding_target"),
+        CheckConstraint("resource_type IN ('persona', 'ai_config')", name="ck_agent_resource_binding_type"),
+        CheckConstraint("length(trim(tenant_key)) > 0", name="ck_agent_resource_binding_tenant_nonempty"),
+        Index("ix_agent_resource_bindings_tenant_type", "tenant_key", "resource_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_key: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    resource_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    is_global_template: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now, index=True)
+
+
 class AgentDefinition(Base):
     """Tenant-scoped mutable authoring object.
 
