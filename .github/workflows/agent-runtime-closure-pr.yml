@@ -13,8 +13,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: agent-runtime-closure-patch
-  cancel-in-progress: false
+  group: agent-runtime-closure-pr
+  cancel-in-progress: true
 
 jobs:
   apply:
