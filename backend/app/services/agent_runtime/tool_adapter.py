@@ -14,6 +14,7 @@ from ..nexus_osr.tool_execution_service import (
     executable_tool_names as core_executable_tool_names,
 )
 from ..webchat_ai_decision_runtime.schemas import AIDecisionToolCall
+from .execution_scope import bind_agent_release_snapshot
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class AgentExecutionContext:
     actor_capabilities: frozenset[str] = frozenset()
     customer_confirmation_granted: bool = False
     human_confirmation_granted: bool = False
+    release_snapshot: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -82,41 +84,36 @@ def execute_agent_tool_calls(
         if context.conversation_id is not None
         else None
     )
-    ticket = (
-        db.get(Ticket, context.ticket_id)
-        if context.ticket_id is not None
-        else None
-    )
+    ticket = db.get(Ticket, context.ticket_id) if context.ticket_id is not None else None
     customer = (
         db.get(Customer, context.customer_id)
         if context.customer_id is not None
         else None
     )
-    results = execute_controlled_tool_calls(
-        db,
-        tool_calls=calls,
-        case_context=case_context,
-        channel=context.channel_key,
-        country_code=context.country_code,
-        tenant_id=context.tenant_key,
-        conversation=conversation,
-        ticket=ticket,
-        customer=customer,
-        options=GovernedToolExecutionOptions(
-            allow_high_risk_write_execution=allow_high_risk_writes,
-            allowed_high_risk_write_tools=(
-                frozenset(context.allowed_tools)
-                if allow_high_risk_writes
-                else frozenset()
+    with bind_agent_release_snapshot(context.release_snapshot):
+        results = execute_controlled_tool_calls(
+            db,
+            tool_calls=calls,
+            case_context=case_context,
+            channel=context.channel_key,
+            country_code=context.country_code,
+            tenant_id=context.tenant_key,
+            conversation=conversation,
+            ticket=ticket,
+            customer=customer,
+            options=GovernedToolExecutionOptions(
+                allow_high_risk_write_execution=allow_high_risk_writes,
+                allowed_high_risk_write_tools=(
+                    frozenset(context.allowed_tools)
+                    if allow_high_risk_writes
+                    else frozenset()
+                ),
+                customer_confirmation_granted=context.customer_confirmation_granted,
+                human_confirmation_granted=context.human_confirmation_granted,
+                allowed_tool_names=frozenset(context.allowed_tools),
+                granted_permissions=frozenset(context.granted_permissions),
             ),
-            customer_confirmation_granted=(
-                context.customer_confirmation_granted
-            ),
-            human_confirmation_granted=context.human_confirmation_granted,
-            allowed_tool_names=frozenset(context.allowed_tools),
-            granted_permissions=frozenset(context.granted_permissions),
-        ),
-    )
+        )
     return [
         ToolObservation(
             tool_name=result.tool_name,
