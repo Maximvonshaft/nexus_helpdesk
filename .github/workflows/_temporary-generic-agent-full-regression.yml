@@ -61,6 +61,13 @@ jobs:
           python scripts/_generic_agent_idempotency_fix.py
           python scripts/_generic_agent_static_gate_fix.py
           python scripts/_generic_agent_compatibility_retirement_fix.py
+          python scripts/_generic_agent_final_core.py
+          python scripts/_generic_agent_final_voice_api.py
+          python scripts/_generic_agent_final_voice_context.py
+          python scripts/_generic_agent_final_voice_actions.py
+          python scripts/_generic_agent_final_voice_lifecycle.py
+          python scripts/_generic_agent_final_voice_tests.py
+          python scripts/_generic_agent_final_tests.py
           git rm -f scripts/_generic_agent_full_regression_fix.py
           git rm -f scripts/_generic_agent_authority_fix.py
           git rm -f scripts/_generic_agent_execution_args_fix.py
@@ -71,6 +78,13 @@ jobs:
           git rm -f scripts/_generic_agent_idempotency_fix.py
           git rm -f scripts/_generic_agent_static_gate_fix.py
           git rm -f scripts/_generic_agent_compatibility_retirement_fix.py
+          git rm -f scripts/_generic_agent_final_core.py
+          git rm -f scripts/_generic_agent_final_voice_api.py
+          git rm -f scripts/_generic_agent_final_voice_context.py
+          git rm -f scripts/_generic_agent_final_voice_actions.py
+          git rm -f scripts/_generic_agent_final_voice_lifecycle.py
+          git rm -f scripts/_generic_agent_final_voice_tests.py
+          git rm -f scripts/_generic_agent_final_tests.py
           git rm -f .github/workflows/_temporary-generic-agent-full-regression.yml
           test -z "$(find .github/workflows -maxdepth 1 -type f -name '_temporary-*' -print)"
           python -m compileall -q backend/app
