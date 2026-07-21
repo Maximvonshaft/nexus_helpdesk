@@ -50,9 +50,9 @@ def test_ticketless_runtime_cannot_end_with_blank_agent_output() -> None:
 
 def test_handoff_terminal_truth_comes_from_committed_observation() -> None:
     source = (ROOT / "backend/app/services/agent_runtime/runtime.py").read_text(encoding="utf-8")
-    final_turn = source.split('if decision.next_action != "call_tool":', 1)[1].split("if round_index >= max_rounds:", 1)[0]
+    terminal_helper = source.split("def _terminal_decision(", 1)[1].split("def _terminal_fallback(", 1)[0]
 
-    assert "handoff_committed = _committed_handoff_observed(state)" in final_turn
-    assert "handoff_required=handoff_committed" in final_turn
-    assert "handoff_required=decision.handoff_required" not in final_turn
-    assert "handoff_tool_side_effect_missing" in final_turn
+    assert "handoff_committed = _committed_handoff_observed(state)" in terminal_helper
+    assert "handoff_required=handoff_committed" in terminal_helper
+    assert "handoff_required=decision.handoff_required" not in terminal_helper
+    assert "handoff_tool_side_effect_missing" in terminal_helper
