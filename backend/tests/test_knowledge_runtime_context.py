@@ -17,12 +17,12 @@ from app import models  # noqa: F401,E402
 from app import models_control_plane  # noqa: F401,E402
 from app.enums import ConversationState, TicketPriority, TicketSource, TicketStatus, UserRole, SourceChannel, ResolutionCategory  # noqa: E402
 from app.models import Market, Ticket, User  # noqa: E402
-from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest, PersonaProfileCreate, PersonaPublishRequest  # noqa: E402
-from app.services import knowledge_service, persona_service  # noqa: E402
+from app.schemas_control_plane import KnowledgeItemCreate  # noqa: E402
+from app.services import knowledge_service  # noqa: E402
 from app.services.ai_runtime_context import build_agent_context  # noqa: E402
 from app.services.knowledge_retrieval_service import search_published_chunks  # noqa: E402
-from app.services.knowledge_runtime import runtime as knowledge_runtime  # noqa: E402
-from app.services.knowledge_runtime import retrieve_knowledge  # noqa: E402
+from app.services.knowledge_runtime import runtime as knowledge_runtime  # noqa: F401,E402
+from app.services.knowledge_runtime import retrieve_knowledge  # noqa: F401,E402
 
 
 @pytest.fixture()
@@ -162,21 +162,8 @@ def test_publish_indexes_chunks_and_retrieval_respects_metadata_filters(db_sessi
     assert [hit.item_key for hit in hits] == ["website.address"]
 
 
-def test_runtime_context_projects_persona_and_channel_without_pre_model_retrieval(db_session):
+def test_runtime_context_is_release_gated_and_does_not_prefetch_knowledge(db_session):
     admin = _user(db_session)
-    profile = persona_service.create_profile(
-        db_session,
-        PersonaProfileCreate(
-            profile_key="default.website.en",
-            name="Default Website English",
-            channel="website",
-            language="en",
-            draft_summary="Use approved Skills and Tools.",
-            draft_content_json={"tone": "concise"},
-        ),
-        admin,
-    )
-    persona_service.publish_profile(db_session, profile, admin, notes="publish")
     item = knowledge_service.create_item(
         db_session,
         _knowledge_payload(item_key="runtime.address", channel="website"),
@@ -192,9 +179,10 @@ def test_runtime_context_projects_persona_and_channel_without_pre_model_retrieva
         body="Can I change my delivery address?",
     )
 
-    assert context["context_version"] == "nexus.agent_context.v1"
-    assert context["persona_context"]["profile_key"] == "default.website.en"
-    assert context["persona_context"]["identity_context"]
+    assert context["context_version"] == "nexus.agent_context.v2"
+    assert context["agent_release_snapshot"] is None
+    assert context["agent_release_error"] == "agent_deployment_unavailable"
+    assert context["persona_context"] is None
     assert context["channel_context"]["channel"] == "website"
     assert "knowledge_context" not in context
     assert "rag_trace" not in context
