@@ -6,19 +6,19 @@ import { RouteLoadingState } from '@/app/OperatorPresentation'
 import { useSession } from '@/hooks/useAuth'
 import { getSupportToken } from '@/lib/supportApi'
 
-const LazyKnowledgePage = lazy(() => import('@/features/knowledge/lazy'))
+const LazyAgentControlPage = lazy(() => import('@/features/agent-control/lazy'))
 
-function KnowledgeCapabilityPage() {
+function AgentControlCapabilityPage() {
   const session = useSession()
   const canManage = Boolean(session.data?.capabilities?.includes('ai_config.manage'))
-  return <LazyKnowledgePage canManage={canManage} />
+  return <LazyAgentControlPage canManage={canManage} />
 }
 
 function KnowledgeRoutePage() {
   return (
     <AuthenticatedAppPage activeRoute="knowledge" requiredAny={['ai_config.read', 'ai_config.manage']}>
-      <Suspense fallback={<RouteLoadingState label="正在加载知识与流程…" />}>
-        <KnowledgeCapabilityPage />
+      <Suspense fallback={<RouteLoadingState label="正在加载 Agent 配置…" />}>
+        <AgentControlCapabilityPage />
       </Suspense>
     </AuthenticatedAppPage>
   )
