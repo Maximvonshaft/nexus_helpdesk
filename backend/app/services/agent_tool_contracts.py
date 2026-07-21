@@ -12,6 +12,52 @@ def bootstrap_agent_tool_contracts() -> None:
     if _BOOTSTRAPPED:
         return
     contracts = {
+        "integration.search": registry.ToolContract(
+            name="integration.search",
+            classification="read",
+            description=(
+                "Search operations from enterprise integrations frozen into the "
+                "current Agent Release before selecting integration.read or "
+                "integration.write."
+            ),
+            input_schema=registry._schema(
+                {
+                    "keywords": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 8,
+                        "uniqueItems": True,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80,
+                            "pattern": "^[A-Za-z0-9_.-]+$",
+                        },
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["read", "write", "all"],
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                required=("keywords",),
+            ),
+            required_permissions=("integration:read",),
+            idempotency_key_strategy=(
+                "sha256(tenant,release,keywords,mode,limit)"
+            ),
+            risk_level="low",
+            allowed_auto_execution_mode="auto",
+            controlled_action_required=True,
+            customer_visible_result=False,
+            redaction_requirements=(
+                "release_catalog_only",
+                "no_credential_state",
+                "no_secret",
+                "no_operation_execution",
+                "bounded_response",
+            ),
+        ),
         "integration.read": registry.ToolContract(
             name="integration.read",
             classification="read",
