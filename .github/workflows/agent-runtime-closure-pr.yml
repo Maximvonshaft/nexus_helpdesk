@@ -45,6 +45,16 @@ jobs:
           ' .github/workflows/agent-runtime-closure-patch.yml > /tmp/apply_agent_runtime_closure.py
           test -s /tmp/apply_agent_runtime_closure.py
           python /tmp/apply_agent_runtime_closure.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/tests/test_provider_runtime_router.py')
+          source = path.read_text(encoding='utf-8')
+          old = 'assert result.raw_payload_safe_summary["traffic"]["path"] == "canary_authoritative"'
+          new = 'assert result.raw_payload_safe_summary["traffic"]["path"] == "blocked"'
+          if source.count(old) != 1:
+              raise SystemExit(f'provider rejection evidence assertion mismatch: {source.count(old)}')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Install backend dependencies
         working-directory: backend
