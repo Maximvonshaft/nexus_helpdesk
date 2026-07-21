@@ -101,7 +101,6 @@ def execute_controlled_tool_calls(
     conversation: WebchatConversation | None = None,
     ticket: Ticket | None = None,
     customer: Customer | None = None,
-    ai_decision: AIDecision | None = None,
     options: GovernedToolExecutionOptions | None = None,
 ) -> list[ActionExecutionResult]:
     options = options or GovernedToolExecutionOptions()
@@ -126,7 +125,7 @@ def execute_controlled_tool_calls(
             ticket=ticket,
         )
 
-    policy_gate_decision = ai_decision or _decision_for_policy_gate(raw_calls, actions)
+    policy_gate_decision = _decision_for_policy_gate(raw_calls, actions)
     gate_result = validate_ai_decision(
         policy_gate_decision,
         allow_high_risk_write_execution=options.allow_high_risk_write_execution,

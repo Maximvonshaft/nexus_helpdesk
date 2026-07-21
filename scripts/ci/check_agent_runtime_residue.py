@@ -92,6 +92,8 @@ FORBIDDEN_RUNTIME_CONTENT = (
     "handoff_required=decision.handoff_required",
 )
 FORBIDDEN_TOOL_GOVERNANCE_CONTENT = (
+    "ai_decision: AIDecision | None = None",
+    "ai_decision or _decision_for_policy_gate",
     "OSRToolExecutionFacade",
     "OSRToolExecutionMode",
     "default_handlers",
