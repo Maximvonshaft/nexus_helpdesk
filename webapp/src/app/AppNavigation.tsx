@@ -3,6 +3,7 @@ import HubRoundedIcon from '@mui/icons-material/HubRounded'
 import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded'
 import MenuBookRoundedIcon from '@mui/icons-material/MenuBookRounded'
 import MonitorHeartRoundedIcon from '@mui/icons-material/MonitorHeartRounded'
+import PsychologyRoundedIcon from '@mui/icons-material/PsychologyRounded'
 import WorkOutlineRoundedIcon from '@mui/icons-material/WorkOutlineRounded'
 import { Box, Stack, Typography } from '@mui/material'
 import { Link } from '@tanstack/react-router'
@@ -12,6 +13,7 @@ import type { AppNavigationRouteKey, AppRouteKey } from './navigation'
 const routeIcons = {
   workspace: WorkOutlineRoundedIcon,
   knowledge: MenuBookRoundedIcon,
+  'agent-control': PsychologyRoundedIcon,
   channels: HubRoundedIcon,
   runtime: MonitorHeartRoundedIcon,
   'control-tower': InsightsRoundedIcon,
