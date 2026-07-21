@@ -4,18 +4,18 @@ The private core remains the only executor, policy, audit and idempotency
 implementation. Configurable Agent extensions register contracts and production
 handlers into that authority; they do not create a parallel dispatcher.
 """
-
 from __future__ import annotations
 
+from dataclasses import replace
+
+from ..agent_runtime.execution_scope import released_knowledge_versions
 from ..agent_tool_contracts import bootstrap_agent_tool_contracts
-from ..agent_tool_handlers import (
-    build_agent_tool_handlers,
-    extension_executable_tool_names,
-)
+from ..agent_tool_handlers import build_agent_tool_handlers, extension_executable_tool_names
 from . import tool_execution_service_core as _core
 
 bootstrap_agent_tool_contracts()
 _ORIGINAL_PRODUCTION_HANDLERS = _core._production_handlers
+_ORIGINAL_RETRIEVE_PUBLISHED_CHUNKS = _core.retrieve_published_chunks
 
 
 def _production_handlers(db, *, conversation, ticket, customer):
@@ -38,7 +38,65 @@ def _production_handlers(db, *, conversation, ticket, customer):
     return handlers
 
 
+def _release_scoped_retrieve_published_chunks(*args, **kwargs):
+    result = _ORIGINAL_RETRIEVE_PUBLISHED_CHUNKS(*args, **kwargs)
+    allowed = released_knowledge_versions()
+    if allowed is None:
+        return result
+    hits = [
+        hit
+        for hit in result.hits
+        if (str(hit.item_key).strip().lower(), int(hit.published_version)) in allowed
+    ]
+    grounding_hit = next(
+        (hit for hit in hits if hit.direct_answer and hit.score >= 24.0),
+        None,
+    )
+    grounding_source = (
+        {
+            "item_key": grounding_hit.item_key,
+            "title": grounding_hit.title,
+            "score": grounding_hit.score,
+            "chunk_index": grounding_hit.chunk_index,
+            "answer_mode": grounding_hit.answer_mode,
+            "retrieval_method": grounding_hit.retrieval_method,
+            "source_metadata": grounding_hit.source_metadata,
+        }
+        if grounding_hit is not None
+        else None
+    )
+    runtime_trace = dict(result.runtime_trace or {})
+    runtime_trace.update(
+        {
+            "release_knowledge_filter_applied": True,
+            "release_knowledge_reference_count": len(allowed),
+            "release_knowledge_hit_count": len(hits),
+        }
+    )
+    return replace(
+        result,
+        hits=hits,
+        total=len(hits),
+        top_hits=[
+            {
+                "item_key": hit.item_key,
+                "title": hit.title,
+                "score": hit.score,
+                "chunk_index": hit.chunk_index,
+                "retrieval_method": hit.retrieval_method,
+                "answer_mode": hit.answer_mode,
+            }
+            for hit in hits[:5]
+        ],
+        grounding_would_apply=grounding_source is not None,
+        grounding_source=grounding_source,
+        runtime_trace=runtime_trace,
+        no_answer_reason=(result.no_answer_reason if hits else "release_knowledge_no_match"),
+    )
+
+
 _core._production_handlers = _production_handlers
+_core.retrieve_published_chunks = _release_scoped_retrieve_published_chunks
 _core._EXECUTABLE_TOOL_NAMES = tuple(
     sorted(set(_core._EXECUTABLE_TOOL_NAMES) | set(extension_executable_tool_names()))
 )
