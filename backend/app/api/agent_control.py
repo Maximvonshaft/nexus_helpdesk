@@ -9,16 +9,17 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import AIConfigResource, Customer, Tenant
+from ..models import AIConfigResource, Team, Tenant
 from ..models_agent_control import AgentDefinition, AgentDeployment, AgentRelease, AgentRunSnapshot
+from ..models_control_plane import KnowledgeItem
 from ..models_osr import ToolExecutionPolicyRecord
 from ..services import persona_service
 from ..services.agent_control_config import CANONICAL_AGENT_CONFIG_TYPES, safe_resource_payload
 from ..services.agent_release_service import (
     RELEASE_SCHEMA,
+    AgentDeploymentUnavailable,
     activate_deployment,
     authoritative_tenant_key,
-    canonical_scope_key,
     create_release,
     resolve_agent_release,
     validate_release_manifest,
@@ -35,10 +36,7 @@ from ..services.permissions import (
     ensure_can_manage_runtime,
     ensure_can_read_ai_configs,
 )
-from ..services.webchat_ai_decision_runtime.tool_registry import (
-    get_tool_contract,
-    safe_registry_summary,
-)
+from ..services.webchat_ai_decision_runtime.tool_registry import get_tool_contract, safe_registry_summary
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
@@ -96,17 +94,13 @@ class AgentResolveRequest(BaseModel):
 
 class PlaygroundRequest(AgentResolveRequest):
     body: str = Field(min_length=1, max_length=4000)
-    customer_id: int | None = None
     execute_model: bool = False
 
 
-class IntegrationTestRequest(BaseModel):
+class IntegrationTestRequest(AgentResolveRequest):
     integration_key: str = Field(min_length=1, max_length=160)
     operation: str = Field(min_length=1, max_length=160)
     arguments: dict[str, Any] = Field(default_factory=dict)
-    market_id: int | None = None
-    channel: str = Field(default="webchat", min_length=1, max_length=40)
-    language: str | None = Field(default=None, max_length=24)
 
 
 @router.get("/snapshot")
@@ -122,10 +116,7 @@ def agent_control_snapshot(
 ):
     ensure_can_read_ai_configs(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=tenant_key, allow_platform_default=True
     )
     definitions = (
         db.query(AgentDefinition)
@@ -148,16 +139,25 @@ def agent_control_snapshot(
         .order_by(AgentDeployment.environment.asc(), AgentDeployment.scope_key.asc())
         .all()
     )
-    resolved = resolve_agent_release(
-        db,
-        tenant_key=tenant,
-        environment=environment,
-        market_id=market_id,
-        channel=channel,
-        language=language,
-        case_type=case_type,
-        cohort_key="control-plane-snapshot",
-    )
+    resolved_snapshot = None
+    resolved_digest = None
+    resolution_error = None
+    try:
+        resolved = resolve_agent_release(
+            db,
+            tenant_key=tenant,
+            environment=environment,
+            market_id=market_id,
+            channel=channel,
+            language=language,
+            case_type=case_type,
+            cohort_key="control-plane-snapshot",
+        )
+        resolved_snapshot = resolved.snapshot
+        resolved_digest = resolved.digest
+    except AgentDeploymentUnavailable as exc:
+        resolution_error = str(exc)[:160]
+
     resources = (
         db.query(AIConfigResource)
         .filter(AIConfigResource.config_type.in_(CANONICAL_AGENT_CONFIG_TYPES))
@@ -174,6 +174,17 @@ def agent_control_snapshot(
         limit=200,
         offset=0,
     )
+    knowledge = (
+        db.query(KnowledgeItem)
+        .filter(
+            KnowledgeItem.status == "active",
+            KnowledgeItem.published_version > 0,
+            KnowledgeItem.tenant_id.in_((tenant, "default")),
+        )
+        .order_by(KnowledgeItem.priority.asc(), KnowledgeItem.item_key.asc())
+        .limit(500)
+        .all()
+    )
     policies = (
         db.query(ToolExecutionPolicyRecord)
         .order_by(
@@ -188,6 +199,7 @@ def agent_control_snapshot(
         {**item, "executable": str(item.get("name")) in executable}
         for item in safe_registry_summary()
     ]
+    released_tools = _release_allowed_tools(resolved_snapshot)
     return {
         "generated_at": time.time(),
         "tenant_key": tenant,
@@ -201,32 +213,42 @@ def agent_control_snapshot(
         "definitions": [_definition_payload(row) for row in definitions],
         "releases": [_release_payload(row) for row in releases],
         "deployments": [_deployment_payload(row) for row in deployments],
-        "resolved_agent": resolved.snapshot,
-        "resolved_agent_digest": resolved.digest,
+        "resolved_agent": resolved_snapshot,
+        "resolved_agent_digest": resolved_digest,
+        "resolution_error": resolution_error,
         "personas": [_persona_payload(row) for row in profiles],
         "persona_total": profile_total,
+        "knowledge": [_knowledge_payload(row) for row in knowledge],
         "resources": [safe_resource_payload(row) for row in resources],
-        "resolved_playbooks": prompt_playbook_catalog(
-            db,
-            market_id=market_id,
-            channel=channel,
-            language=language,
-            available_tools=executable,
-            release_snapshot=resolved.snapshot,
+        "resolved_playbooks": (
+            prompt_playbook_catalog(
+                db,
+                market_id=market_id,
+                channel=channel,
+                language=language,
+                available_tools=executable & released_tools,
+                release_snapshot=resolved_snapshot,
+            )
+            if resolved_snapshot
+            else []
         ),
         "tools": tools,
         "tool_policies": [_tool_policy(row) for row in policies],
-        "integrations": list_integration_catalog(
-            db,
-            market_id=market_id,
-            channel=channel,
-            language=language,
-            release_snapshot=resolved.snapshot,
+        "integrations": (
+            list_integration_catalog(
+                db,
+                market_id=market_id,
+                channel=channel,
+                language=language,
+                release_snapshot=resolved_snapshot,
+            )
+            if resolved_snapshot
+            else []
         ),
         "capabilities": {
             "can_manage": _can_manage(current_user, db),
             "can_deploy": _can_deploy(current_user, db),
-            "playground_model_execution": _can_manage(current_user, db),
+            "playground_model_execution": _can_deploy(current_user, db),
         },
     }
 
@@ -239,21 +261,21 @@ def create_agent_definition(
 ):
     ensure_can_manage_ai_configs(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=payload.tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=payload.tenant_key, allow_platform_default=True
     )
-    normalized, _evidence = validate_release_manifest(db, payload.draft_manifest)
-    if (
+    _ensure_owner_team_tenant(db, payload.owner_team_id, tenant)
+    normalized, _ = validate_release_manifest(
+        db, payload.draft_manifest, tenant_key=tenant
+    )
+    duplicate = (
         db.query(AgentDefinition)
         .filter(
             AgentDefinition.tenant_key == tenant,
             AgentDefinition.definition_key == payload.definition_key,
         )
         .first()
-        is not None
-    ):
+    )
+    if duplicate is not None:
         raise HTTPException(status_code=409, detail="agent_definition_key_exists")
     with managed_session(db):
         row = AgentDefinition(
@@ -283,15 +305,16 @@ def update_agent_definition(
 ):
     ensure_can_manage_ai_configs(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=tenant_key, allow_platform_default=True
     )
     row = _definition_or_404(db, definition_id, tenant)
     values = payload.model_dump(exclude_unset=True)
+    if "owner_team_id" in values:
+        _ensure_owner_team_tenant(db, values["owner_team_id"], tenant)
     if "draft_manifest" in values:
-        normalized, _evidence = validate_release_manifest(db, values.pop("draft_manifest"))
+        normalized, _ = validate_release_manifest(
+            db, values.pop("draft_manifest"), tenant_key=tenant
+        )
         values["draft_manifest_json"] = normalized
     if "name" in values:
         values["name"] = str(values["name"]).strip()
@@ -313,12 +336,10 @@ def release_agent_definition(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
+    # Authoring and production artifact creation are intentionally separated.
+    ensure_can_manage_runtime(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=tenant_key, allow_platform_default=True
     )
     definition = _definition_or_404(db, definition_id, tenant)
     with managed_session(db):
@@ -335,10 +356,7 @@ def deploy_agent_release(
 ):
     ensure_can_manage_runtime(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=payload.tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=payload.tenant_key, allow_platform_default=True
     )
     release = db.get(AgentRelease, payload.release_id)
     if release is None:
@@ -372,21 +390,21 @@ def resolve_agent_configuration(
 ):
     ensure_can_read_ai_configs(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=payload.tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=payload.tenant_key, allow_platform_default=True
     )
-    resolved = resolve_agent_release(
-        db,
-        tenant_key=tenant,
-        environment=payload.environment,
-        market_id=payload.market_id,
-        channel=payload.channel,
-        language=payload.language,
-        case_type=payload.case_type,
-        cohort_key=payload.cohort_key,
-    )
+    try:
+        resolved = resolve_agent_release(
+            db,
+            tenant_key=tenant,
+            environment=payload.environment,
+            market_id=payload.market_id,
+            channel=payload.channel,
+            language=payload.language,
+            case_type=payload.case_type,
+            cohort_key=payload.cohort_key,
+        )
+    except AgentDeploymentUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"digest": resolved.digest, "snapshot": resolved.snapshot}
 
 
@@ -398,17 +416,10 @@ async def agent_playground(
 ):
     ensure_can_read_ai_configs(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=payload.tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=payload.tenant_key, allow_platform_default=True
     )
-    customer = db.get(Customer, payload.customer_id) if payload.customer_id else None
-    if payload.customer_id and customer is None:
-        raise HTTPException(status_code=404, detail="customer_not_found")
-    _ensure_customer_tenant(db, customer, tenant)
     request_id = f"playground-{current_user.id}-{time.time_ns()}"
-    session_id = f"playground:{current_user.id}"
+    session_id = f"playground:{current_user.id}:{payload.cohort_key}"
     context = build_agent_context(
         db,
         tenant_key=tenant,
@@ -416,24 +427,37 @@ async def agent_playground(
         body=payload.body,
         market_id=payload.market_id,
         language=payload.language,
-        customer=customer,
         request_id=request_id,
         session_id=session_id,
         environment=payload.environment,
         case_type=payload.case_type,
     )
-    read_tools = _read_only_tools()
+    release_snapshot = context.get("agent_release_snapshot")
+    release_error = context.get("agent_release_error")
+    if not isinstance(release_snapshot, dict):
+        return {
+            "agent_release": None,
+            "agent_release_digest": None,
+            "resolution_error": release_error or "agent_deployment_not_found",
+            "persona": None,
+            "active_bulletins": context.get("active_bulletins"),
+            "playbooks": [],
+            "tools": [],
+            "model_executed": False,
+        }
+    read_tools = _read_only_tools() & _release_allowed_tools(release_snapshot)
     playbooks = prompt_playbook_catalog(
         db,
         market_id=payload.market_id,
         channel=payload.channel,
         language=payload.language,
         available_tools=read_tools,
-        release_snapshot=context.get("agent_release_snapshot"),
+        release_snapshot=release_snapshot,
     )
     preview = {
-        "agent_release": context.get("agent_release_snapshot"),
+        "agent_release": release_snapshot,
         "agent_release_digest": context.get("agent_release_digest"),
+        "resolution_error": None,
         "persona": context.get("persona_context"),
         "active_bulletins": context.get("active_bulletins"),
         "playbooks": playbooks,
@@ -445,9 +469,8 @@ async def agent_playground(
         "model_executed": False,
     }
     if not payload.execute_model:
-        db.rollback()
         return preview
-    ensure_can_manage_ai_configs(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     execution_context = dict(context.get("agent_execution_context") or {})
     permissions = sorted(
         {
@@ -485,7 +508,6 @@ async def agent_playground(
             metadata=runtime_context,
         ),
     )
-    db.rollback()
     preview.update(
         {
             "model_executed": True,
@@ -507,12 +529,29 @@ def test_integration(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_ai_configs(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
+    tenant = authoritative_tenant_key(
+        db, current_user, requested=payload.tenant_key, allow_platform_default=True
+    )
+    try:
+        resolved = resolve_agent_release(
+            db,
+            tenant_key=tenant,
+            environment=payload.environment,
+            market_id=payload.market_id,
+            channel=payload.channel,
+            language=payload.language,
+            case_type=payload.case_type,
+            cohort_key=payload.cohort_key,
+        )
+    except AgentDeploymentUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     catalog = list_integration_catalog(
         db,
         market_id=payload.market_id,
         channel=payload.channel,
         language=payload.language,
+        release_snapshot=resolved.snapshot,
     )
     selected = next(
         (item for item in catalog if item["resource_key"] == payload.integration_key),
@@ -539,6 +578,7 @@ def test_integration(
         channel=payload.channel,
         language=payload.language,
         dry_run=expected_write,
+        release_snapshot=resolved.snapshot,
     )
     return result.safe_summary()
 
@@ -552,10 +592,7 @@ def list_agent_run_snapshots(
 ):
     ensure_can_read_ai_configs(current_user, db)
     tenant = authoritative_tenant_key(
-        db,
-        current_user,
-        requested=tenant_key,
-        allow_platform_default=True,
+        db, current_user, requested=tenant_key, allow_platform_default=True
     )
     rows = (
         db.query(AgentRunSnapshot)
@@ -593,14 +630,17 @@ def _definition_or_404(db: Session, definition_id: int, tenant_key: str) -> Agen
     return row
 
 
-def _ensure_customer_tenant(db: Session, customer: Customer | None, tenant_key: str) -> None:
-    if customer is None:
+def _ensure_owner_team_tenant(db: Session, team_id: int | None, tenant_key: str) -> None:
+    if team_id is None:
         return
-    if tenant_key == "default" and customer.tenant_id is None:
+    team = db.get(Team, team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="agent_owner_team_not_found")
+    if tenant_key == "default" and team.tenant_id is None:
         return
-    tenant = db.get(Tenant, customer.tenant_id) if customer.tenant_id else None
+    tenant = db.get(Tenant, team.tenant_id) if team.tenant_id else None
     if tenant is None or tenant.tenant_key != tenant_key:
-        raise HTTPException(status_code=403, detail="cross_tenant_customer_forbidden")
+        raise HTTPException(status_code=403, detail="cross_tenant_agent_owner_team_forbidden")
 
 
 def _definition_payload(row: AgentDefinition) -> dict[str, Any]:
@@ -669,6 +709,29 @@ def _persona_payload(row) -> dict[str, Any]:
         "published_at": row.published_at,
         "updated_at": row.updated_at,
     }
+
+
+def _knowledge_payload(row: KnowledgeItem) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "item_key": row.item_key,
+        "title": row.title,
+        "summary": row.summary,
+        "tenant_id": row.tenant_id,
+        "published_version": row.published_version,
+        "indexed_version": row.indexed_version,
+        "status": row.status,
+        "channel": row.channel,
+        "language": row.language,
+    }
+
+
+def _release_allowed_tools(snapshot: Any) -> set[str]:
+    if not isinstance(snapshot, dict):
+        return set()
+    resolved = snapshot.get("resolved")
+    tools = resolved.get("allowed_tools") if isinstance(resolved, dict) else None
+    return {str(item) for item in tools or [] if str(item)}
 
 
 def _read_only_tools() -> set[str]:
