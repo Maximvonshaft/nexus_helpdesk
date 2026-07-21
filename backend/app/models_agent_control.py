@@ -13,11 +13,10 @@ UTCDateTime = DateTime(timezone=True)
 
 
 class AgentDefinition(Base):
-    """Tenant-scoped editable Agent composition.
+    """Tenant-scoped mutable authoring object.
 
-    Definitions are the only mutable authoring object. Runtime never executes a
-    draft definition directly; it executes an immutable AgentRelease selected by
-    AgentDeployment.
+    Runtime never consumes this draft directly. A definition is validated and
+    frozen into an immutable AgentRelease before any deployment can select it.
     """
 
     __tablename__ = "agent_definitions"
@@ -45,15 +44,17 @@ class AgentDefinition(Base):
 
 
 class AgentRelease(Base):
-    """Immutable, validated Agent artifact consumed by deployments."""
+    """Immutable validated Agent artifact.
+
+    Release lifecycle is intentionally independent from deployment state. A
+    single approved release may be active in one scope and canary in another;
+    those facts belong exclusively to AgentDeployment pointers.
+    """
 
     __tablename__ = "agent_releases"
     __table_args__ = (
         UniqueConstraint("definition_id", "version", name="uq_agent_release_definition_version"),
-        CheckConstraint(
-            "status IN ('approved', 'canary', 'active', 'retired')",
-            name="ck_agent_release_status",
-        ),
+        CheckConstraint("status IN ('approved', 'retired')", name="ck_agent_release_status"),
         Index("ix_agent_releases_definition_status", "definition_id", "status"),
     )
 
@@ -65,7 +66,7 @@ class AgentRelease(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="approved", index=True)
     manifest_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    validation_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    validation_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     approved_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now, index=True)
@@ -73,13 +74,11 @@ class AgentRelease(Base):
 
 
 class AgentDeployment(Base):
-    """Atomic scope pointer selecting an immutable AgentRelease."""
+    """Atomic scope pointer selecting immutable active and optional canary releases."""
 
     __tablename__ = "agent_deployments"
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_key", "environment", "scope_key", name="uq_agent_deployment_scope"
-        ),
+        UniqueConstraint("tenant_key", "environment", "scope_key", name="uq_agent_deployment_scope"),
         CheckConstraint("canary_percent >= 0 AND canary_percent <= 100", name="ck_agent_canary_percent"),
         CheckConstraint("environment IN ('test', 'staging', 'production')", name="ck_agent_environment"),
         Index("ix_agent_deployments_lookup", "tenant_key", "environment", "is_active"),
@@ -107,7 +106,7 @@ class AgentDeployment(Base):
 
 
 class AgentRunSnapshot(Base):
-    """Immutable evidence of the exact configuration used for one Agent run."""
+    """Immutable evidence of the exact release and resolved configuration used by one run."""
 
     __tablename__ = "agent_run_snapshots"
     __table_args__ = (
