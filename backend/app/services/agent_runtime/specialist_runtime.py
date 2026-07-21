@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 import time
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..agent_control_config import RUNTIME_POLICY
+from ..nexus_osr.case_context import redact_case_text
 from ..provider_runtime.output_contracts import AGENT_SPECIALIST_OUTPUT_CONTRACT
 from ..provider_runtime.router import ProviderRuntimeRouter
 from ..provider_runtime.schemas import ProviderRequest
@@ -53,7 +53,9 @@ async def run_specialist(
 
     started = time.monotonic()
     specialist_name = _specialist_name(specialist)
-    task_text = " ".join(str(task or "").split())[:3000]
+    # The Specialist boundary never receives raw identifiers. Reuse the canonical
+    # CaseContext redactor so email, phone and waybill handling cannot diverge.
+    task_text = redact_case_text(task, limit=3000)
     if not task_text:
         return _failure(
             specialist_name,
@@ -154,7 +156,10 @@ def run_specialist_sync(
 
 
 def _runtime_timeout(release_snapshot: dict[str, Any]) -> int:
-    if not isinstance(release_snapshot, dict) or release_snapshot.get("source") != "deployment":
+    if (
+        not isinstance(release_snapshot, dict)
+        or release_snapshot.get("source") != "deployment"
+    ):
         raise RuntimeError("agent_release_snapshot_required_for_specialist")
     resolved = release_snapshot.get("resolved")
     resources = resolved.get("resources") if isinstance(resolved, dict) else None
