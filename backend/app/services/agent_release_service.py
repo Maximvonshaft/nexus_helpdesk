@@ -14,6 +14,11 @@ from ..models_agent_control import AgentDefinition, AgentDeployment, AgentReleas
 from ..models_control_plane import KnowledgeItem, KnowledgeItemVersion, PersonaProfile, PersonaProfileVersion
 from ..utils.time import utc_now
 from .agent_control_config import INTEGRATION, MODEL_PROFILE, PLAYBOOK, RUNTIME_POLICY, validate_agent_config_content
+from .agent_resource_authority import (
+    AI_CONFIG_RESOURCE,
+    PERSONA_RESOURCE,
+    ensure_resource_releasable,
+)
 
 RELEASE_SCHEMA = "nexus.agent_release.v1"
 _SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,159}$")
@@ -24,8 +29,14 @@ _RESOURCE_SECTIONS = {
     "runtime_policy": (RUNTIME_POLICY, False),
 }
 _ALLOWED_MANIFEST_KEYS = {
-    "schema_version", "persona", "playbooks", "integrations",
-    "model_profile", "runtime_policy", "knowledge", "metadata",
+    "schema_version",
+    "persona",
+    "playbooks",
+    "integrations",
+    "model_profile",
+    "runtime_policy",
+    "knowledge",
+    "metadata",
 }
 
 
@@ -81,8 +92,11 @@ def authoritative_tenant_key(
 
 
 def canonical_scope_key(
-    *, market_id: int | None, channel: str | None,
-    language: str | None, case_type: str | None,
+    *,
+    market_id: int | None,
+    channel: str | None,
+    language: str | None,
+    case_type: str | None,
 ) -> str:
     return "|".join(
         (
@@ -134,11 +148,20 @@ def validate_release_manifest(
         ref = _version_reference(persona_ref, "persona")
         profile = (
             db.query(PersonaProfile)
-            .filter(PersonaProfile.profile_key == ref["key"], PersonaProfile.is_active.is_(True))
+            .filter(
+                PersonaProfile.profile_key == ref["key"],
+                PersonaProfile.is_active.is_(True),
+            )
             .one_or_none()
         )
         if profile is None:
             raise HTTPException(status_code=409, detail="persona_release_reference_not_found")
+        binding = ensure_resource_releasable(
+            db,
+            resource_type=PERSONA_RESOURCE,
+            resource_id=profile.id,
+            tenant_key=tenant_key,
+        )
         version_row = (
             db.query(PersonaProfileVersion)
             .filter(
@@ -149,11 +172,16 @@ def validate_release_manifest(
         )
         if version_row is None:
             raise HTTPException(status_code=409, detail="persona_release_version_not_found")
-        normalized["persona"] = {"profile_key": profile.profile_key, "version": version_row.version}
+        normalized["persona"] = {
+            "profile_key": profile.profile_key,
+            "version": version_row.version,
+        }
         evidence["persona"] = {
             "id": profile.id,
             "profile_key": profile.profile_key,
             "version": version_row.version,
+            "tenant_key": binding.tenant_key,
+            "is_global_template": bool(binding.is_global_template),
             "snapshot": _json_object(version_row.snapshot_json),
         }
 
@@ -162,7 +190,10 @@ def validate_release_manifest(
         raw = manifest.get(section)
         refs = raw if isinstance(raw, list) else ([] if raw in (None, {}) else [raw])
         if not many and len(refs) != 1:
-            raise HTTPException(status_code=400, detail=f"agent_release_{section}_requires_one_reference")
+            raise HTTPException(
+                status_code=400,
+                detail=f"agent_release_{section}_requires_one_reference",
+            )
         resolved_refs: list[dict[str, Any]] = []
         for raw_ref in refs:
             ref = _version_reference(raw_ref, section)
@@ -176,7 +207,16 @@ def validate_release_manifest(
                 .one_or_none()
             )
             if resource is None:
-                raise HTTPException(status_code=409, detail=f"agent_release_{section}_reference_not_found")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"agent_release_{section}_reference_not_found",
+                )
+            binding = ensure_resource_releasable(
+                db,
+                resource_type=AI_CONFIG_RESOURCE,
+                resource_id=resource.id,
+                tenant_key=tenant_key,
+            )
             version_row = (
                 db.query(AIConfigVersion)
                 .filter(
@@ -186,19 +226,26 @@ def validate_release_manifest(
                 .one_or_none()
             )
             if version_row is None:
-                raise HTTPException(status_code=409, detail=f"agent_release_{section}_version_not_found")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"agent_release_{section}_version_not_found",
+                )
             identity = (config_type, resource.resource_key, version_row.version)
             if identity in seen_resources:
                 raise HTTPException(status_code=400, detail="agent_release_duplicate_resource")
             seen_resources.add(identity)
             content = validate_agent_config_content(config_type, version_row.snapshot_json or {})
-            resolved_refs.append({"resource_key": resource.resource_key, "version": version_row.version})
+            resolved_refs.append(
+                {"resource_key": resource.resource_key, "version": version_row.version}
+            )
             evidence["resources"].append(
                 {
                     "id": resource.id,
                     "resource_key": resource.resource_key,
                     "config_type": config_type,
                     "version": version_row.version,
+                    "tenant_key": binding.tenant_key,
+                    "is_global_template": bool(binding.is_global_template),
                     "scope": {
                         "scope_type": resource.scope_type,
                         "scope_value": resource.scope_value,
@@ -215,7 +262,11 @@ def validate_release_manifest(
         raise HTTPException(status_code=400, detail="agent_release_knowledge_must_be_list")
     for raw_ref in raw_knowledge:
         ref = _version_reference(raw_ref, "knowledge")
-        knowledge = db.query(KnowledgeItem).filter(KnowledgeItem.item_key == ref["key"]).one_or_none()
+        knowledge = (
+            db.query(KnowledgeItem)
+            .filter(KnowledgeItem.item_key == ref["key"])
+            .one_or_none()
+        )
         if knowledge is None or knowledge.status != "active":
             raise HTTPException(status_code=409, detail="agent_release_knowledge_reference_not_found")
         if str(knowledge.tenant_id or "default") not in {tenant_key, "default"}:
@@ -234,12 +285,16 @@ def validate_release_manifest(
         if identity in seen_knowledge:
             raise HTTPException(status_code=400, detail="agent_release_duplicate_knowledge")
         seen_knowledge.add(identity)
-        normalized["knowledge"].append({"item_key": knowledge.item_key, "version": version_row.version})
+        normalized["knowledge"].append(
+            {"item_key": knowledge.item_key, "version": version_row.version}
+        )
         evidence["knowledge"].append(
             {
                 "id": knowledge.id,
                 "item_key": knowledge.item_key,
                 "version": version_row.version,
+                "tenant_key": str(knowledge.tenant_id or "default"),
+                "is_global_template": str(knowledge.tenant_id or "default") == "default",
                 "snapshot": _json_object(version_row.snapshot_json),
             }
         )
@@ -263,7 +318,8 @@ def validate_release_manifest(
 
 def create_release(
     db: Session,
-    *, definition: AgentDefinition,
+    *,
+    definition: AgentDefinition,
     actor_id: int | None,
 ) -> AgentRelease:
     if not definition.is_active:
@@ -300,11 +356,17 @@ def create_release(
 
 def activate_deployment(
     db: Session,
-    *, tenant_key: str, environment: str,
-    release: AgentRelease, actor_id: int | None,
-    market_id: int | None = None, channel: str | None = None,
-    language: str | None = None, case_type: str | None = None,
-    canary_release: AgentRelease | None = None, canary_percent: int = 0,
+    *,
+    tenant_key: str,
+    environment: str,
+    release: AgentRelease,
+    actor_id: int | None,
+    market_id: int | None = None,
+    channel: str | None = None,
+    language: str | None = None,
+    case_type: str | None = None,
+    canary_release: AgentRelease | None = None,
+    canary_percent: int = 0,
 ) -> AgentDeployment:
     environment = str(environment or "production").strip().lower()
     if environment not in {"test", "staging", "production"}:
@@ -312,7 +374,10 @@ def activate_deployment(
     if canary_percent < 0 or canary_percent > 100:
         raise HTTPException(status_code=400, detail="agent_canary_percent_invalid")
     if (canary_release is None) != (canary_percent == 0):
-        raise HTTPException(status_code=400, detail="agent_canary_release_and_percent_must_match")
+        raise HTTPException(
+            status_code=400,
+            detail="agent_canary_release_and_percent_must_match",
+        )
     if canary_release is not None and canary_release.id == release.id:
         raise HTTPException(status_code=400, detail="agent_canary_release_must_differ")
     _assert_release_tenant(db, release, tenant_key)
@@ -327,7 +392,10 @@ def activate_deployment(
     language = _optional_scope(language, 24)
     case_type = _optional_scope(case_type, 80)
     scope_key = canonical_scope_key(
-        market_id=market_id, channel=channel, language=language, case_type=case_type
+        market_id=market_id,
+        channel=channel,
+        language=language,
+        case_type=case_type,
     )
     row = (
         db.query(AgentDeployment)
@@ -362,9 +430,13 @@ def activate_deployment(
 
 def resolve_agent_release(
     db: Session,
-    *, tenant_key: str, environment: str = "production",
-    market_id: int | None = None, channel: str | None = None,
-    language: str | None = None, case_type: str | None = None,
+    *,
+    tenant_key: str,
+    environment: str = "production",
+    market_id: int | None = None,
+    channel: str | None = None,
+    language: str | None = None,
+    case_type: str | None = None,
     cohort_key: str,
 ) -> ResolvedAgentRelease:
     rows = (
@@ -379,10 +451,16 @@ def resolve_agent_release(
     matches = [
         (rank, row)
         for row in rows
-        if (rank := _deployment_rank(
-            row, market_id=market_id, channel=channel,
-            language=language, case_type=case_type
-        )) >= 0
+        if (
+            rank := _deployment_rank(
+                row,
+                market_id=market_id,
+                channel=channel,
+                language=language,
+                case_type=case_type,
+            )
+        )
+        >= 0
     ]
     if not matches:
         raise AgentDeploymentUnavailable("agent_deployment_not_found")
@@ -440,19 +518,31 @@ def resolve_agent_release(
         "manifest": _json_object(release.manifest_json),
         "resolved": resolved_components,
     }
-    return ResolvedAgentRelease(deployment, release, snapshot, manifest_digest(snapshot))
+    return ResolvedAgentRelease(
+        deployment,
+        release,
+        snapshot,
+        manifest_digest(snapshot),
+    )
 
 
 def record_run_snapshot(
     db: Session,
-    *, request_id: str, session_id: str,
-    tenant_key: str, resolved: ResolvedAgentRelease,
+    *,
+    request_id: str,
+    session_id: str,
+    tenant_key: str,
+    resolved: ResolvedAgentRelease,
 ) -> AgentRunSnapshot:
     request_id = str(request_id or "").strip()[:160]
     session_id = str(session_id or "").strip()[:160]
     if not request_id or not session_id:
         raise RuntimeError("agent_run_snapshot_identity_required")
-    existing = db.query(AgentRunSnapshot).filter(AgentRunSnapshot.request_id == request_id).one_or_none()
+    existing = (
+        db.query(AgentRunSnapshot)
+        .filter(AgentRunSnapshot.request_id == request_id)
+        .one_or_none()
+    )
     if existing is not None:
         if existing.snapshot_sha256 != resolved.digest:
             raise RuntimeError("agent_run_snapshot_idempotency_conflict")
@@ -473,11 +563,20 @@ def record_run_snapshot(
 
 
 def manifest_digest(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _assert_release_tenant(db: Session, release: AgentRelease, tenant_key: str) -> None:
+def _assert_release_tenant(
+    db: Session,
+    release: AgentRelease,
+    tenant_key: str,
+) -> None:
     definition = db.get(AgentDefinition, release.definition_id)
     if definition is None or definition.tenant_key != tenant_key:
         raise HTTPException(status_code=403, detail="cross_tenant_agent_release_forbidden")
@@ -485,8 +584,11 @@ def _assert_release_tenant(db: Session, release: AgentRelease, tenant_key: str) 
 
 def _deployment_rank(
     row: AgentDeployment,
-    *, market_id: int | None, channel: str | None,
-    language: str | None, case_type: str | None,
+    *,
+    market_id: int | None,
+    channel: str | None,
+    language: str | None,
+    case_type: str | None,
 ) -> int:
     rank = 0
     for expected, actual, weight in (
@@ -510,8 +612,16 @@ def _cohort_percent(value: str) -> int:
 
 def _version_reference(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise HTTPException(status_code=400, detail=f"agent_release_{label}_reference_invalid")
-    key = value.get("resource_key") or value.get("profile_key") or value.get("item_key") or value.get("key")
+        raise HTTPException(
+            status_code=400,
+            detail=f"agent_release_{label}_reference_invalid",
+        )
+    key = (
+        value.get("resource_key")
+        or value.get("profile_key")
+        or value.get("item_key")
+        or value.get("key")
+    )
     key = _required_key(key, f"{label}_key")
     version = _positive_int(value.get("version"), f"{label}_version")
     return {"key": key, "version": version}
@@ -560,7 +670,10 @@ def _bounded_metadata(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, dict):
         if len(value) > 200:
             raise HTTPException(status_code=400, detail="agent_release_payload_too_wide")
-        return {str(key)[:160]: _bounded_metadata(item, depth=depth + 1) for key, item in value.items()}
+        return {
+            str(key)[:160]: _bounded_metadata(item, depth=depth + 1)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         if len(value) > 300:
             raise HTTPException(status_code=400, detail="agent_release_payload_too_large")
