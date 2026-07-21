@@ -34,9 +34,6 @@ EVENT_TYPES = frozenset(
         "run_completed",
         "session_checkpoint_loaded",
         "session_checkpoint_saved",
-        "specialist_started",
-        "specialist_completed",
-        "specialist_failed",
     }
 )
 
@@ -94,18 +91,8 @@ _EVENT_FIELDS: dict[str, frozenset[str]] = {
     "session_checkpoint_saved": frozenset(
         {"checkpoint_id", "checkpoint_version", "estimated_tokens", "release_id"}
     ),
-    "specialist_started": frozenset({"specialist", "round_index"}),
-    "specialist_completed": frozenset(
-        {"specialist", "round_index", "elapsed_ms", "evidence_count"}
-    ),
-    "specialist_failed": frozenset(
-        {"specialist", "round_index", "elapsed_ms", "error_code"}
-    ),
 }
 
-# Top-level event fields are already closed by _EVENT_FIELDS. Nested payloads use
-# exact/suffix blocking so safe metrics such as prompt_chars and reply_chars are
-# retained while actual content-bearing fields remain impossible to persist.
 _FORBIDDEN_EXACT_KEYS = frozenset(
     {
         "prompt",
