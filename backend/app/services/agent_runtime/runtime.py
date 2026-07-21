@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ...db import SessionLocal
 from ..agent_control_config import RUNTIME_POLICY, resolve_singleton_agent_config
+from ..agent_release_service import record_run_snapshot, resolve_agent_release
 from ..agent_tool_contracts import bootstrap_agent_tool_contracts
 from ..ai_runtime.schemas import RuntimeAIProviderRequest, RuntimeAIProviderResult
 from ..provider_runtime.output_contracts import AGENT_TURN_OUTPUT_CONTRACT
@@ -60,12 +61,17 @@ class AgentRunState:
 
 
 async def run_agent(request: RuntimeAIProviderRequest) -> RuntimeAIProviderResult:
-    """Execute the canonical model → Tool → observation → model loop."""
+    """Execute the one canonical model → Tool → observation → model loop."""
 
     started = time.monotonic()
     db = SessionLocal()
     try:
-        return await run_agent_with_db(db, request=request, started=started)
+        result = await run_agent_with_db(db, request=request, started=started)
+        db.commit()
+        return result
+    except Exception:
+        _safe_rollback(db)
+        raise
     finally:
         db.close()
 
@@ -79,32 +85,94 @@ async def run_agent_with_db(
     started = started if started is not None else time.monotonic()
     metadata = dict(request.metadata or {})
     state = AgentRunState()
-    policy = _runtime_policy(db, request)
-    hard_round_ceiling = _int_env("NEXUS_AGENT_MAX_TOOL_ROUNDS", 6, minimum=1, maximum=6)
+    run_request_id = str(request.request_id or f"agent-{request.session_id}-{time.time_ns()}")[:160]
+
+    try:
+        resolved_release = resolve_agent_release(
+            db,
+            tenant_key=request.tenant_key,
+            environment=str(metadata.get("agent_environment") or "production"),
+            market_id=request.market_id,
+            channel=request.channel_key,
+            language=request.language,
+            case_type=_optional_text(
+                (metadata.get("channel_context") or {}).get("case_type")
+                if isinstance(metadata.get("channel_context"), dict)
+                else None
+            ),
+            cohort_key=request.session_id,
+        )
+        supplied_digest = _optional_text(metadata.get("agent_release_digest"))
+        if supplied_digest and supplied_digest != resolved_release.digest:
+            raise RuntimeError("agent_release_context_mismatch")
+        record_run_snapshot(
+            db,
+            request_id=run_request_id,
+            session_id=request.session_id,
+            tenant_key=request.tenant_key,
+            resolved=resolved_release,
+        )
+        release_snapshot = resolved_release.snapshot
+        metadata["agent_release_snapshot"] = release_snapshot
+        metadata["agent_release_digest"] = resolved_release.digest
+    except Exception as exc:
+        state.elapsed_ms = _elapsed(started)
+        state.traces.append(
+            AgentRoundTrace(
+                round_index=0,
+                next_action=None,
+                error_code=f"agent_release_resolution_failed:{type(exc).__name__}",
+            )
+        )
+        return _fallback_result(
+            request,
+            state=state,
+            error_code="agent_release_resolution_failed",
+            elapsed_ms=state.elapsed_ms,
+        )
+
+    policy = _runtime_policy(db, request, release_snapshot=release_snapshot)
+    hard_round_ceiling = _int_env(
+        "NEXUS_AGENT_MAX_TOOL_ROUNDS", 6, minimum=1, maximum=6
+    )
     max_rounds = min(int(policy.get("max_tool_rounds") or 3), hard_round_ceiling)
     allow_high_risk_writes = bool(policy.get("allow_high_risk_writes")) and _env_bool(
         "NEXUS_AGENT_HIGH_RISK_WRITES_ENABLED", False
     )
+    release_playbooks = prompt_playbook_catalog(
+        db,
+        market_id=request.market_id,
+        channel=request.channel_key,
+        language=request.language,
+        release_snapshot=release_snapshot,
+    )
     available_tools = _available_tools(
         metadata,
         runtime_policy=policy,
+        release_snapshot=release_snapshot,
+        playbooks=release_playbooks,
         allow_high_risk_writes=allow_high_risk_writes,
     )
-    execution_context = _execution_context(request, available_tools=available_tools)
     playbooks = prompt_playbook_catalog(
         db,
         market_id=request.market_id,
         channel=request.channel_key,
         language=request.language,
         available_tools=available_tools,
+        release_snapshot=release_snapshot,
     )
     tools = prompt_tool_catalog(names=sorted(available_tools))
+    execution_context = _execution_context(
+        request,
+        available_tools=available_tools,
+        release_snapshot=release_snapshot,
+    )
     timeout_ms = int(policy.get("provider_timeout_ms") or 15000)
 
     for round_index in range(max_rounds + 1):
         round_metadata = {
             **metadata,
-            "agent_runtime_version": "nexus.agent_runtime.v2",
+            "agent_runtime_version": "nexus.agent_runtime.v3",
             "agent_round": round_index,
             "agent_playbooks": playbooks,
             "agent_tools": tools,
@@ -113,7 +181,9 @@ async def run_agent_with_db(
                 "allow_high_risk_writes": allow_high_risk_writes,
                 "provider_timeout_ms": timeout_ms,
             },
-            "tool_observations": [item.prompt_projection() for item in state.observations],
+            "tool_observations": [
+                item.prompt_projection() for item in state.observations
+            ],
             "customer_language": (
                 request.language
                 or metadata.get("customer_language")
@@ -121,7 +191,7 @@ async def run_agent_with_db(
             ),
         }
         provider_request = ProviderRequest(
-            request_id=_round_request_id(request, round_index),
+            request_id=_round_request_id(run_request_id, round_index),
             tenant_id=request.tenant_key,
             tenant_key=request.tenant_key,
             channel_key=request.channel_key,
@@ -150,6 +220,7 @@ async def run_agent_with_db(
                 state=state,
                 error_code=result.error_code or "provider_unavailable",
                 elapsed_ms=state.elapsed_ms,
+                release_snapshot=release_snapshot,
             )
 
         if not _authoritative_provider_audit_exists(
@@ -171,6 +242,7 @@ async def run_agent_with_db(
                 state=state,
                 error_code="provider_runtime_audit_unavailable",
                 elapsed_ms=state.elapsed_ms,
+                release_snapshot=release_snapshot,
             )
 
         try:
@@ -190,11 +262,14 @@ async def run_agent_with_db(
                 state=state,
                 error_code="invalid_agent_turn",
                 elapsed_ms=state.elapsed_ms,
+                release_snapshot=release_snapshot,
             )
 
         if decision.next_action != "call_tool":
             handoff_committed = _committed_handoff_observed(state)
-            handoff_requested = decision.next_action == "request_handoff" or decision.handoff_required
+            handoff_requested = (
+                decision.next_action == "request_handoff" or decision.handoff_required
+            )
             if handoff_requested and not handoff_committed:
                 state.traces.append(
                     AgentRoundTrace(
@@ -210,6 +285,7 @@ async def run_agent_with_db(
                     state=state,
                     error_code="handoff_tool_side_effect_missing",
                     elapsed_ms=state.elapsed_ms,
+                    release_snapshot=release_snapshot,
                 )
             state.traces.append(
                 AgentRoundTrace(
@@ -231,12 +307,21 @@ async def run_agent_with_db(
                     playbooks=playbooks,
                     tools=tools,
                     policy=policy,
+                    release_snapshot=release_snapshot,
                 ),
                 reply=decision.customer_reply,
                 intent=decision.intent,
                 handoff_required=handoff_committed,
-                handoff_reason=(decision.handoff_reason or "handoff_requested") if handoff_committed else None,
-                recommended_agent_action=("Review the conversation and take over." if handoff_committed else None),
+                handoff_reason=(
+                    decision.handoff_reason or "handoff_requested"
+                    if handoff_committed
+                    else None
+                ),
+                recommended_agent_action=(
+                    "Review the conversation and take over."
+                    if handoff_committed
+                    else None
+                ),
                 tool_calls=list(state.executed_calls),
                 elapsed_ms=state.elapsed_ms,
                 error_code=None,
@@ -259,6 +344,7 @@ async def run_agent_with_db(
                 state=state,
                 error_code="max_tool_rounds_exceeded",
                 elapsed_ms=state.elapsed_ms,
+                release_snapshot=release_snapshot,
             )
 
         try:
@@ -270,7 +356,10 @@ async def run_agent_with_db(
             )
         except Exception:
             _safe_rollback(db)
-            observations = _failed_tool_observations(decision, error_code="tool_execution_failed")
+            observations = _failed_tool_observations(
+                decision,
+                error_code="tool_execution_failed",
+            )
             state.elapsed_ms = _elapsed(started)
             _record_tool_observations(
                 state,
@@ -286,12 +375,16 @@ async def run_agent_with_db(
                 state=state,
                 error_code="tool_execution_failed",
                 elapsed_ms=state.elapsed_ms,
+                release_snapshot=release_snapshot,
             )
         try:
             db.commit()
         except Exception:
             _safe_rollback(db)
-            observations = _failed_tool_observations(decision, error_code="tool_transaction_commit_failed")
+            observations = _failed_tool_observations(
+                decision,
+                error_code="tool_transaction_commit_failed",
+            )
             state.elapsed_ms = _elapsed(started)
             _record_tool_observations(
                 state,
@@ -307,6 +400,7 @@ async def run_agent_with_db(
                 state=state,
                 error_code="tool_transaction_commit_failed",
                 elapsed_ms=state.elapsed_ms,
+                release_snapshot=release_snapshot,
             )
         _record_tool_observations(
             state,
@@ -322,10 +416,19 @@ async def run_agent_with_db(
         state=state,
         error_code="agent_loop_exhausted",
         elapsed_ms=_elapsed(started),
+        release_snapshot=release_snapshot,
     )
 
 
-def _runtime_policy(db: Session, request: RuntimeAIProviderRequest) -> dict[str, Any]:
+def _runtime_policy(
+    db: Session,
+    request: RuntimeAIProviderRequest,
+    *,
+    release_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    released = _released_resource(release_snapshot, RUNTIME_POLICY)
+    if released is not None:
+        return released
     resolved = resolve_singleton_agent_config(
         db,
         config_type=RUNTIME_POLICY,
@@ -344,6 +447,26 @@ def _runtime_policy(db: Session, request: RuntimeAIProviderRequest) -> dict[str,
     return dict(resolved.content)
 
 
+def _released_resource(
+    release_snapshot: dict[str, Any],
+    config_type: str,
+) -> dict[str, Any] | None:
+    if release_snapshot.get("source") != "deployment":
+        return None
+    resolved = release_snapshot.get("resolved")
+    resources = resolved.get("resources") if isinstance(resolved, dict) else None
+    if not isinstance(resources, list):
+        raise RuntimeError("agent_release_resources_invalid")
+    matches = [
+        item.get("content")
+        for item in resources
+        if isinstance(item, dict) and item.get("config_type") == config_type
+    ]
+    if len(matches) != 1 or not isinstance(matches[0], dict):
+        raise RuntimeError(f"agent_release_{config_type}_ambiguous")
+    return dict(matches[0])
+
+
 def _committed_handoff_observed(state: AgentRunState) -> bool:
     return any(
         observation.tool_name == "handoff.request.create"
@@ -353,7 +476,11 @@ def _committed_handoff_observed(state: AgentRunState) -> bool:
     )
 
 
-def _failed_tool_observations(decision: AIDecision, *, error_code: str) -> list[ToolObservation]:
+def _failed_tool_observations(
+    decision: AIDecision,
+    *,
+    error_code: str,
+) -> list[ToolObservation]:
     return [
         ToolObservation(
             tool_name=call.tool_name,
@@ -449,9 +576,14 @@ def _execution_context(
     request: RuntimeAIProviderRequest,
     *,
     available_tools: set[str],
+    release_snapshot: dict[str, Any],
 ) -> AgentExecutionContext:
     metadata = request.metadata if isinstance(request.metadata, dict) else {}
-    execution = metadata.get("agent_execution_context") if isinstance(metadata.get("agent_execution_context"), dict) else {}
+    execution = (
+        metadata.get("agent_execution_context")
+        if isinstance(metadata.get("agent_execution_context"), dict)
+        else {}
+    )
     return AgentExecutionContext(
         tenant_key=request.tenant_key,
         channel_key=request.channel_key,
@@ -468,8 +600,13 @@ def _execution_context(
         allowed_tools=frozenset(available_tools),
         granted_permissions=_string_set(execution.get("granted_permissions")),
         actor_capabilities=_string_set(execution.get("actor_capabilities")),
-        customer_confirmation_granted=bool(execution.get("customer_confirmation_granted") is True),
-        human_confirmation_granted=bool(execution.get("human_confirmation_granted") is True),
+        customer_confirmation_granted=bool(
+            execution.get("customer_confirmation_granted") is True
+        ),
+        human_confirmation_granted=bool(
+            execution.get("human_confirmation_granted") is True
+        ),
+        release_snapshot=release_snapshot,
     )
 
 
@@ -477,16 +614,39 @@ def _available_tools(
     metadata: dict[str, Any],
     *,
     runtime_policy: dict[str, Any],
+    release_snapshot: dict[str, Any],
+    playbooks: list[dict[str, Any]],
     allow_high_risk_writes: bool,
 ) -> set[str]:
     executable = set(executable_tool_names())
     policy_tools = runtime_policy.get("allowed_tools")
     if isinstance(policy_tools, list) and policy_tools:
-        executable &= {str(item).strip() for item in policy_tools if str(item).strip()}
+        executable &= {
+            str(item).strip() for item in policy_tools if str(item).strip()
+        }
     configured = metadata.get("agent_allowed_tools")
     if isinstance(configured, (list, tuple, set)):
-        executable &= {str(item).strip() for item in configured if str(item).strip()}
-    execution = metadata.get("agent_execution_context") if isinstance(metadata.get("agent_execution_context"), dict) else {}
+        executable &= {
+            str(item).strip() for item in configured if str(item).strip()
+        }
+    if release_snapshot.get("source") == "deployment":
+        playbook_tools = {
+            str(name)
+            for playbook in playbooks
+            for name in (playbook.get("tools") or [])
+            if str(name)
+        }
+        executable &= playbook_tools
+        manifest = release_snapshot.get("manifest")
+        if not isinstance(manifest, dict) or not manifest.get("integrations"):
+            executable -= {"integration.read", "integration.write"}
+        if not isinstance(manifest, dict) or not manifest.get("knowledge"):
+            executable.discard("knowledge.search")
+    execution = (
+        metadata.get("agent_execution_context")
+        if isinstance(metadata.get("agent_execution_context"), dict)
+        else {}
+    )
     granted_permissions = _string_set(execution.get("granted_permissions"))
     executable = {
         name
@@ -515,6 +675,7 @@ def _fallback_result(
     state: AgentRunState,
     error_code: str,
     elapsed_ms: int,
+    release_snapshot: dict[str, Any] | None = None,
 ) -> RuntimeAIProviderResult:
     reply = customer_visible_fallback(request.language, request.body)
     return RuntimeAIProviderResult(
@@ -522,7 +683,11 @@ def _fallback_result(
         ai_generated=False,
         reply_source="agent_runtime:fallback",
         raw_provider="agent_runtime",
-        raw_payload_safe_summary=_safe_summary(state, error_code=error_code),
+        raw_payload_safe_summary=_safe_summary(
+            state,
+            error_code=error_code,
+            release_snapshot=release_snapshot,
+        ),
         reply=reply,
         intent="runtime_unavailable",
         handoff_required=False,
@@ -544,18 +709,40 @@ def _safe_summary(
     playbooks: list[dict[str, Any]] | None = None,
     tools: list[dict[str, Any]] | None = None,
     policy: dict[str, Any] | None = None,
+    release_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    release = (
+        release_snapshot.get("release")
+        if isinstance(release_snapshot, dict)
+        and isinstance(release_snapshot.get("release"), dict)
+        else {}
+    )
+    deployment = (
+        release_snapshot.get("deployment")
+        if isinstance(release_snapshot, dict)
+        and isinstance(release_snapshot.get("deployment"), dict)
+        else {}
+    )
     summary: dict[str, Any] = {
         "agent_runtime": True,
-        "agent_runtime_version": "nexus.agent_runtime.v2",
+        "agent_runtime_version": "nexus.agent_runtime.v3",
+        "agent_release_id": release.get("id"),
+        "agent_release_version": release.get("version"),
+        "agent_deployment_id": deployment.get("id"),
+        "agent_release_digest": release.get("manifest_sha256"),
         "round_count": len(state.traces),
         "rounds": [item.as_dict() for item in state.traces[:8]],
         "executed_tools": list(state.executed_calls[:20]),
-        "selected_playbooks": [str(item.get("resource_key") or item.get("name")) for item in (playbooks or [])[:30]],
+        "selected_playbooks": [
+            str(item.get("resource_key") or item.get("name"))
+            for item in (playbooks or [])[:30]
+        ],
         "exposed_tools": [str(item.get("name")) for item in (tools or [])[:50]],
         "runtime_policy": {
             "max_tool_rounds": (policy or {}).get("max_tool_rounds"),
-            "allow_high_risk_writes": bool((policy or {}).get("allow_high_risk_writes")),
+            "allow_high_risk_writes": bool(
+                (policy or {}).get("allow_high_risk_writes")
+            ),
         },
         "elapsed_ms": state.elapsed_ms,
     }
@@ -568,9 +755,8 @@ def _safe_summary(
     return summary
 
 
-def _round_request_id(request: RuntimeAIProviderRequest, round_index: int) -> str:
-    base = str(request.request_id or f"agent-{request.session_id}").strip()[:130]
-    return f"{base}:round:{round_index}"[:160]
+def _round_request_id(base_request_id: str, round_index: int) -> str:
+    return f"{base_request_id[:130]}:round:{round_index}"[:160]
 
 
 def _optional_int(value: Any) -> int | None:
@@ -579,6 +765,11 @@ def _optional_int(value: Any) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _optional_text(value: Any) -> str | None:
+    cleaned = str(value or "").strip().lower()
+    return cleaned or None
 
 
 def _string_set(value: Any) -> frozenset[str]:
