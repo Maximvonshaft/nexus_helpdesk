@@ -15,7 +15,7 @@ NextAction = Literal["reply", "ask_clarifying_question", "call_tool", "request_h
 class AIDecisionToolCall(BaseModel):
     """A model-proposed Tool call. The backend remains execution authority."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     tool_name: str = Field(min_length=1, max_length=160)
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -58,7 +58,7 @@ class AIDecisionToolCall(BaseModel):
 
 
 class AIDecisionEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     source: str = Field(min_length=1, max_length=160)
     evidence_id: str | None = Field(default=None, max_length=240)
@@ -68,7 +68,7 @@ class AIDecisionEvidence(BaseModel):
 class AIDecision(BaseModel):
     """Canonical model turn for direct replies and Tool requests."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     customer_reply: str | None = Field(default=None, max_length=4000)
     intent: str = Field(default="general_support", min_length=1, max_length=80)
