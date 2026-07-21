@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .health import ProviderRuntimeHealth
-from .output_contracts import OutputContracts, AGENT_TURN_OUTPUT_CONTRACT
+from .output_contracts import AGENT_TURN_OUTPUT_CONTRACT, OutputContracts
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
 from .traffic_selection import (
@@ -39,7 +39,15 @@ _CONFIGURATION_ERROR_CODES = frozenset(
     }
 )
 _SAFE_PROVIDER_STRING_KEYS = frozenset(
-    {"provider", "endpoint_path", "request_shape", "model", "prompt_profile", "ollama_keep_alive"}
+    {
+        "provider",
+        "endpoint_path",
+        "request_shape",
+        "model",
+        "prompt_profile",
+        "ollama_keep_alive",
+        "model_profile_key",
+    }
 )
 _SAFE_PROVIDER_SCALAR_KEYS = frozenset(
     {
@@ -51,14 +59,19 @@ _SAFE_PROVIDER_SCALAR_KEYS = frozenset(
         "http_status",
         "retryable_http",
         "contract_repair_applied",
+        "model_profile_version",
+        "agent_release_id",
     }
 )
-_SAFE_PROVIDER_NUMERIC_MAP_KEYS = frozenset({"usage", "runtime_usage", "ollama_options"})
-_SAFE_PROVIDER_TOKEN = re.compile(r"^[A-Za-z0-9_./:+-]{1,120}$")
+_SAFE_PROVIDER_NUMERIC_MAP_KEYS = frozenset(
+    {"usage", "runtime_usage", "ollama_options"}
+)
+_SAFE_PROVIDER_STRUCTURED_KEYS = frozenset({"context_compilation"})
+_SAFE_PROVIDER_TOKEN = re.compile(r"^[A-Za-z0-9_./:+-]{1,160}$")
 
 
 class ProviderRuntimeRouter:
-    """Canonical Provider traffic, health and durable-audit authority."""
+    """Canonical Provider traffic, health, timeout and durable-audit authority."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -91,7 +104,12 @@ class ProviderRuntimeRouter:
                     "session_id": request.session_id,
                     "operation": operation,
                     "status": status,
-                    "safe_summary": json.dumps(safe_summary or {}, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                    "safe_summary": json.dumps(
+                        safe_summary or {},
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
                     "error_code": error_code,
                     "elapsed_ms": elapsed_ms,
                     "now": datetime.now(timezone.utc),
@@ -107,14 +125,17 @@ class ProviderRuntimeRouter:
 
         bootstrap_provider_runtime()
         raw = _load_rule(self.db, request)
-
         try:
             kill_switch = effective_kill_switch(raw["kill_switch"])
         except (TypeError, ValueError) as exc:
             return self._reject_configuration(request, _configuration_error_code(exc))
 
         if kill_switch:
-            traffic = select_provider_traffic(request, canary_percent=raw["canary_percent"], kill_switch=True)
+            traffic = select_provider_traffic(
+                request,
+                canary_percent=raw["canary_percent"],
+                kill_switch=True,
+            )
             summary = _traffic_summary(traffic)
             self._write_audit(
                 request,
@@ -134,6 +155,9 @@ class ProviderRuntimeRouter:
                 canary_percent=config["canary_percent"],
                 kill_switch=False,
             )
+            requested_timeout_ms = _validate_timeout_ms(
+                request.timeout_ms or config["timeout_ms"]
+            )
         except (RuntimeError, TypeError, ValueError) as exc:
             return self._reject_configuration(request, _configuration_error_code(exc))
 
@@ -152,7 +176,10 @@ class ProviderRuntimeRouter:
 
         output_contract = config["output_contract"]
         if not OutputContracts.get_schema(output_contract):
-            summary = _traffic_summary(traffic, {"configuration_error": "provider_runtime_output_contract_invalid"})
+            summary = _traffic_summary(
+                traffic,
+                {"configuration_error": "provider_runtime_output_contract_invalid"},
+            )
             self._write_audit(
                 request,
                 "traffic_select",
@@ -165,8 +192,12 @@ class ProviderRuntimeRouter:
             return _unavailable("provider_runtime_output_contract_invalid", summary)
 
         request.output_contract = output_contract
-        request.timeout_ms = config["timeout_ms"]
-        providers = _dedupe_providers([config["primary_provider"], *config["fallbacks"]])
+        # Routing configuration is the safety ceiling. An immutable Agent Runtime
+        # Policy can tighten this value but can never widen the Provider boundary.
+        request.timeout_ms = min(requested_timeout_ms, config["timeout_ms"])
+        providers = _dedupe_providers(
+            [config["primary_provider"], *config["fallbacks"]]
+        )
         operation = "generate"
         last_elapsed_ms = 0
 
@@ -179,7 +210,10 @@ class ProviderRuntimeRouter:
                     "skipped",
                     provider_name,
                     0,
-                    _traffic_summary(traffic, {"provider_health": health_decision.safe_summary()}),
+                    _traffic_summary(
+                        traffic,
+                        {"provider_health": health_decision.safe_summary()},
+                    ),
                     health_decision.reason or "provider_health_skip",
                 )
                 continue
@@ -206,9 +240,12 @@ class ProviderRuntimeRouter:
                     {
                         **_bounded_provider_summary(result.raw_payload_safe_summary),
                         "provider_error_category": error_code,
+                        "effective_timeout_ms": request.timeout_ms,
                     },
                 )
-                health_event = ProviderRuntimeHealth.record_failure(provider_name, error_code)
+                health_event = ProviderRuntimeHealth.record_failure(
+                    provider_name, error_code
+                )
                 if health_event:
                     safe_summary["provider_health"] = health_event
                 result.error_code = error_code
@@ -234,8 +271,16 @@ class ProviderRuntimeRouter:
                     json.dumps(result.structured_output, ensure_ascii=False),
                 )
             except Exception:
-                safe_summary = _traffic_summary(traffic, {"parse_error": "provider_output_rejected"})
-                health_event = ProviderRuntimeHealth.record_failure(provider_name, "provider_output_invalid")
+                safe_summary = _traffic_summary(
+                    traffic,
+                    {
+                        "parse_error": "provider_output_rejected",
+                        "effective_timeout_ms": request.timeout_ms,
+                    },
+                )
+                health_event = ProviderRuntimeHealth.record_failure(
+                    provider_name, "provider_output_invalid"
+                )
                 if health_event:
                     safe_summary["provider_health"] = health_event
                 self._write_audit(
@@ -250,7 +295,13 @@ class ProviderRuntimeRouter:
                 continue
 
             result.structured_output = parsed
-            safe_summary = _traffic_summary(traffic, _bounded_provider_summary(result.raw_payload_safe_summary))
+            safe_summary = _traffic_summary(
+                traffic,
+                {
+                    **_bounded_provider_summary(result.raw_payload_safe_summary),
+                    "effective_timeout_ms": request.timeout_ms,
+                },
+            )
             health_event = ProviderRuntimeHealth.record_success(provider_name)
             if health_event:
                 safe_summary["provider_health"] = health_event
@@ -265,7 +316,10 @@ class ProviderRuntimeRouter:
             )
             return result
 
-        summary = _traffic_summary(traffic)
+        summary = _traffic_summary(
+            traffic,
+            {"effective_timeout_ms": request.timeout_ms},
+        )
         self._write_audit(
             request,
             operation,
@@ -275,9 +329,13 @@ class ProviderRuntimeRouter:
             summary,
             "all_providers_failed",
         )
-        return _unavailable("all_providers_failed", summary, elapsed_ms=last_elapsed_ms)
+        return _unavailable(
+            "all_providers_failed", summary, elapsed_ms=last_elapsed_ms
+        )
 
-    def _reject_configuration(self, request: ProviderRequest, reason: str) -> ProviderResult:
+    def _reject_configuration(
+        self, request: ProviderRequest, reason: str
+    ) -> ProviderResult:
         summary = {
             "traffic": {
                 "path": "blocked",
@@ -286,7 +344,15 @@ class ProviderRuntimeRouter:
                 "reason": reason,
             }
         }
-        self._write_audit(request, "traffic_select", "failed", "router", 0, summary, reason)
+        self._write_audit(
+            request,
+            "traffic_select",
+            "failed",
+            "router",
+            0,
+            summary,
+            reason,
+        )
         return _unavailable("provider_runtime_configuration_invalid", summary)
 
 
@@ -302,7 +368,11 @@ def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
               AND enabled = true
             """
         ),
-        {"tenant_id": request.tenant_id, "channel": request.channel_key, "scenario": request.scenario},
+        {
+            "tenant_id": request.tenant_id,
+            "channel": request.channel_key,
+            "scenario": request.scenario,
+        },
     ).mappings().first()
     if rule is None:
         return {
@@ -324,21 +394,35 @@ def _load_rule(db: Session, request: ProviderRequest) -> dict[str, Any]:
 
 
 def _effective_configuration(raw: dict[str, Any]) -> dict[str, Any]:
-    primary_provider = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip() or str(raw["primary_provider"] or "").strip()
+    primary_provider = (
+        os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
+        or str(raw["primary_provider"] or "").strip()
+    )
     if primary_provider not in _APPROVED_PROVIDERS:
         raise ValueError("provider_runtime_primary_provider_invalid")
 
     fallback_value = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS")
-    fallbacks = _coerce_fallbacks(raw["fallback_providers"] if fallback_value is None else fallback_value)
+    fallbacks = _coerce_fallbacks(
+        raw["fallback_providers"]
+        if fallback_value is None
+        else fallback_value
+    )
     if any(provider not in _APPROVED_PROVIDERS for provider in fallbacks):
         raise ValueError("provider_runtime_fallback_provider_invalid")
 
-    output_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip() or str(raw["output_contract"] or "").strip()
+    output_contract = (
+        os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
+        or str(raw["output_contract"] or "").strip()
+    )
     if not output_contract:
         raise ValueError("provider_runtime_output_contract_invalid")
 
     timeout_value = os.getenv("PROVIDER_RUNTIME_TIMEOUT_MS")
-    timeout_ms = _validate_timeout_ms(raw["timeout_ms"] if timeout_value is None else timeout_value.strip())
+    timeout_ms = _validate_timeout_ms(
+        raw["timeout_ms"]
+        if timeout_value is None
+        else timeout_value.strip()
+    )
     return {
         "primary_provider": primary_provider,
         "fallbacks": fallbacks,
@@ -385,7 +469,11 @@ def _dedupe_providers(values: list[str]) -> list[str]:
 
 def _configuration_error_code(exc: Exception) -> str:
     candidate = str(exc).strip()
-    return candidate if candidate in _CONFIGURATION_ERROR_CODES else "provider_runtime_configuration_invalid"
+    return (
+        candidate
+        if candidate in _CONFIGURATION_ERROR_CODES
+        else "provider_runtime_configuration_invalid"
+    )
 
 
 def _bounded_provider_error_code(value: Any) -> str:
@@ -396,9 +484,15 @@ def _bounded_provider_error_code(value: Any) -> str:
         return "provider_http_error"
     if any(marker in candidate for marker in ("network", "url_error", "connection")):
         return "provider_network_error"
-    if any(marker in candidate for marker in ("disabled", "missing", "invalid", "forbidden", "requires")):
+    if any(
+        marker in candidate
+        for marker in ("disabled", "missing", "invalid", "forbidden", "requires")
+    ):
         return "provider_configuration_error"
-    if any(marker in candidate for marker in ("bad", "empty", "contract", "response", "json", "schema")):
+    if any(
+        marker in candidate
+        for marker in ("bad", "empty", "contract", "response", "json", "schema")
+    ):
         return "provider_output_invalid"
     return "provider_call_failed"
 
@@ -419,6 +513,10 @@ def _bounded_provider_summary(raw: Any) -> dict[str, Any]:
             safe[key] = value
     for key in _SAFE_PROVIDER_NUMERIC_MAP_KEYS:
         value = _bounded_numeric_map(raw.get(key))
+        if value:
+            safe[key] = value
+    for key in _SAFE_PROVIDER_STRUCTURED_KEYS:
+        value = _bounded_safe_structure(raw.get(key))
         if value:
             safe[key] = value
     return safe
@@ -445,13 +543,51 @@ def _bounded_numeric_map(value: Any, *, depth: int = 0) -> dict[str, Any]:
     return safe
 
 
-def _traffic_summary(traffic: ProviderTrafficSelection, additional: dict[str, Any] | None = None) -> dict[str, Any]:
+def _bounded_safe_structure(value: Any, *, depth: int = 0) -> Any:
+    if depth > 3:
+        return None
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value[:160]
+    if isinstance(value, list):
+        return [
+            item
+            for raw in value[:32]
+            if (item := _bounded_safe_structure(raw, depth=depth + 1)) is not None
+        ]
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        for raw_key, raw_item in list(value.items())[:48]:
+            key = str(raw_key).strip()[:80]
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", key):
+                continue
+            item = _bounded_safe_structure(raw_item, depth=depth + 1)
+            if item is not None:
+                output[key] = item
+        return output
+    return None
+
+
+def _traffic_summary(
+    traffic: ProviderTrafficSelection,
+    additional: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     summary = dict(additional or {})
     summary["traffic"] = traffic.safe_summary()
     return summary
 
 
-def _unavailable(error_code: str, summary: dict[str, Any], *, elapsed_ms: int = 0) -> ProviderResult:
-    result = ProviderResult.unavailable("router", error_code, elapsed_ms, fallback_allowed=False)
+def _unavailable(
+    error_code: str,
+    summary: dict[str, Any],
+    *,
+    elapsed_ms: int = 0,
+) -> ProviderResult:
+    result = ProviderResult.unavailable(
+        "router", error_code, elapsed_ms, fallback_allowed=False
+    )
     result.raw_payload_safe_summary = summary
     return result
