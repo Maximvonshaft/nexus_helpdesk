@@ -1,6 +1,6 @@
 name: Temporary Agent Schema Order Patch
 
-# One-shot self-deleting workflow. The accepted Head must not contain this file.
+# One-shot self-deleting workflow. Corrected finalizer; accepted Head excludes it.
 on:
   push:
     branches:
