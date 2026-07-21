@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .agent_runtime.service import run_agent
+from .agent_runtime.runtime import run_agent
 from .agent_runtime.terminal_reply import customer_visible_fallback
 from .ai_runtime.schemas import RuntimeAIProviderRequest
 from .customer_language import detect_customer_language
