@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import event, or_, select
+from sqlalchemy.orm import Session, with_loader_criteria
 
-from ..models import Tenant
+from ..models import AIConfigResource, Tenant
 from ..models_agent_control import AgentResourceBinding
+from ..models_control_plane import PersonaProfile
 
 SESSION_ACTOR_KEY = "nexus_authenticated_user"
+SESSION_RESOURCE_SCOPE_KEY = "nexus_agent_resource_tenant"
+_SKIP_SCOPE_OPTION = "nexus_skip_agent_resource_scope"
 PERSONA_RESOURCE = "persona"
 AI_CONFIG_RESOURCE = "ai_config"
 RESOURCE_TYPES = {PERSONA_RESOURCE, AI_CONFIG_RESOURCE}
@@ -16,10 +20,37 @@ RESOURCE_TYPES = {PERSONA_RESOURCE, AI_CONFIG_RESOURCE}
 
 def bind_session_actor(db: Session, actor: Any) -> None:
     db.info[SESSION_ACTOR_KEY] = actor
+    tenant_id = getattr(actor, "tenant_id", None)
+    if tenant_id is None:
+        db.info.pop(SESSION_RESOURCE_SCOPE_KEY, None)
+        return
+    tenant = db.get(
+        Tenant,
+        int(tenant_id),
+        execution_options={_SKIP_SCOPE_OPTION: True},
+    )
+    if tenant is None or not tenant.is_active:
+        raise HTTPException(status_code=403, detail="authenticated_tenant_unavailable")
+    set_session_resource_scope(db, tenant.tenant_key)
+
+
+def set_session_resource_scope(db: Session, tenant_key: str | None) -> None:
+    cleaned = str(tenant_key or "").strip().lower()
+    if not cleaned:
+        db.info.pop(SESSION_RESOURCE_SCOPE_KEY, None)
+        return
+    if len(cleaned) > 80:
+        raise HTTPException(status_code=400, detail="tenant_key_invalid")
+    db.info[SESSION_RESOURCE_SCOPE_KEY] = cleaned
 
 
 def session_actor(db: Session) -> Any | None:
     return db.info.get(SESSION_ACTOR_KEY)
+
+
+def session_resource_scope(db: Session) -> str | None:
+    value = db.info.get(SESSION_RESOURCE_SCOPE_KEY)
+    return str(value).strip().lower() if value else None
 
 
 def actor_tenant_key(
@@ -34,10 +65,19 @@ def actor_tenant_key(
     tenant_id = getattr(actor, "tenant_id", None)
     if tenant_id is None:
         return platform_default
-    tenant = db.get(Tenant, int(tenant_id))
+    scoped = session_resource_scope(db)
+    if scoped:
+        return scoped
+    tenant = db.get(
+        Tenant,
+        int(tenant_id),
+        execution_options={_SKIP_SCOPE_OPTION: True},
+    )
     if tenant is None or not tenant.is_active:
         raise HTTPException(status_code=403, detail="authenticated_tenant_unavailable")
-    return str(tenant.tenant_key).strip().lower()
+    key = str(tenant.tenant_key).strip().lower()
+    set_session_resource_scope(db, key)
+    return key
 
 
 def bind_resource(
@@ -94,14 +134,15 @@ def visible_resource_ids(
     actor: Any | None = None,
     include_global_templates: bool = True,
 ) -> set[int] | None:
-    """Return None for unrestricted platform actors, otherwise exact IDs."""
+    """Return exact IDs, or None only for an unscoped platform actor."""
 
     actor = actor or session_actor(db)
     if actor is None:
         return set()
-    if getattr(actor, "tenant_id", None) is None:
+    tenant_key = session_resource_scope(db)
+    if getattr(actor, "tenant_id", None) is None and tenant_key is None:
         return None
-    tenant_key = actor_tenant_key(db, actor)
+    tenant_key = tenant_key or actor_tenant_key(db, actor)
     query = db.query(AgentResourceBinding.resource_id).filter(
         AgentResourceBinding.resource_type == resource_type
     )
@@ -140,7 +181,11 @@ def ensure_resource_visible(
     actor: Any | None = None,
 ) -> AgentResourceBinding | None:
     actor = actor or session_actor(db)
-    if actor is not None and getattr(actor, "tenant_id", None) is None:
+    if (
+        actor is not None
+        and getattr(actor, "tenant_id", None) is None
+        and session_resource_scope(db) is None
+    ):
         return resource_binding(db, resource_type=resource_type, resource_id=resource_id)
     allowed = visible_resource_ids(
         db,
@@ -161,7 +206,11 @@ def ensure_resource_manageable(
     actor: Any | None = None,
 ) -> AgentResourceBinding | None:
     actor = actor or session_actor(db)
-    if actor is not None and getattr(actor, "tenant_id", None) is None:
+    if (
+        actor is not None
+        and getattr(actor, "tenant_id", None) is None
+        and session_resource_scope(db) is None
+    ):
         return resource_binding(db, resource_type=resource_type, resource_id=resource_id)
     allowed = manageable_resource_ids(db, resource_type=resource_type, actor=actor)
     if int(resource_id) not in (allowed or set()):
@@ -197,11 +246,15 @@ def resource_access_projection(
 ) -> dict[str, Any]:
     binding = resource_binding(db, resource_type=resource_type, resource_id=resource_id)
     actor = actor or session_actor(db)
-    platform = actor is not None and getattr(actor, "tenant_id", None) is None
-    manageable = platform
-    if binding is not None and actor is not None and not platform:
+    platform_unscoped = (
+        actor is not None
+        and getattr(actor, "tenant_id", None) is None
+        and session_resource_scope(db) is None
+    )
+    manageable = platform_unscoped
+    if binding is not None and actor is not None and not platform_unscoped:
         manageable = (
-            binding.tenant_key == actor_tenant_key(db, actor)
+            binding.tenant_key == (session_resource_scope(db) or actor_tenant_key(db, actor))
             and not binding.is_global_template
         )
     return {
@@ -209,3 +262,40 @@ def resource_access_projection(
         "is_global_template": bool(binding.is_global_template) if binding else False,
         "can_manage": bool(manageable),
     }
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _apply_agent_resource_scope(execute_state) -> None:  # noqa: ANN001
+    if not execute_state.is_select:
+        return
+    if execute_state.execution_options.get(_SKIP_SCOPE_OPTION):
+        return
+    tenant_key = session_resource_scope(execute_state.session)
+    if not tenant_key:
+        return
+    persona_ids = select(AgentResourceBinding.resource_id).where(
+        AgentResourceBinding.resource_type == PERSONA_RESOURCE,
+        or_(
+            AgentResourceBinding.tenant_key == tenant_key,
+            AgentResourceBinding.is_global_template.is_(True),
+        ),
+    )
+    config_ids = select(AgentResourceBinding.resource_id).where(
+        AgentResourceBinding.resource_type == AI_CONFIG_RESOURCE,
+        or_(
+            AgentResourceBinding.tenant_key == tenant_key,
+            AgentResourceBinding.is_global_template.is_(True),
+        ),
+    )
+    execute_state.statement = execute_state.statement.options(
+        with_loader_criteria(
+            PersonaProfile,
+            PersonaProfile.id.in_(persona_ids),
+            include_aliases=True,
+        ),
+        with_loader_criteria(
+            AIConfigResource,
+            AIConfigResource.id.in_(config_ids),
+            include_aliases=True,
+        ),
+    )
