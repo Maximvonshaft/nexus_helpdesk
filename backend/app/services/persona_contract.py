@@ -54,8 +54,12 @@ class PersonaContent(BaseModel):
 
 
 def validate_persona_content(value: Any) -> dict[str, Any]:
+    # Empty drafts are valid authoring objects but must remain structurally empty
+    # so publish/review guards can distinguish them from meaningful Persona data.
+    if value in (None, {}):
+        return {}
     try:
-        parsed = PersonaContent.model_validate(value or {})
+        parsed = PersonaContent.model_validate(value)
     except Exception as exc:
         raise HTTPException(
             status_code=400,
