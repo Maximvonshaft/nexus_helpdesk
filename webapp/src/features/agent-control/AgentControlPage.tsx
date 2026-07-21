@@ -18,11 +18,16 @@ import { PersonaPanel } from './PersonaPanel'
 import { PlaybookPanel } from './PlaybookPanel'
 import { ToolsIntegrationsPanel } from './ToolsIntegrationsPanel'
 import { RuntimePanel } from './RuntimePanel'
-import { MemoryPanel } from './MemoryPanel'
 
-type AgentControlTab = 'overview' | 'persona' | 'knowledge' | 'playbooks' | 'tools' | 'runtime' | 'memory'
+export type AgentControlTab = 'overview' | 'persona' | 'knowledge' | 'playbooks' | 'tools' | 'runtime'
 
-export function AgentControlPage({ canManage, knowledgePage }: { canManage: boolean; knowledgePage: ReactNode }) {
+export function AgentControlPage({
+  canManage,
+  knowledgePage,
+}: {
+  canManage: boolean
+  knowledgePage: ReactNode
+}) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
   const [tenantKey, setTenantKey] = useState('default')
   const [channel, setChannel] = useState('webchat')
@@ -34,7 +39,7 @@ export function AgentControlPage({ canManage, knowledgePage }: { canManage: bool
     retry: false,
   })
 
-  useEffect(() => { document.title = 'Agent 配置 · Nexus OSR' }, [])
+  useEffect(() => { document.title = 'Agent 控制面 · Nexus OSR' }, [])
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
@@ -42,10 +47,10 @@ export function AgentControlPage({ canManage, knowledgePage }: { canManage: bool
         <Box>
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             <PsychologyRoundedIcon color="primary" aria-hidden="true" />
-            <Typography component="h1" variant="h1">Agent 配置</Typography>
+            <Typography component="h1" variant="h1">Agent 控制面</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            统一管理人格、知识、业务剧本、工具与集成、模型运行和客户记忆。所有发布内容进入同一 Agent Runtime。
+            统一管理 Agent 定义、不可变发布、渠道部署、人格、知识、业务剧本、工具、模型与运行策略。生产运行只消费已部署的 Agent Release。
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -55,30 +60,28 @@ export function AgentControlPage({ canManage, knowledgePage }: { canManage: bool
       </Stack>
 
       <Paper variant="outlined" sx={{ mt: 2.5, overflow: 'hidden' }}>
-        <Tabs value={tab} onChange={(_, next: AgentControlTab) => setTab(next)} variant="scrollable" scrollButtons="auto" aria-label="Agent 配置分类">
-          <Tab value="overview" label="总览与测试" />
+        <Tabs value={tab} onChange={(_, next: AgentControlTab) => setTab(next)} variant="scrollable" scrollButtons="auto" aria-label="Agent 控制面分类">
+          <Tab value="overview" label="定义、发布与测试" />
           <Tab value="persona" label="人格" />
           <Tab value="knowledge" label="知识" />
           <Tab value="playbooks" label="业务剧本" />
           <Tab value="tools" label="工具与集成" />
           <Tab value="runtime" label="模型与运行" />
-          <Tab value="memory" label="记忆" />
         </Tabs>
       </Paper>
 
       {snapshot.isError ? (
-        <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取 Agent 配置" error={snapshot.error} fallback="请检查控制面服务" /></Box>
+        <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取 Agent 控制面" error={snapshot.error} fallback="请检查控制面服务" /></Box>
       ) : snapshot.isLoading || !snapshot.data ? (
         <Stack sx={{ minHeight: 320, alignItems: 'center', justifyContent: 'center' }}><CircularProgress /></Stack>
       ) : (
         <Box sx={{ mt: 2 }}>
-          {tab === 'overview' ? <OverviewPanel snapshot={snapshot.data} tenantKey={tenantKey} setTenantKey={setTenantKey} channel={channel} setChannel={setChannel} language={language} setLanguage={setLanguage} /> : null}
+          {tab === 'overview' ? <OverviewPanel snapshot={snapshot.data} tenantKey={tenantKey} setTenantKey={setTenantKey} channel={channel} setChannel={setChannel} language={language} setLanguage={setLanguage} canManage={canManage} /> : null}
           {tab === 'persona' ? <PersonaPanel snapshot={snapshot.data} canManage={canManage} /> : null}
           {tab === 'knowledge' ? knowledgePage : null}
           {tab === 'playbooks' ? <PlaybookPanel snapshot={snapshot.data} canManage={canManage} /> : null}
           {tab === 'tools' ? <ToolsIntegrationsPanel snapshot={snapshot.data} canManage={canManage} tenantKey={tenantKey} /> : null}
           {tab === 'runtime' ? <RuntimePanel snapshot={snapshot.data} canManage={canManage} /> : null}
-          {tab === 'memory' ? <MemoryPanel snapshot={snapshot.data} canManage={canManage} tenantKey={tenantKey} /> : null}
         </Box>
       )}
     </Box>
