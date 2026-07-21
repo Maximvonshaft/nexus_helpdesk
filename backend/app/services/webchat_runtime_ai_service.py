@@ -66,6 +66,11 @@ async def generate_webchat_runtime_reply(
         return result
 
     language_decision = detect_customer_language(body, explicit=language)
+    metadata = dict(runtime_context or {})
+    # Keep scope available both inside the sanitized channel context and at the
+    # Provider boundary so model-profile resolution never needs a compatibility
+    # branch or heuristic lookup.
+    metadata["market_id"] = market_id
     provider_result = await run_agent(
         RuntimeAIProviderRequest(
             tenant_key=tenant_key,
@@ -76,7 +81,7 @@ async def generate_webchat_runtime_reply(
             request_id=request_id,
             market_id=market_id,
             language=language_decision.language,
-            metadata=runtime_context or {},
+            metadata=metadata,
         )
     )
     safe_summary = provider_result.raw_payload_safe_summary or {}
