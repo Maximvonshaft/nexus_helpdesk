@@ -15,6 +15,12 @@ _SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE),
 )
+_SPECIALIST_IDENTIFIER_PATTERNS = (
+    re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
+    re.compile(r"(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)"),
+    re.compile(r"\b[A-Z]{1,4}\d{8,}[A-Z0-9]*\b", re.IGNORECASE),
+    re.compile(r"\b[A-Z0-9]{14,}\b", re.IGNORECASE),
+)
 _INTERNAL_MARKERS = (
     "<think",
     "hidden reasoning",
@@ -59,6 +65,7 @@ class OutputContracts:
                 ensure_ascii=False,
             )
             OutputContracts.check_internal_evidence_security(rendered)
+            OutputContracts.check_specialist_identifier_security(result)
             return result.model_dump(exclude_none=True)
         raise ValueError("Unsupported output contract")
 
@@ -82,3 +89,14 @@ class OutputContracts:
             raise ValueError("Specialist output contains hidden reasoning content")
         if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
             raise ValueError("Potential secret leakage detected")
+
+    @staticmethod
+    def check_specialist_identifier_security(result: SpecialistResult) -> None:
+        narrative = [result.summary, result.recommended_action or ""]
+        narrative.extend(result.risks)
+        narrative.extend(finding.claim for finding in result.findings)
+        text = "\n".join(narrative)
+        if any(pattern.search(text) for pattern in _SPECIALIST_IDENTIFIER_PATTERNS):
+            raise ValueError(
+                "Specialist output contains a customer or operational identifier"
+            )
