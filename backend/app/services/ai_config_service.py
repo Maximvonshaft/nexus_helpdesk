@@ -7,19 +7,16 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models import AIConfigResource, AIConfigVersion
+from .agent_control_config import (
+    CANONICAL_AGENT_CONFIG_TYPES,
+    SINGLETON_TYPES,
+    validate_agent_config_content,
+)
+from .agent_tool_contracts import bootstrap_agent_tool_contracts
 
+bootstrap_agent_tool_contracts()
 
-VALID_CONFIG_TYPES = {
-    "persona",
-    "knowledge",
-    "sop",
-    "policy",
-    "rule",
-    "rules",
-    "status_dictionary",
-    "channel_policy",
-    "support_runtime",
-}
+VALID_CONFIG_TYPES = set(CANONICAL_AGENT_CONFIG_TYPES)
 VALID_SCOPE_TYPES = {"global", "market", "team", "channel", "case_type"}
 
 
@@ -35,18 +32,23 @@ def validate_config_shape(config_type: str, scope_type: str) -> None:
 
 
 def list_admin_resources(db: Session, *, config_type: Optional[str] = None):
-    query = db.query(AIConfigResource)
+    query = db.query(AIConfigResource).filter(AIConfigResource.config_type.in_(VALID_CONFIG_TYPES))
     if config_type:
+        if config_type not in VALID_CONFIG_TYPES:
+            return []
         query = query.filter(AIConfigResource.config_type == config_type)
     return query.order_by(AIConfigResource.config_type.asc(), AIConfigResource.name.asc()).all()
 
 
 def list_published_resources(db: Session, *, config_type: Optional[str] = None, market_id: Optional[int] = None):
     query = db.query(AIConfigResource).filter(
+        AIConfigResource.config_type.in_(VALID_CONFIG_TYPES),
         AIConfigResource.is_active.is_(True),
         AIConfigResource.published_version > 0,
     )
     if config_type:
+        if config_type not in VALID_CONFIG_TYPES:
+            return []
         query = query.filter(AIConfigResource.config_type == config_type)
     if market_id is not None:
         query = query.filter(or_(AIConfigResource.market_id.is_(None), AIConfigResource.market_id == market_id))
@@ -56,19 +58,27 @@ def list_published_resources(db: Session, *, config_type: Optional[str] = None, 
 def create_resource(db: Session, payload, actor):
     key = normalize_resource_key(payload.resource_key)
     validate_config_shape(payload.config_type, payload.scope_type)
+    content = validate_agent_config_content(payload.config_type, payload.draft_content_json or {})
     if db.query(AIConfigResource).filter(AIConfigResource.resource_key == key).first():
         raise HTTPException(status_code=409, detail="resource_key already exists")
-    row = AIConfigResource(
-        resource_key=key,
+    _ensure_singleton_scope_available(
+        db,
         config_type=payload.config_type,
-        name=payload.name,
-        description=payload.description,
         scope_type=payload.scope_type,
         scope_value=payload.scope_value,
         market_id=payload.market_id,
+    )
+    row = AIConfigResource(
+        resource_key=key,
+        config_type=payload.config_type,
+        name=payload.name.strip(),
+        description=payload.description,
+        scope_type=payload.scope_type,
+        scope_value=_scope_value(payload.scope_value),
+        market_id=payload.market_id,
         is_active=payload.is_active,
         draft_summary=payload.draft_summary,
-        draft_content_json=payload.draft_content_json or {},
+        draft_content_json=content,
         created_by=getattr(actor, "id", None),
         updated_by=getattr(actor, "id", None),
     )
@@ -78,6 +88,8 @@ def create_resource(db: Session, payload, actor):
 
 
 def update_resource(db: Session, row: AIConfigResource, payload, actor):
+    if row.config_type not in VALID_CONFIG_TYPES:
+        raise HTTPException(status_code=409, detail="legacy_ai_config_is_retired")
     values = payload.model_dump(exclude_unset=True)
     if "resource_key" in values and values["resource_key"] is not None:
         values["resource_key"] = normalize_resource_key(values["resource_key"])
@@ -87,7 +99,25 @@ def update_resource(db: Session, row: AIConfigResource, payload, actor):
         ).first()
         if existing:
             raise HTTPException(status_code=409, detail="resource_key already exists")
-    validate_config_shape(values.get("config_type", row.config_type), values.get("scope_type", row.scope_type))
+    next_type = values.get("config_type", row.config_type)
+    next_scope_type = values.get("scope_type", row.scope_type)
+    next_scope_value = _scope_value(values.get("scope_value", row.scope_value))
+    next_market_id = values.get("market_id", row.market_id)
+    validate_config_shape(next_type, next_scope_type)
+    if next_type != row.config_type:
+        raise HTTPException(status_code=400, detail="config_type_is_immutable")
+    _ensure_singleton_scope_available(
+        db,
+        config_type=next_type,
+        scope_type=next_scope_type,
+        scope_value=next_scope_value,
+        market_id=next_market_id,
+        exclude_id=row.id,
+    )
+    if "draft_content_json" in values:
+        values["draft_content_json"] = validate_agent_config_content(next_type, values["draft_content_json"] or {})
+    if "scope_value" in values:
+        values["scope_value"] = next_scope_value
     for key, value in values.items():
         setattr(row, key, value)
     row.updated_by = getattr(actor, "id", None)
@@ -96,9 +126,9 @@ def update_resource(db: Session, row: AIConfigResource, payload, actor):
 
 
 def publish_resource(db: Session, row: AIConfigResource, actor, *, notes: Optional[str] = None):
-    snapshot = row.draft_content_json or {}
-    if not isinstance(snapshot, dict) or not snapshot:
-        raise HTTPException(status_code=400, detail="Draft content is empty")
+    if row.config_type not in VALID_CONFIG_TYPES:
+        raise HTTPException(status_code=409, detail="legacy_ai_config_is_retired")
+    snapshot = validate_agent_config_content(row.config_type, row.draft_content_json or {})
     new_version = (row.published_version or 0) + 1
     version_row = AIConfigVersion(
         resource_id=row.id,
@@ -108,6 +138,7 @@ def publish_resource(db: Session, row: AIConfigResource, actor, *, notes: Option
         notes=notes,
         published_by=getattr(actor, "id", None),
     )
+    row.draft_content_json = snapshot
     row.published_content_json = snapshot
     row.published_summary = row.draft_summary
     row.published_version = new_version
@@ -124,10 +155,42 @@ def list_versions(db: Session, resource_id: int):
 
 
 def rollback_resource(db: Session, row: AIConfigResource, version: int, actor, *, notes: Optional[str] = None):
+    if row.config_type not in VALID_CONFIG_TYPES:
+        raise HTTPException(status_code=409, detail="legacy_ai_config_is_retired")
     target = db.query(AIConfigVersion).filter(AIConfigVersion.resource_id == row.id, AIConfigVersion.version == version).first()
     if not target:
         raise HTTPException(status_code=404, detail="AI config version not found")
-    row.draft_content_json = target.snapshot_json
+    row.draft_content_json = validate_agent_config_content(row.config_type, target.snapshot_json or {})
     row.draft_summary = target.summary
-    rollback_notes = notes or f"Rollback to v{version}"
-    return publish_resource(db, row, actor, notes=rollback_notes)
+    return publish_resource(db, row, actor, notes=notes or f"Rollback to v{version}")
+
+
+def _ensure_singleton_scope_available(
+    db: Session,
+    *,
+    config_type: str,
+    scope_type: str,
+    scope_value: str | None,
+    market_id: int | None,
+    exclude_id: int | None = None,
+) -> None:
+    if config_type not in SINGLETON_TYPES:
+        return
+    query = db.query(AIConfigResource).filter(
+        AIConfigResource.config_type == config_type,
+        AIConfigResource.scope_type == scope_type,
+        AIConfigResource.market_id.is_(None) if market_id is None else AIConfigResource.market_id == market_id,
+    )
+    if scope_value is None:
+        query = query.filter(AIConfigResource.scope_value.is_(None))
+    else:
+        query = query.filter(AIConfigResource.scope_value == scope_value)
+    if exclude_id is not None:
+        query = query.filter(AIConfigResource.id != exclude_id)
+    if query.first() is not None:
+        raise HTTPException(status_code=409, detail="singleton_agent_config_scope_conflict")
+
+
+def _scope_value(value: str | None) -> str | None:
+    cleaned = " ".join(str(value or "").strip().split())
+    return cleaned[:160] if cleaned else None
