@@ -1,19 +1,27 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import AIConfigResource, Customer
+from ..models import AIConfigResource, Customer, Tenant
+from ..models_agent_control import AgentDefinition, AgentDeployment, AgentRelease, AgentRunSnapshot
 from ..models_osr import ToolExecutionPolicyRecord
 from ..services import persona_service
-from ..services.agent_control_config import (
-    CANONICAL_AGENT_CONFIG_TYPES,
-    safe_resource_payload,
+from ..services.agent_control_config import CANONICAL_AGENT_CONFIG_TYPES, safe_resource_payload
+from ..services.agent_release_service import (
+    RELEASE_SCHEMA,
+    activate_deployment,
+    authoritative_tenant_key,
+    canonical_scope_key,
+    create_release,
+    resolve_agent_release,
+    validate_release_manifest,
 )
 from ..services.agent_runtime.playbook_registry import prompt_playbook_catalog
 from ..services.agent_runtime.runtime import run_agent_with_db
@@ -21,19 +29,10 @@ from ..services.agent_runtime.tool_adapter import executable_tool_names
 from ..services.agent_tool_contracts import bootstrap_agent_tool_contracts
 from ..services.ai_runtime.schemas import RuntimeAIProviderRequest
 from ..services.ai_runtime_context import build_agent_context
-from ..services.customer_memory_service import (
-    deactivate_customer_memory,
-    forget_customer_memory,
-    list_customer_memory,
-    resolve_memory_policy,
-    upsert_customer_memory,
-)
-from ..services.integration_runtime import (
-    execute_integration_operation,
-    list_integration_catalog,
-)
+from ..services.integration_runtime import execute_integration_operation, list_integration_catalog
 from ..services.permissions import (
     ensure_can_manage_ai_configs,
+    ensure_can_manage_runtime,
     ensure_can_read_ai_configs,
 )
 from ..services.webchat_ai_decision_runtime.tool_registry import (
@@ -45,14 +44,58 @@ from .deps import get_current_user
 
 bootstrap_agent_tool_contracts()
 router = APIRouter(prefix="/api/agent-control", tags=["agent-control"])
+_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,119}$")
 
 
-class PlaygroundRequest(BaseModel):
-    tenant_key: str = Field(default="default", min_length=1, max_length=80)
-    body: str = Field(min_length=1, max_length=4000)
+class AgentDefinitionCreate(BaseModel):
+    tenant_key: str | None = Field(default=None, max_length=80)
+    definition_key: str = Field(min_length=2, max_length=120)
+    name: str = Field(min_length=1, max_length=160)
+    purpose: str | None = Field(default=None, max_length=4000)
+    owner_team_id: int | None = None
+    draft_manifest: dict[str, Any]
+
+    @field_validator("definition_key")
+    @classmethod
+    def validate_definition_key(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if not _KEY_RE.fullmatch(cleaned):
+            raise ValueError("definition_key_invalid")
+        return cleaned
+
+
+class AgentDefinitionUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    purpose: str | None = Field(default=None, max_length=4000)
+    owner_team_id: int | None = None
+    is_active: bool | None = None
+    draft_manifest: dict[str, Any] | None = None
+
+
+class AgentDeploymentRequest(BaseModel):
+    tenant_key: str | None = Field(default=None, max_length=80)
+    environment: str = Field(default="production", max_length=24)
+    release_id: int = Field(gt=0)
+    canary_release_id: int | None = Field(default=None, gt=0)
+    canary_percent: int = Field(default=0, ge=0, le=100)
+    market_id: int | None = None
+    channel: str | None = Field(default=None, max_length=40)
+    language: str | None = Field(default=None, max_length=24)
+    case_type: str | None = Field(default=None, max_length=80)
+
+
+class AgentResolveRequest(BaseModel):
+    tenant_key: str | None = Field(default=None, max_length=80)
+    environment: str = Field(default="production", max_length=24)
     market_id: int | None = None
     channel: str = Field(default="webchat", min_length=1, max_length=40)
     language: str | None = Field(default=None, max_length=24)
+    case_type: str | None = Field(default=None, max_length=80)
+    cohort_key: str = Field(default="preview", min_length=1, max_length=160)
+
+
+class PlaygroundRequest(AgentResolveRequest):
+    body: str = Field(min_length=1, max_length=4000)
     customer_id: int | None = None
     execute_model: bool = False
 
@@ -66,34 +109,55 @@ class IntegrationTestRequest(BaseModel):
     language: str | None = Field(default=None, max_length=24)
 
 
-class CustomerMemoryUpsertRequest(BaseModel):
-    tenant_key: str = Field(default="default", min_length=1, max_length=80)
-    memory_key: str = Field(min_length=1, max_length=120)
-    value_text: str = Field(min_length=1, max_length=2000)
-    consent_basis: str | None = Field(default=None, max_length=80)
-    source_type: str = Field(default="operator", max_length=40)
-    source_reference: str | None = Field(default=None, max_length=200)
-    confidence: float = Field(default=1.0, ge=0, le=1)
-    sensitivity: str = Field(default="standard", max_length=20)
-    market_id: int | None = None
-    channel: str | None = Field(default=None, max_length=40)
-    language: str | None = Field(default=None, max_length=24)
-
-
-class ForgetMemoryRequest(BaseModel):
-    tenant_key: str = Field(default="default", min_length=1, max_length=80)
-
-
 @router.get("/snapshot")
 def agent_control_snapshot(
-    tenant_key: str = Query(default="default", min_length=1, max_length=80),
+    tenant_key: str | None = Query(default=None, max_length=80),
+    environment: str = "production",
     market_id: int | None = None,
     channel: str = "webchat",
     language: str | None = None,
+    case_type: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=tenant_key,
+        allow_platform_default=True,
+    )
+    definitions = (
+        db.query(AgentDefinition)
+        .filter(AgentDefinition.tenant_key == tenant)
+        .order_by(AgentDefinition.name.asc(), AgentDefinition.id.asc())
+        .all()
+    )
+    definition_ids = [row.id for row in definitions]
+    releases = (
+        db.query(AgentRelease)
+        .filter(AgentRelease.definition_id.in_(definition_ids))
+        .order_by(AgentRelease.definition_id.asc(), AgentRelease.version.desc())
+        .all()
+        if definition_ids
+        else []
+    )
+    deployments = (
+        db.query(AgentDeployment)
+        .filter(AgentDeployment.tenant_key == tenant)
+        .order_by(AgentDeployment.environment.asc(), AgentDeployment.scope_key.asc())
+        .all()
+    )
+    resolved = resolve_agent_release(
+        db,
+        tenant_key=tenant,
+        environment=environment,
+        market_id=market_id,
+        channel=channel,
+        language=language,
+        case_type=case_type,
+        cohort_key="control-plane-snapshot",
+    )
     resources = (
         db.query(AIConfigResource)
         .filter(AIConfigResource.config_type.in_(CANONICAL_AGENT_CONFIG_TYPES))
@@ -124,40 +188,32 @@ def agent_control_snapshot(
         {**item, "executable": str(item.get("name")) in executable}
         for item in safe_registry_summary()
     ]
-    playbooks = prompt_playbook_catalog(
-        db,
-        market_id=market_id,
-        channel=channel,
-        language=language,
-        available_tools=executable,
-    )
     return {
         "generated_at": time.time(),
-        "tenant_key": tenant_key,
-        "scope": {"market_id": market_id, "channel": channel, "language": language},
-        "personas": [
-            {
-                "id": row.id,
-                "profile_key": row.profile_key,
-                "name": row.name,
-                "description": row.description,
-                "market_id": row.market_id,
-                "channel": row.channel,
-                "language": row.language,
-                "is_active": row.is_active,
-                "draft_summary": row.draft_summary,
-                "draft_content_json": row.draft_content_json or {},
-                "published_summary": row.published_summary,
-                "published_content_json": row.published_content_json or {},
-                "published_version": row.published_version,
-                "published_at": row.published_at,
-                "updated_at": row.updated_at,
-            }
-            for row in profiles
-        ],
+        "tenant_key": tenant,
+        "scope": {
+            "environment": environment,
+            "market_id": market_id,
+            "channel": channel,
+            "language": language,
+            "case_type": case_type,
+        },
+        "definitions": [_definition_payload(row) for row in definitions],
+        "releases": [_release_payload(row) for row in releases],
+        "deployments": [_deployment_payload(row) for row in deployments],
+        "resolved_agent": resolved.snapshot,
+        "resolved_agent_digest": resolved.digest,
+        "personas": [_persona_payload(row) for row in profiles],
         "persona_total": profile_total,
         "resources": [safe_resource_payload(row) for row in resources],
-        "resolved_playbooks": playbooks,
+        "resolved_playbooks": prompt_playbook_catalog(
+            db,
+            market_id=market_id,
+            channel=channel,
+            language=language,
+            available_tools=executable,
+            release_snapshot=resolved.snapshot,
+        ),
         "tools": tools,
         "tool_policies": [_tool_policy(row) for row in policies],
         "integrations": list_integration_catalog(
@@ -165,18 +221,173 @@ def agent_control_snapshot(
             market_id=market_id,
             channel=channel,
             language=language,
-        ),
-        "memory_policy": resolve_memory_policy(
-            db,
-            market_id=market_id,
-            channel=channel,
-            language=language,
+            release_snapshot=resolved.snapshot,
         ),
         "capabilities": {
             "can_manage": _can_manage(current_user, db),
+            "can_deploy": _can_deploy(current_user, db),
             "playground_model_execution": _can_manage(current_user, db),
         },
     }
+
+
+@router.post("/definitions")
+def create_agent_definition(
+    payload: AgentDefinitionCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=payload.tenant_key,
+        allow_platform_default=True,
+    )
+    normalized, _evidence = validate_release_manifest(db, payload.draft_manifest)
+    if (
+        db.query(AgentDefinition)
+        .filter(
+            AgentDefinition.tenant_key == tenant,
+            AgentDefinition.definition_key == payload.definition_key,
+        )
+        .first()
+        is not None
+    ):
+        raise HTTPException(status_code=409, detail="agent_definition_key_exists")
+    with managed_session(db):
+        row = AgentDefinition(
+            tenant_key=tenant,
+            definition_key=payload.definition_key,
+            name=payload.name.strip(),
+            purpose=_clean(payload.purpose),
+            owner_team_id=payload.owner_team_id,
+            is_active=True,
+            draft_manifest_json=normalized,
+            created_by=current_user.id,
+            updated_by=current_user.id,
+        )
+        db.add(row)
+        db.flush()
+    db.refresh(row)
+    return _definition_payload(row)
+
+
+@router.put("/definitions/{definition_id}")
+def update_agent_definition(
+    definition_id: int,
+    payload: AgentDefinitionUpdate,
+    tenant_key: str | None = Query(default=None, max_length=80),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=tenant_key,
+        allow_platform_default=True,
+    )
+    row = _definition_or_404(db, definition_id, tenant)
+    values = payload.model_dump(exclude_unset=True)
+    if "draft_manifest" in values:
+        normalized, _evidence = validate_release_manifest(db, values.pop("draft_manifest"))
+        values["draft_manifest_json"] = normalized
+    if "name" in values:
+        values["name"] = str(values["name"]).strip()
+    if "purpose" in values:
+        values["purpose"] = _clean(values["purpose"])
+    with managed_session(db):
+        for key, value in values.items():
+            setattr(row, key, value)
+        row.updated_by = current_user.id
+        db.flush()
+    db.refresh(row)
+    return _definition_payload(row)
+
+
+@router.post("/definitions/{definition_id}/releases")
+def release_agent_definition(
+    definition_id: int,
+    tenant_key: str | None = Query(default=None, max_length=80),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=tenant_key,
+        allow_platform_default=True,
+    )
+    definition = _definition_or_404(db, definition_id, tenant)
+    with managed_session(db):
+        release = create_release(db, definition=definition, actor_id=current_user.id)
+    db.refresh(release)
+    return _release_payload(release)
+
+
+@router.put("/deployments")
+def deploy_agent_release(
+    payload: AgentDeploymentRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_runtime(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=payload.tenant_key,
+        allow_platform_default=True,
+    )
+    release = db.get(AgentRelease, payload.release_id)
+    if release is None:
+        raise HTTPException(status_code=404, detail="agent_release_not_found")
+    canary = db.get(AgentRelease, payload.canary_release_id) if payload.canary_release_id else None
+    if payload.canary_release_id and canary is None:
+        raise HTTPException(status_code=404, detail="agent_canary_release_not_found")
+    with managed_session(db):
+        deployment = activate_deployment(
+            db,
+            tenant_key=tenant,
+            environment=payload.environment,
+            release=release,
+            canary_release=canary,
+            canary_percent=payload.canary_percent,
+            actor_id=current_user.id,
+            market_id=payload.market_id,
+            channel=payload.channel,
+            language=payload.language,
+            case_type=payload.case_type,
+        )
+    db.refresh(deployment)
+    return _deployment_payload(deployment)
+
+
+@router.post("/resolve")
+def resolve_agent_configuration(
+    payload: AgentResolveRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=payload.tenant_key,
+        allow_platform_default=True,
+    )
+    resolved = resolve_agent_release(
+        db,
+        tenant_key=tenant,
+        environment=payload.environment,
+        market_id=payload.market_id,
+        channel=payload.channel,
+        language=payload.language,
+        case_type=payload.case_type,
+        cohort_key=payload.cohort_key,
+    )
+    return {"digest": resolved.digest, "snapshot": resolved.snapshot}
 
 
 @router.post("/playground")
@@ -186,17 +397,30 @@ async def agent_playground(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=payload.tenant_key,
+        allow_platform_default=True,
+    )
     customer = db.get(Customer, payload.customer_id) if payload.customer_id else None
     if payload.customer_id and customer is None:
         raise HTTPException(status_code=404, detail="customer_not_found")
+    _ensure_customer_tenant(db, customer, tenant)
+    request_id = f"playground-{current_user.id}-{time.time_ns()}"
+    session_id = f"playground:{current_user.id}"
     context = build_agent_context(
         db,
-        tenant_key=payload.tenant_key,
+        tenant_key=tenant,
         channel_key=payload.channel,
         body=payload.body,
         market_id=payload.market_id,
         language=payload.language,
         customer=customer,
+        request_id=request_id,
+        session_id=session_id,
+        environment=payload.environment,
+        case_type=payload.case_type,
     )
     read_tools = _read_only_tools()
     playbooks = prompt_playbook_catalog(
@@ -205,10 +429,12 @@ async def agent_playground(
         channel=payload.channel,
         language=payload.language,
         available_tools=read_tools,
+        release_snapshot=context.get("agent_release_snapshot"),
     )
     preview = {
+        "agent_release": context.get("agent_release_snapshot"),
+        "agent_release_digest": context.get("agent_release_digest"),
         "persona": context.get("persona_context"),
-        "customer_memory": context.get("customer_memory"),
         "active_bulletins": context.get("active_bulletins"),
         "playbooks": playbooks,
         "tools": [
@@ -219,6 +445,7 @@ async def agent_playground(
         "model_executed": False,
     }
     if not payload.execute_model:
+        db.rollback()
         return preview
     ensure_can_manage_ai_configs(current_user, db)
     execution_context = dict(context.get("agent_execution_context") or {})
@@ -247,17 +474,18 @@ async def agent_playground(
     result = await run_agent_with_db(
         db,
         request=RuntimeAIProviderRequest(
-            tenant_key=payload.tenant_key,
+            tenant_key=tenant,
             channel_key=payload.channel,
-            session_id=f"playground:{current_user.id}",
+            session_id=session_id,
             body=payload.body,
             recent_context=context.get("recent_conversation") or [],
-            request_id=f"playground-{current_user.id}-{time.time_ns()}",
+            request_id=request_id,
             market_id=payload.market_id,
             language=payload.language,
             metadata=runtime_context,
         ),
     )
+    db.rollback()
     preview.update(
         {
             "model_executed": True,
@@ -286,14 +514,21 @@ def test_integration(
         channel=payload.channel,
         language=payload.language,
     )
-    selected = next((item for item in catalog if item["resource_key"] == payload.integration_key), None)
+    selected = next(
+        (item for item in catalog if item["resource_key"] == payload.integration_key),
+        None,
+    )
     operation = next(
-        (item for item in (selected or {}).get("operations", []) if item.get("key") == payload.operation),
+        (
+            item
+            for item in (selected or {}).get("operations", [])
+            if item.get("key") == payload.operation
+        ),
         None,
     )
     if operation is None:
         raise HTTPException(status_code=404, detail="integration_operation_not_found")
-    expected_write = str(operation.get("method") or "GET").upper() != "GET"
+    expected_write = operation.get("mode") == "write"
     result = execute_integration_operation(
         db,
         integration_key=payload.integration_key,
@@ -308,97 +543,132 @@ def test_integration(
     return result.safe_summary()
 
 
-@router.get("/customers/{customer_id}/memory")
-def get_customer_memory(
-    customer_id: int,
-    tenant_key: str = Query(default="default", min_length=1, max_length=80),
-    include_inactive: bool = False,
+@router.get("/runs")
+def list_agent_run_snapshots(
+    tenant_key: str | None = Query(default=None, max_length=80),
+    limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant = authoritative_tenant_key(
+        db,
+        current_user,
+        requested=tenant_key,
+        allow_platform_default=True,
+    )
+    rows = (
+        db.query(AgentRunSnapshot)
+        .filter(AgentRunSnapshot.tenant_key == tenant)
+        .order_by(AgentRunSnapshot.created_at.desc(), AgentRunSnapshot.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "request_id": row.request_id,
+            "session_id": row.session_id,
+            "deployment_id": row.deployment_id,
+            "release_id": row.release_id,
+            "snapshot_sha256": row.snapshot_sha256,
+            "source": row.source,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+
+
+def _definition_or_404(db: Session, definition_id: int, tenant_key: str) -> AgentDefinition:
+    row = (
+        db.query(AgentDefinition)
+        .filter(
+            AgentDefinition.id == definition_id,
+            AgentDefinition.tenant_key == tenant_key,
+        )
+        .one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="agent_definition_not_found")
+    return row
+
+
+def _ensure_customer_tenant(db: Session, customer: Customer | None, tenant_key: str) -> None:
+    if customer is None:
+        return
+    if tenant_key == "default" and customer.tenant_id is None:
+        return
+    tenant = db.get(Tenant, customer.tenant_id) if customer.tenant_id else None
+    if tenant is None or tenant.tenant_key != tenant_key:
+        raise HTTPException(status_code=403, detail="cross_tenant_customer_forbidden")
+
+
+def _definition_payload(row: AgentDefinition) -> dict[str, Any]:
     return {
-        "customer_id": customer_id,
-        "facts": list_customer_memory(
-            db,
-            tenant_key=tenant_key,
-            customer_id=customer_id,
-            include_inactive=include_inactive,
-        ),
+        "id": row.id,
+        "tenant_key": row.tenant_key,
+        "definition_key": row.definition_key,
+        "name": row.name,
+        "purpose": row.purpose,
+        "owner_team_id": row.owner_team_id,
+        "is_active": row.is_active,
+        "draft_manifest": row.draft_manifest_json,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
     }
 
 
-@router.put("/customers/{customer_id}/memory")
-def put_customer_memory(
-    customer_id: int,
-    payload: CustomerMemoryUpsertRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    ensure_can_manage_ai_configs(current_user, db)
-    with managed_session(db):
-        row = upsert_customer_memory(
-            db,
-            tenant_key=payload.tenant_key,
-            customer_id=customer_id,
-            memory_key=payload.memory_key,
-            value_text=payload.value_text,
-            actor_id=current_user.id,
-            consent_basis=payload.consent_basis,
-            source_type=payload.source_type,
-            source_reference=payload.source_reference,
-            confidence=payload.confidence,
-            sensitivity=payload.sensitivity,
-            market_id=payload.market_id,
-            channel=payload.channel,
-            language=payload.language,
-        )
-    db.refresh(row)
-    return list_customer_memory(
-        db,
-        tenant_key=payload.tenant_key,
-        customer_id=customer_id,
-        include_inactive=True,
-    )
+def _release_payload(row: AgentRelease) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "definition_id": row.definition_id,
+        "version": row.version,
+        "status": row.status,
+        "manifest": row.manifest_json,
+        "manifest_sha256": row.manifest_sha256,
+        "validation": row.validation_json,
+        "created_at": row.created_at,
+        "approved_at": row.approved_at,
+    }
 
 
-@router.delete("/customers/{customer_id}/memory/{memory_id}")
-def delete_customer_memory(
-    customer_id: int,
-    memory_id: int,
-    tenant_key: str = Query(default="default", min_length=1, max_length=80),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    ensure_can_manage_ai_configs(current_user, db)
-    with managed_session(db):
-        row = deactivate_customer_memory(
-            db,
-            tenant_key=tenant_key,
-            customer_id=customer_id,
-            memory_id=memory_id,
-            actor_id=current_user.id,
-        )
-    db.refresh(row)
-    return {"ok": True, "memory_id": row.id, "is_active": row.is_active}
+def _deployment_payload(row: AgentDeployment) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_key": row.tenant_key,
+        "environment": row.environment,
+        "scope_key": row.scope_key,
+        "market_id": row.market_id,
+        "channel": row.channel,
+        "language": row.language,
+        "case_type": row.case_type,
+        "active_release_id": row.active_release_id,
+        "canary_release_id": row.canary_release_id,
+        "canary_percent": row.canary_percent,
+        "is_active": row.is_active,
+        "activated_at": row.activated_at,
+        "updated_at": row.updated_at,
+    }
 
 
-@router.post("/customers/{customer_id}/memory/forget")
-def forget_customer(
-    customer_id: int,
-    payload: ForgetMemoryRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    ensure_can_manage_ai_configs(current_user, db)
-    with managed_session(db):
-        deleted = forget_customer_memory(
-            db,
-            tenant_key=payload.tenant_key,
-            customer_id=customer_id,
-            actor_id=current_user.id,
-        )
-    return {"ok": True, "customer_id": customer_id, "deleted": deleted}
+def _persona_payload(row) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "profile_key": row.profile_key,
+        "name": row.name,
+        "description": row.description,
+        "market_id": row.market_id,
+        "channel": row.channel,
+        "language": row.language,
+        "is_active": row.is_active,
+        "draft_summary": row.draft_summary,
+        "draft_content_json": row.draft_content_json or {},
+        "published_summary": row.published_summary,
+        "published_content_json": row.published_content_json or {},
+        "published_version": row.published_version,
+        "published_at": row.published_at,
+        "updated_at": row.updated_at,
+    }
 
 
 def _read_only_tools() -> set[str]:
@@ -435,3 +705,16 @@ def _can_manage(current_user, db: Session) -> bool:
     except HTTPException:
         return False
     return True
+
+
+def _can_deploy(current_user, db: Session) -> bool:
+    try:
+        ensure_can_manage_runtime(current_user, db)
+    except HTTPException:
+        return False
+    return True
+
+
+def _clean(value: Any) -> str | None:
+    cleaned = " ".join(str(value or "").split())
+    return cleaned or None
