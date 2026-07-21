@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from app.services import agent_tool_handlers
 from app.services.agent_integration_service import execute_integration_operation
+from app.services.agent_runtime.execution_scope import bind_agent_release_snapshot
 from app.services.agent_runtime.runtime import _available_tools
 from app.services.agent_tool_contracts import bootstrap_agent_tool_contracts
 from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_contract
@@ -140,15 +141,16 @@ def test_progressive_search_reads_only_the_release_catalog(monkeypatch) -> None:
         ticket=None,
         customer=None,
     )
-    result = handlers["integration.search"](
-        _request(
-            {
-                "keywords": ["crm", "case"],
-                "mode": "read",
-                "limit": 5,
-            }
+    with bind_agent_release_snapshot(_release_snapshot()):
+        result = handlers["integration.search"](
+            _request(
+                {
+                    "keywords": ["crm", "case"],
+                    "mode": "read",
+                    "limit": 5,
+                }
+            )
         )
-    )
     assert result.ok is True
     assert result.status == "executed"
     assert result.summary["count"] == 1
