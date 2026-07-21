@@ -82,6 +82,7 @@ FORBIDDEN_RUNTIME_CONTENT = (
     "_permissions_for_tools",
     '"assistant_name": "Speedy"',
     '"brand": "Speedaf"',
+    "handoff_required=decision.handoff_required",
 )
 FORBIDDEN_TOOL_GOVERNANCE_CONTENT = (
     "OSRToolExecutionFacade",

@@ -397,3 +397,127 @@ def test_provider_runtime_has_no_non_authoritative_shadow_execution() -> None:
     assert '"shadow"' not in traffic.split("_VALID_MODES", 1)[1].split("}", 1)[0]
     assert "provider_shadow_only" not in router
     assert "shadow_candidate_executed" not in router
+
+
+
+@pytest.mark.asyncio
+async def test_model_only_handoff_final_fails_closed(monkeypatch) -> None:
+    async def route(_self, _request):
+        return ProviderResult(
+            ok=True,
+            provider="private_ai_runtime",
+            raw_provider="private_ai_runtime",
+            reply_source="private_ai_runtime",
+            elapsed_ms=3,
+            structured_output={
+                "customer_reply": "I will connect you to a human.",
+                "intent": "human_handoff",
+                "next_action": "request_handoff",
+                "handoff_required": True,
+                "handoff_reason": "customer_requested_human",
+                "tool_calls": [],
+            },
+            raw_payload_safe_summary={"model": "test"},
+        )
+
+    monkeypatch.setattr(agent_service.ProviderRuntimeRouter, "route", route)
+    monkeypatch.setattr(
+        agent_service,
+        "_authoritative_provider_audit_exists",
+        lambda *_args, **_kwargs: True,
+    )
+    result = await agent_service._run_agent_with_db(
+        _Db(),
+        request=RuntimeAIProviderRequest(
+            tenant_key="tenant",
+            channel_key="website",
+            session_id="session",
+            body="I need a human.",
+            request_id="request-handoff-without-tool",
+            metadata={},
+        ),
+        started=0.0,
+    )
+
+    assert result.ai_generated is False
+    assert result.handoff_required is False
+    assert result.error_code == "handoff_tool_side_effect_missing"
+    assert result.reply
+
+
+@pytest.mark.asyncio
+async def test_committed_handoff_observation_is_terminal_authority(monkeypatch) -> None:
+    outputs = [
+        {
+            "customer_reply": None,
+            "intent": "human_handoff",
+            "next_action": "call_tool",
+            "handoff_required": False,
+            "tool_calls": [
+                {
+                    "tool_name": "handoff.request.create",
+                    "arguments": {"reason": "customer_requested_human"},
+                }
+            ],
+        },
+        {
+            "customer_reply": "A human support handoff has been requested.",
+            "intent": "human_handoff",
+            "next_action": "request_handoff",
+            "handoff_required": True,
+            "handoff_reason": "customer_requested_human",
+            "tool_calls": [],
+        },
+    ]
+
+    async def route(_self, _request):
+        return ProviderResult(
+            ok=True,
+            provider="private_ai_runtime",
+            raw_provider="private_ai_runtime",
+            reply_source="private_ai_runtime",
+            elapsed_ms=3,
+            structured_output=outputs.pop(0),
+            raw_payload_safe_summary={"model": "test"},
+        )
+
+    def execute(_db, *, calls, context, allow_high_risk_writes=False):
+        del calls, context, allow_high_risk_writes
+        return [
+            ToolObservation(
+                tool_name="handoff.request.create",
+                ok=True,
+                status="executed",
+                result={"handoff_request_id": 42},
+            )
+        ]
+
+    monkeypatch.setattr(agent_service.ProviderRuntimeRouter, "route", route)
+    monkeypatch.setattr(
+        agent_service,
+        "_authoritative_provider_audit_exists",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(agent_service, "execute_agent_tool_calls", execute)
+    result = await agent_service._run_agent_with_db(
+        _Db(),
+        request=RuntimeAIProviderRequest(
+            tenant_key="tenant",
+            channel_key="website",
+            session_id="session",
+            body="I need a human.",
+            request_id="request-handoff-with-tool",
+            metadata={
+                "agent_allowed_tools": ["handoff.request.create"],
+                "agent_execution_context": {
+                    "granted_permissions": ["webchat:handoff:create"]
+                },
+            },
+        ),
+        started=0.0,
+    )
+
+    assert result.ok is True
+    assert result.ai_generated is True
+    assert result.handoff_required is True
+    assert result.error_code is None

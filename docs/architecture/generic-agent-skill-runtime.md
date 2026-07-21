@@ -71,3 +71,5 @@ A new Agent capability adds a Skill definition and, when required, a Tool contra
 ## Terminal reply authority
 
 `agent_runtime/terminal_reply.py` is the only deterministic customer-visible fallback authority. Provider failure, Tool failure, output-policy rejection, missing Tool side effects, and disabled Runtime all converge on this reply before message persistence. Ticket-backed and ticketless adapters may differ in persistence mechanics, but neither may return an accepted customer message as `failed_no_public_reply` merely because Agent output was unusable. Superseded turns and active human takeover remain intentionally suppressed because a newer turn or human operator owns the customer response.
+
+A final handoff claim is authoritative only when a committed `handoff.request.create` Tool Observation exists; model-only handoff flags fail closed to the terminal fallback.

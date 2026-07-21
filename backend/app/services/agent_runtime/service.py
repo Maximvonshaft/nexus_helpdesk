@@ -176,6 +176,27 @@ async def _run_agent_with_db(
             )
 
         if decision.next_action != "call_tool":
+            handoff_committed = _committed_handoff_observed(state)
+            handoff_requested = (
+                decision.next_action == "request_handoff"
+                or decision.handoff_required
+            )
+            if handoff_requested and not handoff_committed:
+                state.traces.append(
+                    AgentRoundTrace(
+                        round_index=round_index,
+                        next_action=decision.next_action,
+                        provider=result.provider,
+                        elapsed_ms=result.elapsed_ms,
+                        error_code="handoff_tool_side_effect_missing",
+                    )
+                )
+                return _fallback_result(
+                    request,
+                    state=state,
+                    error_code="handoff_tool_side_effect_missing",
+                    elapsed_ms=state.elapsed_ms,
+                )
             state.traces.append(
                 AgentRoundTrace(
                     round_index=round_index,
@@ -196,11 +217,15 @@ async def _run_agent_with_db(
                 ),
                 reply=decision.customer_reply,
                 intent=decision.intent,
-                handoff_required=decision.handoff_required,
-                handoff_reason=decision.handoff_reason,
+                handoff_required=handoff_committed,
+                handoff_reason=(
+                    decision.handoff_reason or "handoff_requested"
+                    if handoff_committed
+                    else None
+                ),
                 recommended_agent_action=(
                     "Review the conversation and take over."
-                    if decision.handoff_required
+                    if handoff_committed
                     else None
                 ),
                 tool_calls=list(state.executed_calls),
@@ -298,6 +323,17 @@ async def _run_agent_with_db(
         elapsed_ms=_elapsed(started),
     )
 
+
+
+def _committed_handoff_observed(state: AgentRunState) -> bool:
+    """Derive handoff truth only from a committed canonical Tool Observation."""
+
+    return any(
+        observation.tool_name == "handoff.request.create"
+        and observation.ok
+        and observation.status in {"executed", "duplicate"}
+        for observation in state.observations
+    )
 
 def _failed_tool_observations(
     decision: AIDecision,
