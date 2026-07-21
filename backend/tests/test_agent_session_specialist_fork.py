@@ -45,7 +45,7 @@ def test_specialist_delegate_is_one_canonical_read_only_tool_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_specialist_runtime_uses_canonical_provider_router(monkeypatch) -> None:
+async def test_specialist_runtime_uses_router_and_redacts_identifiers(monkeypatch) -> None:
     captured = {}
 
     async def route(_self, request):
@@ -86,15 +86,25 @@ async def test_specialist_runtime_uses_canonical_provider_router(monkeypatch) ->
         session_id="session-a",
         request_id="specialist-request",
         specialist="case_summarizer",
-        task="Summarize only the supplied evidence.",
+        task=(
+            "Summarize CH020000129135 for customer@example.com and "
+            "+382 67 123 456 using supplied evidence."
+        ),
         evidence_refs=["agent_run_event:12"],
     )
 
     assert result.ok is True
     assert result.evidence["specialist"] == "case_summarizer"
-    assert captured["request"].scenario == "agent_specialist"
-    assert captured["request"].output_contract == "nexus.agent_specialist.v1"
-    assert captured["request"].metadata["agent_release_snapshot"]["release"]["id"] == 7
+    request = captured["request"]
+    assert request.scenario == "agent_specialist"
+    assert request.output_contract == "nexus.agent_specialist.v1"
+    assert request.metadata["agent_release_snapshot"]["release"]["id"] == 7
+    assert "customer@example.com" not in request.body
+    assert "+382 67 123 456" not in request.body
+    assert "CH020000129135" not in request.body
+    assert "[redacted_email]" in request.body
+    assert "[redacted_phone]" in request.body
+    assert "tracking ending 129135" in request.body
 
 
 def test_tool_worker_owns_a_fresh_sqlalchemy_session(monkeypatch, tmp_path) -> None:
@@ -138,10 +148,11 @@ def test_tool_worker_owns_a_fresh_sqlalchemy_session(monkeypatch, tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_exact_snapshot_fork_is_read_only_parent_linked_and_requests_canonical_specialist(
+async def test_exact_release_fork_is_read_only_parent_linked_and_requests_specialist(
     monkeypatch,
 ) -> None:
     bootstrap_agent_tool_contracts()
+    release_manifest_sha = "c" * 64
     parent = SimpleNamespace(
         id=10,
         request_id="parent-request",
@@ -150,7 +161,7 @@ async def test_exact_snapshot_fork_is_read_only_parent_linked_and_requests_canon
         trace_id="a" * 64,
         deployment_id=2,
         release_id=3,
-        release_digest="c" * 64,
+        release_digest=release_manifest_sha,
         parent_run_id=None,
         fork_kind=None,
         status="succeeded",
@@ -162,10 +173,33 @@ async def test_exact_snapshot_fork_is_read_only_parent_linked_and_requests_canon
     )
     snapshot = SimpleNamespace(
         id=7,
+        release_id=3,
         snapshot_sha256="d" * 64,
+        snapshot_json={
+            "release": {
+                "id": 3,
+                "version": 2,
+                "manifest_sha256": release_manifest_sha,
+            }
+        },
         source="deployment",
         created_at=None,
     )
+    resolved_snapshot = {
+        "source": "deployment",
+        "release": {
+            "id": 3,
+            "version": 2,
+            "manifest_sha256": release_manifest_sha,
+        },
+        "resolved": {
+            "allowed_tools": [
+                "knowledge.search",
+                "specialist.delegate",
+                "integration.write",
+            ]
+        },
+    }
     monkeypatch.setattr(operations, "ensure_capability", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         operations,
@@ -182,7 +216,8 @@ async def test_exact_snapshot_fork_is_read_only_parent_linked_and_requests_canon
         operations,
         "build_agent_context",
         lambda *_args, **_kwargs: {
-            "agent_release_digest": "d" * 64,
+            "agent_release_digest": "e" * 64,
+            "agent_release_snapshot": resolved_snapshot,
             "agent_execution_context": {},
             "channel_context": {},
         },
@@ -225,25 +260,26 @@ async def test_exact_snapshot_fork_is_read_only_parent_linked_and_requests_canon
     request = captured["request"]
     assert result["agent_run_id"] == 11
     assert result["requested_specialists"] == ["case_summarizer"]
+    assert result["exact_release_id"] == 3
+    assert result["exact_release_manifest_sha256"] == release_manifest_sha
     assert request.metadata["agent_parent_run_id"] == 10
     assert request.metadata["agent_fork_kind"] == "replay"
-    assert request.metadata["agent_release_digest"] == "d" * 64
+    assert request.metadata["agent_release_digest"] == "e" * 64
     assert request.metadata["channel_context"]["requested_specialists"] == [
         "case_summarizer"
     ]
     assert request.metadata["channel_context"]["specialist_delegation_tool"] == (
         "specialist.delegate"
     )
-    assert all(
-        get_tool_contract(name) is not None
-        and get_tool_contract(name).is_read_tool
-        for name in request.metadata["agent_allowed_tools"]
-    )
+    assert request.metadata["agent_allowed_tools"] == [
+        "knowledge.search",
+        "specialist.delegate",
+    ]
     assert "integration.write" not in request.metadata["agent_allowed_tools"]
 
 
 @pytest.mark.asyncio
-async def test_fork_rejects_any_release_snapshot_mismatch(monkeypatch) -> None:
+async def test_fork_rejects_any_release_identity_mismatch(monkeypatch) -> None:
     parent = SimpleNamespace(
         id=10,
         request_id="parent-request",
@@ -262,7 +298,18 @@ async def test_fork_rejects_any_release_snapshot_mismatch(monkeypatch) -> None:
         started_at=None,
         completed_at=None,
     )
-    snapshot = SimpleNamespace(id=7, snapshot_sha256="d" * 64)
+    snapshot = SimpleNamespace(
+        id=7,
+        release_id=3,
+        snapshot_sha256="d" * 64,
+        snapshot_json={
+            "release": {
+                "id": 3,
+                "version": 2,
+                "manifest_sha256": "c" * 64,
+            }
+        },
+    )
     monkeypatch.setattr(operations, "ensure_capability", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         operations,
@@ -278,7 +325,16 @@ async def test_fork_rejects_any_release_snapshot_mismatch(monkeypatch) -> None:
     monkeypatch.setattr(
         operations,
         "build_agent_context",
-        lambda *_args, **_kwargs: {"agent_release_digest": "e" * 64},
+        lambda *_args, **_kwargs: {
+            "agent_release_digest": "f" * 64,
+            "agent_release_snapshot": {
+                "release": {
+                    "id": 4,
+                    "version": 1,
+                    "manifest_sha256": "e" * 64,
+                }
+            },
+        },
     )
 
     with pytest.raises(HTTPException) as exc:
