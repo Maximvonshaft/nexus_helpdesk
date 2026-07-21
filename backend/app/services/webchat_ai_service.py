@@ -15,6 +15,7 @@ from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .agent_runtime.access_policy import resolve_webchat_agent_access
+from .agent_runtime.terminal_reply import customer_visible_fallback
 from .ai_runtime_context import build_agent_context
 from .ai_reply_contract import AI_REPLY_CONTRACT, build_ai_reply_contract
 from .customer_language import resolve_conversation_language
@@ -105,10 +106,10 @@ def process_webchat_ai_reply_job(
 
     final_body = _sanitize_public_ai_reply(result.reply)
     if not final_body:
-        final_body = _localized_fallback(language, visitor_message.body or "")
+        final_body = customer_visible_fallback(language, visitor_message.body or "")
     policy = evaluate_customer_visible_policy(final_body)
     if not policy.allowed:
-        final_body = _localized_fallback(language, visitor_message.body or "")
+        final_body = customer_visible_fallback(language, visitor_message.body or "")
         policy = evaluate_customer_visible_policy(final_body)
         if not policy.allowed:  # pragma: no cover - static fallback should always pass
             raise RuntimeError("customer_visible_fallback_rejected")
@@ -350,14 +351,6 @@ def _sanitize_public_ai_reply(raw: str | None) -> str:
     if re.search(r"<\s*think\b", text, flags=re.IGNORECASE):
         return ""
     return re.sub(r"</?\s*(?:final|answer|response|assistant)\s*>", "", text, flags=re.IGNORECASE).strip()
-
-
-def _localized_fallback(language: str | None, body: str) -> str:
-    if language == "zh" or any("\u4e00" <= char <= "\u9fff" for char in body):
-        return "抱歉，我暂时无法完成这次处理。请稍后重试，或者告诉我是否需要转人工客服。"
-    if language == "de":
-        return "Entschuldigung, ich konnte diese Anfrage gerade nicht abschließen. Bitte versuchen Sie es erneut oder bitten Sie um menschlichen Support."
-    return "Sorry, I could not complete that request right now. Please try again or ask for human support."
 
 
 def _is_whatsapp_conversation(conversation: WebchatConversation) -> bool:

@@ -45,6 +45,8 @@ TOOL_GOVERNANCE_PATHS = (
 )
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
+    "def _fallback(language:",
+    "def _localized_fallback(",
     "arguments=dict(action.arguments),\n                idempotency_key=None",
     "tracking_missing_number",
     "shipment_status_without_evidence",

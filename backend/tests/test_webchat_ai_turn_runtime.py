@@ -12,6 +12,7 @@ from app.main import app
 from app.models import BackgroundJob, Ticket, User
 from app.models_osr import CaseContextRecord, RuntimeDecisionAuditRecord
 from app.models_webchat_debug import WebchatAIDebugRun, WebchatAITestFinding
+from app.services.agent_runtime.terminal_reply import customer_visible_fallback
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_webchat_ai_reply_jobs
 from app.services.webchat_debug_bundle_service import build_ai_debug_bundle, create_test_finding
 from app.services.webchat_runtime_ai_service import WebchatRuntimeReplyResult
@@ -561,17 +562,24 @@ def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(monkeypa
         turn = db.get(WebchatAITurn, ai_turn_id)
         assert turn is not None
         assert turn.ticket_id is None
-        assert turn.status == "failed"
-        assert turn.status_reason == "handoff_tool_side_effect_missing"
-        assert (
+        assert turn.status == "completed"
+        assert turn.status_reason is None
+        message = (
             db.query(WebchatMessage)
             .filter(
                 WebchatMessage.ai_turn_id == ai_turn_id,
                 WebchatMessage.direction == "agent",
             )
-            .count()
-            == 0
+            .one()
         )
+        assert message.body == customer_visible_fallback(
+            "en",
+            "I need a human to review this",
+        )
+        metadata = json.loads(message.metadata_json or "{}")
+        assert metadata["fallback"] is True
+        assert metadata["fallback_reason"] == "handoff_tool_side_effect_missing"
+        assert metadata["runtime_handoff_required"] is False
         conversation = db.get(WebchatConversation, turn.conversation_id)
         assert conversation is not None
         assert conversation.ticket_id is None

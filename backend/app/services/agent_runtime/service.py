@@ -16,6 +16,7 @@ from ..provider_runtime.schemas import ProviderRequest
 from ..webchat_ai_decision_runtime.schemas import AIDecision
 from ..webchat_ai_decision_runtime.tool_registry import get_tool_contract, prompt_tool_catalog
 from .skill_registry import prompt_skill_catalog
+from .terminal_reply import customer_visible_fallback
 from .tool_adapter import (
     AgentExecutionContext,
     ToolObservation,
@@ -482,7 +483,7 @@ def _fallback_result(
     error_code: str,
     elapsed_ms: int,
 ) -> RuntimeAIProviderResult:
-    reply = _localized_fallback(request.language, request.body)
+    reply = customer_visible_fallback(request.language, request.body)
     return RuntimeAIProviderResult(
         ok=True,
         ai_generated=False,
@@ -502,15 +503,6 @@ def _fallback_result(
         error_code=error_code,
         retry_after_ms=1500,
     )
-
-
-def _localized_fallback(language: str | None, body: str) -> str:
-    hint = str(language or "").strip().lower()
-    if hint == "zh" or any("\u4e00" <= char <= "\u9fff" for char in body):
-        return "抱歉，我暂时无法完成这次处理。请稍后重试，或者告诉我是否需要转人工客服。"
-    if hint == "de":
-        return "Entschuldigung, ich konnte diese Anfrage gerade nicht abschließen. Bitte versuchen Sie es erneut oder bitten Sie um menschlichen Support."
-    return "Sorry, I could not complete that request right now. Please try again or ask for human support."
 
 
 def _safe_summary(

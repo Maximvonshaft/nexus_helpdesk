@@ -16,6 +16,7 @@ from ..webchat_models import (
     WebchatMessage,
 )
 from .agent_runtime.access_policy import resolve_webchat_agent_access
+from .agent_runtime.terminal_reply import customer_visible_fallback
 from .ai_runtime_context import build_agent_context
 from .customer_language import resolve_conversation_language
 from .customer_visible_policy import evaluate_customer_visible_policy
@@ -196,14 +197,27 @@ def process_ticketless_ai_reply(
     safe_runtime_trace = sanitized_ai_turn_runtime_trace(
         result.runtime_trace
     )
+    fallback_reason = result.error_code if not result.ai_generated else None
+    reply_source = result.reply_source or "agent_runtime"
+    handoff_required = bool(result.handoff_required)
     if not result.ok or not result.reply:
-        return {
-            "status": "failed_no_public_reply",
-            "reason": result.error_code or "agent_runtime_no_reply",
-            "reply_source": result.reply_source,
-            "runtime_trace": safe_runtime_trace,
-            "bridge_elapsed_ms": result.elapsed_ms,
-        }
+        fallback_reason = result.error_code or "agent_runtime_no_reply"
+        reply_source = "agent_runtime:fallback"
+        handoff_required = False
+        policy = evaluate_customer_visible_policy(
+            customer_visible_fallback(language, visitor_message.body or "")
+        )
+    else:
+        policy = evaluate_customer_visible_policy(result.reply)
+        if not policy.allowed or not policy.normalized_body.strip():
+            fallback_reason = "customer_visible_policy_blocked"
+            reply_source = "agent_runtime:fallback"
+            handoff_required = False
+            policy = evaluate_customer_visible_policy(
+                customer_visible_fallback(language, visitor_message.body or "")
+            )
+    if not policy.allowed or not policy.normalized_body.strip():
+        raise RuntimeError("customer_visible_fallback_rejected")
 
     if suppress_stale_reply_if_needed(
         db,
@@ -219,25 +233,16 @@ def process_ticketless_ai_reply(
             "bridge_elapsed_ms": result.elapsed_ms,
         }
 
-    policy = evaluate_customer_visible_policy(result.reply)
-    if not policy.allowed or not policy.normalized_body.strip():
-        return {
-            "status": "failed_no_public_reply",
-            "reason": "customer_visible_policy_blocked",
-            "reply_source": result.reply_source,
-            "runtime_trace": safe_runtime_trace,
-            "bridge_elapsed_ms": result.elapsed_ms,
-        }
-
     db.expire(conversation)
-    if result.handoff_required and not conversation.current_handoff_request_id:
-        return {
-            "status": "failed_no_public_reply",
-            "reason": "handoff_tool_side_effect_missing",
-            "reply_source": result.reply_source,
-            "runtime_trace": safe_runtime_trace,
-            "bridge_elapsed_ms": result.elapsed_ms,
-        }
+    if handoff_required and not conversation.current_handoff_request_id:
+        fallback_reason = "handoff_tool_side_effect_missing"
+        reply_source = "agent_runtime:fallback"
+        handoff_required = False
+        policy = evaluate_customer_visible_policy(
+            customer_visible_fallback(language, visitor_message.body or "")
+        )
+        if not policy.allowed or not policy.normalized_body.strip():
+            raise RuntimeError("customer_visible_fallback_rejected")
 
     message = WebchatMessage(
         conversation_id=conversation.id,
@@ -249,18 +254,14 @@ def process_ticketless_ai_reply(
         metadata_json=json.dumps(
             {
                 "generated_by": "agent_runtime",
-                "reply_source": result.reply_source,
+                "reply_source": reply_source,
                 "runtime_trace": safe_runtime_trace,
                 "tool_calls": result.tool_calls or [],
-                "runtime_handoff_required": bool(
-                    result.handoff_required
-                ),
+                "runtime_handoff_required": handoff_required,
                 "language": language,
                 "ticketless_conversation": True,
-                "fallback": not result.ai_generated,
-                "fallback_reason": (
-                    result.error_code if not result.ai_generated else None
-                ),
+                "fallback": bool(fallback_reason) or not result.ai_generated,
+                "fallback_reason": fallback_reason,
             },
             ensure_ascii=False,
             default=str,
@@ -294,11 +295,9 @@ def process_ticketless_ai_reply(
     return {
         "status": "done",
         "message_id": message.id,
-        "reply_source": result.reply_source,
-        "fallback_reason": (
-            result.error_code if not result.ai_generated else None
-        ),
+        "reply_source": reply_source,
+        "fallback_reason": fallback_reason,
         "bridge_elapsed_ms": result.elapsed_ms,
         "runtime_trace": safe_runtime_trace,
-        "runtime_handoff_required": bool(result.handoff_required),
+        "runtime_handoff_required": handoff_required,
     }

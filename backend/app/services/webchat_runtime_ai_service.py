@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .agent_runtime.service import run_agent
+from .agent_runtime.terminal_reply import customer_visible_fallback
 from .ai_runtime.schemas import RuntimeAIProviderRequest
 from .customer_language import detect_customer_language
 from .webchat_runtime_config import get_webchat_runtime_settings
@@ -50,7 +51,7 @@ async def generate_webchat_runtime_reply(
             ok=True,
             ai_generated=False,
             reply_source="agent_runtime:fallback",
-            reply=_fallback(language, body),
+            reply=customer_visible_fallback(language, body),
             intent="runtime_disabled",
             handoff_required=False,
             handoff_reason=None,
@@ -101,12 +102,3 @@ async def generate_webchat_runtime_reply(
         elapsed_ms=result.elapsed_ms,
     )
     return result
-
-
-def _fallback(language: str | None, body: str) -> str:
-    hint = str(language or "").strip().lower()
-    if hint == "zh" or any("\u4e00" <= char <= "\u9fff" for char in body):
-        return "抱歉，我暂时无法完成这次处理。请稍后重试，或者告诉我是否需要转人工客服。"
-    if hint == "de":
-        return "Entschuldigung, ich konnte diese Anfrage gerade nicht abschließen. Bitte versuchen Sie es erneut oder bitten Sie um menschlichen Support."
-    return "Sorry, I could not complete that request right now. Please try again or ask for human support."
