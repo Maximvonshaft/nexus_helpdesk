@@ -45,6 +45,7 @@ TOOL_GOVERNANCE_PATHS = (
 )
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
+    "arguments=dict(action.arguments),\n                idempotency_key=None",
     "tracking_missing_number",
     "shipment_status_without_evidence",
     "_contains_live_shipment_conclusion",

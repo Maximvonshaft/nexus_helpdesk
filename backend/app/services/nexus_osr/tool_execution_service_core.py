@@ -749,6 +749,33 @@ def _availability_customer_summary(summary: dict[str, Any]) -> str:
         f"{queued} conversation(s) waiting."
     )
 
+
+def _raw_policy_tool_calls(
+    raw_calls: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], str, dict[str, Any]]]:
+    """Preserve raw model arguments for Registry schema validation.
+
+    Execution receives bounded arguments through RuntimeToolAction only after
+    malformed or additional properties have been rejected by the canonical
+    Tool Registry JSON Schema.
+    """
+
+    normalized: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+    for raw in raw_calls:
+        data = _tool_call_dict(raw)
+        tool_name = canonical_tool_name(
+            data.get("tool_name") or data.get("name") or data.get("tool")
+        )
+        if not tool_name:
+            continue
+        arguments = (
+            data.get("arguments")
+            if isinstance(data.get("arguments"), dict)
+            else {}
+        )
+        normalized.append((data, tool_name, arguments))
+    return normalized
+
 def _decision_for_policy_gate(
     raw_calls: list[dict[str, Any]],
     actions: list[RuntimeToolAction],
@@ -780,12 +807,12 @@ def _decision_for_policy_gate(
         ),
         tool_calls=[
             AIDecisionToolCall.model_construct(
-                tool_name=action.tool_name,
-                arguments=dict(action.arguments),
+                tool_name=tool_name,
+                arguments=dict(arguments),
                 idempotency_key=None,
-                requires_confirmation=action.requires_confirmation,
+                requires_confirmation=bool(data.get("requires_confirmation")),
             )
-            for action in actions
+            for data, tool_name, arguments in _raw_policy_tool_calls(raw_calls)
         ],
         evidence_used=[],
         safety_notes=[],

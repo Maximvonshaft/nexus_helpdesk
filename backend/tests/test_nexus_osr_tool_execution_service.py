@@ -510,3 +510,38 @@ def test_execution_argument_bounding_stops_nested_payloads():
 
     assert "too deep" not in str(action.arguments)
     assert "[truncated]" in str(action.arguments)
+
+
+
+def test_executor_rejects_raw_additional_properties_before_argument_bounding(
+    db_session,
+):
+    add_policy(db_session, "knowledge.search", risk_level="low")
+    secret = "raw-value-must-never-reach-handler-or-audit"
+
+    result = execute_controlled_tool_calls(
+        db_session,
+        tool_calls=[
+            {
+                "tool_name": "knowledge.search",
+                "arguments": {
+                    "query": "approved policy",
+                    "raw_payload": {"token": secret},
+                },
+            }
+        ],
+        case_context=CaseContext(channel="webchat", country_code="ME"),
+        channel="webchat",
+        country_code="ME",
+        options=GovernedToolExecutionOptions(
+            allowed_tool_names=frozenset({"knowledge.search"}),
+            granted_permissions=frozenset({"knowledge:read"}),
+        ),
+    )[0]
+
+    assert result.ok is False
+    assert result.status == "blocked"
+    assert result.error_code == "tool_input_schema_invalid"
+    assert "additionalProperties" in (result.error_message or "")
+    log = db_session.query(ToolCallLog).one()
+    assert secret not in f"{log.input_summary} {log.output_summary} {log.error_message}"

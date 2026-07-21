@@ -10,7 +10,7 @@ Nexus core is a generic Agent execution scaffold. Business capabilities are adde
 2. Ask the model for one `nexus.agent_turn.v1` object.
 3. A final turn contains a customer reply and no Tool calls.
 4. A Tool turn contains Tool calls and no customer reply.
-5. Validate Tool registration, input schema, availability, permission, confirmation, and write-risk policy.
+5. Validate raw model Tool arguments against registration and JSON Schema, then validate availability, permission, confirmation, and write-risk policy before execution-time bounding.
 6. Execute through the canonical Tool Executor.
 7. Return bounded, redacted Tool observations to the model.
 8. Repeat for a bounded number of rounds.
