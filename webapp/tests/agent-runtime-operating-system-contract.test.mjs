@@ -4,7 +4,7 @@ import test from 'node:test'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
-test('Agent control plane owns MCP Doctor, Run Explorer, Fork and Replay', () => {
+test('Agent control plane owns MCP Doctor, Run Explorer and one Fork workflow', () => {
   const page = read('src/features/agent-control/AgentControlPage.tsx')
   const diagnostics = read('src/features/agent-control/DiagnosticsPanel.tsx')
   const explorer = read('src/features/agent-control/RunExplorerPanel.tsx')
@@ -20,11 +20,14 @@ test('Agent control plane owns MCP Doctor, Run Explorer, Fork and Replay', () =>
   assert.match(diagnostics, /不会自动进入 Agent/)
 
   assert.match(explorer, /Agent Run Explorer/)
-  assert.match(explorer, /创建 Playground Fork/)
-  assert.match(explorer, /精确 Release Replay/)
-  assert.match(explorer, /fork\.mutate\('playground'\)/)
-  assert.match(explorer, /fork\.mutate\('replay'\)/)
-  assert.match(explorer, /selectedRun\.status === 'running'/)
+  assert.match(explorer, /只读 Replay \/ Playground Fork/)
+  assert.match(explorer, /value="replay"/)
+  assert.match(explorer, /value="playground"/)
+  assert.match(explorer, /onClick=\{\(\) => fork\.mutate\(\)\}/)
+  assert.equal((explorer.match(/fork\.mutate\(/g) || []).length, 1)
+  assert.match(explorer, /selectedRun\.status !== 'running'/)
+  assert.match(explorer, /原不可变 Release/)
+  assert.match(explorer, /写 Tool 永不进入 Fork/)
 
   assert.match(api, /doctorMcp:/)
   assert.match(api, /runs:/)
