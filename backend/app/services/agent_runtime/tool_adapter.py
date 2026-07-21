@@ -59,6 +59,7 @@ class ToolObservation:
             "status": self.status,
             "result": self.result,
             "error_code": self.error_code,
+            "elapsed_ms": self.elapsed_ms,
         }
 
 
@@ -137,6 +138,7 @@ def execute_agent_tool_calls(
             status=result.status,
             result=dict(result.summary or {}),
             error_code=result.error_code,
+            elapsed_ms=max(0, int(result.elapsed_ms or 0)),
         )
         for result in results
     ]
