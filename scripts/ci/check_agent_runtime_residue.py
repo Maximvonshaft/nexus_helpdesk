@@ -51,6 +51,9 @@ RUNTIME_PATHS = (
 TOOL_GOVERNANCE_PATHS = (
     ROOT / "backend/app/services/nexus_osr",
 )
+TEST_GOVERNANCE_PATHS = (
+    ROOT / "backend/tests",
+)
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
     "customer_visible_runtime_fallback",
@@ -104,6 +107,10 @@ FORBIDDEN_TOOL_GOVERNANCE_CONTENT = (
     "tracking_status_without_mcp_current_status",
     "knowledge_answer_without_customer_visible_knowledge",
 )
+FORBIDDEN_TEST_GOVERNANCE_CONTENT = (
+    "/tmp/nexus-backend/source-export",
+    "bounded source export completed",
+)
 ARCHITECTURE_PATHS = (
     ROOT / "docs/architecture/conversation-first-agent-routing.md",
 )
@@ -152,6 +159,11 @@ def main() -> int:
     _scan_markers(
         roots=TOOL_GOVERNANCE_PATHS,
         markers=FORBIDDEN_TOOL_GOVERNANCE_CONTENT,
+        failures=failures,
+    )
+    _scan_markers(
+        roots=TEST_GOVERNANCE_PATHS,
+        markers=FORBIDDEN_TEST_GOVERNANCE_CONTENT,
         failures=failures,
     )
     for path in ARCHITECTURE_PATHS:
