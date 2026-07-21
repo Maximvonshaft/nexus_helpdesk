@@ -83,6 +83,43 @@ export type AgentRunEvents = {
   last_sequence: number
 }
 
+export type AgentSpecialist =
+  | 'knowledge_researcher'
+  | 'policy_reviewer'
+  | 'case_summarizer'
+  | 'translation_reviewer'
+  | 'data_analyst'
+
+export type AgentRunForkRequest = AgentRuntimeScope & {
+  body: string
+  fork_kind: 'playground' | 'replay'
+  cohort_key?: string
+  specialists: AgentSpecialist[]
+  execute_model: boolean
+}
+
+export type AgentRunForkResult = {
+  parent_run: AgentRun
+  snapshot_id: number
+  source_snapshot_sha256: string
+  resolved_run_digest: string
+  exact_release_id: number
+  exact_release_manifest_sha256: string
+  fork_kind: 'playground' | 'replay'
+  read_tools: string[]
+  requested_specialists: AgentSpecialist[]
+  specialist_delegate_available: boolean
+  model_executed: boolean
+  agent_run_id?: number | null
+  reply?: string | null
+  reply_source?: string | null
+  intent?: string | null
+  handoff_required?: boolean
+  tool_calls?: Array<Record<string, unknown>>
+  runtime_trace?: Record<string, unknown>
+  error_code?: string | null
+}
+
 export const agentRuntimeApi = {
   doctorMcp: (payload: AgentRuntimeScope & { integration_key: string }) =>
     apiRequest<MCPDoctorReport>('/api/agent-control/integrations/mcp/doctor', {
@@ -105,4 +142,9 @@ export const agentRuntimeApi = {
       after_sequence: afterSequence,
       limit: 500,
     })}`),
+  forkRun: (runId: number, payload: AgentRunForkRequest) =>
+    apiRequest<AgentRunForkResult>(`/api/agent-control/runs/${runId}/fork`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 }
