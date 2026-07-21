@@ -47,6 +47,7 @@ def _user(db_session, *, role: UserRole, suffix: str = "") -> User:
 
 def _identity_content(**overrides):
     content = {
+        "schema_version": "nexus.persona.v1",
         "brand_name": "Nexus Express",
         "assistant_name": "Nora",
         "role_label": "Customer support assistant",
@@ -82,13 +83,21 @@ def _seed_persona_builder(db_session):
     admin = _user(db_session, role=UserRole.admin)
     agent = _user(db_session, role=UserRole.agent, suffix="_agent")
     exact = persona_service.create_profile(db_session, _persona_payload(), admin)
-    persona_service.publish_profile(db_session, exact, admin, notes="publish exact webchat")
+    persona_service.publish_profile(
+        db_session,
+        exact,
+        admin,
+        notes="approved exact fixture",
+    )
     persona_service.update_profile(
         db_session,
         exact,
         PersonaProfileUpdate(
             draft_summary="Nexus webchat persona v2 pending",
-            draft_content_json=_identity_content(tone="more direct", guardrails=["Ask one clarifying question before handoff."]),
+            draft_content_json=_identity_content(
+                tone="more direct",
+                guardrails=["Ask one clarifying question before handoff."],
+            ),
         ),
         admin,
     )
@@ -102,11 +111,18 @@ def _seed_persona_builder(db_session):
             channel=None,
             language=None,
             draft_summary="Global fallback persona",
-            draft_content_json=_identity_content(assistant_name="Nexus Assistant"),
+            draft_content_json=_identity_content(
+                assistant_name="Nexus Assistant"
+            ),
         ),
         admin,
     )
-    persona_service.publish_profile(db_session, global_fallback, admin, notes="publish global fallback")
+    persona_service.publish_profile(
+        db_session,
+        global_fallback,
+        admin,
+        notes="approved global fixture",
+    )
     email_draft = persona_service.create_profile(
         db_session,
         _persona_payload(
@@ -116,7 +132,9 @@ def _seed_persona_builder(db_session):
             channel="email",
             language="en",
             draft_summary="Email draft not yet published",
-            draft_content_json=_identity_content(assistant_name="Nexus Email Assistant"),
+            draft_content_json=_identity_content(
+                assistant_name="Nexus Email Assistant"
+            ),
         ),
         admin,
     )
@@ -124,13 +142,23 @@ def _seed_persona_builder(db_session):
     return admin, agent, exact, global_fallback, email_draft
 
 
-def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_context(tmp_path):
+def test_persona_builder_separates_authoring_preview_from_runtime_deployment(tmp_path):
     db_file = tmp_path / "persona_builder.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSession = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     db_session = TestingSession()
-    admin, _agent, exact, global_fallback, email_draft = _seed_persona_builder(db_session)
+    admin, _agent, exact, global_fallback, email_draft = _seed_persona_builder(
+        db_session
+    )
     db_session.commit()
 
     def override_db():
@@ -139,7 +167,10 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     app.dependency_overrides[get_db] = override_db
     try:
         client = TestClient(app)
-        response = client.get("/api/lite/persona-builder", headers=_headers(admin))
+        response = client.get(
+            "/api/lite/persona-builder",
+            headers=_headers(admin),
+        )
         preview = client.post(
             "/api/persona-profiles/resolve-preview",
             headers=_headers(admin),
@@ -188,10 +219,14 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert profiles[exact.profile_key]["identity_ready"] is True
     assert profiles[exact.profile_key]["boundary_ready"] is True
     assert profiles[exact.profile_key]["guardrail_count"] >= 3
-    assert profiles[global_fallback.profile_key]["scope_label"] == "market:global / channel:global / lang:global"
+    assert profiles[global_fallback.profile_key]["scope_label"] == (
+        "market:global / channel:global / lang:global"
+    )
     assert profiles[email_draft.profile_key]["published_ready"] is False
     assert blocks["persona-list"]["status"] == "implemented"
-    assert blocks["resolve-preview"]["backend_contract"] == "POST /api/persona-profiles/resolve-preview"
+    assert blocks["resolve-preview"]["backend_contract"] == (
+        "POST /api/persona-profiles/resolve-preview"
+    )
     assert blocks["approval"]["status"] == "implemented"
     assert blocks["runtime-evidence"]["status"] == "implemented"
     assert lifecycle["approval"]["status"] == "implemented"
@@ -202,7 +237,11 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert payload["facts"]["approval_endpoint"] == "implemented"
     assert payload["facts"]["release_window_command"] == "implemented"
     assert payload["facts"]["dedicated_runtime_evidence_endpoint"] == "implemented"
-    assert any(item["matched_profile_key"] == exact.profile_key and item["match_rank"] == 1 for item in payload["simulation_scenarios"])
+    assert any(
+        item["matched_profile_key"] == exact.profile_key
+        and item["match_rank"] == 1
+        for item in payload["simulation_scenarios"]
+    )
 
     assert preview.status_code == 200, preview.text
     preview_payload = preview.json()
@@ -210,30 +249,47 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert preview_payload["match_rank"] == 1
 
     assert runtime_evidence.status_code == 200, runtime_evidence.text
-    runtime_evidence_payload = runtime_evidence.json()
-    assert runtime_evidence_payload["matched_profile_key"] == exact.profile_key
-    assert runtime_evidence_payload["match_rank"] == 1
-    assert runtime_evidence_payload["expected_profile_key"] == exact.profile_key
-    assert runtime_evidence_payload["matched_expected"] is True
-    assert runtime_evidence_payload["runtime_context"]["context_version"] == "nexus.agent_context.v1"
-    assert runtime_evidence_payload["persona_context"]["identity_context"]["brand_name"] == "Nexus Express"
-    assert runtime_evidence_payload["evidence"]["runtime_contract"] == "build_agent_context"
-    assert runtime_evidence_payload["evidence"]["brand_name"] == "Nexus Express"
-    assert runtime_evidence_payload["evidence"]["assistant_name"] == "Nora"
-    assert runtime_evidence_payload["evidence"]["guardrail_count"] >= 2
+    runtime_payload = runtime_evidence.json()
+    assert runtime_payload["matched_profile_key"] is None
+    assert runtime_payload["match_rank"] is None
+    assert runtime_payload["expected_profile_key"] == exact.profile_key
+    assert runtime_payload["matched_expected"] is False
+    assert runtime_payload["runtime_context"]["context_version"] == (
+        "nexus.agent_context.v2"
+    )
+    assert runtime_payload["persona_context"] is None
+    assert runtime_payload["evidence"]["runtime_contract"] == (
+        "AgentDeployment->AgentRelease->build_agent_context"
+    )
+    assert runtime_payload["evidence"]["release_error"] == (
+        "agent_deployment_unavailable"
+    )
+    assert runtime_payload["evidence"]["identity_ready"] is False
 
-    assert runtime_context["persona_context"]["profile_key"] == exact.profile_key
-    assert runtime_context["persona_context"]["match_rank"] == 1
-    assert runtime_context["persona_context"]["identity_context"]["brand_name"] == "Nexus Express"
+    assert runtime_context["persona_context"] is None
+    assert runtime_context["agent_release_snapshot"] is None
+    assert runtime_context["agent_release_error"] == (
+        "agent_deployment_unavailable"
+    )
 
 
 def test_persona_builder_requires_ai_config_capability(tmp_path):
     db_file = tmp_path / "persona_builder_forbidden.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSession = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     db_session = TestingSession()
-    _admin, agent, _exact, _global_fallback, _email_draft = _seed_persona_builder(db_session)
+    _admin, agent, _exact, _global_fallback, _email_draft = (
+        _seed_persona_builder(db_session)
+    )
     db_session.commit()
 
     def override_db():
@@ -242,7 +298,10 @@ def test_persona_builder_requires_ai_config_capability(tmp_path):
     app.dependency_overrides[get_db] = override_db
     try:
         client = TestClient(app)
-        response = client.get("/api/lite/persona-builder", headers=_headers(agent))
+        response = client.get(
+            "/api/lite/persona-builder",
+            headers=_headers(agent),
+        )
         runtime_evidence = client.post(
             "/api/persona-profiles/runtime-evidence",
             headers=_headers(agent),
@@ -254,5 +313,7 @@ def test_persona_builder_requires_ai_config_capability(tmp_path):
         Base.metadata.drop_all(engine)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "persona_builder_requires_ai_config_capability"
+    assert response.json()["detail"] == (
+        "persona_builder_requires_ai_config_capability"
+    )
     assert runtime_evidence.status_code == 403
