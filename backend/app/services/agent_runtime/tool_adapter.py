@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from ...db import SessionLocal
 from ...models import Customer, Ticket
 from ...webchat_models import WebchatConversation
 from ..agent_tool_handlers import (
@@ -82,15 +81,14 @@ def execute_agent_tool_calls(
 ) -> list[ToolObservation]:
     """Execute one canonical Tool transaction in the calling worker thread.
 
-    Production callers invoke this function through ``asyncio.to_thread``. A
-    SQLAlchemy Session is not thread-safe, so the worker owns a fresh Session and
-    commits the complete governed Tool unit before any observation is returned to
-    the model. Lightweight test doubles keep using the supplied object so unit
-    contracts remain deterministic without creating a parallel executor.
+    A SQLAlchemy Session is not thread-safe. The worker therefore owns a fresh
+    Session bound to the exact same authoritative Engine/Connection pool as the
+    caller. It never falls back to a process-global Session factory that could
+    point at another test, tenant or deployment database.
     """
 
     if isinstance(db, Session):
-        worker_db = SessionLocal()
+        worker_db = _worker_session(db)
         try:
             observations = _execute_with_db(
                 worker_db,
@@ -114,6 +112,20 @@ def execute_agent_tool_calls(
         context=context,
         allow_high_risk_writes=allow_high_risk_writes,
     )
+
+
+def _worker_session(db: Session) -> Session:
+    bind = db.get_bind()
+    if bind is None:
+        raise RuntimeError("agent_tool_worker_database_bind_unavailable")
+    factory = sessionmaker(
+        bind=bind,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    return factory()
 
 
 def _execute_with_db(
