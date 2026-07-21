@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -48,6 +49,7 @@ class ActionExecutionResult:
     policy_decision: ToolPolicyDecision | None = None
     error_code: str | None = None
     error_message: str | None = None
+    elapsed_ms: int = 0
 
 
 class ControlledActionExecutor:
@@ -59,6 +61,11 @@ class ControlledActionExecutor:
     dispatcher. Request-local handlers intentionally take precedence for tools
     such as ``knowledge.search`` whose candidates are constrained by an
     immutable Agent Release.
+
+    Handler duration is measured here because this is the one point at which a
+    policy-approved Tool crosses into its production handler. The existing
+    persistence/audit layer may record this value but does not maintain a second
+    execution clock.
     """
 
     def __init__(
@@ -159,7 +166,9 @@ class ControlledActionExecutor:
                     "No production handler is registered for this canonical Tool."
                 ),
             )
+        started = time.monotonic()
         result = handler(request)
+        elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
         return ActionExecutionResult(
             ok=result.ok,
             tool_name=result.tool_name,
@@ -170,4 +179,5 @@ class ControlledActionExecutor:
             policy_decision=policy_decision,
             error_code=result.error_code,
             error_message=result.error_message,
+            elapsed_ms=elapsed_ms,
         )
