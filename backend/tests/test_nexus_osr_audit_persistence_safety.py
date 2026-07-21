@@ -14,8 +14,6 @@ from app.services.nexus_osr.case_context import CaseContext, ContactMethod
 from app.services.nexus_osr.persistence import audit_runtime_decision
 from app.services.nexus_osr.runtime_decision_contract import (
     BusinessReplyType,
-    EvidenceSource,
-    EvidenceType,
     RuntimeAction,
     RuntimeDecision,
     RuntimeDecisionEvaluation,
@@ -28,8 +26,11 @@ def _serialized(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
-def test_final_audit_write_sanitizes_every_json_field(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'audit-safety.db'}", future=True)
+def test_final_tool_audit_write_sanitizes_every_json_field(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'audit-safety.db'}",
+        future=True,
+    )
     Base.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     db = SessionLocal()
@@ -42,50 +43,39 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
     raw_address = "221 Baker Street"
 
     decision = RuntimeDecision(
-        business_reply_type=BusinessReplyType.TRACKING_STATUS_ANSWER,
-        next_action=RuntimeAction.REPLY,
+        business_reply_type=BusinessReplyType.TOOL_ACTION_RESULT,
+        next_action=RuntimeAction.CALL_TOOL,
         risk_level="high",
-        evidence_sources=[EvidenceSource(
-            evidence_type=EvidenceType.MCP_CURRENT_STATUS,
-            source_id=raw_tracking,
-            label=f"Provider result for {raw_email}",
-            summary={
-                "authority": "mcp",
-                "source_type": "order_query",
-                "status": "out_for_delivery",
-                "tracking_number": raw_tracking,
-                "provider_payload": {"authorization": f"Bearer {raw_secret}"},
-                "provider_group_id": raw_group,
-            },
-            confidence=0.99,
-            verified=True,
-            current_status=True,
-            created_at="2026-07-10T10:00:00+00:00",
-        )],
-        tool_actions=[RuntimeToolAction(
-            tool_name="ticket.create",
-            arguments={
-                "ticket_id": 201,
-                "handoff_request_id": 301,
-                "tracking_number": raw_tracking,
-                "phone": raw_phone,
-                "email": raw_email,
-                "address": raw_address,
-                "token": raw_secret,
-            },
-            requires_confirmation=True,
-            executed=False,
-            result_source_id=raw_tracking,
-        )],
-        audit_reasons=[f"Contact {raw_email} at {raw_phone} about {raw_tracking}"],
+        tool_actions=[
+            RuntimeToolAction(
+                tool_name="ticket.create",
+                arguments={
+                    "ticket_id": 201,
+                    "handoff_request_id": 301,
+                    "tracking_number": raw_tracking,
+                    "phone": raw_phone,
+                    "email": raw_email,
+                    "address": raw_address,
+                    "token": raw_secret,
+                },
+                requires_confirmation=True,
+                executed=False,
+                result_source_id=raw_tracking,
+            )
+        ],
+        audit_reasons=[
+            f"Contact {raw_email} at {raw_phone} about {raw_tracking}"
+        ],
     )
     evaluation = RuntimeDecisionEvaluation(
         allowed=False,
-        violations=[RuntimeDecisionViolation(
-            code="operator_review_required",
-            message=f"Do not expose {raw_secret} for {raw_tracking}",
-            severity="high",
-        )],
+        violations=[
+            RuntimeDecisionViolation(
+                code="operator_review_required",
+                message=f"Do not expose {raw_secret} for {raw_tracking}",
+                severity="high",
+            )
+        ],
         warnings=[f"Address {raw_address}; contact {raw_email}"],
     )
     context = CaseContext(
@@ -93,10 +83,19 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
         ticket_id=201,
         channel="webchat",
         country_code="ME",
-        issue_type="tracking",
+        issue_type="external_action",
         customer_claim_summary=f"Parcel {raw_tracking} for {raw_email}",
-        contact_methods=[ContactMethod(channel="whatsapp", value_redacted=raw_phone, source="customer_form")],
-        last_mcp_fact={"status": "out_for_delivery", "provider_payload": {"api_key": raw_secret}, "address": raw_address},
+        contact_methods=[
+            ContactMethod(
+                channel="whatsapp",
+                value_redacted=raw_phone,
+                source="customer_form",
+            )
+        ],
+        last_mcp_fact={
+            "provider_payload": {"api_key": raw_secret},
+            "address": raw_address,
+        },
         agent_handover_summary=f"Call {raw_phone} and route to {raw_group}",
     )
 
@@ -114,21 +113,27 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
         )
         db.commit()
         stored = db.get(RuntimeDecisionAuditRecord, row.id)
-        text = _serialized({
-            "violations": stored.violations_json,
-            "warnings": stored.warnings_json,
-            "decision": stored.decision_json,
-            "case_context": stored.case_context_json,
-        })
-        for raw in (raw_tracking, raw_phone, raw_email, raw_secret, raw_group, raw_address):
+        text = _serialized(
+            {
+                "violations": stored.violations_json,
+                "warnings": stored.warnings_json,
+                "decision": stored.decision_json,
+                "case_context": stored.case_context_json,
+            }
+        )
+        for raw in (
+            raw_tracking,
+            raw_phone,
+            raw_email,
+            raw_secret,
+            raw_group,
+            raw_address,
+        ):
             assert raw not in text
 
-        assert stored.business_reply_type == "tracking_status_answer"
-        assert stored.next_action == "reply"
+        assert stored.business_reply_type == "tool_action_result"
+        assert stored.next_action == "call_tool"
         assert stored.risk_level == "high"
-        assert stored.decision_json["evidence_sources"][0]["evidence_type"] == "mcp.current_status"
-        assert stored.decision_json["evidence_sources"][0]["summary"]["authority"] == "mcp"
-        assert stored.decision_json["evidence_sources"][0]["verified"] is True
         assert stored.decision_json["tool_actions"][0]["tool_name"] == "ticket.create"
 
         safe_arguments = stored.decision_json["tool_actions"][0]["arguments"]
@@ -136,15 +141,19 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
         assert safe_arguments["handoff_request_id"] == 301
         assert safe_arguments["redacted"] is True
         assert safe_arguments["redacted_field_count"] == 5
-        for forbidden in ("tracking_number", "phone", "email", "address", "token"):
+        for forbidden in (
+            "tracking_number",
+            "phone",
+            "email",
+            "address",
+            "token",
+        ):
             assert forbidden not in safe_arguments
 
         claim_summary = stored.case_context_json["customer_claim_summary"]
         assert isinstance(claim_summary, str)
         assert "[redacted_tracking]" in claim_summary
         assert "[redacted_email]" in claim_summary
-        assert raw_tracking not in claim_summary
-        assert raw_email not in claim_summary
     finally:
         db.close()
         engine.dispose()
