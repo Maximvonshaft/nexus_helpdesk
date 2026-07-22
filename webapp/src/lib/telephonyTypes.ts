@@ -71,3 +71,26 @@ export interface VoiceSessionBootstrap {
   accepted_by_user_id?: number | null
   handoff_request_id?: number | null
 }
+
+export interface VoiceCommandRead {
+  id: string
+  action_type: string
+  status: string
+  provider_status: string
+  provider_reason?: string | null
+  provider_reference?: string | null
+  idempotency_key: string
+  attempt_count: number
+  result: Record<string, unknown>
+  actor_user_id?: number | null
+  completed_at?: string | null
+  next_attempt_at?: string | null
+  created_at?: string | null
+}
+
+export interface VoiceCommandResponse {
+  ok: boolean
+  ticket_id?: number | null
+  voice_session_id: string
+  action: VoiceCommandRead
+}
