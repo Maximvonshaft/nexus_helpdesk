@@ -5,7 +5,10 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, SchemaError
 
-from ..customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
+from ..customer_visible_policy import (
+    evaluate_customer_visible_policy,
+    format_policy_reasons,
+)
 from .schemas import AIDecision, AIDecisionToolCall
 from .tool_registry import ToolContract, get_tool_contract
 
@@ -48,7 +51,8 @@ def validate_ai_decision(
 
     Domain truth is owned by Skills and Tool observations. This gate enforces
     platform controls only. Model-produced confirmation flags are descriptive
-    output and never authorize execution.
+    output and never authorize execution. Customer and human authority are kept
+    separate: a human approval cannot be substituted for customer consent.
     """
 
     violations: list[PolicyViolation] = []
@@ -56,9 +60,6 @@ def validate_ai_decision(
     checked_tools: list[str] = []
     allowed_high_risk = set(allowed_high_risk_write_tools or set())
     permissions = None if granted_permissions is None else set(granted_permissions)
-    trusted_confirmation = bool(
-        customer_confirmation_granted or human_confirmation_granted
-    )
 
     if decision.customer_reply:
         customer_policy = evaluate_customer_visible_policy(decision.customer_reply)
@@ -90,7 +91,10 @@ def validate_ai_decision(
             continue
         _validate_contract_authority(
             contract,
-            trusted_confirmation=trusted_confirmation,
+            customer_confirmation_granted=bool(
+                customer_confirmation_granted
+            ),
+            human_confirmation_granted=bool(human_confirmation_granted),
             allow_high_risk_write_execution=allow_high_risk_write_execution,
             allowed_high_risk=allowed_high_risk,
             permissions=permissions,
@@ -116,8 +120,12 @@ def _validate_tool_input_schema(
     try:
         Draft202012Validator.check_schema(contract.input_schema)
         errors = sorted(
-            Draft202012Validator(contract.input_schema).iter_errors(call.arguments),
-            key=lambda error: tuple(str(item) for item in error.absolute_path),
+            Draft202012Validator(contract.input_schema).iter_errors(
+                call.arguments
+            ),
+            key=lambda error: tuple(
+                str(item) for item in error.absolute_path
+            ),
         )
     except SchemaError:
         return PolicyViolation(
@@ -147,7 +155,8 @@ def _validate_tool_input_schema(
 def _validate_contract_authority(
     contract: ToolContract,
     *,
-    trusted_confirmation: bool,
+    customer_confirmation_granted: bool,
+    human_confirmation_granted: bool,
     allow_high_risk_write_execution: bool,
     allowed_high_risk: set[str],
     permissions: set[str] | None,
@@ -172,7 +181,9 @@ def _validate_contract_authority(
         violations.append(
             PolicyViolation(
                 code="tool_permission_denied",
-                message="The runtime does not have the required Tool permission.",
+                message=(
+                    "The runtime does not have the required Tool permission."
+                ),
                 tool_name=contract.name,
                 risk_level=contract.risk_level,
             )
@@ -180,12 +191,15 @@ def _validate_contract_authority(
     if (
         enforce_confirmation_requirements
         and contract.confirmation_required
-        and not trusted_confirmation
+        and not customer_confirmation_granted
     ):
         violations.append(
             PolicyViolation(
-                code="write_tool_confirmation_required",
-                message="The requested action requires trusted server-side confirmation.",
+                code="customer_confirmation_required",
+                message=(
+                    "The requested action requires trusted server-side "
+                    "customer confirmation."
+                ),
                 tool_name=contract.name,
                 risk_level=contract.risk_level,
             )
@@ -198,10 +212,20 @@ def _validate_contract_authority(
             violations.append(
                 PolicyViolation(
                     code="high_risk_write_tool_blocked",
-                    message="High-risk write execution is not enabled for this Tool.",
+                    message=(
+                        "High-risk write execution is not enabled for this Tool."
+                    ),
                     tool_name=contract.name,
                     risk_level="high",
                 )
             )
-    elif contract.is_write_tool and contract.allowed_auto_execution_mode == "policy_gated":
+    elif (
+        contract.is_write_tool
+        and contract.allowed_auto_execution_mode == "policy_gated"
+    ):
         warnings.append(f"policy_gated_write:{contract.name}")
+
+    # The canonical registry currently models customer confirmation. Human
+    # confirmation remains a ToolExecutionPolicy concern and is deliberately
+    # not allowed to satisfy customer consent at this layer.
+    del human_confirmation_granted
