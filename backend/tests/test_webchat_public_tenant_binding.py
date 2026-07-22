@@ -12,9 +12,10 @@ from starlette.requests import Request
 from app.db import Base
 from app.model_registry import register_all_models
 from app.models import Customer, Tenant, Ticket
+from app.models_agent_routing import ConversationControl
 from app.models_webchat_binding import WebchatPublicOriginBinding
-from app.services import webchat_rate_limit, webchat_service
-from app.services.webchat_service import create_or_resume_conversation
+from app.services import conversation_first_service, webchat_rate_limit
+from app.services.conversation_first_service import create_or_resume_conversation
 from app.services.webchat_tenant_binding import (
     normalize_public_origin,
     resolve_public_webchat_scope,
@@ -78,7 +79,11 @@ def _binding(
 
 
 def _tenant(db, *, tenant_key: str = "tenant-a", active: bool = True) -> Tenant:
-    row = Tenant(tenant_key=tenant_key, display_name=f"Tenant {tenant_key}", is_active=active)
+    row = Tenant(
+        tenant_key=tenant_key,
+        display_name=f"Tenant {tenant_key}",
+        is_active=active,
+    )
     db.add(row)
     db.commit()
     return row
@@ -101,6 +106,22 @@ def _payload(**overrides):
     return SimpleNamespace(**values)
 
 
+def _conversation_state(db, public_id: str):
+    conversation = (
+        db.query(WebchatConversation)
+        .filter(WebchatConversation.public_id == public_id)
+        .one()
+    )
+    control = (
+        db.query(ConversationControl)
+        .filter(ConversationControl.conversation_id == conversation.id)
+        .one()
+    )
+    customer = db.get(Customer, control.customer_id)
+    assert customer is not None
+    return conversation, control, customer
+
+
 def test_production_requires_server_binding(db) -> None:
     with pytest.raises(HTTPException) as exc:
         resolve_public_webchat_scope(
@@ -114,7 +135,7 @@ def test_production_requires_server_binding(db) -> None:
     assert exc.value.detail == "webchat_public_binding_required"
 
 
-def test_binding_overrides_legacy_default_scope(db) -> None:
+def test_binding_overrides_client_default_scope(db) -> None:
     row = _binding(db)
     scope = resolve_public_webchat_scope(
         db,
@@ -196,18 +217,30 @@ def test_verified_scope_is_applied_at_final_orm_boundary(db) -> None:
     assert conversation.origin == "https://tenant-a.example"
 
 
-def test_rate_limit_bucket_uses_verified_server_tenant(db, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rate_limit_bucket_uses_verified_server_tenant(
+    db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _binding(db)
     captured: dict[str, str] = {}
 
     def capture_bucket(*, request, tenant_key, conversation_id):
+        del request, conversation_id
         captured["tenant_key"] = tenant_key
         return "bounded-bucket"
 
     monkeypatch.setattr(webchat_rate_limit, "_bucket_key", capture_bucket)
-    monkeypatch.setattr(webchat_rate_limit, "_enforce_database", lambda _db, _key: None)
+    monkeypatch.setattr(
+        webchat_rate_limit,
+        "_enforce_database",
+        lambda _db, _key: None,
+    )
     monkeypatch.setattr(webchat_rate_limit.settings, "app_env", "production")
-    monkeypatch.setattr(webchat_rate_limit.settings, "webchat_rate_limit_backend", "database")
+    monkeypatch.setattr(
+        webchat_rate_limit.settings,
+        "webchat_rate_limit_backend",
+        "database",
+    )
 
     webchat_rate_limit.enforce_webchat_rate_limit(
         db,
@@ -218,7 +251,7 @@ def test_rate_limit_bucket_uses_verified_server_tenant(db, monkeypatch: pytest.M
     assert captured["tenant_key"] == "tenant-a"
 
 
-def test_nonproduction_legacy_fallback_is_explicit(db) -> None:
+def test_nonproduction_client_scope_is_explicit(db) -> None:
     scope = resolve_public_webchat_scope(
         db,
         request=_request("http://localhost"),
@@ -231,7 +264,7 @@ def test_nonproduction_legacy_fallback_is_explicit(db) -> None:
     assert scope.authority == "non_production_legacy"
 
 
-def test_origin_normalization_rejects_wildcard_credentials_and_insecure_remote_http() -> None:
+def test_origin_normalization_rejects_invalid_origins() -> None:
     for origin in (
         "*",
         "https://user:password@example.com",
@@ -244,7 +277,7 @@ def test_origin_normalization_rejects_wildcard_credentials_and_insecure_remote_h
     assert normalize_public_origin("http://localhost:3000") == "http://localhost:3000"
 
 
-def test_public_webchat_stamps_customer_and_ticket_with_verified_relational_tenant(db) -> None:
+def test_public_webchat_stamps_customer_and_control_with_verified_tenant(db) -> None:
     tenant = _tenant(db)
     _binding(db)
     resolve_public_webchat_scope(
@@ -256,21 +289,26 @@ def test_public_webchat_stamps_customer_and_ticket_with_verified_relational_tena
     )
 
     result = create_or_resume_conversation(db, _payload(), _request())
+    conversation, control, customer = _conversation_state(
+        db,
+        result["conversation_id"],
+    )
 
-    ticket = db.query(Ticket).filter(Ticket.source_chat_id == result["conversation_id"]).one()
-    customer = db.get(Customer, ticket.customer_id)
-    assert customer is not None
-    assert ticket.tenant_id == tenant.id
+    assert conversation.ticket_id is None
+    assert db.query(Ticket).count() == 0
     assert customer.tenant_id == tenant.id
-    assert ticket.country_code == "CH"
-    assert ticket.tenant_assignment_source == "runtime_principal"
+    assert control.tenant_key == "tenant-a"
+    assert control.country_code == "CH"
+    assert control.channel_key == "webchat"
     assert customer.tenant_assignment_source == "runtime_principal"
-    assert ticket.tenant_assignment_version == "nexus.tenant.runtime_authority.v1"
     assert customer.tenant_assignment_version == "nexus.tenant.runtime_authority.v1"
 
 
 @pytest.mark.parametrize("active", [False, None])
-def test_public_webchat_rejects_missing_or_inactive_relational_tenant_before_customer_write(db, active) -> None:
+def test_public_webchat_rejects_missing_or_inactive_relational_tenant_before_write(
+    db,
+    active,
+) -> None:
     if active is not None:
         _tenant(db, active=active)
     _binding(db)
@@ -294,25 +332,39 @@ def test_public_webchat_rejects_missing_or_inactive_relational_tenant_before_cus
 
 
 def test_enforce_mode_never_uses_unverified_payload_tenant_as_authority(
-    db, monkeypatch: pytest.MonkeyPatch
+    db,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _tenant(db)
-    monkeypatch.setattr(webchat_service, "tenant_runtime_authority_mode", lambda: "enforce")
+    monkeypatch.setattr(
+        conversation_first_service,
+        "tenant_runtime_authority_mode",
+        lambda: "enforce",
+    )
     before_customers = db.query(Customer).count()
 
     with pytest.raises(HTTPException) as exc:
-        create_or_resume_conversation(db, _payload(tenant_key="tenant-a"), _request())
+        create_or_resume_conversation(
+            db,
+            _payload(tenant_key="tenant-a"),
+            _request(),
+        )
 
     assert exc.value.status_code == 403
     assert exc.value.detail == "webchat_verified_scope_required"
     assert db.query(Customer).count() == before_customers
 
 
-def test_shadow_mode_never_promotes_nonproduction_client_scope_to_relational_tenant(
-    db, monkeypatch: pytest.MonkeyPatch
+def test_shadow_mode_does_not_promote_nonproduction_scope_to_relational_tenant(
+    db,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _tenant(db)
-    monkeypatch.setattr(webchat_service, "tenant_runtime_authority_mode", lambda: "shadow")
+    monkeypatch.setattr(
+        conversation_first_service,
+        "tenant_runtime_authority_mode",
+        lambda: "shadow",
+    )
     request = _request("http://localhost")
     scope = resolve_public_webchat_scope(
         db,
@@ -328,12 +380,13 @@ def test_shadow_mode_never_promotes_nonproduction_client_scope_to_relational_ten
         _payload(tenant_key="tenant-a", page_url="http://localhost/help"),
         request,
     )
+    conversation, control, customer = _conversation_state(
+        db,
+        result["conversation_id"],
+    )
 
-    ticket = db.query(Ticket).filter(Ticket.source_chat_id == result["conversation_id"]).one()
-    customer = db.get(Customer, ticket.customer_id)
-    assert customer is not None
-    assert ticket.tenant_id is None
+    assert conversation.ticket_id is None
+    assert db.query(Ticket).count() == 0
     assert customer.tenant_id is None
-    assert ticket.country_code is None
-    assert ticket.tenant_assignment_source is None
+    assert control.country_code is None
     assert customer.tenant_assignment_source is None

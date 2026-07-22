@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Static deployment-authority checks consumed by supply_chain.py only."""
+"""Static deployment-authority checks consumed by supply_chain.py."""
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 RETIRED_DEPLOY_PATHS = (
@@ -12,10 +14,38 @@ RETIRED_DEPLOY_PATHS = (
     "deploy/.env.prod.local-postgres.example",
     "deploy/.env.prod.external-postgres.example",
     "deploy/.env.candidate.example",
+    "deploy/systemd/nexusdesk-worker.service",
+    "backend/scripts/run_api_manual.py",
+    "backend/scripts/run_worker_manual.py",
     "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh",
     "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md",
     "backend/tests/test_candidate_compose_contract.py",
 )
+
+DEPLOYMENT_TEXT_SUFFIXES = {
+    ".yml",
+    ".yaml",
+    ".sh",
+    ".service",
+    ".conf",
+    ".template",
+    ".env",
+    ".example",
+}
+
+
+def _deployment_files(root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for directory in (root / "deploy", root / "scripts/deploy"):
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*"):
+            if path.is_file() and (
+                path.suffix.lower() in DEPLOYMENT_TEXT_SUFFIXES
+                or path.name.endswith(".example")
+            ):
+                paths.append(path)
+    return sorted(set(paths))
 
 
 def deployment_authority_findings(root: Path) -> list[str]:
@@ -29,6 +59,16 @@ def deployment_authority_findings(root: Path) -> list[str]:
         if (root / relative).exists():
             findings.append(f"retired_deploy_path_exists:{relative}")
 
+    for path in _deployment_files(root):
+        relative = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"(?:python\s+)?scripts/run_worker\.py\b", text):
+            findings.append(f"unsupervised_worker_entrypoint:{relative}")
+        if "--queue all" in text:
+            findings.append(f"queue_all_worker_forbidden:{relative}")
+        if ".env.local-manual" in text:
+            findings.append(f"manual_environment_bypass:{relative}")
+
     if controlled.is_file():
         text = controlled.read_text(encoding="utf-8")
         for forbidden in (
@@ -39,6 +79,7 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "--queue all",
             "/proc/1/cmdline",
             "controlled-worker-ok",
+            "scripts/run_worker.py",
         ):
             if forbidden in text:
                 findings.append(f"controlled_compose_forbidden:{forbidden}")
@@ -84,7 +125,9 @@ def deployment_authority_findings(root: Path) -> list[str]:
             ".env.candidate",
         ):
             if forbidden in text:
-                findings.append(f"production_wrapper_legacy_reference:{forbidden}")
+                findings.append(
+                    f"production_wrapper_legacy_reference:{forbidden}"
+                )
 
     if rollback.is_file():
         text = rollback.read_text(encoding="utf-8")
@@ -106,5 +149,20 @@ def deployment_authority_findings(root: Path) -> list[str]:
         ):
             if forbidden in text:
                 findings.append(f"rollback_legacy_path_present:{forbidden}")
+    return sorted(set(findings))
 
-    return findings
+
+def main() -> int:
+    root = Path(__file__).resolve().parents[2]
+    findings = deployment_authority_findings(root)
+    payload = {
+        "schema": "nexus.deployment-authority.v2",
+        "status": "pass" if not findings else "fail",
+        "findings": findings,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if not findings else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

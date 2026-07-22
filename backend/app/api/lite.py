@@ -12,7 +12,6 @@ from ..schemas import (
     LiteAssignRequest,
     LiteCaseCreate,
     LiteCaseDetail,
-    LiteCaseListItem,
     LiteCaseUpdate,
     LiteControlTowerActionRequest,
     LiteControlTowerActionResponse,
@@ -27,24 +26,35 @@ from ..schemas import (
     TeamRead,
     UserRead,
 )
-from ..services.canonical_control_tower_service import build_control_tower, submit_control_tower_action
+from ..services.canonical_control_tower_service import (
+    build_control_tower,
+    submit_control_tower_action,
+)
 from ..services.canonical_lite_service import (
     LITE_STATUS_ORDER,
     assign_lite_case,
     change_lite_status,
     create_lite_case,
     get_lite_case,
-    list_lite_cases,
     save_ai_intake_lite,
     save_human_note_lite,
     update_lite_case,
     workflow_update_lite_case,
 )
-from ..services.canonical_qa_training_service import build_qa_training, submit_agent_appeal, submit_knowledge_gap
+from ..services.canonical_qa_training_service import (
+    build_qa_training,
+    submit_agent_appeal,
+    submit_knowledge_gap,
+)
 from ..services.canonical_route_projection import project_control_tower_routes
 from ..services.knowledge_studio_service import build_knowledge_studio
 from ..services.lite_pagination import list_lite_cases_page
-from ..services.permissions import CAP_AUDIT_READ, CAP_TICKET_ASSIGN, CAP_USER_MANAGE, resolve_capabilities
+from ..services.permissions import (
+    CAP_AUDIT_READ,
+    CAP_TICKET_ASSIGN,
+    CAP_USER_MANAGE,
+    resolve_capabilities,
+)
 from ..services.persona_builder_service import build_persona_builder
 from ..services.today_workbench_service import build_today_workbench
 from ..unit_of_work import managed_session
@@ -55,72 +65,137 @@ router = APIRouter(prefix="/api/lite", tags=["lite"])
 
 @router.get("/stream")
 def lite_stream(current_user=Depends(get_current_user)):
-    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Realtime stream is disabled; use polling /api/lite/cases instead")
+    del current_user
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Realtime stream is disabled; use polling /api/lite/cases instead",
+    )
 
 
 @router.get("/meta", response_model=LiteMetaRead)
-def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_lite_meta(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     capabilities = resolve_capabilities(current_user, db)
-    can_view_all_operators = bool(capabilities & {CAP_TICKET_ASSIGN, CAP_AUDIT_READ, CAP_USER_MANAGE})
+    can_view_all_operators = bool(
+        capabilities & {CAP_TICKET_ASSIGN, CAP_AUDIT_READ, CAP_USER_MANAGE}
+    )
     if can_view_all_operators:
-        users = db.query(User).filter(User.is_active.is_(True)).order_by(User.display_name.asc()).all()
-        teams = db.query(Team).filter(Team.is_active.is_(True)).order_by(Team.name.asc()).all()
+        users = (
+            db.query(User)
+            .filter(User.is_active.is_(True))
+            .order_by(User.display_name.asc())
+            .all()
+        )
+        teams = (
+            db.query(Team)
+            .filter(Team.is_active.is_(True))
+            .order_by(Team.name.asc())
+            .all()
+        )
     else:
-        users = db.query(User).filter(User.is_active.is_(True), User.team_id == current_user.team_id).order_by(User.display_name.asc()).all()
-        if current_user.id and all(user.id != current_user.id for user in users):
+        users = (
+            db.query(User)
+            .filter(
+                User.is_active.is_(True),
+                User.team_id == current_user.team_id,
+            )
+            .order_by(User.display_name.asc())
+            .all()
+        )
+        if current_user.id and all(row.id != current_user.id for row in users):
             users.append(current_user)
-        teams = db.query(Team).filter(Team.is_active.is_(True), Team.id == current_user.team_id).order_by(Team.name.asc()).all()
+        teams = (
+            db.query(Team)
+            .filter(
+                Team.is_active.is_(True),
+                Team.id == current_user.team_id,
+            )
+            .order_by(Team.name.asc())
+            .all()
+        )
     return LiteMetaRead(
-        users=[UserRead.model_validate(x) for x in users],
-        teams=[TeamRead.model_validate(x) for x in teams],
+        users=[UserRead.model_validate(row) for row in users],
+        teams=[TeamRead.model_validate(row) for row in teams],
         statuses=LITE_STATUS_ORDER,
         priorities=["low", "medium", "high", "urgent"],
     )
 
 
 @router.get("/today-workbench")
-def today_workbench(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def today_workbench(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     return build_today_workbench(db, current_user)
 
 
 @router.get("/control-tower")
-def control_tower(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def control_tower(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     return project_control_tower_routes(build_control_tower(db, current_user))
 
 
-@router.post("/control-tower/actions", response_model=LiteControlTowerActionResponse)
-def control_tower_action(payload: LiteControlTowerActionRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post(
+    "/control-tower/actions",
+    response_model=LiteControlTowerActionResponse,
+)
+def control_tower_action(
+    payload: LiteControlTowerActionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
-        result = submit_control_tower_action(db, current_user, payload)
-    return result
+        return submit_control_tower_action(db, current_user, payload)
 
 
 @router.get("/qa-training")
-def qa_training(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def qa_training(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     return build_qa_training(db, current_user)
 
 
 @router.post("/qa-training/appeals", response_model=LiteQAAppealResponse)
-def qa_training_appeal(payload: LiteQAAppealRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def qa_training_appeal(
+    payload: LiteQAAppealRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
-        result = submit_agent_appeal(db, current_user, payload)
-    return result
+        return submit_agent_appeal(db, current_user, payload)
 
 
-@router.post("/qa-training/knowledge-gaps", response_model=LiteQAKnowledgeGapResponse)
-def qa_training_knowledge_gap(payload: LiteQAKnowledgeGapRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post(
+    "/qa-training/knowledge-gaps",
+    response_model=LiteQAKnowledgeGapResponse,
+)
+def qa_training_knowledge_gap(
+    payload: LiteQAKnowledgeGapRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
-        result = submit_knowledge_gap(db, current_user, payload)
-    return result
+        return submit_knowledge_gap(db, current_user, payload)
 
 
 @router.get("/knowledge-studio")
-def knowledge_studio(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def knowledge_studio(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     return build_knowledge_studio(db, current_user)
 
 
 @router.get("/persona-builder")
-def persona_builder(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def persona_builder(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     return build_persona_builder(db, current_user)
 
 
@@ -134,12 +209,9 @@ def list_cases(
     overdue: bool | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
-    legacy: bool = Query(default=False, description="Return the pre-pagination list shape for older clients."),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
-) -> dict[str, Any] | list[LiteCaseListItem]:
-    if legacy:
-        return list_lite_cases(db, current_user, q=q, status=status)
+) -> dict[str, Any]:
     return list_lite_cases_page(
         db,
         current_user,
@@ -155,12 +227,20 @@ def list_cases(
 
 
 @router.get("/cases/{ticket_id}", response_model=LiteCaseDetail)
-def get_case(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_case(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     return get_lite_case(db, ticket_id, current_user)
 
 
 @router.post("/cases")
-def create_case(payload: LiteCaseCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_case(
+    payload: LiteCaseCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case, action = create_lite_case(db, payload, current_user)
         db.flush()
@@ -168,7 +248,12 @@ def create_case(payload: LiteCaseCreate, db: Session = Depends(get_db), current_
 
 
 @router.patch("/cases/{ticket_id}", response_model=LiteCaseDetail)
-def update_case(ticket_id: int, payload: LiteCaseUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def update_case(
+    ticket_id: int,
+    payload: LiteCaseUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case = update_lite_case(db, ticket_id, payload, current_user)
         db.flush()
@@ -176,18 +261,25 @@ def update_case(ticket_id: int, payload: LiteCaseUpdate, db: Session = Depends(g
 
 
 @router.post("/cases/{ticket_id}/workflow-update", response_model=LiteCaseDetail)
-def workflow_update_case(ticket_id: int, payload: LiteWorkflowUpdateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def workflow_update_case(
+    ticket_id: int,
+    payload: LiteWorkflowUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case = workflow_update_lite_case(db, ticket_id, payload, current_user)
         db.flush()
-    if payload.status == "resolved" and case.status == "resolved":
-        from ..services.auto_reply_service import fire_and_forget_auto_reply
-        fire_and_forget_auto_reply(case.id, current_user.id)
     return case
 
 
 @router.post("/cases/{ticket_id}/assign", response_model=LiteCaseDetail)
-def assign_case(ticket_id: int, payload: LiteAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def assign_case(
+    ticket_id: int,
+    payload: LiteAssignRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case = assign_lite_case(db, ticket_id, payload, current_user)
         db.flush()
@@ -195,29 +287,38 @@ def assign_case(ticket_id: int, payload: LiteAssignRequest, db: Session = Depend
 
 
 @router.post("/cases/{ticket_id}/status", response_model=LiteCaseDetail)
-def set_status(ticket_id: int, payload: LiteStatusRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def set_status(
+    ticket_id: int,
+    payload: LiteStatusRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case = change_lite_status(db, ticket_id, payload, current_user)
         db.flush()
-    if payload.status == "resolved" and case.status == "resolved":
-        from ..services.auto_reply_service import fire_and_forget_auto_reply
-        fire_and_forget_auto_reply(case.id, current_user.id)
     return case
 
 
 @router.post("/cases/{ticket_id}/human-note", response_model=LiteCaseDetail)
-def save_human_note(ticket_id: int, payload: LiteHumanNoteRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def save_human_note(
+    ticket_id: int,
+    payload: LiteHumanNoteRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case = save_human_note_lite(db, ticket_id, payload, current_user)
         db.flush()
-    if case.status == "resolved":
-        from ..services.auto_reply_service import fire_and_forget_auto_reply
-        fire_and_forget_auto_reply(case.id, current_user.id)
     return case
 
 
 @router.post("/cases/{ticket_id}/ai-intake", response_model=LiteCaseDetail)
-def save_ai_intake(ticket_id: int, payload: LiteAIIntakeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def save_ai_intake(
+    ticket_id: int,
+    payload: LiteAIIntakeRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     with managed_session(db):
         case = save_ai_intake_lite(db, ticket_id, payload, current_user)
         db.flush()

@@ -11,9 +11,11 @@ from starlette.requests import Request
 from app.db import Base
 from app.model_registry import register_all_models
 from app.models import Tenant, Ticket
+from app.models_agent_routing import ConversationControl
 from app.models_webchat_binding import WebchatPublicOriginBinding
-from app.services.webchat_service import create_or_resume_conversation
+from app.services.conversation_first_service import create_or_resume_conversation
 from app.services.webchat_tenant_binding import resolve_public_webchat_scope
+from app.webchat_models import WebchatConversation
 
 
 def _request() -> Request:
@@ -48,7 +50,13 @@ def db():
 
 
 def _seed(db, *, country_code: str | None = "CH") -> WebchatPublicOriginBinding:
-    db.add(Tenant(tenant_key="country-tenant", display_name="Country Tenant", is_active=True))
+    db.add(
+        Tenant(
+            tenant_key="country-tenant",
+            display_name="Country Tenant",
+            is_active=True,
+        )
+    )
     row = WebchatPublicOriginBinding(
         normalized_origin="https://country.example",
         tenant_key="country-tenant",
@@ -79,7 +87,7 @@ def _payload(**overrides):
     return SimpleNamespace(**values)
 
 
-def test_server_origin_country_is_stamped_on_canonical_ticket(db) -> None:
+def test_server_origin_country_is_stamped_on_conversation_control(db) -> None:
     _seed(db)
     scope = resolve_public_webchat_scope(
         db,
@@ -90,10 +98,21 @@ def test_server_origin_country_is_stamped_on_canonical_ticket(db) -> None:
     )
 
     result = create_or_resume_conversation(db, _payload(), _request())
-    ticket = db.query(Ticket).filter(Ticket.source_chat_id == result["conversation_id"]).one()
+    conversation = (
+        db.query(WebchatConversation)
+        .filter(WebchatConversation.public_id == result["conversation_id"])
+        .one()
+    )
+    control = (
+        db.query(ConversationControl)
+        .filter(ConversationControl.conversation_id == conversation.id)
+        .one()
+    )
 
     assert scope.country_code == "CH"
-    assert ticket.country_code == "CH"
+    assert control.country_code == "CH"
+    assert conversation.ticket_id is None
+    assert db.query(Ticket).count() == 0
 
 
 def test_missing_configured_country_fails_closed(db) -> None:

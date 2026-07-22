@@ -1,86 +1,58 @@
 # WebCall Current State
 
-## Product definition
+## Product boundary
 
-NexusDesk has two external inbound entry points:
+Nexus exposes two customer communication capabilities over the canonical Conversation runtime:
 
-1. **WebChat** — text inbound from an external website widget.
-2. **WebCall** — browser-based voice inbound from an external website call entry.
+1. **Human WebCall** — browser voice between a visitor and an operator.
+2. **Live AI Voice** — realtime voice handled by the governed Agent Runtime.
 
-Both channels enter the same NexusDesk Ticket Runtime:
+They are separate capabilities with separate feature flags, API authorities and runtime services. Neither capability is a second inbox, ticket system, handoff queue or conversation model.
 
-```text
-conversation / ticket / customer / agent / event / evidence / AI assist
-```
+## Canonical authorities
 
-WebCall is not a standalone LiveKit demo and should not be treated as a decorative button inside WebChat. It is NexusDesk's second inbound channel. The current implementation temporarily reuses the existing WebChat conversation and ticket foundation so voice calls can bind to the same operational record.
+### Human WebCall
 
-## Current main branch state
+- API: `backend/app/api/webchat_voice.py`
+- lifecycle service: `backend/app/services/webchat_voice_service.py`
+- provider interface: `backend/app/services/voice_provider.py`
+- LiveKit provider: `backend/app/services/livekit_voice_provider.py`
+- feature flag: `WEBCHAT_HUMAN_CALL_ENABLED`
 
-The current `main` branch contains the WebCall mock foundation, implemented under legacy `webchat_voice` naming:
+The LiveKit provider can create and close rooms, issue participant tokens and query room state. The mock provider remains a bounded test implementation and is not a production transport authority.
 
-- WebChat Voice business state machine.
-- Mock voice provider.
-- Voice session database tables.
-- Security header and CSP readiness for future browser microphone/WebRTC usage.
-- Visitor-side optional voice entry script.
-- Admin mock console.
-- End-of-call evidence written into the WebChat thread as `message_type=voice_call`.
+### Live AI Voice
 
-The current implementation is **not** production real voice:
+- API: `backend/app/api/webchat_live_voice.py`
+- orchestration: `backend/app/services/live_voice_orchestration_service.py`
+- feature flag: `WEBCHAT_LIVE_AI_VOICE_ENABLED`
 
-- No real browser audio transport.
-- No LiveKit room connection yet.
-- No `getUserMedia()` runtime yet.
-- No SIP, PSTN, phone numbers, PBX, Twilio, Vonage, or CPaaS dependency.
-- No recording.
-- No realtime transcription.
-- No AI voice agent.
+The AI voice capability uses the canonical Conversation and Agent Runtime authorities. It does not create a parallel AI model, provider router, handoff lifecycle or ticket workflow.
 
-## Naming decision
+## Conversation-first invariant
 
-The long-term product and architecture name is:
+A voice session belongs to a Conversation. A Ticket is optional context and is created only by a governed business action when durable follow-up is required. Starting, accepting, rejecting, annotating or ending a voice session must not create a Ticket merely to satisfy a technical service signature.
 
-```text
-WebCall Inbound
-```
+## Production posture
 
-The short-term code path may remain:
+Repository support for LiveKit is not evidence that production voice traffic is enabled. Controlled deployment keeps Human WebCall and Live AI Voice disabled unless an explicitly authorized deployment supplies complete credentials, origins, network routing, monitoring and operational readiness evidence.
 
-```text
-/api/webchat/.../voice/...
-/webchat/voice/{voice_session_id}
-backend/app/services/webchat_voice_service.py
-```
+The aggregate `WEBCHAT_VOICE_ENABLED` flag is compatibility-only. Production activation must use the two explicit capability flags.
 
-This preserves API compatibility and avoids risky broad rename work while the real voice provider is being introduced.
+## Not yet implied by repository presence
 
-## Strategic intent
+The source tree does not by itself prove that the following are operational in a production environment:
 
-The goal is not to build a LiveKit sample app. The goal is to plug WebCall into the NexusDesk Ticket Runtime:
+- public DNS and TLS for the LiveKit endpoint;
+- TURN reachability from intended customer networks;
+- approved recording and retention policy;
+- realtime transcription quality and language coverage;
+- SIP or PSTN ingress;
+- production call-volume capacity;
+- operator staffing and incident readiness.
 
-```text
-External WebCall click
-  -> create or bind conversation + ticket
-  -> create voice session
-  -> establish real WebRTC room
-  -> visitor joins
-  -> agent accepts in NexusDesk
-  -> call ends
-  -> ticket timeline / event / evidence is written
-```
+These require deployment evidence bound to an immutable release identity.
 
-## Near-term phases
+## Verification
 
-```text
-Phase 1: WebCall backend LiveKit provider
-Phase 2: Visitor WebCall room page
-Phase 3: Agent inbox WebCall panel
-Phase 4: lifecycle webhook / missed call / metrics
-Phase 5: transcript / summary / QA / compliance
-Phase 6: SIP / phone number only if business really needs it
-```
-
-## Phase boundary
-
-PR-0 is documentation-only. It does not rename code, change API paths, modify database migrations, or introduce LiveKit runtime behavior.
+Use the canonical repository verification and voice-specific tests and probes. Do not treat this document, a green unit test or the existence of a provider class as production enablement authority.

@@ -12,7 +12,6 @@ from app.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "deploy" / "docker-compose.controlled.yml"
-ENV_EXAMPLE = ROOT / "deploy" / ".env.controlled.example"
 PREFLIGHT = ROOT / "scripts" / "deploy" / "validate_controlled_server_preflight.py"
 SETTINGS = ROOT / "backend" / "app" / "settings.py"
 BACKGROUND_BOUNDARY = (
@@ -22,18 +21,11 @@ WORKER_RUNNER = ROOT / "backend" / "scripts" / "run_worker.py"
 
 
 def _service_blocks(text: str) -> dict[str, str]:
-    services_text = text.split("\nservices:\n", 1)[1].split(
-        "\nnetworks:\n",
-        1,
-    )[0]
+    services_text = text.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
     matches = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", services_text))
     blocks: dict[str, str] = {}
     for index, match in enumerate(matches):
-        end = (
-            matches[index + 1].start()
-            if index + 1 < len(matches)
-            else len(services_text)
-        )
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(services_text)
         blocks[match.group(1)] = services_text[match.end() : end]
     return blocks
 
@@ -114,9 +106,7 @@ def test_disabled_capabilities_receive_no_credentials():
 
 
 def test_migration_receives_only_database_and_metrics_volume():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[
-        "migrate-controlled"
-    ]
+    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))["migrate-controlled"]
     assert "DATABASE_URL_MIGRATION" in block
     assert "prometheus-multiproc" in block
     for forbidden in (
@@ -131,18 +121,19 @@ def test_migration_receives_only_database_and_metrics_volume():
 
 
 def test_web_process_owns_only_http_secrets_and_storage_mounts():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[
-        "app-controlled"
-    ]
-    assert "DATABASE_URL_APP" in block
-    assert "SECRET_KEY" in block
-    assert "METRICS_TOKEN" in block
-    assert "ALLOWED_ORIGINS" in block
-    assert "WEBCHAT_ALLOWED_ORIGINS" in block
-    assert "NEXUS_UPLOADS_HOST_PATH" in block
-    assert ":/app/backend/uploads:rw" in block
-    assert "NEXUS_UPLOAD_BACKUP_HOST_PATH" in block
-    assert ":/var/backups/nexusdesk/uploads:ro" in block
+    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))["app-controlled"]
+    for required in (
+        "DATABASE_URL_APP",
+        "SECRET_KEY",
+        "METRICS_TOKEN",
+        "ALLOWED_ORIGINS",
+        "WEBCHAT_ALLOWED_ORIGINS",
+        "NEXUS_UPLOADS_HOST_PATH",
+        ":/app/backend/uploads:rw",
+        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
+        ":/var/backups/nexusdesk/uploads:ro",
+    ):
+        assert required in block
 
 
 def test_outbound_worker_has_read_only_attachments_and_no_http_secret():
@@ -180,29 +171,19 @@ def test_background_worker_has_writable_uploads_only():
         assert forbidden not in block
 
 
-def test_ai_worker_has_no_provider_credential_while_ai_is_disabled():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[
-        "worker-webchat-ai-controlled"
-    ]
-    assert "DATABASE_URL_WEBCHAT_AI" in block
-    assert "prometheus-multiproc" in block
-    for forbidden in (
-        "SECRET_KEY",
-        "METRICS_TOKEN",
-        "ALLOWED_ORIGINS",
-        "WEBCHAT_ALLOWED_ORIGINS",
-        "NEXUS_UPLOADS_HOST_PATH",
-        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
-        "TOKEN",
-    ):
-        assert forbidden not in block
-
-
-def test_handoff_worker_has_no_business_secret_or_file_mount():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[
-        "worker-handoff-snapshot-controlled"
-    ]
-    assert "DATABASE_URL_HANDOFF" in block
+@pytest.mark.parametrize(
+    "service,database_key",
+    [
+        ("worker-webchat-ai-controlled", "DATABASE_URL_WEBCHAT_AI"),
+        ("worker-handoff-snapshot-controlled", "DATABASE_URL_HANDOFF"),
+    ],
+)
+def test_isolated_workers_have_no_business_secret_or_file_mount(
+    service: str,
+    database_key: str,
+):
+    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[service]
+    assert database_key in block
     assert "prometheus-multiproc" in block
     for forbidden in (
         "SECRET_KEY",
@@ -219,7 +200,6 @@ def test_handoff_worker_has_no_business_secret_or_file_mount():
 def test_preflight_executes_the_same_role_isolation_contract():
     module = _load_preflight_module()
     module._validate_compose(COMPOSE)
-
     values: dict[str, str] = {}
     for index, key in enumerate(module.DATABASE_ROLE_KEYS.values(), start=1):
         values[key] = (
@@ -231,7 +211,6 @@ def test_preflight_executes_the_same_role_isolation_contract():
         expected_database_host="10.2.64.2",
         expected_database_port=5432,
     )
-
     assert set(roles) == set(module.DATABASE_ROLE_KEYS)
     assert len({row["username"] for row in roles.values()}) == len(roles)
     rendered = json.dumps(roles, sort_keys=True)
@@ -271,9 +250,7 @@ def test_non_http_production_roles_start_without_web_secrets(
         "RUNTIME_CONTRACT_SIGNING_SECRET",
     ):
         monkeypatch.delenv(key, raising=False)
-
     settings = Settings()
-
     assert settings.process_role == role
     assert settings.is_http_process is False
     assert settings.jwt_secret_key is None
@@ -295,11 +272,7 @@ def test_ai_worker_cannot_enable_ai_without_real_knowledge_runtime(
     monkeypatch.delenv("SECRET_KEY", raising=False)
     monkeypatch.delenv("KNOWLEDGE_EMBEDDING_API_KEY", raising=False)
     monkeypatch.delenv("KNOWLEDGE_EMBEDDING_API_KEY_FILE", raising=False)
-
-    with pytest.raises(
-        RuntimeError,
-        match="KNOWLEDGE_EMBEDDINGS_ENABLED=true",
-    ):
+    with pytest.raises(RuntimeError, match="KNOWLEDGE_EMBEDDINGS_ENABLED=true"):
         Settings()
 
 
@@ -313,22 +286,25 @@ def test_background_worker_claims_only_its_owned_queue_types():
         and node.name == "dispatch_pending_background_jobs"
     )
     for required in (
-        "AUTO_REPLY_JOB",
         "SPEEDAF_WORK_ORDER_CREATE_JOB",
         "SPEEDAF_ADDRESS_UPDATE_JOB",
         "SPEEDAF_VOICE_CALLBACK_JOB",
         "EMAIL_MAILBOX_SYNC_JOB",
     ):
         assert required in function
-    assert "WEBCHAT_AI_REPLY_JOB" not in function
-    assert "WEBCHAT_HANDOFF_SNAPSHOT_JOB" not in function
-    assert "EXTERNAL_CHANNEL_SYNC_JOB" not in function
+    for forbidden in (
+        "AUTO_REPLY_JOB",
+        "WEBCHAT_AI_REPLY_JOB",
+        "WEBCHAT_HANDOFF_SNAPSHOT_JOB",
+        "EXTERNAL_CHANNEL_SYNC_JOB",
+    ):
+        assert forbidden not in function
 
 
 def test_worker_runner_keeps_processed_counts_separate_from_queue_depth():
     runner = WORKER_RUNNER.read_text(encoding="utf-8")
     assert 'if queue == "webchat-ai"' in runner
-    assert 'if queue in {"all", "handoff-snapshot"}' in runner
+    assert 'if queue == "handoff-snapshot"' in runner
     assert "collect_queue_health" in runner
     assert "_record_queue_depth_snapshot_if_due" in runner
     assert 'record_queue_snapshot("outbound", "processed"' not in runner

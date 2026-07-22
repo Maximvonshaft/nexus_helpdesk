@@ -93,7 +93,10 @@ def _dockerfile_findings(path: Path) -> list[str]:
 
 def _requirements_findings(path: Path) -> list[str]:
     findings: list[str] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        1,
+    ):
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or stripped.startswith("--"):
             continue
@@ -104,7 +107,10 @@ def _requirements_findings(path: Path) -> list[str]:
 
 def _compose_findings(path: Path) -> list[str]:
     findings: list[str] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        1,
+    ):
         stripped = line.strip()
         if not stripped.startswith("image:"):
             continue
@@ -244,11 +250,18 @@ def collect_supply_chain_state(
     }
 
 
+def _default_ci_output() -> Path | None:
+    if os.getenv("CI", "").strip().lower() != "true":
+        return None
+    directory = Path("/tmp/nexus-static")
+    return directory / "supply-chain.json" if directory.is_dir() else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--evidence-dir", type=Path)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, default=_default_ci_output())
     args = parser.parse_args()
     payload = collect_supply_chain_state(
         release=args.release,

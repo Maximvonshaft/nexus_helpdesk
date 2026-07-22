@@ -45,6 +45,54 @@
       "compatibility_shims": []
     },
     {
+      "responsibility": "webchat-session-identity",
+      "public_authority": "backend/app/services/webchat_session_identity.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "conversation-first-webchat-initialization",
+      "public_authority": "backend/app/services/conversation_first_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "webchat-public-message-service",
+      "public_authority": "backend/app/services/webchat_message_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "customer-visible-message-persistence",
+      "public_authority": "backend/app/services/customer_visible_message_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "webchat-application-facade",
+      "public_authority": "backend/app/services/webchat_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "conversation-operator-read-and-reply",
+      "public_authority": "backend/app/services/conversation_operator_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "webchat-agent-reply",
+      "public_authority": "backend/app/services/webchat_ai_service.py",
+      "private_implementation": "backend/app/services/webchat_runtime_ai_service.py",
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "webchat-agent-turn-orchestration",
+      "public_authority": "backend/app/services/webchat_ai_orchestration_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
       "responsibility": "osr-admin-api",
       "public_authority": "backend/app/api/canonical_osr_admin.py",
       "private_implementation": "backend/app/api/osr_admin_core.py",

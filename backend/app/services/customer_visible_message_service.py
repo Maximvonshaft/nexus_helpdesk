@@ -9,9 +9,13 @@ from sqlalchemy.orm import Session
 from ..enums import EventType, MessageStatus, NoteVisibility, SourceChannel
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..utils.time import utc_now
-from ..webchat_models import WebchatConversation, WebchatMessage
+from ..webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
 from .ai_reply_contract import AIReplyContract
-from .message_dispatch import _enforce_customer_visible_origin, _normalize_customer_visible_origin, queue_outbound_message
+from .message_dispatch import (
+    _enforce_customer_visible_origin,
+    _normalize_customer_visible_origin,
+    queue_outbound_message,
+)
 from .ticket_event_sanitizer import serialize_ticket_event_payload
 
 
@@ -39,23 +43,40 @@ def create_customer_visible_outbound(
     subject: str | None = None,
 ) -> CustomerVisibleMessageResult:
     if ai_contract and ai_contract.reply_type == "null_reply":
-        return CustomerVisibleMessageResult(outbound_message=None, customer_visible=False, provider_status="runtime_null_reply_not_sent")
+        return CustomerVisibleMessageResult(
+            outbound_message=None,
+            customer_visible=False,
+            provider_status="runtime_null_reply_not_sent",
+        )
 
     runtime_payload_json = None
     runtime_payload_sha256 = None
     runtime_reply_type = None
     if ai_contract is not None:
-        runtime_payload_json = ai_contract.payload_json(body=body, origin=origin, customer_visible=True)
-        runtime_payload_sha256 = ai_contract.payload_sha256(body=body, origin=origin, customer_visible=True)
+        runtime_payload_json = ai_contract.payload_json(
+            body=body,
+            origin=origin,
+            customer_visible=True,
+        )
+        runtime_payload_sha256 = ai_contract.payload_sha256(
+            body=body,
+            origin=origin,
+            customer_visible=True,
+        )
         runtime_reply_type = ai_contract.reply_type
 
     _enforce_customer_visible_origin(
         body=body,
-        origin=_normalize_customer_visible_origin(origin, created_by=created_by),
+        origin=_normalize_customer_visible_origin(
+            origin,
+            created_by=created_by,
+        ),
         ticket=ticket,
         created_by=created_by,
         runtime_trace_id=ai_contract.runtime_trace_id if ai_contract else None,
-        runtime_contract_version=ai_contract.contract_version if ai_contract else None,
+        runtime_contract_version=(
+            ai_contract.contract_version if ai_contract else None
+        ),
         runtime_signature=ai_contract.runtime_signature if ai_contract else None,
         runtime_contract_payload_json=runtime_payload_json,
         runtime_contract_payload_sha256=runtime_payload_sha256,
@@ -71,9 +92,15 @@ def create_customer_visible_outbound(
             subject=subject,
             body=body,
             origin=origin,
-            runtime_trace_id=ai_contract.runtime_trace_id if ai_contract else None,
-            runtime_contract_version=ai_contract.contract_version if ai_contract else None,
-            runtime_signature=ai_contract.runtime_signature if ai_contract else None,
+            runtime_trace_id=(
+                ai_contract.runtime_trace_id if ai_contract else None
+            ),
+            runtime_contract_version=(
+                ai_contract.contract_version if ai_contract else None
+            ),
+            runtime_signature=(
+                ai_contract.runtime_signature if ai_contract else None
+            ),
             runtime_contract_payload_json=runtime_payload_json,
             runtime_contract_payload_sha256=runtime_payload_sha256,
             runtime_reply_type=runtime_reply_type,
@@ -88,7 +115,11 @@ def create_customer_visible_outbound(
         )
         db.add(outbound_message)
         db.flush()
-        return CustomerVisibleMessageResult(outbound_message=outbound_message, customer_visible=True, provider_status=provider_status)
+        return CustomerVisibleMessageResult(
+            outbound_message=outbound_message,
+            customer_visible=True,
+            provider_status=provider_status,
+        )
 
     outbound_message = queue_outbound_message(
         db,
@@ -100,20 +131,26 @@ def create_customer_visible_outbound(
         provider_status=provider_status,
         origin=origin,
         runtime_trace_id=ai_contract.runtime_trace_id if ai_contract else None,
-        runtime_contract_version=ai_contract.contract_version if ai_contract else None,
+        runtime_contract_version=(
+            ai_contract.contract_version if ai_contract else None
+        ),
         runtime_signature=ai_contract.runtime_signature if ai_contract else None,
         runtime_contract_payload_json=runtime_payload_json,
         runtime_contract_payload_sha256=runtime_payload_sha256,
         runtime_reply_type=runtime_reply_type,
         safety_status=ai_contract.safety_status if ai_contract else None,
     )
-    return CustomerVisibleMessageResult(outbound_message=outbound_message, customer_visible=True, provider_status=provider_status)
+    return CustomerVisibleMessageResult(
+        outbound_message=outbound_message,
+        customer_visible=True,
+        provider_status=provider_status,
+    )
 
 
 def create_customer_visible_message(
     db: Session,
     *,
-    ticket: Ticket,
+    ticket: Ticket | None,
     channel: SourceChannel,
     body: str,
     origin: str,
@@ -140,27 +177,44 @@ def create_customer_visible_message(
     event_payload: dict[str, Any] | None = None,
 ) -> CustomerVisibleMessageResult:
     if ai_contract and ai_contract.reply_type == "null_reply":
-        return CustomerVisibleMessageResult(outbound_message=None, customer_visible=False, provider_status="runtime_null_reply_not_sent")
+        return CustomerVisibleMessageResult(
+            outbound_message=None,
+            customer_visible=False,
+            provider_status="runtime_null_reply_not_sent",
+        )
+    if ticket is None and conversation is None:
+        raise ValueError(
+            "ticketless customer-visible message requires a conversation"
+        )
+    if ticket is None and channel != SourceChannel.web_chat:
+        raise ValueError(
+            "ticketless customer-visible message requires web_chat channel"
+        )
 
-    outbound_result = create_customer_visible_outbound(
-        db,
-        ticket=ticket,
-        channel=channel,
-        body=body,
-        origin=origin,
-        created_by=created_by,
-        provider_status=provider_status,
-        ai_contract=ai_contract,
-        status=outbound_status,
-        subject=subject,
+    outbound_message: TicketOutboundMessage | None = None
+    if ticket is not None:
+        outbound_result = create_customer_visible_outbound(
+            db,
+            ticket=ticket,
+            channel=channel,
+            body=body,
+            origin=origin,
+            created_by=created_by,
+            provider_status=provider_status,
+            ai_contract=ai_contract,
+            status=outbound_status,
+            subject=subject,
+        )
+        outbound_message = outbound_result.outbound_message
+
+    resolved_delivery_status = delivery_status or (
+        "queued" if channel == SourceChannel.whatsapp else "sent"
     )
-
-    resolved_delivery_status = delivery_status or ("queued" if channel == SourceChannel.whatsapp else "sent")
     webchat_message: WebchatMessage | None = None
     if conversation is not None:
         webchat_message = WebchatMessage(
             conversation_id=conversation.id,
-            ticket_id=ticket.id,
+            ticket_id=ticket.id if ticket is not None else None,
             direction=webchat_direction,
             body=body,
             body_text=body,
@@ -178,25 +232,30 @@ def create_customer_visible_message(
         db.flush()
 
     ticket_comment: TicketComment | None = None
-    if create_external_comment:
-        ticket_comment = TicketComment(ticket_id=ticket.id, author_id=comment_author_id, body=body, visibility=NoteVisibility.external)
+    if ticket is not None and create_external_comment:
+        ticket_comment = TicketComment(
+            ticket_id=ticket.id,
+            author_id=comment_author_id,
+            body=body,
+            visibility=NoteVisibility.external,
+        )
         db.add(ticket_comment)
         db.flush()
 
     ticket_event: TicketEvent | None = None
-    if event_type is not None:
+    if ticket is not None and event_type is not None:
         payload = dict(event_payload or {})
         payload.setdefault("ticket_id", ticket.id)
         payload.setdefault("provider_status", provider_status)
-        payload.setdefault("reply_channel", channel.value if hasattr(channel, "value") else str(channel))
+        payload.setdefault("reply_channel", channel.value)
         payload.setdefault("external_send", channel == SourceChannel.whatsapp)
         if conversation is not None:
             payload.setdefault("conversation_public_id", conversation.public_id)
             payload.setdefault("conversation_id", conversation.id)
         if webchat_message is not None:
             payload.setdefault("webchat_message_id", webchat_message.id)
-        if outbound_result.outbound_message is not None:
-            payload.setdefault("outbound_message_id", outbound_result.outbound_message.id)
+        if outbound_message is not None:
+            payload.setdefault("outbound_message_id", outbound_message.id)
         ticket_event = TicketEvent(
             ticket_id=ticket.id,
             actor_id=created_by,
@@ -207,8 +266,35 @@ def create_customer_visible_message(
         db.add(ticket_event)
         db.flush()
 
+    if (
+        origin == "human_agent"
+        and conversation is not None
+        and webchat_message is not None
+        and conversation.current_handoff_request_id is not None
+    ):
+        db.add(
+            WebchatEvent(
+                conversation_id=conversation.id,
+                ticket_id=ticket.id if ticket is not None else None,
+                event_type="handoff.agent_reply_sent",
+                payload_json=json.dumps(
+                    {
+                        "handoff_request_id": (
+                            conversation.current_handoff_request_id
+                        ),
+                        "message_id": webchat_message.id,
+                        "actor_id": created_by,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                created_at=utc_now(),
+            )
+        )
+        db.flush()
+
     return CustomerVisibleMessageResult(
-        outbound_message=outbound_result.outbound_message,
+        outbound_message=outbound_message,
         webchat_message=webchat_message,
         ticket_comment=ticket_comment,
         ticket_event=ticket_event,
@@ -224,10 +310,14 @@ def record_runtime_null_reply(
     ai_contract: AIReplyContract,
     provider_status: str = "runtime_null_reply_not_sent",
 ) -> CustomerVisibleMessageResult:
-    # Intentionally no TicketOutboundMessage: null_reply is not customer-visible.
+    del ai_contract
     ticket.last_runtime_reply_at = utc_now()
     db.flush()
-    return CustomerVisibleMessageResult(outbound_message=None, customer_visible=False, provider_status=provider_status)
+    return CustomerVisibleMessageResult(
+        outbound_message=None,
+        customer_visible=False,
+        provider_status=provider_status,
+    )
 
 
 def _json_or_none(value: dict[str, Any] | str | None) -> str | None:

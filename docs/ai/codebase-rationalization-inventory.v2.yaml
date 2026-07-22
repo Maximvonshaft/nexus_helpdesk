@@ -27,7 +27,16 @@ canonical_authorities:
   safe_effective_closure: backend/app/services/ticket_closure_readiness.py
   ticket_closure_api: backend/app/api/ticket_closure.py
   unified_operator_queue: backend/app/services/operator_work_queue.py
+  webchat_session_identity: backend/app/services/webchat_session_identity.py
+  webchat_initialization: backend/app/services/conversation_first_service.py
+  webchat_message_service: backend/app/services/webchat_message_service.py
+  customer_visible_message_persistence: backend/app/services/customer_visible_message_service.py
+  webchat_application_facade: backend/app/services/webchat_service.py
   webchat_handoff: backend/app/services/webchat_handoff_service.py
+  webchat_agent_orchestration: backend/app/services/webchat_ai_orchestration_service.py
+  webchat_agent_reply: backend/app/services/webchat_ai_service.py
+  webchat_agent_provider_bridge: backend/app/services/webchat_runtime_ai_service.py
+  conversation_operator_service: backend/app/services/conversation_operator_service.py
   integration_api: backend/app/api/canonical_integration.py
   integration_private_runtime: backend/app/api/integration_runtime.py
   permissions: backend/app/services/permissions.py
@@ -67,6 +76,16 @@ retired_paths_must_be_absent:
   - backend/app/api/osr_admin.py
   - backend/app/services/outbound_adapters/whatsapp.py
   - backend/app/services/webchat_ai_decision_runtime/prompt_builder.py
+  - backend/app/services/conversation_ai_service.py
+  - backend/app/services/llm_service.py
+  - backend/app/services/auto_reply_service.py
+  - backend/scripts/run_api_manual.py
+  - backend/scripts/run_worker_manual.py
+  - deploy/systemd/nexusdesk-worker.service
+  - docs/legacy-frontend-deprecation.md
+  - docs/backend-refactor-roadmap.md
+  - docs/backend-module-split-plan.md
+  - docs/ai/codebase-rationalization-inventory.v1.yaml
   - artifacts/supply-chain
 
 single_authority_rules:
@@ -75,9 +94,16 @@ single_authority_rules:
   - one generic UI framework and theme
   - one frontend HTTP transport lifecycle
   - one public authority per backend responsibility
-  - no compatibility forwarding module for canonical services or routers
+  - no business logic in stable import facades
+  - no independently callable private implementation
   - no role-name authorization outside the capability authority
   - no runtime schema DDL outside Alembic
+  - no ticket-mandatory WebChat initialization
+  - one Customer-visible Message persistence boundary
+  - one WebChat Agent reply and persistence authority
+  - no direct model CLI or standalone AI Job
+  - no legacy Lite response shape
+  - no worker deployment through run_worker.py or queue all
   - no ticket closure from status or technical success alone
   - no worker health claim without durable progress freshness
   - one GitHub Actions workflow and one required gate

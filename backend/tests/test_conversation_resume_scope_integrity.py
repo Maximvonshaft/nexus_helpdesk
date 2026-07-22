@@ -37,7 +37,7 @@ from app.db import Base  # noqa: E402
 from app.models import Customer  # noqa: E402
 from app.models_agent_routing import ConversationControl  # noqa: E402
 from app.services import conversation_first_service  # noqa: E402
-from app.services.webchat_service import _hash_token  # noqa: E402
+from app.services.webchat_session_identity import hash_token  # noqa: E402
 from app.webchat_models import WebchatConversation  # noqa: E402
 
 
@@ -90,7 +90,7 @@ def test_resume_rejects_country_scope_change_without_rewriting_control(
     db_session.flush()
     conversation = WebchatConversation(
         public_id="conversation-scope-integrity",
-        visitor_token_hash=_hash_token(token),
+        visitor_token_hash=hash_token(token),
         tenant_key="default",
         channel_key="webchat",
         ticket_id=None,

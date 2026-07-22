@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/lite_cases_pagination_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/lite_cases_pagination_tests.db",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -19,7 +23,13 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.api.lite import list_cases  # noqa: E402
 from app.db import Base  # noqa: E402
-from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.enums import (  # noqa: E402
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+    UserRole,
+)
 from app.models import Customer, Market, Team, Ticket, User  # noqa: E402
 from app.services.lite_pagination import (  # noqa: E402
     _decode_cursor,
@@ -33,8 +43,18 @@ from app.services.lite_pagination import (  # noqa: E402
 @pytest.fixture()
 def db_session(tmp_path):
     db_file = tmp_path / "lite_cases.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
-    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     session = Session()
     try:
@@ -59,7 +79,12 @@ def make_market(db, code: str = "CH") -> Market:
     return row
 
 
-def make_user(db, username: str, role: UserRole = UserRole.admin, team_id: int | None = None) -> User:
+def make_user(
+    db,
+    username: str,
+    role: UserRole = UserRole.admin,
+    team_id: int | None = None,
+) -> User:
     row = User(
         username=username,
         display_name=username,
@@ -84,7 +109,10 @@ def make_ticket(
     market_id: int | None,
     updated_at: datetime,
 ) -> Ticket:
-    customer = Customer(name=f"Customer {idx}", email=f"customer{idx}@invalid.test")
+    customer = Customer(
+        name=f"Customer {idx}",
+        email=f"customer{idx}@invalid.test",
+    )
     db.add(customer)
     db.flush()
     row = Ticket(
@@ -121,7 +149,11 @@ def seed_tickets(db, *, total: int = 120):
             make_ticket(
                 db,
                 idx,
-                status=TicketStatus.new if idx % 2 == 0 else TicketStatus.in_progress,
+                status=(
+                    TicketStatus.new
+                    if idx % 2 == 0
+                    else TicketStatus.in_progress
+                ),
                 assignee_id=agent_a.id if idx % 3 == 0 else agent_b.id,
                 team_id=team_a.id if idx % 4 in {0, 1} else team_b.id,
                 market_id=market.id,
@@ -178,7 +210,12 @@ def test_lite_cases_real_db_default_limit_cap_and_no_overlap(db_session):
     admin, *_ = seed_tickets(db_session, total=120)
 
     first = list_lite_cases_page(db_session, admin, limit=None)
-    second = list_lite_cases_page(db_session, admin, cursor=first["next_cursor"], limit=None)
+    second = list_lite_cases_page(
+        db_session,
+        admin,
+        cursor=first["next_cursor"],
+        limit=None,
+    )
     capped = list_lite_cases_page(db_session, admin, limit=500)
 
     assert len(first["items"]) == 50
@@ -187,10 +224,12 @@ def test_lite_cases_real_db_default_limit_cap_and_no_overlap(db_session):
     assert first["next_cursor"] is not None
     assert len(capped["items"]) == 100
     assert capped["filters"]["limit"] == 100
-    assert not {item_id(item) for item in first["items"]} & {item_id(item) for item in second["items"]}
+    assert not {item_id(item) for item in first["items"]} & {
+        item_id(item) for item in second["items"]
+    }
 
 
-def test_lite_cases_non_legacy_returns_stable_workspace_contract(db_session):
+def test_lite_cases_returns_stable_workspace_contract(db_session):
     admin, *_ = seed_tickets(db_session, total=5)
 
     page = list_lite_cases_page(db_session, admin, limit=2)
@@ -224,35 +263,102 @@ def test_lite_cases_non_legacy_returns_stable_workspace_contract(db_session):
 
 
 def test_lite_cases_real_db_status_assignee_and_team_cursor_stability(db_session):
-    admin, agent_a, _agent_b, team_a, _team_b, _rows = seed_tickets(db_session, total=120)
+    admin, agent_a, _agent_b, team_a, _team_b, _rows = seed_tickets(
+        db_session,
+        total=120,
+    )
 
-    status_first = list_lite_cases_page(db_session, admin, status="new", limit=30)
-    status_second = list_lite_cases_page(db_session, admin, status="new", cursor=status_first["next_cursor"], limit=30)
+    status_first = list_lite_cases_page(
+        db_session,
+        admin,
+        status="new",
+        limit=30,
+    )
+    status_second = list_lite_cases_page(
+        db_session,
+        admin,
+        status="new",
+        cursor=status_first["next_cursor"],
+        limit=30,
+    )
     assert status_first["next_cursor"] is not None
-    assert not {item_id(item) for item in status_first["items"]} & {item_id(item) for item in status_second["items"]}
-    assert all(item_status(item) == "new" for item in [*status_first["items"], *status_second["items"]])
+    assert not {item_id(item) for item in status_first["items"]} & {
+        item_id(item) for item in status_second["items"]
+    }
+    assert all(
+        item_status(item) == "new"
+        for item in [*status_first["items"], *status_second["items"]]
+    )
 
-    assignee_first = list_lite_cases_page(db_session, admin, assignee_id=agent_a.id, limit=30)
-    assignee_second = list_lite_cases_page(db_session, admin, assignee_id=agent_a.id, cursor=assignee_first["next_cursor"], limit=30)
-    assert not {item_id(item) for item in assignee_first["items"]} & {item_id(item) for item in assignee_second["items"]}
-    assignee_ids = {row.id for row in db_session.query(Ticket).filter(Ticket.assignee_id == agent_a.id).all()}
-    assert {item_id(item) for item in [*assignee_first["items"], *assignee_second["items"]]}.issubset(assignee_ids)
+    assignee_first = list_lite_cases_page(
+        db_session,
+        admin,
+        assignee_id=agent_a.id,
+        limit=30,
+    )
+    assignee_second = list_lite_cases_page(
+        db_session,
+        admin,
+        assignee_id=agent_a.id,
+        cursor=assignee_first["next_cursor"],
+        limit=30,
+    )
+    assert not {item_id(item) for item in assignee_first["items"]} & {
+        item_id(item) for item in assignee_second["items"]
+    }
+    assignee_ids = {
+        row.id
+        for row in db_session.query(Ticket)
+        .filter(Ticket.assignee_id == agent_a.id)
+        .all()
+    }
+    assert {
+        item_id(item)
+        for item in [*assignee_first["items"], *assignee_second["items"]]
+    }.issubset(assignee_ids)
 
-    team_first = list_lite_cases_page(db_session, admin, team_id=team_a.id, limit=30)
-    team_second = list_lite_cases_page(db_session, admin, team_id=team_a.id, cursor=team_first["next_cursor"], limit=30)
-    assert not {item_id(item) for item in team_first["items"]} & {item_id(item) for item in team_second["items"]}
-    team_ids = {row.id for row in db_session.query(Ticket).filter(Ticket.team_id == team_a.id).all()}
-    assert {item_id(item) for item in [*team_first["items"], *team_second["items"]]}.issubset(team_ids)
+    team_first = list_lite_cases_page(
+        db_session,
+        admin,
+        team_id=team_a.id,
+        limit=30,
+    )
+    team_second = list_lite_cases_page(
+        db_session,
+        admin,
+        team_id=team_a.id,
+        cursor=team_first["next_cursor"],
+        limit=30,
+    )
+    assert not {item_id(item) for item in team_first["items"]} & {
+        item_id(item) for item in team_second["items"]
+    }
+    team_ids = {
+        row.id
+        for row in db_session.query(Ticket)
+        .filter(Ticket.team_id == team_a.id)
+        .all()
+    }
+    assert {
+        item_id(item)
+        for item in [*team_first["items"], *team_second["items"]]
+    }.issubset(team_ids)
 
 
-def test_lite_cases_real_db_invalid_cursor_and_legacy_shape(db_session):
+def test_lite_cases_invalid_cursor_and_legacy_mode_absence(db_session):
     admin, *_ = seed_tickets(db_session, total=120)
 
     with pytest.raises(HTTPException) as exc:
-        list_lite_cases_page(db_session, admin, cursor="not-a-real-cursor")
+        list_lite_cases_page(
+            db_session,
+            admin,
+            cursor="not-a-real-cursor",
+        )
     assert exc.value.status_code == 400
 
-    legacy = list_cases(
+    signature = inspect.signature(list_cases)
+    assert "legacy" not in signature.parameters
+    page = list_cases(
         q=None,
         status=None,
         priority=None,
@@ -261,12 +367,11 @@ def test_lite_cases_real_db_invalid_cursor_and_legacy_shape(db_session):
         overdue=None,
         cursor=None,
         limit=50,
-        legacy=True,
         db=db_session,
         current_user=admin,
     )
-    assert isinstance(legacy, list)
-    assert legacy
-    assert hasattr(legacy[0], "id")
-    assert hasattr(legacy[0], "case")
-    assert hasattr(legacy[0], "status")
+    assert isinstance(page, dict)
+    assert page["items"]
+    assert isinstance(page["items"][0], dict)
+    assert "ticket_no" in page["items"][0]
+    assert "case" not in page["items"][0]

@@ -2,150 +2,152 @@
 
 ## Purpose
 
-Nexus treats a customer conversation and a support ticket as different business objects.
+Nexus treats a customer Conversation and a Ticket as different business objects.
 
-- A **conversation** is the live communication record between the customer, AI, and an operator.
-- A **ticket** is a durable follow-up responsibility that remains after the live conversation cannot finish the work.
-- A **handoff** transfers a live conversation from AI to a human operator. A handoff does not require a ticket.
-- A **voice session** is a real-time communication session attached to a conversation. Starting or operating a voice session does not create a ticket.
+- A **Conversation** is the live communication record between the customer, Agent and operator.
+- A **Ticket** is a durable follow-up responsibility created only when live interaction cannot complete the work or a governed business action requires a formal record.
+- A **Handoff** transfers a live Conversation from Agent to operator. It does not require a Ticket.
+- A **Voice Session** is attached to a Conversation. Starting or operating voice does not create a Ticket.
 
-This design establishes one canonical routing and capacity authority. It does not create a second inbox, queue, message transport, permission system, ticket workflow, or voice state machine.
+This architecture establishes one routing, capacity, Agent execution and message-persistence authority. It does not create a second inbox, queue, HTTP transport, permission system, Ticket workflow or voice state machine.
 
 ## Product invariants
 
-1. A WebChat conversation can be created, receive messages, run Agent turns, start voice, and close without a ticket.
-2. A human handoff can be requested, queued, accepted, released, resumed to AI, or closed without a ticket.
-3. A ticket is created only when the issue requires asynchronous follow-up, a controlled business action, or a formal record.
-4. `webchat_conversations.ticket_id` remains the optional primary link. A many-to-many link model is not introduced without a proven business requirement.
-5. Agent occupancy is derived from accepted, non-terminal handoffs. There is no mutable parallel counter.
-6. Agent availability is derived from server-owned presence state, heartbeat freshness, configured capacity, current occupancy, and authorized scope.
-7. Waiting handoffs are selected FIFO inside the eligible tenant/country/channel scope.
-8. Assignment is concurrency-safe. Capacity and handoff state are rechecked while rows are locked before ownership is committed.
-9. Closing a human conversation records an outcome and releases capacity. “Conversation ended” and “customer issue resolved” are separate facts.
-10. Ticket Safe Effective Closure remains ticket-only and does not govern ordinary conversation closure.
-11. Voice control is session-first. Ticket visibility is consulted only when a voice session already has a ticket; otherwise visibility comes from the conversation tenant/country/channel scope.
-12. A ticket-required business action fails closed when no ticket exists. The system must not create a ticket merely to satisfy a technical route or service signature.
+1. A WebChat Conversation can be created, receive messages, run Agent turns, start voice and close without a Ticket.
+2. A Handoff can be requested, queued, accepted, released, resumed to Agent or closed without a Ticket.
+3. A Ticket is created only for asynchronous follow-up, a controlled business action or a formal record.
+4. `webchat_conversations.ticket_id` is an optional link, not the primary runtime identity.
+5. Operator occupancy is derived from accepted non-terminal handoffs. There is no parallel mutable counter.
+6. Availability is derived from server-owned presence, heartbeat freshness, configured capacity, current occupancy and authorized scope.
+7. Waiting handoffs are FIFO within eligible tenant, country and channel scope.
+8. Assignment rechecks eligibility and capacity while rows are locked.
+9. Conversation closure and Ticket Safe Effective Closure are distinct business facts.
+10. Voice control is session-first and ticket-optional.
+11. A Ticket-required Tool fails closed when no Ticket exists; the runtime must not manufacture a Ticket for a technical dependency.
+12. Ticket-backed historical Conversations and ticketless Conversations use the same Agent reply and persistence authority.
 
 ## Canonical lifecycle
 
-### Agent resolves the conversation
+### Agent resolves live
 
-`open -> ai_active -> closed(ai_resolved)`
+```text
+open -> ai_active -> closed(ai_resolved)
+```
 
-No ticket is created.
+No Ticket is created.
 
-### Human resolves the conversation live
+### Operator resolves live
 
-`open -> handoff_requested -> human_active -> closed(human_resolved)`
+```text
+open -> handoff_requested -> human_active -> closed(human_resolved)
+```
 
-No ticket is created.
+No Ticket is created.
 
-### Follow-up is required
+### Durable follow-up is required
 
-`open -> handoff_requested|ai_active -> ticket_created -> closed(ticket_created)`
+```text
+open -> ai_active|handoff_requested -> ticket.create -> closed(ticket_created)
+```
 
-The governed `ticket.create` action creates or reuses the ticket and binds its id to the conversation only after trusted server-side confirmation.
+The governed `ticket.create` Tool creates or reuses the Ticket only after server-side authorization and trusted confirmation.
 
-### Voice is explicitly initiated
+### Voice is initiated
 
-`conversation -> voice_session(requested) -> accepted|rejected|ended`
+```text
+conversation -> voice_session(requested) -> accepted|rejected|ended
+```
 
-The existing `WebchatVoiceSession` lifecycle remains the only voice authority. Operator actions use session-first routes:
+Voice may reference an existing Ticket, but initiation never creates or backfills one.
 
-- `/admin/voice/{voice_session_id}/accept`
-- `/admin/voice/{voice_session_id}/reject`
-- `/admin/voice/{voice_session_id}/end`
-- `/admin/voice/{voice_session_id}/evidence`
-- `/admin/voice/{voice_session_id}/actions`
-- `/admin/voice/{voice_session_id}/notes`
+## Canonical implementation authorities
 
-A voice session may reference a ticket that already exists, but voice initiation never creates or backfills one. A provider callback or another controlled action that genuinely requires a formal ticket returns an explicit ticket-required failure when the session is ticketless.
+- Session identity and visitor-token policy: `backend/app/services/webchat_session_identity.py`
+- Conversation initialization and resume: `backend/app/services/conversation_first_service.py`
+- Visitor messages and structured actions: `backend/app/services/webchat_message_service.py`
+- Stable application facade: `backend/app/services/webchat_service.py`
+- Agent turn orchestration: `backend/app/services/webchat_ai_orchestration_service.py`
+- Agent reply execution and persistence: `backend/app/services/webchat_ai_service.py`
+- Generic Agent provider bridge: `backend/app/services/webchat_runtime_ai_service.py`
+- Operator thread and reply authority: `backend/app/services/conversation_operator_service.py`
+- Handoff lifecycle: `backend/app/services/webchat_handoff_service.py`
+- Operator assignment and capacity: the canonical operator queue and availability services
+- Human voice lifecycle: `backend/app/services/webchat_voice_service.py`
+- Live AI voice orchestration: `backend/app/services/live_voice_orchestration_service.py`
+
+`webchat_service.py` is a bounded stable import facade. It must not contain Ticket creation, provider calls, policy evaluation, message persistence or fallback logic.
 
 ## Agent presence and capacity
 
-Each operator has one server-owned state:
+Operator status is server-owned:
 
-- `online`: may receive new conversations.
-- `paused`: may finish current conversations but receives no new assignments.
-- `offline`: unavailable for assignment.
+- `online`: eligible for new Conversations;
+- `paused`: may finish current work but receives no new assignment;
+- `offline`: unavailable.
 
-A fresh browser heartbeat is required for assignment. Stale presence is treated as unavailable without rewriting the operator's chosen status.
+A fresh browser heartbeat is required. Available capacity is:
 
-Capacity is calculated as:
+```text
+max_concurrent_conversations - accepted_open_handoffs
+```
 
-`available_slots = max_concurrent_conversations - accepted_open_handoffs`
-
-The default maximum is 3 and is bounded to 1..20.
+The configured maximum is bounded and assignment is concurrency-safe.
 
 ## Queue and assignment
 
-The existing `WebchatHandoffRequest` and `OperatorTask` records remain the only handoff queue authorities.
+`WebchatHandoffRequest` and `OperatorTask` remain the queue authorities.
 
-When a handoff is requested:
+1. Suspend Agent execution and create or reuse the Handoff request.
+2. Attempt assignment to an eligible online operator with capacity.
+3. Otherwise keep the request waiting.
+4. Order eligible requests by `requested_at`, then `id`.
+5. Reassign the oldest eligible request when capacity becomes available.
 
-1. Suspend AI and create or reuse the open handoff request.
-2. Attempt automatic assignment to an eligible online operator with free capacity.
-3. If none is available, keep the request in `requested` status.
-4. Order waiting requests by `requested_at`, then `id`.
-5. When an operator comes online or a slot is released, assign the oldest eligible request.
-
-Eligibility requires matching server-owned queue scope. FIFO applies after scope eligibility.
-
-## Agent Tools
-
-The governed Tool Registry and private Tool Executor Core remain canonical.
-
-- `support.availability` returns a safe aggregate: online agents, total capacity, occupied capacity, available capacity, queue length, and the current request position when available.
-- `handoff.request.create` creates or updates a ticketless handoff request.
-- `ticket.create` requires trusted server-side customer confirmation before it may create or reuse a ticket.
-- Public WebChat exposes only least-privilege Tools that it can authorize end to end. Confirmation-required Tools are not exposed to that principal until a server-issued confirmation artifact exists.
-
-The model proposes Tools. The server validates registration, JSON input schema, availability, permission, confirmation, risk, idempotency, handler authority, redaction, and audit before execution.
-
-## Runtime, evidence, and audit
+## Agent execution and evidence
 
 Conversation is the primary runtime identity. Ticket is optional context.
 
-- Ticketless Agent turns, messages, events, handoffs, Debug Runs, Test Findings, and voice sessions persist with `ticket_id = NULL`.
-- An ordinary final reply is audited through the durable `WebchatAITurn`, sanitized runtime trace, Provider Runtime audit, customer-visible message, and conversation event. Nexus does not write a parallel OSR reply-decision record for the same outcome.
-- Tool execution additionally persists the canonical `ToolCallLog`, sanitized Tool governance audit, and Case Context; these records may remain ticketless when the conversation has no Ticket.
-- Ticket-backed and ticketless text paths use the same bounded Generic Agent loop.
-- Runtime generation rechecks the server-owned conversation state immediately before creating a public Agent message. A human takeover or superseding customer message suppresses the stale reply.
-- Runtime traces, Tool observations, and customer-visible message metadata are sanitized before persistence.
-- A Tool result is returned to the model as successful only after its database transaction commits.
-- Provider/runtime failure still produces one deterministic customer-visible terminal response.
+- All text turns use one Generic Agent loop.
+- All public replies pass through one customer-visible policy and terminal-fallback boundary.
+- All text replies are persisted by one Agent reply authority, with only the final storage projection varying according to whether a Ticket already exists.
+- Runtime state is rechecked before a public reply is committed.
+- Handoff is a Tool side effect, not a reply-text shortcut.
+- Runtime traces and Tool data are sanitized before persistence.
+- Tool success is returned to the model only after its business transaction succeeds.
+- Provider failure produces one deterministic customer-visible terminal response.
+- A standalone model CLI, channel-specific model loop or Ticketless reply service is forbidden.
 
-## Delivery boundaries
+## Compatibility boundary
 
-This delivery is WebChat-first. It preserves current ticket-backed WhatsApp behavior until outbound routing can be conversation-bound without weakening provider safety. It does not introduce a parallel WhatsApp conversation implementation.
+Historical Conversations may already reference Tickets. That data relationship is supported by the same canonical runtime; it is not a second initialization or Agent execution path.
 
-The delivered foundation includes:
+Compatibility may read historical state but may not:
 
-- one Alembic head through revision `20260720_0067`;
-- ticketless WebChat initialization and Generic Agent execution;
-- ticketless handoff lifecycle;
-- operator presence, heartbeat, capacity, and FIFO assignment;
-- conversation closure outcomes and capacity release;
-- aggregate availability and governed ticket tools;
-- one canonical frontend presence control;
-- session-first, ticket-optional voice control;
-- ticketless Agent-turn trace, Debug Bundle, Test Finding, and Tool-specific Case Context and audit support.
+- create a Ticket for every new Conversation;
+- select a separate Agent service by `ticket_id`;
+- own customer-visible policy or fallback behavior;
+- call a model or Provider independently;
+- define a second message persistence path.
 
-## Verification contract
+## Migration authority
 
-The acceptance suite must prove at least these business outcomes:
+Alembic is the only schema-mutation authority. The current migration head must be derived from `alembic heads` and exact release evidence; architecture documents must not hard-code a moving revision as current truth.
 
-1. Creating and using text WebChat does not create a ticket.
-2. Ticketless Agent replies are persisted with sanitized runtime evidence and remain visible in the debug bundle; Tool calls additionally persist redacted Tool audit and Case Context without requiring a Ticket.
-3. A human takeover during Agent generation prevents the stale reply from being committed.
-4. A ticketless handoff can enter the unified queue and be assigned according to online state, heartbeat, capacity, scope, and FIFO order.
-5. Closing one accepted conversation releases one slot and assigns the next eligible request.
-6. `ticket.create` cannot execute without trusted server-side confirmation and is idempotent after confirmation.
-7. Starting, accepting, rejecting, annotating, or ending a ticketless voice session never creates a ticket.
-8. A ticket-required voice business action fails closed when the session has no ticket.
-9. Tool arguments that do not match the registered JSON Schema are blocked before handler execution.
-10. PostgreSQL migration, complete backend regression, frontend verification, browser journeys, security checks, and image smoke all pass for the exact candidate Head.
+## Acceptance contract
+
+Acceptance must prove:
+
+1. New WebChat initialization does not create a Ticket.
+2. Historical ticket-backed and new ticketless Conversations execute through the same Agent reply function.
+3. No direct model CLI, standalone Auto Reply Job or duplicate Ticketless Agent service exists.
+4. A human takeover or newer customer message suppresses stale Agent output.
+5. Ticketless handoff assignment observes presence, capacity, scope and FIFO.
+6. Closing an accepted Conversation releases capacity and assigns the next eligible request.
+7. `ticket.create` requires trusted server authorization and is idempotent.
+8. Starting or operating a ticketless voice session never creates a Ticket.
+9. Tool arguments are schema-validated before handler execution.
+10. PostgreSQL migration, complete backend regression, frontend verification, browser journeys, security checks and image smoke pass on one exact immutable Head.
 
 ## Retirement rule
 
-Any old path that assumes a ticket is mandatory for text, handoff, or voice must be changed at its source or physically deleted. No duplicate live path, compatibility executor, automatic voice-ticket adapter, temporary patch, export, migration helper, or shadow runtime may remain in the accepted tree.
+Any path that assumes a Ticket is mandatory for text, handoff or voice must be changed at its source or deleted. No duplicate live path, model subprocess, compatibility executor, automatic voice-ticket adapter, manual worker bypass, temporary patch or shadow runtime may remain in the accepted tree.
