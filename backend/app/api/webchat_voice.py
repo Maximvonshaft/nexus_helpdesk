@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -35,6 +37,7 @@ from ..services.webchat_voice_service import (
 )
 from .deps import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webchat", tags=["webchat-voice"])
 
 
@@ -158,7 +161,14 @@ def accept_voice_session(
         raise
     except Exception:
         db.rollback()
-        raise
+        logger.exception(
+            "voice_accept_failed",
+            extra={"voice_session_id": voice_session_id, "actor_user_id": getattr(current_user, "id", None)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="voice session acceptance is temporarily unavailable",
+        ) from None
 
 
 @router.post("/admin/voice/{voice_session_id}/reject")
@@ -201,17 +211,33 @@ def create_voice_action(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    with managed_session(db):
-        return record_admin_voice_action(
-            db,
-            voice_session_public_id=voice_session_id,
-            current_user=current_user,
-            action_type=payload.action_type,
-            target=payload.target,
-            digits=payload.digits,
-            note=payload.note,
-            idempotency_key=payload.idempotency_key,
+    try:
+        with managed_session(db):
+            return record_admin_voice_action(
+                db,
+                voice_session_public_id=voice_session_id,
+                current_user=current_user,
+                action_type=payload.action_type,
+                target=payload.target,
+                digits=payload.digits,
+                note=payload.note,
+                idempotency_key=payload.idempotency_key,
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "voice_command_request_failed",
+            extra={
+                "voice_session_id": voice_session_id,
+                "actor_user_id": getattr(current_user, "id", None),
+                "action_type": payload.action_type,
+            },
         )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="voice provider command is temporarily unavailable",
+        ) from None
 
 
 @router.post("/admin/voice/{voice_session_id}/speedaf/callback", response_model=SpeedafVoiceCallbackResponse)
