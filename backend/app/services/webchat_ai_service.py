@@ -7,9 +7,16 @@ import re
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketStatus
+from ..enums import (
+    ConversationState,
+    EventType,
+    MessageStatus,
+    SourceChannel,
+    TicketStatus,
+)
 from ..models import Customer, Ticket, TicketEvent
 from ..models_agent_routing import ConversationControl
 from ..settings import get_settings
@@ -28,6 +35,7 @@ from .webchat_ai_turn_service import (
     safe_write_webchat_event,
     sanitized_ai_turn_runtime_trace,
     suppress_stale_reply_if_needed,
+    supersede_ai_turn,
 )
 from .webchat_runtime_ai_service import (
     WebchatRuntimeReplyResult,
@@ -179,6 +187,24 @@ def process_webchat_ai_reply_job(
         customer_message=visitor_message.body or "",
     )
 
+    committed_handoff = _committed_handoff_owns_conversation(
+        db,
+        conversation_id=conversation.id,
+    )
+    if turn is not None and committed_handoff:
+        supersede_ai_turn(
+            db,
+            conversation=conversation,
+            turn=turn,
+            reason="handoff_started_before_reply_commit",
+        )
+        return {
+            "status": "superseded",
+            "reason": "handoff_started_before_reply_commit",
+            "reply_source": "suppressed",
+            "runtime_trace": safe_trace,
+            "bridge_elapsed_ms": result.elapsed_ms,
+        }
     if suppress_stale_reply_if_needed(
         db,
         conversation=conversation,
@@ -204,6 +230,7 @@ def process_webchat_ai_reply_job(
         )
 
     now = utc_now()
+    final_body = public["body"]
     if ticket is not None:
         message, outbound_message = _persist_ticket_reply(
             db,
@@ -226,7 +253,7 @@ def process_webchat_ai_reply_job(
             ticket.status = TicketStatus.waiting_customer
             ticket.conversation_state = ConversationState.waiting_customer
         update_first_response(ticket)
-        ticket.last_ai_update = public["body"]
+        ticket.last_ai_update = final_body
         ticket.last_runtime_reply_at = now
         ticket.updated_at = now
         evaluate_sla(ticket, db)
@@ -238,6 +265,7 @@ def process_webchat_ai_reply_job(
             ai_turn_id=ai_turn_id,
             result=result,
             safe_trace=safe_trace,
+            session_policy=session_policy,
             language=language,
             public=public,
         )
@@ -295,6 +323,34 @@ def process_webchat_ai_reply_job(
         "runtime_trace": safe_trace,
         "runtime_handoff_required": public["handoff_required"],
     }
+
+
+def _committed_handoff_owns_conversation(
+    db: Session,
+    *,
+    conversation_id: int,
+) -> bool:
+    """Read the committed ownership state outside the worker Session snapshot."""
+
+    bind = db.get_bind()
+    engine = getattr(bind, "engine", bind)
+    if engine is None:
+        return False
+    with engine.connect() as connection:
+        row = connection.execute(
+            select(
+                WebchatConversation.ai_suspended,
+                WebchatConversation.handoff_status,
+                WebchatConversation.active_agent_id,
+            ).where(WebchatConversation.id == conversation_id)
+        ).first()
+    if row is None:
+        return True
+    return bool(
+        row[0]
+        or str(row[1] or "") in {"requested", "accepted"}
+        or row[2] is not None
+    )
 
 
 def _public_reply_decision(
@@ -362,7 +418,7 @@ def _persist_ticket_reply(
     visitor_message: WebchatMessage,
     ai_turn_id: int | None,
     result: WebchatRuntimeReplyResult,
-    safe_trace: dict[str, Any],
+    safe_trace: dict[str, Any] | None,
     session_policy: dict[str, Any],
     public: dict[str, Any],
 ) -> tuple[WebchatMessage, Any]:
@@ -371,17 +427,11 @@ def _persist_ticket_reply(
     provider_status = (
         "whatsapp_ai_reply_queued" if external else "webchat_ai_delivered"
     )
-    contract = build_ai_reply_contract(
-        body=public["body"],
-        runtime_trace=safe_trace,
-        safety_status="passed",
-        **_ai_reply_contract_fields(
-            body=public["body"],
-            channel=channel,
-            handoff_required=public["handoff_required"],
-            runtime_trace=safe_trace,
-            reply_type=_reply_type(result, public["body"]),
-        ),
+    contract = _reply_contract(
+        result=result,
+        safe_trace=safe_trace,
+        channel=channel,
+        public=public,
     )
     visible = create_customer_visible_message(
         db,
@@ -411,9 +461,13 @@ def _persist_ticket_reply(
             public["policy"].reasons,
             ensure_ascii=False,
         ),
-        event_type=EventType.outbound_queued if external else EventType.outbound_sent,
+        event_type=(
+            EventType.outbound_queued if external else EventType.outbound_sent
+        ),
         event_note=(
-            "WhatsApp Agent reply queued" if external else "Webchat Agent reply sent"
+            "WhatsApp Agent reply queued"
+            if external
+            else "Webchat Agent reply sent"
         ),
         event_payload={
             "public_conversation_id": conversation.public_id,
@@ -441,45 +495,73 @@ def _persist_ticketless_reply(
     conversation: WebchatConversation,
     ai_turn_id: int | None,
     result: WebchatRuntimeReplyResult,
-    safe_trace: dict[str, Any],
+    safe_trace: dict[str, Any] | None,
+    session_policy: dict[str, Any],
     language: str | None,
     public: dict[str, Any],
 ) -> WebchatMessage:
-    message = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=None,
-        direction="agent",
+    channel = SourceChannel.web_chat
+    metadata = _message_metadata(
+        result=result,
+        safe_trace=safe_trace,
+        session_policy=session_policy,
+        external_send=False,
+        ai_turn_id=ai_turn_id,
+        ticketless=True,
+        public=public,
+    )
+    metadata["language"] = language
+    visible = create_customer_visible_message(
+        db,
+        ticket=None,
+        conversation=conversation,
+        channel=channel,
         body=public["body"],
-        body_text=public["body"],
-        message_type="text",
-        metadata_json=json.dumps(
-            {
-                "generated_by": "agent_runtime",
-                "reply_source": public["reply_source"],
-                "runtime_trace": safe_trace,
-                "tool_calls": result.tool_calls or [],
-                "runtime_handoff_required": public["handoff_required"],
-                "language": language,
-                "ticketless_conversation": True,
-                "fallback": public["fallback"],
-                "fallback_reason": public["fallback_reason"],
-            },
-            ensure_ascii=False,
-            default=str,
+        origin="provider_runtime",
+        created_by=None,
+        provider_status="webchat_ai_delivered",
+        ai_contract=_reply_contract(
+            result=result,
+            safe_trace=safe_trace,
+            channel=channel,
+            public=public,
         ),
+        outbound_status=MessageStatus.sent,
         ai_turn_id=ai_turn_id,
         delivery_status="sent",
+        metadata_json=metadata,
         author_label=AI_AUTHOR_LABEL,
         safety_level=public["policy"].level,
         safety_reasons_json=json.dumps(
             public["policy"].reasons,
             ensure_ascii=False,
         ),
-        created_at=utc_now(),
+        create_external_comment=False,
     )
-    db.add(message)
-    db.flush()
-    return message
+    if visible.webchat_message is None or visible.outbound_message is not None:
+        raise RuntimeError("ticketless_customer_visible_message_not_created")
+    return visible.webchat_message
+
+
+def _reply_contract(
+    *,
+    result: WebchatRuntimeReplyResult,
+    safe_trace: dict[str, Any] | None,
+    channel: SourceChannel,
+    public: dict[str, Any],
+):
+    return build_ai_reply_contract(
+        body=public["body"],
+        runtime_trace=safe_trace or {},
+        safety_status="passed",
+        **_ai_reply_contract_fields(
+            body=public["body"],
+            channel=channel,
+            handoff_required=public["handoff_required"],
+            runtime_trace=safe_trace,
+            reply_type=_reply_type(result, public["body"]),
+        ),
+    )
 
 
 def _conversation_control(
@@ -691,7 +773,7 @@ def _reply_type(result: WebchatRuntimeReplyResult, body: str) -> str:
 def _message_metadata(
     *,
     result: WebchatRuntimeReplyResult,
-    safe_trace: dict[str, Any],
+    safe_trace: dict[str, Any] | None,
     session_policy: dict[str, Any],
     external_send: bool,
     ai_turn_id: int | None,
