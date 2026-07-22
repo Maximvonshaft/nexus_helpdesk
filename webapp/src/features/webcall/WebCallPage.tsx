@@ -19,7 +19,7 @@ import {
 import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supportApi } from '@/lib/supportApi'
-import type { VoiceSessionBootstrap } from '@/lib/telephonyTypes'
+import type { VoiceCommandResponse, VoiceSessionBootstrap } from '@/lib/telephonyTypes'
 
 interface VisitorBootstrap extends VoiceSessionBootstrap {
   role: 'visitor'
@@ -65,7 +65,7 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
       action_type,
       idempotency_key: `webcall-${voiceSessionId}-${action_type}-${crypto.randomUUID()}`,
       ...extra,
-    })
+    }) as Promise<VoiceCommandResponse>
   }, [bootstrap, voiceSessionId])
 
   useEffect(() => {
@@ -143,7 +143,7 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     setError(null)
     try {
       const result = await recordAction(action, { target })
-      if (!result?.action?.id) throw new Error('转接命令未被系统接受')
+      if (!result?.action.id) throw new Error('转接命令未被系统接受')
       setStatus(
         action === 'cold_transfer'
           ? '直接转接命令已提交，等待 Provider 确认'
