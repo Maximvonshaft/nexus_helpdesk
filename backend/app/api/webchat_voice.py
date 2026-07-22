@@ -20,6 +20,7 @@ from ..voice_schemas import (
     WebchatVoiceRejectRequest,
 )
 from ..webchat_voice_config import load_webchat_voice_runtime_config
+from ..services.observability import record_voice_provider_error
 from ..services.voice_business_action_service import queue_speedaf_voice_callback
 from ..services.voice_evidence_service import (
     list_admin_voice_actions,
@@ -27,6 +28,7 @@ from ..services.voice_evidence_service import (
     record_admin_voice_action,
     save_admin_voice_note,
 )
+from ..services.voice_provider import VoiceProviderError
 from ..services.voice_session_service import (
     DETAIL_EXPIRED,
     accept_admin_voice_session,
@@ -35,7 +37,9 @@ from ..services.voice_session_service import (
     end_public_voice_session,
     list_admin_incoming_voice_sessions,
     list_admin_voice_sessions,
+    load_voice_session,
     reject_admin_voice_session,
+    serialize_voice_session,
 )
 from .deps import get_current_user
 
@@ -87,12 +91,26 @@ def end_visitor_voice_session(
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
-        return end_public_voice_session(
-            db,
-            conversation_public_id=conversation_id,
-            voice_session_public_id=voice_session_id,
-            visitor_token=visitor_token,
-        )
+        try:
+            return end_public_voice_session(
+                db,
+                conversation_public_id=conversation_id,
+                voice_session_public_id=voice_session_id,
+                visitor_token=visitor_token,
+            )
+        except VoiceProviderError:
+            session = load_voice_session(db, voice_session_id)
+            if session.conversation_id is None or session.ended_at is None:
+                raise
+            record_voice_provider_error(session.provider, "close_room")
+            logger.warning(
+                "voice_room_cleanup_deferred",
+                extra={
+                    "voice_session_id": session.public_id,
+                    "provider": session.provider,
+                },
+            )
+            return serialize_voice_session(db, session=session)
 
 
 @router.get("/admin/tickets/{ticket_id}/voice/sessions")
@@ -175,7 +193,10 @@ def accept_voice_session(
         db.commit()
         return result
     except HTTPException as exc:
-        if exc.status_code == status.HTTP_409_CONFLICT and exc.detail == DETAIL_EXPIRED:
+        if (
+            exc.status_code == status.HTTP_409_CONFLICT
+            and exc.detail == DETAIL_EXPIRED
+        ):
             db.commit()
         else:
             db.rollback()
@@ -309,8 +330,12 @@ def voice_runtime_config() -> dict:
         "live_ai_voice_enabled": config.live_ai_voice_enabled,
         "provider": config.provider,
         "routing_mode": config.routing_mode,
-        "media_plane": "livekit" if config.provider == "livekit" else "mock",
-        "livekit_url": config.livekit_url if config.provider == "livekit" else None,
+        "media_plane": (
+            "livekit" if config.provider == "livekit" else "mock"
+        ),
+        "livekit_url": (
+            config.livekit_url if config.provider == "livekit" else None
+        ),
         "recording_enabled": config.recording_enabled,
         "transcription_enabled": config.transcription_enabled,
     }
