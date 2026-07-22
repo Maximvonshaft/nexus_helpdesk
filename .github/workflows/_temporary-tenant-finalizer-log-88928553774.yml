@@ -2,6 +2,7 @@ name: Temporary Tenant Authority External Finalizer
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
     branches: [main]
     paths:
       - .github/workflows/_temporary-tenant-finalizer-log-88928553774.yml
@@ -55,7 +56,6 @@ jobs:
 
           path = Path('/tmp/finalizer.py')
           text = path.read_text(encoding='utf-8')
-
           changed_old = '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
           changed_new = (
               '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
