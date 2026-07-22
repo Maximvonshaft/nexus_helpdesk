@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import importlib.util
+import inspect
+from unittest.mock import MagicMock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -515,3 +517,65 @@ def test_seeded_role_capabilities_decode_cross_database_json_arrays():
     ) == ["ticket.read", "user.manage"]
     with pytest.raises(RuntimeError, match="role_template_capabilities_json_invalid"):
         migration._as_json_array('"ticket.read"')
+
+
+def test_role_description_distinguishes_omitted_from_explicit_null(db_session):
+    tenant = Tenant(tenant_key="description-tenant", display_name="Description Tenant")
+    db_session.add(tenant)
+    db_session.flush()
+    actor = User(
+        tenant_id=tenant.id,
+        username="description-actor",
+        display_name="Description Actor",
+        password_hash="test",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    template = RoleTemplate(
+        tenant_id=tenant.id,
+        role_key="description-semantics",
+        display_name="Description semantics",
+        description="old description",
+        base_role=UserRole.agent.value,
+        risk_level="standard",
+        draft_capabilities_json=["ticket.read"],
+    )
+    db_session.add_all([actor, template])
+    db_session.commit()
+
+    governance_service.update_role_template(
+        db_session, row=template, actor=actor, display_name="Renamed"
+    )
+    assert template.description == "old description"
+
+    governance_service.update_role_template(
+        db_session, row=template, actor=actor, description=None
+    )
+    assert template.description is None
+
+
+def test_governance_access_mutations_lock_scope_inside_transaction():
+    db = MagicMock()
+    tenant = Tenant(tenant_key="governance-lock", display_name="Governance Lock")
+    tenant.id = 91
+    tenant.is_active = True
+    query = MagicMock()
+    db.query.return_value = query
+    query.filter.return_value = query
+    query.with_for_update.return_value = query
+    query.one_or_none.return_value = tenant
+
+    governance_api._lock_governance_scope(db, tenant.id)
+    query.with_for_update.assert_called_once_with()
+
+    for endpoint in (
+        governance_api.publish_role_template,
+        governance_api.apply_role_template,
+    ):
+        source = inspect.getsource(endpoint)
+        assert source.index("with managed_session(db):") < source.index(
+            "_lock_governance_scope"
+        )
+        assert source.index("_lock_governance_scope") < source.index(
+            "_ensure_governance_access_survives"
+        )

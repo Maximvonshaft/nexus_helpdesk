@@ -29,12 +29,24 @@ from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read
 from ..services import knowledge_service
 from ..services.knowledge_studio_service import run_conflict_check
 from ..services.knowledge_retrieval_service import retrieve_published_chunks
+from ..services.agent_release_service import authoritative_tenant_key
 from ..services.ai_runtime_context import build_agent_context
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/knowledge-items", tags=["knowledge-items"])
+
+
+def _actor_tenant_key(
+    db: Session, current_user, *, requested: str | None = None
+) -> str:
+    return authoritative_tenant_key(
+        db,
+        current_user,
+        requested=requested,
+        allow_platform_default=True,
+    )
 
 
 def _item_out(row) -> KnowledgeItemOut:
@@ -91,8 +103,10 @@ def list_knowledge_items(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(db, current_user)
     rows, total = knowledge_service.list_items(
         db,
+        tenant_id=tenant_key,
         status=status,
         source_type=source_type,
         knowledge_kind=knowledge_kind,
@@ -113,8 +127,11 @@ def create_knowledge_item(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(db, current_user)
     with managed_session(db):
-        row = knowledge_service.create_item(db, payload, current_user)
+        row = knowledge_service.create_item(
+            db, payload, current_user, tenant_id=tenant_key
+        )
     db.refresh(row)
     return _item_out(row)
 
@@ -132,6 +149,7 @@ def create_knowledge_item_from_upload(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(db, current_user)
     with managed_session(db):
         row = knowledge_service.create_file_item_from_upload(
             db,
@@ -143,6 +161,7 @@ def create_knowledge_item_from_upload(
             channel=channel,
             audience_scope=audience_scope or "customer",
             language=language,
+            tenant_id=tenant_key,
         )
     db.refresh(row)
     return _item_out(row)
@@ -155,8 +174,10 @@ def search_published_knowledge_items(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(db, current_user)
     rows, total = knowledge_service.search_published(
         db,
+        tenant_id=tenant_key,
         q=payload.q,
         market_id=payload.market_id,
         channel=payload.channel,
@@ -173,8 +194,10 @@ def test_knowledge_retrieval(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(db, current_user)
     retrieval = retrieve_published_chunks(
         db,
+        tenant_id=tenant_key,
         q=payload.q,
         market_id=payload.market_id,
         channel=payload.channel,
@@ -192,7 +215,8 @@ def check_knowledge_conflicts(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
-    return run_conflict_check(db, payload)
+    tenant_key = _actor_tenant_key(db, current_user)
+    return run_conflict_check(db, payload, tenant_id=tenant_key)
 
 
 @router.post("/golden-test", response_model=KnowledgeGoldenTestOut)
@@ -202,8 +226,10 @@ def run_knowledge_golden_test(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(db, current_user)
     retrieval = retrieve_published_chunks(
         db,
+        tenant_id=tenant_key,
         q=payload.q,
         market_id=payload.market_id,
         channel=payload.channel,
@@ -229,10 +255,13 @@ def test_knowledge_runtime_context(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    tenant_key = _actor_tenant_key(
+        db, current_user, requested=payload.tenant_key
+    )
     return KnowledgeRuntimeContextTestOut(
         context=build_agent_context(
             db,
-            tenant_key=payload.tenant_key,
+            tenant_key=tenant_key,
             channel_key=payload.channel or "website",
             body=payload.q,
             market_id=payload.market_id,
@@ -249,7 +278,10 @@ def get_knowledge_item(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
-    row = knowledge_service.get_item_or_404(db, item_id)
+    tenant_key = _actor_tenant_key(db, current_user)
+    row = knowledge_service.get_item_or_404(
+        db, item_id, tenant_id=tenant_key
+    )
     return _detail_out(db, row)
 
 
@@ -261,9 +293,14 @@ def update_knowledge_item(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
-    row = knowledge_service.get_item_or_404(db, item_id)
+    tenant_key = _actor_tenant_key(db, current_user)
+    row = knowledge_service.get_item_or_404(
+        db, item_id, tenant_id=tenant_key
+    )
     with managed_session(db):
-        row = knowledge_service.update_item(db, row, payload, current_user)
+        row = knowledge_service.update_item(
+            db, row, payload, current_user, tenant_id=tenant_key
+        )
     db.refresh(row)
     return _item_out(row)
 
@@ -276,7 +313,10 @@ def upload_knowledge_item_document(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
-    row = knowledge_service.get_item_or_404(db, item_id)
+    tenant_key = _actor_tenant_key(db, current_user)
+    row = knowledge_service.get_item_or_404(
+        db, item_id, tenant_id=tenant_key
+    )
     with managed_session(db):
         row = knowledge_service.upload_document(db, row, file, current_user)
     db.refresh(row)
@@ -291,7 +331,10 @@ def publish_knowledge_item(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
-    row = knowledge_service.get_item_or_404(db, item_id)
+    tenant_key = _actor_tenant_key(db, current_user)
+    row = knowledge_service.get_item_or_404(
+        db, item_id, tenant_id=tenant_key
+    )
     with managed_session(db):
         version_row = knowledge_service.publish_item(db, row, current_user, notes=payload.notes)
     db.refresh(version_row)
@@ -306,8 +349,18 @@ def rollback_knowledge_item(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
-    row = knowledge_service.get_item_or_404(db, item_id)
+    tenant_key = _actor_tenant_key(db, current_user)
+    row = knowledge_service.get_item_or_404(
+        db, item_id, tenant_id=tenant_key
+    )
     with managed_session(db):
-        version_row = knowledge_service.rollback_item(db, row, version=payload.version, actor=current_user, notes=payload.notes)
+        version_row = knowledge_service.rollback_item(
+            db,
+            row,
+            version=payload.version,
+            actor=current_user,
+            notes=payload.notes,
+            tenant_id=tenant_key,
+        )
     db.refresh(version_row)
     return KnowledgeItemVersionOut.model_validate(version_row)

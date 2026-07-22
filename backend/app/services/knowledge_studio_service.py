@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
 from ..utils.time import utc_now
+from .agent_release_service import authoritative_tenant_key
 from .permissions import CAP_AI_CONFIG_MANAGE, CAP_AI_CONFIG_READ, resolve_capabilities
 
 KNOWLEDGE_STUDIO_CAPABILITIES = {CAP_AI_CONFIG_READ, CAP_AI_CONFIG_MANAGE}
@@ -121,8 +122,12 @@ def _build_conflicts(rows: list[KnowledgeItem]) -> tuple[list[dict[str, Any]], s
     return conflicts, conflicting_ids
 
 
-def run_conflict_check(db: Session, payload) -> dict[str, Any]:
+def run_conflict_check(
+    db: Session, payload, *, tenant_id: str | None = None
+) -> dict[str, Any]:
     query = db.query(KnowledgeItem)
+    if tenant_id is not None:
+        query = query.filter(KnowledgeItem.tenant_id == tenant_id)
     if not getattr(payload, "include_archived", False):
         query = query.filter(KnowledgeItem.status != "archived")
     if getattr(payload, "market_id", None) is not None:
@@ -218,9 +223,13 @@ def build_knowledge_studio(db: Session, current_user) -> dict[str, Any]:
     capabilities = resolve_capabilities(current_user, db)
     if not (capabilities & KNOWLEDGE_STUDIO_CAPABILITIES):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="knowledge_studio_requires_ai_config_capability")
+    tenant_key = authoritative_tenant_key(
+        db, current_user, allow_platform_default=True
+    )
 
     rows = (
         db.query(KnowledgeItem)
+        .filter(KnowledgeItem.tenant_id == tenant_key)
         .order_by(KnowledgeItem.status.asc(), KnowledgeItem.priority.asc(), KnowledgeItem.updated_at.desc(), KnowledgeItem.item_key.asc())
         .limit(200)
         .all()
@@ -233,8 +242,19 @@ def build_knowledge_studio(db: Session, current_user) -> dict[str, Any]:
     ready_drafts = sum(1 for row in rows if row.status != "archived" and _has_draft_content(row))
     file_items = sum(1 for row in rows if row.source_type == "file")
     parsed_files = sum(1 for row in rows if row.source_type == "file" and row.parsing_status == "parsed")
-    indexed_chunks = int(db.query(func.count(KnowledgeChunk.id)).scalar() or 0)
-    version_count = int(db.query(func.count(KnowledgeItemVersion.id)).scalar() or 0)
+    indexed_chunks = int(
+        db.query(func.count(KnowledgeChunk.id))
+        .filter(KnowledgeChunk.tenant_id == tenant_key)
+        .scalar()
+        or 0
+    )
+    version_count = int(
+        db.query(func.count(KnowledgeItemVersion.id))
+        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeItemVersion.item_id)
+        .filter(KnowledgeItem.tenant_id == tenant_key)
+        .scalar()
+        or 0
+    )
     stale_index_count = sum(1 for row in rows if row.published_version > 0 and row.indexed_version < row.published_version)
     conflicts, conflicting_ids = _build_conflicts(rows)
     visible_conflicts = conflicts[:12]

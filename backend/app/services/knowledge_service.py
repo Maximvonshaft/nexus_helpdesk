@@ -204,6 +204,7 @@ def _snapshot(row: KnowledgeItem, *, version: int, published_at) -> dict:
 def list_items(
     db: Session,
     *,
+    tenant_id: Optional[str] = None,
     status: Optional[str] = None,
     source_type: Optional[str] = None,
     knowledge_kind: Optional[str] = None,
@@ -215,6 +216,8 @@ def list_items(
     offset: int = 0,
 ) -> tuple[list[KnowledgeItem], int]:
     query = db.query(KnowledgeItem)
+    if tenant_id is not None:
+        query = query.filter(KnowledgeItem.tenant_id == tenant_id)
     if status:
         query = query.filter(KnowledgeItem.status == status.strip())
     if source_type:
@@ -245,8 +248,13 @@ def list_items(
     return rows, total
 
 
-def get_item_or_404(db: Session, item_id: int) -> KnowledgeItem:
-    row = db.query(KnowledgeItem).filter(KnowledgeItem.id == item_id).first()
+def get_item_or_404(
+    db: Session, item_id: int, *, tenant_id: str | None = None
+) -> KnowledgeItem:
+    query = db.query(KnowledgeItem).filter(KnowledgeItem.id == item_id)
+    if tenant_id is not None:
+        query = query.filter(KnowledgeItem.tenant_id == tenant_id)
+    row = query.first()
     if row is None:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
     return row
@@ -256,8 +264,13 @@ def list_versions(db: Session, item_id: int) -> list[KnowledgeItemVersion]:
     return db.query(KnowledgeItemVersion).filter(KnowledgeItemVersion.item_id == item_id).order_by(KnowledgeItemVersion.version.desc()).all()
 
 
-def create_item(db: Session, payload, actor) -> KnowledgeItem:
+def create_item(
+    db: Session, payload, actor, *, tenant_id: str | None = None
+) -> KnowledgeItem:
     key = _normalize_key(payload.item_key)
+    tenant_key = _normalize_scope(
+        tenant_id if tenant_id is not None else payload.tenant_id, "default"
+    )
     _validate_shape(
         status=payload.status,
         source_type=payload.source_type,
@@ -278,7 +291,7 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
         status=payload.status,
         source_type=payload.source_type,
         knowledge_kind=payload.knowledge_kind,
-        tenant_id=_normalize_scope(payload.tenant_id, "default"),
+        tenant_id=tenant_key,
         brand_id=_normalize_scope(payload.brand_id, "default"),
         country_scope=_normalize_country_scope(payload.country_scope),
         channel_scope=_normalize_scope(payload.channel_scope, "all"),
@@ -331,8 +344,10 @@ def create_file_item_from_upload(
     channel: str | None = "website",
     audience_scope: str | None = "customer",
     language: str | None = None,
+    tenant_id: str = "default",
 ) -> KnowledgeItem:
     filename = file.filename or "knowledge.txt"
+    tenant_key = _normalize_scope(tenant_id, "default")
     key = _normalize_key(_clean_optional_text(item_key) or _safe_item_key_from_filename(filename))
     if db.query(KnowledgeItem).filter(KnowledgeItem.item_key == key).first() is not None:
         raise HTTPException(status_code=409, detail="item_key already exists")
@@ -343,7 +358,7 @@ def create_file_item_from_upload(
         status="draft",
         source_type="file",
         knowledge_kind="document",
-        tenant_id="default",
+        tenant_id=tenant_key,
         brand_id="default",
         country_scope="GLOBAL",
         channel_scope=channel or "all",
@@ -443,8 +458,18 @@ def _merge_aliases(existing: list[str], suggested: list[str]) -> list[str]:
     return merged
 
 
-def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeItem:
+def update_item(
+    db: Session,
+    row: KnowledgeItem,
+    payload,
+    actor,
+    *,
+    tenant_id: str | None = None,
+) -> KnowledgeItem:
+    if tenant_id is not None and row.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Knowledge item not found")
     values = payload.model_dump(exclude_unset=True)
+    values.pop("tenant_id", None)
     for field in _BACKEND_OWNED_FIELDS:
         values.pop(field, None)
     status = values.get("status", row.status)
@@ -518,7 +543,17 @@ def publish_item(db: Session, row: KnowledgeItem, actor, *, notes: Optional[str]
     return version_row
 
 
-def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes: Optional[str] = None) -> KnowledgeItemVersion:
+def rollback_item(
+    db: Session,
+    row: KnowledgeItem,
+    *,
+    version: int,
+    actor,
+    notes: Optional[str] = None,
+    tenant_id: str | None = None,
+) -> KnowledgeItemVersion:
+    if tenant_id is not None and row.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Knowledge item not found")
     target = db.query(KnowledgeItemVersion).filter(
         KnowledgeItemVersion.item_id == row.id,
         KnowledgeItemVersion.version == version,
@@ -531,7 +566,7 @@ def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes
     row.status = snapshot.get("status") or row.status
     row.source_type = snapshot.get("source_type") or row.source_type
     row.knowledge_kind = snapshot.get("knowledge_kind") or row.knowledge_kind
-    row.tenant_id = snapshot.get("tenant_id") or row.tenant_id or "default"
+    row.tenant_id = tenant_id if tenant_id is not None else (snapshot.get("tenant_id") or row.tenant_id or "default")
     row.brand_id = snapshot.get("brand_id") or row.brand_id or "default"
     row.country_scope = _normalize_country_scope(snapshot.get("country_scope") or row.country_scope)
     row.channel_scope = snapshot.get("channel_scope") or row.channel_scope or "all"
@@ -569,6 +604,7 @@ def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes
 def search_published(
     db: Session,
     *,
+    tenant_id: Optional[str] = None,
     q: Optional[str] = None,
     market_id: Optional[int] = None,
     channel: Optional[str] = None,
@@ -586,6 +622,8 @@ def search_published(
         or_(KnowledgeItem.valid_from.is_(None), KnowledgeItem.valid_from <= now),
         or_(KnowledgeItem.valid_until.is_(None), KnowledgeItem.valid_until >= now),
     )
+    if tenant_id is not None:
+        query = query.filter(KnowledgeItem.tenant_id == tenant_id)
     if market_id is not None:
         query = query.filter(or_(KnowledgeItem.market_id.is_(None), KnowledgeItem.market_id == market_id))
     if channel:
