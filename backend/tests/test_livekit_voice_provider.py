@@ -148,7 +148,7 @@ def test_livekit_close_room_reports_provider_failure_to_orchestrator(monkeypatch
         api_secret="unit_secret",
     )
 
-    with pytest.raises(VoiceProviderError, match="failed to close LiveKit room"):
+    with pytest.raises(VoiceProviderError, match="livekit room close failed"):
         provider.close_room(room_name="webcall_wv_123")
 
 
