@@ -162,7 +162,8 @@ def test_declining_offer_is_idempotent_and_does_not_end_customer_call():
     assert second.status_code == 200, second.text
     assert first.json()["status"] == "ringing"
     assert second.json()["status"] == "ringing"
-    assert "participant_token" not in first.text
+    assert first.json()["participant_token"] is None
+    assert first.json()["participant_identity"] is None
 
     db = SessionLocal()
     try:
