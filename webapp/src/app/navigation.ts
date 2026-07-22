@@ -30,7 +30,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
   },
   {
     key: 'agent-control',
-    label: 'Agent 控制',
+    label: '自动处理',
     canonicalRoute: '/agent-control',
     currentHref: '/agent-control',
     capabilityAny: ['ai_config.read', 'ai_config.manage', 'runtime.manage'],
