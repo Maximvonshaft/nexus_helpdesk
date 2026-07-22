@@ -9,14 +9,14 @@ from ..models import Market
 from ..models_control_plane import ChannelOnboardingTask
 from ..utils.time import utc_now
 
-ALLOWED_PROVIDERS = {"whatsapp", "email", "web_chat", "telegram", "sms"}
+ALLOWED_PROVIDERS = {"whatsapp", "email", "web_chat", "telegram", "sms", "voice"}
 ALLOWED_STATUSES = {"pending", "in_progress", "completed", "failed", "cancelled"}
 TERMINAL_STATUSES = {"completed", "cancelled"}
 
 
 def _normalize_provider(value: str) -> str:
     provider = value.strip().lower().replace("-", "_")
-    if provider == "web":
+    if provider in {"web", "webchat"}:
         provider = "web_chat"
     if provider not in ALLOWED_PROVIDERS:
         raise HTTPException(status_code=400, detail="Unsupported channel provider")

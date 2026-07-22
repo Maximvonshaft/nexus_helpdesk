@@ -173,3 +173,7 @@ Production requires:
 - `/healthz` and `/readyz` passing.
 
 Do not deploy directly from a code-consolidation branch. Deployment requires an explicit candidate, migration rehearsal, smoke evidence and rollback plan. Never use destructive Git cleanup against a live server directory before preserving environment files, data, attachments and server-only overrides.
+
+## Canonical voice and telephony
+
+Browser voice, AI voice and SIP/PSTN use one LiveKit media plane and the existing Conversation/Handoff/Ticket authorities. Repository support does not imply that a real DID, SIP trunk or production provider credential is activated; those remain controlled deployment inputs.

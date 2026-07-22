@@ -26,6 +26,9 @@ from app.services.observability import (  # noqa: E402
     record_worker_result,
 )
 from app.services.queue_health import collect_queue_health  # noqa: E402
+from app.services.voice_command_dispatcher import (  # noqa: E402
+    dispatch_pending_voice_commands,
+)
 from app.services.webchat_ai_reconciler import (  # noqa: E402
     reconcile_webchat_ai_state,
 )
@@ -52,9 +55,6 @@ _QUEUE_DEPTH_LABELS: set[tuple[str, str]] = set()
 
 
 def _is_sqlalchemy_session(db) -> bool:
-    # Several legacy worker tests replace db_context() with a SimpleNamespace
-    # fake to assert dispatch behavior. The WebChat handoff snapshot worker uses
-    # BackgroundJob claiming and therefore requires a real SQLAlchemy Session.
     return (
         hasattr(db, "bind")
         and hasattr(db, "query")
@@ -79,6 +79,7 @@ def _run_outbound(worker_id: str) -> int:
 
 
 def _run_background(worker_id: str) -> int:
+    processed = 0
     with db_context() as db:
         jobs = dispatch_pending_background_jobs(db, worker_id=worker_id)
         if jobs:
@@ -88,7 +89,24 @@ def _run_background(worker_id: str) -> int:
                 "processed",
                 len(jobs),
             )
-        return len(jobs)
+        processed += len(jobs)
+    with db_context() as db:
+        if _is_sqlalchemy_session(db):
+            voice_command_ids = dispatch_pending_voice_commands(
+                db,
+                worker_id=worker_id,
+            )
+        else:
+            voice_command_ids = []
+        if voice_command_ids:
+            record_worker_result(
+                worker_id,
+                "voice_command",
+                "processed",
+                len(voice_command_ids),
+            )
+        processed += len(voice_command_ids)
+    return processed
 
 
 def _run_handoff_snapshot(worker_id: str) -> int:
@@ -169,9 +187,7 @@ def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> int:
                         "failed": result.get("failed"),
                         "promoted": result.get("promoted"),
                         "timed_out": result.get("timed_out"),
-                        "elapsed_ms": int(
-                            (time.monotonic() - started) * 1000
-                        ),
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
                     }
                 },
             )
@@ -189,9 +205,7 @@ def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> int:
             extra={
                 "event_payload": {
                     "worker_id": worker_id,
-                    "elapsed_ms": int(
-                        (time.monotonic() - started) * 1000
-                    ),
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
                 }
             },
         )
@@ -218,9 +232,7 @@ def _run_webchat_ai(worker_id: str) -> int:
             )
         processed += len(jobs)
 
-    if not bool(
-        getattr(settings, "webchat_ai_reconciler_enabled", True)
-    ):
+    if not bool(getattr(settings, "webchat_ai_reconciler_enabled", True)):
         record_worker_result(
             worker_id,
             "webchat_ai_reconciler",
@@ -247,8 +259,6 @@ def _record_queue_depth_snapshot_if_due(
     """Publish real database queue counts from one designated Worker only."""
     global _LAST_QUEUE_DEPTH_SNAPSHOT_AT, _QUEUE_DEPTH_LABELS
 
-    # The controlled topology always has one dedicated background Worker.
-    # Sampling from every Worker would multiply a multiprocess Gauge.
     if queue != "background":
         return
     now = time.monotonic()
@@ -263,9 +273,7 @@ def _record_queue_depth_snapshot_if_due(
     try:
         snapshot = collect_queue_health(db)
         current_labels: set[tuple[str, str]] = set()
-        for queue_name, statuses in snapshot["background_jobs"][
-            "counts"
-        ].items():
+        for queue_name, statuses in snapshot["background_jobs"]["counts"].items():
             metric_name = f"background:{queue_name}"[:80]
             for status_name, count in statuses.items():
                 label = (metric_name, str(status_name)[:80])
@@ -354,8 +362,6 @@ def _install_shutdown_handlers() -> None:
             "worker_shutdown_requested",
             signal=signal.Signals(signum).name,
         )
-        # SystemExit runs Python atexit handlers, which remove this worker's
-        # namespaced live-Gauge files from the shared canonical registry.
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, request_shutdown)

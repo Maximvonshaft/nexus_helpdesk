@@ -10,6 +10,10 @@ export interface AgentState {
   max_concurrent_conversations: number
   active_conversations: number
   available_capacity: number
+  max_concurrent_voice_calls: number
+  active_voice_calls: number
+  available_voice_capacity: number
+  voice_wrap_up_seconds: number
   last_heartbeat_at?: string | null
   heartbeat_ttl_seconds: number
 }
@@ -29,11 +33,15 @@ export const agentRoutingApi = {
   updateState: (
     status: AgentPresenceStatus,
     maxConcurrentConversations?: number,
+    maxConcurrentVoiceCalls?: number,
+    voiceWrapUpSeconds?: number,
   ) => apiRequest<AgentState>('/api/operator/agent-state', {
     method: 'PUT',
     body: JSON.stringify({
       status,
       max_concurrent_conversations: maxConcurrentConversations,
+      max_concurrent_voice_calls: maxConcurrentVoiceCalls,
+      voice_wrap_up_seconds: voiceWrapUpSeconds,
     }),
     requestIdPrefix: 'agent-state',
   }),

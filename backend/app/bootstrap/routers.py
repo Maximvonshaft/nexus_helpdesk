@@ -42,7 +42,7 @@ from ..api.ticket_perf import router as ticket_perf_router
 from ..api.tickets import router as tickets_router
 from ..api.webchat import router as webchat_router
 from ..api.webchat_events import router as webchat_events_router
-from ..api.webchat_live_voice import router as webchat_live_voice_router
+from ..api.telephony import router as telephony_router
 from ..api.webchat_voice import router as webchat_voice_router
 from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
@@ -101,7 +101,7 @@ def register_api_routers(app: FastAPI) -> None:
         support_conversations_router,
         support_intelligence_router,
         webchat_events_router,
-        webchat_live_voice_router,
+        telephony_router,
         webchat_ws_router,
         webchat_voice_router,
         whatsapp_native_integration_router,

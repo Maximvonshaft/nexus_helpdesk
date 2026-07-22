@@ -62,6 +62,7 @@ import type {
   TicketClosureReceipt,
 } from '@/lib/ticketClosureTypes'
 import { apiRequest, normalizeApiBaseUrl } from '@/lib/apiClient'
+import type { VoiceConfiguration, VoiceConfigurationUpdate, VoiceSessionBootstrap } from '@/lib/telephonyTypes'
 
 export {
   ApiError,
@@ -205,6 +206,25 @@ export const supportApi = {
   }),
 
   channelAccounts: () => apiRequest<ChannelAccount[]>('/api/admin/channel-accounts'),
+  voiceConfigurations: () => apiRequest<{ items: VoiceConfiguration[] }>('/api/telephony/configurations'),
+  updateVoiceConfiguration: (channelAccountId: number, payload: VoiceConfigurationUpdate) => apiRequest<VoiceConfiguration>(`/api/telephony/configurations/${channelAccountId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  }),
+  acceptVoiceSession: (voiceSessionId: string) => apiRequest<VoiceSessionBootstrap>(`/api/webchat/admin/voice/${encodeURIComponent(voiceSessionId)}/accept`, {
+    method: 'POST',
+  }),
+  endVoiceSession: (voiceSessionId: string) => apiRequest<{ ok: boolean; status: string }>(`/api/webchat/admin/voice/${encodeURIComponent(voiceSessionId)}/end`, {
+    method: 'POST',
+  }),
+  endPublicVoiceSession: (conversationId: string, voiceSessionId: string, visitorToken: string) => apiRequest<{ ok: boolean; status: string }>(`/api/webchat/conversations/${encodeURIComponent(conversationId)}/voice/${encodeURIComponent(voiceSessionId)}/end`, {
+    method: 'POST',
+    headers: { 'X-Webchat-Visitor-Token': visitorToken },
+  }),
+  recordVoiceAction: (voiceSessionId: string, payload: Record<string, unknown>) => apiRequest(`/api/webchat/admin/voice/${encodeURIComponent(voiceSessionId)}/actions`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   whatsappNativeStatus: (accountId: string) => apiRequest<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
   outboundEmailAccounts: () => apiRequest<OutboundEmailAccount[]>('/api/admin/outbound-email/accounts'),
   createOutboundEmailAccount: (payload: OutboundEmailAccountCreate) => apiRequest<OutboundEmailAccount>('/api/admin/outbound-email/accounts', {

@@ -26,7 +26,6 @@
   var securityNote = script.getAttribute('data-security-note') || 'Do not share passwords or payment codes.';
   var autoOpen = script.getAttribute('data-auto-open') === 'true';
   var liveVoiceMode = (script.getAttribute('data-live-voice-mode') || 'off').toLowerCase();
-  var liveVoiceWsPath = script.getAttribute('data-live-voice-ws-path') || '/webchat/live/ws';
   var liveVoiceLabel = script.getAttribute('data-live-voice-label') || 'VOIP Call';
   var storageKey = 'nexusdesk:webchat:' + apiBase + ':' + tenantKey + ':' + channelKey + ':' + mode;
   var contextKey = storageKey + ':recent-context';
@@ -34,13 +33,6 @@
   var MAX_CONTEXT_TURNS = 5;
   var LEGACY_POLL_IDLE_MS = Number(script.getAttribute('data-poll-ms') || 4000);
   var LEGACY_POLL_PENDING_MS = Number(script.getAttribute('data-pending-poll-ms') || 350);
-
-var LIVE_VOICE_WORKLET_URL = new URL('/webchat/live-voice-capture-worklet.js?v=1', scriptUrl.origin).toString();
-var LIVE_VOICE_PROCESSOR_NAME = 'nexus-live-voice-capture-v1';
-var LIVE_VOICE_FRAME_SAMPLES = 320;
-var MAX_CAPTURE_PACKET_BYTES = 4096;
-var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
-// Legacy createScriptProcessor capture was removed; AudioWorklet is mandatory.
 
   var state = {
     open: false,
@@ -139,7 +131,7 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
   voiceBtn.className = 'nd-webchat-voice';
   voiceBtn.type = 'button';
   voiceBtn.setAttribute('aria-label', liveVoiceLabel);
-  voiceBtn.setAttribute('data-visible', liveVoiceMode === 'edge-card' ? 'true' : 'false');
+  voiceBtn.setAttribute('data-visible', liveVoiceMode === 'livekit-room' ? 'true' : 'false');
   voiceBtn.innerHTML = '<span aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.07 21 3 13.93 3 5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.19 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span><span>' + escapeHtml(liveVoiceLabel) + '</span>';
   var close = document.createElement('button');
   close.className = 'nd-webchat-close';
@@ -158,9 +150,9 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
     + '<div class="nd-webchat-voice-auto">Language is detected automatically.</div>'
     + '<button class="nd-webchat-voice-start" type="button">Start</button>'
     + '</div>'
-    + '<div class="nd-webchat-voice-status">Tap Start and allow microphone access.</div>'
+    + '<div class="nd-webchat-voice-status">Tap Start to open the secure LiveKit call window.</div>'
     + '<div class="nd-webchat-voice-transcript"></div>'
-    + '<div class="nd-webchat-voice-foot">Voice support is live. Do not share passwords or payment codes.</div>';
+    + '<div class="nd-webchat-voice-foot">Voice uses the canonical LiveKit room. Do not share passwords or payment codes.</div>';
   var messagesEl = document.createElement('div');
   messagesEl.className = 'nd-webchat-messages';
   messagesEl.setAttribute('role', 'log');
@@ -459,11 +451,10 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
   }
 
   function toggleVoicePanel(force) {
-    if (liveVoiceMode !== 'edge-card') return;
+    if (liveVoiceMode !== 'livekit-room') return;
     openPanel(true);
     state.voiceOpen = typeof force === 'boolean' ? force : !state.voiceOpen;
     voicePanel.setAttribute('data-open', state.voiceOpen ? 'true' : 'false');
-    if (!state.voiceOpen && state.liveVoice) stopLiveVoice('Voice stopped.');
   }
 
   function voiceStatus(text) {
@@ -471,353 +462,48 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
     if (el) el.textContent = text || '';
   }
 
-  function addVoiceTranscript(kind, text) {
-    if (!text) return;
-    var wrap = voicePanel.querySelector('.nd-webchat-voice-transcript');
-    if (!wrap) return;
-    var div = document.createElement('div');
-    div.className = 'nd-webchat-voice-msg ' + kind;
-    div.textContent = text;
-    wrap.appendChild(div);
-    wrap.scrollTop = wrap.scrollHeight;
-  }
-
-  function stopLivePlayback(liveOverride) {
-    var live = liveOverride || state.liveVoice;
-    if (!live) return;
-    live.playbackGeneration = (live.playbackGeneration || 0) + 1;
-    if (live.playbackReadyTimer) {
-      clearTimeout(live.playbackReadyTimer);
-      live.playbackReadyTimer = null;
-    }
-    (live.playingSources || []).forEach(function (sourceNode) {
-      try { sourceNode.stop(); } catch (err) {}
-      try { sourceNode.disconnect(); } catch (err) {}
-    });
-    live.playingSources = [];
-    if (live.audioContext && live.audioContext.state !== 'closed') {
-      live.nextPlayTime = live.audioContext.currentTime + 0.03;
-      live.captureResumeAt = live.audioContext.currentTime;
-    }
-  }
-
-  function livePlaybackActive(live) {
-    if (!live || !live.audioContext || live.audioContext.state === 'closed') return false;
-    return (live.playingSources || []).length > 0 ||
-      (live.captureResumeAt || 0) > live.audioContext.currentTime;
-  }
-
-  function scheduleLiveVoiceReady(live) {
-    if (!live || !live.audioContext || live.released) return;
-    if (live.playbackReadyTimer) clearTimeout(live.playbackReadyTimer);
-    var generation = live.playbackGeneration || 0;
-    var remainingSeconds = Math.max(0, (live.captureResumeAt || live.nextPlayTime || 0) - live.audioContext.currentTime);
-    live.playbackReadyTimer = setTimeout(function () {
-      if (live.released || state.liveVoice !== live || generation !== (live.playbackGeneration || 0)) return;
-      live.playbackReadyTimer = null;
-      voiceStatus('Ready. You can speak again.');
-    }, Math.ceil(remainingSeconds * 1000));
-  }
-
-  function resetLiveVoice(statusText) {
+  function stopLiveVoice(statusText) {
+    state.liveVoice = null;
     voiceBtn.classList.remove('is-live');
-    var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-    if (startBtn) {
-      startBtn.classList.remove('stop');
-      startBtn.textContent = 'Start';
-    }
     if (statusText) voiceStatus(statusText);
   }
 
-  function releaseLiveVoice(live, statusText, closeSocket) {
-    if (!live || live.released) {
-      if (statusText && !state.liveVoice) resetLiveVoice(statusText);
-      return;
-    }
-    live.released = true;
-    stopLivePlayback(live);
-    if (state.liveVoice === live) state.liveVoice = null;
-
-    if (live.captureNode) {
-      try { live.captureNode.port.onmessage = null; } catch (err) {}
-      try { live.captureNode.port.postMessage({ type: 'stop' }); } catch (err) {}
-      try { live.captureNode.port.close(); } catch (err) {}
-      try { live.captureNode.disconnect(); } catch (err) {}
-    }
-    try { if (live.source) live.source.disconnect(); } catch (err) {}
-    try {
-      if (live.stream) live.stream.getTracks().forEach(function (track) { track.stop(); });
-    } catch (err) {}
-
-    if (live.ws) {
-      live.ws.onopen = null;
-      live.ws.onmessage = null;
-      live.ws.onerror = null;
-      live.ws.onclose = null;
-      if (closeSocket) {
-        try {
-if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
-        } catch (err) {}
-      }
-    }
-
-    if (live.audioContext && live.audioContext.state !== 'closed') {
-      try { Promise.resolve(live.audioContext.close()).catch(function () {}); } catch (err) {}
-    }
-    resetLiveVoice(statusText || 'Voice stopped.');
-  }
-
-  function stopLiveVoice(statusText) {
-    releaseLiveVoice(state.liveVoice, statusText || 'Voice stopped.', true);
-  }
-
-  function safeLiveVoicePath(path) {
-    var value = String(path || '').trim();
-    if (!value || value.indexOf('://') !== -1 || value.charAt(0) !== '/') return '/webchat/live/ws';
-    return value;
-  }
-
-  function buildLiveWsUrl(langCode, voice, speed, conversationId, voiceSessionId, connectionTicket) {
-    var url = new URL(safeLiveVoicePath(liveVoiceWsPath), window.location.href);
-    url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.host = window.location.host;
-    url.search = '';
-    url.searchParams.set('lang_code', langCode);
-    url.searchParams.set('voice', voice);
-    url.searchParams.set('speed', speed);
-    url.searchParams.set('conversation_id', conversationId);
-    url.searchParams.set('voice_session_id', voiceSessionId);
-    url.searchParams.set('connection_ticket', connectionTicket);
-    return url.toString();
-  }
-
-  function createLiveVoiceSession(langCode) {
-    return ensureLegacySession().then(function () {
-      if (!state.legacyConversationId || !state.legacyVisitorToken) {
-        throw new Error('WebChat session is unavailable.');
-      }
-      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/live-voice/session', {
-        method: 'POST',
-        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
-        body: JSON.stringify({ locale: langCode || null })
-      }, 12000);
-    });
-  }
-
-  function playPcm16(arrayBuffer, sampleRate) {
-    var live = state.liveVoice;
-    if (!live || !live.audioContext) return Promise.resolve();
-    var pcm = new Int16Array(arrayBuffer);
-    if (!pcm.length) return Promise.resolve();
-    var float32 = new Float32Array(pcm.length);
-    for (var index = 0; index < pcm.length; index += 1) {
-      float32[index] = pcm[index] / 32768;
-    }
-    var audioBuffer = live.audioContext.createBuffer(1, float32.length, sampleRate || 24000);
-    audioBuffer.copyToChannel(float32, 0);
-    var sourceNode = live.audioContext.createBufferSource();
-    sourceNode.buffer = audioBuffer;
-    sourceNode.connect(live.audioContext.destination);
-    live.playingSources.push(sourceNode);
-    sourceNode.onended = function () {
-      live.playingSources = live.playingSources.filter(function (item) { return item !== sourceNode; });
-    };
-    var startAt = Math.max(live.audioContext.currentTime + 0.03, live.nextPlayTime || 0);
-    sourceNode.start(startAt);
-    live.nextPlayTime = startAt + audioBuffer.duration;
-    live.captureResumeAt = live.nextPlayTime + LIVE_VOICE_PLAYBACK_GUARD_SECONDS;
-    return Promise.resolve();
-  }
-
-  function handleLiveMessage(event) {
-    var live = state.liveVoice;
-    if (!live) return Promise.resolve();
-    if (typeof event.data !== 'string') {
-      return playPcm16(event.data, live.currentTtsSampleRate || 24000);
-    }
-    var payload = null;
-    try { payload = JSON.parse(event.data); } catch (err) {}
-    if (!payload) return Promise.resolve();
-    if (payload.type === 'barge_in') {
-      stopLivePlayback();
-      voiceStatus('Listening...');
-    }
-    if (payload.type === 'speech_start') voiceStatus('Listening...');
-    if (payload.type === 'stt_start') voiceStatus('Transcribing...');
-    if (payload.type === 'stt_result') {
-      addVoiceTranscript('user', payload.text);
-      voiceStatus('Thinking...');
-    }
-    if (payload.type === 'stt_rejected') voiceStatus("I didn't catch that clearly.");
-    if (payload.type === 'ai_answer') {
-      addVoiceTranscript('ai', payload.answer);
-      voiceStatus('Speaking...');
-    }
-    if (payload.type === 'tts_start' && payload.sample_rate) {
-      live.playbackGeneration = (live.playbackGeneration || 0) + 1;
-      live.currentTtsSampleRate = payload.sample_rate;
-      if (live.audioContext) live.nextPlayTime = live.audioContext.currentTime + 0.03;
-    }
-    if (payload.type === 'tts_end') scheduleLiveVoiceReady(live);
-    if (payload.type === 'turn_error') voiceStatus('Voice error: ' + (payload.message || payload.error || 'unknown'));
-    return Promise.resolve();
-  }
-
-  function openLiveVoiceSocket(live, langCode, voice, speed) {
-    return new Promise(function (resolve, reject) {
-      if (live.released || state.liveVoice !== live) {
-        reject(new Error('Voice start was cancelled.'));
-        return;
-      }
-      var socket;
-      try {
-        socket = new WebSocket(buildLiveWsUrl(
-          langCode,
-          voice,
-          speed,
-          state.legacyConversationId,
-          live.voiceSessionId,
-          live.connectionTicket
-        ));
-      } catch (err) {
-        reject(err);
-        return;
-      }
-      live.ws = socket;
-      socket.binaryType = 'arraybuffer';
-      socket.onmessage = function (event) { handleLiveMessage(event); };
-      socket.onopen = function () {
-        if (live.released || state.liveVoice !== live) {
-try { socket.close(1000, 'cancelled'); } catch (err) {}
-reject(new Error('Voice start was cancelled.'));
-return;
-        }
-        resolve(socket);
-      };
-      socket.onerror = function () {
-        reject(new Error('Voice connection failed.'));
-      };
-      socket.onclose = function () {
-        if (!live.released) releaseLiveVoice(live, 'Voice disconnected.', false);
-      };
-    });
+  function encodeVoiceBootstrap(payload) {
+    var encoded = window.btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    return encoded;
   }
 
   function startLiveVoice() {
-    if (liveVoiceMode !== 'edge-card') return;
+    if (liveVoiceMode !== 'livekit-room') return;
     toggleVoicePanel(true);
-    if (state.liveVoice) {
-      stopLiveVoice('Voice stopped.');
-      return;
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      voiceStatus('Microphone is not available in this browser.');
-      return;
-    }
-    var AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextConstructor || !window.AudioWorkletNode) {
-      voiceStatus('AudioWorklet support is required for voice capture.');
-      return;
-    }
-
-    var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-    var langCode = 'auto';
-    var voice = 'auto';
-    var speed = '1.0';
-    var live = {
-      ws: null,
-      audioContext: null,
-      source: null,
-      captureNode: null,
-      stream: null,
-      playingSources: [],
-      currentTtsSampleRate: 24000,
-      nextPlayTime: 0,
-      captureResumeAt: 0,
-      playbackGeneration: 0,
-      playbackReadyTimer: null,
-      voiceSessionId: null,
-      connectionTicket: null,
-      released: false
-    };
-    state.liveVoice = live;
-    voiceStatus('Preparing secure voice capture...');
-
-    Promise.resolve().then(function () {
-      return createLiveVoiceSession(langCode);
-    }).then(function (voiceSession) {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      live.voiceSessionId = String(voiceSession.voice_session_id || '');
-      live.connectionTicket = String(voiceSession.connection_ticket || '');
-      if (!live.voiceSessionId || !live.connectionTicket) throw new Error('Voice session could not be created.');
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      live.audioContext = new AudioContextConstructor();
-      if (!live.audioContext.audioWorklet || !live.audioContext.audioWorklet.addModule) {
-        throw new Error('AudioWorklet support is unavailable.');
-      }
-      return live.audioContext.resume();
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      return live.audioContext.audioWorklet.addModule(LIVE_VOICE_WORKLET_URL);
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      return openLiveVoiceSocket(live, langCode, voice, speed);
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      voiceStatus('Connected. Requesting microphone access...');
-      return navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    voiceStatus('Preparing a secure LiveKit room...');
+    ensureLegacySession().then(function () {
+      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/voice/sessions', {
+        method: 'POST',
+        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
+        body: JSON.stringify({ locale: locale || null, recording_consent: false })
+      }, 12000);
+    }).then(function (session) {
+      if (!session.livekit_url || !session.participant_token) throw new Error('LiveKit voice is unavailable.');
+      var bootstrap = encodeVoiceBootstrap({
+        role: 'visitor',
+        voice_session_id: session.voice_session_id,
+        provider: session.provider,
+        livekit_url: session.livekit_url,
+        participant_token: session.participant_token,
+        participant_identity: session.participant_identity,
+        visitor_token: state.legacyVisitorToken,
+        conversation_id: state.legacyConversationId
       });
-    }).then(function (mediaStream) {
-      if (live.released || state.liveVoice !== live) {
-        mediaStream.getTracks().forEach(function (track) { track.stop(); });
-        throw new Error('Voice start was cancelled.');
-      }
-      live.stream = mediaStream;
-      live.source = live.audioContext.createMediaStreamSource(mediaStream);
-      live.captureNode = new AudioWorkletNode(live.audioContext, LIVE_VOICE_PROCESSOR_NAME, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        processorOptions: {
-outputSampleRate: 16000,
-frameSamples: LIVE_VOICE_FRAME_SAMPLES
-        }
-      });
-      live.captureNode.port.onmessage = function (event) {
-        if (live.released || state.liveVoice !== live) return;
-        var data = event && event.data;
-        var packet = data && data.type === 'pcm16' ? data.buffer : null;
-        if (!(packet instanceof ArrayBuffer) || packet.byteLength === 0) return;
-        if (livePlaybackActive(live)) return;
-        if (packet.byteLength > MAX_CAPTURE_PACKET_BYTES) {
-releaseLiveVoice(live, 'Voice capture stopped because an audio packet exceeded the safety limit.', true);
-return;
-        }
-        if (live.ws && live.ws.readyState === WebSocket.OPEN) live.ws.send(packet);
-      };
-      live.source.connect(live.captureNode);
-      live.captureNode.connect(live.audioContext.destination);
-      voiceBtn.classList.add('is-live');
-      if (startBtn) {
-        startBtn.classList.add('stop');
-        startBtn.textContent = 'Stop';
-      }
-      voiceStatus('Listening...');
+      var opened = window.open('/webcall/' + encodeURIComponent(session.voice_session_id) + '#' + bootstrap, '_blank', 'noopener,noreferrer');
+      if (!opened) window.location.assign('/webcall/' + encodeURIComponent(session.voice_session_id) + '#' + bootstrap);
+      voiceStatus('Voice room opened in a secure call window.');
     }).catch(function (err) {
-      if (live.released && state.liveVoice !== live) return;
-      var errorName = err && err.name ? String(err.name) : '';
-      var message = err && err.message ? String(err.message) : String(err || 'unknown');
-      var status = 'Voice start failed: ' + message;
-      if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
-        status = 'Microphone access was denied.';
-      } else if (message.indexOf('AudioWorklet') !== -1) {
-        status = 'AudioWorklet support is unavailable.';
-      }
-      releaseLiveVoice(live, status, true);
+      voiceStatus('Voice start failed: ' + (err && err.message ? err.message : 'unknown'));
     });
   }
+
 
   function api(path, options, timeoutMs) {
     options = options || {};

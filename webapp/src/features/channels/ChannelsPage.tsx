@@ -37,6 +37,7 @@ import { supportApi } from '@/lib/supportApi'
 import { channelPresentation, healthPresentation } from '@/lib/supportStatus'
 import type { ChannelOnboardingTask } from '@/lib/channelControlTypes'
 import type { ChannelAccount } from '@/lib/types'
+import { TelephonyConfigurationPanel } from './TelephonyConfigurationPanel'
 
 type PendingTaskAction = 'complete' | 'fail' | 'cancel' | null
 
@@ -249,6 +250,8 @@ export function ChannelsPage() {
           )}
         </Paper>
       </Box>
+
+      <TelephonyConfigurationPanel accounts={activeAccounts} />
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(300px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2 }}>
         <Paper component="section" variant="outlined" aria-labelledby="channel-onboarding-create-title" sx={{ p: 2 }}>

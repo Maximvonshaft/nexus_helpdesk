@@ -27,7 +27,6 @@
     'data-security-note',
     'data-auto-open',
     'data-live-voice-mode',
-    'data-live-voice-ws-path',
     'data-live-voice-label',
     'data-websocket',
     'data-poll-ms',
