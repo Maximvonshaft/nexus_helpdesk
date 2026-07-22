@@ -82,13 +82,31 @@
     },
     {
       "responsibility": "voice-session-lifecycle",
-      "public_authority": "backend/app/services/webchat_voice_service.py",
+      "public_authority": "backend/app/services/voice_session_service.py",
       "private_implementation": null,
       "compatibility_shims": []
     },
     {
-      "responsibility": "livekit-telephony-orchestration",
-      "public_authority": "backend/app/services/livekit_telephony_service.py",
+      "responsibility": "voice-channel-configuration",
+      "public_authority": "backend/app/services/telephony_configuration_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "provider-event-inbox-and-projection",
+      "public_authority": "backend/app/services/telephony_event_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "outbound-call-orchestration",
+      "public_authority": "backend/app/services/telephony_outbound_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "durable-voice-command-dispatch",
+      "public_authority": "backend/app/services/voice_command_dispatcher.py",
       "private_implementation": null,
       "compatibility_shims": []
     },
