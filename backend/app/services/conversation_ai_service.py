@@ -15,10 +15,6 @@ from ..webchat_models import (
     WebchatEvent,
     WebchatMessage,
 )
-from .agent_confirmation_service import (
-    active_confirmation_context,
-    resolve_confirmation_from_customer_message,
-)
 from .agent_runtime.access_policy import resolve_webchat_agent_access
 from .agent_runtime.terminal_reply import customer_visible_fallback
 from .ai_runtime_context import build_agent_context
@@ -147,16 +143,6 @@ def process_ticketless_ai_reply(
         .first()
     )
     language = _language_hint(visitor_message.body or "", rows)
-    confirmation_resolution = resolve_confirmation_from_customer_message(
-        db,
-        conversation=conversation,
-        message=visitor_message,
-    )
-    confirmation_context = (
-        confirmation_resolution
-        if confirmation_resolution is not None
-        else active_confirmation_context(db, conversation=conversation)
-    )
     access = resolve_webchat_agent_access()
     customer = (
         db.get(Customer, control.customer_id)
@@ -174,6 +160,11 @@ def process_ticketless_ai_reply(
         conversation=conversation,
         customer=customer,
     )
+    confirmation_context = (
+        runtime_context.get("customer_confirmation")
+        if isinstance(runtime_context.get("customer_confirmation"), dict)
+        else None
+    )
     execution_context = dict(runtime_context.get("agent_execution_context") or {})
     execution_context.update(
         {
@@ -184,30 +175,10 @@ def process_ticketless_ai_reply(
             "ai_turn_id": turn.id if turn else None,
             "granted_permissions": sorted(access.granted_permissions),
             "actor_capabilities": sorted(access.actor_capabilities),
-            "customer_confirmation_granted": bool(
-                confirmation_context
-                and confirmation_context.get("customer_confirmation_granted")
-            ),
-            "customer_confirmation_id": (
-                confirmation_context.get("confirmation_id")
-                if confirmation_context
-                else None
-            ),
-            "customer_confirmation_tool_name": (
-                confirmation_context.get("tool_name")
-                if confirmation_context
-                else None
-            ),
-            "customer_confirmation_arguments_sha256": (
-                confirmation_context.get("arguments_sha256")
-                if confirmation_context
-                else None
-            ),
         }
     )
     runtime_context["agent_allowed_tools"] = list(access.allowed_tools)
     runtime_context["agent_execution_context"] = execution_context
-    runtime_context["customer_confirmation"] = confirmation_context
     result = _run_runtime(
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
