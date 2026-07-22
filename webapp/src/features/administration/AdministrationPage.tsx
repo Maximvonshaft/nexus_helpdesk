@@ -66,19 +66,19 @@ export function AdministrationPage() {
             <Typography component="h1" variant="h1">系统管理</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            管理人员、角色权限、凭据会话、团队工作范围与安全审计。所有变更由服务端授权并记录审计。
+            管理账号、权限、登录安全、团队和管理记录。
           </Typography>
         </Box>
       </Stack>
 
       {!canManageUsers && canReadSecurity ? (
         <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-          当前账号为只读审计视图，不能修改用户、凭据、角色或团队。
+          当前账号只能查看安全记录，不能修改账号、权限或团队。
         </Alert>
       ) : null}
       {referenceError ? (
         <Box sx={{ mt: 2 }}>
-          <OperatorErrorNotice title="无法读取身份治理配置" error={referenceError} fallback="请稍后重试" />
+          <OperatorErrorNotice title="无法读取系统管理数据" error={referenceError} fallback="请稍后重试" />
         </Box>
       ) : null}
 
@@ -91,30 +91,18 @@ export function AdministrationPage() {
           aria-label="系统管理分类"
         >
           {canManageUsers ? <Tab icon={<ManageAccountsRoundedIcon />} iconPosition="start" value="users" label="用户与权限" /> : null}
-          {canManageUsers ? <Tab icon={<KeyRoundedIcon />} iconPosition="start" value="credentials" label="凭据与会话" /> : null}
+          {canManageUsers ? <Tab icon={<KeyRoundedIcon />} iconPosition="start" value="credentials" label="密码与登录" /> : null}
           {canManageUsers ? <Tab icon={<GroupsRoundedIcon />} iconPosition="start" value="teams" label="团队与范围" /> : null}
-          {canReadSecurity ? <Tab icon={<SecurityRoundedIcon />} iconPosition="start" value="security" label="安全审计" /> : null}
+          {canReadSecurity ? <Tab icon={<SecurityRoundedIcon />} iconPosition="start" value="security" label="安全记录" /> : null}
         </Tabs>
       </Paper>
 
       <Box sx={{ mt: 2 }}>
         {tab === 'users' && canManageUsers ? (
-          <UserGovernance
-            currentUserId={session.data?.id ?? 0}
-            roles={roles.data ?? []}
-            teams={teams.data ?? []}
-            referencesLoading={roles.isLoading || teams.isLoading}
-          />
+          <UserGovernance currentUserId={session.data?.id ?? 0} roles={roles.data ?? []} teams={teams.data ?? []} referencesLoading={roles.isLoading || teams.isLoading} />
         ) : null}
         {tab === 'credentials' && canManageUsers ? <CredentialGovernance currentUserId={session.data?.id ?? 0} /> : null}
-        {tab === 'teams' && canManageUsers ? (
-          <TeamGovernance
-            teams={teams.data ?? []}
-            markets={markets.data ?? []}
-            isLoading={teams.isLoading || markets.isLoading}
-            error={teams.error || markets.error}
-          />
-        ) : null}
+        {tab === 'teams' && canManageUsers ? <TeamGovernance teams={teams.data ?? []} markets={markets.data ?? []} isLoading={teams.isLoading || markets.isLoading} error={teams.error || markets.error} /> : null}
         {tab === 'security' && canReadSecurity ? <SecurityAuditPanel readOnly={!canManageUsers} /> : null}
       </Box>
     </Box>
