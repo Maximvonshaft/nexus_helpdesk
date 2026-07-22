@@ -1,10 +1,16 @@
-# isolated trigger
+# isolated observable trigger
 name: Temporary Governance Tenant Finalizer
 
 on:
   push:
     branches:
       - release/governed-operator-config-final-tenant
+    paths:
+      - .github/temporary-governance-tenant-finalizer.py
+      - .github/workflows/_temporary-governance-tenant-finalizer.yml
+  pull_request:
+    branches:
+      - main
     paths:
       - .github/temporary-governance-tenant-finalizer.py
       - .github/workflows/_temporary-governance-tenant-finalizer.yml
@@ -19,6 +25,7 @@ concurrency:
 
 jobs:
   finalize:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
