@@ -49,6 +49,11 @@ def _actor_tenant_key(
     )
 
 
+def _explicit_requested_tenant(payload, field_name: str) -> str | None:
+    fields_set = getattr(payload, "model_fields_set", set())
+    return getattr(payload, field_name) if field_name in fields_set else None
+
+
 def _item_out(row) -> KnowledgeItemOut:
     return KnowledgeItemOut.model_validate(row)
 
@@ -127,7 +132,10 @@ def create_knowledge_item(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_ai_configs(current_user, db)
-    tenant_key = _actor_tenant_key(db, current_user)
+    requested_tenant = _explicit_requested_tenant(payload, "tenant_id")
+    tenant_key = _actor_tenant_key(
+        db, current_user, requested=requested_tenant
+    )
     with managed_session(db):
         row = knowledge_service.create_item(
             db, payload, current_user, tenant_id=tenant_key
@@ -255,8 +263,9 @@ def test_knowledge_runtime_context(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
+    requested_tenant = _explicit_requested_tenant(payload, "tenant_key")
     tenant_key = _actor_tenant_key(
-        db, current_user, requested=payload.tenant_key
+        db, current_user, requested=requested_tenant
     )
     return KnowledgeRuntimeContextTestOut(
         context=build_agent_context(
