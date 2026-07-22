@@ -1,6 +1,6 @@
 {
   "schema": "nexus.operator-language.v1",
-  "version": "operator_language.2026-07-22.1",
+  "version": "operator_language.2026-07-22.2",
   "status": "canonical_all_routes_enforced",
   "principles": [
     "primary surfaces present the task, state, facts, blocking reason, recovery step and explicit action",
@@ -42,7 +42,11 @@
     "persona": "回复风格",
     "playbook": "业务规则",
     "deployment": "生效范围",
-    "run": "运行记录"
+    "release_delivery": "发布范围",
+    "run": "运行记录",
+    "role_template": "角色模板",
+    "market_governance": "市场与国家",
+    "knowledge_import": "批量导入知识文件"
   },
   "technical_disclosures": [
     "系统信息",
@@ -51,6 +55,7 @@
     "原始数据",
     "处理编号",
     "权限代码",
+    "权限配置",
     "运行证据",
     "连接详情"
   ],
@@ -75,6 +80,7 @@
     "webapp/src/features/operator-workspace/OperatorWorkspaceCase.tsx",
     "webapp/src/features/operator-workspace/OperatorWorkspaceConversation.tsx",
     "webapp/src/features/knowledge/KnowledgePage.tsx",
+    "webapp/src/features/knowledge/KnowledgeImportPanel.tsx",
     "webapp/src/features/channels/ChannelsPage.tsx",
     "webapp/src/features/channels/EmailAccountGovernance.tsx",
     "webapp/src/features/runtime/RuntimePage.tsx",
@@ -87,9 +93,12 @@
     "webapp/src/features/administration/UserGovernance.tsx",
     "webapp/src/features/administration/CredentialGovernance.tsx",
     "webapp/src/features/administration/TeamGovernance.tsx",
+    "webapp/src/features/administration/RoleTemplatesPanel.tsx",
+    "webapp/src/features/administration/MarketGovernancePanel.tsx",
     "webapp/src/features/administration/SecurityAuditPanel.tsx",
     "webapp/src/features/agent-control/AgentControlPage.tsx",
     "webapp/src/features/agent-control/OverviewPanel.tsx",
+    "webapp/src/features/agent-control/ReleaseDeliveryPanel.tsx",
     "webapp/src/features/agent-control/PersonaPanel.tsx",
     "webapp/src/features/agent-control/PlaybookPanel.tsx",
     "webapp/src/features/agent-control/ToolsIntegrationsPanel.tsx",
@@ -101,8 +110,9 @@
   ],
   "required_surface_literals": {
     "webapp/src/app/navigation.ts": ["自动处理", "案例处理", "系统管理"],
-    "webapp/src/features/agent-control/AgentControlPage.tsx": ["自动处理配置", "方案与测试", "回复风格", "业务规则", "运行记录"],
+    "webapp/src/features/agent-control/AgentControlPage.tsx": ["自动处理配置", "方案与测试", "发布范围", "回复风格", "业务规则", "运行记录"],
     "webapp/src/features/agent-control/OverviewPanel.tsx": ["适用范围", "处理方案", "版本与生效范围", "回复测试"],
+    "webapp/src/features/agent-control/ReleaseDeliveryPanel.tsx": ["发布范围", "开始小范围发布", "设为正式版本", "系统信息"],
     "webapp/src/features/agent-control/PersonaPanel.tsx": ["回复风格", "转人工条件", "禁止与限制"],
     "webapp/src/features/agent-control/PlaybookPanel.tsx": ["业务规则", "处理要求", "允许使用的工具"],
     "webapp/src/features/agent-control/ToolsIntegrationsPanel.tsx": ["工具权限", "外部系统", "连接测试"],
@@ -110,9 +120,12 @@
     "webapp/src/features/agent-control/DiagnosticsPanel.tsx": ["连接诊断", "检查连接"],
     "webapp/src/features/agent-control/RunExplorerPanel.tsx": ["运行记录", "基于此记录测试", "运行详情"],
     "webapp/src/features/account/AccountPage.tsx": ["账户设置", "退出所有设备", "确认退出"],
-    "webapp/src/features/administration/AdministrationPage.tsx": ["系统管理", "密码与登录", "安全记录"],
+    "webapp/src/features/administration/AdministrationPage.tsx": ["系统管理", "角色模板", "密码与登录", "市场与国家", "安全记录"],
     "webapp/src/features/administration/UserGovernance.tsx": ["用户与权限", "权限代码", "创建账号"],
     "webapp/src/features/administration/CredentialGovernance.tsx": ["密码与登录", "要求改密", "退出设备", "重置两步验证"],
+    "webapp/src/features/administration/RoleTemplatesPanel.tsx": ["角色模板", "权限配置", "分配模板", "确认分配并退出旧设备"],
+    "webapp/src/features/administration/MarketGovernancePanel.tsx": ["市场与国家", "退役影响", "保存市场配置", "确认并保存"],
+    "webapp/src/features/knowledge/KnowledgeImportPanel.tsx": ["批量导入知识文件", "创建知识草稿", "已创建草稿"],
     "webapp/src/features/channels/EmailAccountGovernance.tsx": ["邮件账号", "发送服务器", "收件配置"],
     "webapp/src/features/runtime/RuntimeRecoveryPanel.tsx": ["失败任务恢复", "确认恢复"]
   },
@@ -136,6 +149,13 @@
     "缺少 runtime.manage",
     "缺少 user.manage",
     "开通对应 capability",
-    "确认 feature flag"
+    "确认 feature flag",
+    "运行时不会直接读取模板表",
+    "现有 Market 权威",
+    "只修改现有 AgentDeployment",
+    "唯一 Release Resolver",
+    "每个文件仍进入现有 KnowledgeItem",
+    "重复文件按 SHA-256 去重",
+    "不创建第二套知识库"
   ]
 }
