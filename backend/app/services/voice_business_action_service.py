@@ -12,12 +12,11 @@ from ..models import User
 from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceAIAction
 from ..webchat_models import WebchatEvent
-from .audit_service import log_admin_audit
+from .audit_service import log_admin_audit, log_event
 from .background_jobs import (
     enqueue_speedaf_voice_callback_job,
     find_recent_speedaf_voice_callback_job,
 )
-from .event_service import log_event
 from .permissions import ensure_can_control_webcall_voice
 from .speedaf.redactor import safe_waybill_payload
 from .voice_session_service import _visible_context
