@@ -15,6 +15,10 @@ from ..webchat_models import (
     WebchatEvent,
     WebchatMessage,
 )
+from .agent_confirmation_service import (
+    active_confirmation_context,
+    resolve_confirmation_from_customer_message,
+)
 from .agent_runtime.access_policy import resolve_webchat_agent_access
 from .agent_runtime.terminal_reply import customer_visible_fallback
 from .ai_runtime_context import build_agent_context
@@ -143,6 +147,16 @@ def process_ticketless_ai_reply(
         .first()
     )
     language = _language_hint(visitor_message.body or "", rows)
+    confirmation_resolution = resolve_confirmation_from_customer_message(
+        db,
+        conversation=conversation,
+        message=visitor_message,
+    )
+    confirmation_context = (
+        confirmation_resolution
+        if confirmation_resolution is not None
+        else active_confirmation_context(db, conversation=conversation)
+    )
     access = resolve_webchat_agent_access()
     customer = (
         db.get(Customer, control.customer_id)
@@ -170,10 +184,30 @@ def process_ticketless_ai_reply(
             "ai_turn_id": turn.id if turn else None,
             "granted_permissions": sorted(access.granted_permissions),
             "actor_capabilities": sorted(access.actor_capabilities),
+            "customer_confirmation_granted": bool(
+                confirmation_context
+                and confirmation_context.get("customer_confirmation_granted")
+            ),
+            "customer_confirmation_id": (
+                confirmation_context.get("confirmation_id")
+                if confirmation_context
+                else None
+            ),
+            "customer_confirmation_tool_name": (
+                confirmation_context.get("tool_name")
+                if confirmation_context
+                else None
+            ),
+            "customer_confirmation_arguments_sha256": (
+                confirmation_context.get("arguments_sha256")
+                if confirmation_context
+                else None
+            ),
         }
     )
     runtime_context["agent_allowed_tools"] = list(access.allowed_tools)
     runtime_context["agent_execution_context"] = execution_context
+    runtime_context["customer_confirmation"] = confirmation_context
     result = _run_runtime(
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
@@ -234,6 +268,7 @@ def process_ticketless_ai_reply(
         }
 
     db.expire(conversation)
+    resolved_ticket_id = conversation.ticket_id
     if handoff_required and not conversation.current_handoff_request_id:
         fallback_reason = "handoff_tool_side_effect_missing"
         reply_source = "agent_runtime:fallback"
@@ -246,7 +281,7 @@ def process_ticketless_ai_reply(
 
     message = WebchatMessage(
         conversation_id=conversation.id,
-        ticket_id=None,
+        ticket_id=resolved_ticket_id,
         direction="agent",
         body=policy.normalized_body,
         body_text=policy.normalized_body,
@@ -259,9 +294,11 @@ def process_ticketless_ai_reply(
                 "tool_calls": result.tool_calls or [],
                 "runtime_handoff_required": handoff_required,
                 "language": language,
-                "ticketless_conversation": True,
+                "ticketless_conversation": resolved_ticket_id is None,
+                "ticket_created_in_turn": resolved_ticket_id is not None,
                 "fallback": bool(fallback_reason) or not result.ai_generated,
                 "fallback_reason": fallback_reason,
+                "customer_confirmation": confirmation_context,
             },
             ensure_ascii=False,
             default=str,
@@ -278,6 +315,9 @@ def process_ticketless_ai_reply(
     )
     db.add(message)
     db.flush()
+    if turn is not None and resolved_ticket_id is not None:
+        turn.ticket_id = resolved_ticket_id
+        turn.updated_at = utc_now()
     _event(
         db,
         conversation=conversation,
@@ -286,7 +326,8 @@ def process_ticketless_ai_reply(
             "message_id": message.id,
             "direction": "agent",
             "ai_turn_id": turn.id if turn else None,
-            "ticketless_conversation": True,
+            "ticketless_conversation": resolved_ticket_id is None,
+            "ticket_id": resolved_ticket_id,
         },
     )
     conversation.updated_at = utc_now()
@@ -295,6 +336,7 @@ def process_ticketless_ai_reply(
     return {
         "status": "done",
         "message_id": message.id,
+        "ticket_id": resolved_ticket_id,
         "reply_source": reply_source,
         "fallback_reason": fallback_reason,
         "bridge_elapsed_ms": result.elapsed_ms,
