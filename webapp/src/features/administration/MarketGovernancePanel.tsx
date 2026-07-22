@@ -10,6 +10,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   MenuItem,
   Paper,
@@ -35,6 +36,36 @@ const EMPTY_MARKET: MarketDraft = {
   language_codes: ['en'],
 }
 
+const MARKET_STATUSES: Array<{ value: GovernedMarket['status']; label: string }> = [
+  { value: 'draft', label: '草稿' },
+  { value: 'active', label: '启用' },
+  { value: 'paused', label: '暂停' },
+  { value: 'retiring', label: '退役处理中' },
+  { value: 'retired', label: '已退役' },
+]
+
+const IMPACT_LABELS: Record<string, string> = {
+  teams: '团队',
+  tickets: '案例与工单',
+  knowledge: '知识',
+  personas: '回复风格',
+  agent_configs: '自动处理配置',
+  deployments: '生效范围',
+  channels: '渠道',
+  email_accounts: '邮件账号',
+  bulletins: '公告',
+}
+
+function marketStatusLabel(status: GovernedMarket['status']) {
+  return MARKET_STATUSES.find((item) => item.value === status)?.label || status
+}
+
+function marketStatusColor(status: GovernedMarket['status']): 'success' | 'warning' | 'default' {
+  if (status === 'active') return 'success'
+  if (status === 'draft' || status === 'paused' || status === 'retiring') return 'warning'
+  return 'default'
+}
+
 export function MarketGovernancePanel() {
   const queryClient = useQueryClient()
   const markets = useQuery({ queryKey: ['governance', 'markets'], queryFn: governanceApi.markets })
@@ -43,6 +74,7 @@ export function MarketGovernancePanel() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [draft, setDraft] = useState<MarketDraft>(EMPTY_MARKET)
   const [createOpen, setCreateOpen] = useState(false)
+  const [lifecycleConfirmOpen, setLifecycleConfirmOpen] = useState(false)
   const selected = useMemo(() => markets.data?.find((item) => item.id === selectedId) ?? null, [markets.data, selectedId])
 
   useEffect(() => {
@@ -74,17 +106,20 @@ export function MarketGovernancePanel() {
   })
   const update = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: Partial<MarketDraft> & { expected_version: number } }) => governanceApi.updateMarket(id, payload),
-    onSuccess: invalidate,
+    onSuccess: async () => {
+      setLifecycleConfirmOpen(false)
+      await invalidate()
+    },
   })
 
   if (markets.isLoading || countries.isLoading || teams.isLoading) return <Stack sx={{ alignItems: 'center', py: 6 }}><CircularProgress /></Stack>
   const error = markets.error || countries.error || teams.error
-  if (error) return <OperatorErrorNotice title="无法读取市场治理配置" error={error} fallback="请稍后重试" />
+  if (error) return <OperatorErrorNotice title="无法读取市场配置" error={error} fallback="请稍后重试" />
 
   const countryOptions = countries.data || []
-  const save = () => {
-    if (!selected) return
-    update.mutate({
+  const savePayload = () => {
+    if (!selected) return null
+    return {
       id: selected.id,
       payload: {
         name: draft.name,
@@ -98,7 +133,19 @@ export function MarketGovernancePanel() {
         language_codes: draft.language_codes,
         expected_version: selected.version,
       },
-    })
+    }
+  }
+  const commitSave = () => {
+    const payload = savePayload()
+    if (payload) update.mutate(payload)
+  }
+  const save = () => {
+    if (!selected) return
+    if (draft.status !== selected.status && (draft.status === 'retiring' || draft.status === 'retired')) {
+      setLifecycleConfirmOpen(true)
+      return
+    }
+    commitSave()
   }
 
   return (
@@ -108,7 +155,7 @@ export function MarketGovernancePanel() {
           <Box>
             <Typography component="h2" variant="h2">市场与国家</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              市场继续使用现有 Market 权威；本页只补充国家目录、语言、生命周期、责任团队和退役影响检查。
+              维护经营市场的国家范围、语言、时区、责任团队和生命周期。
             </Typography>
           </Box>
           <Button variant="contained" startIcon={<AddLocationAltRoundedIcon />} onClick={() => setCreateOpen(true)}>新建市场</Button>
@@ -116,40 +163,40 @@ export function MarketGovernancePanel() {
       </Paper>
 
       {!markets.data?.length ? (
-        <OperatorEmptyState title="暂无经营市场" description="从受控国家目录创建第一个市场。" />
+        <OperatorEmptyState title="暂无经营市场" description="从国家目录创建第一个市场。" />
       ) : (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 0.8fr) minmax(0, 2fr)' }, gap: 2 }}>
-          <Paper variant="outlined" sx={{ p: 1.5 }}>
+          <Paper component="aside" variant="outlined" sx={{ p: 1.5 }}>
             <Stack spacing={1}>
               {markets.data.map((item) => (
                 <Button key={item.id} variant={item.id === selectedId ? 'contained' : 'text'} color={item.id === selectedId ? 'primary' : 'inherit'} onClick={() => setSelectedId(item.id)} sx={{ justifyContent: 'space-between' }}>
                   <span>{item.name}</span>
-                  <Chip size="small" color={item.status === 'active' ? 'success' : item.status === 'retired' ? 'default' : 'warning'} label={item.status} />
+                  <Chip size="small" color={marketStatusColor(item.status)} label={marketStatusLabel(item.status)} />
                 </Button>
               ))}
             </Stack>
           </Paper>
 
           {selected ? (
-            <Paper variant="outlined" sx={{ p: 2 }}>
+            <Paper component="section" variant="outlined" sx={{ p: 2 }}>
               <Stack spacing={2}>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                   <Box>
                     <Typography variant="h3">{selected.name}</Typography>
-                    <Typography variant="caption" color="text.secondary">{selected.code} · 配置版本 {selected.version} · {selected.countries.join(', ')}</Typography>
+                    <Typography variant="caption" color="text.secondary">{selected.code} · {selected.countries.join(', ')}</Typography>
                   </Box>
-                  <Chip color={selected.status === 'active' ? 'success' : 'warning'} label={selected.status} />
+                  <Chip color={marketStatusColor(selected.status)} label={marketStatusLabel(selected.status)} />
                 </Stack>
-                {selected.status === 'retired' ? <Alert severity="info">该市场已经退役。重新激活会恢复 Market 运行状态，但不会自动恢复依赖资源。</Alert> : null}
+                {selected.status === 'retired' ? <Alert severity="info">该市场已经退役。重新启用不会自动恢复已停用的关联配置。</Alert> : null}
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <TextField fullWidth label="市场名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
                   <TextField fullWidth label="市场代码" value={draft.code} disabled />
                 </Stack>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <TextField select fullWidth label="生命周期" value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as GovernedMarket['status'] })}>
-                    {['draft', 'active', 'paused', 'retiring', 'retired'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
+                  <TextField select fullWidth label="状态" value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as GovernedMarket['status'] })}>
+                    {MARKET_STATUSES.map((status) => <MenuItem key={status.value} value={status.value}>{status.label}</MenuItem>)}
                   </TextField>
-                  <TextField fullWidth label="IANA 时区" value={draft.timezone || ''} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} />
+                  <TextField fullWidth label="时区" value={draft.timezone || ''} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} helperText="例如 Europe/Podgorica" />
                   <TextField fullWidth label="默认币种" value={draft.default_currency || ''} onChange={(event) => setDraft({ ...draft, default_currency: event.target.value.toUpperCase().slice(0, 3) })} />
                 </Stack>
                 <Autocomplete
@@ -158,7 +205,7 @@ export function MarketGovernancePanel() {
                   getOptionLabel={(option) => `${option.canonical_name} (${option.iso_alpha2})`}
                   value={countryOptions.filter((option) => draft.country_codes.includes(option.iso_alpha2))}
                   onChange={(_, value) => setDraft({ ...draft, country_codes: value.map((item) => item.iso_alpha2) })}
-                  renderInput={(params) => <TextField {...params} label="国家范围" helperText="列表第一项作为主国家。" />}
+                  renderInput={(params) => <TextField {...params} label="国家范围" helperText="第一项作为主国家。" />}
                 />
                 <Autocomplete
                   multiple
@@ -166,7 +213,7 @@ export function MarketGovernancePanel() {
                   options={['en', 'de', 'fr', 'it', 'pt', 'es', 'zh', 'me', 'sr', 'mk', 'uk']}
                   value={draft.language_codes}
                   onChange={(_, value) => setDraft({ ...draft, language_codes: value.map(String) })}
-                  renderInput={(params) => <TextField {...params} label="语言代码" helperText="使用 BCP 47 语言代码，第一项作为主语言。" />}
+                  renderInput={(params) => <TextField {...params} label="语言" helperText="第一项作为主语言。" />}
                 />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <TextField select fullWidth label="责任团队" value={draft.owner_team_id || ''} onChange={(event) => setDraft({ ...draft, owner_team_id: event.target.value ? Number(event.target.value) : null })}>
@@ -179,11 +226,11 @@ export function MarketGovernancePanel() {
                 <Box>
                   <Typography variant="subtitle2">退役影响</Typography>
                   <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 1 }}>
-                    {Object.entries(selected.impact).map(([key, value]) => <Chip key={key} color={value ? 'warning' : 'default'} label={`${key}: ${value}`} />)}
+                    {Object.entries(selected.impact).map(([key, value]) => <Chip key={key} color={value ? 'warning' : 'default'} label={`${IMPACT_LABELS[key] || key} ${value}`} />)}
                   </Stack>
                 </Box>
                 <Button variant="contained" startIcon={<SaveRoundedIcon />} disabled={update.isPending || !draft.name.trim() || !draft.country_codes.length || !draft.language_codes.length} onClick={save}>保存市场配置</Button>
-                {update.error ? <OperatorErrorNotice title="市场更新失败" error={update.error} fallback="请刷新后重试；退役前必须先解除所有活动依赖" /> : null}
+                {update.error ? <OperatorErrorNotice title="市场更新失败" error={update.error} fallback="请刷新后重试；退役前必须先处理所有关联业务" /> : null}
               </Stack>
             </Paper>
           ) : null}
@@ -192,6 +239,21 @@ export function MarketGovernancePanel() {
 
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} fullWidth maxWidth="md">
         <MarketEditor countries={countryOptions} teams={teams.data || []} pending={create.isPending} error={create.error} onClose={() => setCreateOpen(false)} onSubmit={(payload) => create.mutate(payload)} />
+      </Dialog>
+
+      <Dialog open={lifecycleConfirmOpen} onClose={() => { if (!update.isPending) setLifecycleConfirmOpen(false) }} fullWidth maxWidth="sm">
+        <DialogTitle>{draft.status === 'retired' ? '退役市场？' : '开始退役市场？'}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            该操作会影响上方列出的关联业务。保存前请确认相关团队已经完成迁移或停用处理。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" disabled={update.isPending} onClick={() => setLifecycleConfirmOpen(false)}>取消</Button>
+          <Button color="warning" variant="contained" disabled={update.isPending} onClick={commitSave}>
+            {update.isPending ? '正在保存…' : '确认并保存'}
+          </Button>
+        </DialogActions>
       </Dialog>
     </Stack>
   )
@@ -216,9 +278,9 @@ function MarketEditor({ countries, teams, pending, error, onClose, onSubmit }: {
             <TextField fullWidth label="市场名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
           </Stack>
           <Autocomplete multiple options={countries} getOptionLabel={(option) => `${option.canonical_name} (${option.iso_alpha2})`} value={countries.filter((option) => draft.country_codes.includes(option.iso_alpha2))} onChange={(_, value) => setDraft({ ...draft, country_codes: value.map((item) => item.iso_alpha2) })} renderInput={(params) => <TextField {...params} label="国家范围" />} />
-          <Autocomplete multiple freeSolo options={['en', 'de', 'fr', 'it', 'pt', 'es', 'zh', 'me', 'sr', 'mk', 'uk']} value={draft.language_codes} onChange={(_, value) => setDraft({ ...draft, language_codes: value.map(String) })} renderInput={(params) => <TextField {...params} label="语言代码" />} />
+          <Autocomplete multiple freeSolo options={['en', 'de', 'fr', 'it', 'pt', 'es', 'zh', 'me', 'sr', 'mk', 'uk']} value={draft.language_codes} onChange={(_, value) => setDraft({ ...draft, language_codes: value.map(String) })} renderInput={(params) => <TextField {...params} label="语言" />} />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <TextField fullWidth label="IANA 时区" value={draft.timezone || ''} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} />
+            <TextField fullWidth label="时区" value={draft.timezone || ''} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} />
             <TextField fullWidth label="默认币种" value={draft.default_currency || ''} onChange={(event) => setDraft({ ...draft, default_currency: event.target.value.toUpperCase().slice(0, 3) })} />
           </Stack>
           <TextField select label="责任团队" value={draft.owner_team_id || ''} onChange={(event) => setDraft({ ...draft, owner_team_id: event.target.value ? Number(event.target.value) : null })}>
@@ -232,7 +294,7 @@ function MarketEditor({ countries, teams, pending, error, onClose, onSubmit }: {
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>取消</Button>
-        <Button variant="contained" disabled={pending || !draft.code.trim() || !draft.name.trim() || !draft.country_codes.length || !draft.language_codes.length} onClick={() => onSubmit(draft)}>创建</Button>
+        <Button variant="contained" disabled={pending || !draft.code.trim() || !draft.name.trim() || !draft.country_codes.length || !draft.language_codes.length} onClick={() => onSubmit(draft)}>创建市场</Button>
       </DialogActions>
     </>
   )
