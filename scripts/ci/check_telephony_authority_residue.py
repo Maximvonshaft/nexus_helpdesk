@@ -46,6 +46,7 @@ FORBIDDEN_MARKERS = (
     "live-voice-capture-worklet",
     "livekit_telephony_service",
     "webchat_voice_service",
+    "from .event_service import",
     "WebchatVoiceSession.accepted_by_user_id",
     "temporary_telephony",
     "canonical_telephony_finalizer",
