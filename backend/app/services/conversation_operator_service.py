@@ -7,7 +7,13 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketStatus
+from ..enums import (
+    ConversationState,
+    EventType,
+    MessageStatus,
+    SourceChannel,
+    TicketStatus,
+)
 from ..models import Ticket, User
 from ..models_agent_routing import ConversationControl
 from ..operator_models import OperatorQueueScopeGrant
@@ -21,7 +27,10 @@ from ..webchat_models import (
     WebchatMessage,
 )
 from .customer_visible_message_service import create_customer_visible_message
-from .customer_visible_policy import evaluate_customer_visible_policy, format_policy_reasons
+from .customer_visible_policy import (
+    evaluate_customer_visible_policy,
+    format_policy_reasons,
+)
 from .permissions import (
     CAP_OUTBOUND_SEND,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
@@ -36,7 +45,10 @@ from .sla_service import evaluate_sla, update_first_response
 from .ticket_service import get_ticket_or_404
 from .ticketless_handoff_policy import can_resume_ticketless_handoff
 from .webchat_ai_turn_service import ai_snapshot, safe_write_webchat_event
-from .webchat_handoff_service import ensure_can_reply_in_handoff, serialize_handoff_request
+from .webchat_handoff_service import (
+    ensure_can_reply_in_handoff,
+    serialize_handoff_request,
+)
 from .webchat_inbox_read_state import webchat_read_state_payload
 from .webchat_message_service import message_payload
 from .webchat_session_identity import clip_body
@@ -125,7 +137,10 @@ def ensure_conversation_visible(
 
     control = _control(db, conversation=conversation)
     if not control.country_code:
-        raise HTTPException(status_code=403, detail="conversation_scope_unavailable")
+        raise HTTPException(
+            status_code=403,
+            detail="conversation_scope_unavailable",
+        )
     grant = (
         db.query(OperatorQueueScopeGrant.id)
         .filter(
@@ -138,7 +153,10 @@ def ensure_conversation_visible(
         .first()
     )
     if grant is None:
-        raise HTTPException(status_code=403, detail="conversation_scope_not_authorized")
+        raise HTTPException(
+            status_code=403,
+            detail="conversation_scope_not_authorized",
+        )
     return control
 
 
@@ -148,7 +166,10 @@ def _handoff(
     conversation: WebchatConversation,
 ) -> WebchatHandoffRequest | None:
     if conversation.current_handoff_request_id:
-        row = db.get(WebchatHandoffRequest, conversation.current_handoff_request_id)
+        row = db.get(
+            WebchatHandoffRequest,
+            conversation.current_handoff_request_id,
+        )
         if row is not None:
             return row
     return (
@@ -179,7 +200,11 @@ def _handoff_payload(
         "webchat_conversation_id": conversation.id,
         "ticket_id": None,
         "ticket_no": None,
-        "title": handoff.reason_text or handoff.reason_code or "WebChat human support",
+        "title": (
+            handoff.reason_text
+            or handoff.reason_code
+            or "WebChat human support"
+        ),
         "status": handoff.status,
         "source": handoff.source,
         "trigger_type": handoff.trigger_type,
@@ -188,21 +213,35 @@ def _handoff_payload(
         "recommended_agent_action": handoff.recommended_agent_action,
         "assigned_agent_id": handoff.assigned_agent_id,
         "accepted_by_user_id": handoff.accepted_by_user_id,
-        "requested_at": handoff.requested_at.isoformat() if handoff.requested_at else None,
-        "accepted_at": handoff.accepted_at.isoformat() if handoff.accepted_at else None,
-        "closed_at": handoff.closed_at.isoformat() if handoff.closed_at else None,
-        "can_accept": handoff.status == "requested"
-        and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities,
-        "can_decline": handoff.status == "requested"
-        and CAP_WEBCHAT_HANDOFF_DECLINE in capabilities,
+        "requested_at": (
+            handoff.requested_at.isoformat() if handoff.requested_at else None
+        ),
+        "accepted_at": (
+            handoff.accepted_at.isoformat() if handoff.accepted_at else None
+        ),
+        "closed_at": (
+            handoff.closed_at.isoformat() if handoff.closed_at else None
+        ),
+        "can_accept": (
+            handoff.status == "requested"
+            and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities
+        ),
+        "can_decline": (
+            handoff.status == "requested"
+            and CAP_WEBCHAT_HANDOFF_DECLINE in capabilities
+        ),
         "can_force_takeover": False,
-        "can_release": handoff.status == "accepted"
-        and assigned_to_current_user
-        and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities,
+        "can_release": (
+            handoff.status == "accepted"
+            and assigned_to_current_user
+            and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities
+        ),
         "can_resume_ai": can_resume_ai,
-        "can_reply": handoff.status == "accepted"
-        and assigned_to_current_user
-        and CAP_OUTBOUND_SEND in capabilities,
+        "can_reply": (
+            handoff.status == "accepted"
+            and assigned_to_current_user
+            and CAP_OUTBOUND_SEND in capabilities
+        ),
     }
 
 
@@ -226,7 +265,9 @@ def _event_payload(row: WebchatEvent) -> dict[str, Any]:
     return {
         "id": row.id,
         "event_type": row.event_type,
-        "payload_json": _redact_event_payload(_loads_json(row.payload_json) or {}),
+        "payload_json": _redact_event_payload(
+            _loads_json(row.payload_json) or {}
+        ),
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -239,20 +280,32 @@ def read_conversation_thread(
     before_message_id: int | None = None,
     message_limit: int = 100,
 ) -> dict[str, Any]:
-    control = ensure_conversation_visible(db, conversation=conversation, user=user)
+    control = ensure_conversation_visible(
+        db,
+        conversation=conversation,
+        user=user,
+    )
     capabilities = resolve_capabilities(user, db)
     safe_limit = max(1, min(int(message_limit or 100), MAX_THREAD_MESSAGES))
     query = db.query(WebchatMessage).filter(
         WebchatMessage.conversation_id == conversation.id
     )
     if before_message_id is not None:
-        query = query.filter(WebchatMessage.id < max(1, int(before_message_id)))
-    fetched = query.order_by(WebchatMessage.id.desc()).limit(safe_limit + 1).all()
+        query = query.filter(
+            WebchatMessage.id < max(1, int(before_message_id))
+        )
+    fetched = (
+        query.order_by(WebchatMessage.id.desc()).limit(safe_limit + 1).all()
+    )
     has_more = len(fetched) > safe_limit
     messages = list(reversed(fetched[:safe_limit]))
     next_before_id = messages[0].id if has_more and messages else None
     handoff = _handoff(db, conversation=conversation)
-    ticket = db.get(Ticket, conversation.ticket_id) if conversation.ticket_id else None
+    ticket = (
+        db.get(Ticket, conversation.ticket_id)
+        if conversation.ticket_id
+        else None
+    )
 
     payload: dict[str, Any] = {
         "conversation_id": conversation.public_id,
@@ -261,8 +314,11 @@ def read_conversation_thread(
         "origin": conversation.origin,
         "page_url": conversation.page_url,
         "status": (
-            ticket.status.value if ticket and hasattr(ticket.status, "value") else
-            str(ticket.status) if ticket else conversation.status
+            ticket.status.value
+            if ticket and hasattr(ticket.status, "value")
+            else str(ticket.status)
+            if ticket
+            else conversation.status
         ),
         "conversation_state": (
             ticket.conversation_state.value
@@ -280,9 +336,11 @@ def read_conversation_thread(
         "required_action": (
             ticket.required_action
             if ticket
-            else handoff.recommended_agent_action
-            or handoff.reason_text
-            or handoff.reason_code
+            else (
+                handoff.recommended_agent_action
+                or handoff.reason_text
+                or handoff.reason_code
+            )
             if handoff
             else None
         ),
@@ -338,15 +396,17 @@ def read_conversation_thread(
     )
     payload.update(
         {
-            "handoff": serialize_handoff_request(
-                db,
-                handoff,
-                current_user=user,
-                conversation=conversation,
-                ticket=ticket,
-            )
-            if handoff
-            else None,
+            "handoff": (
+                serialize_handoff_request(
+                    db,
+                    handoff,
+                    current_user=user,
+                    conversation=conversation,
+                    ticket=ticket,
+                )
+                if handoff
+                else None
+            ),
             "actions": [
                 {
                     "id": action.id,
@@ -356,13 +416,17 @@ def read_conversation_thread(
                     "payload": _loads_json(action.action_payload_json) or {},
                     "submitted_by": action.submitted_by,
                     "origin": action.origin,
-                    "created_at": action.created_at.isoformat()
-                    if action.created_at
-                    else None,
+                    "created_at": (
+                        action.created_at.isoformat()
+                        if action.created_at
+                        else None
+                    ),
                 }
                 for action in action_rows
             ],
-            "ai_turns": [_ai_turn_payload(row) for row in reversed(ai_turn_rows)],
+            "ai_turns": [
+                _ai_turn_payload(row) for row in reversed(ai_turn_rows)
+            ],
             "events": [_event_payload(row) for row in reversed(event_rows)],
             **webchat_read_state_payload(
                 db,
@@ -374,7 +438,10 @@ def read_conversation_thread(
     return payload
 
 
-def _reply_channel(ticket: Ticket, conversation: WebchatConversation) -> SourceChannel:
+def _reply_channel(
+    ticket: Ticket,
+    conversation: WebchatConversation,
+) -> SourceChannel:
     values = {
         str(getattr(value, "value", value) or "").strip().lower()
         for value in (
@@ -420,7 +487,9 @@ def _reply_ticket_conversation(
         raise HTTPException(
             status_code=400,
             detail={
-                "message": "Outbound reply blocked by customer-visible content policy",
+                "message": (
+                    "Outbound reply blocked by customer-visible content policy"
+                ),
                 "policy": decision_payload,
             },
         )
@@ -460,11 +529,18 @@ def _reply_ticket_conversation(
         author_label=user.display_name,
         author_user_id=user.id,
         safety_level=decision.level,
-        safety_reasons_json=json.dumps(decision.reasons, ensure_ascii=False),
+        safety_reasons_json=json.dumps(
+            decision.reasons,
+            ensure_ascii=False,
+        ),
         comment_author_id=user.id,
-        event_type=EventType.outbound_queued if external else EventType.outbound_sent,
+        event_type=(
+            EventType.outbound_queued if external else EventType.outbound_sent
+        ),
         event_note=(
-            "WhatsApp agent reply queued" if external else "Webchat agent reply sent"
+            "WhatsApp agent reply queued"
+            if external
+            else "Webchat agent reply sent"
         ),
         event_payload={
             "public_conversation_id": conversation.public_id,
@@ -480,7 +556,10 @@ def _reply_ticket_conversation(
         },
     )
     if result.webchat_message is None or result.outbound_message is None:
-        raise HTTPException(status_code=500, detail="customer visible reply was not created")
+        raise HTTPException(
+            status_code=500,
+            detail="customer visible reply was not created",
+        )
     metadata = _loads_json(result.webchat_message.metadata_json) or {}
     metadata.update(
         {
@@ -521,27 +600,13 @@ def _reply_ticket_conversation(
     }
 
 
-def reply_to_conversation(
+def _reply_ticketless_conversation(
     db: Session,
     *,
     conversation: WebchatConversation,
     user: User,
     body: str,
-    evidence_reference_id: int | None = None,
 ) -> dict[str, Any]:
-    ensure_can_send_outbound(user, db)
-    ensure_conversation_visible(db, conversation=conversation, user=user)
-    ticket = db.get(Ticket, conversation.ticket_id) if conversation.ticket_id else None
-    if ticket is not None:
-        return _reply_ticket_conversation(
-            db,
-            conversation=conversation,
-            ticket=ticket,
-            user=user,
-            body=body,
-            evidence_reference_id=evidence_reference_id,
-        )
-
     if conversation.status != "open":
         raise HTTPException(status_code=409, detail="conversation_is_closed")
     handoff = _handoff(db, conversation=conversation)
@@ -555,42 +620,106 @@ def reply_to_conversation(
             status_code=409,
             detail="handoff_must_be_accepted_before_replying",
         )
-    text = " ".join(str(body or "").strip().split())
-    if not text:
-        raise HTTPException(status_code=400, detail="reply_body_required")
-    now = utc_now()
-    message = WebchatMessage(
+
+    decision = evaluate_customer_visible_policy(clip_body(body))
+    decision_payload = asdict(decision)
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": (
+                    "Outbound reply blocked by customer-visible content policy"
+                ),
+                "policy": decision_payload,
+            },
+        )
+    result = create_customer_visible_message(
+        db,
+        ticket=None,
+        conversation=conversation,
+        channel=SourceChannel.web_chat,
+        body=decision.normalized_body,
+        origin="human_agent",
+        created_by=user.id,
+        provider_status="webchat_delivered",
+        outbound_status=MessageStatus.sent,
+        delivery_status="sent",
+        metadata_json={
+            "generated_by": "human_agent",
+            "safety_level": decision.level,
+            "external_send": False,
+            "reply_channel": SourceChannel.web_chat.value,
+        },
+        author_label=user.display_name,
+        author_user_id=user.id,
+        safety_level=decision.level,
+        safety_reasons_json=json.dumps(
+            decision.reasons,
+            ensure_ascii=False,
+        ),
+        create_external_comment=False,
+    )
+    if result.webchat_message is None or result.outbound_message is not None:
+        raise HTTPException(
+            status_code=500,
+            detail="ticketless customer visible reply was not created",
+        )
+    conversation.updated_at = utc_now()
+    conversation.last_seen_at = utc_now()
+    safe_write_webchat_event(
+        db,
         conversation_id=conversation.id,
         ticket_id=None,
-        direction="agent",
-        body=text[:2000],
-        body_text=text[:2000],
-        message_type="text",
-        author_user_id=user.id,
-        author_label=user.display_name,
-        delivery_status="sent",
-        created_at=now,
+        event_type="message.created",
+        payload={
+            "message_id": result.webchat_message.id,
+            "direction": "agent",
+            "author_user_id": user.id,
+        },
     )
-    db.add(message)
     db.flush()
-    db.add(
-        WebchatEvent(
-            conversation_id=conversation.id,
-            ticket_id=None,
-            event_type="message.created",
-            payload_json=json.dumps(
-                {
-                    "message_id": message.id,
-                    "direction": "agent",
-                    "author_user_id": user.id,
-                },
-                separators=(",", ":"),
-            ),
-            created_at=now,
+    db.refresh(result.webchat_message)
+    return {
+        "ok": True,
+        "safety": decision_payload,
+        "message": message_payload(result.webchat_message),
+    }
+
+
+def reply_to_conversation(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    user: User,
+    body: str,
+    evidence_reference_id: int | None = None,
+) -> dict[str, Any]:
+    ensure_can_send_outbound(user, db)
+    ensure_conversation_visible(
+        db,
+        conversation=conversation,
+        user=user,
+    )
+    ticket = (
+        db.get(Ticket, conversation.ticket_id)
+        if conversation.ticket_id
+        else None
+    )
+    if ticket is not None:
+        return _reply_ticket_conversation(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            user=user,
+            body=body,
+            evidence_reference_id=evidence_reference_id,
         )
+    return _reply_ticketless_conversation(
+        db,
+        conversation=conversation,
+        user=user,
+        body=body,
     )
-    db.flush()
-    return {"ok": True, "message": message_payload(message)}
 
 
 def read_ticket_conversation_thread(
@@ -637,7 +766,9 @@ def reply_to_ticket_conversation(
         WebchatConversation.ticket_id == ticket.id
     )
     if conversation_public_id:
-        query = query.filter(WebchatConversation.public_id == conversation_public_id)
+        query = query.filter(
+            WebchatConversation.public_id == conversation_public_id
+        )
     conversation = query.first()
     if conversation is None:
         raise HTTPException(
