@@ -105,23 +105,25 @@ def test_policy_gate_accepts_arguments_matching_registered_schema() -> None:
     assert result.violations == ()
 
 
-def test_public_webchat_defaults_are_least_privilege(monkeypatch) -> None:
+def test_public_webchat_defaults_expose_only_governed_customer_tools(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("WEBCHAT_AGENT_ALLOWED_TOOLS", raising=False)
     monkeypatch.delenv("WEBCHAT_AGENT_GRANTED_PERMISSIONS", raising=False)
 
     policy = resolve_webchat_agent_access()
 
-    assert "ticket.create" not in policy.allowed_tools
+    assert "ticket.create" in policy.allowed_tools
+    assert "ticket:create" in policy.granted_permissions
     assert "timeline.event.create" not in policy.allowed_tools
-    assert "ticket:create" not in policy.granted_permissions
     assert "timeline:event:create" not in policy.granted_permissions
-    assert all(
-        not get_tool_contract(tool_name).confirmation_required
-        for tool_name in policy.allowed_tools
-    )
+    ticket_contract = get_tool_contract("ticket.create")
+    assert ticket_contract is not None
+    assert ticket_contract.confirmation_required is True
+    assert ticket_contract.allowed_auto_execution_mode == "confirmation_required"
 
 
-def test_public_webchat_cannot_enable_confirmation_required_tool_by_env(
+def test_environment_can_expose_confirmation_tool_but_cannot_grant_consent(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(
@@ -135,7 +137,34 @@ def test_public_webchat_cannot_enable_confirmation_required_tool_by_env(
 
     policy = resolve_webchat_agent_access()
 
-    assert policy.allowed_tools == ("knowledge.search",)
+    assert policy.allowed_tools == ("knowledge.search", "ticket.create")
     assert policy.granted_permissions == frozenset(
         {"knowledge:read", "ticket:create"}
+    )
+    decision = AIDecision.model_validate(
+        {
+            "customer_reply": None,
+            "intent": "follow_up",
+            "next_action": "call_tool",
+            "tool_calls": [
+                {
+                    "tool_name": "ticket.create",
+                    "arguments": {
+                        "title": "Customer follow-up",
+                        "description": "Follow up after the call.",
+                    },
+                    "requires_confirmation": False,
+                }
+            ],
+        }
+    )
+    gate = validate_ai_decision(
+        decision,
+        granted_permissions=set(policy.granted_permissions),
+        customer_confirmation_granted=False,
+    )
+    assert gate.ok is False
+    assert any(
+        violation.code == "customer_confirmation_required"
+        for violation in gate.violations
     )
