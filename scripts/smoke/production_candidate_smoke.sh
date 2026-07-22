@@ -22,10 +22,11 @@ curl_text() {
 
 curl_json /healthz "$OUT_DIR/healthz.json"
 curl_json /readyz "$OUT_DIR/readyz.json"
+curl_json /api/webchat/voice/runtime-config "$OUT_DIR/voice_runtime.json"
 curl_text /webchat/demo/ "$OUT_DIR/webchat_demo.html"
 curl_text /webchat/voice-entry.js "$OUT_DIR/voice-entry.js"
 
-python3 - "$OUT_DIR/healthz.json" "$OUT_DIR/readyz.json" <<'PY'
+python3 - "$OUT_DIR/healthz.json" "$OUT_DIR/readyz.json" "$OUT_DIR/voice_runtime.json" <<'PY'
 import json
 import os
 import sys
@@ -33,6 +34,7 @@ from pathlib import Path
 
 healthz = json.loads(Path(sys.argv[1]).read_text())
 readyz = json.loads(Path(sys.argv[2]).read_text())
+voice_runtime = json.loads(Path(sys.argv[3]).read_text())
 
 errors = []
 if healthz.get("status") != "ok":
@@ -62,20 +64,23 @@ if expected_sha and healthz.get("git_sha") != expected_sha:
 if expected_sha and readyz.get("git_sha") != expected_sha:
     errors.append(f"readyz_git_sha={readyz.get('git_sha')} expected={expected_sha}")
 
+if voice_runtime.get("media_plane") not in {"livekit", "mock"}:
+    errors.append(f"voice_media_plane={voice_runtime.get('media_plane')}")
+serialized_voice = json.dumps(voice_runtime, sort_keys=True)
+for forbidden in ("LIVEKIT_API_SECRET", "LIVEKIT_API_KEY", "livekit_api_secret", "livekit_api_key"):
+    if forbidden in serialized_voice:
+        errors.append(f"voice_runtime_secret_field={forbidden}")
+
 if errors:
     raise SystemExit("\n".join(errors))
 PY
 
-grep -q 'data-live-voice-mode="edge-card"' "$OUT_DIR/webchat_demo.html"
-grep -Fq "widget.setAttribute('data-live-voice-mode', 'off')" "$OUT_DIR/voice-entry.js"
-if grep -Fq "widget.setAttribute('data-live-voice-mode', 'edge-card')" "$OUT_DIR/voice-entry.js" \
-  || grep -Fq 'window.NexusDeskWebChat.open()' "$OUT_DIR/voice-entry.js"; then
-  echo "voice-entry enables live voice or opens chat without explicit embed configuration" >&2
-  exit 2
-fi
-  echo "voice-entry contains production-only, credential, or debug markers" >&2
-  exit 2
-fi
+for file in "$OUT_DIR/webchat_demo.html" "$OUT_DIR/voice-entry.js"; do
+  if grep -Eiq '/webchat/live/ws|LIVE_VOICE_UPSTREAM|nexus_media_edge|data-live-voice-mode=["'"']edge-card["'"']' "$file"; then
+    echo "legacy live-voice media path present in $(basename "$file")" >&2
+    exit 2
+  fi
+done
 
 curl -fsS -i --max-time 10 \
   -X OPTIONS "${BASE_URL%/}/api/webchat/init" \
@@ -92,14 +97,11 @@ if curl -fsS -i --max-time 10 \
   exit 2
 fi
 
-if [[ "${CHECK_LIVE_VOICE_HEALTH:-false}" =~ ^(1|true|yes|on)$ ]]; then
-fi
-
-if [[ "${CHECK_LIVE_VOICE_WS_UPGRADE:-false}" =~ ^(1|true|yes|on)$ ]]; then
+if [[ "${CHECK_WEBCHAT_WS_UPGRADE:-false}" =~ ^(1|true|yes|on)$ ]]; then
   python3 "$SCRIPT_DIR/websocket_upgrade_probe.py" \
     --base-url "${BASE_URL%/}" \
-    --query "${LIVE_VOICE_WS_QUERY:-lang_code=en&voice=bm_george&speed=1.0}" \
-    --timeout-seconds "${LIVE_VOICE_WS_TIMEOUT_SECONDS:-10}"
+    --path "/api/webchat/ws" \
+    --timeout-seconds "${WEBCHAT_WS_TIMEOUT_SECONDS:-10}"
 fi
 
 echo "CANDIDATE_SMOKE_PASS=true"
