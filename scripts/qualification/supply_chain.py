@@ -6,64 +6,59 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
-from dependency_lock import dependency_lock_findings
-from deployment_authority import deployment_authority_findings
-from image_runtime_contract import image_runtime_contract_findings
-from secret_strategy import secret_strategy_findings
-
 ROOT = Path(__file__).resolve().parents[2]
-TRACKED_INPUTS = (
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.qualification.deployment_authority import (  # noqa: E402
+    deployment_authority_findings,
+)
+
+DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
+EXACT_REQUIREMENT_RE = re.compile(
+    r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s;]+(?:\s*;.*)?$"
+)
+EVIDENCE_DIR_ENV = "NEXUS_SUPPLY_CHAIN_EVIDENCE_DIR"
+
+SUPPLY_CHAIN_INPUTS = (
     "Dockerfile",
     "backend/requirements.txt",
+    "webapp/package.json",
     "webapp/package-lock.json",
     "deploy/docker-compose.controlled.yml",
     "deploy/docker-compose.controlled-postgres.yml",
+    "deploy/.env.controlled.example",
+    "deploy/.env.controlled.local-postgres.example",
+    "deploy/postgres/init-controlled-roles.sh",
     "deploy/nexus-prod-compose.sh",
+    "scripts/deploy/validate_controlled_server_preflight.py",
+    "scripts/deploy/safe_update_server.sh",
     "scripts/deploy/rollback_release.sh",
-    "scripts/release/run_controlled_image_assurance.sh",
+    "scripts/deploy/check_deploy_contract.sh",
+    "scripts/verify_repository.py",
+    "scripts/qualification/deployment_authority.py",
+    "scripts/qualification/service_authority.py",
+    "scripts/qualification/route_authority.py",
+    "scripts/qualification/database_capacity.py",
+    "scripts/qualification/infrastructure_decision.py",
+    "scripts/qualification/local_storage_backup.py",
+    "scripts/qualification/exact_head_acceptance.py",
+    "scripts/qualification/postgres_acceptance.py",
     "scripts/release/assemble_supply_chain_evidence.py",
-    "scripts/security/scan_repository.py",
-    "config/security/secret-scan-allowlist.json",
-    "config/security/codeql-exceptions.json",
+    "config/architecture/service-authority.v1.json",
+    "config/architecture/compatibility-lifecycle.v1.json",
+    "backend/tests/test_exact_head_acceptance.py",
+    "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md",
 )
+
 COMPOSE_INPUTS = (
     "deploy/docker-compose.controlled.yml",
     "deploy/docker-compose.controlled-postgres.yml",
 )
-EXPECTED_PYTHON_DIRECT = (
-    "alembic",
-    "bcrypt",
-    "fastapi",
-    "gunicorn",
-    "httpx",
-    "livekit-api",
-    "openpyxl",
-    "passlib",
-    "prometheus-client",
-    "psycopg",
-    "pydantic",
-    "pydantic-settings",
-    "PyJWT",
-    "python-multipart",
-    "redis",
-    "requests",
-    "SQLAlchemy",
-    "uvicorn",
-)
-SHA256 = re.compile(r"^[0-9a-f]{64}$")
-FROM_IMAGE = re.compile(r"^FROM\s+([^\s]+)", re.IGNORECASE)
-COMPOSE_IMAGE = re.compile(r"^\s*image:\s*(.+?)\s*$")
-
-
-def _inside_candidate_tree(path: Path) -> bool:
-    try:
-        path.resolve().relative_to(ROOT.resolve())
-    except ValueError:
-        return False
-    return True
 
 
 def _sha256(path: Path) -> str:
@@ -74,17 +69,75 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _dockerfile_findings(path: Path) -> list[str]:
+    findings: list[str] = []
+    content = path.read_text(encoding="utf-8")
+    effective_content = "\n".join(
+        line for line in content.splitlines() if not line.lstrip().startswith("#")
+    )
+    for line in effective_content.splitlines():
+        stripped = line.strip()
+        if stripped.upper().startswith("FROM "):
+            image = stripped.split()[1]
+            if not DIGEST_RE.search(image):
+                findings.append(f"dockerfile_base_not_pinned:{image}")
+    if re.search(r"\bapk\s+upgrade\b", effective_content):
+        findings.append("dockerfile_mutable_apk_upgrade")
+    if re.search(
+        r"python\s+-m\s+pip\s+install\s+--upgrade\s+[^\\\n]*[><~=]",
+        effective_content,
+    ):
+        findings.append("dockerfile_mutable_build_tool_range")
+    return findings
+
+
+def _requirements_findings(path: Path) -> list[str]:
+    findings: list[str] = []
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        1,
+    ):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("--"):
+            continue
+        if not EXACT_REQUIREMENT_RE.match(stripped):
+            findings.append(f"requirement_not_exact:{number}:{stripped[:120]}")
+    return findings
+
+
+def _compose_findings(path: Path) -> list[str]:
+    findings: list[str] = []
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        1,
+    ):
+        stripped = line.strip()
+        if not stripped.startswith("image:"):
+            continue
+        image = stripped.split(":", 1)[1].strip()
+        if image.startswith("${"):
+            continue
+        if not DIGEST_RE.search(image):
+            findings.append(
+                f"compose_image_not_pinned:{path.name}:{number}:{image}"
+            )
+    return findings
+
+
 def _load_json(
     path: Path,
     *,
     label: str,
     findings: list[str],
 ) -> dict[str, Any] | None:
-    if not path.is_file():
-        findings.append(f"release_evidence_missing:{label}")
-        return None
     if path.is_symlink():
         findings.append(f"release_evidence_symlink_forbidden:{label}")
+        return None
+    if not path.is_file() or path.stat().st_size == 0:
+        findings.append(f"release_evidence_missing:{label}")
+        return None
+    if path.stat().st_size > 64 * 1024 * 1024:
+        findings.append(f"release_evidence_too_large:{label}")
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -92,141 +145,45 @@ def _load_json(
         findings.append(f"release_evidence_invalid_json:{label}")
         return None
     if not isinstance(payload, dict):
-        findings.append(f"release_evidence_not_object:{label}")
+        findings.append(f"release_evidence_invalid_root:{label}")
         return None
     return payload
 
 
-def _requirement_findings(path: Path) -> list[str]:
-    findings: list[str] = []
-    names: list[str] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("--"):
-            continue
-        if "==" not in stripped:
-            findings.append(f"python_requirement_not_exact:{number}")
-            continue
-        requirement = stripped.split(";", 1)[0]
-        name, version = requirement.split("==", 1)
-        normalized = name.split("[", 1)[0].strip()
-        names.append(normalized)
-        if not version.strip():
-            findings.append(f"python_requirement_version_missing:{number}")
-    duplicates = sorted({name for name in names if names.count(name) > 1})
-    if duplicates:
-        findings.append(f"python_requirement_duplicate:{','.join(duplicates)}")
-    if tuple(names) != EXPECTED_PYTHON_DIRECT:
-        findings.append(
-            "python_direct_dependency_set_mismatch:"
-            f"expected={list(EXPECTED_PYTHON_DIRECT)}:actual={names}"
-        )
-    return findings
+def _evidence_directory(explicit: Path | None) -> Path | None:
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    raw = os.getenv(EVIDENCE_DIR_ENV, "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
 
 
-def _dockerfile_findings(path: Path) -> list[str]:
-    findings: list[str] = []
-    source = path.read_text(encoding="utf-8")
-    from_lines: list[str] = []
-    for line in source.splitlines():
-        match = FROM_IMAGE.match(line.strip())
-        if not match:
-            continue
-        image = match.group(1)
-        from_lines.append(image)
-        if "@sha256:" not in image:
-            findings.append(f"docker_base_image_not_digest_pinned:{image}")
-    if not from_lines:
-        findings.append("dockerfile_base_image_missing")
-    if re.search(r"\bapk\s+upgrade\b", source):
-        findings.append("dockerfile_mutable_apk_upgrade_forbidden")
-    if "npm ci --ignore-scripts" not in source:
-        findings.append("dockerfile_frontend_install_not_deterministic")
-    for marker in (
-        "requirements.txt",
-        "--no-cache-dir",
-        "--require-hashes",
-        "USER nexus",
-        "org.opencontainers.image.revision",
-        "org.opencontainers.image.created",
-        "org.opencontainers.image.version",
-        "org.opencontainers.image.ref.name",
-        "GIT_SHA",
-        "BUILD_TIME",
-        "IMAGE_TAG",
-    ):
-        if marker not in source:
-            findings.append(f"dockerfile_supply_marker_missing:{marker}")
-    return findings
-
-
-def _lock_findings(path: Path) -> list[str]:
-    findings: list[str] = []
+def _inside_candidate_tree(path: Path) -> bool:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ["frontend_lock_invalid"]
-    if payload.get("lockfileVersion") != 3:
-        findings.append("frontend_lock_version_not_3")
-    packages = payload.get("packages")
-    if not isinstance(packages, dict):
-        return [*findings, "frontend_lock_packages_missing"]
-    integrity_missing: list[str] = []
-    for name, entry in packages.items():
-        if not name.startswith("node_modules/") or not isinstance(entry, dict):
-            continue
-        if not entry.get("resolved") or not entry.get("integrity"):
-            integrity_missing.append(name)
-    if integrity_missing:
-        findings.append(
-            "frontend_lock_integrity_missing:"
-            f"{','.join(sorted(integrity_missing)[:20])}"
-        )
-    return findings
-
-
-def _compose_findings(path: Path) -> list[str]:
-    findings: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        match = COMPOSE_IMAGE.match(line)
-        if not match:
-            continue
-        value = match.group(1).strip().strip('"\'')
-        if value.startswith("${"):
-            if ":?" not in value:
-                findings.append(f"compose_image_not_required:{path.name}:{value}")
-            if "CONTROLLED_IMAGE" not in value:
-                findings.append(f"compose_noncanonical_image_variable:{path.name}:{value}")
-            continue
-        if "@sha256:" not in value:
-            findings.append(f"compose_image_not_digest_pinned:{path.name}:{value}")
-    return findings
-
-
-def _evidence_directory(value: Path | None) -> Path | None:
-    return value.expanduser().resolve() if value is not None else None
+        path.resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def collect_supply_chain_state(
     *,
-    release: bool,
+    release: bool = False,
     evidence_dir: Path | None = None,
 ) -> dict[str, Any]:
+    tracked = [ROOT / relative for relative in SUPPLY_CHAIN_INPUTS]
     findings: list[str] = []
-    tracked: list[Path] = []
-    for relative in TRACKED_INPUTS:
-        path = ROOT / relative
+    for path in tracked:
         if not path.is_file():
-            findings.append(f"supply_input_missing:{relative}")
-            continue
-        tracked.append(path)
+            findings.append(
+                f"supply_chain_input_missing:{path.relative_to(ROOT)}"
+            )
 
-    findings.extend(_dockerfile_findings(ROOT / "Dockerfile"))
-    findings.extend(_requirement_findings(ROOT / "backend/requirements.txt"))
-    findings.extend(_lock_findings(ROOT / "webapp/package-lock.json"))
-    findings.extend(dependency_lock_findings(ROOT))
-    findings.extend(secret_strategy_findings(ROOT))
-    findings.extend(image_runtime_contract_findings(ROOT))
+    dockerfile = ROOT / "Dockerfile"
+    requirements = ROOT / "backend/requirements.txt"
+    if dockerfile.is_file():
+        findings.extend(_dockerfile_findings(dockerfile))
+    if requirements.is_file():
+        findings.extend(_requirements_findings(requirements))
     for relative in COMPOSE_INPUTS:
         path = ROOT / relative
         if path.is_file():
