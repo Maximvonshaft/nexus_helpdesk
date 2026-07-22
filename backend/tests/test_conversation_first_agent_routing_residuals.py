@@ -43,6 +43,7 @@ from app.models_agent_routing import ConversationControl  # noqa: E402
 from app.operator_models import OperatorQueueScopeGrant  # noqa: E402
 from app.services.agent_routing_service import (  # noqa: E402
     close_conversation,
+    fill_agent_capacity,
     request_handoff,
     set_agent_state,
 )
@@ -165,6 +166,9 @@ def test_new_handoff_dispatches_oldest_newly_eligible_waiter(db_session):
         reason_code="older_waiter",
     )
     _grant(db_session, user_id=agent.id)
+    # A governed scope grant triggers canonical capacity refill. That refill must
+    # claim the oldest eligible waiter before a newer request can be assigned.
+    fill_agent_capacity(db_session, user=agent)
     newer_request = request_handoff(
         db_session,
         conversation=newer,
