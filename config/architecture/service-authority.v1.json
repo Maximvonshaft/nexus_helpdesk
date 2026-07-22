@@ -129,39 +129,15 @@
       "compatibility_shims": []
     },
     {
-      "responsibility": "voice-session-lifecycle",
-      "public_authority": "backend/app/services/voice_session_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "voice-channel-configuration",
-      "public_authority": "backend/app/services/telephony_configuration_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "provider-event-inbox-and-projection",
-      "public_authority": "backend/app/services/telephony_event_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "outbound-call-orchestration",
-      "public_authority": "backend/app/services/telephony_outbound_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "durable-voice-command-dispatch",
-      "public_authority": "backend/app/services/voice_command_dispatcher.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "voice-http-and-webhook-api",
+      "responsibility": "human-webcall",
       "public_authority": "backend/app/api/webchat_voice.py",
-      "private_implementation": null,
+      "private_implementation": "backend/app/services/webchat_voice_service.py",
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "live-ai-voice",
+      "public_authority": "backend/app/api/webchat_live_voice.py",
+      "private_implementation": "backend/app/services/live_voice_orchestration_service.py",
       "compatibility_shims": []
     }
   ],
