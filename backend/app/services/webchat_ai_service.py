@@ -31,6 +31,7 @@ from .customer_visible_message_service import create_customer_visible_message
 from .customer_visible_policy import evaluate_customer_visible_policy
 from .sla_service import evaluate_sla, update_first_response
 from .webchat_ai_turn_service import (
+    AI_TURN_TERMINAL_STATUSES,
     is_ai_suspended_for_handoff,
     safe_write_webchat_event,
     sanitized_ai_turn_runtime_trace,
@@ -189,21 +190,28 @@ def process_webchat_ai_reply_job(
 
     committed_handoff = _committed_handoff_owns_conversation(
         db,
-        conversation_id=conversation.id,
+        conversation=conversation,
     )
     if turn is not None and committed_handoff:
-        supersede_ai_turn(
+        conversation, turn = _restart_after_committed_handoff(
             db,
-            conversation=conversation,
-            turn=turn,
-            reason="handoff_started_before_reply_commit",
+            conversation_id=conversation.id,
+            turn_id=turn.id,
         )
+        if turn.status not in AI_TURN_TERMINAL_STATUSES:
+            supersede_ai_turn(
+                db,
+                conversation=conversation,
+                turn=turn,
+                reason="handoff_started_before_reply_commit",
+            )
         return {
             "status": "superseded",
             "reason": "handoff_started_before_reply_commit",
             "reply_source": "suppressed",
             "runtime_trace": safe_trace,
             "bridge_elapsed_ms": result.elapsed_ms,
+            "turn_finalized": True,
         }
     if suppress_stale_reply_if_needed(
         db,
@@ -328,29 +336,51 @@ def process_webchat_ai_reply_job(
 def _committed_handoff_owns_conversation(
     db: Session,
     *,
-    conversation_id: int,
+    conversation: WebchatConversation,
 ) -> bool:
-    """Read the committed ownership state outside the worker Session snapshot."""
+    """Read committed human ownership without treating uncommitted fixtures as missing."""
 
     bind = db.get_bind()
     engine = getattr(bind, "engine", bind)
     if engine is None:
-        return False
+        return is_ai_suspended_for_handoff(conversation)
     with engine.connect() as connection:
         row = connection.execute(
             select(
                 WebchatConversation.ai_suspended,
                 WebchatConversation.handoff_status,
                 WebchatConversation.active_agent_id,
-            ).where(WebchatConversation.id == conversation_id)
+            ).where(WebchatConversation.id == conversation.id)
         ).first()
     if row is None:
-        return True
+        return is_ai_suspended_for_handoff(conversation)
     return bool(
         row[0]
         or str(row[1] or "") in {"requested", "accepted"}
         or row[2] is not None
     )
+
+
+def _restart_after_committed_handoff(
+    db: Session,
+    *,
+    conversation_id: int,
+    turn_id: int,
+) -> tuple[WebchatConversation, WebchatAITurn]:
+    """Discard the stale worker snapshot before recording the terminal result.
+
+    A human may commit ownership while the Provider call is in flight. On
+    snapshot-based databases, attempting to upgrade the old read transaction to
+    a writer can fail or overwrite the human state. The job lease was committed
+    before processing, so rolling back this attempt-local transaction is safe.
+    """
+
+    db.rollback()
+    conversation = db.get(WebchatConversation, conversation_id)
+    turn = db.get(WebchatAITurn, turn_id)
+    if conversation is None or turn is None:
+        raise RuntimeError("webchat runtime context disappeared after handoff")
+    return conversation, turn
 
 
 def _public_reply_decision(
