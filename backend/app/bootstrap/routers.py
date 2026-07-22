@@ -24,6 +24,7 @@ from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
 from ..api.email import router as email_router
 from ..api.files import router as files_router
+from ..api.governance import router as governance_router
 from ..api.knowledge_items import router as knowledge_items_router
 from ..api.lite import router as lite_router
 from ..api.lookups import router as lookups_router
@@ -69,12 +70,11 @@ def register_api_routers(app: FastAPI) -> None:
         ticket_perf_router,
     ):
         app.include_router(router)
-    app.include_router(
-        admin_router,
-        dependencies=_compose_admin_dependencies(
-            dependencies=[Depends(enforce_admin_password_request_policy)]
-        ),
+    admin_dependencies = _compose_admin_dependencies(
+        dependencies=[Depends(enforce_admin_password_request_policy)]
     )
+    app.include_router(admin_router, dependencies=admin_dependencies)
+    app.include_router(governance_router, dependencies=admin_dependencies)
     for router in (
         admin_queue_router,
         osr_admin_router,

@@ -65,6 +65,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
       'ai_config.read',
       'ai_config.manage',
       'user.manage',
+      'market.manage',
     ],
     status: 'canonical',
   },
@@ -73,7 +74,7 @@ export const APP_NAVIGATION: AppNavigationItem[] = [
     label: '系统管理',
     canonicalRoute: '/administration',
     currentHref: '/administration',
-    capabilityAny: ['user.manage', 'security.read', 'audit.read'],
+    capabilityAny: ['user.manage', 'market.manage', 'security.read', 'audit.read'],
     status: 'canonical',
   },
 ]

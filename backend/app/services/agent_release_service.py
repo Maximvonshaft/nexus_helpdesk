@@ -373,7 +373,7 @@ def activate_deployment(
         raise HTTPException(status_code=400, detail="agent_environment_invalid")
     if canary_percent < 0 or canary_percent > 100:
         raise HTTPException(status_code=400, detail="agent_canary_percent_invalid")
-    if (canary_release is None) != (canary_percent == 0):
+    if canary_release is None and canary_percent != 0:
         raise HTTPException(
             status_code=400,
             detail="agent_canary_release_and_percent_must_match",
