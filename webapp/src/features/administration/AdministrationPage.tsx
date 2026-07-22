@@ -1,7 +1,9 @@
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded'
+import BadgeRoundedIcon from '@mui/icons-material/BadgeRounded'
 import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded'
 import KeyRoundedIcon from '@mui/icons-material/KeyRounded'
 import ManageAccountsRoundedIcon from '@mui/icons-material/ManageAccountsRounded'
+import PublicRoundedIcon from '@mui/icons-material/PublicRounded'
 import SecurityRoundedIcon from '@mui/icons-material/SecurityRounded'
 import {
   Alert,
@@ -18,18 +20,22 @@ import { OperatorErrorNotice } from '@/app/OperatorPresentation'
 import { useSession } from '@/hooks/useAuth'
 import { supportApi } from '@/lib/supportApi'
 import { CredentialGovernance } from './CredentialGovernance'
+import { MarketGovernancePanel } from './MarketGovernancePanel'
+import { RoleTemplatesPanel } from './RoleTemplatesPanel'
 import { SecurityAuditPanel } from './SecurityAuditPanel'
 import { TeamGovernance } from './TeamGovernance'
 import { UserGovernance } from './UserGovernance'
 
-type AdministrationTab = 'users' | 'credentials' | 'teams' | 'security'
+type AdministrationTab = 'users' | 'roles' | 'credentials' | 'teams' | 'markets' | 'security'
 
 export function AdministrationPage() {
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
   const canManageUsers = capabilities.has('user.manage')
+  const canManageMarkets = capabilities.has('market.manage')
   const canReadSecurity = canManageUsers || capabilities.has('security.read') || capabilities.has('audit.read')
-  const [tab, setTab] = useState<AdministrationTab>(canManageUsers ? 'users' : 'security')
+  const initialTab: AdministrationTab = canManageUsers ? 'users' : canManageMarkets ? 'markets' : 'security'
+  const [tab, setTab] = useState<AdministrationTab>(initialTab)
 
   const roles = useQuery({
     queryKey: ['identityRolePolicies'],
@@ -52,8 +58,13 @@ export function AdministrationPage() {
 
   useEffect(() => { document.title = '系统管理 · Nexus OSR' }, [])
   useEffect(() => {
-    if (!canManageUsers && tab !== 'security') setTab('security')
-  }, [canManageUsers, tab])
+    const allowed = (
+      (canManageUsers && ['users', 'roles', 'credentials', 'teams'].includes(tab))
+      || (canManageMarkets && tab === 'markets')
+      || (canReadSecurity && tab === 'security')
+    )
+    if (!allowed) setTab(canManageUsers ? 'users' : canManageMarkets ? 'markets' : 'security')
+  }, [canManageMarkets, canManageUsers, canReadSecurity, tab])
 
   const referenceError = roles.error || teams.error || markets.error
 
@@ -66,19 +77,19 @@ export function AdministrationPage() {
             <Typography component="h1" variant="h1">系统管理</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            管理人员、角色权限、凭据会话、团队工作范围与安全审计。所有变更由服务端授权并记录审计。
+            管理人员、角色、登录安全、团队和经营市场。所有配置只保留一个服务端权威，并记录操作证据。
           </Typography>
         </Box>
       </Stack>
 
-      {!canManageUsers && canReadSecurity ? (
+      {!canManageUsers && !canManageMarkets && canReadSecurity ? (
         <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-          当前账号为只读审计视图，不能修改用户、凭据、角色或团队。
+          当前账号为只读审计视图，不能修改人员、角色、凭据、团队或市场。
         </Alert>
       ) : null}
       {referenceError ? (
         <Box sx={{ mt: 2 }}>
-          <OperatorErrorNotice title="无法读取身份治理配置" error={referenceError} fallback="请稍后重试" />
+          <OperatorErrorNotice title="无法读取系统管理配置" error={referenceError} fallback="请稍后重试" />
         </Box>
       ) : null}
 
@@ -90,9 +101,11 @@ export function AdministrationPage() {
           scrollButtons="auto"
           aria-label="系统管理分类"
         >
-          {canManageUsers ? <Tab icon={<ManageAccountsRoundedIcon />} iconPosition="start" value="users" label="用户与权限" /> : null}
-          {canManageUsers ? <Tab icon={<KeyRoundedIcon />} iconPosition="start" value="credentials" label="凭据与会话" /> : null}
+          {canManageUsers ? <Tab icon={<ManageAccountsRoundedIcon />} iconPosition="start" value="users" label="员工账号" /> : null}
+          {canManageUsers ? <Tab icon={<BadgeRoundedIcon />} iconPosition="start" value="roles" label="角色模板" /> : null}
+          {canManageUsers ? <Tab icon={<KeyRoundedIcon />} iconPosition="start" value="credentials" label="登录与会话" /> : null}
           {canManageUsers ? <Tab icon={<GroupsRoundedIcon />} iconPosition="start" value="teams" label="团队与范围" /> : null}
+          {canManageMarkets ? <Tab icon={<PublicRoundedIcon />} iconPosition="start" value="markets" label="市场与国家" /> : null}
           {canReadSecurity ? <Tab icon={<SecurityRoundedIcon />} iconPosition="start" value="security" label="安全审计" /> : null}
         </Tabs>
       </Paper>
@@ -106,6 +119,7 @@ export function AdministrationPage() {
             referencesLoading={roles.isLoading || teams.isLoading}
           />
         ) : null}
+        {tab === 'roles' && canManageUsers ? <RoleTemplatesPanel /> : null}
         {tab === 'credentials' && canManageUsers ? <CredentialGovernance currentUserId={session.data?.id ?? 0} /> : null}
         {tab === 'teams' && canManageUsers ? (
           <TeamGovernance
@@ -115,6 +129,7 @@ export function AdministrationPage() {
             error={teams.error || markets.error}
           />
         ) : null}
+        {tab === 'markets' && canManageMarkets ? <MarketGovernancePanel /> : null}
         {tab === 'security' && canReadSecurity ? <SecurityAuditPanel readOnly={!canManageUsers} /> : null}
       </Box>
     </Box>

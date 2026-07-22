@@ -17,11 +17,12 @@ import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { OverviewPanel } from './OverviewPanel'
 import { PersonaPanel } from './PersonaPanel'
 import { PlaybookPanel } from './PlaybookPanel'
+import { ReleaseDeliveryPanel } from './ReleaseDeliveryPanel'
 import { RunExplorerPanel } from './RunExplorerPanel'
 import { ToolsIntegrationsPanel } from './ToolsIntegrationsPanel'
 import { RuntimePanel } from './RuntimePanel'
 
-export type AgentControlTab = 'overview' | 'persona' | 'playbooks' | 'tools' | 'runtime' | 'diagnostics'
+export type AgentControlTab = 'overview' | 'delivery' | 'persona' | 'playbooks' | 'tools' | 'runtime' | 'diagnostics'
 
 export function AgentControlPage({ canManage }: { canManage: boolean }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
@@ -93,6 +94,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
           aria-label="Agent 控制面分类"
         >
           <Tab value="overview" label="定义、发布与测试" />
+          <Tab value="delivery" label="小范围发布" />
           <Tab value="persona" label="人格" />
           <Tab value="playbooks" label="业务剧本" />
           <Tab value="tools" label="工具与集成" />
@@ -134,6 +136,12 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
               caseType={caseType}
               setCaseType={setCaseType}
               canManage={canManage && snapshot.data.capabilities.can_manage}
+              canDeploy={snapshot.data.capabilities.can_deploy}
+            />
+          ) : null}
+          {tab === 'delivery' ? (
+            <ReleaseDeliveryPanel
+              snapshot={snapshot.data}
               canDeploy={snapshot.data.capabilities.can_deploy}
             />
           ) : null}

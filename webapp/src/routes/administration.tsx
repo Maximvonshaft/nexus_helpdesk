@@ -7,7 +7,7 @@ import { getSupportToken } from '@/lib/supportApi'
 
 const LazyAdministrationPage = lazy(() => import('@/features/administration/lazy'))
 
-const ADMINISTRATION_CAPABILITIES = ['user.manage', 'security.read', 'audit.read']
+const ADMINISTRATION_CAPABILITIES = ['user.manage', 'market.manage', 'security.read', 'audit.read']
 
 function AdministrationRoutePage() {
   return (
