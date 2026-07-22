@@ -382,5 +382,5 @@ test('knowledge editing protects drafts and requires an explicit publication rev
   await expect(review).toBeVisible()
   await expect(review.getByText('Return policy — reviewed')).toBeVisible()
   await expect(review.getByText('Can I return my parcel?')).toBeVisible()
-  await expect(review.getByText('提交后等待发布状态更新。')).toBeVisible()
+  await expect(review.getByText('提交后请等待发布状态更新；提交成功不等于已经同步完成。')).toBeVisible()
 })
