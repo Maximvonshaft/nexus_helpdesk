@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 import uuid
@@ -48,9 +50,8 @@ from app.services.timeline_service import serialize_outbound  # noqa: E402
 
 @pytest.fixture()
 def db_session(tmp_path):
-    db_file = tmp_path / "outbound_semantics.db"
     engine = create_engine(
-        f"sqlite:///{db_file}",
+        f"sqlite:///{tmp_path / 'outbound_semantics.db'}",
         connect_args={"check_same_thread": False},
         future=True,
     )
@@ -75,39 +76,29 @@ def _uid() -> str:
     return uuid.uuid4().hex[:10]
 
 
-def make_team(db_session):
-    team = Team(name=f"Ops-{_uid()}", team_type="support")
-    db_session.add(team)
-    db_session.flush()
-    return team
-
-
-def make_user(db_session, team=None, role=UserRole.lead):
-    suffix = _uid()
-    user = User(
-        username=f"ops-user-{suffix}",
-        display_name="Ops User",
-        email=f"ops-user-{suffix}@example.com",
-        password_hash=hash_password("pass123"),
-        role=role,
-        team_id=team.id if team else None,
-        is_active=True,
-    )
-    db_session.add(user)
-    db_session.flush()
-    return user
-
-
-def make_ticket(
+def _ticket(
     db_session,
     *,
-    channel=SourceChannel.whatsapp,
-    contact="+15550001",
-):
-    team = make_team(db_session)
-    make_user(db_session, team)
+    channel: SourceChannel,
+    contact: str,
+) -> Ticket:
+    suffix = _uid()
+    team = Team(name=f"Ops-{suffix}", team_type="support")
+    db_session.add(team)
+    db_session.flush()
+    db_session.add(
+        User(
+            username=f"ops-{suffix}",
+            display_name="Ops User",
+            email=f"ops-{suffix}@example.com",
+            password_hash=hash_password("pass123"),
+            role=UserRole.lead,
+            team_id=team.id,
+            is_active=True,
+        )
+    )
     ticket = Ticket(
-        ticket_no=f"T-{channel.value}-{_uid()}",
+        ticket_no=f"T-{channel.value}-{suffix}",
         title="Customer message",
         description="Customer message",
         source=TicketSource.user_message,
@@ -125,20 +116,19 @@ def make_ticket(
     return ticket
 
 
-def add_outbound(
+def _outbound(
     db_session,
-    ticket,
+    ticket: Ticket,
     *,
-    channel,
-    status,
-    provider_status,
-    body="hello",
-):
+    channel: SourceChannel,
+    status: MessageStatus,
+    provider_status: str,
+) -> TicketOutboundMessage:
     row = TicketOutboundMessage(
         ticket_id=ticket.id,
         channel=channel,
         status=status,
-        body=body,
+        body="hello",
         provider_status=provider_status,
         max_retries=3,
     )
@@ -147,27 +137,27 @@ def add_outbound(
     return row
 
 
-def test_webchat_local_messages_do_not_count_as_external_pending(db_session):
-    ticket = make_ticket(
+def test_webchat_local_messages_do_not_count_as_provider_pending(db_session):
+    ticket = _ticket(
         db_session,
         channel=SourceChannel.web_chat,
         contact="wc-local",
     )
-    add_outbound(
+    _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         provider_status="webchat_delivered",
     )
-    add_outbound(
+    _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         provider_status="webchat_ai_delivered",
     )
-    add_outbound(
+    _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
@@ -181,39 +171,39 @@ def test_webchat_local_messages_do_not_count_as_external_pending(db_session):
     assert counts["webchat_ai_delivered_sent"] == 1
 
 
-def test_external_channel_pending_counts_are_semantic(db_session):
-    whatsapp_ticket = make_ticket(
+def test_provider_pending_counts_are_semantic(db_session):
+    whatsapp = _ticket(
         db_session,
         channel=SourceChannel.whatsapp,
         contact="+15550101",
     )
-    telegram_ticket = make_ticket(
+    telegram = _ticket(
         db_session,
         channel=SourceChannel.telegram,
         contact="telegram:42",
     )
-    sms_ticket = make_ticket(
+    sms = _ticket(
         db_session,
         channel=SourceChannel.sms,
         contact="+15550102",
     )
-    add_outbound(
+    _outbound(
         db_session,
-        whatsapp_ticket,
+        whatsapp,
         channel=SourceChannel.whatsapp,
         status=MessageStatus.pending,
         provider_status="queued",
     )
-    add_outbound(
+    _outbound(
         db_session,
-        telegram_ticket,
+        telegram,
         channel=SourceChannel.telegram,
         status=MessageStatus.pending,
         provider_status="queued",
     )
-    add_outbound(
+    _outbound(
         db_session,
-        sms_ticket,
+        sms,
         channel=SourceChannel.sms,
         status=MessageStatus.dead,
         provider_status="dead:max_retries",
@@ -223,84 +213,67 @@ def test_external_channel_pending_counts_are_semantic(db_session):
     assert counts["external_dead_outbound"] == 1
 
 
-def test_outbound_ui_labels_are_semantic_not_raw_provider_statuses(db_session):
-    ticket = make_ticket(
+def test_ui_labels_expose_business_semantics(db_session):
+    ticket = _ticket(
         db_session,
         channel=SourceChannel.web_chat,
         contact="wc-label",
     )
-    local_message = add_outbound(
+    local = _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         provider_status="webchat_delivered",
     )
-    ai_reply = add_outbound(
+    ai = _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         provider_status="webchat_ai_delivered",
     )
-    draft = add_outbound(
+    draft = _outbound(
         db_session,
         ticket,
         channel=SourceChannel.whatsapp,
         status=MessageStatus.draft,
         provider_status="draft",
     )
-    pending = add_outbound(
+    pending = _outbound(
         db_session,
         ticket,
         channel=SourceChannel.whatsapp,
         status=MessageStatus.pending,
         provider_status="queued",
     )
-    assert (
-        outbound_ui_label(
-            local_message.channel,
-            local_message.status,
-            local_message.provider_status,
-        )
-        == "Local WebChat ACK"
-    )
-    assert (
-        outbound_ui_label(
-            ai_reply.channel,
-            ai_reply.status,
-            ai_reply.provider_status,
-        )
-        == "Local WebChat AI Reply"
-    )
+    assert outbound_ui_label(local.channel, local.status, local.provider_status) == "Local WebChat ACK"
+    assert outbound_ui_label(ai.channel, ai.status, ai.provider_status) == "Local WebChat AI Reply"
     assert outbound_ui_label(draft.channel, draft.status, draft.provider_status) == "Draft"
-    assert (
-        outbound_ui_label(pending.channel, pending.status, pending.provider_status)
-        == "External Send Pending"
-    )
-    assert serialize_outbound(local_message)["payload"]["is_external_send"] is False
+    assert outbound_ui_label(pending.channel, pending.status, pending.provider_status) == "External Send Pending"
+    assert serialize_outbound(local)["payload"]["is_external_send"] is False
     assert serialize_outbound(pending)["payload"]["is_external_send"] is True
 
 
-def test_claim_pending_messages_ignores_local_webchat_pending_rows(db_session):
-    webchat_ticket = make_ticket(
+def test_claim_ignores_local_webchat_pending_rows(db_session):
+    webchat_ticket = _ticket(
         db_session,
         channel=SourceChannel.web_chat,
         contact="wc-pending",
     )
-    whatsapp_ticket = make_ticket(
+    whatsapp_ticket = _ticket(
         db_session,
         channel=SourceChannel.whatsapp,
         contact="+15550103",
     )
-    webchat_row = add_outbound(
+    webchat_row = _outbound(
         db_session,
         webchat_ticket,
         channel=SourceChannel.web_chat,
         status=MessageStatus.pending,
         provider_status="queued",
     )
-    whatsapp_row = add_outbound(
+    whatsapp_row = _outbound(
         db_session,
         whatsapp_ticket,
         channel=SourceChannel.whatsapp,
@@ -316,16 +289,13 @@ def test_claim_pending_messages_ignores_local_webchat_pending_rows(db_session):
     assert whatsapp_row.status == MessageStatus.processing
 
 
-def test_non_external_outbound_never_calls_provider_dispatch(
-    db_session,
-    monkeypatch,
-):
-    ticket = make_ticket(
+def test_local_outbound_never_calls_provider_dispatch(db_session, monkeypatch):
+    ticket = _ticket(
         db_session,
         channel=SourceChannel.web_chat,
         contact="wc-send-block",
     )
-    row = add_outbound(
+    row = _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
@@ -333,32 +303,26 @@ def test_non_external_outbound_never_calls_provider_dispatch(
         provider_status="queued",
     )
     db_session.commit()
-    monkeypatch.setattr(
-        message_dispatch,
-        "_dispatch_whatsapp_message",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("provider path must not run for web_chat")
-        ),
-    )
-    monkeypatch.setattr(
-        message_dispatch,
-        "_dispatch_email_message",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("provider path must not run for web_chat")
-        ),
-    )
+    for name in ("_dispatch_whatsapp_message", "_dispatch_email_message"):
+        monkeypatch.setattr(
+            message_dispatch,
+            name,
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("provider path must not run for web_chat")
+            ),
+        )
     processed = process_outbound_message(db_session, row)
     assert processed.status == MessageStatus.dead
     assert processed.failure_code == "non_external_outbound_not_dispatchable"
 
 
-def test_requeue_dead_outbound_rejects_local_webchat_message(db_session):
-    ticket = make_ticket(
+def test_dead_local_message_cannot_be_requeued(db_session):
+    ticket = _ticket(
         db_session,
         channel=SourceChannel.web_chat,
         contact="wc-dead",
     )
-    row = add_outbound(
+    row = _outbound(
         db_session,
         ticket,
         channel=SourceChannel.web_chat,
@@ -372,7 +336,7 @@ def test_requeue_dead_outbound_rejects_local_webchat_message(db_session):
     assert "external outbound" in exc.value.detail
 
 
-def test_worker_disabled_outbound_never_claims_or_dispatches(monkeypatch):
+def test_disabled_outbound_worker_never_claims(monkeypatch):
     from scripts import run_worker
 
     @contextmanager
@@ -388,15 +352,7 @@ def test_worker_disabled_outbound_never_claims_or_dispatches(monkeypatch):
             AssertionError("outbound dispatch should not run")
         ),
     )
-    monkeypatch.setattr(
-        run_worker,
-        "record_worker_poll",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        run_worker,
-        "record_worker_result",
-        lambda *args, **kwargs: None,
-    )
+    monkeypatch.setattr(run_worker, "record_worker_poll", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, "record_worker_result", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_worker, "log_event", lambda *args, **kwargs: None)
     assert run_worker.run_queue_once("worker-test", "outbound") == 0
