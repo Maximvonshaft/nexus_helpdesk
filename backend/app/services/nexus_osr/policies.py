@@ -42,7 +42,10 @@ class HumanHoursPolicy:
     # Example: {"mon": [("09:00", "18:00")], "tue": [("09:00", "18:00")]}
     weekly_hours: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     holidays: set[str] = field(default_factory=set)
-    offline_message_template: str = "Our human support team is currently offline. I can create a ticket so the team can follow up during working hours."
+    offline_message_template: str = (
+        "Our human support team is currently offline. I can create a ticket so "
+        "the team can follow up during working hours."
+    )
     auto_ticket_when_offline: bool = True
 
     def evaluate(self, now: datetime | None = None) -> HumanAvailabilityDecision:
@@ -68,7 +71,11 @@ class HumanHoursPolicy:
         windows = self.weekly_hours.get(day_key, [])
         for start, end in windows:
             if _parse_hhmm(start) <= current.time() <= _parse_hhmm(end):
-                return HumanAvailabilityDecision(status=HumanAvailabilityStatus.ONLINE, queue_key=self.queue_key, reason="within_working_hours")
+                return HumanAvailabilityDecision(
+                    status=HumanAvailabilityStatus.ONLINE,
+                    queue_key=self.queue_key,
+                    reason="within_working_hours",
+                )
         return HumanAvailabilityDecision(
             status=HumanAvailabilityStatus.OFFLINE,
             queue_key=self.queue_key,
@@ -89,11 +96,17 @@ class EscalationDecision:
 
     @property
     def handoff_required(self) -> bool:
-        return self.action in {EscalationAction.REQUEST_HANDOFF, EscalationAction.HANDOFF_OR_TICKET}
+        return self.action in {
+            EscalationAction.REQUEST_HANDOFF,
+            EscalationAction.HANDOFF_OR_TICKET,
+        }
 
     @property
     def ticket_required(self) -> bool:
-        return self.action in {EscalationAction.CREATE_TICKET, EscalationAction.HANDOFF_OR_TICKET}
+        return self.action in {
+            EscalationAction.CREATE_TICKET,
+            EscalationAction.HANDOFF_OR_TICKET,
+        }
 
 
 @dataclass(frozen=True)
@@ -105,13 +118,22 @@ class EscalationPolicy:
     forbidden_commitments: list[str] = field(default_factory=list)
     enabled: bool = True
 
-    def evaluate(self, message: str, *, ai_attempt_count: int = 0) -> EscalationDecision:
+    def evaluate(
+        self,
+        message: str,
+        *,
+        ai_attempt_count: int = 0,
+    ) -> EscalationDecision:
         if not self.enabled:
             return EscalationDecision(matched=False)
         text = str(message or "")
         for pattern in self.patterns:
             if re.search(pattern, text, re.IGNORECASE):
-                action = self.action if ai_attempt_count >= self.max_ai_attempts else EscalationAction.TRY_AI_RESOLUTION
+                action = (
+                    self.action
+                    if ai_attempt_count >= self.max_ai_attempts
+                    else EscalationAction.TRY_AI_RESOLUTION
+                )
                 return EscalationDecision(
                     matched=True,
                     risk_key=self.risk_key,
@@ -146,26 +168,59 @@ class ToolExecutionPolicy:
     allowed_channels: set[str] = field(default_factory=set)
     allowed_countries: set[str] = field(default_factory=set)
 
-    def evaluate(self, *, channel: str | None = None, country_code: str | None = None, has_tracking_number: bool = False, has_contact: bool = False) -> ToolPolicyDecision:
+    def evaluate(
+        self,
+        *,
+        channel: str | None = None,
+        country_code: str | None = None,
+        has_tracking_number: bool = False,
+        has_contact: bool = False,
+    ) -> ToolPolicyDecision:
         missing: list[str] = []
         if not self.enabled:
             return ToolPolicyDecision(False, self.tool_name, "tool_disabled")
-        if not self.ai_auto_executable:
-            return ToolPolicyDecision(False, self.tool_name, "tool_not_ai_auto_executable")
+
+        confirmation_gated = bool(
+            self.requires_customer_confirmation
+            or self.requires_human_confirmation
+        )
+        if not self.ai_auto_executable and not confirmation_gated:
+            return ToolPolicyDecision(
+                False,
+                self.tool_name,
+                "tool_not_ai_auto_executable",
+            )
         if self.allowed_channels and (channel or "") not in self.allowed_channels:
-            return ToolPolicyDecision(False, self.tool_name, "channel_not_allowed")
+            return ToolPolicyDecision(
+                False,
+                self.tool_name,
+                "channel_not_allowed",
+            )
         if self.allowed_countries and (country_code or "") not in self.allowed_countries:
-            return ToolPolicyDecision(False, self.tool_name, "country_not_allowed")
+            return ToolPolicyDecision(
+                False,
+                self.tool_name,
+                "country_not_allowed",
+            )
         if self.requires_tracking_number and not has_tracking_number:
             missing.append("tracking_number")
         if self.requires_contact and not has_contact:
             missing.append("contact_method")
         if missing:
-            return ToolPolicyDecision(False, self.tool_name, "missing_required_context", missing_requirements=missing)
+            return ToolPolicyDecision(
+                False,
+                self.tool_name,
+                "missing_required_context",
+                missing_requirements=missing,
+            )
         return ToolPolicyDecision(
             True,
             self.tool_name,
-            "allowed",
+            (
+                "confirmation_required"
+                if not self.ai_auto_executable and confirmation_gated
+                else "allowed"
+            ),
             requires_customer_confirmation=self.requires_customer_confirmation,
             requires_human_confirmation=self.requires_human_confirmation,
         )
@@ -176,12 +231,17 @@ def default_escalation_policies() -> list[EscalationPolicy]:
         EscalationPolicy(
             risk_key="compensation",
             patterns=[r"\bcompensation\b", r"\brefund\b", r"赔偿", r"退款", r"索赔"],
-            forbidden_commitments=["do_not_confirm_compensation", "do_not_confirm_refund"],
+            forbidden_commitments=[
+                "do_not_confirm_compensation",
+                "do_not_confirm_refund",
+            ],
         ),
         EscalationPolicy(
             risk_key="formal_complaint",
             patterns=[r"\bcomplain\b", r"\bcomplaint\b", r"投诉", r"客诉"],
-            forbidden_commitments=["do_not_claim_complaint_resolved_without_ticket"],
+            forbidden_commitments=[
+                "do_not_claim_complaint_resolved_without_ticket"
+            ],
         ),
         EscalationPolicy(
             risk_key="legal_threat",
@@ -192,9 +252,17 @@ def default_escalation_policies() -> list[EscalationPolicy]:
     ]
 
 
-def evaluate_escalation(message: str, *, ai_attempt_count: int = 0, policies: list[EscalationPolicy] | None = None) -> EscalationDecision:
+def evaluate_escalation(
+    message: str,
+    *,
+    ai_attempt_count: int = 0,
+    policies: list[EscalationPolicy] | None = None,
+) -> EscalationDecision:
     for policy in policies or default_escalation_policies():
-        decision = policy.evaluate(message, ai_attempt_count=ai_attempt_count)
+        decision = policy.evaluate(
+            message,
+            ai_attempt_count=ai_attempt_count,
+        )
         if decision.matched:
             return decision
     return EscalationDecision(matched=False)
