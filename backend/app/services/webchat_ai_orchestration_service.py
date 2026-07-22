@@ -116,7 +116,7 @@ def _complete_turn(
     turn: WebchatAITurn | None,
     result: dict[str, Any],
 ) -> None:
-    if turn is None:
+    if turn is None or result.get("turn_finalized"):
         return
     complete_ai_turn_with_reply(
         db,
