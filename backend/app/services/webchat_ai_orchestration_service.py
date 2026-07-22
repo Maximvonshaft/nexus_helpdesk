@@ -15,6 +15,9 @@ from ..webchat_models import (
     WebchatEvent,
     WebchatMessage,
 )
+from .background_job_transaction_boundary import (
+    commit_webchat_agent_provider_boundary,
+)
 from .webchat_ai_service import (
     AI_AUTHOR_LABEL,
     process_webchat_ai_reply_job as _run_agent_reply,
@@ -250,6 +253,7 @@ def process_webchat_ai_reply_job(
             "reply_source": "off",
         }
     else:
+        commit_webchat_agent_provider_boundary(db)
         result = _run_agent_reply(
             db,
             conversation_id=conversation.id,
