@@ -9,6 +9,11 @@ import {
   Button,
   Checkbox,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   FormControlLabel,
   MenuItem,
@@ -19,7 +24,7 @@ import {
 } from '@mui/material'
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { OperatorErrorNotice } from '@/app/OperatorPresentation'
+import { OperatorErrorNotice, OperatorTechnicalDisclosure } from '@/app/OperatorPresentation'
 import { agentControlApi } from '@/lib/agentControlApi'
 import type {
   AgentConfigResource,
@@ -94,8 +99,9 @@ export function OverviewPanel({
   const queryClient = useQueryClient()
   const [composer, setComposer] = useState<ComposerState>(EMPTY_COMPOSER)
   const [editingDefinitionId, setEditingDefinitionId] = useState<number | null>(null)
-  const [playgroundBody, setPlaygroundBody] = useState('Where is my shipment?')
-  const [executeModel, setExecuteModel] = useState(false)
+  const [testMessage, setTestMessage] = useState('我的包裹在哪里？')
+  const [generateReply, setGenerateReply] = useState(false)
+  const [pendingVersion, setPendingVersion] = useState<AgentRelease | null>(null)
 
   const publishedPlaybooks = useMemo(
     () => resources(snapshot.resources, 'playbook'),
@@ -160,13 +166,13 @@ export function OverviewPanel({
     },
   })
 
-  const release = useMutation({
+  const publishVersion = useMutation({
     mutationFn: (definition: AgentDefinition) =>
       agentControlApi.releaseDefinition(definition.id, tenantKey),
     onSuccess: () => invalidate(queryClient),
   })
 
-  const deploy = useMutation({
+  const applyVersion = useMutation({
     mutationFn: (target: AgentRelease) => agentControlApi.deployRelease({
       tenant_key: tenantKey,
       environment,
@@ -176,10 +182,13 @@ export function OverviewPanel({
       language: language || null,
       case_type: caseType || null,
     }),
-    onSuccess: () => invalidate(queryClient),
+    onSuccess: async () => {
+      setPendingVersion(null)
+      await invalidate(queryClient)
+    },
   })
 
-  const playground = useMutation({
+  const testReply = useMutation({
     mutationFn: () => agentControlApi.playground({
       tenant_key: tenantKey,
       environment,
@@ -188,8 +197,8 @@ export function OverviewPanel({
       language: language || null,
       case_type: caseType || null,
       cohort_key: 'operator-playground',
-      body: playgroundBody,
-      execute_model: executeModel,
+      body: testMessage,
+      execute_model: generateReply,
     }),
   })
 
@@ -214,11 +223,8 @@ export function OverviewPanel({
 
   return (
     <Stack spacing={2}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h2">解析作用域</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          所有预览、Playground 与 Deployment 使用同一个服务端 Resolver。空值表示通配作用域。
-        </Typography>
+      <Paper component="section" variant="outlined" sx={{ p: 2 }}>
+        <Typography component="h2" variant="h2">适用范围</Typography>
         <Box
           sx={{
             display: 'grid',
@@ -227,25 +233,25 @@ export function OverviewPanel({
             mt: 2,
           }}
         >
-          <TextField label="Tenant" value={tenantKey} onChange={(event) => setTenantKey(event.target.value)} />
+          <TextField label="租户编号" value={tenantKey} onChange={(event) => setTenantKey(event.target.value)} />
           <TextField
             select
-            label="Environment"
+            label="环境"
             value={environment}
             onChange={(event) => setEnvironment(event.target.value as Props['environment'])}
           >
-            <MenuItem value="test">Test</MenuItem>
-            <MenuItem value="staging">Staging</MenuItem>
-            <MenuItem value="production">Production</MenuItem>
+            <MenuItem value="test">测试</MenuItem>
+            <MenuItem value="staging">预发布</MenuItem>
+            <MenuItem value="production">生产</MenuItem>
           </TextField>
           <TextField
-            label="Market ID（可选）"
+            label="市场编号（可选）"
             value={marketId}
             onChange={(event) => setMarketId(event.target.value.replace(/[^0-9]/g, ''))}
           />
-          <TextField label="Channel" value={channel} onChange={(event) => setChannel(event.target.value)} />
-          <TextField label="Language（可选）" value={language} onChange={(event) => setLanguage(event.target.value)} />
-          <TextField label="Case Type（可选）" value={caseType} onChange={(event) => setCaseType(event.target.value)} />
+          <TextField label="渠道" value={channel} onChange={(event) => setChannel(event.target.value)} />
+          <TextField label="语言（可选）" value={language} onChange={(event) => setLanguage(event.target.value)} />
+          <TextField label="业务类型（可选）" value={caseType} onChange={(event) => setCaseType(event.target.value)} />
         </Box>
         <Stack
           direction={{ xs: 'column', sm: 'row' }}
@@ -254,31 +260,33 @@ export function OverviewPanel({
         >
           {snapshot.resolved_agent ? (
             <Alert severity="success" icon={<CheckCircleRoundedIcon />} sx={{ flex: 1 }}>
-              已解析 Agent Release：{releaseLabel(snapshot.resolved_agent)}；摘要 {snapshot.resolved_agent_digest?.slice(0, 12)}
+              当前生效版本：{releaseLabel(snapshot.resolved_agent)}
             </Alert>
           ) : (
             <Alert severity="warning" sx={{ flex: 1 }}>
-              当前作用域尚未部署 Agent Release：{snapshot.resolution_error || 'agent_deployment_not_found'}
+              {snapshot.resolution_error || '当前范围尚未配置已发布版本。'}
             </Alert>
           )}
-          <Chip label={`${snapshot.definitions.length} Definitions`} variant="outlined" />
-          <Chip label={`${snapshot.releases.length} Releases`} variant="outlined" />
-          <Chip label={`${snapshot.deployments.length} Deployments`} variant="outlined" />
+          <Chip label={`处理方案 ${snapshot.definitions.length}`} variant="outlined" />
+          <Chip label={`已发布版本 ${snapshot.releases.length}`} variant="outlined" />
+          <Chip label={`生效范围 ${snapshot.deployments.length}`} variant="outlined" />
         </Stack>
+        {snapshot.resolved_agent_digest ? (
+          <OperatorTechnicalDisclosure title="系统信息" summary="当前版本标识" compact>
+            <Typography component="code" variant="caption">
+              {snapshot.resolved_agent_digest}
+            </Typography>
+          </OperatorTechnicalDisclosure>
+        ) : null}
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper component="section" variant="outlined" sx={{ p: 2 }}>
         <Stack
           direction={{ xs: 'column', sm: 'row' }}
           spacing={1}
           sx={{ justifyContent: 'space-between' }}
         >
-          <Box>
-            <Typography variant="h2">Agent Definition 组合器</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              只组合已发布、版本固定的资源。保存 Definition 不会影响运行；创建 Release 后才可部署。
-            </Typography>
-          </Box>
+          <Typography component="h2" variant="h2">处理方案</Typography>
           {editingDefinitionId ? (
             <Button
               onClick={() => {
@@ -286,7 +294,7 @@ export function OverviewPanel({
                 setComposer(defaultComposer(snapshot))
               }}
             >
-              退出编辑
+              取消编辑
             </Button>
           ) : null}
         </Stack>
@@ -300,7 +308,7 @@ export function OverviewPanel({
           }}
         >
           <TextField
-            label="Definition Key"
+            label="方案编号"
             value={composer.definitionKey}
             disabled={Boolean(editingDefinitionId)}
             onChange={(event) => setComposer({
@@ -309,12 +317,12 @@ export function OverviewPanel({
             })}
           />
           <TextField
-            label="名称"
+            label="方案名称"
             value={composer.name}
             onChange={(event) => setComposer({ ...composer, name: event.target.value })}
           />
           <TextField
-            label="目的"
+            label="用途说明"
             value={composer.purpose}
             multiline
             minRows={2}
@@ -323,11 +331,11 @@ export function OverviewPanel({
           />
           <TextField
             select
-            label="Persona（可选）"
+            label="回复风格（可选）"
             value={composer.persona}
             onChange={(event) => setComposer({ ...composer, persona: event.target.value })}
           >
-            <MenuItem value="">不绑定</MenuItem>
+            <MenuItem value="">不指定</MenuItem>
             {publishedPersonas.map((item) => (
               <MenuItem key={item.id} value={`${item.profile_key}@${item.published_version}`}>
                 {item.name} · v{item.published_version}
@@ -336,7 +344,7 @@ export function OverviewPanel({
           </TextField>
           <TextField
             select
-            label="Model Profile"
+            label="模型配置"
             value={composer.modelProfile}
             onChange={(event) => setComposer({ ...composer, modelProfile: event.target.value })}
           >
@@ -348,7 +356,7 @@ export function OverviewPanel({
           </TextField>
           <TextField
             select
-            label="Runtime Policy"
+            label="运行限制"
             value={composer.runtimePolicy}
             onChange={(event) => setComposer({ ...composer, runtimePolicy: event.target.value })}
           >
@@ -361,13 +369,13 @@ export function OverviewPanel({
         </Box>
 
         <ResourceChecklist
-          title="Business Playbooks（至少一个）"
+          title="业务规则（至少选择一个）"
           resources={publishedPlaybooks}
           selected={composer.playbooks}
           onChange={(playbooks) => setComposer({ ...composer, playbooks })}
         />
         <ResourceChecklist
-          title="Integrations（可选）"
+          title="外部系统（可选）"
           resources={publishedIntegrations}
           selected={composer.integrations}
           onChange={(integrations) => setComposer({ ...composer, integrations })}
@@ -381,9 +389,9 @@ export function OverviewPanel({
         {createOrUpdate.isError ? (
           <Box sx={{ mt: 2 }}>
             <OperatorErrorNotice
-              title="无法保存 Agent Definition"
+              title="无法保存处理方案"
               error={createOrUpdate.error}
-              fallback="请检查资源版本与租户范围"
+              fallback="请检查必填项和所选版本"
             />
           </Box>
         ) : null}
@@ -394,15 +402,12 @@ export function OverviewPanel({
           onClick={() => createOrUpdate.mutate()}
           sx={{ mt: 2 }}
         >
-          {editingDefinitionId ? '保存 Definition 草稿' : '创建 Agent Definition'}
+          {editingDefinitionId ? '保存方案草稿' : '创建处理方案'}
         </Button>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h2">Release 与 Deployment</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          Release 是不可变产物。将旧 Release 重新部署到相同作用域即为原子回滚，不复制配置。
-        </Typography>
+      <Paper component="section" variant="outlined" sx={{ p: 2 }}>
+        <Typography component="h2" variant="h2">版本与生效范围</Typography>
         <Stack spacing={1.5} sx={{ mt: 2 }}>
           {snapshot.definitions.length ? snapshot.definitions.map((definition) => {
             const definitionReleases = snapshot.releases.filter(
@@ -418,10 +423,10 @@ export function OverviewPanel({
                   <Box>
                     <Typography variant="subtitle1">{definition.name}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {definition.definition_key} · {definition.purpose || '未填写目的'}
+                      {definition.purpose || '未填写用途说明'}
                     </Typography>
                   </Box>
-                  <Stack direction="row" spacing={1}>
+                  <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                     <Button
                       size="small"
                       disabled={!canManage}
@@ -430,21 +435,21 @@ export function OverviewPanel({
                         setComposer(composerFromDefinition(definition))
                       }}
                     >
-                      编辑组合
+                      编辑方案
                     </Button>
                     <Button
                       size="small"
                       variant="outlined"
                       startIcon={<PublishRoundedIcon />}
-                      disabled={!canDeploy || release.isPending}
-                      onClick={() => release.mutate(definition)}
+                      disabled={!canDeploy || publishVersion.isPending}
+                      onClick={() => publishVersion.mutate(definition)}
                     >
-                      创建 Release
+                      发布新版本
                     </Button>
                   </Stack>
                 </Stack>
                 <Divider sx={{ my: 1.5 }} />
-                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                   {definitionReleases.length ? definitionReleases.map((item) => (
                     <Button
                       key={item.id}
@@ -452,44 +457,44 @@ export function OverviewPanel({
                       variant={item.id === activeReleaseId ? 'contained' : 'outlined'}
                       color={item.id === activeReleaseId ? 'success' : 'primary'}
                       startIcon={<RocketLaunchRoundedIcon />}
-                      disabled={!canDeploy || deploy.isPending}
-                      onClick={() => deploy.mutate(item)}
+                      disabled={!canDeploy || applyVersion.isPending || item.id === activeReleaseId}
+                      onClick={() => setPendingVersion(item)}
                     >
-                      v{item.version} {item.id === activeReleaseId ? '已部署' : '部署/回滚至此版本'}
+                      v{item.version} {item.id === activeReleaseId ? '当前生效' : '应用此版本'}
                     </Button>
                   )) : (
-                    <Typography variant="body2" color="text.secondary">尚无 Release</Typography>
+                    <Typography variant="body2" color="text.secondary">尚未发布版本</Typography>
                   )}
                 </Stack>
+                <OperatorTechnicalDisclosure title="系统信息" summary={definition.definition_key} compact>
+                  <Typography component="code" variant="caption">{definition.definition_key}</Typography>
+                </OperatorTechnicalDisclosure>
               </Paper>
             )
           }) : (
-            <Alert severity="info">尚无 Agent Definition。先通过上方组合器创建。</Alert>
+            <Alert severity="info">尚无处理方案。请先创建方案。</Alert>
           )}
         </Stack>
-        {release.isError || deploy.isError ? (
+        {publishVersion.isError || applyVersion.isError ? (
           <Box sx={{ mt: 2 }}>
             <OperatorErrorNotice
-              title="Release 或 Deployment 失败"
-              error={release.error || deploy.error}
-              fallback="需要 runtime.manage 权限，且所有引用版本必须有效"
+              title="版本操作失败"
+              error={publishVersion.error || applyVersion.error}
+              fallback="请检查发布权限、配置完整性和适用范围"
             />
           </Box>
         ) : null}
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper component="section" variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <ScienceRoundedIcon color="primary" />
-          <Typography variant="h2">Agent Playground</Typography>
+          <ScienceRoundedIcon color="primary" aria-hidden="true" />
+          <Typography component="h2" variant="h2">回复测试</Typography>
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          使用当前作用域的真实 Deployment、Resolver、Persona、Playbooks、Tools、Model Profile 与 Runtime Policy。写工具永不执行。
-        </Typography>
         <TextField
           label="客户消息"
-          value={playgroundBody}
-          onChange={(event) => setPlaygroundBody(event.target.value)}
+          value={testMessage}
+          onChange={(event) => setTestMessage(event.target.value)}
           multiline
           minRows={3}
           fullWidth
@@ -503,61 +508,84 @@ export function OverviewPanel({
           <FormControlLabel
             control={(
               <Checkbox
-                checked={executeModel}
-                onChange={(event) => setExecuteModel(event.target.checked)}
+                checked={generateReply}
+                onChange={(event) => setGenerateReply(event.target.checked)}
                 disabled={!canDeploy}
               />
             )}
-            label="执行模型（仅 runtime.manage；仍为只读 Tool）"
+            label="生成测试回复"
           />
           <Button
             variant="contained"
             startIcon={<PlayArrowRoundedIcon />}
-            disabled={!playgroundBody.trim() || playground.isPending}
-            onClick={() => playground.mutate()}
+            disabled={!testMessage.trim() || testReply.isPending}
+            onClick={() => testReply.mutate()}
           >
-            运行 Playground
+            开始测试
           </Button>
         </Stack>
-        {playground.isError ? (
+        {testReply.isError ? (
           <Box sx={{ mt: 2 }}>
             <OperatorErrorNotice
-              title="Playground 失败"
-              error={playground.error}
-              fallback="请先部署 Agent Release"
+              title="测试失败"
+              error={testReply.error}
+              fallback="请先为当前范围应用一个已发布版本"
             />
           </Box>
         ) : null}
-        {playground.data ? (
+        {testReply.data ? (
           <Box sx={{ mt: 2 }}>
-            {playground.data.resolution_error ? (
-              <Alert severity="warning">{playground.data.resolution_error}</Alert>
+            {testReply.data.resolution_error ? (
+              <Alert severity="warning">{testReply.data.resolution_error}</Alert>
             ) : (
               <Stack spacing={1}>
-                <Alert severity={playground.data.model_executed ? 'success' : 'info'}>
-                  Release {releaseLabel(playground.data.agent_release)} · {playground.data.playbooks.length} Playbooks · {playground.data.tools.length} read Tools
+                <Alert severity={testReply.data.model_executed ? 'success' : 'info'}>
+                  {testReply.data.model_executed
+                    ? '测试回复已生成。'
+                    : `配置检查完成：${testReply.data.playbooks.length} 条业务规则，${testReply.data.tools.length} 个可用工具。`}
                 </Alert>
-                {playground.data.reply ? (
+                {testReply.data.reply ? (
                   <Paper variant="outlined" sx={{ p: 1.5 }}>
-                    <Typography variant="caption" color="text.secondary">最终客户回复</Typography>
+                    <Typography variant="caption" color="text.secondary">客户回复</Typography>
                     <Typography sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
-                      {playground.data.reply}
+                      {testReply.data.reply}
                     </Typography>
                   </Paper>
                 ) : null}
-                <TextField
-                  label="解析与运行证据"
-                  value={JSON.stringify(playground.data, null, 2)}
-                  multiline
-                  minRows={8}
-                  fullWidth
-                  slotProps={{ input: { readOnly: true } }}
-                />
+                <OperatorTechnicalDisclosure title="测试详情" summary="版本、规则和运行证据">
+                  <Box component="pre" sx={{ m: 0, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                    {JSON.stringify(testReply.data, null, 2)}
+                  </Box>
+                </OperatorTechnicalDisclosure>
               </Stack>
             )}
           </Box>
         ) : null}
       </Paper>
+
+      <Dialog
+        open={Boolean(pendingVersion)}
+        onClose={() => { if (!applyVersion.isPending) setPendingVersion(null) }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>应用版本 v{pendingVersion?.version}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            该版本将应用到当前选择的环境、市场、渠道、语言和业务类型。保存后，新进入的请求将使用此版本。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" disabled={applyVersion.isPending} onClick={() => setPendingVersion(null)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={!pendingVersion || applyVersion.isPending}
+            onClick={() => { if (pendingVersion) applyVersion.mutate(pendingVersion) }}
+          >
+            {applyVersion.isPending ? '正在应用…' : '确认应用'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }
@@ -593,7 +621,7 @@ function ResourceChecklist({
             />
           )
         }) : (
-          <Typography variant="body2" color="text.secondary">暂无已发布资源</Typography>
+          <Typography variant="body2" color="text.secondary">暂无已发布项目</Typography>
         )}
       </Stack>
     </Box>
@@ -611,7 +639,7 @@ function KnowledgeChecklist({
 }) {
   return (
     <Box sx={{ mt: 2 }}>
-      <Typography variant="subtitle2">Knowledge（已发布且已索引，可选）</Typography>
+      <Typography variant="subtitle2">知识库（可选）</Typography>
       <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
         {items.length ? items.map((item) => {
           const value = `${item.item_key}@${item.published_version}`
@@ -629,7 +657,7 @@ function KnowledgeChecklist({
             />
           )
         }) : (
-          <Typography variant="body2" color="text.secondary">暂无可绑定的已索引知识</Typography>
+          <Typography variant="body2" color="text.secondary">暂无可用知识</Typography>
         )}
       </Stack>
     </Box>
@@ -743,12 +771,12 @@ function nullableNumber(value?: number | null) {
 }
 
 function releaseLabel(value: unknown) {
-  if (!value || typeof value !== 'object') return '未部署'
+  if (!value || typeof value !== 'object') return '未配置'
   const record = value as Record<string, unknown>
   const release = record.release
-  if (!release || typeof release !== 'object') return '未知 Release'
+  if (!release || typeof release !== 'object') return '未知版本'
   const item = release as Record<string, unknown>
-  return `#${String(item.id || '?')} v${String(item.version || '?')}`
+  return `v${String(item.version || '?')}`
 }
 
 async function invalidate(queryClient: QueryClient) {

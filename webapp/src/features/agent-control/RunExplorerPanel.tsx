@@ -33,19 +33,19 @@ import {
 
 const STATUS_OPTIONS: Array<{ value: '' | AgentRun['status']; label: string }> = [
   { value: '', label: '全部状态' },
-  { value: 'running', label: '运行中' },
-  { value: 'succeeded', label: '成功' },
-  { value: 'fallback', label: '降级' },
+  { value: 'running', label: '处理中' },
+  { value: 'succeeded', label: '已完成' },
+  { value: 'fallback', label: '已降级' },
   { value: 'failed', label: '失败' },
   { value: 'cancelled', label: '已取消' },
 ]
 
 const SPECIALISTS: Array<{ value: AgentSpecialist; label: string }> = [
-  { value: 'knowledge_researcher', label: '知识研究' },
-  { value: 'policy_reviewer', label: '政策复核' },
-  { value: 'case_summarizer', label: '案例摘要' },
-  { value: 'translation_reviewer', label: '翻译复核' },
-  { value: 'data_analyst', label: '数据分析' },
+  { value: 'knowledge_researcher', label: '补充知识检索' },
+  { value: 'policy_reviewer', label: '复核业务规则' },
+  { value: 'case_summarizer', label: '生成案例摘要' },
+  { value: 'translation_reviewer', label: '复核翻译' },
+  { value: 'data_analyst', label: '补充数据分析' },
 ]
 
 export function RunExplorerPanel({
@@ -59,10 +59,10 @@ export function RunExplorerPanel({
 }) {
   const [status, setStatus] = useState<'' | AgentRun['status']>('')
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
-  const [forkBody, setForkBody] = useState('')
-  const [forkKind, setForkKind] = useState<'playground' | 'replay'>('replay')
+  const [testMessage, setTestMessage] = useState('')
+  const [testKind, setTestKind] = useState<'playground' | 'replay'>('replay')
   const [specialists, setSpecialists] = useState<AgentSpecialist[]>([])
-  const [executeModel, setExecuteModel] = useState(false)
+  const [generateReply, setGenerateReply] = useState(false)
   const runs = useQuery({
     queryKey: ['agentRuntimeRuns', tenantKey, status],
     queryFn: () => agentRuntimeApi.runs(tenantKey, status || undefined, 100),
@@ -86,7 +86,7 @@ export function RunExplorerPanel({
     refetchInterval: selectedRun?.status === 'running' ? 2_000 : false,
     retry: false,
   })
-  const fork = useMutation({
+  const testRun = useMutation({
     mutationFn: () => agentRuntimeApi.forkRun(selectedRunId as number, {
       tenant_key: tenantKey,
       environment: scope.environment,
@@ -94,35 +94,34 @@ export function RunExplorerPanel({
       channel: scope.channel || 'webchat',
       language: scope.language,
       case_type: scope.case_type,
-      body: forkBody,
-      fork_kind: forkKind,
-      cohort_key: `operator-${forkKind}`,
+      body: testMessage,
+      fork_kind: testKind,
+      cohort_key: `operator-${testKind}`,
       specialists,
-      execute_model: executeModel,
+      execute_model: generateReply,
     }),
   })
   useEffect(() => {
-    fork.reset()
-    setForkBody('')
+    testRun.reset()
+    setTestMessage('')
     setSpecialists([])
-    setExecuteModel(false)
+    setGenerateReply(false)
   // Reset only when the selected authority changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId])
 
   const terminalRun = selectedRun && selectedRun.status !== 'running'
-  const canRunFork = Boolean(terminalRun && forkBody.trim() && !fork.isPending)
+  const canRunTest = Boolean(terminalRun && testMessage.trim() && !testRun.isPending)
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        <TimelineRoundedIcon color="primary" />
-        <Typography component="h2" variant="h2">Agent Run Explorer</Typography>
-        {runs.isFetching ? <CircularProgress size={18} /> : null}
+    <Paper component="section" variant="outlined" sx={{ p: 2 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <TimelineRoundedIcon color="primary" aria-hidden="true" />
+          <Typography component="h2" variant="h2">运行记录</Typography>
+        </Stack>
+        {runs.isFetching ? <CircularProgress size={18} aria-label="正在刷新" /> : null}
       </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-        查看按 Sequence 追加的运行事件，并基于原不可变 Release 创建只读 Replay 或 Playground Fork。事件不保存原始 Prompt、隐藏推理、凭据、Tool 参数或客户 PII。
-      </Typography>
       <TextField
         select
         size="small"
@@ -138,7 +137,7 @@ export function RunExplorerPanel({
 
       {runs.error ? (
         <Box sx={{ mt: 2 }}>
-          <OperatorErrorNotice title="无法读取 Agent Runs" error={runs.error} fallback="请检查运行事件服务" />
+          <OperatorErrorNotice title="无法读取运行记录" error={runs.error} fallback="请稍后重试" />
         </Box>
       ) : null}
 
@@ -150,7 +149,7 @@ export function RunExplorerPanel({
           mt: 2,
         }}
       >
-        <Paper variant="outlined" sx={{ p: 1, maxHeight: 760, overflow: 'auto' }}>
+        <Paper component="aside" variant="outlined" sx={{ p: 1, maxHeight: 760, overflow: 'auto' }}>
           {(runs.data || []).length ? (
             <List disablePadding>
               {(runs.data || []).map((run) => (
@@ -161,29 +160,15 @@ export function RunExplorerPanel({
                   sx={{ display: 'block', borderBottom: 1, borderColor: 'divider' }}
                 >
                   <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between' }}>
-                    <Typography variant="subtitle2">Run #{run.id}</Typography>
-                    <Chip
-                      size="small"
-                      color={
-                        run.status === 'succeeded'
-                          ? 'success'
-                          : run.status === 'fallback'
-                            ? 'warning'
-                            : run.status === 'failed'
-                              ? 'error'
-                              : run.status === 'running'
-                                ? 'info'
-                                : 'default'
-                      }
-                      label={run.status}
-                    />
+                    <Typography variant="subtitle2">记录 #{run.id}</Typography>
+                    <Chip size="small" color={runColor(run.status)} label={runStatusLabel(run.status)} />
                   </Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                    Release {run.release_id ?? '未解析'} · {run.elapsed_ms} ms
+                    用时 {run.elapsed_ms} ms
                   </Typography>
                   {run.parent_run_id ? (
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                      {run.fork_kind || 'fork'} of Run #{run.parent_run_id}
+                      基于记录 #{run.parent_run_id} 创建
                     </Typography>
                   ) : null}
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
@@ -197,15 +182,15 @@ export function RunExplorerPanel({
               <CircularProgress size={24} />
             </Stack>
           ) : (
-            <OperatorEmptyState title="尚无 Agent Run" description="模型执行后会在此生成运行证据" />
+            <OperatorEmptyState title="暂无运行记录" description="自动处理执行后会在此生成记录" />
           )}
         </Paper>
 
         <Box sx={{ minWidth: 0 }}>
           {!selectedRun ? (
-            <OperatorEmptyState title="选择一个 Run" description="查看事件时间线并创建只读 Fork" />
+            <OperatorEmptyState title="请选择一条记录" description="查看处理过程或基于记录进行测试" />
           ) : events.error ? (
-            <OperatorErrorNotice title="无法读取 Run 事件" error={events.error} fallback="请检查事件持久化" />
+            <OperatorErrorNotice title="无法读取处理过程" error={events.error} fallback="请稍后重试" />
           ) : events.isLoading || !events.data ? (
             <Stack sx={{ minHeight: 240, alignItems: 'center', justifyContent: 'center' }}>
               <CircularProgress size={28} />
@@ -213,19 +198,16 @@ export function RunExplorerPanel({
           ) : (
             <Stack spacing={1.25}>
               <Alert severity={selectedRun.status === 'failed' ? 'error' : selectedRun.status === 'fallback' ? 'warning' : 'info'}>
-                Trace {selectedRun.trace_id.slice(0, 16)} · {events.data.events.length} events · 最终动作 {selectedRun.final_action || '未完成'}
+                {runStatusLabel(selectedRun.status)} · {events.data.events.length} 个处理步骤 · 最终结果 {selectedRun.final_action || '未完成'}
               </Alert>
 
               <Paper variant="outlined" sx={{ p: 1.5 }}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                  <ReplayRoundedIcon color="primary" />
-                  <Typography variant="h3">只读 Replay / Playground Fork</Typography>
+                  <ReplayRoundedIcon color="primary" aria-hidden="true" />
+                  <Typography variant="h3">基于此记录测试</Typography>
                 </Stack>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  只在当前作用域解析到与原 Run 相同的 Release ID 和 manifest SHA 时执行。候选 Tool 还会与该 Release 的允许清单取交集，写 Tool 永不进入 Fork。
-                </Typography>
                 {!terminalRun ? (
-                  <Alert severity="info" sx={{ mt: 1.5 }}>运行中的 Run 不能创建 Fork。</Alert>
+                  <Alert severity="info" sx={{ mt: 1.5 }}>处理中记录暂不能用于测试。</Alert>
                 ) : null}
                 <Box
                   sx={{
@@ -238,24 +220,24 @@ export function RunExplorerPanel({
                   <TextField
                     select
                     size="small"
-                    label="Fork 类型"
-                    value={forkKind}
-                    onChange={(event) => setForkKind(event.target.value as 'playground' | 'replay')}
+                    label="测试方式"
+                    value={testKind}
+                    onChange={(event) => setTestKind(event.target.value as 'playground' | 'replay')}
                     disabled={!terminalRun}
                   >
-                    <MenuItem value="replay">Replay</MenuItem>
-                    <MenuItem value="playground">Playground</MenuItem>
+                    <MenuItem value="replay">复用原配置</MenuItem>
+                    <MenuItem value="playground">自定义测试</MenuItem>
                   </TextField>
                   <TextField
-                    label="新的测试消息"
-                    value={forkBody}
-                    onChange={(event) => setForkBody(event.target.value)}
+                    label="测试消息"
+                    value={testMessage}
+                    onChange={(event) => setTestMessage(event.target.value)}
                     multiline
                     minRows={3}
                     disabled={!terminalRun}
                   />
                 </Box>
-                <Typography variant="subtitle2" sx={{ mt: 1.5 }}>允许 Parent Agent 请求的 Specialist（最多三个）</Typography>
+                <Typography variant="subtitle2" sx={{ mt: 1.5 }}>附加检查（最多三项）</Typography>
                 <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
                   {SPECIALISTS.map((item) => (
                     <FormControlLabel
@@ -276,47 +258,49 @@ export function RunExplorerPanel({
                   sx={{ mt: 0.5 }}
                   control={(
                     <Checkbox
-                      checked={executeModel}
+                      checked={generateReply}
                       disabled={!terminalRun || !canExecute}
-                      onChange={(event) => setExecuteModel(event.target.checked)}
+                      onChange={(event) => setGenerateReply(event.target.checked)}
                     />
                   )}
-                  label={canExecute ? '执行模型（仍为只读 Tool）' : '仅预览；缺少 runtime.manage 权限'}
+                  label={canExecute ? '生成测试回复' : '当前账号只能预览测试范围'}
                 />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 1 }}>
                   <Button
-                    variant={executeModel ? 'contained' : 'outlined'}
-                    startIcon={executeModel ? <PlayArrowRoundedIcon /> : <ReplayRoundedIcon />}
-                    disabled={!canRunFork}
-                    onClick={() => fork.mutate()}
+                    variant={generateReply ? 'contained' : 'outlined'}
+                    startIcon={generateReply ? <PlayArrowRoundedIcon /> : <ReplayRoundedIcon />}
+                    disabled={!canRunTest}
+                    onClick={() => testRun.mutate()}
                   >
-                    {executeModel ? '执行只读 Fork' : '预览 Fork 边界'}
+                    {generateReply ? '开始测试' : '检查可用范围'}
                   </Button>
-                  {fork.isPending ? <CircularProgress size={24} /> : null}
+                  {testRun.isPending ? <CircularProgress size={24} /> : null}
                 </Stack>
-                {fork.error ? (
+                {testRun.error ? (
                   <Box sx={{ mt: 1.5 }}>
                     <OperatorErrorNotice
-                      title="无法创建 Fork"
-                      error={fork.error}
-                      fallback="请检查当前作用域是否仍解析到原不可变 Release"
+                      title="无法开始测试"
+                      error={testRun.error}
+                      fallback="请检查当前生效版本是否与原记录一致"
                     />
                   </Box>
                 ) : null}
-                {fork.data ? (
+                {testRun.data ? (
                   <Stack spacing={1} sx={{ mt: 1.5 }}>
-                    <Alert severity={fork.data.error_code ? 'warning' : 'success'}>
-                      Release #{fork.data.exact_release_id} · {fork.data.read_tools.length} 个只读 Tool · {fork.data.model_executed ? `生成 Run #${fork.data.agent_run_id || '未知'}` : '仅完成权限预览'}
+                    <Alert severity={testRun.data.error_code ? 'warning' : 'success'}>
+                      {testRun.data.model_executed
+                        ? `测试完成${testRun.data.agent_run_id ? `，记录 #${testRun.data.agent_run_id}` : ''}`
+                        : `范围检查完成，可使用 ${testRun.data.read_tools.length} 个只读工具`}
                     </Alert>
-                    {fork.data.reply ? (
+                    {testRun.data.reply ? (
                       <Paper variant="outlined" sx={{ p: 1.25 }}>
-                        <Typography variant="caption" color="text.secondary">Fork 回复</Typography>
-                        <Typography sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>{fork.data.reply}</Typography>
+                        <Typography variant="caption" color="text.secondary">测试回复</Typography>
+                        <Typography sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>{testRun.data.reply}</Typography>
                       </Paper>
                     ) : null}
-                    <OperatorTechnicalDisclosure title="Fork 权威证据">
+                    <OperatorTechnicalDisclosure title="测试详情">
                       <Box component="pre" sx={{ m: 0, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                        {JSON.stringify(fork.data, null, 2)}
+                        {JSON.stringify(testRun.data, null, 2)}
                       </Box>
                     </OperatorTechnicalDisclosure>
                   </Stack>
@@ -332,21 +316,23 @@ export function RunExplorerPanel({
                   >
                     <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                       <Chip size="small" label={`#${event.sequence}`} />
-                      <Typography variant="subtitle2">{event.event_type}</Typography>
-                      <Chip size="small" variant="outlined" label={event.status} />
+                      <Typography variant="subtitle2">{eventTypeLabel(event.event_type)}</Typography>
+                      <Chip size="small" variant="outlined" label={eventStatusLabel(event.status)} />
                     </Stack>
                     <Typography variant="caption" color="text.secondary">
                       {event.duration_ms} ms · {new Date(event.created_at).toLocaleString()}
                     </Typography>
                   </Stack>
                   {Object.keys(event.safe_payload || {}).length ? (
-                    <Box component="pre" sx={{ m: 0, mt: 1, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                      {JSON.stringify(event.safe_payload, null, 2)}
-                    </Box>
+                    <OperatorTechnicalDisclosure title="步骤详情" summary={event.event_type} compact>
+                      <Box component="pre" sx={{ m: 0, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                        {JSON.stringify(event.safe_payload, null, 2)}
+                      </Box>
+                    </OperatorTechnicalDisclosure>
                   ) : null}
                 </Paper>
               ))}
-              <OperatorTechnicalDisclosure title="Run 权威摘要">
+              <OperatorTechnicalDisclosure title="运行详情" summary="版本、范围和追踪信息">
                 <Box component="pre" sx={{ m: 0, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
                   {JSON.stringify(events.data.run, null, 2)}
                 </Box>
@@ -357,6 +343,47 @@ export function RunExplorerPanel({
       </Box>
     </Paper>
   )
+}
+
+function runColor(status: AgentRun['status']): 'success' | 'warning' | 'error' | 'info' | 'default' {
+  if (status === 'succeeded') return 'success'
+  if (status === 'fallback') return 'warning'
+  if (status === 'failed') return 'error'
+  if (status === 'running') return 'info'
+  return 'default'
+}
+
+function runStatusLabel(status: AgentRun['status']) {
+  return STATUS_OPTIONS.find((item) => item.value === status)?.label || status
+}
+
+function eventStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: '等待中',
+    running: '处理中',
+    succeeded: '已完成',
+    completed: '已完成',
+    failed: '失败',
+    skipped: '已跳过',
+    cancelled: '已取消',
+  }
+  return labels[status] || status
+}
+
+function eventTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    run_started: '开始处理',
+    context_compiled: '准备处理信息',
+    model_started: '开始生成',
+    model_completed: '生成完成',
+    tool_requested: '请求工具',
+    tool_completed: '工具完成',
+    specialist_requested: '请求附加检查',
+    specialist_completed: '附加检查完成',
+    run_completed: '处理完成',
+    run_failed: '处理失败',
+  }
+  return labels[value] || value.replaceAll('_', ' ')
 }
 
 function toggleSpecialist(

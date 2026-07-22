@@ -15,8 +15,9 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
-import { governanceApi } from '@/lib/governanceApi'
+import { governanceApi, type KnowledgeImportBatch } from '@/lib/governanceApi'
 import { supportApi } from '@/lib/supportApi'
+import { channelPresentation } from '@/lib/supportStatus'
 
 export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
   const queryClient = useQueryClient()
@@ -56,19 +57,19 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
         <Box>
           <Typography component="h2" variant="h2">批量导入知识文件</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            一次最多 20 个文件。每个文件仍进入现有 KnowledgeItem 草稿、发布与索引链路，不创建第二套知识库。
+            一次最多选择 20 个文件。导入结果会生成知识草稿，需要审核并发布后才会生效。
           </Typography>
         </Box>
         <Button variant={expanded ? 'outlined' : 'contained'} startIcon={<CloudUploadRoundedIcon />} onClick={() => setExpanded((value) => !value)}>
-          {expanded ? '收起导入' : '打开导入'}
+          {expanded ? '收起导入' : '开始导入'}
         </Button>
       </Stack>
 
       {latest ? (
         <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 1.5 }}>
           <Chip label={`最近批次 #${latest.id}`} />
-          <Chip color={latest.status === 'ready' ? 'success' : latest.status === 'failed' ? 'error' : 'warning'} label={latest.status} />
-          <Chip label={`草稿 ${latest.succeeded_files}`} />
+          <Chip color={importStatusColor(latest.status)} label={importStatusLabel(latest.status)} />
+          <Chip label={`已创建草稿 ${latest.succeeded_files}`} />
           <Chip label={`重复 ${latest.duplicate_files}`} />
           <Chip label={`失败 ${latest.failed_files}`} />
         </Stack>
@@ -95,20 +96,25 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
           ) : null}
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
             <TextField select fullWidth label="市场" value={marketId} onChange={(event) => setMarketId(event.target.value ? Number(event.target.value) : '')}>
-              <MenuItem value="">全局知识</MenuItem>
+              <MenuItem value="">全部市场</MenuItem>
               {(markets.data || []).map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
             </TextField>
             <TextField select fullWidth label="渠道" value={channel} onChange={(event) => setChannel(event.target.value)}>
-              {['all', 'webchat', 'whatsapp', 'email', 'voice', 'website'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
+              <MenuItem value="all">全部渠道</MenuItem>
+              <MenuItem value="webchat">网页客服</MenuItem>
+              <MenuItem value="whatsapp">WhatsApp</MenuItem>
+              <MenuItem value="email">邮件</MenuItem>
+              <MenuItem value="voice">语音</MenuItem>
+              <MenuItem value="website">网站</MenuItem>
             </TextField>
-            <TextField select fullWidth label="受众" value={audienceScope} onChange={(event) => setAudienceScope(event.target.value as 'customer' | 'internal')}>
-              <MenuItem value="customer">客户</MenuItem>
-              <MenuItem value="internal">内部</MenuItem>
+            <TextField select fullWidth label="适用对象" value={audienceScope} onChange={(event) => setAudienceScope(event.target.value as 'customer' | 'internal')}>
+              <MenuItem value="customer">客户问答</MenuItem>
+              <MenuItem value="internal">内部参考</MenuItem>
             </TextField>
-            <TextField fullWidth label="语言（可选）" value={language} onChange={(event) => setLanguage(event.target.value)} placeholder="en / de / zh" />
+            <TextField fullWidth label="语言（可选）" value={language} onChange={(event) => setLanguage(event.target.value)} placeholder="例如 en、de、zh" />
           </Stack>
           <Alert severity="info" variant="outlined">
-            文件内容只用于创建受控知识草稿；重复文件按 SHA-256 去重。批次失败不会发布任何知识项。
+            文件只会生成草稿，不会自动发布。系统会识别重复文件；整个批次失败时不会创建任何可用知识。
           </Alert>
           <Button
             variant="contained"
@@ -116,13 +122,13 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
             startIcon={upload.isPending ? <CircularProgress color="inherit" size={16} /> : <CloudUploadRoundedIcon />}
             onClick={() => upload.mutate({ files, marketId: marketId || null, channel, audienceScope, language: language || null })}
           >
-            创建知识草稿批次
+            {upload.isPending ? '正在导入…' : '创建知识草稿'}
           </Button>
           {upload.error ? <OperatorErrorNotice title="知识导入失败" error={upload.error} fallback="请检查文件类型、大小和市场状态" /> : null}
         </Stack>
       </Collapse>
 
-      {imports.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取导入历史" error={imports.error} fallback="请稍后重试" /></Box> : null}
+      {imports.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取导入记录" error={imports.error} fallback="请稍后重试" /></Box> : null}
       {imports.isLoading ? <Stack sx={{ alignItems: 'center', py: 2 }}><CircularProgress size={24} /></Stack> : null}
       {imports.data?.length ? (
         <Stack spacing={1} sx={{ mt: 2 }}>
@@ -131,18 +137,18 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                 <Box>
                   <Typography variant="subtitle2">批次 #{batch.id} · {batch.total_files} 个文件</Typography>
-                  <Typography variant="caption" color="text.secondary">{new Date(batch.created_at).toLocaleString()} · {batch.channel} · {batch.audience_scope}</Typography>
+                  <Typography variant="caption" color="text.secondary">{new Date(batch.created_at).toLocaleString()} · {batch.channel === 'all' ? '全部渠道' : channelPresentation(batch.channel).label} · {audienceLabel(batch.audience_scope)}</Typography>
                 </Box>
-                <Stack direction="row" spacing={1}>
-                  <Chip size="small" color={batch.status === 'ready' ? 'success' : batch.status === 'failed' ? 'error' : 'warning'} label={batch.status} />
-                  <Chip size="small" label={`成功 ${batch.succeeded_files}`} />
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                  <Chip size="small" color={importStatusColor(batch.status)} label={importStatusLabel(batch.status)} />
+                  <Chip size="small" label={`已创建 ${batch.succeeded_files}`} />
                   <Chip size="small" label={`重复 ${batch.duplicate_files}`} />
                   <Chip size="small" label={`失败 ${batch.failed_files}`} />
                 </Stack>
               </Stack>
               {batch.documents.some((document) => document.status === 'failed') ? (
                 <Alert severity="warning" variant="outlined" sx={{ mt: 1 }}>
-                  {batch.documents.filter((document) => document.status === 'failed').map((document) => `${document.file_name}: ${document.error_message || document.error_code || '处理失败'}`).join('；')}
+                  {batch.documents.filter((document) => document.status === 'failed').map((document) => `${document.file_name}: ${document.error_message || '处理失败'}`).join('；')}
                 </Alert>
               ) : null}
             </Paper>
@@ -151,4 +157,21 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
       ) : null}
     </Paper>
   )
+}
+
+function importStatusLabel(status: KnowledgeImportBatch['status']) {
+  if (status === 'processing') return '处理中'
+  if (status === 'ready') return '已完成'
+  if (status === 'partial') return '部分完成'
+  return '失败'
+}
+
+function importStatusColor(status: KnowledgeImportBatch['status']): 'success' | 'warning' | 'error' {
+  if (status === 'ready') return 'success'
+  if (status === 'failed') return 'error'
+  return 'warning'
+}
+
+function audienceLabel(audience: KnowledgeImportBatch['audience_scope']) {
+  return audience === 'internal' ? '内部参考' : '客户问答'
 }

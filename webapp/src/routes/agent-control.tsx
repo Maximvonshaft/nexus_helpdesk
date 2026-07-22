@@ -20,7 +20,7 @@ function AgentControlRoutePage() {
       activeRoute="agent-control"
       requiredAny={['ai_config.read', 'ai_config.manage', 'runtime.manage']}
     >
-      <Suspense fallback={<RouteLoadingState label="正在加载 Agent 控制面…" />}>
+      <Suspense fallback={<RouteLoadingState label="正在加载自动处理配置…" />}>
         <AgentControlCapabilityPage />
       </Suspense>
     </AuthenticatedAppPage>

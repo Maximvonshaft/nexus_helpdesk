@@ -5,18 +5,66 @@ import test from 'node:test'
 
 const webapp = resolve(process.cwd())
 const repo = resolve(webapp, '..')
-const value = JSON.parse(readFileSync(join(webapp, 'design/operator-language.v1.json'), 'utf8'))
+const register = JSON.parse(readFileSync(join(webapp, 'design/operator-language.v1.json'), 'utf8'))
 
-test('operator language is concise and exact-head verified', () => {
-  assert.equal(value.schema, 'nexus.operator-language.v1')
-  assert.equal(value.status, 'exact_head_verification_complete')
-  for (const term of ['待处理任务', '当前负责人', '处理时限', '接手处理', '转回待处理', '恢复自动回复', '系统状态']) assert.ok(Object.values(value.canonical_terms).includes(term))
+function source(path) {
+  return readFileSync(join(repo, path), 'utf8')
+}
+
+test('operator language register covers every canonical route domain', () => {
+  assert.equal(register.schema, 'nexus.operator-language.v1')
+  assert.equal(register.status, 'canonical_all_routes_enforced')
+  for (const path of [
+    'webapp/src/routes/workspace.tsx',
+    'webapp/src/routes/knowledge.tsx',
+    'webapp/src/routes/agent-control.tsx',
+    'webapp/src/routes/channels.tsx',
+    'webapp/src/routes/runtime.tsx',
+    'webapp/src/routes/control-tower.tsx',
+    'webapp/src/routes/administration.tsx',
+    'webapp/src/routes/account.tsx',
+  ]) {
+    assert.ok(register.completed_surfaces.includes(path), path)
+  }
 })
 
-test('completed operator surfaces contain no retired primary literal', () => {
-  for (const path of value.completed_surfaces) {
+test('all registered operator surfaces exist and contain no retired primary narration', () => {
+  for (const path of register.completed_surfaces) {
     assert.equal(existsSync(join(repo, path)), true, path)
-    const source = readFileSync(join(repo, path), 'utf8')
-    for (const literal of value.forbidden_primary_literals) assert.equal(source.includes(literal), false, `${path}: ${literal}`)
+    const value = source(path)
+    for (const literal of register.forbidden_primary_literals) {
+      assert.equal(value.includes(literal), false, `${path}: ${literal}`)
+    }
   }
+})
+
+test('task-oriented labels remain present on high-risk administration surfaces', () => {
+  for (const [path, requiredLiterals] of Object.entries(register.required_surface_literals)) {
+    const value = source(path)
+    for (const literal of requiredLiterals) {
+      assert.equal(value.includes(literal), true, `${path}: ${literal}`)
+    }
+  }
+})
+
+test('technical identifiers use named progressive disclosure on governed editors', () => {
+  const requirements = {
+    'webapp/src/features/agent-control/OverviewPanel.tsx': '系统信息',
+    'webapp/src/features/agent-control/ToolsIntegrationsPanel.tsx': '连接设置',
+    'webapp/src/features/agent-control/RunExplorerPanel.tsx': '运行详情',
+    'webapp/src/features/administration/UserGovernance.tsx': '权限代码',
+  }
+  for (const [path, disclosure] of Object.entries(requirements)) {
+    const value = source(path)
+    assert.equal(value.includes('OperatorTechnicalDisclosure'), true, path)
+    assert.equal(value.includes(disclosure), true, `${path}: ${disclosure}`)
+  }
+})
+
+test('operator-facing permission failures do not expose raw policy codes', () => {
+  const value = source('webapp/src/lib/apiErrorMap.ts')
+  for (const literal of ['缺少 runtime.manage', '缺少 user.manage', '开通对应 capability', '确认 feature flag']) {
+    assert.equal(value.includes(literal), false, literal)
+  }
+  assert.equal(value.includes('当前账号没有执行此操作的权限'), true)
 })

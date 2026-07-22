@@ -128,21 +128,21 @@ export function PlaybookPanel({
   const save = useMutation({
     mutationFn: async (publish: boolean) => {
       if (!draft.display_name.trim() || !draft.name.trim()) {
-        throw new Error('请填写业务剧本名称')
+        throw new Error('请填写业务规则名称')
       }
-      if (!draft.description.trim()) throw new Error('请填写业务剧本说明')
-      if (!lines(draft.instructions).length) throw new Error('请至少填写一条执行指令')
+      if (!draft.description.trim()) throw new Error('请填写业务规则说明')
+      if (!lines(draft.instructions).length) throw new Error('请至少填写一条处理要求')
       if (draft.scope_type === 'market' && !draft.market_id.trim()) {
-        throw new Error('市场作用域必须填写 Market ID')
+        throw new Error('按市场生效时必须选择市场')
       }
       if (draft.scope_type === 'channel' && !draft.scope_value.trim()) {
-        throw new Error('渠道作用域必须填写渠道标识')
+        throw new Error('按渠道生效时必须填写渠道')
       }
       const data = payload(draft)
       const item = creating || !selected
         ? await agentControlApi.createConfig(data)
         : await agentControlApi.updateConfig(selected.id, data)
-      if (publish) await agentControlApi.publishConfig(item.id, 'Business Playbook publish')
+      if (publish) await agentControlApi.publishConfig(item.id, 'Business rule publish')
       return item
     },
     onSuccess: async (item) => {
@@ -155,7 +155,7 @@ export function PlaybookPanel({
     mutationFn: (version: number) => agentControlApi.rollbackConfig(
       selected!.id,
       version,
-      `Rollback Business Playbook to v${version}`,
+      `Restore business rule draft from v${version}`,
     ),
     onSuccess: async () => {
       await invalidate()
@@ -168,7 +168,7 @@ export function PlaybookPanel({
     <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '300px minmax(0, 1fr) 340px' } }}>
       <Paper component="aside" variant="outlined" sx={{ p: 1.5 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-          <Typography component="h2" variant="h3">业务剧本</Typography>
+          <Typography component="h2" variant="h3">业务规则</Typography>
           {canManage ? (
             <Button
               size="small"
@@ -198,30 +198,27 @@ export function PlaybookPanel({
             )
           })}
           {!resources.length ? (
-            <OperatorEmptyState title="尚无业务剧本" description="创建企业 Agent 的第一个业务剧本" />
+            <OperatorEmptyState title="尚无业务规则" description="新建第一条自动处理规则" />
           ) : null}
         </List>
       </Paper>
 
       <Paper component="section" variant="outlined" sx={{ p: 2, minWidth: 0 }}>
         <Typography component="h2" variant="h3">
-          {creating ? '新建业务剧本' : '编辑业务剧本'}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          业务剧本定义何时执行、怎样执行，以及允许使用哪些工具。Agent Release 固定引用已发布版本。
+          {creating ? '新建业务规则' : '编辑业务规则'}
         </Typography>
         {!canManage ? (
           <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>当前为只读视图。</Alert>
         ) : null}
         {save.error ? (
           <Box sx={{ mt: 2 }}>
-            <OperatorErrorNotice title="保存失败" error={save.error} fallback="请检查字段与工具" />
+            <OperatorErrorNotice title="保存失败" error={save.error} fallback="请检查必填项和所选工具" />
           </Box>
         ) : null}
         <Stack spacing={1.5} sx={{ mt: 2 }}>
           <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
             <TextField
-              label="资源编号"
+              label="规则编号"
               required
               disabled={!creating || !canManage}
               value={draft.resource_key}
@@ -250,13 +247,14 @@ export function PlaybookPanel({
             <TextField
               label="优先级"
               type="number"
+              helperText="数字越小越优先"
               disabled={!canManage}
               value={draft.priority}
               onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))}
             />
             <TextField
               select
-              label="作用域"
+              label="生效范围"
               disabled={!canManage}
               value={draft.scope_type}
               onChange={(event) => setDraft((current) => ({
@@ -266,13 +264,13 @@ export function PlaybookPanel({
                 market_id: '',
               }))}
             >
-              <MenuItem value="global">全局模板</MenuItem>
-              <MenuItem value="market">市场</MenuItem>
-              <MenuItem value="channel">渠道</MenuItem>
+              <MenuItem value="global">全部范围</MenuItem>
+              <MenuItem value="market">指定市场</MenuItem>
+              <MenuItem value="channel">指定渠道</MenuItem>
             </TextField>
             {draft.scope_type === 'market' ? (
               <TextField
-                label="Market ID"
+                label="市场编号"
                 required
                 type="number"
                 disabled={!canManage}
@@ -282,7 +280,7 @@ export function PlaybookPanel({
             ) : null}
             {draft.scope_type === 'channel' ? (
               <TextField
-                label="渠道标识"
+                label="渠道"
                 required
                 disabled={!canManage}
                 value={draft.scope_value}
@@ -328,9 +326,9 @@ export function PlaybookPanel({
             onChange={(event) => setDraft((current) => ({ ...current, languages: event.target.value }))}
           />
           <TextField
-            label="执行指令"
+            label="处理要求"
             required
-            helperText="每行一条明确、可验证的执行约束"
+            helperText="每行一条明确、可验证的要求"
             multiline
             minRows={8}
             disabled={!canManage}
@@ -363,8 +361,7 @@ export function PlaybookPanel({
           >
             {snapshot.tools.map((tool) => (
               <MenuItem key={tool.name} value={tool.name} disabled={!tool.executable}>
-                {tool.name} · {tool.classification} · {tool.risk_level}
-                {!tool.executable ? ' · 未接入唯一执行器' : ''}
+                {tool.name}{!tool.executable ? ' · 暂不可用' : ''}
               </MenuItem>
             ))}
           </TextField>
@@ -392,7 +389,7 @@ export function PlaybookPanel({
                 startIcon={<PublishRoundedIcon />}
                 onClick={() => save.mutate(true)}
               >
-                保存并发布资源版本
+                保存并发布
               </Button>
             </Stack>
           ) : null}
@@ -419,7 +416,7 @@ export function PlaybookPanel({
                       disabled={rollback.isPending}
                       onClick={() => rollback.mutate(version)}
                     >
-                      回滚资源草稿
+                      恢复为草稿
                     </Button>
                   ) : null}
                 </Stack>

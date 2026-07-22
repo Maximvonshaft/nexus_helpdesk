@@ -57,18 +57,18 @@ export function RuntimeRecoveryPanel() {
     <Paper component="section" variant="outlined" aria-labelledby="runtime-recovery-title" sx={{ p: 2, mt: 2 }}>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { xs: 'stretch', md: 'center' }, justifyContent: 'space-between' }}>
         <Box>
-          <Typography id="runtime-recovery-title" component="h2" variant="h3">队列恢复</Typography>
+          <Typography id="runtime-recovery-title" component="h2" variant="h3">失败任务恢复</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            仅重新排队已经进入 dead 状态的后台任务或外部消息。每次最多处理 50 项，操作受速率限制并写入安全审计。
+            将失败的后台任务或外部消息重新加入处理队列。每次最多处理 50 项。
           </Typography>
         </Box>
         {summary.isFetching ? <CircularProgress size={20} aria-label="正在刷新队列" /> : null}
       </Stack>
       <Divider sx={{ my: 2 }} />
 
-      {summary.isError ? <OperatorErrorNotice title="无法读取队列状态" error={summary.error} fallback="请稍后重试" /> : null}
-      {recovery.isError ? <OperatorErrorNotice title="队列恢复失败" error={recovery.error} fallback="请检查运行权限或稍后重试" /> : null}
-      {summary.isLoading ? <OperatorLoadingState label="正在读取队列…" minHeight={160} /> : summary.data ? (
+      {summary.isError ? <OperatorErrorNotice title="无法读取任务状态" error={summary.error} fallback="请稍后重试" /> : null}
+      {recovery.isError ? <OperatorErrorNotice title="恢复失败" error={recovery.error} fallback="请检查操作权限或稍后重试" /> : null}
+      {summary.isLoading ? <OperatorLoadingState label="正在读取任务状态…" minHeight={160} /> : summary.data ? (
         <Stack spacing={2}>
           <OperatorFactGrid columns={4} facts={[
             ['待处理后台任务', summary.data.pending_jobs],
@@ -77,7 +77,7 @@ export function RuntimeRecoveryPanel() {
             ['失败外部消息', summary.data.external_dead_outbound ?? summary.data.dead_outbound ?? 0],
           ]} />
           {!canRecover ? (
-            <Alert severity="info" variant="outlined">当前账号只有运行查看权限，不能执行恢复。</Alert>
+            <Alert severity="info" variant="outlined">当前账号只能查看，不能执行恢复。</Alert>
           ) : (
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
               <Button
@@ -107,7 +107,7 @@ export function RuntimeRecoveryPanel() {
         <DialogTitle>{action === 'jobs' ? '恢复失败后台任务' : '恢复失败外部消息'}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            系统将按最旧失败记录优先，最多重新排队 50 项。该操作不会跳过幂等、权限或发送安全边界，也不代表业务结果已经完成。
+            系统将从最早失败的记录开始，最多重新处理 50 项。恢复操作只会重新安排处理，不代表业务结果已经完成。
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -119,7 +119,7 @@ export function RuntimeRecoveryPanel() {
             startIcon={recovery.isPending ? <CircularProgress color="inherit" size={16} /> : <ReplayRoundedIcon />}
             onClick={() => { if (action) recovery.mutate(action) }}
           >
-            {recovery.isPending ? '正在恢复…' : '确认重新排队'}
+            {recovery.isPending ? '正在恢复…' : '确认恢复'}
           </Button>
         </DialogActions>
       </Dialog>

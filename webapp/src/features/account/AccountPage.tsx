@@ -5,6 +5,11 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   Paper,
   Stack,
@@ -24,6 +29,15 @@ import { formatDateTime } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import { MfaAccountPanel } from './MfaAccountPanel'
 
+function roleLabel(role: string) {
+  if (role === 'admin') return '管理员'
+  if (role === 'manager') return '运营经理'
+  if (role === 'lead') return '组长'
+  if (role === 'agent') return '客服专员'
+  if (role === 'auditor') return '审计员'
+  return role
+}
+
 export function AccountPage() {
   const navigate = useNavigate()
   const logout = useLogout()
@@ -32,6 +46,7 @@ export function AccountPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [validationError, setValidationError] = useState('')
+  const [logoutAllOpen, setLogoutAllOpen] = useState(false)
 
   useEffect(() => { document.title = '账户设置 · Nexus OSR' }, [])
 
@@ -78,25 +93,25 @@ export function AccountPage() {
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Typography component="h1" variant="h1">账户设置</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-        管理当前登录身份、密码、两步验证和会话。安全配置变更后，所有旧令牌会立即失效。
+        管理当前账号的密码、两步验证和登录设备。
       </Typography>
 
       {session.data.must_change_password ? (
         <Alert severity="warning" variant="outlined" sx={{ mt: 2 }}>
-          当前密码由管理员签发或重置。完成密码修改前，业务页面和实时工作连接均不可使用。
+          当前密码需要更新。完成密码修改前，暂不能访问其他页面。
         </Alert>
       ) : null}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(280px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2.5 }}>
         <Paper component="section" variant="outlined" aria-labelledby="account-identity-title" sx={{ p: 2, alignSelf: 'start' }}>
-          <Typography id="account-identity-title" component="h2" variant="h3">当前身份</Typography>
+          <Typography id="account-identity-title" component="h2" variant="h3">当前账号</Typography>
           <Divider sx={{ my: 2 }} />
           <OperatorFactGrid facts={[
             ['姓名', session.data.display_name || '未设置'],
             ['账号', session.data.username],
             ['邮箱', session.data.email || '未设置'],
-            ['角色', session.data.role],
-            ['团队编号', session.data.team_id ?? '未分配'],
+            ['角色', roleLabel(session.data.role)],
+            ['团队', session.data.team_id ?? '未分配'],
             ['两步验证', session.data.mfa_enabled ? '已启用' : '未启用'],
             ['上次登录', session.data.last_login_at ? formatDateTime(session.data.last_login_at) : '暂无'],
             ['密码更新', session.data.password_changed_at ? formatDateTime(session.data.password_changed_at) : '暂无'],
@@ -118,36 +133,10 @@ export function AccountPage() {
               {changePassword.isError ? (
                 <OperatorErrorNotice title="密码修改失败" error={changePassword.error} fallback="请检查当前密码和新密码规则" />
               ) : null}
-              <TextField
-                label="当前密码"
-                type="password"
-                required
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-              />
-              <TextField
-                label="新密码"
-                type="password"
-                required
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-              />
-              <TextField
-                label="确认新密码"
-                type="password"
-                required
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-              />
-              <Button
-                type="submit"
-                variant="contained"
-                disabled={!currentPassword || !newPassword || !confirmPassword || changePassword.isPending}
-                startIcon={changePassword.isPending ? <CircularProgress color="inherit" size={16} /> : <LockResetRoundedIcon />}
-              >
+              <TextField label="当前密码" type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+              <TextField label="新密码" type="password" required autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <TextField label="确认新密码" type="password" required autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+              <Button type="submit" variant="contained" disabled={!currentPassword || !newPassword || !confirmPassword || changePassword.isPending} startIcon={changePassword.isPending ? <CircularProgress color="inherit" size={16} /> : <LockResetRoundedIcon />}>
                 {changePassword.isPending ? '正在更新…' : '更新密码并重新登录'}
               </Button>
             </Stack>
@@ -158,22 +147,31 @@ export function AccountPage() {
       {!session.data.must_change_password ? <MfaAccountPanel /> : null}
 
       <Paper component="section" variant="outlined" aria-labelledby="account-session-title" sx={{ p: 2, mt: 2 }}>
-        <Typography id="account-session-title" component="h2" variant="h3">会话控制</Typography>
+        <Typography id="account-session-title" component="h2" variant="h3">登录设备</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-          撤销该账号在所有设备和实时工作连接中的访问。当前设备也会退出。
+          退出该账号在所有设备上的登录，包括当前设备。密码不会改变。
         </Typography>
         <Divider sx={{ my: 2 }} />
-        {logoutAll.isError ? <OperatorErrorNotice title="会话撤销失败" error={logoutAll.error} fallback="请稍后重试" /> : null}
-        <Button
-          color="error"
-          variant="outlined"
-          startIcon={logoutAll.isPending ? <CircularProgress color="inherit" size={16} /> : <LogoutRoundedIcon />}
-          disabled={logoutAll.isPending}
-          onClick={() => logoutAll.mutate()}
-        >
+        {logoutAll.isError ? <OperatorErrorNotice title="退出失败" error={logoutAll.error} fallback="请稍后重试" /> : null}
+        <Button color="error" variant="outlined" startIcon={<LogoutRoundedIcon />} disabled={logoutAll.isPending} onClick={() => setLogoutAllOpen(true)}>
           退出所有设备
         </Button>
       </Paper>
+
+      <Dialog open={logoutAllOpen} onClose={() => { if (!logoutAll.isPending) setLogoutAllOpen(false) }} maxWidth="sm" fullWidth>
+        <DialogTitle>退出所有设备？</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            该账号在所有设备上的登录将立即失效，包括当前设备。密码不会改变。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" disabled={logoutAll.isPending} onClick={() => setLogoutAllOpen(false)}>取消</Button>
+          <Button color="error" variant="contained" disabled={logoutAll.isPending} startIcon={logoutAll.isPending ? <CircularProgress color="inherit" size={16} /> : <LogoutRoundedIcon />} onClick={() => logoutAll.mutate()}>
+            {logoutAll.isPending ? '正在退出…' : '确认退出所有设备'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

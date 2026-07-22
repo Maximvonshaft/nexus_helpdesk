@@ -1,9 +1,9 @@
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
+import BlockRoundedIcon from '@mui/icons-material/BlockRounded'
 import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded'
 import PublishRoundedIcon from '@mui/icons-material/PublishRounded'
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded'
 import SendRoundedIcon from '@mui/icons-material/SendRounded'
-import BlockRoundedIcon from '@mui/icons-material/BlockRounded'
 import {
   Alert,
   Box,
@@ -166,7 +166,7 @@ export function PersonaPanel({
   const save = useMutation({
     mutationFn: async () => {
       const data = payload(draft)
-      if (!data.name) throw new Error('请填写人格名称')
+      if (!data.name) throw new Error('请填写回复风格名称')
       return creating || !selected
         ? agentControlApi.createPersona(data)
         : agentControlApi.updatePersona(selected.id, data)
@@ -180,7 +180,7 @@ export function PersonaPanel({
   const submit = useMutation({
     mutationFn: async () => {
       const data = payload(draft)
-      if (!data.name) throw new Error('请填写人格名称')
+      if (!data.name) throw new Error('请填写回复风格名称')
       const item = creating || !selected
         ? await agentControlApi.createPersona(data)
         : await agentControlApi.updatePersona(selected.id, data)
@@ -214,7 +214,7 @@ export function PersonaPanel({
   const testEvidence = useMutation({
     mutationFn: () => agentControlApi.personaRuntimeEvidence({
       tenant_key: tenantKey || undefined,
-      body: 'Who are you and what can you help with?',
+      body: '你是谁？你可以帮助我处理什么？',
       market_id: snapshot.scope.market_id ?? null,
       channel: snapshot.scope.channel || 'webchat',
       language: snapshot.scope.language || null,
@@ -230,7 +230,7 @@ export function PersonaPanel({
     <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '300px minmax(0, 1fr) 360px' } }}>
       <Paper component="aside" variant="outlined" sx={{ p: 1.5 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-          <Typography component="h2" variant="h3">人格列表</Typography>
+          <Typography component="h2" variant="h3">回复风格</Typography>
           {canManage ? (
             <Button size="small" variant="contained" startIcon={<AddRoundedIcon />} onClick={() => { setCreating(true); setSelectedId(null) }}>
               新建
@@ -247,31 +247,31 @@ export function PersonaPanel({
             >
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
                 <Typography variant="subtitle2">{item.name}</Typography>
-                {item.is_global_template ? <Chip size="small" label="全局模板" /> : null}
+                {item.is_global_template ? <Chip size="small" label="系统模板" /> : null}
               </Stack>
               <Typography variant="caption" color="text.secondary">
-                {item.channel || '全渠道'} · {item.language || '全语言'} · v{item.published_version}
+                {item.channel || '全部渠道'} · {item.language || '全部语言'} · v{item.published_version}
               </Typography>
             </ListItemButton>
           ))}
-          {!snapshot.personas.length ? <OperatorEmptyState title="尚未配置人格" description="创建第一个企业 Agent 人格" /> : null}
+          {!snapshot.personas.length ? <OperatorEmptyState title="尚未配置回复风格" description="新建第一套客户沟通风格" /> : null}
         </List>
       </Paper>
 
       <Paper component="section" variant="outlined" sx={{ p: 2, minWidth: 0 }}>
-        <Typography component="h2" variant="h3">{creating ? '新建人格' : '编辑人格草稿'}</Typography>
+        <Typography component="h2" variant="h3">{creating ? '新建回复风格' : '编辑回复风格'}</Typography>
         {!canManage ? <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>当前为只读视图。</Alert> : null}
-        {selected?.is_global_template ? <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>这是平台全局模板，可用于 Agent Release，但租户不可直接修改。请创建租户人格。</Alert> : null}
-        {actionError ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="操作失败" error={actionError} fallback="请检查字段、权限和评审状态" /></Box> : null}
+        {selected?.is_global_template ? <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>系统模板不可直接修改。请新建一套回复风格。</Alert> : null}
+        {actionError ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="操作失败" error={actionError} fallback="请检查字段和审批状态" /></Box> : null}
         <Stack spacing={1.5} sx={{ mt: 2 }}>
           <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
-            <TextField label="人格编号" required disabled={!creating || !canManage} value={draft.profile_key} onChange={(event) => setDraft((current) => ({ ...current, profile_key: event.target.value.replace(/[^a-zA-Z0-9_.-]+/g, '-').toLowerCase() }))} />
-            <TextField label="人格名称" required disabled={!selectedCanManage && !creating} value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+            <TextField label="配置编号" required disabled={!creating || !canManage} value={draft.profile_key} onChange={(event) => setDraft((current) => ({ ...current, profile_key: event.target.value.replace(/[^a-zA-Z0-9_.-]+/g, '-').toLowerCase() }))} />
+            <TextField label="配置名称" required disabled={!selectedCanManage && !creating} value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
             <TextField label="品牌名称" disabled={!selectedCanManage && !creating} value={draft.brand_name} onChange={(event) => setDraft((current) => ({ ...current, brand_name: event.target.value }))} />
-            <TextField label="助手名称" disabled={!selectedCanManage && !creating} value={draft.assistant_name} onChange={(event) => setDraft((current) => ({ ...current, assistant_name: event.target.value }))} />
-            <TextField label="角色名称" disabled={!selectedCanManage && !creating} value={draft.role_label} onChange={(event) => setDraft((current) => ({ ...current, role_label: event.target.value }))} />
-            <TextField label="语气" disabled={!selectedCanManage && !creating} value={draft.tone} onChange={(event) => setDraft((current) => ({ ...current, tone: event.target.value }))} placeholder="例如：准确、克制、友好" />
-            <TextField label="市场 ID" type="number" disabled={!selectedCanManage && !creating} value={draft.market_id} onChange={(event) => setDraft((current) => ({ ...current, market_id: event.target.value }))} />
+            <TextField label="客服名称" disabled={!selectedCanManage && !creating} value={draft.assistant_name} onChange={(event) => setDraft((current) => ({ ...current, assistant_name: event.target.value }))} />
+            <TextField label="身份称呼" disabled={!selectedCanManage && !creating} value={draft.role_label} onChange={(event) => setDraft((current) => ({ ...current, role_label: event.target.value }))} />
+            <TextField label="沟通语气" disabled={!selectedCanManage && !creating} value={draft.tone} onChange={(event) => setDraft((current) => ({ ...current, tone: event.target.value }))} placeholder="例如：准确、克制、友好" />
+            <TextField label="市场编号" type="number" disabled={!selectedCanManage && !creating} value={draft.market_id} onChange={(event) => setDraft((current) => ({ ...current, market_id: event.target.value }))} />
             <TextField select label="渠道" disabled={!selectedCanManage && !creating} value={draft.channel} onChange={(event) => setDraft((current) => ({ ...current, channel: event.target.value }))}>
               <MenuItem value="">全部渠道</MenuItem><MenuItem value="webchat">网页客服</MenuItem><MenuItem value="whatsapp">WhatsApp</MenuItem><MenuItem value="email">邮件</MenuItem><MenuItem value="voice">语音</MenuItem>
             </TextField>
@@ -279,21 +279,21 @@ export function PersonaPanel({
             <FormControlLabel control={<Checkbox disabled={!selectedCanManage && !creating} checked={draft.is_active} onChange={(event) => setDraft((current) => ({ ...current, is_active: event.target.checked }))} />} label="启用" />
           </Box>
           <TextField label="说明" multiline minRows={2} disabled={!selectedCanManage && !creating} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
-          <TextField label="身份陈述" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.identity_statement} onChange={(event) => setDraft((current) => ({ ...current, identity_statement: event.target.value }))} />
-          <TextField label="身份问题回答规则" multiline minRows={2} disabled={!selectedCanManage && !creating} value={draft.identity_answer_rule} onChange={(event) => setDraft((current) => ({ ...current, identity_answer_rule: event.target.value }))} />
-          <TextField label="转人工边界" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.handoff_boundary} onChange={(event) => setDraft((current) => ({ ...current, handoff_boundary: event.target.value }))} />
-          <TextField label="可提供能力" helperText="每行一项" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.capabilities} onChange={(event) => setDraft((current) => ({ ...current, capabilities: event.target.value }))} />
-          <TextField label="行为边界" helperText="每行一项" multiline minRows={4} disabled={!selectedCanManage && !creating} value={draft.guardrails} onChange={(event) => setDraft((current) => ({ ...current, guardrails: event.target.value }))} />
-          <TextField label="禁止身份声明" helperText="每行一项" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.disallowed_identity_claims} onChange={(event) => setDraft((current) => ({ ...current, disallowed_identity_claims: event.target.value }))} />
+          <TextField label="对外身份说明" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.identity_statement} onChange={(event) => setDraft((current) => ({ ...current, identity_statement: event.target.value }))} />
+          <TextField label="身份询问回复" multiline minRows={2} disabled={!selectedCanManage && !creating} value={draft.identity_answer_rule} onChange={(event) => setDraft((current) => ({ ...current, identity_answer_rule: event.target.value }))} />
+          <TextField label="转人工条件" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.handoff_boundary} onChange={(event) => setDraft((current) => ({ ...current, handoff_boundary: event.target.value }))} />
+          <TextField label="可处理事项" helperText="每行一项" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.capabilities} onChange={(event) => setDraft((current) => ({ ...current, capabilities: event.target.value }))} />
+          <TextField label="禁止与限制" helperText="每行一项" multiline minRows={4} disabled={!selectedCanManage && !creating} value={draft.guardrails} onChange={(event) => setDraft((current) => ({ ...current, guardrails: event.target.value }))} />
+          <TextField label="禁止说法" helperText="每行一项" multiline minRows={3} disabled={!selectedCanManage && !creating} value={draft.disallowed_identity_claims} onChange={(event) => setDraft((current) => ({ ...current, disallowed_identity_claims: event.target.value }))} />
           <TextField label="版本摘要" multiline minRows={2} disabled={!selectedCanManage && !creating} value={draft.draft_summary} onChange={(event) => setDraft((current) => ({ ...current, draft_summary: event.target.value }))} />
-          <TextField label="评审说明" helperText="说明本次变更、预期行为和风险" multiline minRows={2} disabled={!canManage && !canDeploy} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
+          <TextField label="审批说明" helperText="说明本次变更、预期结果和风险" multiline minRows={2} disabled={!canManage && !canDeploy} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
           {(creating ? canManage : selectedCanManage) ? (
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
               <Button variant="contained" disabled={busy} startIcon={save.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />} onClick={() => save.mutate()}>
                 保存草稿
               </Button>
               <Button variant="outlined" disabled={busy || latestReview?.status === 'pending'} startIcon={<SendRoundedIcon />} onClick={() => submit.mutate()}>
-                保存并提交评审
+                保存并提交审批
               </Button>
             </Stack>
           ) : null}
@@ -302,16 +302,13 @@ export function PersonaPanel({
 
       <Stack component="aside" spacing={2} sx={{ minWidth: 0 }}>
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Typography component="h2" variant="h3">发布治理</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            人格版本必须经过独立审批。发布 Persona 版本后，还需在 Agent Definition 中绑定该版本并创建、部署 Agent Release 才会生效。
-          </Typography>
+          <Typography component="h2" variant="h3">审批与发布</Typography>
           {reviews.isLoading ? <CircularProgress size={20} sx={{ mt: 2 }} /> : null}
-          {reviews.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取评审" error={reviews.error} fallback="请检查权限" /></Box> : null}
+          {reviews.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取审批记录" error={reviews.error} fallback="请稍后重试" /></Box> : null}
           {latestReview ? (
             <Stack spacing={1.25} sx={{ mt: 2 }}>
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-                <Typography variant="subtitle2">评审 #{latestReview.review_version}</Typography>
+                <Typography variant="subtitle2">审批 #{latestReview.review_version}</Typography>
                 <Chip size="small" color={reviewColor(latestReview.status)} label={reviewLabel(latestReview.status)} />
               </Stack>
               <Typography variant="body2">{latestReview.notes || latestReview.summary || '无说明'}</Typography>
@@ -324,26 +321,23 @@ export function PersonaPanel({
               ) : null}
               {canDeploy && latestReview.status === 'approved' ? (
                 <Button size="small" variant="contained" startIcon={<PublishRoundedIcon />} disabled={busy} onClick={() => publish.mutate(latestReview)}>
-                  发布人格版本
+                  发布版本
                 </Button>
               ) : null}
             </Stack>
           ) : selected ? (
-            <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>尚无评审记录。</Alert>
+            <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>尚无审批记录。</Alert>
           ) : null}
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Typography component="h2" variant="h3">实际运行验证</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            验证当前租户、环境、市场、渠道和语言实际部署的 Agent Release 命中了哪个 Persona。草稿或仅发布但未绑定到 Agent Release 的版本不会命中。
-          </Typography>
+          <Typography component="h2" variant="h3">生效检查</Typography>
           <Button fullWidth variant="outlined" sx={{ mt: 2 }} disabled={testEvidence.isPending || !draft.profile_key} onClick={() => testEvidence.mutate()}>
-            {testEvidence.isPending ? '验证中…' : '验证当前部署'}
+            {testEvidence.isPending ? '检查中…' : '检查当前配置'}
           </Button>
-          {testEvidence.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="验证失败" error={testEvidence.error} fallback="请检查 Agent Deployment" /></Box> : null}
+          {testEvidence.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="检查失败" error={testEvidence.error} fallback="请检查当前生效范围" /></Box> : null}
           {evidence ? (
-            <OperatorTechnicalDisclosure title="命中证据" summary={String(evidence.matched_profile_key || '未命中')}>
+            <OperatorTechnicalDisclosure title="检查详情" summary={String(evidence.matched_profile_key || '未匹配')}>
               <Box component="pre" sx={{ m: 0, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(evidence, null, 2)}</Box>
             </OperatorTechnicalDisclosure>
           ) : null}
@@ -352,7 +346,7 @@ export function PersonaPanel({
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Typography variant="subtitle2">版本状态</Typography>
             <Divider sx={{ my: 1.5 }} />
-            <Typography variant="body2">已发布人格版本：v{selected.published_version}</Typography>
+            <Typography variant="body2">已发布版本：v{selected.published_version}</Typography>
             <Typography variant="body2">最后更新：{new Date(selected.updated_at).toLocaleString()}</Typography>
           </Paper>
         ) : null}

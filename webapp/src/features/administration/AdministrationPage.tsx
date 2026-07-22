@@ -77,19 +77,19 @@ export function AdministrationPage() {
             <Typography component="h1" variant="h1">系统管理</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            管理人员、角色、登录安全、团队和经营市场。所有配置只保留一个服务端权威，并记录操作证据。
+            管理账号、角色模板、登录安全、团队、市场与安全记录。
           </Typography>
         </Box>
       </Stack>
 
       {!canManageUsers && !canManageMarkets && canReadSecurity ? (
         <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-          当前账号为只读审计视图，不能修改人员、角色、凭据、团队或市场。
+          当前账号只能查看安全记录，不能修改账号、角色、团队或市场。
         </Alert>
       ) : null}
       {referenceError ? (
         <Box sx={{ mt: 2 }}>
-          <OperatorErrorNotice title="无法读取系统管理配置" error={referenceError} fallback="请稍后重试" />
+          <OperatorErrorNotice title="无法读取系统管理数据" error={referenceError} fallback="请稍后重试" />
         </Box>
       ) : null}
 
@@ -101,12 +101,12 @@ export function AdministrationPage() {
           scrollButtons="auto"
           aria-label="系统管理分类"
         >
-          {canManageUsers ? <Tab icon={<ManageAccountsRoundedIcon />} iconPosition="start" value="users" label="员工账号" /> : null}
+          {canManageUsers ? <Tab icon={<ManageAccountsRoundedIcon />} iconPosition="start" value="users" label="用户与权限" /> : null}
           {canManageUsers ? <Tab icon={<BadgeRoundedIcon />} iconPosition="start" value="roles" label="角色模板" /> : null}
-          {canManageUsers ? <Tab icon={<KeyRoundedIcon />} iconPosition="start" value="credentials" label="登录与会话" /> : null}
+          {canManageUsers ? <Tab icon={<KeyRoundedIcon />} iconPosition="start" value="credentials" label="密码与登录" /> : null}
           {canManageUsers ? <Tab icon={<GroupsRoundedIcon />} iconPosition="start" value="teams" label="团队与范围" /> : null}
           {canManageMarkets ? <Tab icon={<PublicRoundedIcon />} iconPosition="start" value="markets" label="市场与国家" /> : null}
-          {canReadSecurity ? <Tab icon={<SecurityRoundedIcon />} iconPosition="start" value="security" label="安全审计" /> : null}
+          {canReadSecurity ? <Tab icon={<SecurityRoundedIcon />} iconPosition="start" value="security" label="安全记录" /> : null}
         </Tabs>
       </Paper>
 

@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   FormControlLabel,
   MenuItem,
@@ -22,7 +23,11 @@ import {
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { OperatorEmptyState, OperatorErrorNotice } from '@/app/OperatorPresentation'
+import {
+  OperatorEmptyState,
+  OperatorErrorNotice,
+  OperatorTechnicalDisclosure,
+} from '@/app/OperatorPresentation'
 import { governanceApi, type RoleTemplateDraft } from '@/lib/governanceApi'
 
 const EMPTY_DRAFT: RoleTemplateDraft = {
@@ -32,6 +37,24 @@ const EMPTY_DRAFT: RoleTemplateDraft = {
   base_role: 'agent',
   risk_level: 'standard',
   capabilities: [],
+}
+
+const ROLE_OPTIONS = [
+  { value: 'admin', label: '管理员' },
+  { value: 'manager', label: '运营经理' },
+  { value: 'lead', label: '组长' },
+  { value: 'agent', label: '客服专员' },
+  { value: 'auditor', label: '审计员' },
+]
+
+const RISK_OPTIONS = [
+  { value: 'standard', label: '标准' },
+  { value: 'sensitive', label: '敏感' },
+  { value: 'administrator', label: '管理员级' },
+]
+
+function riskLabel(value: string) {
+  return RISK_OPTIONS.find((item) => item.value === value)?.label || value
 }
 
 export function RoleTemplatesPanel() {
@@ -44,10 +67,12 @@ export function RoleTemplatesPanel() {
   const [active, setActive] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
   const [applyUserId, setApplyUserId] = useState<number | ''>('')
+  const [applyOpen, setApplyOpen] = useState(false)
   const selected = useMemo(
     () => templates.data?.find((item) => item.id === selectedId) ?? null,
     [selectedId, templates.data],
   )
+  const selectedAssignment = assignments.data?.find((item) => item.user_id === applyUserId) ?? null
 
   useEffect(() => {
     if (!selected && templates.data?.length) setSelectedId(templates.data[0].id)
@@ -94,7 +119,11 @@ export function RoleTemplatesPanel() {
   const apply = useMutation({
     mutationFn: ({ templateId, userId }: { templateId: number; userId: number }) =>
       governanceApi.applyRoleTemplate(templateId, userId),
-    onSuccess: async () => { setApplyUserId(''); await invalidate() },
+    onSuccess: async () => {
+      setApplyOpen(false)
+      setApplyUserId('')
+      await invalidate()
+    },
   })
 
   const currentDraftPayload = (): Partial<RoleTemplateDraft> & { is_active?: boolean } => ({
@@ -124,7 +153,7 @@ export function RoleTemplatesPanel() {
           <Box>
             <Typography component="h2" variant="h2">角色模板</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              模板发布后编译到现有用户角色与能力覆盖权威；运行时不会直接读取模板表。
+              创建可重复使用的权限组合，发布后可分配给员工。
             </Typography>
           </Box>
           <Button startIcon={<AddRoundedIcon />} variant="contained" onClick={() => setCreateOpen(true)}>
@@ -134,10 +163,10 @@ export function RoleTemplatesPanel() {
       </Paper>
 
       {!templates.data?.length ? (
-        <OperatorEmptyState title="暂无角色模板" description="建立租户角色模板后再发布并分配给员工。" />
+        <OperatorEmptyState title="暂无角色模板" description="新建模板后即可配置权限、发布并分配给员工。" />
       ) : (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(260px, 0.8fr) minmax(0, 2fr)' }, gap: 2 }}>
-          <Paper variant="outlined" sx={{ p: 1.5 }}>
+          <Paper component="aside" variant="outlined" sx={{ p: 1.5 }}>
             <Stack spacing={1}>
               {templates.data.map((item) => (
                 <Button
@@ -155,37 +184,42 @@ export function RoleTemplatesPanel() {
           </Paper>
 
           {selected ? (
-            <Paper variant="outlined" sx={{ p: 2 }}>
+            <Paper component="section" variant="outlined" sx={{ p: 2 }}>
               <Stack spacing={2}>
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ alignItems: { md: 'center' } }}>
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="h3">{selected.display_name}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {selected.role_key} · 已分配 {selected.assignment_count} 人 · {selected.can_manage ? '租户可维护' : '系统只读'}
+                      已分配 {selected.assignment_count} 人 · {selected.can_manage ? '可维护' : '系统模板'}
                     </Typography>
                   </Box>
-                  <Chip color={selected.risk_level === 'administrator' ? 'error' : selected.risk_level === 'sensitive' ? 'warning' : 'default'} label={selected.risk_level} />
+                  <Chip color={selected.risk_level === 'administrator' ? 'error' : selected.risk_level === 'sensitive' ? 'warning' : 'default'} label={riskLabel(selected.risk_level)} />
                   <Chip color={selected.is_active ? 'success' : 'default'} label={selected.is_active ? '启用' : '停用'} />
                 </Stack>
-                {!selected.can_manage ? <Alert severity="info">系统保护模板只能查看，不能修改、发布或停用。</Alert> : null}
-                <TextField label="显示名称" value={draft.display_name} disabled={!selected.can_manage} onChange={(event) => setDraft({ ...draft, display_name: event.target.value })} />
+                {!selected.can_manage ? <Alert severity="info">该系统模板只能查看，不能修改、发布或停用。</Alert> : null}
+                <TextField label="模板名称" value={draft.display_name} disabled={!selected.can_manage} onChange={(event) => setDraft({ ...draft, display_name: event.target.value })} />
                 <TextField label="说明" multiline minRows={2} value={draft.description || ''} disabled={!selected.can_manage} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <TextField select fullWidth label="基础角色" value={draft.base_role} disabled={!selected.can_manage} onChange={(event) => setDraft({ ...draft, base_role: event.target.value })}>
-                    {['admin', 'manager', 'lead', 'agent', 'auditor'].map((role) => <MenuItem key={role} value={role}>{role}</MenuItem>)}
+                    {ROLE_OPTIONS.map((role) => <MenuItem key={role.value} value={role.value}>{role.label}</MenuItem>)}
                   </TextField>
                   <TextField select fullWidth label="风险等级" value={draft.risk_level} disabled={!selected.can_manage} onChange={(event) => setDraft({ ...draft, risk_level: event.target.value })}>
-                    {['standard', 'sensitive', 'administrator'].map((risk) => <MenuItem key={risk} value={risk}>{risk}</MenuItem>)}
+                    {RISK_OPTIONS.map((risk) => <MenuItem key={risk.value} value={risk.value}>{risk.label}</MenuItem>)}
                   </TextField>
                 </Stack>
-                <Autocomplete
-                  multiple
-                  options={capabilities.data || []}
-                  value={draft.capabilities}
-                  disabled={!selected.can_manage}
-                  onChange={(_, value) => setDraft({ ...draft, capabilities: value })}
-                  renderInput={(params) => <TextField {...params} label="能力集合" helperText="保存修改草稿；发布后才可用于分配。" />}
-                />
+                <OperatorTechnicalDisclosure title="权限配置" summary={`已选择 ${draft.capabilities.length} 项`}>
+                  <Stack spacing={1.5}>
+                    <Typography variant="caption" color="text.secondary">模板编号：{selected.role_key}</Typography>
+                    <Autocomplete
+                      multiple
+                      options={capabilities.data || []}
+                      value={draft.capabilities}
+                      disabled={!selected.can_manage}
+                      onChange={(_, value) => setDraft({ ...draft, capabilities: value })}
+                      renderInput={(params) => <TextField {...params} label="权限代码" helperText="保存后仍为草稿，发布后才能分配。" />}
+                    />
+                  </Stack>
+                </OperatorTechnicalDisclosure>
                 <FormControlLabel control={<Switch checked={active} disabled={!selected.can_manage} onChange={(event) => setActive(event.target.checked)} />} label="启用模板" />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <Button variant="outlined" startIcon={<SaveRoundedIcon />} disabled={!selected.can_manage || update.isPending || publish.isPending} onClick={saveSelected}>保存草稿</Button>
@@ -195,28 +229,28 @@ export function RoleTemplatesPanel() {
                     disabled={!selected.can_manage || publish.isPending || update.isPending || !draft.capabilities.length}
                     onClick={() => publish.mutate({ id: selected.id, payload: currentDraftPayload() })}
                   >
-                    保存并发布新版本
+                    保存并发布
                   </Button>
                 </Stack>
-                {(update.error || publish.error) ? <OperatorErrorNotice title="角色模板操作失败" error={update.error || publish.error} fallback="请检查能力集合和并发状态" /> : null}
+                {(update.error || publish.error) ? <OperatorErrorNotice title="角色模板操作失败" error={update.error || publish.error} fallback="请检查权限配置和当前状态" /> : null}
 
                 <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2 }}>
-                  <Typography variant="h3">分配已发布模板</Typography>
+                  <Typography variant="h3">分配模板</Typography>
                   <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 1 }}>
                     <TextField select fullWidth label="员工" value={applyUserId} onChange={(event) => setApplyUserId(Number(event.target.value))}>
                       {(assignments.data || []).map((item) => (
-                        <MenuItem key={item.user_id} value={item.user_id}>{item.display_name} · {item.username}{item.assignment ? ` · ${item.assignment.template_name}` : ''}</MenuItem>
+                        <MenuItem key={item.user_id} value={item.user_id}>{item.display_name} · {item.username}{item.assignment ? ` · 当前：${item.assignment.template_name}` : ''}</MenuItem>
                       ))}
                     </TextField>
                     <Button
                       variant="contained"
                       disabled={!selected.published_version || !applyUserId || apply.isPending}
-                      onClick={() => apply.mutate({ templateId: selected.id, userId: Number(applyUserId) })}
+                      onClick={() => setApplyOpen(true)}
                     >
-                      分配并撤销旧会话
+                      分配模板
                     </Button>
                   </Stack>
-                  {apply.error ? <OperatorErrorNotice title="角色分配失败" error={apply.error} fallback="请确认不会移除最后一个治理账号" /> : null}
+                  {apply.error ? <OperatorErrorNotice title="角色分配失败" error={apply.error} fallback="请确认不会移除最后一个管理员账号" /> : null}
                 </Box>
               </Stack>
             </Paper>
@@ -226,6 +260,25 @@ export function RoleTemplatesPanel() {
 
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} fullWidth maxWidth="md">
         <RoleTemplateEditor title="新建角色模板" capabilities={capabilities.data || []} onSubmit={(value) => create.mutate(value)} pending={create.isPending} error={create.error} onClose={() => setCreateOpen(false)} />
+      </Dialog>
+
+      <Dialog open={applyOpen} onClose={() => { if (!apply.isPending) setApplyOpen(false) }} fullWidth maxWidth="sm">
+        <DialogTitle>分配角色模板？</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {selectedAssignment?.display_name || '该员工'} 将获得“{selected?.display_name || '所选模板'}”的已发布权限，现有登录状态将全部失效。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" disabled={apply.isPending} onClick={() => setApplyOpen(false)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={!selected || !applyUserId || apply.isPending}
+            onClick={() => { if (selected && applyUserId) apply.mutate({ templateId: selected.id, userId: Number(applyUserId) }) }}
+          >
+            {apply.isPending ? '正在分配…' : '确认分配并退出旧设备'}
+          </Button>
+        </DialogActions>
       </Dialog>
     </Stack>
   )
@@ -245,19 +298,19 @@ function RoleTemplateEditor({ title, capabilities, onSubmit, pending, error, onC
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
-          <TextField label="角色键" value={draft.role_key} onChange={(event) => setDraft({ ...draft, role_key: event.target.value.toLowerCase() })} helperText="仅允许小写字母、数字、点、下划线和连字符。" />
-          <TextField label="显示名称" value={draft.display_name} onChange={(event) => setDraft({ ...draft, display_name: event.target.value })} />
+          <TextField label="模板编号" value={draft.role_key} onChange={(event) => setDraft({ ...draft, role_key: event.target.value.toLowerCase() })} helperText="仅允许小写字母、数字、点、下划线和连字符。" />
+          <TextField label="模板名称" value={draft.display_name} onChange={(event) => setDraft({ ...draft, display_name: event.target.value })} />
           <TextField label="说明" multiline minRows={2} value={draft.description || ''} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
             <TextField select fullWidth label="基础角色" value={draft.base_role} onChange={(event) => setDraft({ ...draft, base_role: event.target.value })}>
-              {['admin', 'manager', 'lead', 'agent', 'auditor'].map((role) => <MenuItem key={role} value={role}>{role}</MenuItem>)}
+              {ROLE_OPTIONS.map((role) => <MenuItem key={role.value} value={role.value}>{role.label}</MenuItem>)}
             </TextField>
             <TextField select fullWidth label="风险等级" value={draft.risk_level} onChange={(event) => setDraft({ ...draft, risk_level: event.target.value })}>
-              {['standard', 'sensitive', 'administrator'].map((risk) => <MenuItem key={risk} value={risk}>{risk}</MenuItem>)}
+              {RISK_OPTIONS.map((risk) => <MenuItem key={risk.value} value={risk.value}>{risk.label}</MenuItem>)}
             </TextField>
           </Stack>
-          <Autocomplete multiple options={capabilities} value={draft.capabilities} onChange={(_, value) => setDraft({ ...draft, capabilities: value })} renderInput={(params) => <TextField {...params} label="能力集合" />} />
-          {error ? <OperatorErrorNotice title="创建失败" error={error} fallback="请检查角色键和能力集合" /> : null}
+          <Autocomplete multiple options={capabilities} value={draft.capabilities} onChange={(_, value) => setDraft({ ...draft, capabilities: value })} renderInput={(params) => <TextField {...params} label="权限代码" />} />
+          {error ? <OperatorErrorNotice title="创建失败" error={error} fallback="请检查模板编号和权限配置" /> : null}
         </Stack>
       </DialogContent>
       <DialogActions>

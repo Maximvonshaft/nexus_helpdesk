@@ -230,13 +230,13 @@ export function ToolsIntegrationsPanel({
             variant={mode === 'tools' ? 'contained' : 'text'}
             onClick={() => setMode('tools')}
           >
-            工具治理
+            工具权限
           </Button>
           <Button
             variant={mode === 'integrations' ? 'contained' : 'text'}
             onClick={() => setMode('integrations')}
           >
-            企业集成
+            外部系统
           </Button>
         </Stack>
       </Paper>
@@ -294,17 +294,16 @@ function ToolGovernance({
   })
   return (
     <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.5fr) 380px' } }}>
-      <Paper variant="outlined" sx={{ p: 2, minWidth: 0 }}>
-        <Typography component="h2" variant="h3">工具目录与执行状态</Typography>
+      <Paper component="section" variant="outlined" sx={{ p: 2, minWidth: 0 }}>
+        <Typography component="h2" variant="h3">工具列表</Typography>
         <TableContainer sx={{ mt: 2 }}>
-          <Table size="small">
+          <Table size="small" aria-label="工具列表">
             <TableHead>
               <TableRow>
                 <TableCell>工具</TableCell>
-                <TableCell>类型</TableCell>
                 <TableCell>风险</TableCell>
-                <TableCell>执行器</TableCell>
-                <TableCell>策略</TableCell>
+                <TableCell>接入状态</TableCell>
+                <TableCell>权限规则</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -321,20 +320,19 @@ function ToolGovernance({
                     sx={{ cursor: 'pointer' }}
                   >
                     <TableCell><Typography variant="subtitle2">{tool.name}</Typography></TableCell>
-                    <TableCell>{tool.classification}</TableCell>
-                    <TableCell>{tool.risk_level}</TableCell>
+                    <TableCell>{riskLabel(tool.risk_level)}</TableCell>
                     <TableCell>
                       <Chip
                         size="small"
                         color={tool.executable ? 'success' : 'default'}
-                        label={tool.executable ? '已注册' : '未实现'}
+                        label={tool.executable ? '可用' : '未接入'}
                       />
                     </TableCell>
                     <TableCell>
                       <Chip
                         size="small"
                         color={policy ? 'success' : 'warning'}
-                        label={policy ? '已配置' : '缺失'}
+                        label={policy ? '已配置' : '待配置'}
                       />
                     </TableCell>
                   </TableRow>
@@ -344,21 +342,19 @@ function ToolGovernance({
           </Table>
         </TableContainer>
       </Paper>
-      <Paper variant="outlined" sx={{ p: 2, alignSelf: 'start' }}>
-        <Typography component="h2" variant="h3">执行策略</Typography>
+      <Paper component="aside" variant="outlined" sx={{ p: 2, alignSelf: 'start' }}>
+        <Typography component="h2" variant="h3">工具权限</Typography>
         {!selectedContract ? (
-          <OperatorEmptyState title="选择一个工具" description="从左侧目录选择" />
+          <OperatorEmptyState title="请选择一个工具" description="从左侧列表选择" />
         ) : (
           <Stack spacing={1.5} sx={{ mt: 2 }}>
             <Alert severity={selectedContract.executable ? 'success' : 'warning'} variant="outlined">
-              {selectedContract.executable
-                ? '已连接唯一 Tool Executor。'
-                : '只有契约，没有生产执行器；不可自动执行。'}
+              {selectedContract.executable ? '该工具已接入，可配置使用权限。' : '该工具尚未接入，不能自动执行。'}
             </Alert>
             <TextField label="工具名称" value={draft.tool_name} disabled />
             <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
               <TextField
-                label="国家"
+                label="国家或地区"
                 disabled={!canManage}
                 value={draft.country_code}
                 onChange={(event) => setDraft((current) => ({ ...current, country_code: event.target.value }))}
@@ -371,7 +367,7 @@ function ToolGovernance({
               />
               <TextField
                 select
-                label="风险"
+                label="风险等级"
                 disabled={!canManage}
                 value={draft.risk_level}
                 onChange={(event) => setDraft((current) => ({ ...current, risk_level: event.target.value }))}
@@ -383,7 +379,7 @@ function ToolGovernance({
               </TextField>
               <TextField
                 select
-                label="审计级别"
+                label="记录级别"
                 disabled={!canManage}
                 value={draft.audit_level}
                 onChange={(event) => setDraft((current) => ({ ...current, audit_level: event.target.value }))}
@@ -400,7 +396,7 @@ function ToolGovernance({
                   onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
                 />
               )}
-              label="策略启用"
+              label="启用此规则"
             />
             <FormControlLabel
               control={(
@@ -410,62 +406,19 @@ function ToolGovernance({
                   onChange={(event) => setDraft((current) => ({ ...current, ai_auto_executable: event.target.checked }))}
                 />
               )}
-              label="允许 Agent 自动执行"
+              label="允许自动执行"
             />
-            <FormControlLabel
-              control={(
-                <Checkbox
-                  disabled={!canManage}
-                  checked={draft.requires_tracking_number}
-                  onChange={(event) => setDraft((current) => ({ ...current, requires_tracking_number: event.target.checked }))}
-                />
-              )}
-              label="要求运单号"
-            />
-            <FormControlLabel
-              control={(
-                <Checkbox
-                  disabled={!canManage}
-                  checked={draft.requires_contact}
-                  onChange={(event) => setDraft((current) => ({ ...current, requires_contact: event.target.checked }))}
-                />
-              )}
-              label="要求联系方式"
-            />
-            <FormControlLabel
-              control={(
-                <Checkbox
-                  disabled={!canManage || selectedContract.confirmation_required}
-                  checked={selectedContract.confirmation_required || draft.requires_customer_confirmation}
-                  onChange={(event) => setDraft((current) => ({ ...current, requires_customer_confirmation: event.target.checked }))}
-                />
-              )}
-              label="要求客户确认"
-            />
-            <FormControlLabel
-              control={(
-                <Checkbox
-                  disabled={!canManage}
-                  checked={draft.requires_human_confirmation}
-                  onChange={(event) => setDraft((current) => ({ ...current, requires_human_confirmation: event.target.checked }))}
-                />
-              )}
-              label="要求人工确认"
-            />
-            {save.error ? (
-              <OperatorErrorNotice title="策略保存失败" error={save.error} fallback="请检查策略冲突" />
-            ) : null}
+            <FormControlLabel control={<Checkbox disabled={!canManage} checked={draft.requires_tracking_number} onChange={(event) => setDraft((current) => ({ ...current, requires_tracking_number: event.target.checked }))} />} label="必须提供运单号" />
+            <FormControlLabel control={<Checkbox disabled={!canManage} checked={draft.requires_contact} onChange={(event) => setDraft((current) => ({ ...current, requires_contact: event.target.checked }))} />} label="必须提供联系方式" />
+            <FormControlLabel control={<Checkbox disabled={!canManage || selectedContract.confirmation_required} checked={selectedContract.confirmation_required || draft.requires_customer_confirmation} onChange={(event) => setDraft((current) => ({ ...current, requires_customer_confirmation: event.target.checked }))} />} label="必须获得客户确认" />
+            <FormControlLabel control={<Checkbox disabled={!canManage} checked={draft.requires_human_confirmation} onChange={(event) => setDraft((current) => ({ ...current, requires_human_confirmation: event.target.checked }))} />} label="必须由人工确认" />
+            {save.error ? <OperatorErrorNotice title="权限规则保存失败" error={save.error} fallback="请检查规则是否冲突" /> : null}
             {canManage ? (
-              <Button
-                variant="contained"
-                disabled={save.isPending}
-                startIcon={save.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />}
-                onClick={() => save.mutate()}
-              >
-                保存策略
+              <Button variant="contained" disabled={save.isPending} startIcon={save.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />} onClick={() => save.mutate()}>
+                保存权限规则
               </Button>
             ) : null}
-            <OperatorTechnicalDisclosure title="工具契约">
+            <OperatorTechnicalDisclosure title="系统信息" summary="工具契约和内部标识">
               <Box component="pre" sx={{ m: 0, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
                 {JSON.stringify(selectedContract, null, 2)}
               </Box>
@@ -505,32 +458,24 @@ function IntegrationGovernance({
 
   const save = useMutation({
     mutationFn: async (publish: boolean) => {
-      if (!draft.name.trim() || !draft.base_url.trim()) {
-        throw new Error('请填写集成名称和地址')
-      }
-      if (!lines(draft.host_allowlist).length) {
-        throw new Error('请至少填写一个精确主机白名单')
-      }
-      if (!draft.operations.length) throw new Error('至少配置一个操作')
-      if (draft.scope_type === 'market' && !draft.market_id.trim()) {
-        throw new Error('市场作用域必须填写 Market ID')
-      }
-      if (draft.scope_type === 'channel' && !draft.scope_value.trim()) {
-        throw new Error('渠道作用域必须填写渠道标识')
-      }
+      if (!draft.name.trim() || !draft.base_url.trim()) throw new Error('请填写系统名称和连接地址')
+      if (!lines(draft.host_allowlist).length) throw new Error('请至少填写一个允许访问的主机名')
+      if (!draft.operations.length) throw new Error('请至少配置一个可用操作')
+      if (draft.scope_type === 'market' && !draft.market_id.trim()) throw new Error('按市场生效时必须选择市场')
+      if (draft.scope_type === 'channel' && !draft.scope_value.trim()) throw new Error('按渠道生效时必须填写渠道')
       for (const operation of draft.operations) {
         if (!operation.key.trim() || !operation.description.trim() || !operation.path.trim()) {
-          throw new Error('每个操作必须填写编号、说明和路径')
+          throw new Error('每个操作都必须填写编号、说明和路径')
         }
         if (operation.mode === 'write' && !operation.requires_confirmation) {
-          throw new Error('写操作必须要求客户确认')
+          throw new Error('写入操作必须获得客户确认')
         }
       }
       const data = integrationPayload(draft)
       const item = creating || !selected
         ? await agentControlApi.createConfig(data)
         : await agentControlApi.updateConfig(selected.id, data)
-      if (publish) await agentControlApi.publishConfig(item.id, 'Enterprise integration publish')
+      if (publish) await agentControlApi.publishConfig(item.id, 'External system publish')
       return item
     },
     onSuccess: async (item) => {
@@ -573,401 +518,122 @@ function IntegrationGovernance({
 
   return (
     <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: '280px minmax(0, 1fr) 360px' } }}>
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Paper component="aside" variant="outlined" sx={{ p: 1.5 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-          <Typography component="h2" variant="h3">企业集成</Typography>
-          {canManage ? (
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={<AddRoundedIcon />}
-              onClick={() => { setCreating(true); setSelectedId(null) }}
-            >
-              新建
-            </Button>
-          ) : null}
+          <Typography component="h2" variant="h3">外部系统</Typography>
+          {canManage ? <Button size="small" variant="contained" startIcon={<AddRoundedIcon />} onClick={() => { setCreating(true); setSelectedId(null) }}>新建</Button> : null}
         </Stack>
         <List disablePadding sx={{ mt: 1.5 }}>
           {resources.map((item) => (
-            <ListItemButton
-              key={item.id}
-              selected={!creating && item.id === selectedId}
-              onClick={() => { setCreating(false); setSelectedId(item.id) }}
-              sx={{ display: 'block', borderBottom: 1, borderColor: 'divider' }}
-            >
+            <ListItemButton key={item.id} selected={!creating && item.id === selectedId} onClick={() => { setCreating(false); setSelectedId(item.id) }} sx={{ display: 'block', borderBottom: 1, borderColor: 'divider' }}>
               <Typography variant="subtitle2">{item.name}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                {asString(contentOf(item).kind, 'http')} · v{item.published_version}
-              </Typography>
+              <Typography variant="caption" color="text.secondary">v{item.published_version}</Typography>
             </ListItemButton>
           ))}
-          {!resources.length ? (
-            <OperatorEmptyState title="尚无企业集成" description="连接 HTTP API 或 MCP Server" />
-          ) : null}
+          {!resources.length ? <OperatorEmptyState title="尚未连接外部系统" description="新建一个连接配置" /> : null}
         </List>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2, minWidth: 0 }}>
-        <Typography component="h2" variant="h3">
-          {creating ? '新建集成' : '编辑集成'}
-        </Typography>
-        <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-          凭据只保存 Secret 引用；生产环境从 Secret File 读取。发布资源后还必须绑定到 Agent Release，并经过 ToolExecutionPolicy。
-        </Alert>
-        {save.error ? (
-          <Box sx={{ mt: 2 }}>
-            <OperatorErrorNotice
-              title="保存失败"
-              error={save.error}
-              fallback="请检查主机白名单、显式读写模式和确认要求"
-            />
-          </Box>
-        ) : null}
+      <Paper component="section" variant="outlined" sx={{ p: 2, minWidth: 0 }}>
+        <Typography component="h2" variant="h3">{creating ? '新建外部系统' : '编辑外部系统'}</Typography>
+        {save.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="保存失败" error={save.error} fallback="请检查连接地址、访问范围和操作设置" /></Box> : null}
         <Stack spacing={1.5} sx={{ mt: 2 }}>
           <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
-            <TextField
-              label="资源编号"
-              required
-              disabled={!creating || !canManage}
-              value={draft.resource_key}
-              onChange={(event) => setDraft((current) => ({
+            <TextField label="配置编号" required disabled={!creating || !canManage} value={draft.resource_key} onChange={(event) => setDraft((current) => ({ ...current, resource_key: event.target.value.replace(/[^a-zA-Z0-9_.:-]+/g, '-').toLowerCase() }))} />
+            <TextField label="系统名称" required disabled={!canManage} value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+            <TextField select label="连接方式" disabled={!canManage} value={draft.kind} onChange={(event) => {
+              const kind = event.target.value as IntegrationKind
+              setDraft((current) => ({
                 ...current,
-                resource_key: event.target.value.replace(/[^a-zA-Z0-9_.:-]+/g, '-').toLowerCase(),
-              }))}
-            />
-            <TextField
-              label="集成名称"
-              required
-              disabled={!canManage}
-              value={draft.name}
-              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-            />
-            <TextField
-              select
-              label="协议"
-              disabled={!canManage}
-              value={draft.kind}
-              onChange={(event) => {
-                const kind = event.target.value as IntegrationKind
-                setDraft((current) => ({
-                  ...current,
-                  kind,
-                  operations: current.operations.map((item) => ({
-                    ...item,
-                    method: kind === 'mcp_http'
-                      ? 'POST'
-                      : item.mode === 'read'
-                        ? 'GET'
-                        : item.method,
-                  })),
-                }))
-              }}
-            >
-              <MenuItem value="http">HTTP API</MenuItem>
-              <MenuItem value="mcp_http">MCP over HTTP</MenuItem>
+                kind,
+                operations: current.operations.map((item) => ({
+                  ...item,
+                  method: kind === 'mcp_http' ? 'POST' : item.mode === 'read' ? 'GET' : item.method,
+                })),
+              }))
+            }}>
+              <MenuItem value="http">HTTP API</MenuItem><MenuItem value="mcp_http">MCP over HTTP</MenuItem>
             </TextField>
-            <TextField
-              label="凭据引用"
-              disabled={!canManage}
-              value={draft.credential_ref}
-              onChange={(event) => setDraft((current) => ({ ...current, credential_ref: event.target.value }))}
-              placeholder="例如 speedaf.production"
-              helperText="不得填写 Token 或密码"
-            />
-            <TextField
-              label="Base URL"
-              required
-              disabled={!canManage}
-              value={draft.base_url}
-              onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
-              placeholder="https://api.example.com"
-            />
-            <TextField
-              select
-              label="作用域"
-              disabled={!canManage}
-              value={draft.scope_type}
-              onChange={(event) => setDraft((current) => ({
-                ...current,
-                scope_type: event.target.value as ScopeType,
-                scope_value: '',
-                market_id: '',
-              }))}
-            >
-              <MenuItem value="global">全局模板</MenuItem>
-              <MenuItem value="market">市场</MenuItem>
-              <MenuItem value="channel">渠道</MenuItem>
+            <TextField label="连接地址" required disabled={!canManage} value={draft.base_url} onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))} placeholder="https://api.example.com" />
+            <TextField select label="生效范围" disabled={!canManage} value={draft.scope_type} onChange={(event) => setDraft((current) => ({ ...current, scope_type: event.target.value as ScopeType, scope_value: '', market_id: '' }))}>
+              <MenuItem value="global">全部范围</MenuItem><MenuItem value="market">指定市场</MenuItem><MenuItem value="channel">指定渠道</MenuItem>
             </TextField>
-            {draft.scope_type === 'market' ? (
-              <TextField
-                label="Market ID"
-                type="number"
-                required
-                disabled={!canManage}
-                value={draft.market_id}
-                onChange={(event) => setDraft((current) => ({ ...current, market_id: event.target.value }))}
-              />
-            ) : null}
-            {draft.scope_type === 'channel' ? (
-              <TextField
-                label="渠道标识"
-                required
-                disabled={!canManage}
-                value={draft.scope_value}
-                onChange={(event) => setDraft((current) => ({ ...current, scope_value: event.target.value }))}
-              />
-            ) : null}
-            <TextField
-              label="超时秒数"
-              type="number"
-              disabled={!canManage}
-              value={draft.timeout_seconds}
-              onChange={(event) => setDraft((current) => ({ ...current, timeout_seconds: event.target.value }))}
-            />
-            <TextField
-              label="最大响应字节"
-              type="number"
-              disabled={!canManage}
-              value={draft.max_response_bytes}
-              onChange={(event) => setDraft((current) => ({ ...current, max_response_bytes: event.target.value }))}
-            />
+            {draft.scope_type === 'market' ? <TextField label="市场编号" type="number" required disabled={!canManage} value={draft.market_id} onChange={(event) => setDraft((current) => ({ ...current, market_id: event.target.value }))} /> : null}
+            {draft.scope_type === 'channel' ? <TextField label="渠道" required disabled={!canManage} value={draft.scope_value} onChange={(event) => setDraft((current) => ({ ...current, scope_value: event.target.value }))} /> : null}
           </Box>
-          <TextField
-            label="说明"
-            multiline
-            minRows={2}
-            disabled={!canManage}
-            value={draft.description}
-            onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
-          />
-          <TextField
-            label="主机白名单"
-            helperText="每行一个精确主机名；运行时还会阻断私网、Loopback、云元数据与重定向"
-            multiline
-            minRows={2}
-            disabled={!canManage}
-            value={draft.host_allowlist}
-            onChange={(event) => setDraft((current) => ({ ...current, host_allowlist: event.target.value }))}
-          />
-          <Divider><Chip label="操作" /></Divider>
+          <TextField label="说明" multiline minRows={2} disabled={!canManage} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
+          <OperatorTechnicalDisclosure title="连接设置" summary="凭据、白名单和响应限制">
+            <Stack spacing={1.5}>
+              <TextField label="凭据引用" disabled={!canManage} value={draft.credential_ref} onChange={(event) => setDraft((current) => ({ ...current, credential_ref: event.target.value }))} helperText="仅填写系统密钥引用，不填写真实密钥" />
+              <TextField label="允许访问的主机" helperText="每行一个精确主机名" multiline minRows={2} disabled={!canManage} value={draft.host_allowlist} onChange={(event) => setDraft((current) => ({ ...current, host_allowlist: event.target.value }))} />
+              <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
+                <TextField label="超时秒数" type="number" disabled={!canManage} value={draft.timeout_seconds} onChange={(event) => setDraft((current) => ({ ...current, timeout_seconds: event.target.value }))} />
+                <TextField label="最大响应字节" type="number" disabled={!canManage} value={draft.max_response_bytes} onChange={(event) => setDraft((current) => ({ ...current, max_response_bytes: event.target.value }))} />
+              </Box>
+            </Stack>
+          </OperatorTechnicalDisclosure>
+          <Divider><Chip label="可用操作" /></Divider>
           {draft.operations.map((operation, index) => (
             <Paper key={`${operation.key}-${index}`} variant="outlined" sx={{ p: 1.5 }}>
               <Stack spacing={1.25}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
                   <Typography variant="subtitle2">操作 {index + 1}</Typography>
-                  {canManage ? (
-                    <Button
-                      size="small"
-                      color="error"
-                      startIcon={<DeleteOutlineRoundedIcon />}
-                      onClick={() => setDraft((current) => ({
-                        ...current,
-                        operations: current.operations.filter((_, itemIndex) => itemIndex !== index),
-                      }))}
-                    >
-                      删除
-                    </Button>
-                  ) : null}
+                  {canManage ? <Button size="small" color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => setDraft((current) => ({ ...current, operations: current.operations.filter((_, itemIndex) => itemIndex !== index) }))}>删除</Button> : null}
                 </Stack>
                 <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
-                  <TextField
-                    label="操作编号"
-                    required
-                    disabled={!canManage}
-                    value={operation.key}
-                    onChange={(event) => updateOperation(index, { key: event.target.value })}
-                  />
-                  <TextField
-                    select
-                    label="操作模式"
-                    disabled={!canManage}
-                    value={operation.mode}
-                    onChange={(event) => updateOperation(index, { mode: event.target.value as OperationMode })}
-                  >
-                    <MenuItem value="read">读取</MenuItem>
-                    <MenuItem value="write">写入</MenuItem>
+                  <TextField label="操作编号" required disabled={!canManage} value={operation.key} onChange={(event) => updateOperation(index, { key: event.target.value })} />
+                  <TextField select label="操作类型" disabled={!canManage} value={operation.mode} onChange={(event) => updateOperation(index, { mode: event.target.value as OperationMode })}>
+                    <MenuItem value="read">查询</MenuItem><MenuItem value="write">修改</MenuItem>
                   </TextField>
-                  <TextField
-                    select
-                    label="HTTP 方法"
-                    disabled={!canManage || draft.kind === 'mcp_http' || operation.mode === 'read'}
-                    value={draft.kind === 'mcp_http' ? 'POST' : operation.method}
-                    onChange={(event) => updateOperation(index, { method: event.target.value })}
-                  >
-                    {['POST', 'PUT', 'PATCH', 'DELETE'].map((method) => (
-                      <MenuItem key={method} value={method}>{method}</MenuItem>
-                    ))}
+                  <TextField select label="请求方法" disabled={!canManage || draft.kind === 'mcp_http' || operation.mode === 'read'} value={draft.kind === 'mcp_http' ? 'POST' : operation.method} onChange={(event) => updateOperation(index, { method: event.target.value })}>
+                    {['POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}
                     {operation.mode === 'read' ? <MenuItem value="GET">GET</MenuItem> : null}
                   </TextField>
-                  <TextField
-                    label="路径"
-                    required
-                    disabled={!canManage}
-                    value={operation.path}
-                    onChange={(event) => updateOperation(index, { path: event.target.value })}
-                  />
-                  <TextField
-                    select
-                    label="风险"
-                    disabled={!canManage}
-                    value={operation.risk_level}
-                    onChange={(event) => updateOperation(index, {
-                      risk_level: event.target.value as OperationDraft['risk_level'],
-                    })}
-                  >
-                    <MenuItem value="low">低</MenuItem>
-                    <MenuItem value="medium">中</MenuItem>
-                    <MenuItem value="high">高</MenuItem>
+                  <TextField label="请求路径" required disabled={!canManage} value={operation.path} onChange={(event) => updateOperation(index, { path: event.target.value })} />
+                  <TextField select label="风险等级" disabled={!canManage} value={operation.risk_level} onChange={(event) => updateOperation(index, { risk_level: event.target.value as OperationDraft['risk_level'] })}>
+                    <MenuItem value="low">低</MenuItem><MenuItem value="medium">中</MenuItem><MenuItem value="high">高</MenuItem>
                   </TextField>
                 </Box>
-                <TextField
-                  label="操作说明"
-                  required
-                  disabled={!canManage}
-                  value={operation.description}
-                  onChange={(event) => updateOperation(index, { description: event.target.value })}
-                />
-                <TextField
-                  label="输入字段"
-                  helperText="每行 name:type:required；类型支持 string/integer/number/boolean/object/array"
-                  multiline
-                  minRows={3}
-                  disabled={!canManage}
-                  value={operation.schema_fields}
-                  onChange={(event) => updateOperation(index, { schema_fields: event.target.value })}
-                />
-                <TextField
-                  label="结果字段白名单"
-                  helperText="每行一个 JSON 路径；留空表示返回经过边界与密钥脱敏的结果"
-                  multiline
-                  minRows={2}
-                  disabled={!canManage}
-                  value={operation.result_allowlist}
-                  onChange={(event) => updateOperation(index, { result_allowlist: event.target.value })}
-                />
-                <Stack direction="row" spacing={2}>
-                  <FormControlLabel
-                    control={(
-                      <Checkbox
-                        disabled={!canManage || operation.mode === 'write'}
-                        checked={operation.mode === 'write' || operation.requires_confirmation}
-                        onChange={(event) => updateOperation(index, { requires_confirmation: event.target.checked })}
-                      />
-                    )}
-                    label="要求客户确认"
-                  />
-                  <FormControlLabel
-                    control={(
-                      <Checkbox
-                        disabled={!canManage}
-                        checked={operation.enabled}
-                        onChange={(event) => updateOperation(index, { enabled: event.target.checked })}
-                      />
-                    )}
-                    label="启用"
-                  />
+                <TextField label="操作说明" required disabled={!canManage} value={operation.description} onChange={(event) => updateOperation(index, { description: event.target.value })} />
+                <OperatorTechnicalDisclosure title="数据字段" summary="输入格式和返回字段">
+                  <Stack spacing={1.25}>
+                    <TextField label="输入字段" helperText="每行 name:type:required" multiline minRows={3} disabled={!canManage} value={operation.schema_fields} onChange={(event) => updateOperation(index, { schema_fields: event.target.value })} />
+                    <TextField label="允许返回的字段" helperText="每行一个 JSON 路径；留空使用系统脱敏结果" multiline minRows={2} disabled={!canManage} value={operation.result_allowlist} onChange={(event) => updateOperation(index, { result_allowlist: event.target.value })} />
+                  </Stack>
+                </OperatorTechnicalDisclosure>
+                <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                  <FormControlLabel control={<Checkbox disabled={!canManage || operation.mode === 'write'} checked={operation.mode === 'write' || operation.requires_confirmation} onChange={(event) => updateOperation(index, { requires_confirmation: event.target.checked })} />} label="要求客户确认" />
+                  <FormControlLabel control={<Checkbox disabled={!canManage} checked={operation.enabled} onChange={(event) => updateOperation(index, { enabled: event.target.checked })} />} label="启用" />
                 </Stack>
               </Stack>
             </Paper>
           ))}
-          {canManage ? (
-            <Button
-              variant="outlined"
-              startIcon={<AddRoundedIcon />}
-              onClick={() => setDraft((current) => ({
-                ...current,
-                operations: [...current.operations, emptyOperation()],
-              }))}
-            >
-              添加操作
-            </Button>
-          ) : null}
-          <TextField
-            label="版本摘要"
-            multiline
-            minRows={2}
-            disabled={!canManage}
-            value={draft.draft_summary}
-            onChange={(event) => setDraft((current) => ({ ...current, draft_summary: event.target.value }))}
-          />
-          <FormControlLabel
-            control={(
-              <Switch
-                disabled={!canManage}
-                checked={draft.is_active}
-                onChange={(event) => setDraft((current) => ({ ...current, is_active: event.target.checked }))}
-              />
-            )}
-            label="启用集成"
-          />
-          {canManage ? (
-            <Stack direction="row" spacing={1}>
-              <Button
-                variant="contained"
-                disabled={save.isPending}
-                startIcon={save.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />}
-                onClick={() => save.mutate(false)}
-              >
-                保存草稿
-              </Button>
-              <Button
-                variant="outlined"
-                disabled={save.isPending}
-                startIcon={<PublishRoundedIcon />}
-                onClick={() => save.mutate(true)}
-              >
-                保存并发布资源版本
-              </Button>
-            </Stack>
-          ) : null}
+          {canManage ? <Button variant="outlined" startIcon={<AddRoundedIcon />} onClick={() => setDraft((current) => ({ ...current, operations: [...current.operations, emptyOperation()] }))}>添加操作</Button> : null}
+          <TextField label="版本摘要" multiline minRows={2} disabled={!canManage} value={draft.draft_summary} onChange={(event) => setDraft((current) => ({ ...current, draft_summary: event.target.value }))} />
+          <FormControlLabel control={<Switch disabled={!canManage} checked={draft.is_active} onChange={(event) => setDraft((current) => ({ ...current, is_active: event.target.checked }))} />} label="启用外部系统" />
+          {canManage ? <Stack direction="row" spacing={1}><Button variant="contained" disabled={save.isPending} startIcon={save.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />} onClick={() => save.mutate(false)}>保存草稿</Button><Button variant="outlined" disabled={save.isPending} startIcon={<PublishRoundedIcon />} onClick={() => save.mutate(true)}>保存并发布</Button></Stack> : null}
         </Stack>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2, alignSelf: 'start' }}>
+      <Paper component="aside" variant="outlined" sx={{ p: 2, alignSelf: 'start' }}>
         <Typography component="h2" variant="h3">连接测试</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          只测试已发布资源。读取操作执行受限请求；写入操作只做 Schema、凭据和路由验证，不产生副作用。
-        </Typography>
         <Stack spacing={1.5} sx={{ mt: 2 }}>
-          <TextField
-            select
-            label="操作"
-            value={testOperation}
-            onChange={(event) => setTestOperation(event.target.value)}
-          >
-            {draft.operations.map((item) => (
-              <MenuItem key={item.key} value={item.key}>
-                {item.key || '未命名'} · {item.mode} · {draft.kind === 'mcp_http' ? 'POST' : item.method}
-              </MenuItem>
-            ))}
+          <TextField select label="操作" value={testOperation} onChange={(event) => setTestOperation(event.target.value)}>
+            {draft.operations.map((item) => <MenuItem key={item.key} value={item.key}>{item.description || item.key || '未命名操作'} · {item.mode === 'read' ? '查询' : '修改'}</MenuItem>)}
           </TextField>
-          <TextField
-            label="测试参数 JSON"
-            multiline
-            minRows={6}
-            value={testArguments}
-            onChange={(event) => setTestArguments(event.target.value)}
-          />
-          <Button
-            variant="outlined"
-            disabled={!selected || selected.published_version <= 0 || !testOperation || test.isPending}
-            startIcon={test.isPending ? <CircularProgress size={16} /> : <PlayArrowRoundedIcon />}
-            onClick={() => test.mutate()}
-          >
+          <TextField label="测试参数" helperText="JSON 格式" multiline minRows={6} value={testArguments} onChange={(event) => setTestArguments(event.target.value)} />
+          <Button variant="outlined" disabled={!selected || selected.published_version <= 0 || !testOperation || test.isPending} startIcon={test.isPending ? <CircularProgress size={16} /> : <PlayArrowRoundedIcon />} onClick={() => test.mutate()}>
             测试已发布版本
           </Button>
-          {test.error ? (
-            <OperatorErrorNotice title="测试失败" error={test.error} fallback="请检查凭据、主机、作用域和参数" />
-          ) : null}
-          {test.data ? (
-            <OperatorTechnicalDisclosure title="测试结果">
-              <Box component="pre" sx={{ m: 0, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                {JSON.stringify(test.data, null, 2)}
-              </Box>
-            </OperatorTechnicalDisclosure>
-          ) : null}
+          {test.error ? <OperatorErrorNotice title="测试失败" error={test.error} fallback="请检查凭据、连接地址、适用范围和测试参数" /> : null}
+          {test.data ? <OperatorTechnicalDisclosure title="测试结果"><Box component="pre" sx={{ m: 0, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(test.data, null, 2)}</Box></OperatorTechnicalDisclosure> : null}
         </Stack>
       </Paper>
     </Box>
   )
+}
+
+function riskLabel(value: string) {
+  const labels: Record<string, string> = { low: '低', medium: '中', high: '高', critical: '关键' }
+  return labels[value] || value
 }

@@ -1,4 +1,4 @@
-import PsychologyRoundedIcon from '@mui/icons-material/PsychologyRounded'
+import TuneRoundedIcon from '@mui/icons-material/TuneRounded'
 import {
   Alert,
   Box,
@@ -55,7 +55,7 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
     retry: false,
   })
 
-  useEffect(() => { document.title = 'Agent 控制面 · Nexus OSR' }, [])
+  useEffect(() => { document.title = '自动处理配置 · Nexus OSR' }, [])
   useEffect(() => {
     if (!tenantKey && snapshot.data?.tenant_key) setTenantKey(snapshot.data.tenant_key)
   }, [snapshot.data?.tenant_key, tenantKey])
@@ -66,19 +66,14 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
         sx={{
-          alignItems: { xs: 'stretch', sm: 'flex-start' },
+          alignItems: { xs: 'stretch', sm: 'center' },
           justifyContent: 'space-between',
         }}
       >
-        <Box>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <PsychologyRoundedIcon color="primary" aria-hidden="true" />
-            <Typography component="h1" variant="h1">Agent 控制面</Typography>
-          </Stack>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            统一管理 Agent 定义、不可变发布、渠道部署、人格、业务剧本、工具、模型、运行策略和运行诊断；知识继续由唯一知识库维护，并在 Agent Definition 中按版本绑定。
-          </Typography>
-        </Box>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <TuneRoundedIcon color="primary" aria-hidden="true" />
+          <Typography component="h1" variant="h1">自动处理配置</Typography>
+        </Stack>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           {!canManage ? <Alert severity="info" variant="outlined">只读</Alert> : null}
           {snapshot.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
@@ -91,24 +86,24 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
           onChange={(_, next: AgentControlTab) => setTab(next)}
           variant="scrollable"
           scrollButtons="auto"
-          aria-label="Agent 控制面分类"
+          aria-label="自动处理配置分类"
         >
-          <Tab value="overview" label="定义、发布与测试" />
-          <Tab value="delivery" label="小范围发布" />
-          <Tab value="persona" label="人格" />
-          <Tab value="playbooks" label="业务剧本" />
+          <Tab value="overview" label="方案与测试" />
+          <Tab value="delivery" label="发布范围" />
+          <Tab value="persona" label="回复风格" />
+          <Tab value="playbooks" label="业务规则" />
           <Tab value="tools" label="工具与集成" />
           <Tab value="runtime" label="模型与运行" />
-          <Tab value="diagnostics" label="运行诊断" />
+          <Tab value="diagnostics" label="运行记录" />
         </Tabs>
       </Paper>
 
       {snapshot.isError ? (
         <Box sx={{ mt: 2 }}>
           <OperatorErrorNotice
-            title="无法读取 Agent 控制面"
+            title="无法读取自动处理配置"
             error={snapshot.error}
-            fallback="请检查控制面服务"
+            fallback="请稍后重试或联系系统管理员"
           />
         </Box>
       ) : snapshot.isLoading || !snapshot.data ? (
@@ -196,7 +191,7 @@ function deploymentResolutionMessage(value?: string | null) {
   if (
     value === 'agent_deployment_not_found'
     || value === 'agent_deployment_unavailable'
-  ) return '未找到匹配当前范围的 Agent Deployment。'
-  if (value === 'ambiguous_agent_deployment_scope') return '当前范围命中了多个 Agent Deployment，请收敛作用域。'
-  return '当前 Agent Deployment 暂不可用，请检查已发布 Release 和部署范围。'
+  ) return '当前范围尚未配置已发布版本。'
+  if (value === 'ambiguous_agent_deployment_scope') return '当前范围匹配到多个生效配置，请缩小适用范围。'
+  return '当前配置暂不可用，请检查已发布版本和适用范围。'
 }

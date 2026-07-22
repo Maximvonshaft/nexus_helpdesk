@@ -37,6 +37,7 @@ import {
   OperatorEmptyState,
   OperatorErrorNotice,
   OperatorLoadingState,
+  OperatorTechnicalDisclosure,
 } from '@/app/OperatorPresentation'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
@@ -62,13 +63,46 @@ const emptyDraft: UserDraft = {
   capabilities: [],
 }
 
+const capabilityLabels: Record<string, string> = {
+  'operator_queue.read': '查看待处理任务',
+  'ticket.read': '查看案例与工单',
+  'ticket.write': '更新案例与工单',
+  'ticket.assign': '分配案例与工单',
+  'attachment.read': '查看附件',
+  'attachment.write': '上传附件',
+  'customer_profile.read': '查看客户资料',
+  'customer_profile.write': '更新客户资料',
+  'outbound.send': '发送客户消息',
+  'note.read': '查看内部备注',
+  'note.write': '添加内部备注',
+  'user.manage': '管理用户与权限',
+  'channel_account.manage': '管理渠道账号',
+  'bulletin.manage': '管理公告',
+  'ai_config.read': '查看自动处理配置',
+  'ai_config.manage': '管理自动处理配置',
+  'runtime.manage': '管理系统运行',
+  'market.manage': '管理市场配置',
+  'qa.read': '查看质量数据',
+  'qa.manage': '管理质量规则',
+  'security.read': '查看安全记录',
+  'audit.read': '查看审计记录',
+  'webcall.voice.read': '查看语音会话',
+  'webcall.voice.queue.view': '查看来电队列',
+  'webcall.voice.accept': '接听来电',
+  'webcall.voice.reject': '拒接来电',
+  'webcall.voice.end': '结束通话',
+  'webcall.voice.control': '管理通话',
+  'webchat.read': '查看网页会话',
+  'webchat.write': '回复网页会话',
+}
+
 function roleLabel(role: string) {
   if (role === 'admin') return '管理员'
   if (role === 'manager') return '运营经理'
   if (role === 'lead') return '组长'
   if (role === 'agent') return '客服专员'
   if (role === 'auditor') return '审计员'
-  return role
+  return sanitizeDisplayText(role)
 }
 
 function capabilityGroup(capability: string) {
@@ -79,30 +113,36 @@ function capabilityGroup(capability: string) {
     attachment: '附件',
     customer_profile: '客户资料',
     outbound: '客户沟通',
-    ai_intake: 'AI 辅助',
-    note: '备注与评论',
-    user: '用户治理',
+    ai_intake: '自动处理',
+    note: '内部备注',
+    user: '用户管理',
     channel_account: '渠道管理',
-    bulletin: '公告治理',
-    ai_config: '知识与 AI 配置',
+    bulletin: '公告管理',
+    ai_config: '自动处理配置',
     runtime: '系统运行',
     market: '市场配置',
     qa: '质量管理',
-    security: '安全审计',
+    security: '安全记录',
     audit: '审计记录',
     webcall: '语音会话',
     webchat: '网页会话',
-    operator_queue: '统一任务队列',
+    operator_queue: '任务队列',
   }
   return labels[prefix] || '其他权限'
 }
 
 function capabilityLabel(capability: string) {
-  return capability
-    .replace(/^tool:/, '')
-    .replaceAll(':', ' · ')
-    .replaceAll('_', ' ')
-    .replaceAll('.', ' · ')
+  if (capabilityLabels[capability]) return capabilityLabels[capability]
+  if (capability.startsWith('tool:')) {
+    const segments = capability.replace(/^tool:/, '').split(':')
+    const operation = segments.at(-1) === 'write' ? '执行' : '查看'
+    const subject = segments.slice(0, -1).join(' · ').replaceAll('_', ' ')
+    return `${operation} ${subject}`
+  }
+  const action = capability.split('.').at(-1)
+  if (action === 'read') return '查看'
+  if (action === 'write' || action === 'manage') return '管理'
+  return '使用'
 }
 
 export function UserGovernance({
@@ -295,7 +335,7 @@ export function UserGovernance({
         <Box>
           <Typography id="user-governance-title" component="h2" variant="h2">用户与权限</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            角色提供服务器默认权限，个别用户可在同一表单中增加或移除能力。停用账号不会删除审计历史。
+            创建账号、分配角色和团队，并按需调整权限。停用账号不会删除历史记录。
           </Typography>
         </Box>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
@@ -306,7 +346,7 @@ export function UserGovernance({
       <Divider sx={{ my: 2 }} />
 
       {usersQuery.isError ? <OperatorErrorNotice title="无法读取用户" error={usersQuery.error} fallback="请稍后重试" /> : null}
-      {toggleStatus.isError ? <Box sx={{ mb: 2 }}><OperatorErrorNotice title="账号状态更新失败" error={toggleStatus.error} fallback="请检查管理员保护规则" /></Box> : null}
+      {toggleStatus.isError ? <Box sx={{ mb: 2 }}><OperatorErrorNotice title="账号状态更新失败" error={toggleStatus.error} fallback="请检查账号保护规则" /></Box> : null}
       {usersQuery.isLoading ? <OperatorLoadingState label="正在加载用户…" minHeight={220} /> : !visibleUsers.length ? (
         <OperatorEmptyState title="没有匹配的用户" description={search ? '请调整搜索条件。' : '创建第一个运营账号。'} />
       ) : (
@@ -318,7 +358,7 @@ export function UserGovernance({
                   <TableCell>用户</TableCell>
                   <TableCell>角色</TableCell>
                   <TableCell>团队</TableCell>
-                  <TableCell align="right">有效权限</TableCell>
+                  <TableCell align="right">权限</TableCell>
                   <TableCell>状态</TableCell>
                   <TableCell>最近更新</TableCell>
                   <TableCell align="right">操作</TableCell>
@@ -337,7 +377,7 @@ export function UserGovernance({
                       <TableCell>{team ? team.name : '未分配'}</TableCell>
                       <TableCell align="right">{user.capabilities.length}</TableCell>
                       <TableCell><Chip size="small" color={user.is_active ? 'success' : 'default'} label={user.is_active ? '启用' : '停用'} /></TableCell>
-                      <TableCell>{user.updated_at ? formatDateTime(user.updated_at) : '暂无'}</TableCell>
+                      <TableCell>{formatDateTime(user.updated_at)}</TableCell>
                       <TableCell align="right">
                         <Stack direction="row" spacing={0.5} useFlexGap sx={{ justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                           <Button size="small" color="inherit" startIcon={<EditRoundedIcon />} onClick={() => openEdit(user)}>编辑</Button>
@@ -374,14 +414,14 @@ export function UserGovernance({
           <DialogTitle>{selectedUser ? '编辑用户' : '创建用户'}</DialogTitle>
           <DialogContent>
             <DialogContentText>
-              用户治理变更会立即使该用户的旧登录会话失效。角色权限来自服务器策略，页面不会保存第二份权限模板。
+              保存后，新角色、团队和权限立即生效。修改当前账号时需要重新登录。
             </DialogContentText>
             <Stack spacing={2} sx={{ mt: 2 }}>
-              {saveUser.isError ? <OperatorErrorNotice title="保存用户失败" error={saveUser.error} fallback="请检查账号唯一性、密码规则和管理员保护规则" /> : null}
+              {saveUser.isError ? <OperatorErrorNotice title="保存用户失败" error={saveUser.error} fallback="请检查账号、密码和管理员保护规则" /> : null}
               {selectedUser?.id === currentUserId ? <Alert severity="warning" variant="outlined">正在修改当前登录账号；保存后需要重新登录。</Alert> : null}
               {selectedUserIsFinalActiveAdmin ? (
                 <Alert severity="warning" variant="outlined">
-                  这是当前租户最后一个活跃管理员。角色和 user.manage 权限已锁定，避免造成治理失联。
+                  这是当前组织最后一个启用的管理员。管理员角色和用户管理权限不能移除。
                 </Alert>
               ) : null}
               <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
@@ -403,7 +443,7 @@ export function UserGovernance({
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
                   <Box>
-                    <Typography component="h3" variant="h3">有效权限</Typography>
+                    <Typography component="h3" variant="h3">权限</Typography>
                     <Typography variant="body2" color="text.secondary">已选择 {draft.capabilities.length} 项；角色默认 {selectedRoleDefaults.length} 项。</Typography>
                   </Box>
                   <Button color="inherit" startIcon={<RestartAltRoundedIcon />} onClick={restoreRoleDefaults}>恢复角色默认</Button>
@@ -431,6 +471,11 @@ export function UserGovernance({
                     </Box>
                   ))}
                 </Stack>
+                <OperatorTechnicalDisclosure title="权限代码" summary={`${draft.capabilities.length} 项`} compact>
+                  <Typography component="pre" variant="caption" sx={{ m: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {draft.capabilities.join('\n') || '无'}
+                  </Typography>
+                </OperatorTechnicalDisclosure>
               </Paper>
             </Stack>
           </DialogContent>
@@ -447,11 +492,11 @@ export function UserGovernance({
         <DialogTitle>重置用户密码</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            为 {resetUser?.display_name} 设置新密码。成功后该用户所有旧会话会立即失效。
+            为 {resetUser?.display_name} 设置新密码。完成后，该用户需要使用新密码重新登录。
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 2 }}>
             <Alert severity="info" variant="outlined">密码至少 12 位，并同时包含小写字母、大写字母、数字和特殊字符。</Alert>
-            {resetCredential.isError ? <OperatorErrorNotice title="密码重置失败" error={resetCredential.error} fallback="请检查密码规则" /> : null}
+            {resetCredential.isError ? <OperatorErrorNotice title="密码重置失败" error={resetCredential.error} fallback="请检查密码要求" /> : null}
             <TextField label="新密码" type="password" required autoComplete="new-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} />
             <TextField label="确认新密码" type="password" required autoComplete="new-password" value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} error={Boolean(resetConfirmation && resetPassword !== resetConfirmation)} helperText={resetConfirmation && resetPassword !== resetConfirmation ? '两次密码不一致' : ' '} />
           </Stack>
@@ -459,7 +504,7 @@ export function UserGovernance({
         <DialogActions>
           <Button color="inherit" disabled={resetCredential.isPending} onClick={() => setResetUser(null)}>取消</Button>
           <Button variant="contained" disabled={!resetReady || resetCredential.isPending} startIcon={resetCredential.isPending ? <CircularProgress color="inherit" size={16} /> : <KeyRoundedIcon />} onClick={() => resetCredential.mutate()}>
-            {resetCredential.isPending ? '正在重置…' : '重置并撤销旧会话'}
+            {resetCredential.isPending ? '正在重置…' : '重置密码'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -469,8 +514,8 @@ export function UserGovernance({
         <DialogContent>
           <DialogContentText>
             {toggleUser?.is_active
-              ? `停用 ${toggleUser.display_name} 后，该账号将立即无法登录，现有会话也会失效。审计历史不会删除。`
-              : `启用 ${toggleUser?.display_name} 后，该账号可以使用现有凭据重新登录。`}
+              ? `停用 ${toggleUser.display_name} 后，该账号将立即无法登录并退出所有设备。历史记录不会删除。`
+              : `启用 ${toggleUser?.display_name} 后，该账号可以重新登录。`}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

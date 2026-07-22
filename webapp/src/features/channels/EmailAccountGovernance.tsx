@@ -4,7 +4,6 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded'
 import ToggleOffRoundedIcon from '@mui/icons-material/ToggleOffRounded'
 import ToggleOnRoundedIcon from '@mui/icons-material/ToggleOnRounded'
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -35,6 +34,7 @@ import {
   OperatorEmptyState,
   OperatorErrorNotice,
   OperatorLoadingState,
+  OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
@@ -205,7 +205,7 @@ export function EmailAccountGovernance() {
       return supportApi.testOutboundEmailAccount(testAccount.id, {
         to_address: testAddress.trim(),
         subject: 'Nexus OSR 邮件渠道测试',
-        body: '此邮件用于验证 Nexus OSR SMTP 账号配置与外部发送路径。',
+        body: '此邮件用于验证 Nexus OSR 邮件发送配置。',
       })
     },
     onSuccess: async () => {
@@ -250,21 +250,18 @@ export function EmailAccountGovernance() {
         <Box>
           <Typography id="email-accounts-title" component="h2" variant="h3">邮件账号</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            管理 SMTP 外发与可选 IMAP 收件配置。密码只写入加密存储，页面不会回显明文。
+            管理邮件发送和收件账号。密码仅在新增或更换时填写，保存后不再显示。
           </Typography>
         </Box>
         <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreate}>新增邮件账号</Button>
       </Stack>
       <Divider sx={{ my: 2 }} />
-      <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
-        SMTP 与 IMAP 密码只在新增或主动替换时提交；列表、编辑表单、审计记录和错误提示均不回显明文。
-      </Alert>
 
       {accounts.isError ? <OperatorErrorNotice title="无法读取邮件账号" error={accounts.error} fallback="请稍后重试" /> : null}
       {markets.isError ? <OperatorErrorNotice title="无法读取市场" error={markets.error} fallback="请稍后重试" /> : null}
       {toggleActive.isError ? <OperatorErrorNotice title="账号状态更新失败" error={toggleActive.error} fallback="请稍后重试" /> : null}
       {accounts.isLoading ? <OperatorLoadingState label="正在加载邮件账号…" minHeight={220} /> : !sortedAccounts.length ? (
-        <OperatorEmptyState title="暂无邮件账号" description="新增 SMTP 账号并完成测试发送后，邮件渠道才能进入可用状态。" />
+        <OperatorEmptyState title="暂无邮件账号" description="新增账号并完成测试发送后，即可启用邮件渠道。" />
       ) : (
         <TableContainer>
           <Table size="small" aria-label="邮件账号列表">
@@ -272,7 +269,7 @@ export function EmailAccountGovernance() {
               <TableRow>
                 <TableCell>账号</TableCell>
                 <TableCell>市场</TableCell>
-                <TableCell>外发</TableCell>
+                <TableCell>发送</TableCell>
                 <TableCell>收件</TableCell>
                 <TableCell>测试</TableCell>
                 <TableCell>状态</TableCell>
@@ -287,17 +284,11 @@ export function EmailAccountGovernance() {
                   <TableRow key={account.id} hover>
                     <TableCell>
                       <Typography variant="subtitle2">{sanitizeDisplayText(account.display_name || account.from_address)}</Typography>
-                      <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(`${account.host}:${account.port} · ${account.username}`)}</Typography>
+                      <Typography variant="caption" color="text.secondary">{sanitizeDisplayText(account.from_address)}</Typography>
                     </TableCell>
-                    <TableCell>{market?.name || (account.market_id ? `#${account.market_id}` : '全局')}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{account.password_configured ? '凭据已配置' : '缺少凭据'}</Typography>
-                      <Typography variant="caption" color="text.secondary">{account.security_mode}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{account.inbound_enabled ? (account.imap_password_configured ? '已启用' : '配置不完整') : '未启用'}</Typography>
-                      <Typography variant="caption" color="text.secondary">{account.imap_last_status || '暂无同步状态'}</Typography>
-                    </TableCell>
+                    <TableCell>{market?.name || (account.market_id ? `市场 #${account.market_id}` : '全部市场')}</TableCell>
+                    <TableCell>{account.password_configured ? '已配置' : '缺少密码'}</TableCell>
+                    <TableCell>{account.inbound_enabled ? (account.imap_password_configured ? '已启用' : '配置不完整') : '未启用'}</TableCell>
                     <TableCell>
                       <Typography variant="body2">{account.last_test_status || '未测试'}</Typography>
                       <Typography variant="caption" color="text.secondary">{account.last_test_at ? formatDateTime(account.last_test_at) : '暂无时间'}</Typography>
@@ -335,51 +326,58 @@ export function EmailAccountGovernance() {
           <DialogTitle>{selected ? '编辑邮件账号' : '新增邮件账号'}</DialogTitle>
           <DialogContent>
             <DialogContentText>
-              SMTP 密码和 IMAP 密码仅在新增或主动替换时提交。编辑时留空会保留现有加密凭据。
+              编辑已有账号时，密码留空会保留当前密码。
             </DialogContentText>
             <Stack spacing={2} sx={{ mt: 2 }}>
-              {saveAccount.isError ? <OperatorErrorNotice title="保存邮件账号失败" error={saveAccount.error} fallback="请检查主机、端口、市场和收件配置" /> : null}
+              {saveAccount.isError ? <OperatorErrorNotice title="保存邮件账号失败" error={saveAccount.error} fallback="请检查地址、端口、市场和收件配置" /> : null}
               <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
                 <TextField label="账号名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
                 <TextField select label="市场" value={draft.marketId} onChange={(event) => setDraft((current) => ({ ...current, marketId: event.target.value }))}>
-                  <MenuItem value="">全局</MenuItem>
+                  <MenuItem value="">全部市场</MenuItem>
                   {(markets.data ?? []).map((market) => <MenuItem key={market.id} value={String(market.id)}>{market.name}</MenuItem>)}
                 </TextField>
-                <TextField label="SMTP 主机" required value={draft.host} onChange={(event) => setDraft((current) => ({ ...current, host: event.target.value }))} />
-                <TextField label="SMTP 端口" required type="number" value={draft.port} onChange={(event) => setDraft((current) => ({ ...current, port: event.target.value }))} />
-                <TextField label="SMTP 用户名" required value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
-                <TextField label={selected ? '替换 SMTP 密码' : 'SMTP 密码'} required={!selected} type="password" autoComplete="new-password" value={draft.password} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} helperText={selected ? '留空保留现有加密密码' : '必填'} />
+                <TextField label="发送服务器" required value={draft.host} onChange={(event) => setDraft((current) => ({ ...current, host: event.target.value }))} />
+                <TextField label="发送端口" required type="number" value={draft.port} onChange={(event) => setDraft((current) => ({ ...current, port: event.target.value }))} />
+                <TextField label="登录账号" required value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
+                <TextField label={selected ? '更换发送密码' : '发送密码'} required={!selected} type="password" autoComplete="new-password" value={draft.password} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} helperText={selected ? '留空保留当前密码' : '必填'} />
                 <TextField label="发件地址" required type="email" value={draft.fromAddress} onChange={(event) => setDraft((current) => ({ ...current, fromAddress: event.target.value }))} />
                 <TextField label="回复地址" type="email" value={draft.replyTo} onChange={(event) => setDraft((current) => ({ ...current, replyTo: event.target.value }))} />
-                <TextField select label="SMTP 安全模式" value={draft.securityMode} onChange={(event) => setDraft((current) => ({ ...current, securityMode: event.target.value as OutboundEmailSecurityMode }))}>
-                  <MenuItem value="starttls">STARTTLS</MenuItem>
-                  <MenuItem value="ssl">SSL/TLS</MenuItem>
-                  <MenuItem value="plain">Plain</MenuItem>
-                </TextField>
                 <TextField label="优先级" type="number" required value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))} />
               </Box>
 
-              <FormControlLabel control={<Switch checked={draft.isActive} onChange={(event) => setDraft((current) => ({ ...current, isActive: event.target.checked }))} />} label="保存后启用外发账号" />
-              <FormControlLabel control={<Switch checked={draft.inboundEnabled} onChange={(event) => setDraft((current) => ({ ...current, inboundEnabled: event.target.checked }))} />} label="启用 IMAP 收件" />
+              <FormControlLabel control={<Switch checked={draft.isActive} onChange={(event) => setDraft((current) => ({ ...current, isActive: event.target.checked }))} />} label="保存后启用发送" />
+              <FormControlLabel control={<Switch checked={draft.inboundEnabled} onChange={(event) => setDraft((current) => ({ ...current, inboundEnabled: event.target.checked }))} />} label="启用收件" />
 
               {draft.inboundEnabled ? (
                 <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography component="h3" variant="h3">IMAP 收件配置</Typography>
+                  <Typography component="h3" variant="h3">收件配置</Typography>
                   <Divider sx={{ my: 2 }} />
                   <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
-                    <TextField label="IMAP 主机" required value={draft.imapHost} onChange={(event) => setDraft((current) => ({ ...current, imapHost: event.target.value }))} />
-                    <TextField label="IMAP 端口" required type="number" value={draft.imapPort} onChange={(event) => setDraft((current) => ({ ...current, imapPort: event.target.value }))} />
-                    <TextField label="IMAP 用户名" required value={draft.imapUsername} onChange={(event) => setDraft((current) => ({ ...current, imapUsername: event.target.value }))} />
-                    <TextField label={selected ? '替换 IMAP 密码' : 'IMAP 密码'} required={!selected?.imap_password_configured} type="password" autoComplete="new-password" value={draft.imapPassword} onChange={(event) => setDraft((current) => ({ ...current, imapPassword: event.target.value }))} helperText={selected ? '留空保留现有加密密码' : '启用收件时必填'} />
-                    <TextField select label="IMAP 安全模式" value={draft.imapSecurityMode} onChange={(event) => setDraft((current) => ({ ...current, imapSecurityMode: event.target.value as OutboundEmailSecurityMode }))}>
-                      <MenuItem value="ssl">SSL/TLS</MenuItem>
-                      <MenuItem value="starttls">STARTTLS</MenuItem>
-                      <MenuItem value="plain">Plain</MenuItem>
-                    </TextField>
+                    <TextField label="收件服务器" required value={draft.imapHost} onChange={(event) => setDraft((current) => ({ ...current, imapHost: event.target.value }))} />
+                    <TextField label="收件端口" required type="number" value={draft.imapPort} onChange={(event) => setDraft((current) => ({ ...current, imapPort: event.target.value }))} />
+                    <TextField label="收件登录账号" required value={draft.imapUsername} onChange={(event) => setDraft((current) => ({ ...current, imapUsername: event.target.value }))} />
+                    <TextField label={selected ? '更换收件密码' : '收件密码'} required={!selected?.imap_password_configured} type="password" autoComplete="new-password" value={draft.imapPassword} onChange={(event) => setDraft((current) => ({ ...current, imapPassword: event.target.value }))} helperText={selected ? '留空保留当前密码' : '启用收件时必填'} />
                     <TextField label="邮箱目录" value={draft.imapMailbox} onChange={(event) => setDraft((current) => ({ ...current, imapMailbox: event.target.value }))} />
                   </Box>
                 </Paper>
               ) : null}
+
+              <OperatorTechnicalDisclosure title="高级连接设置" summary="加密方式与协议">
+                <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
+                  <TextField select label="发送加密方式" value={draft.securityMode} onChange={(event) => setDraft((current) => ({ ...current, securityMode: event.target.value as OutboundEmailSecurityMode }))}>
+                    <MenuItem value="starttls">STARTTLS</MenuItem>
+                    <MenuItem value="ssl">SSL/TLS</MenuItem>
+                    <MenuItem value="plain">不加密</MenuItem>
+                  </TextField>
+                  {draft.inboundEnabled ? (
+                    <TextField select label="收件加密方式" value={draft.imapSecurityMode} onChange={(event) => setDraft((current) => ({ ...current, imapSecurityMode: event.target.value as OutboundEmailSecurityMode }))}>
+                      <MenuItem value="ssl">SSL/TLS</MenuItem>
+                      <MenuItem value="starttls">STARTTLS</MenuItem>
+                      <MenuItem value="plain">不加密</MenuItem>
+                    </TextField>
+                  ) : null}
+                </Box>
+              </OperatorTechnicalDisclosure>
             </Stack>
           </DialogContent>
           <DialogActions>
@@ -395,10 +393,10 @@ export function EmailAccountGovernance() {
         <DialogTitle>测试邮件发送</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            使用 {testAccount?.display_name || testAccount?.from_address} 向指定地址发送一封真实测试邮件，并更新账号健康状态。
+            使用 {testAccount?.display_name || testAccount?.from_address} 向指定地址发送一封真实测试邮件。
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 2 }}>
-            {testSend.isError ? <OperatorErrorNotice title="测试发送失败" error={testSend.error} fallback="请检查 SMTP 配置、网络和收件地址" /> : null}
+            {testSend.isError ? <OperatorErrorNotice title="测试发送失败" error={testSend.error} fallback="请检查账号配置和收件地址" /> : null}
             <TextField label="测试收件地址" type="email" required value={testAddress} onChange={(event) => setTestAddress(event.target.value)} />
           </Stack>
         </DialogContent>
@@ -415,8 +413,8 @@ export function EmailAccountGovernance() {
         <DialogContent>
           <DialogContentText>
             {toggleAccount?.is_active
-              ? '停用后，该账号不会被选择用于新的外部邮件发送；历史记录和审计证据保留。'
-              : '启用不会替代测试发送。生产可用性仍取决于凭据、健康状态和运行开关。'}
+              ? '停用后，该账号不会用于新的邮件发送。历史记录会保留。'
+              : '启用后仍应先完成测试发送，确认账号可以正常使用。'}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

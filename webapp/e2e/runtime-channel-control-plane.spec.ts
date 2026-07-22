@@ -73,16 +73,16 @@ test('runtime manager sees dead queues and requeues through canonical commands',
   })
 
   await page.goto('/runtime')
-  const recoveryRegion = page.getByRole('region', { name: '队列恢复' })
-  await expect(recoveryRegion.getByRole('heading', { level: 2, name: '队列恢复' })).toBeVisible()
+  const recoveryRegion = page.getByRole('region', { name: '失败任务恢复' })
+  await expect(recoveryRegion.getByRole('heading', { level: 2, name: '失败任务恢复' })).toBeVisible()
   await expect(recoveryRegion.getByText('失败后台任务', { exact: true })).toBeVisible()
 
   await recoveryRegion.getByRole('button', { name: '恢复失败后台任务' }).click()
-  await page.getByRole('dialog', { name: '恢复失败后台任务' }).getByRole('button', { name: '确认重新排队' }).click()
+  await page.getByRole('dialog', { name: '恢复失败后台任务' }).getByRole('button', { name: '确认恢复' }).click()
   await expect.poll(() => commands).toContain('jobs')
 
   await recoveryRegion.getByRole('button', { name: '恢复失败外部消息' }).click()
-  await page.getByRole('dialog', { name: '恢复失败外部消息' }).getByRole('button', { name: '确认重新排队' }).click()
+  await page.getByRole('dialog', { name: '恢复失败外部消息' }).getByRole('button', { name: '确认恢复' }).click()
   await expect.poll(() => commands).toContain('outbound')
 })
 
