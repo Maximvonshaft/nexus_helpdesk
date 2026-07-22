@@ -38,6 +38,7 @@ test('router exposes only the owned canonical route files', () => {
     'login.tsx',
     'root.tsx',
     'runtime.tsx',
+    'webcall.tsx',
     'webchat.tsx',
     'workspace.tsx',
   ])

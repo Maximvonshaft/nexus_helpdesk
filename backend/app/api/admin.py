@@ -115,7 +115,7 @@ def _validate_channel_account_payload(
     normalized_account_id = account_id.strip()
     normalized_fallback = fallback_account_id.strip() if fallback_account_id else None
 
-    if normalized_provider not in EXTERNAL_READY_CANDIDATE_CHANNELS:
+    if normalized_provider not in {*EXTERNAL_READY_CANDIDATE_CHANNELS, "voice"}:
         raise HTTPException(status_code=400, detail='Unsupported channel provider')
     if not normalized_account_id:
         raise HTTPException(status_code=400, detail='account_id is required')

@@ -11,6 +11,7 @@ import { Route as ControlTowerRoute } from '@/routes/control-tower'
 import { Route as AdministrationRoute } from '@/routes/administration'
 import { Route as AccountRoute } from '@/routes/account'
 import { Route as WebchatRoute } from '@/routes/webchat'
+import { Route as WebCallRoute } from '@/routes/webcall'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
@@ -24,6 +25,7 @@ const routeTree = RootRoute.addChildren([
   AdministrationRoute,
   AccountRoute,
   WebchatRoute,
+  WebCallRoute,
 ])
 
 export const router = createRouter({

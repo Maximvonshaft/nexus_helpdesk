@@ -43,6 +43,9 @@ RETIRED_PATHS = (
     "webapp/src/features/runtime/runtime-evidence-audit.css",
     "webapp/src/lib/cn.ts",
     "backend/app/services/outbound_adapters/whatsapp.py",
+    "backend/app/static/webchat/live-voice-capture-worklet.js",
+    "backend/app/services/live_voice_orchestration_service.py",
+    "backend/app/api/webchat_live_voice.py",
     "backend/app/services/webchat_ai_decision_runtime/prompt_builder.py",
     "backend/app/services/canonical_ticket_service.py",
     "backend/app/services/canonical_operator_work_queue.py",
@@ -129,6 +132,7 @@ REQUIRED_PATHS = (
     CURRENT_COMPATIBILITY_REGISTRY,
     "scripts/ci/check_legacy_surface_registry.py",
     "scripts/ci/check_agent_runtime_residue.py",
+    "scripts/ci/check_telephony_authority_residue.py",
     "scripts/qualification/service_authority.py",
     "scripts/qualification/route_authority.py",
     "scripts/qualification/database_capacity.py",
@@ -520,6 +524,7 @@ def static_failures() -> list[str]:
     failures.extend(_qualification_failures("scripts/qualification/service_authority.py"))
     failures.extend(_qualification_failures("scripts/ci/check_legacy_surface_registry.py"))
     failures.extend(_qualification_failures("scripts/ci/check_agent_runtime_residue.py"))
+    failures.extend(_qualification_failures("scripts/ci/check_telephony_authority_residue.py"))
     failures.extend(_migration_authority_failures())
     failures.extend(_retired_persistence_failures())
     failures.extend(_frontend_failures())

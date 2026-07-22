@@ -1,116 +1,25 @@
-# WebCall Architecture
+# Canonical LiveKit Telephony Architecture
 
-## Definition
+## Authority
 
-WebCall is the browser voice inbound channel for NexusDesk.
-
-```text
-WebChat = text inbound
-WebCall = voice inbound
-```
-
-Both channels enter the same NexusDesk Ticket Runtime instead of creating isolated products.
-
-## Shared runtime
-
-The shared runtime includes:
+LiveKit is the only real-time media plane for browser voice, AI voice and SIP/PSTN. Nexus owns business state; LiveKit owns media state.
 
 ```text
-conversation -> ticket -> customer context -> agent -> events -> evidence -> AI assist
+Browser or SIP participant
+  -> one LiveKit room
+  -> Nexus Conversation
+  -> Generic Agent Runtime or canonical Handoff
+  -> OperatorAgentState capacity and scope routing
+  -> optional Ticket only for formal asynchronous responsibility
 ```
 
-WebCall must use this runtime so the operation can track one customer issue through the same ticket record whether the customer entered by text or by browser voice.
+The sole customer ownership authority is the accepted `WebchatHandoffRequest`, projected onto `WebchatConversation.active_agent_id` and `WebchatVoiceSession.accepted_by_user_id`.
 
-## Current compatibility layer
+## Provider boundaries
 
-Current `main` still uses legacy names and paths:
-
-```text
-webchat_voice
-/api/webchat/.../voice/...
-/webchat/voice/{voice_session_id}
-```
-
-This is acceptable in the short term. The architecture name is WebCall Inbound, but broad code renaming is intentionally deferred to avoid breaking the current mock foundation.
-
-## Target flow
-
-```text
-visitor opens WebCall
-  -> NexusDesk initializes or binds conversation and ticket
-  -> NexusDesk creates voice session
-  -> provider creates or resolves media room
-  -> NexusDesk signs visitor participant token
-  -> visitor joins WebRTC room
-  -> agent sees Incoming WebCall in NexusDesk
-  -> agent accepts through NexusDesk endpoint
-  -> NexusDesk writes accepted_by_user_id and first-agent-wins state
-  -> NexusDesk signs agent participant token
-  -> agent joins WebRTC room
-  -> call ends
-  -> NexusDesk writes events and final ticket evidence
-```
-
-## Provider principle
-
-LiveKit is the first real media provider because Phase 1 uses a free self-hosted route.
-
-LiveKit owns media transport:
-
-```text
-room, participant token, media connection, lifecycle webhook signal
-```
-
-NexusDesk remains the system of record for:
-
-```text
-conversation, ticket, accepted_by_user_id, state transitions, timeline, evidence, audit
-```
-
-## Phase 1 scope
-
-Phase 1 introduces backend provider capability only:
-
-- `WEBCHAT_VOICE_PROVIDER=mock` remains default and continues to work.
-- `WEBCHAT_VOICE_PROVIDER=livekit` no longer fails with provider unavailable when configured correctly.
-- NexusDesk can create or resolve a LiveKit room.
-- NexusDesk can issue visitor and agent participant tokens scoped to one room.
-- Existing conversation/ticket binding, event writes, and `voice_call` evidence behavior remain compatible.
-
-Phase 1 must not implement:
-
-- SIP, PSTN, phone numbers, or CPaaS providers.
-- Recording.
-- Realtime transcription.
-- AI voice.
-- Formal inbox panel changes.
-- Large API path rename.
-
-## Self-hosted deployment direction
-
-The first deployment route is self-hosted LiveKit.
-
-```text
-dev/local: LiveKit dev mode or docker compose
-staging: voice subdomain, trusted SSL, WSS endpoint, Nginx websocket proxy, TURN/STUN check
-production: independent voice domain, observability, firewall rules, scaling plan
-```
-
-External customer browsers must reach a public HTTPS/WSS voice domain. Internal NexusDesk services may continue to use private networking, but WebCall media needs a public browser-reachable endpoint.
-
-Target media endpoint pattern:
-
-```text
-voice.<our-domain>
-wss://voice.<our-domain>
-```
-
-## Later phases
-
-```text
-Phase 2: Visitor WebCall room page with click-to-join microphone request
-Phase 3: Agent WebCall panel embedded in the formal NexusDesk inbox
-Phase 4: lifecycle webhook, missed calls, cleanup worker, metrics
-Phase 5: compliance-gated recording, transcription, summary, QA
-Phase 6: SIP / PSTN only if hotline business requires it
-```
+- Signed LiveKit webhooks enter `TelephonyEventInbox` exactly once.
+- `ChannelAccount(provider=voice)` remains the channel directory; `VoiceChannelConfiguration` is its one-to-one SIP/LiveKit extension.
+- AI joins through explicit Agent Dispatch.
+- SIP transfer and outbound participants use LiveKit SIP server APIs.
+- Voice commands are idempotent `WebchatVoiceSessionAction` records with provider results.
+- Recording is disabled until country-specific consent, retention, access and erasure policy is implemented.

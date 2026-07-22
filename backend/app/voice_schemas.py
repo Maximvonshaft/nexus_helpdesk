@@ -50,8 +50,9 @@ class WebchatVoiceActionRequest(BaseModel):
     target: str | None = Field(default=None, max_length=240)
     digits: str | None = Field(default=None, max_length=64, pattern=r"^[0-9*#]+$")
     note: str | None = Field(default=None, max_length=500)
+    idempotency_key: str | None = Field(default=None, max_length=160)
 
-    @field_validator("target", "digits", "note", mode="before")
+    @field_validator("target", "digits", "note", "idempotency_key", mode="before")
     @classmethod
     def strip_action_text(cls, value):
         if isinstance(value, str):
@@ -65,6 +66,8 @@ class WebchatVoiceActionRead(BaseModel):
     status: str
     provider_status: str
     provider_reason: str
+    idempotency_key: str | None = None
+    attempt_count: int = 0
     payload: dict = Field(default_factory=dict)
     actor_user_id: int
     ticket_event_id: int | None = None

@@ -115,7 +115,8 @@ test('dependency graph selects MUI and excludes retired or parallel visual packa
   assert.equal(manifest.dependencies?.['@emotion/styled'], '11.14.1')
   assert.equal(manifest.dependencies?.['react-is'], '18.3.1')
   assert.equal(manifest.overrides?.['react-is'], '18.3.1')
-  for (const dependency of ['@radix-ui/react-dialog', '@chakra-ui/react', '@mantine/core', 'antd', 'tailwindcss', 'bootstrap', 'clsx', 'livekit-client']) {
+  assert.equal(manifest.dependencies?.['livekit-client'], '2.20.2')
+  for (const dependency of ['@radix-ui/react-dialog', '@chakra-ui/react', '@mantine/core', 'antd', 'tailwindcss', 'bootstrap', 'clsx']) {
     assert.equal(manifest.dependencies?.[dependency], undefined, dependency)
   }
 })

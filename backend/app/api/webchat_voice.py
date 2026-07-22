@@ -210,6 +210,7 @@ def create_voice_action(
             target=payload.target,
             digits=payload.digits,
             note=payload.note,
+            idempotency_key=payload.idempotency_key,
         )
 
 
@@ -255,6 +256,8 @@ def voice_runtime_config() -> dict:
         "human_call_enabled": config.human_call_enabled,
         "live_ai_voice_enabled": config.live_ai_voice_enabled,
         "provider": config.provider,
+        "routing_mode": config.routing_mode,
+        "media_plane": "livekit" if config.provider == "livekit" else "mock",
         "livekit_url": config.livekit_url if config.provider == "livekit" else None,
         "recording_enabled": config.recording_enabled,
         "transcription_enabled": config.transcription_enabled,

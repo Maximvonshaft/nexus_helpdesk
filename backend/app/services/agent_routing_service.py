@@ -12,6 +12,7 @@ from ..models import Ticket, User
 from ..models_agent_routing import ConversationControl, OperatorAgentState
 from ..operator_models import OperatorQueueScopeGrant, OperatorTask
 from ..utils.time import ensure_utc, utc_now
+from ..voice_models import WebchatVoiceSession
 from ..webchat_models import (
     WebchatConversation,
     WebchatEvent,
@@ -37,6 +38,11 @@ CONVERSATION_OUTCOMES = {
 HEARTBEAT_TTL_SECONDS = 90
 DEFAULT_AGENT_CAPACITY = 3
 MAX_AGENT_CAPACITY = 20
+DEFAULT_VOICE_CAPACITY = 1
+MAX_VOICE_CAPACITY = 5
+DEFAULT_VOICE_WRAP_UP_SECONDS = 30
+MAX_VOICE_WRAP_UP_SECONDS = 900
+VOICE_ACTIVE_STATUSES = {"created", "ringing", "accepted", "active"}
 
 
 def _lock(query, db: Session):
@@ -82,6 +88,8 @@ def get_or_create_agent_state(
             user_id=user_id,
             status="offline",
             max_concurrent_conversations=DEFAULT_AGENT_CAPACITY,
+            max_concurrent_voice_calls=DEFAULT_VOICE_CAPACITY,
+            voice_wrap_up_seconds=DEFAULT_VOICE_WRAP_UP_SECONDS,
             status_changed_at=now,
             created_at=now,
             updated_at=now,
@@ -100,8 +108,25 @@ def heartbeat_is_fresh(row: OperatorAgentState, *, now=None) -> bool:
 
 
 def active_agent_load(db: Session, *, user_id: int) -> int:
-    """Count accepted, still-open handoffs; this is the sole occupancy authority."""
+    """Count accepted text handoffs; voice ownership has its own capacity authority."""
 
+    now = utc_now()
+    voice_occupancy = (
+        db.query(WebchatVoiceSession.id)
+        .filter(
+            WebchatVoiceSession.conversation_id
+            == WebchatHandoffRequest.conversation_id,
+            WebchatVoiceSession.accepted_by_user_id == user_id,
+            (
+                WebchatVoiceSession.status.in_(list(VOICE_ACTIVE_STATUSES))
+                | (
+                    WebchatVoiceSession.wrap_up_expires_at.isnot(None)
+                    & (WebchatVoiceSession.wrap_up_expires_at > now)
+                )
+            ),
+        )
+        .exists()
+    )
     return int(
         db.query(func.count(WebchatHandoffRequest.id))
         .join(
@@ -112,18 +137,130 @@ def active_agent_load(db: Session, *, user_id: int) -> int:
             WebchatHandoffRequest.status == "accepted",
             WebchatHandoffRequest.assigned_agent_id == user_id,
             WebchatConversation.status == "open",
+            ~voice_occupancy,
         )
         .scalar()
         or 0
     )
 
 
+def active_voice_load(db: Session, *, user_id: int, now=None) -> int:
+    """Count active calls and bounded after-call work for one operator."""
+
+    current = ensure_utc(now or utc_now()) or utc_now()
+    return int(
+        db.query(func.count(WebchatVoiceSession.id))
+        .filter(
+            WebchatVoiceSession.accepted_by_user_id == user_id,
+            (
+                WebchatVoiceSession.status.in_(list(VOICE_ACTIVE_STATUSES))
+                | (
+                    WebchatVoiceSession.wrap_up_expires_at.isnot(None)
+                    & (WebchatVoiceSession.wrap_up_expires_at > current)
+                )
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _voice_session_for_conversation(
+    db: Session,
+    *,
+    conversation_id: int,
+) -> WebchatVoiceSession | None:
+    return (
+        db.query(WebchatVoiceSession)
+        .filter(
+            WebchatVoiceSession.conversation_id == conversation_id,
+            WebchatVoiceSession.status.in_(["created", "ringing", "accepted", "active"]),
+        )
+        .order_by(WebchatVoiceSession.id.desc())
+        .first()
+    )
+
+
+def _request_requires_voice_capacity(
+    db: Session,
+    *,
+    request_row: WebchatHandoffRequest,
+) -> bool:
+    return _voice_session_for_conversation(
+        db,
+        conversation_id=request_row.conversation_id,
+    ) is not None
+
+
+def release_expired_voice_wrap_ups(
+    db: Session,
+    *,
+    user_id: int | None = None,
+    limit: int = 100,
+) -> int:
+    """Release stale voice ownership without reviving AI or losing follow-up evidence."""
+
+    now = utc_now()
+    query = db.query(WebchatVoiceSession).filter(
+        WebchatVoiceSession.wrap_up_expires_at.isnot(None),
+        WebchatVoiceSession.wrap_up_expires_at <= now,
+    )
+    if user_id is not None:
+        query = query.filter(WebchatVoiceSession.accepted_by_user_id == user_id)
+    sessions = _lock(
+        query.order_by(WebchatVoiceSession.wrap_up_expires_at.asc()).limit(
+            max(1, min(int(limit or 100), 500))
+        ),
+        db,
+    ).all()
+    released = 0
+    for session in sessions:
+        session.wrap_up_expires_at = None
+        request_row = (
+            db.get(WebchatHandoffRequest, session.handoff_request_id)
+            if session.handoff_request_id is not None
+            else None
+        )
+        conversation = db.get(WebchatConversation, session.conversation_id)
+        if request_row is not None and request_row.status == "accepted":
+            request_row.status = "closed"
+            request_row.closed_at = now
+            request_row.decision_note = "voice_wrap_up_expired"
+            request_row.lock_version += 1
+            request_row.updated_at = now
+        if conversation is not None and conversation.active_agent_id == session.accepted_by_user_id:
+            conversation.active_agent_id = None
+            conversation.current_handoff_request_id = None
+            conversation.handoff_status = "closed"
+            conversation.takeover_mode = None
+            conversation.ai_suspended = True
+            conversation.ai_suspended_reason = "voice_follow_up_required"
+            conversation.updated_at = now
+            _event(
+                db,
+                conversation=conversation,
+                event_type="voice.wrap_up.expired",
+                payload={
+                    "voice_session_id": session.public_id,
+                    "previous_agent_id": session.accepted_by_user_id,
+                },
+            )
+        released += 1
+    if released:
+        db.flush()
+    return released
+
+
 def _state_payload(db: Session, row: OperatorAgentState) -> dict[str, Any]:
     load = active_agent_load(db, user_id=row.user_id)
+    voice_load = active_voice_load(db, user_id=row.user_id)
     fresh = heartbeat_is_fresh(row)
     assignable = row.status == "online" and fresh
     available = (
         max(0, row.max_concurrent_conversations - load) if assignable else 0
+    )
+    available_voice = (
+        max(0, row.max_concurrent_voice_calls - voice_load) if assignable else 0
     )
     return {
         "user_id": row.user_id,
@@ -133,6 +270,10 @@ def _state_payload(db: Session, row: OperatorAgentState) -> dict[str, Any]:
         "max_concurrent_conversations": row.max_concurrent_conversations,
         "active_conversations": load,
         "available_capacity": available,
+        "max_concurrent_voice_calls": row.max_concurrent_voice_calls,
+        "active_voice_calls": voice_load,
+        "available_voice_capacity": available_voice,
+        "voice_wrap_up_seconds": row.voice_wrap_up_seconds,
         "last_heartbeat_at": (
             row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None
         ),
@@ -153,6 +294,8 @@ def set_agent_state(
     user: User,
     presence_status: str,
     max_concurrent_conversations: int | None = None,
+    max_concurrent_voice_calls: int | None = None,
+    voice_wrap_up_seconds: int | None = None,
 ) -> dict[str, Any]:
     normalized = str(presence_status or "").strip().lower()
     if normalized not in PRESENCE_STATUSES:
@@ -171,6 +314,22 @@ def set_agent_state(
                 detail="invalid_agent_capacity",
             )
         row.max_concurrent_conversations = capacity
+    if max_concurrent_voice_calls is not None:
+        voice_capacity = int(max_concurrent_voice_calls)
+        if not 1 <= voice_capacity <= MAX_VOICE_CAPACITY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid_agent_voice_capacity",
+            )
+        row.max_concurrent_voice_calls = voice_capacity
+    if voice_wrap_up_seconds is not None:
+        wrap_up = int(voice_wrap_up_seconds)
+        if not 0 <= wrap_up <= MAX_VOICE_WRAP_UP_SECONDS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid_agent_voice_wrap_up",
+            )
+        row.voice_wrap_up_seconds = wrap_up
     if row.status != normalized:
         row.status = normalized
         row.status_changed_at = now
@@ -178,6 +337,7 @@ def set_agent_state(
     row.updated_at = now
     db.flush()
     if normalized == "online":
+        release_expired_voice_wrap_ups(db, user_id=user.id)
         fill_agent_capacity(db, user=user)
     payload = _state_payload(db, row)
     log_admin_audit(
@@ -200,6 +360,7 @@ def heartbeat_agent(db: Session, *, user: User) -> dict[str, Any]:
     row.last_heartbeat_at = now
     row.updated_at = now
     db.flush()
+    release_expired_voice_wrap_ups(db, user_id=user.id)
     if row.status == "online":
         fill_agent_capacity(db, user=user)
     return _state_payload(db, row)
@@ -240,11 +401,7 @@ def _eligible_requested_handoff(
     *,
     user: User,
 ) -> tuple[WebchatHandoffRequest, WebchatConversation, ConversationControl] | None:
-    """Lock the oldest request the agent can actually serve.
-
-    Scope eligibility and this agent's prior declines are part of the SQL
-    candidate set, so unrelated global backlog cannot starve later eligible work.
-    """
+    """Lock the oldest scope-eligible request this agent has channel capacity for."""
 
     declined_exists = (
         db.query(WebchatHandoffDecision.id)
@@ -289,8 +446,21 @@ def _eligible_requested_handoff(
             WebchatHandoffRequest.requested_at.asc(),
             WebchatHandoffRequest.id.asc(),
         )
+        .limit(100)
     )
-    return _lock(query, db).first()
+    rows = _lock(query, db).all()
+    state = get_or_create_agent_state(db, user_id=user.id, lock=True)
+    text_full = active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations
+    voice_full = active_voice_load(db, user_id=user.id) >= state.max_concurrent_voice_calls
+    for row in rows:
+        request_row, _conversation, _control = row
+        requires_voice = _request_requires_voice_capacity(db, request_row=request_row)
+        if requires_voice and voice_full:
+            continue
+        if not requires_voice and text_full:
+            continue
+        return row
+    return None
 
 
 def _operator_task(
@@ -326,7 +496,17 @@ def assign_handoff_to_agent(
             status_code=status.HTTP_409_CONFLICT,
             detail="agent_not_available",
         )
-    if active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations:
+    voice_session = _voice_session_for_conversation(
+        db,
+        conversation_id=conversation.id,
+    )
+    if voice_session is not None:
+        if active_voice_load(db, user_id=user.id) >= state.max_concurrent_voice_calls:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="agent_voice_capacity_full",
+            )
+    elif active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="agent_capacity_full",
@@ -356,6 +536,11 @@ def assign_handoff_to_agent(
     locked_request.accepted_at = locked_request.accepted_at or now
     locked_request.lock_version += 1
     locked_request.updated_at = now
+    if voice_session is not None:
+        voice_session.handoff_request_id = locked_request.id
+        voice_session.accepted_by_user_id = user.id
+        voice_session.accepted_at = None
+        voice_session.updated_at = now
     conversation.current_handoff_request_id = locked_request.id
     conversation.handoff_status = "accepted"
     conversation.active_agent_id = user.id
@@ -389,6 +574,7 @@ def assign_handoff_to_agent(
             "handoff_request_id": locked_request.id,
             "actor_id": user.id,
             "assignment_mode": mode,
+            "channel_kind": "voice" if voice_session is not None else "text",
         },
     )
     log_admin_audit(
@@ -401,6 +587,7 @@ def assign_handoff_to_agent(
             "conversation_id": conversation.id,
             "assigned_agent_id": user.id,
             "assignment_mode": mode,
+            "channel_kind": "voice" if voice_session is not None else "text",
         },
     )
     db.flush()
@@ -417,7 +604,9 @@ def fill_agent_capacity(db: Session, *, user: User) -> list[dict[str, Any]]:
         state = get_or_create_agent_state(db, user_id=user.id, lock=True)
         if state.status != "online" or not heartbeat_is_fresh(state):
             break
-        if active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations:
+        text_full = active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations
+        voice_full = active_voice_load(db, user_id=user.id) >= state.max_concurrent_voice_calls
+        if text_full and voice_full:
             break
         candidate = _eligible_requested_handoff(db, user=user)
         if candidate is None:
@@ -499,6 +688,13 @@ def request_handoff(
     )
     db.add(row)
     db.flush()
+    voice_session = _voice_session_for_conversation(
+        db,
+        conversation_id=conversation.id,
+    )
+    if voice_session is not None:
+        voice_session.handoff_request_id = row.id
+        voice_session.updated_at = now
     conversation.current_handoff_request_id = row.id
     conversation.handoff_status = "requested"
     conversation.active_agent_id = None
@@ -778,3 +974,99 @@ def close_conversation(
         "outcome": normalized,
         "ticket_id": conversation.ticket_id,
     }
+
+def decline_voice_handoff_offer(
+    db: Session,
+    *,
+    voice_session: WebchatVoiceSession,
+    user: User,
+    reason_code: str = "agent_skipped_voice_offer",
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Decline only this operator's offer and return the same call to the queue."""
+
+    if voice_session.handoff_request_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="voice_handoff_missing")
+    request_row = _lock(
+        db.query(WebchatHandoffRequest).filter(
+            WebchatHandoffRequest.id == voice_session.handoff_request_id
+        ),
+        db,
+    ).first()
+    conversation = _lock(
+        db.query(WebchatConversation).filter(
+            WebchatConversation.id == voice_session.conversation_id
+        ),
+        db,
+    ).first()
+    if request_row is None or conversation is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="voice_handoff_missing")
+    if request_row.status != "accepted" or request_row.assigned_agent_id != user.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="voice_offer_not_owned")
+
+    now = utc_now()
+    db.add(
+        WebchatHandoffDecision(
+            request_id=request_row.id,
+            actor_id=user.id,
+            decision="declined",
+            reason_code=(reason_code or "agent_skipped_voice_offer")[:160],
+            note=(note or "")[:1000] or None,
+            created_at=now,
+        )
+    )
+    request_row.status = "requested"
+    request_row.assigned_agent_id = None
+    request_row.accepted_by_user_id = None
+    request_row.accepted_at = None
+    request_row.decision_note = (note or "")[:1000] or None
+    request_row.lock_version += 1
+    request_row.updated_at = now
+    voice_session.accepted_by_user_id = None
+    voice_session.accepted_at = None
+    voice_session.active_at = None
+    voice_session.status = "ringing"
+    voice_session.updated_at = now
+    conversation.current_handoff_request_id = request_row.id
+    conversation.handoff_status = "requested"
+    conversation.active_agent_id = None
+    conversation.ai_suspended = True
+    conversation.ai_suspended_reason = "voice_handoff_waiting"
+    conversation.takeover_mode = None
+    conversation.updated_at = now
+    task = _operator_task(db, conversation_id=conversation.id)
+    if task is not None:
+        task.status = "pending"
+        task.assignee_id = None
+        task.updated_at = now
+    _event(
+        db,
+        conversation=conversation,
+        event_type="voice.offer.declined",
+        payload={
+            "voice_session_id": voice_session.public_id,
+            "handoff_request_id": request_row.id,
+            "actor_id": user.id,
+            "reason_code": reason_code,
+        },
+    )
+    log_admin_audit(
+        db,
+        actor_id=user.id,
+        action="webcall.voice.offer_declined",
+        target_type="webchat_voice_session",
+        target_id=voice_session.id,
+        new_value={
+            "handoff_request_id": request_row.id,
+            "reason_code": reason_code,
+        },
+    )
+    db.flush()
+    control = _control_for_conversation(db, conversation)
+    _auto_assign_request(
+        db,
+        request_row=request_row,
+        conversation=conversation,
+        control=control,
+    )
+    return serialize_handoff(db, request_row=request_row, conversation=conversation)

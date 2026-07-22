@@ -74,7 +74,7 @@ class ConversationControl(Base):
 
 
 class OperatorAgentState(Base):
-    """Server-owned operator presence and concurrency configuration."""
+    """Single server-owned operator presence and channel-capacity authority."""
 
     __tablename__ = "operator_agent_states"
     __table_args__ = (
@@ -86,6 +86,14 @@ class OperatorAgentState(Base):
         CheckConstraint(
             "max_concurrent_conversations BETWEEN 1 AND 20",
             name="ck_operator_agent_states_capacity",
+        ),
+        CheckConstraint(
+            "max_concurrent_voice_calls BETWEEN 1 AND 5",
+            name="ck_operator_agent_states_voice_capacity",
+        ),
+        CheckConstraint(
+            "voice_wrap_up_seconds BETWEEN 0 AND 900",
+            name="ck_operator_agent_states_voice_wrap_up",
         ),
         Index(
             "ix_operator_agent_states_status_heartbeat",
@@ -103,6 +111,12 @@ class OperatorAgentState(Base):
     )
     max_concurrent_conversations: Mapped[int] = mapped_column(
         Integer, nullable=False, default=3
+    )
+    max_concurrent_voice_calls: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+    voice_wrap_up_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30
     )
     last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(
         UTCDateTime, nullable=True, index=True

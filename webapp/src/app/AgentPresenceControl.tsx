@@ -40,6 +40,8 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
     mutationFn: (status: AgentPresenceStatus) => agentRoutingApi.updateState(
       status,
       state.data?.max_concurrent_conversations,
+      state.data?.max_concurrent_voice_calls,
+      state.data?.voice_wrap_up_seconds,
     ),
     onSuccess: (next) => queryClient.setQueryData(STATE_QUERY_KEY, next),
   })
@@ -62,6 +64,7 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
     update.mutate(event.target.value as AgentPresenceStatus)
   }
   const capacity = `${state.data.active_conversations}/${state.data.max_concurrent_conversations}`
+  const voiceCapacity = `${state.data.active_voice_calls}/${state.data.max_concurrent_voice_calls}`
   const available = state.data.status === 'online' && state.data.heartbeat_fresh
 
   return (
@@ -81,12 +84,12 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
           <MenuItem value="offline">离线</MenuItem>
         </Select>
       </FormControl>
-      <Tooltip title={`当前人工会话 ${capacity}，剩余容量 ${state.data.available_capacity}`}>
+      <Tooltip title={`文字会话 ${capacity}，语音 ${voiceCapacity}，语音整理 ${state.data.voice_wrap_up_seconds} 秒`}>
         <Chip
           size="small"
           icon={<CircleRoundedIcon fontSize="small" />}
           color={available ? 'success' : state.data.status === 'paused' ? 'warning' : 'default'}
-          label={state.data.status === 'online' ? `接线 ${capacity}` : LABELS[state.data.status]}
+          label={state.data.status === 'online' ? `接线 ${capacity} · 语音 ${voiceCapacity}` : LABELS[state.data.status]}
           variant={available ? 'filled' : 'outlined'}
         />
       </Tooltip>

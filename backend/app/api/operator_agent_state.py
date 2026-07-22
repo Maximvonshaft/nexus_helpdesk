@@ -41,11 +41,15 @@ class AgentStateUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str = Field(min_length=2, max_length=24)
     max_concurrent_conversations: int | None = Field(default=None, ge=1, le=20)
+    max_concurrent_voice_calls: int | None = Field(default=None, ge=1, le=5)
+    voice_wrap_up_seconds: int | None = Field(default=None, ge=0, le=900)
 
 
 class AgentCapacityUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     max_concurrent_conversations: int = Field(ge=1, le=20)
+    max_concurrent_voice_calls: int = Field(default=1, ge=1, le=5)
+    voice_wrap_up_seconds: int = Field(default=30, ge=0, le=900)
 
 
 class ConversationReplyRequest(BaseModel):
@@ -107,6 +111,7 @@ def get_agent_state(
 
 
 @router.put("/agent-state")
+@router.put("/agent-state")
 def update_agent_state(
     payload: AgentStateUpdateRequest,
     db: Session = Depends(get_db),
@@ -115,16 +120,16 @@ def update_agent_state(
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
         current_state = read_agent_state(db, user_id=current_user.id)
-        requested_capacity = payload.max_concurrent_conversations
-        capacity_changed = bool(
-            requested_capacity is not None
-            and requested_capacity
-            != current_state["max_concurrent_conversations"]
+        governed_fields = {
+            "max_concurrent_conversations": payload.max_concurrent_conversations,
+            "max_concurrent_voice_calls": payload.max_concurrent_voice_calls,
+            "voice_wrap_up_seconds": payload.voice_wrap_up_seconds,
+        }
+        capacity_changed = any(
+            value is not None and value != current_state.get(name)
+            for name, value in governed_fields.items()
         )
-        if (
-            capacity_changed
-            and CAP_USER_MANAGE not in resolve_capabilities(current_user, db)
-        ):
+        if capacity_changed and CAP_USER_MANAGE not in resolve_capabilities(current_user, db):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="agent_capacity_update_requires_user_manage",
@@ -133,7 +138,9 @@ def update_agent_state(
             db,
             user=current_user,
             presence_status=payload.status,
-            max_concurrent_conversations=requested_capacity,
+            max_concurrent_conversations=payload.max_concurrent_conversations,
+            max_concurrent_voice_calls=payload.max_concurrent_voice_calls,
+            voice_wrap_up_seconds=payload.voice_wrap_up_seconds,
         )
 
 
@@ -165,6 +172,7 @@ def get_managed_agent_state(
 
 
 @router.put("/agent-states/{user_id}/capacity")
+@router.put("/agent-states/{user_id}/capacity")
 def update_managed_agent_capacity(
     user_id: int,
     payload: AgentCapacityUpdateRequest,
@@ -179,6 +187,8 @@ def update_managed_agent_capacity(
             actor=current_user,
             target_user=target,
             max_concurrent_conversations=payload.max_concurrent_conversations,
+            max_concurrent_voice_calls=payload.max_concurrent_voice_calls,
+            voice_wrap_up_seconds=payload.voice_wrap_up_seconds,
         )
 
 

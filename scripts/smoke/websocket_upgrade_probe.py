@@ -114,7 +114,6 @@ def _header_tokens(value: str) -> set[str]:
 def probe_websocket_upgrade(
     *,
     base_url: str,
-    path: str = "/webchat/live/ws",
     query: str = "",
     timeout_seconds: float = 10.0,
     ssl_context: ssl.SSLContext | None = None,
@@ -184,7 +183,6 @@ def _parser() -> argparse.ArgumentParser:
         description="Verify an HTTP WebSocket 101 upgrade without external dependencies."
     )
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--path", default="/webchat/live/ws")
     parser.add_argument("--query", default="")
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     return parser
