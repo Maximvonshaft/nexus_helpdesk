@@ -7,7 +7,14 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..enums import EventType, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus
+from ..enums import (
+    EventType,
+    ResolutionCategory,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+)
 from ..models import Customer, Market, Ticket, TicketAIIntake, TicketInternalNote, User
 from ..schemas import (
     AIIntakeCreate,
@@ -34,10 +41,17 @@ from .permissions import (
     ensure_can_write_internal_note,
     ensure_ticket_visible,
 )
-from .ticket_service import add_ai_intake, add_internal_note, change_status, create_ticket, get_ticket_or_404, list_tickets, validate_assignee_team
-from .tenant_authority import ensure_resource_tenant, resolve_actor_tenant_id
 from .sla_service import evaluate_sla, resume_sla, update_pause_state_for_status
 from .state_machine import requires_note, validate_transition
+from .tenant_authority import ensure_resource_tenant, resolve_actor_tenant_id
+from .ticket_service import (
+    add_ai_intake,
+    add_internal_note,
+    change_status,
+    create_ticket,
+    get_ticket_or_404,
+    validate_assignee_team,
+)
 
 LITE_STATUS_ORDER = [
     "new",
@@ -52,7 +66,11 @@ LITE_STATUS_ORDER = [
 def _internal_to_lite(status: TicketStatus) -> str:
     if status == TicketStatus.new:
         return "new"
-    if status in {TicketStatus.pending_assignment, TicketStatus.waiting_internal, TicketStatus.escalated}:
+    if status in {
+        TicketStatus.pending_assignment,
+        TicketStatus.waiting_internal,
+        TicketStatus.escalated,
+    }:
         return "pending_human"
     if status == TicketStatus.in_progress:
         return "in_progress"
@@ -108,7 +126,7 @@ def _contact_value(customer: Optional[Customer]) -> Optional[str]:
 def _latest_ai(ticket: Ticket) -> Optional[TicketAIIntake]:
     if not ticket.ai_intakes:
         return None
-    return sorted(ticket.ai_intakes, key=lambda x: x.created_at, reverse=True)[0]
+    return sorted(ticket.ai_intakes, key=lambda row: row.created_at, reverse=True)[0]
 
 
 def serialize_lite_case(ticket: Ticket) -> LiteCaseDetail:
@@ -141,14 +159,25 @@ def serialize_lite_case(ticket: Ticket) -> LiteCaseDetail:
         preferred_reply_contact=ticket.preferred_reply_contact,
         market_id=ticket.market_id,
         country_code=ticket.country_code,
-        ai_summary=(latest_ai.summary if latest_ai else ticket.ai_summary),
-        ai_case_type=(latest_ai.classification if latest_ai else ticket.ai_classification),
-        ai_suggested_required_action=latest_ai.recommended_action if latest_ai else ticket.required_action,
-        ai_missing_fields=(", ".join(json.loads(latest_ai.missing_fields_json)) if latest_ai and latest_ai.missing_fields_json else ticket.missing_fields),
+        ai_summary=latest_ai.summary if latest_ai else ticket.ai_summary,
+        ai_case_type=(
+            latest_ai.classification if latest_ai else ticket.ai_classification
+        ),
+        ai_suggested_required_action=(
+            latest_ai.recommended_action if latest_ai else ticket.required_action
+        ),
+        ai_missing_fields=(
+            ", ".join(json.loads(latest_ai.missing_fields_json))
+            if latest_ai and latest_ai.missing_fields_json
+            else ticket.missing_fields
+        ),
     )
 
 
-def serialize_lite_list(ticket: Ticket, highlighted: bool = False) -> LiteCaseListItem:
+def serialize_lite_list(
+    ticket: Ticket,
+    highlighted: bool = False,
+) -> LiteCaseListItem:
     return LiteCaseListItem(
         id=ticket.id,
         case=ticket.ticket_no,
@@ -170,64 +199,57 @@ def _find_open_case(
     current_user: User,
 ) -> Optional[Ticket]:
     actor_tenant_id = resolve_actor_tenant_id(db, current_user)
-    q = db.query(Ticket)
+    query = db.query(Ticket)
     if actor_tenant_id is not None:
-        q = q.filter(Ticket.tenant_id == actor_tenant_id)
+        query = query.filter(Ticket.tenant_id == actor_tenant_id)
     else:
-        q = q.filter(Ticket.tenant_id.is_(None))
-    q = q.filter(Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
-
+        query = query.filter(Ticket.tenant_id.is_(None))
+    query = query.filter(
+        Ticket.status.notin_(
+            [TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]
+        )
+    )
     if payload.source_chat_id:
-        found = q.filter(Ticket.source_chat_id == payload.source_chat_id).order_by(Ticket.updated_at.desc()).first()
+        found = (
+            query.filter(Ticket.source_chat_id == payload.source_chat_id)
+            .order_by(Ticket.updated_at.desc())
+            .first()
+        )
         if found:
             return found
-
     if payload.tracking_number and payload.customer_contact:
         found = (
-            q.join(Customer, Customer.id == Ticket.customer_id, isouter=True)
+            query.join(Customer, Customer.id == Ticket.customer_id, isouter=True)
             .filter(
                 Ticket.tracking_number == payload.tracking_number,
-                or_(Customer.phone == payload.customer_contact, Customer.email == payload.customer_contact),
+                or_(
+                    Customer.phone == payload.customer_contact,
+                    Customer.email == payload.customer_contact,
+                ),
             )
             .order_by(Ticket.updated_at.desc())
             .first()
         )
         if found:
             return found
-
     return None
 
 
-def list_lite_cases(db: Session, current_user: User, q: Optional[str] = None, status: Optional[str] = None):
-    status_value = None
-    status_in = None
-    if status:
-        if status == "pending_human":
-            status_in = [TicketStatus.new.value, TicketStatus.pending_assignment.value, TicketStatus.waiting_internal.value, TicketStatus.escalated.value]
-        elif status == "closed":
-            status_in = [s.value for s in TicketStatus if s not in {TicketStatus.new, TicketStatus.pending_assignment, TicketStatus.waiting_internal, TicketStatus.escalated, TicketStatus.in_progress, TicketStatus.waiting_customer, TicketStatus.resolved}]
-        else:
-            mapping = {
-                "new": TicketStatus.new,
-                "in_progress": TicketStatus.in_progress,
-                "waiting_customer": TicketStatus.waiting_customer,
-                "resolved": TicketStatus.resolved,
-            }
-            internal_status = mapping.get(status)
-            if internal_status:
-                status_value = internal_status.value
-
-    tickets = list_tickets(db, current_user, q=q, status_value=status_value, status_in=status_in, limit=100)
-    return [serialize_lite_list(t) for t in tickets]
-
-
-def get_lite_case(db: Session, ticket_id: int, current_user: User) -> LiteCaseDetail:
+def get_lite_case(
+    db: Session,
+    ticket_id: int,
+    current_user: User,
+) -> LiteCaseDetail:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     return serialize_lite_case(ticket)
 
 
-def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
+def create_lite_case(
+    db: Session,
+    payload: LiteCaseCreate,
+    current_user: User,
+):
     if payload.upsert_open_case:
         existing = _find_open_case(db, payload, current_user)
         if existing:
@@ -243,7 +265,10 @@ def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
                 if value is not None and getattr(existing, field) != value:
                     setattr(existing, field, value)
                     changed = True
-            if payload.issue_summary and existing.issue_summary != payload.issue_summary:
+            if (
+                payload.issue_summary
+                and existing.issue_summary != payload.issue_summary
+            ):
                 existing.issue_summary = payload.issue_summary
                 existing.title = payload.issue_summary[:255]
                 changed = True
@@ -258,22 +283,37 @@ def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
                     payload={"summary": "Open case updated from new intake"},
                 )
                 db.flush()
-            return serialize_lite_case(get_ticket_or_404(db, existing.id)), "updated"
+            return (
+                serialize_lite_case(get_ticket_or_404(db, existing.id)),
+                "updated",
+            )
 
     customer = None
     if payload.customer_name or payload.customer_contact:
         customer = CustomerInput(
             name=payload.customer_name or "Unknown Customer",
-            phone=payload.customer_contact if payload.customer_contact and payload.customer_contact.startswith("+") else None,
-            email=payload.customer_contact if payload.customer_contact and "@" in payload.customer_contact else None,
+            phone=(
+                payload.customer_contact
+                if payload.customer_contact
+                and payload.customer_contact.startswith("+")
+                else None
+            ),
+            email=(
+                payload.customer_contact
+                if payload.customer_contact and "@" in payload.customer_contact
+                else None
+            ),
         )
-
     ticket = create_ticket(
         db,
         TicketCreate(
             title=payload.issue_summary[:255],
             description=payload.customer_request,
-            source=TicketSource.ai_intake if payload.ai_summary else TicketSource.manual,
+            source=(
+                TicketSource.ai_intake
+                if payload.ai_summary
+                else TicketSource.manual
+            ),
             source_channel=_channel(payload.channel),
             priority=_priority(payload.priority),
             category=payload.case_type,
@@ -289,9 +329,13 @@ def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
             issue_summary=payload.issue_summary,
             customer_request=payload.customer_request,
             source_chat_id=payload.source_chat_id,
-            required_action=payload.required_action or payload.ai_suggested_required_action,
+            required_action=(
+                payload.required_action or payload.ai_suggested_required_action
+            ),
             missing_fields=payload.missing_fields or payload.ai_missing_fields,
-            last_customer_message=payload.last_customer_message or payload.customer_request,
+            last_customer_message=(
+                payload.last_customer_message or payload.customer_request
+            ),
             customer_update=payload.customer_update,
             resolution_summary=payload.resolution_summary,
             last_human_update=None,
@@ -304,20 +348,32 @@ def create_lite_case(db: Session, payload: LiteCaseCreate, current_user: User):
         ),
         current_user,
     )
-
     return serialize_lite_case(ticket), "created"
 
 
-def update_lite_case(db: Session, ticket_id: int, payload: LiteCaseUpdate, current_user: User) -> LiteCaseDetail:
+def update_lite_case(
+    db: Session,
+    ticket_id: int,
+    payload: LiteCaseUpdate,
+    current_user: User,
+) -> LiteCaseDetail:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     actor_tenant_id = resolve_actor_tenant_id(db, current_user)
     if payload.market_id is not None:
-        market = db.query(Market).filter(Market.id == payload.market_id, Market.is_active.is_(True)).first()
+        market = (
+            db.query(Market)
+            .filter(Market.id == payload.market_id, Market.is_active.is_(True))
+            .first()
+        )
         if market is None:
             raise HTTPException(status_code=404, detail="Market not found")
-        ensure_resource_tenant(db, actor_tenant_id, market, resource_kind="Market")
-
+        ensure_resource_tenant(
+            db,
+            actor_tenant_id,
+            market,
+            resource_kind="Market",
+        )
     changed_fields = []
     mapping = {
         "case_type": "case_type",
@@ -336,12 +392,11 @@ def update_lite_case(db: Session, ticket_id: int, payload: LiteCaseUpdate, curre
         "market_id": "market_id",
         "country_code": "country_code",
     }
-    for req_field, model_field in mapping.items():
-        value = getattr(payload, req_field)
+    for request_field, model_field in mapping.items():
+        value = getattr(payload, request_field)
         if value is not None and getattr(ticket, model_field) != value:
             setattr(ticket, model_field, value)
-            changed_fields.append(req_field)
-
+            changed_fields.append(request_field)
     if payload.issue_summary is not None:
         ticket.title = payload.issue_summary[:255]
     if payload.customer_request is not None:
@@ -351,7 +406,6 @@ def update_lite_case(db: Session, ticket_id: int, payload: LiteCaseUpdate, curre
     if payload.priority is not None:
         ticket.priority = _priority(payload.priority)
         changed_fields.append("priority")
-
     if changed_fields:
         ticket.updated_at = utc_now()
         log_event(
@@ -360,13 +414,21 @@ def update_lite_case(db: Session, ticket_id: int, payload: LiteCaseUpdate, curre
             actor_id=current_user.id,
             event_type=EventType.field_updated,
             note="Lite case fields updated",
-            payload={"fields": changed_fields, "summary": "Case details updated"},
+            payload={
+                "fields": changed_fields,
+                "summary": "Case details updated",
+            },
         )
         db.flush()
     return serialize_lite_case(get_ticket_or_404(db, ticket.id))
 
 
-def assign_lite_case(db: Session, ticket_id: int, payload: LiteAssignRequest, current_user: User) -> LiteCaseDetail:
+def assign_lite_case(
+    db: Session,
+    ticket_id: int,
+    payload: LiteAssignRequest,
+    current_user: User,
+) -> LiteCaseDetail:
     ensure_can_assign(current_user, db)
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
@@ -379,7 +441,10 @@ def assign_lite_case(db: Session, ticket_id: int, payload: LiteAssignRequest, cu
     )
     ticket.assignee_id = assignee.id if assignee else None
     ticket.team_id = team.id if team else ticket.team_id
-    if ticket.status in {TicketStatus.new, TicketStatus.pending_assignment} and ticket.assignee_id:
+    if (
+        ticket.status in {TicketStatus.new, TicketStatus.pending_assignment}
+        and ticket.assignee_id
+    ):
         ticket.status = TicketStatus.in_progress
     ticket.updated_at = utc_now()
     log_event(
@@ -388,37 +453,57 @@ def assign_lite_case(db: Session, ticket_id: int, payload: LiteAssignRequest, cu
         actor_id=current_user.id,
         event_type=EventType.assigned,
         note="Lite assignment updated",
-        payload={"summary": f"Assigned to {assignee.display_name if assignee else 'unassigned'}"},
+        payload={
+            "summary": (
+                f"Assigned to {assignee.display_name if assignee else 'unassigned'}"
+            )
+        },
     )
     db.flush()
     return serialize_lite_case(get_ticket_or_404(db, ticket.id))
 
 
-def change_lite_status(db: Session, ticket_id: int, payload: LiteStatusRequest, current_user: User) -> LiteCaseDetail:
+def change_lite_status(
+    db: Session,
+    ticket_id: int,
+    payload: LiteStatusRequest,
+    current_user: User,
+) -> LiteCaseDetail:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     internal = _lite_status_to_internal(ticket, payload.status)
-    ticket = change_status(db, ticket_id, TicketStatusChangeRequest(new_status=internal), current_user)
-
+    ticket = change_status(
+        db,
+        ticket_id,
+        TicketStatusChangeRequest(new_status=internal),
+        current_user,
+    )
     return serialize_lite_case(ticket)
 
 
-def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflowUpdateRequest, current_user: User) -> LiteCaseDetail:
+def workflow_update_lite_case(
+    db: Session,
+    ticket_id: int,
+    payload: LiteWorkflowUpdateRequest,
+    current_user: User,
+) -> LiteCaseDetail:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
-
     provided_fields = payload.model_fields_set
     assignee_provided = "assignee_id" in provided_fields
     team_provided = "team_id" in provided_fields
     status_provided = "status" in provided_fields and payload.status is not None
-
     if team_provided and payload.team_id is None:
-        raise HTTPException(status_code=400, detail="team_id cannot be null in workflow_update")
-
+        raise HTTPException(
+            status_code=400,
+            detail="team_id cannot be null in workflow_update",
+        )
     if assignee_provided or team_provided:
         ensure_can_assign(current_user, db)
         effective_team_id = payload.team_id if team_provided else ticket.team_id
-        effective_assignee_id = payload.assignee_id if assignee_provided else ticket.assignee_id
+        effective_assignee_id = (
+            payload.assignee_id if assignee_provided else ticket.assignee_id
+        )
         assignee, team = validate_assignee_team(
             db,
             effective_assignee_id,
@@ -430,9 +515,18 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
             ticket.team_id = team.id
         if assignee_provided:
             ticket.assignee_id = assignee.id if assignee else None
-        if ticket.status in {TicketStatus.new, TicketStatus.pending_assignment} and ticket.assignee_id:
+        if (
+            ticket.status in {TicketStatus.new, TicketStatus.pending_assignment}
+            and ticket.assignee_id
+        ):
             ticket.status = TicketStatus.in_progress
-        summary_name = assignee.display_name if assignee else (ticket.assignee.display_name if ticket.assignee else "unassigned")
+        summary_name = (
+            assignee.display_name
+            if assignee
+            else ticket.assignee.display_name
+            if ticket.assignee
+            else "unassigned"
+        )
         log_event(
             db,
             ticket_id=ticket.id,
@@ -441,13 +535,16 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
             note="Lite workflow assignment updated",
             payload={"summary": f"Assigned to {summary_name}"},
         )
-
     changed_fields = []
-    for field in ["required_action", "missing_fields", "customer_update", "resolution_summary"]:
+    for field in [
+        "required_action",
+        "missing_fields",
+        "customer_update",
+        "resolution_summary",
+    ]:
         value = getattr(payload, field)
         if value is not None and getattr(ticket, field) != value:
             changed_fields.append(field)
-
     if changed_fields:
         ensure_can_update_core_fields(current_user, db)
         for field in changed_fields:
@@ -458,13 +555,20 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
             actor_id=current_user.id,
             event_type=EventType.field_updated,
             note="Lite workflow fields updated",
-            payload={"fields": changed_fields, "summary": "Workflow fields updated"},
+            payload={
+                "fields": changed_fields,
+                "summary": "Workflow fields updated",
+            },
         )
-
     if payload.human_note:
         ensure_can_write_internal_note(current_user, db)
-        note = TicketInternalNote(ticket_id=ticket.id, author_id=current_user.id, body=payload.human_note)
-        db.add(note)
+        db.add(
+            TicketInternalNote(
+                ticket_id=ticket.id,
+                author_id=current_user.id,
+                body=payload.human_note,
+            )
+        )
         ticket.last_human_update = payload.human_note
         log_event(
             db,
@@ -473,18 +577,24 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
             event_type=EventType.internal_note_added,
             note="Internal note added",
         )
-
-    status_changed = False
     if status_provided:
         internal = _lite_status_to_internal(ticket, payload.status or "")
-        status_changed = internal != ticket.status
-        if status_changed:
+        if internal != ticket.status:
             ensure_can_change_status(current_user, ticket, internal)
             validate_transition(ticket.status, internal)
             if requires_note(internal) and not payload.human_note:
-                raise HTTPException(status_code=400, detail="This status change requires a note in workflow_update")
-            if internal == TicketStatus.closed and ticket.resolution_category == ResolutionCategory.none:
-                raise HTTPException(status_code=400, detail="Resolution category is required before closing a ticket")
+                raise HTTPException(
+                    status_code=400,
+                    detail="This status change requires a note in workflow_update",
+                )
+            if (
+                internal == TicketStatus.closed
+                and ticket.resolution_category == ResolutionCategory.none
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Resolution category is required before closing a ticket",
+                )
             old_status = ticket.status
             ticket.status = internal
             if internal == TicketStatus.resolved:
@@ -502,18 +612,31 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
                 old_value=old_status.value,
                 new_value=ticket.status.value,
                 note=payload.human_note,
-                payload={"summary": f"Status changed from {old_status.value} to {ticket.status.value}"},
+                payload={
+                    "summary": (
+                        f"Status changed from {old_status.value} "
+                        f"to {ticket.status.value}"
+                    )
+                },
             )
-
     ticket.updated_at = utc_now()
     db.flush()
     db.refresh(ticket)
-
     return serialize_lite_case(ticket)
 
 
-def save_human_note_lite(db: Session, ticket_id: int, payload: LiteHumanNoteRequest, current_user: User) -> LiteCaseDetail:
-    add_internal_note(db, ticket_id, InternalNoteCreate(body=payload.note), current_user)
+def save_human_note_lite(
+    db: Session,
+    ticket_id: int,
+    payload: LiteHumanNoteRequest,
+    current_user: User,
+) -> LiteCaseDetail:
+    add_internal_note(
+        db,
+        ticket_id,
+        InternalNoteCreate(body=payload.note),
+        current_user,
+    )
     ticket = get_ticket_or_404(db, ticket_id)
     ticket.last_human_update = payload.note
     ticket.updated_at = utc_now()
@@ -521,7 +644,12 @@ def save_human_note_lite(db: Session, ticket_id: int, payload: LiteHumanNoteRequ
     return serialize_lite_case(get_ticket_or_404(db, ticket.id))
 
 
-def save_ai_intake_lite(db: Session, ticket_id: int, payload: LiteAIIntakeRequest, current_user: User) -> LiteCaseDetail:
+def save_ai_intake_lite(
+    db: Session,
+    ticket_id: int,
+    payload: LiteAIIntakeRequest,
+    current_user: User,
+) -> LiteCaseDetail:
     add_ai_intake(
         db,
         ticket_id,
@@ -529,7 +657,11 @@ def save_ai_intake_lite(db: Session, ticket_id: int, payload: LiteAIIntakeReques
             summary=payload.ai_summary or "",
             classification=payload.case_type,
             confidence=None,
-            missing_fields=[x.strip() for x in (payload.missing_fields or "").split(",") if x.strip()],
+            missing_fields=[
+                item.strip()
+                for item in (payload.missing_fields or "").split(",")
+                if item.strip()
+            ],
             recommended_action=payload.suggested_required_action,
             suggested_reply=None,
             raw_payload=None,
