@@ -1,4 +1,4 @@
-name: Temporary Governance Authority Finalizer Log
+name: Temporary Tenant Authority Test Log
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ jobs:
       - name: Capture failed job tail
         env:
           GH_TOKEN: ${{ github.token }}
-          JOB_ID: "88935814321"
+          JOB_ID: "88938122792"
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -27,11 +27,11 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/jobs/${JOB_ID}/logs" \
-            --output /tmp/governance-authority-finalizer.log
-          tail -n 500 /tmp/governance-authority-finalizer.log | tee /tmp/governance-authority-finalizer-tail.log
+            --output /tmp/tenant-authority-test.log
+          tail -n 600 /tmp/tenant-authority-test.log | tee /tmp/tenant-authority-test-tail.log
       - name: Upload failure tail
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: governance-authority-finalizer-88935814321-tail
-          path: /tmp/governance-authority-finalizer-tail.log
+          name: tenant-authority-test-88938122792-tail
+          path: /tmp/tenant-authority-test-tail.log
           retention-days: 1
