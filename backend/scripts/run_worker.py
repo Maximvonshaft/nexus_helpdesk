@@ -26,21 +26,17 @@ from app.services.observability import (  # noqa: E402
     record_worker_result,
 )
 from app.services.queue_health import collect_queue_health  # noqa: E402
-from app.services.webchat_ai_reconciler import (  # noqa: E402
-    reconcile_webchat_ai_state,
-)
+from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
 from app.services.webchat_handoff_snapshot_worker import (  # noqa: E402
     dispatch_pending_webchat_handoff_snapshot_jobs,
 )
 from app.settings import get_settings  # noqa: E402
 
 LOGGER = logging.getLogger(__name__)
-
 settings = get_settings()
 configure_logging(settings.log_json)
 
 QUEUES = {
-    "all",
     "outbound",
     "background",
     "webchat-ai",
@@ -52,9 +48,6 @@ _QUEUE_DEPTH_LABELS: set[tuple[str, str]] = set()
 
 
 def _is_sqlalchemy_session(db) -> bool:
-    # Several legacy worker tests replace db_context() with a SimpleNamespace
-    # fake to assert dispatch behavior. The WebChat handoff snapshot worker uses
-    # BackgroundJob claiming and therefore requires a real SQLAlchemy Session.
     return (
         hasattr(db, "bind")
         and hasattr(db, "query")
@@ -93,13 +86,14 @@ def _run_background(worker_id: str) -> int:
 
 def _run_handoff_snapshot(worker_id: str) -> int:
     with db_context() as db:
-        if _is_sqlalchemy_session(db):
-            handoff_jobs = dispatch_pending_webchat_handoff_snapshot_jobs(
+        handoff_jobs = (
+            dispatch_pending_webchat_handoff_snapshot_jobs(
                 db,
                 worker_id=worker_id,
             )
-        else:
-            handoff_jobs = []
+            if _is_sqlalchemy_session(db)
+            else []
+        )
         if handoff_jobs:
             record_worker_result(
                 worker_id,
@@ -218,9 +212,7 @@ def _run_webchat_ai(worker_id: str) -> int:
             )
         processed += len(jobs)
 
-    if not bool(
-        getattr(settings, "webchat_ai_reconciler_enabled", True)
-    ):
+    if not bool(getattr(settings, "webchat_ai_reconciler_enabled", True)):
         record_worker_result(
             worker_id,
             "webchat_ai_reconciler",
@@ -244,11 +236,7 @@ def _record_queue_depth_snapshot_if_due(
     *,
     queue: str,
 ) -> None:
-    """Publish real database queue counts from one designated Worker only."""
     global _LAST_QUEUE_DEPTH_SNAPSHOT_AT, _QUEUE_DEPTH_LABELS
-
-    # The controlled topology always has one dedicated background Worker.
-    # Sampling from every Worker would multiply a multiprocess Gauge.
     if queue != "background":
         return
     now = time.monotonic()
@@ -263,9 +251,7 @@ def _record_queue_depth_snapshot_if_due(
     try:
         snapshot = collect_queue_health(db)
         current_labels: set[tuple[str, str]] = set()
-        for queue_name, statuses in snapshot["background_jobs"][
-            "counts"
-        ].items():
+        for queue_name, statuses in snapshot["background_jobs"]["counts"].items():
             metric_name = f"background:{queue_name}"[:80]
             for status_name, count in statuses.items():
                 label = (metric_name, str(status_name)[:80])
@@ -310,15 +296,14 @@ def run_queue_once(worker_id: str, queue: str) -> int:
     if queue not in QUEUES:
         raise ValueError(f"unsupported worker queue: {queue}")
     record_worker_poll(worker_id)
-    processed = 0
-    if queue in {"all", "outbound"}:
-        processed += _run_outbound(worker_id)
-    if queue in {"all", "background"}:
-        processed += _run_background(worker_id)
-    if queue in {"all", "handoff-snapshot"}:
-        processed += _run_handoff_snapshot(worker_id)
-    if queue == "webchat-ai":
-        processed += _run_webchat_ai(worker_id)
+    if queue == "outbound":
+        processed = _run_outbound(worker_id)
+    elif queue == "background":
+        processed = _run_background(worker_id)
+    elif queue == "handoff-snapshot":
+        processed = _run_handoff_snapshot(worker_id)
+    else:
+        processed = _run_webchat_ai(worker_id)
     _record_queue_depth_snapshot_if_due(worker_id, queue=queue)
     if processed > 0 or queue != "webchat-ai":
         log_event(
@@ -329,10 +314,6 @@ def run_queue_once(worker_id: str, queue: str) -> int:
             processed=processed,
         )
     return processed
-
-
-def run_once(worker_id: str) -> int:
-    return run_queue_once(worker_id, "all")
 
 
 def _sleep_seconds_for_queue(queue: str, processed: int) -> float:
@@ -354,8 +335,6 @@ def _install_shutdown_handlers() -> None:
             "worker_shutdown_requested",
             signal=signal.Signals(signum).name,
         )
-        # SystemExit runs Python atexit handlers, which remove this worker's
-        # namespaced live-Gauge files from the shared canonical registry.
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, request_shutdown)
@@ -364,23 +343,19 @@ def _install_shutdown_handlers() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run isolated NexusDesk background worker queues"
+        description="Run one isolated NexusDesk background Worker queue"
     )
-    parser.add_argument("--worker-id", default="worker-main")
-    parser.add_argument("--queue", choices=sorted(QUEUES), default="all")
+    parser.add_argument("--worker-id", required=True)
+    parser.add_argument("--queue", choices=sorted(QUEUES), required=True)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 
-    worker_id = getattr(args, "worker_id", "worker-main")
-    queue = getattr(args, "queue", "all")
-    once = bool(getattr(args, "once", False))
-
     while True:
-        processed = run_queue_once(worker_id, queue)
-        if once:
+        processed = run_queue_once(args.worker_id, args.queue)
+        if args.once:
             print(f"processed={processed}")
             return 0
-        time.sleep(_sleep_seconds_for_queue(queue, processed))
+        time.sleep(_sleep_seconds_for_queue(args.queue, processed))
 
 
 if __name__ == "__main__":
