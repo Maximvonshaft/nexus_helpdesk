@@ -111,7 +111,6 @@ def get_agent_state(
 
 
 @router.put("/agent-state")
-@router.put("/agent-state")
 def update_agent_state(
     payload: AgentStateUpdateRequest,
     db: Session = Depends(get_db),
@@ -171,7 +170,6 @@ def get_managed_agent_state(
         }
 
 
-@router.put("/agent-states/{user_id}/capacity")
 @router.put("/agent-states/{user_id}/capacity")
 def update_managed_agent_capacity(
     user_id: int,
