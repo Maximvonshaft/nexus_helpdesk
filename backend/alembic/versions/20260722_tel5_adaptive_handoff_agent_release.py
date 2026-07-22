@@ -81,6 +81,18 @@ def _json_copy(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
+def _json_object(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return _json_copy(value)
+    if isinstance(value, str):
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return parsed
+    raise RuntimeError("adaptive_handoff_json_object_invalid")
+
+
 def _digest(value: Any) -> str:
     encoded = json.dumps(
         value,
@@ -91,7 +103,18 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _replace_playbook_reference(manifest: dict[str, Any]) -> dict[str, Any] | None:
+def _json_statement(sql: str, *names: str):
+    statement = sa.text(sql)
+    if names:
+        statement = statement.bindparams(
+            *(sa.bindparam(name, type_=sa.JSON()) for name in names)
+        )
+    return statement
+
+
+def _replace_playbook_reference(
+    manifest: dict[str, Any],
+) -> dict[str, Any] | None:
     output = _json_copy(manifest)
     playbooks = output.get("playbooks")
     if not isinstance(playbooks, list):
@@ -170,7 +193,11 @@ def _updated_validation(
             continue
         content = row.get("content")
         if not isinstance(content, dict):
-            content = row.get("snapshot") if isinstance(row.get("snapshot"), dict) else {}
+            content = (
+                row.get("snapshot")
+                if isinstance(row.get("snapshot"), dict)
+                else {}
+            )
         tools = content.get("tools") if isinstance(content, dict) else []
         if isinstance(tools, list):
             allowed_tools.update(
@@ -201,6 +228,8 @@ def upgrade() -> None:
     if resource is None:
         raise RuntimeError("adaptive_handoff_playbook_resource_missing")
     resource_id = int(resource["id"])
+    if int(resource["published_version"] or 0) != 1:
+        raise RuntimeError("adaptive_handoff_playbook_source_version_invalid")
     existing_v2 = bind.execute(
         sa.text(
             "SELECT id FROM ai_config_versions "
@@ -213,7 +242,7 @@ def upgrade() -> None:
 
     summary = str(_PLAYBOOK_V2["description"])
     bind.execute(
-        sa.text(
+        _json_statement(
             """
             INSERT INTO ai_config_versions
                 (resource_id, version, snapshot_json, summary, notes,
@@ -221,7 +250,8 @@ def upgrade() -> None:
             VALUES
                 (:resource_id, 2, :snapshot, :summary, :notes,
                  NULL, :now)
-            """
+            """,
+            "snapshot",
         ),
         {
             "resource_id": resource_id,
@@ -232,7 +262,7 @@ def upgrade() -> None:
         },
     )
     bind.execute(
-        sa.text(
+        _json_statement(
             """
             UPDATE ai_config_resources
             SET draft_summary = :summary,
@@ -243,7 +273,8 @@ def upgrade() -> None:
                 published_at = :now,
                 updated_at = :now
             WHERE id = :resource_id
-            """
+            """,
+            "content",
         ),
         {
             "summary": summary,
@@ -258,10 +289,11 @@ def upgrade() -> None:
             """
             SELECT id, active_release_id, canary_release_id
             FROM agent_deployments
-            WHERE is_active = true
+            WHERE is_active = :is_active
             ORDER BY id
             """
-        )
+        ),
+        {"is_active": True},
     ).mappings().all()
     candidate_release_ids = sorted(
         {
@@ -288,8 +320,9 @@ def upgrade() -> None:
         ).mappings().one_or_none()
         if release is None or str(release["status"] or "") != "approved":
             continue
-        previous_manifest = dict(release["manifest_json"] or {})
-        manifest = _replace_playbook_reference(previous_manifest)
+        manifest = _replace_playbook_reference(
+            _json_object(release["manifest_json"])
+        )
         if manifest is None:
             continue
         definition_id = int(release["definition_id"])
@@ -303,39 +336,45 @@ def upgrade() -> None:
             ).scalar_one()
         )
         validation = _updated_validation(
-            dict(release["validation_json"] or {}),
+            _json_object(release["validation_json"]),
             previous_release_id=previous_release_id,
             resource_id=resource_id,
             manifest=manifest,
         )
-        new_release_id = int(
-            bind.execute(
-                sa.text(
-                    """
-                    INSERT INTO agent_releases
-                        (definition_id, version, status, manifest_json,
-                         manifest_sha256, validation_json, created_by,
-                         approved_by, created_at, approved_at)
-                    VALUES
-                        (:definition_id, :version, 'approved', :manifest,
-                         :manifest_sha256, :validation, :created_by,
-                         :approved_by, :now, :now)
-                    RETURNING id
-                    """
-                ),
-                {
-                    "definition_id": definition_id,
-                    "version": next_version,
-                    "manifest": manifest,
-                    "manifest_sha256": _digest(manifest),
-                    "validation": validation,
-                    "created_by": release["created_by"],
-                    "approved_by": release["approved_by"],
-                    "now": now,
-                },
-            ).scalar_one()
+        bind.execute(
+            _json_statement(
+                """
+                INSERT INTO agent_releases
+                    (definition_id, version, status, manifest_json,
+                     manifest_sha256, validation_json, created_by,
+                     approved_by, created_at, approved_at)
+                VALUES
+                    (:definition_id, :version, 'approved', :manifest,
+                     :manifest_sha256, :validation, :created_by,
+                     :approved_by, :now, :now)
+                """,
+                "manifest",
+                "validation",
+            ),
+            {
+                "definition_id": definition_id,
+                "version": next_version,
+                "manifest": manifest,
+                "manifest_sha256": _digest(manifest),
+                "validation": validation,
+                "created_by": release["created_by"],
+                "approved_by": release["approved_by"],
+                "now": now,
+            },
         )
-        replacement_by_release[previous_release_id] = new_release_id
+        new_release_id = bind.execute(
+            sa.text(
+                "SELECT id FROM agent_releases "
+                "WHERE definition_id = :definition_id AND version = :version"
+            ),
+            {"definition_id": definition_id, "version": next_version},
+        ).scalar_one()
+        replacement_by_release[previous_release_id] = int(new_release_id)
         latest_manifest_by_definition[definition_id] = manifest
 
     for previous_release_id, new_release_id in replacement_by_release.items():
@@ -372,13 +411,14 @@ def upgrade() -> None:
 
     for definition_id, manifest in latest_manifest_by_definition.items():
         bind.execute(
-            sa.text(
+            _json_statement(
                 """
                 UPDATE agent_definitions
                 SET draft_manifest_json = :manifest,
                     updated_at = :now
                 WHERE id = :definition_id
-                """
+                """,
+                "manifest",
             ),
             {
                 "manifest": manifest,
@@ -398,17 +438,19 @@ def downgrade() -> None:
         )
     ).mappings().all()
     restore_by_new_release: dict[int, int] = {}
-    definitions: set[int] = set()
+    definition_previous_release: dict[int, int] = {}
     for row in migrated:
-        validation = dict(row["validation_json"] or {})
+        validation = _json_object(row["validation_json"])
         marker = validation.get("adaptive_handoff_migration")
         if not isinstance(marker, dict) or marker.get("origin") != _MIGRATION_ORIGIN:
             continue
         previous_release_id = int(marker.get("previous_release_id") or 0)
         if previous_release_id <= 0:
-            continue
-        restore_by_new_release[int(row["id"])] = previous_release_id
-        definitions.add(int(row["definition_id"]))
+            raise RuntimeError("adaptive_handoff_previous_release_missing")
+        new_release_id = int(row["id"])
+        definition_id = int(row["definition_id"])
+        restore_by_new_release[new_release_id] = previous_release_id
+        definition_previous_release[definition_id] = previous_release_id
 
     for new_release_id, previous_release_id in restore_by_new_release.items():
         bind.execute(
@@ -442,59 +484,31 @@ def downgrade() -> None:
             },
         )
 
-    for definition_id in definitions:
-        previous_manifest = bind.execute(
+    for definition_id, previous_release_id in definition_previous_release.items():
+        manifest_value = bind.execute(
             sa.text(
-                """
-                SELECT manifest_json
-                FROM agent_releases
-                WHERE definition_id = :definition_id
-                  AND id NOT IN (
-                      SELECT id FROM agent_releases
-                  )
-                """
+                "SELECT manifest_json FROM agent_releases WHERE id = :release_id"
             ),
-            {"definition_id": definition_id},
+            {"release_id": previous_release_id},
         ).scalar_one_or_none()
-        del previous_manifest
-        previous_release_id = next(
-            (
-                old_id
-                for new_id, old_id in restore_by_new_release.items()
-                if int(
-                    bind.execute(
-                        sa.text(
-                            "SELECT definition_id FROM agent_releases WHERE id = :id"
-                        ),
-                        {"id": new_id},
-                    ).scalar_one()
-                )
-                == definition_id
+        if manifest_value is None:
+            raise RuntimeError("adaptive_handoff_previous_manifest_missing")
+        bind.execute(
+            _json_statement(
+                """
+                UPDATE agent_definitions
+                SET draft_manifest_json = :manifest,
+                    updated_at = :now
+                WHERE id = :definition_id
+                """,
+                "manifest",
             ),
-            None,
+            {
+                "manifest": _json_object(manifest_value),
+                "now": now,
+                "definition_id": definition_id,
+            },
         )
-        if previous_release_id is not None:
-            manifest = bind.execute(
-                sa.text(
-                    "SELECT manifest_json FROM agent_releases WHERE id = :release_id"
-                ),
-                {"release_id": previous_release_id},
-            ).scalar_one()
-            bind.execute(
-                sa.text(
-                    """
-                    UPDATE agent_definitions
-                    SET draft_manifest_json = :manifest,
-                        updated_at = :now
-                    WHERE id = :definition_id
-                    """
-                ),
-                {
-                    "manifest": manifest,
-                    "now": now,
-                    "definition_id": definition_id,
-                },
-            )
 
     if restore_by_new_release:
         placeholders = ", ".join(
@@ -518,40 +532,43 @@ def downgrade() -> None:
         ),
         {"resource_key": _PLAYBOOK_KEY},
     ).scalar_one_or_none()
-    if resource_id is not None:
-        version_one = bind.execute(
-            sa.text(
-                "SELECT snapshot_json, summary FROM ai_config_versions "
-                "WHERE resource_id = :resource_id AND version = 1"
-            ),
-            {"resource_id": int(resource_id)},
-        ).mappings().one_or_none()
-        if version_one is not None:
-            bind.execute(
-                sa.text(
-                    """
-                    UPDATE ai_config_resources
-                    SET draft_summary = :summary,
-                        draft_content_json = :content,
-                        published_summary = :summary,
-                        published_content_json = :content,
-                        published_version = 1,
-                        published_at = :now,
-                        updated_at = :now
-                    WHERE id = :resource_id
-                    """
-                ),
-                {
-                    "summary": version_one["summary"],
-                    "content": version_one["snapshot_json"],
-                    "now": now,
-                    "resource_id": int(resource_id),
-                },
-            )
-        bind.execute(
-            sa.text(
-                "DELETE FROM ai_config_versions "
-                "WHERE resource_id = :resource_id AND version = 2"
-            ),
-            {"resource_id": int(resource_id)},
-        )
+    if resource_id is None:
+        raise RuntimeError("adaptive_handoff_playbook_resource_missing")
+    version_one = bind.execute(
+        sa.text(
+            "SELECT snapshot_json, summary FROM ai_config_versions "
+            "WHERE resource_id = :resource_id AND version = 1"
+        ),
+        {"resource_id": int(resource_id)},
+    ).mappings().one_or_none()
+    if version_one is None:
+        raise RuntimeError("adaptive_handoff_playbook_v1_missing")
+    bind.execute(
+        _json_statement(
+            """
+            UPDATE ai_config_resources
+            SET draft_summary = :summary,
+                draft_content_json = :content,
+                published_summary = :summary,
+                published_content_json = :content,
+                published_version = 1,
+                published_at = :now,
+                updated_at = :now
+            WHERE id = :resource_id
+            """,
+            "content",
+        ),
+        {
+            "summary": version_one["summary"],
+            "content": _json_object(version_one["snapshot_json"]),
+            "now": now,
+            "resource_id": int(resource_id),
+        },
+    )
+    bind.execute(
+        sa.text(
+            "DELETE FROM ai_config_versions "
+            "WHERE resource_id = :resource_id AND version = 2"
+        ),
+        {"resource_id": int(resource_id)},
+    )
