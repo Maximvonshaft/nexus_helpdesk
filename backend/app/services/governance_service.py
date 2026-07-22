@@ -262,6 +262,27 @@ def publish_role_template(
     return version_row
 
 
+def role_template_version_values(
+    db: Session, *, template_id: int, version: int
+) -> tuple[UserRole, list[str]]:
+    version_row = (
+        db.query(RoleTemplateVersion)
+        .filter(
+            RoleTemplateVersion.template_id == template_id,
+            RoleTemplateVersion.version == version,
+        )
+        .one_or_none()
+    )
+    if version_row is None:
+        raise HTTPException(status_code=409, detail="role_template_published_version_missing")
+    snapshot = dict(version_row.snapshot_json or {})
+    base_role = validate_base_role(str(snapshot.get("base_role") or ""))
+    capabilities = clean_capabilities(list(snapshot.get("capabilities") or []))
+    if not capabilities:
+        raise HTTPException(status_code=409, detail="role_template_published_version_invalid")
+    return base_role, capabilities
+
+
 def role_assignment_payload(db: Session, user: User) -> dict | None:
     assignment = db.get(RoleTemplateAssignment, user.id)
     if assignment is None:
@@ -387,9 +408,32 @@ def update_market_governance(
     notes: str | None | object = _UNSET,
     country_codes: list[str] | None = None,
     language_codes: list[str] | None = None,
+    expected_version: int | None = None,
 ) -> MarketGovernanceProfile:
     tenant_id = actor_tenant_id(db, actor)
     profile = ensure_market_profile(db, market, actor.id)
+    version_claimed = False
+    if expected_version is not None:
+        expected = int(expected_version)
+        claimed = (
+            db.query(MarketGovernanceProfile)
+            .filter(
+                MarketGovernanceProfile.market_id == market.id,
+                MarketGovernanceProfile.version == expected,
+            )
+            .update(
+                {
+                    MarketGovernanceProfile.version: expected + 1,
+                    MarketGovernanceProfile.updated_by: actor.id,
+                    MarketGovernanceProfile.updated_at: utc_now(),
+                },
+                synchronize_session=False,
+            )
+        )
+        if claimed != 1:
+            raise HTTPException(status_code=409, detail="market_configuration_changed")
+        db.refresh(profile)
+        version_claimed = True
     if name is not None:
         cleaned_name = str(name).strip()
         if not cleaned_name:
@@ -499,7 +543,8 @@ def update_market_governance(
             profile.retired_by = None
         profile.status = normalized_status
 
-    profile.version = int(profile.version or 0) + 1
+    if not version_claimed:
+        profile.version = int(profile.version or 0) + 1
     profile.updated_by = actor.id
     profile.updated_at = utc_now()
     market.updated_at = utc_now()

@@ -184,6 +184,19 @@ def _ensure_governance_access_survives(
         return
     raise HTTPException(status_code=409, detail="cannot_remove_last_governance_access")
 
+
+def _role_template_assigned_users(
+    db: Session, *, tenant_id: int | None, template_id: int
+) -> list[User]:
+    return (
+        apply_tenant_scope(db.query(User), User, tenant_id)
+        .join(RoleTemplateAssignment, RoleTemplateAssignment.user_id == User.id)
+        .filter(RoleTemplateAssignment.template_id == template_id)
+        .order_by(User.id.asc())
+        .all()
+    )
+
+
 def _template_for_actor(
     db: Session, current_user: User, template_id: int, *, require_manageable: bool = False
 ) -> RoleTemplate:
@@ -291,20 +304,14 @@ def publish_role_template(
         list(row.draft_capabilities_json or [])
     )
     base_role = governance_service.validate_base_role(row.base_role)
-    assigned_users = (
-        apply_tenant_scope(db.query(User), User, tenant_id)
-        .join(RoleTemplateAssignment, RoleTemplateAssignment.user_id == User.id)
-        .filter(
-            RoleTemplateAssignment.template_id == row.id,
-            User.is_active.is_(True),
-        )
-        .order_by(User.id.asc())
-        .all()
+    assigned_users = _role_template_assigned_users(
+        db, tenant_id=tenant_id, template_id=row.id
     )
     losing_governors = {
         user.id
         for user in assigned_users
-        if CAP_USER_MANAGE in resolve_capabilities(user, db)
+        if user.is_active
+        and CAP_USER_MANAGE in resolve_capabilities(user, db)
         and CAP_USER_MANAGE not in capabilities
     }
     if current_user.id in losing_governors:
@@ -375,9 +382,8 @@ def apply_role_template(
     )
     if user is None:
         raise HTTPException(status_code=404, detail="user_not_found")
-    base_role = governance_service.validate_base_role(template.base_role)
-    capabilities = governance_service.clean_capabilities(
-        list(template.published_capabilities_json or [])
+    base_role, capabilities = governance_service.role_template_version_values(
+        db, template_id=template.id, version=template.published_version
     )
     currently_governs = CAP_USER_MANAGE in resolve_capabilities(user, db)
     will_govern = CAP_USER_MANAGE in capabilities
@@ -589,18 +595,16 @@ def update_market(
 ):
     ensure_can_manage_markets(current_user, db)
     market = governance_service.market_for_actor(db, current_user, market_id)
-    profile = governance_service.ensure_market_profile(db, market, current_user.id)
-    if (
-        payload.expected_version is not None
-        and payload.expected_version != profile.version
-    ):
-        raise HTTPException(status_code=409, detail="market_configuration_changed")
-    before = governance_service.market_payload(db, market)
     values = payload.model_dump(exclude_unset=True)
-    values.pop("expected_version", None)
+    expected_version = values.pop("expected_version", None)
     with managed_session(db):
+        before = governance_service.market_payload(db, market)
         governance_service.update_market_governance(
-            db, market=market, actor=current_user, **values
+            db,
+            market=market,
+            actor=current_user,
+            expected_version=expected_version,
+            **values,
         )
         after = governance_service.market_payload(db, market)
         log_admin_audit(
