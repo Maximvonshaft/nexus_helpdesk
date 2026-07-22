@@ -47,7 +47,23 @@ RETIRED_PATHS = (
     ROOT / "docs/ops/NEXUS_OSR_EVAL_RUNBOOK.md",
 )
 
-RUNTIME_PATHS = (
+# Retired Agent markers are contextual. Scan only modules that own Agent
+# generation/orchestration, not unrelated business integrations whose canonical
+# Tool names may contain the same words.
+AGENT_MARKER_PATHS = (
+    ROOT / "backend/app/services/agent_runtime",
+    ROOT / "backend/app/services/ai_runtime",
+    ROOT / "backend/app/services/provider_runtime",
+    ROOT / "backend/app/services/webchat_ai_decision_runtime",
+    ROOT / "backend/app/services/webchat_ai_service.py",
+    ROOT / "backend/app/services/webchat_runtime_ai_service.py",
+    ROOT / "backend/app/services/webchat_ai_orchestration_service.py",
+    ROOT / "backend/app/services/background_jobs.py",
+    ROOT / "backend/app/services/background_job_transaction_boundary.py",
+    ROOT / "backend/app/services/lite_service.py",
+    ROOT / "backend/app/api/lite.py",
+)
+DIRECT_MODEL_SCAN_PATHS = (
     ROOT / "backend/app/services",
     ROOT / "backend/app/api",
     ROOT / "backend/scripts",
@@ -168,7 +184,7 @@ def _scan_markers(
 
 
 def _scan_direct_model_cli(failures: list[str]) -> None:
-    for root in RUNTIME_PATHS:
+    for root in DIRECT_MODEL_SCAN_PATHS:
         for path in _python_files(root):
             if "__pycache__" in path.parts:
                 continue
@@ -205,7 +221,7 @@ def main() -> int:
                 f"retired path still exists: {path.relative_to(ROOT)}"
             )
     _scan_markers(
-        roots=RUNTIME_PATHS,
+        roots=AGENT_MARKER_PATHS,
         markers=FORBIDDEN_RUNTIME_CONTENT,
         failures=failures,
     )
