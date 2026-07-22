@@ -49,6 +49,22 @@ def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
     return True
 
 
+def commit_webchat_agent_provider_boundary(db: Any) -> None:
+    """Persist bridge state and release database locks before Provider I/O.
+
+    WebChat Agent generation is an external call that may overlap an operator
+    takeover. Keeping the bridge-state transaction open would hold Conversation
+    and Agent-turn locks for the entire Provider latency window. This explicit
+    attempt boundary makes the in-flight state durable, releases those locks,
+    and lets the post-Provider phase re-read committed human ownership before a
+    public reply is persisted.
+    """
+
+    if not _is_sqlalchemy_session(db):
+        return
+    db.commit()
+
+
 def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
     if not _is_sqlalchemy_session(db):
         return True
