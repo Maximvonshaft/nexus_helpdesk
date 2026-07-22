@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.services.livekit_voice_provider import LiveKitVoiceProvider, _server_api_url
+from app.services.voice_provider import VoiceProviderError
 from app.webchat_voice_config import load_webchat_voice_runtime_config
 
 
@@ -79,7 +80,10 @@ def test_livekit_runtime_config_accepts_required_settings(monkeypatch):
     monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
     monkeypatch.setenv("LIVEKIT_API_KEY", "unit_key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "unit_secret")
-    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test https://voice.example.test")
+    monkeypatch.setenv(
+        "WEBCHAT_VOICE_CONNECT_SRC",
+        "wss://voice.example.test https://voice.example.test",
+    )
 
     config = load_webchat_voice_runtime_config()
 
@@ -100,7 +104,11 @@ def test_livekit_provider_issues_room_scoped_token(monkeypatch):
 
     fake_api = SimpleNamespace(AccessToken=FakeAccessToken, VideoGrants=FakeVideoGrants)
     monkeypatch.setattr(provider_module, "_livekit_api_module", lambda: fake_api)
-    provider = LiveKitVoiceProvider(livekit_url="wss://voice.example.test", api_key="unit_key", api_secret="unit_secret")
+    provider = LiveKitVoiceProvider(
+        livekit_url="wss://voice.example.test",
+        api_key="unit_key",
+        api_secret="unit_secret",
+    )
 
     token = provider.issue_participant_token(
         room_name="webcall_wv_123",
@@ -120,19 +128,28 @@ def test_livekit_create_room_treats_already_exists_as_success(monkeypatch):
         raise RuntimeError("room already exists")
 
     monkeypatch.setattr(LiveKitVoiceProvider, "_create_room_async", raise_exists)
-    provider = LiveKitVoiceProvider(livekit_url="wss://voice.example.test", api_key="unit_key", api_secret="unit_secret")
+    provider = LiveKitVoiceProvider(
+        livekit_url="wss://voice.example.test",
+        api_key="unit_key",
+        api_secret="unit_secret",
+    )
 
     assert provider.create_room(room_name="webcall_wv_123") == "webcall_wv_123"
 
 
-def test_livekit_close_room_does_not_break_nexusdesk_end_flow(monkeypatch):
+def test_livekit_close_room_reports_provider_failure_to_orchestrator(monkeypatch):
     async def raise_unavailable(self, *, room_name: str):
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(LiveKitVoiceProvider, "_delete_room_async", raise_unavailable)
-    provider = LiveKitVoiceProvider(livekit_url="wss://voice.example.test", api_key="unit_key", api_secret="unit_secret")
+    provider = LiveKitVoiceProvider(
+        livekit_url="wss://voice.example.test",
+        api_key="unit_key",
+        api_secret="unit_secret",
+    )
 
-    assert provider.close_room(room_name="webcall_wv_123") is None
+    with pytest.raises(VoiceProviderError, match="failed to close LiveKit room"):
+        provider.close_room(room_name="webcall_wv_123")
 
 
 def test_livekit_get_room_status_uses_provider_lookup(monkeypatch):
@@ -140,7 +157,11 @@ def test_livekit_get_room_status_uses_provider_lookup(monkeypatch):
         return room_name == "webcall_wv_exists"
 
     monkeypatch.setattr(LiveKitVoiceProvider, "_room_exists_async", room_exists)
-    provider = LiveKitVoiceProvider(livekit_url="wss://voice.example.test", api_key="unit_key", api_secret="unit_secret")
+    provider = LiveKitVoiceProvider(
+        livekit_url="wss://voice.example.test",
+        api_key="unit_key",
+        api_secret="unit_secret",
+    )
 
     assert provider.get_room_status(room_name="webcall_wv_exists") == "active"
     assert provider.get_room_status(room_name="webcall_wv_missing") == "not_found"
