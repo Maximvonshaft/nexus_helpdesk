@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -100,6 +101,12 @@ class OperatorAgentState(Base):
             "status",
             "last_heartbeat_at",
         ),
+        Index(
+            "ix_operator_agent_states_voice_eligibility",
+            "voice_enabled",
+            "status",
+            "last_heartbeat_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -111,6 +118,9 @@ class OperatorAgentState(Base):
     )
     max_concurrent_conversations: Mapped[int] = mapped_column(
         Integer, nullable=False, default=3
+    )
+    voice_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True
     )
     max_concurrent_voice_calls: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1
