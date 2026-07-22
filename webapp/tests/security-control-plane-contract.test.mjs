@@ -71,7 +71,7 @@ test('email account governance remains inside the single channels route and writ
   assert.match(lazy, /ChannelsControlPlane/)
   assert.match(controlPlane, /<ChannelsPage/)
   assert.match(controlPlane, /<EmailAccountGovernance/)
-  assert.match(email, /留空保留现有加密密码/)
+  assert.match(email, /留空保留当前密码/)
   assert.match(email, /testOutboundEmailAccount/)
   assert.equal((router.match(/ChannelsRoute/g) ?? []).length, 2)
   assert.doesNotMatch(email, /password_encrypted|imap_password_encrypted|\bfetch\s*\(/)
