@@ -54,8 +54,8 @@ jobs:
 
           path = Path('/tmp/finalizer.py')
           text = path.read_text(encoding='utf-8')
-          old = '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
-          new = (
+          changed_old = '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
+          changed_new = (
               '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
               '    changed.update(\n'
               '        subprocess.check_output(\n'
@@ -63,9 +63,55 @@ jobs:
               '        ).splitlines()\n'
               '    )\n'
           )
-          if text.count(old) != 1:
+          if text.count(changed_old) != 1:
               raise SystemExit('finalizer changed-path authority anchor mismatch')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = text.replace(changed_old, changed_new, 1)
+
+          fixture_old = '''    tenant = Tenant(tenant_key="description-tenant", display_name="Description Tenant")
+    actor = User(
+        tenant=tenant,
+        username="description-actor",
+        display_name="Description Actor",
+        password_hash="test",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    template = RoleTemplate(
+        tenant=tenant,
+        role_key="description-semantics",
+        display_name="Description semantics",
+        description="old description",
+        base_role=UserRole.agent.value,
+        risk_level="standard",
+        draft_capabilities_json=["ticket.read"],
+    )
+    db_session.add_all([tenant, actor, template])
+'''
+          fixture_new = '''    tenant = Tenant(tenant_key="description-tenant", display_name="Description Tenant")
+    db_session.add(tenant)
+    db_session.flush()
+    actor = User(
+        tenant_id=tenant.id,
+        username="description-actor",
+        display_name="Description Actor",
+        password_hash="test",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    template = RoleTemplate(
+        tenant_id=tenant.id,
+        role_key="description-semantics",
+        display_name="Description semantics",
+        description="old description",
+        base_role=UserRole.agent.value,
+        risk_level="standard",
+        draft_capabilities_json=["ticket.read"],
+    )
+    db_session.add_all([actor, template])
+'''
+          if text.count(fixture_old) != 1:
+              raise SystemExit('role description fixture authority anchor mismatch')
+          path.write_text(text.replace(fixture_old, fixture_new, 1), encoding='utf-8')
           PY
           git reset --hard "$EXPECTED_SOURCE"
           git clean -ffdx
