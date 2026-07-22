@@ -3,7 +3,9 @@ import DialpadRoundedIcon from '@mui/icons-material/DialpadRounded'
 import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded'
 import MicRoundedIcon from '@mui/icons-material/MicRounded'
 import PauseRoundedIcon from '@mui/icons-material/PauseRounded'
+import PhoneForwardedRoundedIcon from '@mui/icons-material/PhoneForwardedRounded'
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded'
+import SwapCallsRoundedIcon from '@mui/icons-material/SwapCallsRounded'
 import {
   Alert,
   Box,
@@ -24,6 +26,8 @@ interface VisitorBootstrap extends VoiceSessionBootstrap {
   visitor_token: string
   conversation_id: string
 }
+
+type TransferAction = 'cold_transfer' | 'warm_transfer'
 
 function readVisitorBootstrap(): VisitorBootstrap | null {
   const raw = window.location.hash.replace(/^#/, '')
@@ -52,10 +56,12 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
   const [held, setHeld] = useState(false)
   const [digits, setDigits] = useState('')
   const [connected, setConnected] = useState(false)
+  const [transferTarget, setTransferTarget] = useState('')
+  const [transferPending, setTransferPending] = useState<TransferAction | null>(null)
 
   const recordAction = useCallback(async (action_type: string, extra: Record<string, unknown> = {}) => {
-    if (bootstrap) return
-    await supportApi.recordVoiceAction(voiceSessionId, {
+    if (bootstrap) return null
+    return supportApi.recordVoiceAction(voiceSessionId, {
       action_type,
       idempotency_key: `webcall-${voiceSessionId}-${action_type}-${crypto.randomUUID()}`,
       ...extra,
@@ -130,6 +136,26 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     await recordAction('keypad', { digits })
     setDigits('')
   }
+  const transferCall = async (action: TransferAction) => {
+    const target = transferTarget.trim()
+    if (!target) return
+    setTransferPending(action)
+    setError(null)
+    try {
+      const result = await recordAction(action, { target })
+      if (!result?.action?.id) throw new Error('转接命令未被系统接受')
+      setStatus(
+        action === 'cold_transfer'
+          ? '直接转接命令已提交，等待 Provider 确认'
+          : '咨询转接已发起，等待目标方加入通话',
+      )
+      setTransferTarget('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '转接失败')
+    } finally {
+      setTransferPending(null)
+    }
+  }
   const endCall = async () => {
     try {
       if (bootstrap) {
@@ -150,7 +176,7 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
 
   return (
     <Box component="main" sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 2, bgcolor: 'background.default' }}>
-      <Paper variant="outlined" sx={{ width: 'min(560px, 100%)', p: { xs: 2, sm: 3 } }}>
+      <Paper variant="outlined" sx={{ width: 'min(640px, 100%)', p: { xs: 2, sm: 3 } }}>
         <Stack spacing={2.5} sx={{ alignItems: 'stretch' }}>
           <Box>
             <Typography component="h1" variant="h2">Nexus Live Voice</Typography>
@@ -175,6 +201,37 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
             <TextField fullWidth label="DTMF" value={digits} slotProps={{ htmlInput: { pattern: '[0-9*#]*', maxLength: 32 } }} onChange={(event) => setDigits(event.target.value.replace(/[^0-9*#]/g, ''))} />
             <Button variant="outlined" startIcon={<DialpadRoundedIcon />} disabled={!connected || !digits} onClick={() => void sendDigits()}>发送</Button>
           </Stack>
+          {!bootstrap ? (
+            <Stack spacing={1}>
+              <Typography component="h2" variant="h4">转接通话</Typography>
+              <TextField
+                fullWidth
+                label="目标坐席、队列或电话号码"
+                value={transferTarget}
+                helperText="内部目标使用系统身份；外部目标使用完整电话号码。实际支持范围由 LiveKit/SIP Provider 决定。"
+                slotProps={{ htmlInput: { maxLength: 240 } }}
+                onChange={(event) => setTransferTarget(event.target.value)}
+              />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <Button
+                  variant="outlined"
+                  startIcon={<PhoneForwardedRoundedIcon />}
+                  disabled={!connected || !transferTarget.trim() || transferPending !== null}
+                  onClick={() => void transferCall('cold_transfer')}
+                >
+                  {transferPending === 'cold_transfer' ? '提交中…' : '直接转接'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<SwapCallsRoundedIcon />}
+                  disabled={!connected || !transferTarget.trim() || transferPending !== null}
+                  onClick={() => void transferCall('warm_transfer')}
+                >
+                  {transferPending === 'warm_transfer' ? '邀请中…' : '咨询后转接'}
+                </Button>
+              </Stack>
+            </Stack>
+          ) : null}
           <Alert severity="info" variant="outlined">请勿在通话中披露密码、支付验证码或其他高敏感凭证。</Alert>
         </Stack>
       </Paper>
