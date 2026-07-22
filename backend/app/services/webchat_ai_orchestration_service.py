@@ -15,6 +15,7 @@ from ..webchat_models import (
     WebchatEvent,
     WebchatMessage,
 )
+from .agent_confirmation_service import resolve_confirmation_from_customer_message
 from .background_job_transaction_boundary import (
     commit_webchat_agent_provider_boundary,
 )
@@ -164,6 +165,42 @@ def _record_disabled(
     db.flush()
 
 
+def _resolve_customer_confirmation(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    visitor_message: WebchatMessage,
+) -> None:
+    resolution = resolve_confirmation_from_customer_message(
+        db,
+        conversation=conversation,
+        message=visitor_message,
+    )
+    if resolution is None or resolution.get("decision") in {None, "ambiguous"}:
+        return
+    db.add(
+        WebchatEvent(
+            conversation_id=conversation.id,
+            ticket_id=conversation.ticket_id,
+            event_type="agent.tool_confirmation.resolved",
+            payload_json=json.dumps(
+                {
+                    "confirmation_id": resolution.get("confirmation_id"),
+                    "tool_name": resolution.get("tool_name"),
+                    "decision": resolution.get("decision"),
+                    "status": resolution.get("status"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+    )
+    db.flush()
+    # The Agent Runtime and Tool Executor use independent Sessions. Persist the
+    # customer authorization before either boundary can read or act on it.
+    commit_webchat_agent_provider_boundary(db)
+
+
 def process_webchat_ai_reply_job(
     db: Session,
     *,
@@ -176,6 +213,11 @@ def process_webchat_ai_reply_job(
         conversation_id=conversation_id,
         ticket_id=ticket_id,
         visitor_message_id=visitor_message_id,
+    )
+    _resolve_customer_confirmation(
+        db,
+        conversation=conversation,
+        visitor_message=visitor_message,
     )
     turn = _open_turn_for_message(
         db,
