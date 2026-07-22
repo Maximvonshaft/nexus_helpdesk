@@ -32,6 +32,10 @@ SUPPORTED_COMMANDS = {
 }
 
 
+def _actor_id(actor: User | None) -> int | None:
+    return actor.id if actor is not None else None
+
+
 def _safe_request(
     action_type: str,
     *,
@@ -43,7 +47,9 @@ def _safe_request(
     if target:
         payload["target"] = {
             "redacted": True,
-            "sha256_prefix": hashlib.sha256(target.encode("utf-8")).hexdigest()[:16],
+            "sha256_prefix": hashlib.sha256(
+                target.encode("utf-8")
+            ).hexdigest()[:16],
             "suffix": target[-4:] if len(target) >= 4 else "",
         }
     if digits:
@@ -89,7 +95,7 @@ def _resolve_existing_command(
     *,
     idempotency_key: str,
     session: WebchatVoiceSession,
-    actor: User,
+    actor: User | None,
 ) -> WebchatVoiceSessionAction | None:
     existing = (
         db.query(WebchatVoiceSessionAction)
@@ -98,7 +104,10 @@ def _resolve_existing_command(
     )
     if existing is None:
         return None
-    if existing.voice_session_id != session.id or existing.actor_user_id != actor.id:
+    if (
+        existing.voice_session_id != session.id
+        or existing.actor_user_id != _actor_id(actor)
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="voice action idempotency conflict",
@@ -110,7 +119,7 @@ def enqueue_voice_command(
     db: Session,
     *,
     session: WebchatVoiceSession,
-    actor: User,
+    actor: User | None,
     action_type: str,
     target: str | None = None,
     digits: str | None = None,
@@ -133,6 +142,8 @@ def enqueue_voice_command(
             return existing
 
     now = utc_now()
+    actor_id = _actor_id(actor)
+    actor_type = "operator" if actor is not None else "system"
     safe_request = _safe_request(
         requested,
         target=target,
@@ -144,7 +155,7 @@ def enqueue_voice_command(
         voice_session_id=session.id,
         conversation_id=session.conversation_id,
         ticket_id=session.ticket_id,
-        actor_user_id=actor.id,
+        actor_user_id=actor_id,
         action_type=requested,
         idempotency_key=key,
         status="requested",
@@ -186,7 +197,8 @@ def enqueue_voice_command(
                 "voice_session_id": session.public_id,
                 "command_id": command.public_id,
                 "action_type": requested,
-                "actor_user_id": actor.id,
+                "actor_user_id": actor_id,
+                "actor_type": actor_type,
                 "safe_request": safe_request,
             },
             ensure_ascii=False,
@@ -198,7 +210,7 @@ def enqueue_voice_command(
     db.flush()
     audit = log_admin_audit(
         db,
-        actor_id=actor.id,
+        actor_id=actor_id,
         action=f"webcall.voice.command.{requested}.requested",
         target_type="webchat_voice_command",
         target_id=command.id,
@@ -206,6 +218,7 @@ def enqueue_voice_command(
         new_value={
             "voice_session_id": session.public_id,
             "command_id": command.public_id,
+            "actor_type": actor_type,
             "safe_request": safe_request,
         },
     )
@@ -215,7 +228,9 @@ def enqueue_voice_command(
     return command
 
 
-def serialize_voice_command(command: WebchatVoiceSessionAction) -> dict[str, Any]:
+def serialize_voice_command(
+    command: WebchatVoiceSessionAction,
+) -> dict[str, Any]:
     try:
         result = json.loads(command.result_json or "{}")
     except json.JSONDecodeError:
@@ -231,7 +246,19 @@ def serialize_voice_command(command: WebchatVoiceSessionAction) -> dict[str, Any
         "attempt_count": command.attempt_count,
         "result": result,
         "actor_user_id": command.actor_user_id,
-        "completed_at": command.completed_at.isoformat() if command.completed_at else None,
-        "next_attempt_at": command.next_attempt_at.isoformat() if command.next_attempt_at else None,
-        "created_at": command.created_at.isoformat() if command.created_at else None,
+        "completed_at": (
+            command.completed_at.isoformat()
+            if command.completed_at
+            else None
+        ),
+        "next_attempt_at": (
+            command.next_attempt_at.isoformat()
+            if command.next_attempt_at
+            else None
+        ),
+        "created_at": (
+            command.created_at.isoformat()
+            if command.created_at
+            else None
+        ),
     }
