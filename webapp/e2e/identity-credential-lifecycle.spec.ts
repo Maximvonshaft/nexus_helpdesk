@@ -149,7 +149,7 @@ test('forced password rotation cannot render the workspace and completes through
 
   await expect(page).toHaveURL(/\/account$/)
   await expect(page.getByRole('heading', { level: 1, name: '账户设置' })).toBeVisible()
-  await expect(page.getByText('完成密码修改前，业务页面和实时工作连接均不可使用。')).toBeVisible()
+  await expect(page.getByText('当前密码需要更新。完成密码修改前，暂不能访问其他页面。')).toBeVisible()
   await expect(page.getByTestId('operator-workspace')).toHaveCount(0)
 
   const passwordRegion = page.getByRole('region', { name: '修改密码' })
