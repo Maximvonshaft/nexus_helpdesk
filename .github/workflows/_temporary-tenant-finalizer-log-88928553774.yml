@@ -19,8 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      EXPECTED_SOURCE: 968f232eea7d849e1090c78598b60e372c254532
-      EXPECTED_HEAD: ba7ad045f804319bfcde197e46e268b03ebd21fe
+      EXPECTED_SOURCE: cdec15284116fc14ef048bbcb478dbbf8a985ac0
+      EXPECTED_HEAD: 828d657fdf51bfe2f9991af270909fc31d17e97f
       TARGET_BRANCH: fix/governance-tenant-authority-final
       PYTHONPATH: backend
       APP_ENV: test
