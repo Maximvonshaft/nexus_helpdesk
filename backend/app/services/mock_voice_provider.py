@@ -61,7 +61,9 @@ class MockVoiceProvider(VoiceProvider):
         target: str | None = None,
         digits: str | None = None,
         participant_identity: str | None = None,
+        controller_identity: str | None = None,
         outbound_trunk_id: str | None = None,
+        recording_reference: str | None = None,
         idempotency_key: str | None = None,
     ) -> VoiceProviderActionResult:
         material = ":".join(
@@ -71,7 +73,9 @@ class MockVoiceProvider(VoiceProvider):
                 action_type,
                 target,
                 participant_identity,
+                controller_identity,
                 outbound_trunk_id,
+                recording_reference,
                 idempotency_key,
             )
         )
@@ -84,5 +88,7 @@ class MockVoiceProvider(VoiceProvider):
                 "target_present": bool(target),
                 "digits_length": len(digits or ""),
                 "participant_identity_present": bool(participant_identity),
+                "controller_identity_present": bool(controller_identity),
+                "recording_reference_present": bool(recording_reference),
             },
         )
