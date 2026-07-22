@@ -30,6 +30,7 @@ canonical_authorities:
   webchat_session_identity: backend/app/services/webchat_session_identity.py
   webchat_initialization: backend/app/services/conversation_first_service.py
   webchat_message_service: backend/app/services/webchat_message_service.py
+  customer_visible_message_persistence: backend/app/services/customer_visible_message_service.py
   webchat_application_facade: backend/app/services/webchat_service.py
   webchat_handoff: backend/app/services/webchat_handoff_service.py
   webchat_agent_orchestration: backend/app/services/webchat_ai_orchestration_service.py
@@ -98,6 +99,7 @@ single_authority_rules:
   - no role-name authorization outside the capability authority
   - no runtime schema DDL outside Alembic
   - no ticket-mandatory WebChat initialization
+  - one Customer-visible Message persistence boundary
   - one WebChat Agent reply and persistence authority
   - no direct model CLI or standalone AI Job
   - no legacy Lite response shape
