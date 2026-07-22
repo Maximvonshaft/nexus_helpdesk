@@ -1,7 +1,4 @@
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -18,7 +15,11 @@ import {
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { OperatorEmptyState, OperatorErrorNotice } from '@/app/OperatorPresentation'
+import {
+  OperatorEmptyState,
+  OperatorErrorNotice,
+  OperatorTechnicalDisclosure,
+} from '@/app/OperatorPresentation'
 import { supportApi } from '@/lib/supportApi'
 import type { ChannelAccount } from '@/lib/types'
 import type {
@@ -217,23 +218,18 @@ export function TelephonyConfigurationPanel({ accounts }: { accounts: ChannelAcc
             录音或转写只有在对应国家的告知、同意、访问权限、保留期和删除策略完成审批后才能启用。
           </Alert>
 
-          <Accordion variant="outlined" disableGutters>
-            <AccordionSummary>
-              <Box>
-                <Typography component="h3" variant="h4">高级 Provider 诊断</Typography>
-                <Typography variant="body2" color="text.secondary">仅供实施与故障排查；日常运营无需修改。</Typography>
-              </Box>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-                <TextField label="LiveKit Project Reference" value={draft.livekit_project_ref || ''} onChange={(event) => setDraft((value) => ({ ...value, livekit_project_ref: event.target.value || null }))} />
-                <TextField label="Room Controller / AI Agent Name" value={draft.ai_agent_name || ''} onChange={(event) => setDraft((value) => ({ ...value, ai_agent_name: event.target.value || null }))} />
-                <TextField label="Inbound Trunk ID" value={draft.inbound_trunk_id || ''} onChange={(event) => setDraft((value) => ({ ...value, inbound_trunk_id: event.target.value || null }))} />
-                <TextField label="Outbound Trunk ID" value={draft.outbound_trunk_id || ''} onChange={(event) => setDraft((value) => ({ ...value, outbound_trunk_id: event.target.value || null }))} />
-                <TextField label="Dispatch Rule ID" value={draft.dispatch_rule_id || ''} onChange={(event) => setDraft((value) => ({ ...value, dispatch_rule_id: event.target.value || null }))} />
-              </Box>
-            </AccordionDetails>
-          </Accordion>
+          <OperatorTechnicalDisclosure
+            title="高级 Provider 诊断"
+            summary="仅供实施与故障排查；日常运营无需修改。"
+          >
+            <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+              <TextField label="LiveKit Project Reference" value={draft.livekit_project_ref || ''} onChange={(event) => setDraft((value) => ({ ...value, livekit_project_ref: event.target.value || null }))} />
+              <TextField label="Room Controller / AI Agent Name" value={draft.ai_agent_name || ''} onChange={(event) => setDraft((value) => ({ ...value, ai_agent_name: event.target.value || null }))} />
+              <TextField label="Inbound Trunk ID" value={draft.inbound_trunk_id || ''} onChange={(event) => setDraft((value) => ({ ...value, inbound_trunk_id: event.target.value || null }))} />
+              <TextField label="Outbound Trunk ID" value={draft.outbound_trunk_id || ''} onChange={(event) => setDraft((value) => ({ ...value, outbound_trunk_id: event.target.value || null }))} />
+              <TextField label="Dispatch Rule ID" value={draft.dispatch_rule_id || ''} onChange={(event) => setDraft((value) => ({ ...value, dispatch_rule_id: event.target.value || null }))} />
+            </Box>
+          </OperatorTechnicalDisclosure>
 
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
