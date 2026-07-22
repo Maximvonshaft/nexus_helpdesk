@@ -23,6 +23,7 @@ LIVEKIT_KEY_ENV = "LIVEKIT_API_KEY"
 LIVEKIT_KEY_FILE_ENV = "LIVEKIT_API_KEY_FILE"
 LIVEKIT_SECRET_ENV = "LIVEKIT_API_SECRET"
 LIVEKIT_SECRET_FILE_ENV = "LIVEKIT_API_SECRET_FILE"
+LIVEKIT_AGENT_NAME_ENV = "LIVEKIT_AGENT_NAME"
 
 VOICE_ENV_KEYS = [
     "WEBCHAT_VOICE_ENABLED",
@@ -37,6 +38,7 @@ VOICE_ENV_KEYS = [
     LIVEKIT_KEY_FILE_ENV,
     LIVEKIT_SECRET_ENV,
     LIVEKIT_SECRET_FILE_ENV,
+    LIVEKIT_AGENT_NAME_ENV,
 ]
 
 
@@ -85,6 +87,7 @@ def test_retired_pcm_health_route_is_always_absent(monkeypatch):
         WEBCHAT_HUMAN_CALL_ENABLED="false",
         WEBCHAT_LIVE_AI_VOICE_ENABLED="true",
         WEBCHAT_VOICE_PROVIDER="mock",
+        LIVEKIT_AGENT_NAME="nexus-voice-agent",
     )
 
     response = client.get("/webchat/live/health")
@@ -94,6 +97,7 @@ def test_retired_pcm_health_route_is_always_absent(monkeypatch):
     assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
     assert runtime_config.status_code == 200
     assert runtime_config.json()["media_plane"] == "mock"
+    assert runtime_config.json()["live_ai_voice_enabled"] is True
     assert "upstream" not in runtime_config.text.lower()
 
 
