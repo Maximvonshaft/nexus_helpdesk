@@ -93,15 +93,44 @@ Production API and service code must not infer access directly from a role name.
 
 The former channel persistence boundary is removed from application code and current schema. Migration `20260720_0063` preserves historical rows in a hash-verified rollback archive, projects ticket-linked evidence into canonical ticket events and attachments, and removes the retired tables and columns. No runtime route, worker, setting, model, or provider fallback may recreate that state.
 
+## Canonical voice and telephony
 
-## Voice capability authority
+LiveKit is the only real-time media plane for browser voice and SIP/PSTN. All participants join the same canonical Room: caller, governed AI Agent, human operator, recorder, transcriber and authorized supervisor.
 
-Voice is split into two explicit, non-overlapping capabilities:
+Nexus remains the orchestration and system-of-record authority:
 
-- Human WebCall: `WEBCHAT_HUMAN_CALL_ENABLED`, owned by `api/webchat_voice.py` and `webchat_voice_service.py`.
-- Live AI voice: `WEBCHAT_LIVE_AI_VOICE_ENABLED`, owned by `api/webchat_live_voice.py` and `live_voice_orchestration_service.py`.
+- `WebchatConversation` — the one interaction entity;
+- `WebchatHandoffRequest.assigned_agent_id` and `WebchatConversation.active_agent_id` — the only human ownership authority;
+- Agent Runtime and immutable Agent Release — AI decisions, knowledge and governed Tools;
+- `OperatorAgentState` — online state, heartbeat, text/voice capacity and after-call work;
+- `ChannelAccount(provider="voice")` with `VoiceChannelConfiguration` — the one telephone configuration product under `/channels`;
+- Timeline, Evidence and Audit — durable operational proof;
+- Ticket — created only when follow-up work is required, never as a call prerequisite.
 
-`WEBCHAT_VOICE_ENABLED` is compatibility-only. Production must set both explicit flags and cannot use the aggregate flag as an ambiguous activation authority.
+The adaptive handoff journey uses existing governed Tools rather than a telephony-specific parallel runtime:
+
+```text
+support.availability
+→ read scoped operator status, voice capacity, queue and evidence-based wait
+→ explain available options to the customer
+→ handoff.request.create when a live transfer is chosen
+→ ticket.create only after exact, one-time customer confirmation when follow-up is required
+```
+
+Voice control is durable:
+
+```text
+API / Agent request
+→ Voice Command outbox
+→ worker-owned LiveKit/SIP execution
+→ Provider or Room-controller event
+→ idempotent projection
+→ Timeline and Audit
+```
+
+The retired PCM/AudioWorklet `/webchat/live/ws` media edge, `LIVE_VOICE_UPSTREAM_*`, `nexus_media_edge`, parallel AI voice orchestration and independent Voice ownership must not be restored.
+
+Repository support does not imply that a real DID, Carrier, SIP trunk or production LiveKit credential is active. Missing Provider configuration fails closed and cannot simulate successful PSTN operations.
 
 ## Frontend build
 
@@ -142,6 +171,7 @@ The verifier rejects:
 - executable raw SQL migration paths outside Alembic;
 - retired paths and unreachable frontend modules;
 - a second GitHub Actions workflow or Actions-only governance authority;
+- parallel voice media, ownership, presence, routing or Channel configuration authorities;
 - loss of Runtime read/manage separation;
 - loss of cancel-preview input binding;
 - noncanonical Control Tower links.
@@ -167,13 +197,10 @@ Production requires:
 - `AUTO_INIT_DB=false`;
 - `SEED_DEMO_DATA=false`;
 - no dev authentication or legacy token transport;
-- explicit `WEBCHAT_HUMAN_CALL_ENABLED` and `WEBCHAT_LIVE_AI_VOICE_ENABLED`;
+- LiveKit URL, API key and API secret when voice is enabled;
+- server-governed `ChannelAccount(provider="voice")`, DID, SIP trunk and Dispatch Rule mapping for PSTN;
 - generated `frontend_dist` present;
 - explicit Provider routing, fallback and kill-switch configuration;
 - `/healthz` and `/readyz` passing.
 
 Do not deploy directly from a code-consolidation branch. Deployment requires an explicit candidate, migration rehearsal, smoke evidence and rollback plan. Never use destructive Git cleanup against a live server directory before preserving environment files, data, attachments and server-only overrides.
-
-## Canonical voice and telephony
-
-Browser voice, AI voice and SIP/PSTN use one LiveKit media plane and the existing Conversation/Handoff/Ticket authorities. Repository support does not imply that a real DID, SIP trunk or production provider credential is activated; those remain controlled deployment inputs.
