@@ -20,8 +20,8 @@ jobs:
     timeout-minutes: 45
     env:
       EXPECTED_SOURCE: 968f232eea7d849e1090c78598b60e372c254532
-      EXPECTED_HEAD: 78e6d43b0b80f09e4770a890e198b72be9fbfab8
-      TARGET_BRANCH: fix/governance-tenant-authority-968f232
+      EXPECTED_HEAD: ba7ad045f804319bfcde197e46e268b03ebd21fe
+      TARGET_BRANCH: fix/governance-tenant-authority-final
       PYTHONPATH: backend
       APP_ENV: test
       AUTO_INIT_DB: "false"
@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-          ref: fix/governance-tenant-authority-968f232
+          ref: fix/governance-tenant-authority-final
           persist-credentials: true
 
       - name: Reconstruct bounded product candidate
