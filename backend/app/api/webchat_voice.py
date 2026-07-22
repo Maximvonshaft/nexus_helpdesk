@@ -184,10 +184,7 @@ def accept_voice_session(
         db.rollback()
         logger.exception(
             "voice_accept_failed",
-            extra={
-                "voice_session_id": voice_session_id,
-                "actor_user_id": getattr(current_user, "id", None),
-            },
+            extra={"actor_user_id": getattr(current_user, "id", None)},
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -258,11 +255,7 @@ def create_voice_action(
     except Exception:
         logger.exception(
             "voice_command_request_failed",
-            extra={
-                "voice_session_id": voice_session_id,
-                "actor_user_id": getattr(current_user, "id", None),
-                "action_type": payload.action_type,
-            },
+            extra={"actor_user_id": getattr(current_user, "id", None)},
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
