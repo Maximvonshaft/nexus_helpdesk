@@ -15,10 +15,9 @@ from ..webchat_models import (
     WebchatEvent,
     WebchatMessage,
 )
-from .conversation_ai_service import process_ticketless_ai_reply
 from .webchat_ai_service import (
     AI_AUTHOR_LABEL,
-    process_webchat_ai_reply_job as _run_ticket_reply,
+    process_webchat_ai_reply_job as _run_agent_reply,
 )
 from .webchat_ai_turn_service import (
     AI_TURN_OPEN_STATUSES,
@@ -43,8 +42,7 @@ def _load_context(
     visitor_message_id: int,
 ) -> tuple[WebchatConversation, Ticket | None, WebchatMessage]:
     conversation = db.get(WebchatConversation, conversation_id)
-    normalized_ticket_id = int(ticket_id or 0)
-    ticket = db.get(Ticket, normalized_ticket_id) if normalized_ticket_id > 0 else None
+    ticket = db.get(Ticket, ticket_id) if ticket_id is not None else None
     visitor_message = db.get(WebchatMessage, visitor_message_id)
     if conversation is None:
         raise RuntimeError(
@@ -59,11 +57,12 @@ def _load_context(
     if conversation.ticket_id is None:
         if ticket is not None or visitor_message.ticket_id is not None:
             raise RuntimeError("ticketless webchat job payload mismatch")
-    else:
-        if ticket is None or ticket.id != conversation.ticket_id:
-            raise RuntimeError("ticket-backed webchat job payload mismatch")
-        if visitor_message.ticket_id != ticket.id:
-            raise RuntimeError("webchat message ticket mismatch")
+    elif (
+        ticket is None
+        or ticket.id != conversation.ticket_id
+        or visitor_message.ticket_id != ticket.id
+    ):
+        raise RuntimeError("ticket-backed webchat job payload mismatch")
     return conversation, ticket, visitor_message
 
 
@@ -114,12 +113,9 @@ def _complete_turn(
     db: Session,
     *,
     conversation: WebchatConversation,
-    ticket: Ticket | None,
-    visitor_message: WebchatMessage,
     turn: WebchatAITurn | None,
     result: dict[str, Any],
 ) -> None:
-    del ticket, visitor_message
     if turn is None:
         return
     complete_ai_turn_with_reply(
@@ -223,8 +219,6 @@ def process_webchat_ai_reply_job(
         _complete_turn(
             db,
             conversation=conversation,
-            ticket=ticket,
-            visitor_message=visitor_message,
             turn=turn,
             result=result,
         )
@@ -255,27 +249,18 @@ def process_webchat_ai_reply_job(
             "reason": "webchat_ai_auto_reply_off",
             "reply_source": "off",
         }
-    elif ticket is not None:
-        result = _run_ticket_reply(
+    else:
+        result = _run_agent_reply(
             db,
             conversation_id=conversation.id,
-            ticket_id=ticket.id,
+            ticket_id=ticket.id if ticket else None,
             visitor_message_id=visitor_message.id,
             ai_turn_id=turn.id if turn else None,
-        )
-    else:
-        result = process_ticketless_ai_reply(
-            db,
-            conversation=conversation,
-            visitor_message=visitor_message,
-            turn=turn,
         )
 
     _complete_turn(
         db,
         conversation=conversation,
-        ticket=ticket,
-        visitor_message=visitor_message,
         turn=turn,
         result=result or {},
     )
