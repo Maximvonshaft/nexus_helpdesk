@@ -82,7 +82,13 @@ export function RoleTemplatesPanel() {
     onSuccess: invalidate,
   })
   const publish = useMutation({
-    mutationFn: (id: number) => governanceApi.publishRoleTemplate(id, '运营控制面发布'),
+    mutationFn: async ({ id, payload }: {
+      id: number
+      payload: Partial<RoleTemplateDraft> & { is_active?: boolean }
+    }) => {
+      await governanceApi.updateRoleTemplate(id, payload)
+      return governanceApi.publishRoleTemplate(id, '运营控制面发布')
+    },
     onSuccess: invalidate,
   })
   const apply = useMutation({
@@ -91,19 +97,18 @@ export function RoleTemplatesPanel() {
     onSuccess: async () => { setApplyUserId(''); await invalidate() },
   })
 
+  const currentDraftPayload = (): Partial<RoleTemplateDraft> & { is_active?: boolean } => ({
+    display_name: draft.display_name,
+    description: draft.description || null,
+    base_role: draft.base_role,
+    risk_level: draft.risk_level,
+    capabilities: draft.capabilities,
+    is_active: active,
+  })
+
   const saveSelected = () => {
     if (!selected) return
-    update.mutate({
-      id: selected.id,
-      payload: {
-        display_name: draft.display_name,
-        description: draft.description || null,
-        base_role: draft.base_role,
-        risk_level: draft.risk_level,
-        capabilities: draft.capabilities,
-        is_active: active,
-      },
-    })
+    update.mutate({ id: selected.id, payload: currentDraftPayload() })
   }
 
   if (templates.isLoading || capabilities.isLoading || assignments.isLoading) {
@@ -183,8 +188,15 @@ export function RoleTemplatesPanel() {
                 />
                 <FormControlLabel control={<Switch checked={active} disabled={!selected.can_manage} onChange={(event) => setActive(event.target.checked)} />} label="启用模板" />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <Button variant="outlined" startIcon={<SaveRoundedIcon />} disabled={!selected.can_manage || update.isPending} onClick={saveSelected}>保存草稿</Button>
-                  <Button variant="contained" startIcon={<PublishRoundedIcon />} disabled={!selected.can_manage || publish.isPending || !draft.capabilities.length} onClick={() => publish.mutate(selected.id)}>发布新版本</Button>
+                  <Button variant="outlined" startIcon={<SaveRoundedIcon />} disabled={!selected.can_manage || update.isPending || publish.isPending} onClick={saveSelected}>保存草稿</Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<PublishRoundedIcon />}
+                    disabled={!selected.can_manage || publish.isPending || update.isPending || !draft.capabilities.length}
+                    onClick={() => publish.mutate({ id: selected.id, payload: currentDraftPayload() })}
+                  >
+                    保存并发布新版本
+                  </Button>
                 </Stack>
                 {(update.error || publish.error) ? <OperatorErrorNotice title="角色模板操作失败" error={update.error || publish.error} fallback="请检查能力集合和并发状态" /> : null}
 

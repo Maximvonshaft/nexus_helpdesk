@@ -19,6 +19,7 @@ from ..api.deps import get_current_user
 from ..db import get_db
 from ..models import Market, Team, Tenant, User
 from ..models_agent_control import AgentDeployment, AgentRelease, AgentRun
+from ..models_control_plane import KnowledgeItem
 from ..schemas import MarketCreate
 from ..models_governance import (
     AgentDeploymentRevision,
@@ -124,6 +125,37 @@ def _tenant_id_string(db: Session, current_user: User) -> str:
     return tenant.tenant_key
 
 
+
+
+def _find_visible_knowledge_import_duplicate(
+    db: Session,
+    *,
+    tenant_id: str,
+    sha256: str,
+    market_id: int | None,
+    channel: str,
+    audience_scope: str,
+    language: str | None,
+) -> KnowledgeImportDocument | None:
+    return (
+        db.query(KnowledgeImportDocument)
+        .join(
+            KnowledgeItem,
+            KnowledgeImportDocument.knowledge_item_id == KnowledgeItem.id,
+        )
+        .filter(
+            KnowledgeImportDocument.tenant_id == tenant_id,
+            KnowledgeImportDocument.sha256 == sha256,
+            KnowledgeImportDocument.status == "draft_created",
+            KnowledgeItem.tenant_id == tenant_id,
+            KnowledgeItem.market_id == market_id,
+            KnowledgeItem.channel == channel,
+            KnowledgeItem.audience_scope == audience_scope,
+            KnowledgeItem.language == language,
+        )
+        .order_by(KnowledgeImportDocument.id.asc())
+        .first()
+    )
 
 
 def _active_governor_ids(db: Session, tenant_id: int | None) -> set[int]:
@@ -697,15 +729,14 @@ def create_knowledge_import(
                 content = read_upload_bytes(upload)
                 digest = hashlib.sha256(content).hexdigest()
                 upload.file.seek(0)
-                duplicate = (
-                    db.query(KnowledgeImportDocument)
-                    .filter(
-                        KnowledgeImportDocument.tenant_id == tenant_key,
-                        KnowledgeImportDocument.sha256 == digest,
-                        KnowledgeImportDocument.status == "draft_created",
-                    )
-                    .order_by(KnowledgeImportDocument.id.asc())
-                    .first()
+                duplicate = _find_visible_knowledge_import_duplicate(
+                    db,
+                    tenant_id=tenant_key,
+                    sha256=digest,
+                    market_id=market_id,
+                    channel=normalized_channel,
+                    audience_scope=normalized_audience,
+                    language=normalized_language,
                 )
                 if duplicate is not None:
                     db.add(
