@@ -1,4 +1,4 @@
-# isolated observable trigger with strict diagnostics
+# isolated observable trigger with strict diagnostics v2
 name: Temporary Governance Tenant Finalizer
 
 on:
@@ -56,6 +56,7 @@ jobs:
           set +e
           mkdir -p /tmp/governance-tenant-diagnostics
           (
+            set -Eeuo pipefail
             set -x
             temporary_head="$(git rev-parse HEAD)"
             echo "TEMPORARY_HEAD=$temporary_head" >> "$GITHUB_ENV"
@@ -70,7 +71,14 @@ jobs:
               "$expected_paths" "$observed_paths"
             test "$observed_paths" = "$expected_paths"
             cp .github/temporary-governance-tenant-finalizer.py /tmp/governance-tenant-finalizer.py
-            sed -i 's/count=2,/count=1,/' /tmp/governance-tenant-finalizer.py
+            python - <<'PY'
+            from pathlib import Path
+            path = Path('/tmp/governance-tenant-finalizer.py')
+            text = path.read_text(encoding='utf-8')
+            if text.count('count=2,') < 2:
+                raise SystemExit('expected both scoped replacement counters')
+            path.write_text(text.replace('count=2,', 'count=1,', 1), encoding='utf-8')
+            PY
             git reset --hard "$EXPECTED_SOURCE"
             git clean -ffdx
             python /tmp/governance-tenant-finalizer.py
