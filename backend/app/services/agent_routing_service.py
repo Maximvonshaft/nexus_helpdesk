@@ -70,7 +70,12 @@ def _event(
         conversation_id=conversation.id,
         ticket_id=conversation.ticket_id,
         event_type=event_type,
-        payload_json=json.dumps(payload or {}, ensure_ascii=False, default=str),
+        payload_json=json.dumps(
+            payload or {},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ),
         created_at=utc_now(),
     )
     db.add(row)
@@ -84,7 +89,9 @@ def get_or_create_agent_state(
     user_id: int,
     lock: bool = False,
 ) -> OperatorAgentState:
-    query = db.query(OperatorAgentState).filter(OperatorAgentState.user_id == user_id)
+    query = db.query(OperatorAgentState).filter(
+        OperatorAgentState.user_id == user_id
+    )
     if lock:
         query = _lock(query, db)
     row = query.first()
@@ -106,12 +113,18 @@ def get_or_create_agent_state(
     return row
 
 
-def heartbeat_is_fresh(row: OperatorAgentState, *, now=None) -> bool:
+def heartbeat_is_fresh(
+    row: OperatorAgentState,
+    *,
+    now=None,
+) -> bool:
     heartbeat = ensure_utc(row.last_heartbeat_at)
     current = ensure_utc(now or utc_now())
     if heartbeat is None or current is None:
         return False
-    return heartbeat >= current - timedelta(seconds=HEARTBEAT_TTL_SECONDS)
+    return heartbeat >= current - timedelta(
+        seconds=HEARTBEAT_TTL_SECONDS
+    )
 
 
 def _voice_session_for_conversation(
@@ -123,7 +136,9 @@ def _voice_session_for_conversation(
         db.query(WebchatVoiceSession)
         .filter(
             WebchatVoiceSession.conversation_id == conversation_id,
-            WebchatVoiceSession.status.in_(sorted(VOICE_OPEN_SESSION_STATUSES)),
+            WebchatVoiceSession.status.in_(
+                sorted(VOICE_OPEN_SESSION_STATUSES)
+            ),
         )
         .order_by(WebchatVoiceSession.id.desc())
         .first()
@@ -136,8 +151,11 @@ def active_agent_load(db: Session, *, user_id: int) -> int:
     voice_occupancy = (
         db.query(WebchatVoiceSession.id)
         .filter(
-            WebchatVoiceSession.conversation_id == WebchatHandoffRequest.conversation_id,
-            WebchatVoiceSession.status.in_(sorted(VOICE_OPEN_SESSION_STATUSES)),
+            WebchatVoiceSession.conversation_id
+            == WebchatHandoffRequest.conversation_id,
+            WebchatVoiceSession.status.in_(
+                sorted(VOICE_OPEN_SESSION_STATUSES)
+            ),
         )
         .exists()
     )
@@ -145,7 +163,8 @@ def active_agent_load(db: Session, *, user_id: int) -> int:
         db.query(func.count(WebchatHandoffRequest.id))
         .join(
             WebchatConversation,
-            WebchatConversation.id == WebchatHandoffRequest.conversation_id,
+            WebchatConversation.id
+            == WebchatHandoffRequest.conversation_id,
         )
         .filter(
             WebchatHandoffRequest.status == "accepted",
@@ -158,21 +177,29 @@ def active_agent_load(db: Session, *, user_id: int) -> int:
     )
 
 
-def active_voice_load(db: Session, *, user_id: int, now=None) -> int:
-    """Count accepted calls and bounded after-call work from canonical Handoffs."""
+def active_voice_load(
+    db: Session,
+    *,
+    user_id: int,
+    now=None,
+) -> int:
+    """Count accepted calls and bounded after-call work."""
 
     current = ensure_utc(now or utc_now()) or utc_now()
     return int(
         db.query(func.count(WebchatVoiceSession.id))
         .join(
             WebchatHandoffRequest,
-            WebchatHandoffRequest.id == WebchatVoiceSession.handoff_request_id,
+            WebchatHandoffRequest.id
+            == WebchatVoiceSession.handoff_request_id,
         )
         .filter(
             WebchatHandoffRequest.status == "accepted",
             WebchatHandoffRequest.assigned_agent_id == user_id,
             (
-                WebchatVoiceSession.status.in_(sorted(VOICE_CALL_OCCUPANCY_STATUSES))
+                WebchatVoiceSession.status.in_(
+                    sorted(VOICE_CALL_OCCUPANCY_STATUSES)
+                )
                 | (
                     WebchatVoiceSession.wrap_up_expires_at.isnot(None)
                     & (WebchatVoiceSession.wrap_up_expires_at > current)
@@ -184,7 +211,12 @@ def active_voice_load(db: Session, *, user_id: int, now=None) -> int:
     )
 
 
-def reserved_voice_offer_count(db: Session, *, user_id: int, now=None) -> int:
+def reserved_voice_offer_count(
+    db: Session,
+    *,
+    user_id: int,
+    now=None,
+) -> int:
     current = ensure_utc(now or utc_now()) or utc_now()
     return int(
         db.query(func.count(VoiceRoutingOffer.id))
@@ -204,7 +236,7 @@ def release_expired_voice_wrap_ups(
     user_id: int | None = None,
     limit: int = 100,
 ) -> int:
-    """Release expired after-call reservations without reviving the AI runtime."""
+    """Release expired after-call work without restarting the AI."""
 
     now = utc_now()
     query = db.query(WebchatVoiceSession).filter(
@@ -214,12 +246,15 @@ def release_expired_voice_wrap_ups(
     if user_id is not None:
         query = query.join(
             WebchatHandoffRequest,
-            WebchatHandoffRequest.id == WebchatVoiceSession.handoff_request_id,
-        ).filter(WebchatHandoffRequest.assigned_agent_id == user_id)
+            WebchatHandoffRequest.id
+            == WebchatVoiceSession.handoff_request_id,
+        ).filter(
+            WebchatHandoffRequest.assigned_agent_id == user_id
+        )
     sessions = _lock(
-        query.order_by(WebchatVoiceSession.wrap_up_expires_at.asc()).limit(
-            max(1, min(int(limit or 100), 500))
-        ),
+        query.order_by(
+            WebchatVoiceSession.wrap_up_expires_at.asc()
+        ).limit(max(1, min(int(limit or 100), 500))),
         db,
     ).all()
     released = 0
@@ -230,21 +265,33 @@ def release_expired_voice_wrap_ups(
             if session.handoff_request_id is not None
             else None
         )
-        conversation = db.get(WebchatConversation, session.conversation_id)
-        previous_agent_id = request_row.assigned_agent_id if request_row is not None else None
+        conversation = db.get(
+            WebchatConversation,
+            session.conversation_id,
+        )
+        previous_agent_id = (
+            request_row.assigned_agent_id
+            if request_row is not None
+            else None
+        )
         if request_row is not None and request_row.status == "accepted":
             request_row.status = "closed"
             request_row.closed_at = now
             request_row.decision_note = "voice_wrap_up_expired"
             request_row.lock_version += 1
             request_row.updated_at = now
-        if conversation is not None and conversation.active_agent_id == previous_agent_id:
+        if (
+            conversation is not None
+            and conversation.active_agent_id == previous_agent_id
+        ):
             conversation.active_agent_id = None
             conversation.current_handoff_request_id = None
             conversation.handoff_status = "closed"
             conversation.takeover_mode = None
             conversation.ai_suspended = True
-            conversation.ai_suspended_reason = "voice_follow_up_required"
+            conversation.ai_suspended_reason = (
+                "voice_follow_up_required"
+            )
             conversation.updated_at = now
             _event(
                 db,
@@ -261,16 +308,31 @@ def release_expired_voice_wrap_ups(
     return released
 
 
-def _state_payload(db: Session, row: OperatorAgentState) -> dict[str, Any]:
+def _state_payload(
+    db: Session,
+    row: OperatorAgentState,
+) -> dict[str, Any]:
     load = active_agent_load(db, user_id=row.user_id)
     voice_load = active_voice_load(db, user_id=row.user_id)
-    reserved_voice = reserved_voice_offer_count(db, user_id=row.user_id)
+    reserved_voice = reserved_voice_offer_count(
+        db,
+        user_id=row.user_id,
+    )
     fresh = heartbeat_is_fresh(row)
     assignable = row.status == "online" and fresh
-    available = max(0, row.max_concurrent_conversations - load) if assignable else 0
+    available = (
+        max(0, row.max_concurrent_conversations - load)
+        if assignable
+        else 0
+    )
     voice_assignable = assignable and bool(row.voice_enabled)
     available_voice = (
-        max(0, row.max_concurrent_voice_calls - voice_load - reserved_voice)
+        max(
+            0,
+            row.max_concurrent_voice_calls
+            - voice_load
+            - reserved_voice,
+        )
         if voice_assignable
         else 0
     )
@@ -279,7 +341,9 @@ def _state_payload(db: Session, row: OperatorAgentState) -> dict[str, Any]:
         "status": row.status,
         "heartbeat_fresh": fresh,
         "assignable": assignable,
-        "max_concurrent_conversations": row.max_concurrent_conversations,
+        "max_concurrent_conversations": (
+            row.max_concurrent_conversations
+        ),
         "active_conversations": load,
         "available_capacity": available,
         "voice_enabled": bool(row.voice_enabled),
@@ -289,15 +353,26 @@ def _state_payload(db: Session, row: OperatorAgentState) -> dict[str, Any]:
         "reserved_voice_offers": reserved_voice,
         "available_voice_capacity": available_voice,
         "voice_wrap_up_seconds": row.voice_wrap_up_seconds,
-        "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
+        "last_heartbeat_at": (
+            row.last_heartbeat_at.isoformat()
+            if row.last_heartbeat_at
+            else None
+        ),
         "heartbeat_ttl_seconds": HEARTBEAT_TTL_SECONDS,
     }
 
 
-def read_agent_state(db: Session, *, user_id: int) -> dict[str, Any]:
+def read_agent_state(
+    db: Session,
+    *,
+    user_id: int,
+) -> dict[str, Any]:
     expire_voice_offers(db, agent_id=user_id)
     release_expired_voice_wrap_ups(db, user_id=user_id)
-    return _state_payload(db, get_or_create_agent_state(db, user_id=user_id))
+    return _state_payload(
+        db,
+        get_or_create_agent_state(db, user_id=user_id),
+    )
 
 
 def set_agent_state(
@@ -316,35 +391,65 @@ def set_agent_state(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="invalid_agent_presence_status",
         )
-    row = get_or_create_agent_state(db, user_id=user.id, lock=True)
+    row = get_or_create_agent_state(
+        db,
+        user_id=user.id,
+        lock=True,
+    )
     old = _state_payload(db, row)
     now = utc_now()
     if max_concurrent_conversations is not None:
         capacity = int(max_concurrent_conversations)
         if not 1 <= capacity <= MAX_AGENT_CAPACITY:
-            raise HTTPException(status_code=400, detail="invalid_agent_capacity")
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_agent_capacity",
+            )
         row.max_concurrent_conversations = capacity
     if voice_enabled is not None:
+        if (
+            not voice_enabled
+            and active_voice_load(db, user_id=user.id) > 0
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="agent_voice_disable_blocked_by_active_call",
+            )
         row.voice_enabled = bool(voice_enabled)
     if max_concurrent_voice_calls is not None:
         voice_capacity = int(max_concurrent_voice_calls)
         if not 1 <= voice_capacity <= MAX_VOICE_CAPACITY:
-            raise HTTPException(status_code=400, detail="invalid_agent_voice_capacity")
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_agent_voice_capacity",
+            )
         if voice_capacity < active_voice_load(db, user_id=user.id):
-            raise HTTPException(status_code=409, detail="agent_voice_capacity_below_active_load")
+            raise HTTPException(
+                status_code=409,
+                detail="agent_voice_capacity_below_active_load",
+            )
         row.max_concurrent_voice_calls = voice_capacity
     if voice_wrap_up_seconds is not None:
         wrap_up = int(voice_wrap_up_seconds)
         if not 0 <= wrap_up <= MAX_VOICE_WRAP_UP_SECONDS:
-            raise HTTPException(status_code=400, detail="invalid_agent_voice_wrap_up")
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_agent_voice_wrap_up",
+            )
         row.voice_wrap_up_seconds = wrap_up
     if row.status != normalized:
         row.status = normalized
         row.status_changed_at = now
-    row.last_heartbeat_at = now if normalized in {"online", "paused"} else None
+    row.last_heartbeat_at = (
+        now if normalized in {"online", "paused"} else None
+    )
     row.updated_at = now
     if normalized != "online" or not row.voice_enabled:
-        _cancel_agent_voice_offers(db, agent_id=user.id, reason="agent_unavailable")
+        _cancel_agent_voice_offers(
+            db,
+            agent_id=user.id,
+            reason="agent_unavailable",
+        )
     db.flush()
     if normalized == "online":
         release_expired_voice_wrap_ups(db, user_id=user.id)
@@ -362,8 +467,16 @@ def set_agent_state(
     return payload
 
 
-def heartbeat_agent(db: Session, *, user: User) -> dict[str, Any]:
-    row = get_or_create_agent_state(db, user_id=user.id, lock=True)
+def heartbeat_agent(
+    db: Session,
+    *,
+    user: User,
+) -> dict[str, Any]:
+    row = get_or_create_agent_state(
+        db,
+        user_id=user.id,
+        lock=True,
+    )
     if row.status == "offline":
         return _state_payload(db, row)
     now = utc_now()
@@ -397,7 +510,8 @@ def _scope_grant_exists(
         .filter(
             OperatorQueueScopeGrant.user_id == user.id,
             OperatorQueueScopeGrant.tenant_key == control.tenant_key,
-            OperatorQueueScopeGrant.country_code == control.country_code,
+            OperatorQueueScopeGrant.country_code
+            == control.country_code,
             OperatorQueueScopeGrant.channel_key == control.channel_key,
             OperatorQueueScopeGrant.enabled.is_(True),
         )
@@ -405,14 +519,24 @@ def _scope_grant_exists(
     )
 
 
-def _operator_task(db: Session, *, conversation_id: int) -> OperatorTask | None:
+def _operator_task(
+    db: Session,
+    *,
+    conversation_id: int,
+) -> OperatorTask | None:
     return (
         db.query(OperatorTask)
         .filter(
             OperatorTask.webchat_conversation_id == conversation_id,
             OperatorTask.task_type == "handoff",
             OperatorTask.status.notin_(
-                ["resolved", "dropped", "replayed", "replay_failed", "cancelled"]
+                [
+                    "resolved",
+                    "dropped",
+                    "replayed",
+                    "replay_failed",
+                    "cancelled",
+                ]
             ),
         )
         .order_by(OperatorTask.id.desc())
@@ -429,15 +553,32 @@ def _voice_offer_timeout_seconds(
         return DEFAULT_VOICE_OFFER_TIMEOUT_SECONDS
     config = (
         db.query(VoiceChannelConfiguration)
-        .filter(VoiceChannelConfiguration.channel_account_id == session.channel_account_id)
+        .filter(
+            VoiceChannelConfiguration.channel_account_id
+            == session.channel_account_id
+        )
         .first()
     )
     if config is None:
         return DEFAULT_VOICE_OFFER_TIMEOUT_SECONDS
-    return max(5, min(int(config.offer_timeout_seconds or DEFAULT_VOICE_OFFER_TIMEOUT_SECONDS), 120))
+    return max(
+        5,
+        min(
+            int(
+                config.offer_timeout_seconds
+                or DEFAULT_VOICE_OFFER_TIMEOUT_SECONDS
+            ),
+            120,
+        ),
+    )
 
 
-def _cancel_agent_voice_offers(db: Session, *, agent_id: int, reason: str) -> int:
+def _cancel_agent_voice_offers(
+    db: Session,
+    *,
+    agent_id: int,
+    reason: str,
+) -> int:
     now = utc_now()
     offers = _lock(
         db.query(VoiceRoutingOffer).filter(
@@ -476,9 +617,13 @@ def expire_voice_offers(
     if agent_id is not None:
         query = query.filter(VoiceRoutingOffer.agent_id == agent_id)
     if voice_session_id is not None:
-        query = query.filter(VoiceRoutingOffer.voice_session_id == voice_session_id)
+        query = query.filter(
+            VoiceRoutingOffer.voice_session_id == voice_session_id
+        )
     offers = _lock(
-        query.order_by(VoiceRoutingOffer.expires_at.asc()).limit(max(1, min(limit, 1000))),
+        query.order_by(VoiceRoutingOffer.expires_at.asc()).limit(
+            max(1, min(limit, 1000))
+        ),
         db,
     ).all()
     affected_sessions: set[int] = set()
@@ -487,8 +632,15 @@ def expire_voice_offers(
         offer.expired_at = now
         offer.updated_at = now
         affected_sessions.add(offer.voice_session_id)
-        session = db.get(WebchatVoiceSession, offer.voice_session_id)
-        conversation = db.get(WebchatConversation, session.conversation_id) if session else None
+        session = db.get(
+            WebchatVoiceSession,
+            offer.voice_session_id,
+        )
+        conversation = (
+            db.get(WebchatConversation, session.conversation_id)
+            if session
+            else None
+        )
         if conversation is not None:
             _event(
                 db,
@@ -517,9 +669,12 @@ def _agent_has_prior_voice_offer(
     return bool(
         db.query(VoiceRoutingOffer.id)
         .filter(
-            VoiceRoutingOffer.handoff_request_id == handoff_request_id,
+            VoiceRoutingOffer.handoff_request_id
+            == handoff_request_id,
             VoiceRoutingOffer.agent_id == agent_id,
-            VoiceRoutingOffer.status.in_(["offered", "accepted", "declined", "expired"]),
+            VoiceRoutingOffer.status.in_(
+                ["offered", "accepted", "declined", "expired"]
+            ),
         )
         .first()
     )
@@ -531,16 +686,24 @@ def _eligible_voice_agents(
     request_row: WebchatHandoffRequest,
     control: ConversationControl,
 ) -> list[tuple[User, OperatorAgentState]]:
+    if not control.country_code:
+        return []
     candidates = (
         db.query(User, OperatorAgentState)
-        .join(OperatorAgentState, OperatorAgentState.user_id == User.id)
+        .join(
+            OperatorAgentState,
+            OperatorAgentState.user_id == User.id,
+        )
         .join(
             OperatorQueueScopeGrant,
             and_(
                 OperatorQueueScopeGrant.user_id == User.id,
-                OperatorQueueScopeGrant.tenant_key == control.tenant_key,
-                OperatorQueueScopeGrant.country_code == control.country_code,
-                OperatorQueueScopeGrant.channel_key == control.channel_key,
+                OperatorQueueScopeGrant.tenant_key
+                == control.tenant_key,
+                OperatorQueueScopeGrant.country_code
+                == control.country_code,
+                OperatorQueueScopeGrant.channel_key
+                == control.channel_key,
                 OperatorQueueScopeGrant.enabled.is_(True),
             ),
         )
@@ -548,9 +711,11 @@ def _eligible_voice_agents(
             User.is_active.is_(True),
             OperatorAgentState.status == "online",
             OperatorAgentState.voice_enabled.is_(True),
-            ConversationControl.country_code.is_not(None),
         )
-        .order_by(OperatorAgentState.updated_at.asc(), User.id.asc())
+        .order_by(
+            OperatorAgentState.updated_at.asc(),
+            User.id.asc(),
+        )
         .all()
     )
     eligible: list[tuple[User, OperatorAgentState]] = []
@@ -564,7 +729,10 @@ def _eligible_voice_agents(
         ):
             continue
         occupied = active_voice_load(db, user_id=user.id)
-        reserved = reserved_voice_offer_count(db, user_id=user.id)
+        reserved = reserved_voice_offer_count(
+            db,
+            user_id=user.id,
+        )
         if occupied + reserved >= state.max_concurrent_voice_calls:
             continue
         eligible.append((user, state))
@@ -576,7 +744,7 @@ def create_next_voice_offer(
     *,
     voice_session: WebchatVoiceSession,
 ) -> VoiceRoutingOffer | None:
-    """Create one short-lived ringing reservation without changing Handoff ownership."""
+    """Reserve one ringing agent without changing Handoff ownership."""
 
     if voice_session.status not in VOICE_OPEN_SESSION_STATUSES:
         return None
@@ -587,18 +755,22 @@ def create_next_voice_offer(
     )
     if request_row is None or request_row.status != "requested":
         return None
+    now = utc_now()
     active_offer = (
         db.query(VoiceRoutingOffer)
         .filter(
             VoiceRoutingOffer.voice_session_id == voice_session.id,
             VoiceRoutingOffer.status == "offered",
-            VoiceRoutingOffer.expires_at > utc_now(),
+            VoiceRoutingOffer.expires_at > now,
         )
         .first()
     )
     if active_offer is not None:
         return active_offer
-    conversation = db.get(WebchatConversation, voice_session.conversation_id)
+    conversation = db.get(
+        WebchatConversation,
+        voice_session.conversation_id,
+    )
     if conversation is None or conversation.status != "open":
         return None
     control = _control_for_conversation(db, conversation)
@@ -611,12 +783,15 @@ def create_next_voice_offer(
         return None
     user, _state = candidates[0]
     sequence = int(
-        db.query(func.coalesce(func.max(VoiceRoutingOffer.sequence), 0))
-        .filter(VoiceRoutingOffer.voice_session_id == voice_session.id)
+        db.query(
+            func.coalesce(func.max(VoiceRoutingOffer.sequence), 0)
+        )
+        .filter(
+            VoiceRoutingOffer.voice_session_id == voice_session.id
+        )
         .scalar()
         or 0
     ) + 1
-    now = utc_now()
     offer = VoiceRoutingOffer(
         public_id=f"vo_{secrets.token_urlsafe(18)}",
         voice_session_id=voice_session.id,
@@ -626,20 +801,27 @@ def create_next_voice_offer(
         status="offered",
         offered_at=now,
         expires_at=now
-        + timedelta(seconds=_voice_offer_timeout_seconds(db, session=voice_session)),
+        + timedelta(
+            seconds=_voice_offer_timeout_seconds(
+                db,
+                session=voice_session,
+            )
+        ),
         created_at=now,
         updated_at=now,
     )
-    db.add(offer)
     try:
-        db.flush()
+        with db.begin_nested():
+            db.add(offer)
+            db.flush()
     except IntegrityError:
-        db.rollback()
         return (
             db.query(VoiceRoutingOffer)
             .filter(
-                VoiceRoutingOffer.voice_session_id == voice_session.id,
+                VoiceRoutingOffer.voice_session_id
+                == voice_session.id,
                 VoiceRoutingOffer.status == "offered",
+                VoiceRoutingOffer.expires_at > utc_now(),
             )
             .first()
         )
@@ -679,11 +861,16 @@ def _eligible_text_request_for_agent(
     db: Session,
     *,
     user: User,
-) -> tuple[WebchatHandoffRequest, WebchatConversation, ConversationControl] | None:
+) -> tuple[
+    WebchatHandoffRequest,
+    WebchatConversation,
+    ConversationControl,
+] | None:
     declined_exists = (
         db.query(WebchatHandoffDecision.id)
         .filter(
-            WebchatHandoffDecision.request_id == WebchatHandoffRequest.id,
+            WebchatHandoffDecision.request_id
+            == WebchatHandoffRequest.id,
             WebchatHandoffDecision.actor_id == user.id,
             WebchatHandoffDecision.decision == "declined",
         )
@@ -692,28 +879,40 @@ def _eligible_text_request_for_agent(
     voice_exists = (
         db.query(WebchatVoiceSession.id)
         .filter(
-            WebchatVoiceSession.conversation_id == WebchatHandoffRequest.conversation_id,
-            WebchatVoiceSession.status.in_(sorted(VOICE_OPEN_SESSION_STATUSES)),
+            WebchatVoiceSession.conversation_id
+            == WebchatHandoffRequest.conversation_id,
+            WebchatVoiceSession.status.in_(
+                sorted(VOICE_OPEN_SESSION_STATUSES)
+            ),
         )
         .exists()
     )
     query = (
-        db.query(WebchatHandoffRequest, WebchatConversation, ConversationControl)
+        db.query(
+            WebchatHandoffRequest,
+            WebchatConversation,
+            ConversationControl,
+        )
         .join(
             WebchatConversation,
-            WebchatConversation.id == WebchatHandoffRequest.conversation_id,
+            WebchatConversation.id
+            == WebchatHandoffRequest.conversation_id,
         )
         .join(
             ConversationControl,
-            ConversationControl.conversation_id == WebchatConversation.id,
+            ConversationControl.conversation_id
+            == WebchatConversation.id,
         )
         .join(
             OperatorQueueScopeGrant,
             and_(
                 OperatorQueueScopeGrant.user_id == user.id,
-                OperatorQueueScopeGrant.tenant_key == ConversationControl.tenant_key,
-                OperatorQueueScopeGrant.country_code == ConversationControl.country_code,
-                OperatorQueueScopeGrant.channel_key == ConversationControl.channel_key,
+                OperatorQueueScopeGrant.tenant_key
+                == ConversationControl.tenant_key,
+                OperatorQueueScopeGrant.country_code
+                == ConversationControl.country_code,
+                OperatorQueueScopeGrant.channel_key
+                == ConversationControl.channel_key,
                 OperatorQueueScopeGrant.enabled.is_(True),
             ),
         )
@@ -724,7 +923,10 @@ def _eligible_text_request_for_agent(
             ~declined_exists,
             ~voice_exists,
         )
-        .order_by(WebchatHandoffRequest.requested_at.asc(), WebchatHandoffRequest.id.asc())
+        .order_by(
+            WebchatHandoffRequest.requested_at.asc(),
+            WebchatHandoffRequest.id.asc(),
+        )
         .limit(1)
     )
     return _lock(query, db).first()
@@ -739,23 +941,44 @@ def assign_handoff_to_agent(
     mode: str = "automatic",
     voice_offer: VoiceRoutingOffer | None = None,
 ) -> dict[str, Any]:
-    state = get_or_create_agent_state(db, user_id=user.id, lock=True)
+    state = get_or_create_agent_state(
+        db,
+        user_id=user.id,
+        lock=True,
+    )
     if state.status != "online" or not heartbeat_is_fresh(state):
-        raise HTTPException(status_code=409, detail="agent_not_available")
+        raise HTTPException(
+            status_code=409,
+            detail="agent_not_available",
+        )
     control = _control_for_conversation(db, conversation)
     if not _scope_grant_exists(db, user=user, control=control):
-        raise HTTPException(status_code=403, detail="agent_scope_not_authorized")
+        raise HTTPException(
+            status_code=403,
+            detail="agent_scope_not_authorized",
+        )
 
     locked_request = _lock(
-        db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.id == request_row.id),
+        db.query(WebchatHandoffRequest).filter(
+            WebchatHandoffRequest.id == request_row.id
+        ),
         db,
     ).first()
     locked_conversation = _lock(
-        db.query(WebchatConversation).filter(WebchatConversation.id == conversation.id),
+        db.query(WebchatConversation).filter(
+            WebchatConversation.id == conversation.id
+        ),
         db,
     ).first()
-    if locked_request is None or locked_conversation is None or locked_request.status != "requested":
-        raise HTTPException(status_code=409, detail="handoff_not_waiting")
+    if (
+        locked_request is None
+        or locked_conversation is None
+        or locked_request.status != "requested"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="handoff_not_waiting",
+        )
 
     voice_session = _voice_session_for_conversation(
         db,
@@ -765,7 +988,10 @@ def assign_handoff_to_agent(
     locked_offer: VoiceRoutingOffer | None = None
     if voice_session is not None:
         if not state.voice_enabled:
-            raise HTTPException(status_code=409, detail="agent_voice_disabled")
+            raise HTTPException(
+                status_code=409,
+                detail="agent_voice_disabled",
+            )
         offer_id = voice_offer.id if voice_offer is not None else None
         query = db.query(VoiceRoutingOffer).filter(
             VoiceRoutingOffer.voice_session_id == voice_session.id,
@@ -776,22 +1002,41 @@ def assign_handoff_to_agent(
             query = query.filter(VoiceRoutingOffer.id == offer_id)
         locked_offer = _lock(query, db).first()
         if locked_offer is None:
-            raise HTTPException(status_code=409, detail="voice_offer_not_owned")
+            raise HTTPException(
+                status_code=409,
+                detail="voice_offer_not_owned",
+            )
         if locked_offer.expires_at <= now:
-            locked_offer.status = "expired"
-            locked_offer.expired_at = now
-            locked_offer.updated_at = now
-            db.flush()
-            create_next_voice_offer(db, voice_session=voice_session)
-            raise HTTPException(status_code=409, detail="voice_offer_expired")
+            raise HTTPException(
+                status_code=409,
+                detail="voice_offer_expired",
+            )
         other_reservations = max(
             0,
-            reserved_voice_offer_count(db, user_id=user.id, now=now) - 1,
+            reserved_voice_offer_count(
+                db,
+                user_id=user.id,
+                now=now,
+            )
+            - 1,
         )
-        if active_voice_load(db, user_id=user.id, now=now) + other_reservations >= state.max_concurrent_voice_calls:
-            raise HTTPException(status_code=409, detail="agent_voice_capacity_full")
-    elif active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations:
-        raise HTTPException(status_code=409, detail="agent_capacity_full")
+        if (
+            active_voice_load(db, user_id=user.id, now=now)
+            + other_reservations
+            >= state.max_concurrent_voice_calls
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="agent_voice_capacity_full",
+            )
+    elif (
+        active_agent_load(db, user_id=user.id)
+        >= state.max_concurrent_conversations
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="agent_capacity_full",
+        )
 
     locked_request.status = "accepted"
     locked_request.accepted_by_user_id = user.id
@@ -803,7 +1048,9 @@ def assign_handoff_to_agent(
     locked_conversation.handoff_status = "accepted"
     locked_conversation.active_agent_id = user.id
     locked_conversation.ai_suspended = True
-    locked_conversation.ai_suspended_at = locked_conversation.ai_suspended_at or now
+    locked_conversation.ai_suspended_at = (
+        locked_conversation.ai_suspended_at or now
+    )
     locked_conversation.ai_suspended_by = user.id
     locked_conversation.ai_suspended_reason = "handoff_accepted"
     locked_conversation.takeover_mode = mode
@@ -833,8 +1080,10 @@ def assign_handoff_to_agent(
         leg = (
             db.query(WebchatVoiceParticipant)
             .filter(
-                WebchatVoiceParticipant.voice_session_id == voice_session.id,
-                WebchatVoiceParticipant.provider_identity == identity,
+                WebchatVoiceParticipant.voice_session_id
+                == voice_session.id,
+                WebchatVoiceParticipant.user_id == user.id,
+                WebchatVoiceParticipant.participant_type == "human",
             )
             .first()
         )
@@ -859,7 +1108,10 @@ def assign_handoff_to_agent(
         actor_id=user.id,
         reason_code="handoff_accepted",
     )
-    task = _operator_task(db, conversation_id=locked_conversation.id)
+    task = _operator_task(
+        db,
+        conversation_id=locked_conversation.id,
+    )
     if task is not None:
         task.status = "assigned"
         task.assignee_id = user.id
@@ -879,7 +1131,11 @@ def assign_handoff_to_agent(
             "actor_id": user.id,
             "assignment_mode": mode,
             "channel_kind": channel_kind,
-            "voice_offer_id": locked_offer.public_id if locked_offer is not None else None,
+            "voice_offer_id": (
+                locked_offer.public_id
+                if locked_offer is not None
+                else None
+            ),
         },
     )
     log_admin_audit(
@@ -893,7 +1149,11 @@ def assign_handoff_to_agent(
             "assigned_agent_id": user.id,
             "assignment_mode": mode,
             "channel_kind": channel_kind,
-            "voice_offer_id": locked_offer.public_id if locked_offer is not None else None,
+            "voice_offer_id": (
+                locked_offer.public_id
+                if locked_offer is not None
+                else None
+            ),
         },
     )
     db.flush()
@@ -911,11 +1171,23 @@ def accept_voice_offer(
     user: User,
 ) -> dict[str, Any]:
     if voice_session.handoff_request_id is None:
-        raise HTTPException(status_code=409, detail="voice_handoff_missing")
-    request_row = db.get(WebchatHandoffRequest, voice_session.handoff_request_id)
-    conversation = db.get(WebchatConversation, voice_session.conversation_id)
+        raise HTTPException(
+            status_code=409,
+            detail="voice_handoff_missing",
+        )
+    request_row = db.get(
+        WebchatHandoffRequest,
+        voice_session.handoff_request_id,
+    )
+    conversation = db.get(
+        WebchatConversation,
+        voice_session.conversation_id,
+    )
     if request_row is None or conversation is None:
-        raise HTTPException(status_code=409, detail="voice_handoff_missing")
+        raise HTTPException(
+            status_code=409,
+            detail="voice_handoff_missing",
+        )
     offer = (
         db.query(VoiceRoutingOffer)
         .filter(
@@ -926,7 +1198,10 @@ def accept_voice_offer(
         .first()
     )
     if offer is None:
-        raise HTTPException(status_code=409, detail="voice_offer_not_owned")
+        raise HTTPException(
+            status_code=409,
+            detail="voice_offer_not_owned",
+        )
     return assign_handoff_to_agent(
         db,
         request_row=request_row,
@@ -946,11 +1221,23 @@ def decline_voice_offer(
     note: str | None = None,
 ) -> dict[str, Any]:
     if voice_session.handoff_request_id is None:
-        raise HTTPException(status_code=409, detail="voice_handoff_missing")
-    request_row = db.get(WebchatHandoffRequest, voice_session.handoff_request_id)
-    conversation = db.get(WebchatConversation, voice_session.conversation_id)
+        raise HTTPException(
+            status_code=409,
+            detail="voice_handoff_missing",
+        )
+    request_row = db.get(
+        WebchatHandoffRequest,
+        voice_session.handoff_request_id,
+    )
+    conversation = db.get(
+        WebchatConversation,
+        voice_session.conversation_id,
+    )
     if request_row is None or conversation is None:
-        raise HTTPException(status_code=409, detail="voice_handoff_missing")
+        raise HTTPException(
+            status_code=409,
+            detail="voice_handoff_missing",
+        )
     now = utc_now()
     offer = _lock(
         db.query(VoiceRoutingOffer).filter(
@@ -964,7 +1251,8 @@ def decline_voice_offer(
         previous = (
             db.query(VoiceRoutingOffer)
             .filter(
-                VoiceRoutingOffer.voice_session_id == voice_session.id,
+                VoiceRoutingOffer.voice_session_id
+                == voice_session.id,
                 VoiceRoutingOffer.agent_id == user.id,
                 VoiceRoutingOffer.status == "declined",
             )
@@ -978,7 +1266,10 @@ def decline_voice_offer(
                 "status": "declined",
                 "idempotent": True,
             }
-        raise HTTPException(status_code=409, detail="voice_offer_not_owned")
+        raise HTTPException(
+            status_code=409,
+            detail="voice_offer_not_owned",
+        )
     offer.status = "declined"
     offer.declined_at = now
     offer.decline_reason = (note or reason_code)[:240]
@@ -988,7 +1279,9 @@ def decline_voice_offer(
             request_id=request_row.id,
             actor_id=user.id,
             decision="declined",
-            reason_code=(reason_code or "agent_declined_voice_offer")[:160],
+            reason_code=(
+                reason_code or "agent_declined_voice_offer"
+            )[:160],
             note=(note or "")[:1000] or None,
             created_at=now,
         )
@@ -1031,24 +1324,42 @@ def decline_voice_offer(
         },
     )
     db.flush()
-    next_offer = create_next_voice_offer(db, voice_session=voice_session)
+    next_offer = create_next_voice_offer(
+        db,
+        voice_session=voice_session,
+    )
     return {
         "voice_session_id": voice_session.public_id,
         "offer_id": offer.public_id,
         "status": "declined",
-        "next_offer_id": next_offer.public_id if next_offer is not None else None,
+        "next_offer_id": (
+            next_offer.public_id
+            if next_offer is not None
+            else None
+        ),
     }
 
 
-def fill_agent_capacity(db: Session, *, user: User) -> list[dict[str, Any]]:
+def fill_agent_capacity(
+    db: Session,
+    *,
+    user: User,
+) -> list[dict[str, Any]]:
     assigned: list[dict[str, Any]] = []
-    state = get_or_create_agent_state(db, user_id=user.id, lock=True)
+    state = get_or_create_agent_state(
+        db,
+        user_id=user.id,
+        lock=True,
+    )
     if state.status != "online" or not heartbeat_is_fresh(state):
         return assigned
     expire_voice_offers(db, agent_id=user.id)
     release_expired_voice_wrap_ups(db, user_id=user.id)
 
-    while active_agent_load(db, user_id=user.id) < state.max_concurrent_conversations:
+    while (
+        active_agent_load(db, user_id=user.id)
+        < state.max_concurrent_conversations
+    ):
         candidate = _eligible_text_request_for_agent(db, user=user)
         if candidate is None:
             break
@@ -1064,7 +1375,10 @@ def fill_agent_capacity(db: Session, *, user: User) -> list[dict[str, Any]]:
                 )
             )
         except HTTPException as exc:
-            if exc.status_code == 409 and exc.detail == "handoff_not_waiting":
+            if (
+                exc.status_code == 409
+                and exc.detail == "handoff_not_waiting"
+            ):
                 continue
             break
 
@@ -1073,18 +1387,25 @@ def fill_agent_capacity(db: Session, *, user: User) -> list[dict[str, Any]]:
             db.query(WebchatVoiceSession)
             .join(
                 WebchatHandoffRequest,
-                WebchatHandoffRequest.id == WebchatVoiceSession.handoff_request_id,
+                WebchatHandoffRequest.id
+                == WebchatVoiceSession.handoff_request_id,
             )
             .filter(
                 WebchatHandoffRequest.status == "requested",
                 WebchatVoiceSession.status.in_(["created", "ringing"]),
             )
-            .order_by(WebchatHandoffRequest.requested_at.asc(), WebchatVoiceSession.id.asc())
+            .order_by(
+                WebchatHandoffRequest.requested_at.asc(),
+                WebchatVoiceSession.id.asc(),
+            )
             .limit(100)
             .all()
         )
         for voice_session in voice_rows:
-            create_next_voice_offer(db, voice_session=voice_session)
+            create_next_voice_offer(
+                db,
+                voice_session=voice_session,
+            )
     return assigned
 
 
@@ -1105,7 +1426,8 @@ def request_handoff(
     existing = _lock(
         db.query(WebchatHandoffRequest)
         .filter(
-            WebchatHandoffRequest.conversation_id == conversation.id,
+            WebchatHandoffRequest.conversation_id
+            == conversation.id,
             WebchatHandoffRequest.status.in_(["requested", "accepted"]),
         )
         .order_by(WebchatHandoffRequest.id.desc()),
@@ -1117,9 +1439,12 @@ def request_handoff(
             existing.reason_code = existing.reason_code or reason_code
             existing.reason_text = existing.reason_text or reason_text
             existing.recommended_agent_action = (
-                existing.recommended_agent_action or recommended_agent_action
+                existing.recommended_agent_action
+                or recommended_agent_action
             )
-            existing.trigger_message_id = existing.trigger_message_id or trigger_message_id
+            existing.trigger_message_id = (
+                existing.trigger_message_id or trigger_message_id
+            )
             existing.ai_turn_id = existing.ai_turn_id or ai_turn_id
             existing.updated_at = now
             voice_session = _voice_session_for_conversation(
@@ -1128,7 +1453,10 @@ def request_handoff(
             )
             if voice_session is not None:
                 voice_session.handoff_request_id = existing.id
-                create_next_voice_offer(db, voice_session=voice_session)
+                create_next_voice_offer(
+                    db,
+                    voice_session=voice_session,
+                )
         return existing
 
     row = WebchatHandoffRequest(
@@ -1139,10 +1467,15 @@ def request_handoff(
         status="requested",
         reason_code=(reason_code or "human_review_required")[:160],
         reason_text=(reason_text or "")[:240] or None,
-        recommended_agent_action=(recommended_agent_action or "")[:1000] or None,
+        recommended_agent_action=(
+            recommended_agent_action or ""
+        )[:1000]
+        or None,
         trigger_message_id=trigger_message_id,
         ai_turn_id=ai_turn_id,
-        requested_by_actor_type=(requested_by_actor_type or "system")[:40],
+        requested_by_actor_type=(
+            requested_by_actor_type or "system"
+        )[:40],
         requested_by_user_id=requested_by_user_id,
         requested_at=now,
         created_at=now,
@@ -1190,7 +1523,9 @@ def request_handoff(
             "country_code": control.country_code,
             "channel_key": control.channel_key,
             "visitor_name": conversation.visitor_name,
-            "channel_kind": "voice" if voice_session is not None else "text",
+            "channel_kind": (
+                "voice" if voice_session is not None else "text"
+            ),
         },
     )
     task.status = "pending"
@@ -1204,7 +1539,9 @@ def request_handoff(
             "source": row.source,
             "trigger_type": row.trigger_type,
             "reason_code": row.reason_code,
-            "channel_kind": "voice" if voice_session is not None else "text",
+            "channel_kind": (
+                "voice" if voice_session is not None else "text"
+            ),
         },
     )
     log_admin_audit(
@@ -1217,12 +1554,17 @@ def request_handoff(
             "conversation_id": conversation.id,
             "ticket_id": conversation.ticket_id,
             "reason": row.reason_code,
-            "channel_kind": "voice" if voice_session is not None else "text",
+            "channel_kind": (
+                "voice" if voice_session is not None else "text"
+            ),
         },
     )
     db.flush()
     if voice_session is not None:
-        create_next_voice_offer(db, voice_session=voice_session)
+        create_next_voice_offer(
+            db,
+            voice_session=voice_session,
+        )
     else:
         _auto_assign_text_request(
             db,
@@ -1242,19 +1584,31 @@ def _auto_assign_text_request(
 ) -> None:
     candidates = (
         db.query(User, OperatorAgentState)
-        .join(OperatorAgentState, OperatorAgentState.user_id == User.id)
+        .join(
+            OperatorAgentState,
+            OperatorAgentState.user_id == User.id,
+        )
         .join(
             OperatorQueueScopeGrant,
             and_(
                 OperatorQueueScopeGrant.user_id == User.id,
-                OperatorQueueScopeGrant.tenant_key == control.tenant_key,
-                OperatorQueueScopeGrant.country_code == control.country_code,
-                OperatorQueueScopeGrant.channel_key == control.channel_key,
+                OperatorQueueScopeGrant.tenant_key
+                == control.tenant_key,
+                OperatorQueueScopeGrant.country_code
+                == control.country_code,
+                OperatorQueueScopeGrant.channel_key
+                == control.channel_key,
                 OperatorQueueScopeGrant.enabled.is_(True),
             ),
         )
-        .filter(User.is_active.is_(True), OperatorAgentState.status == "online")
-        .order_by(OperatorAgentState.updated_at.asc(), User.id.asc())
+        .filter(
+            User.is_active.is_(True),
+            OperatorAgentState.status == "online",
+        )
+        .order_by(
+            OperatorAgentState.updated_at.asc(),
+            User.id.asc(),
+        )
         .all()
     )
     for user, state in candidates:
@@ -1262,7 +1616,10 @@ def _auto_assign_text_request(
             return
         if not heartbeat_is_fresh(state):
             continue
-        if active_agent_load(db, user_id=user.id) >= state.max_concurrent_conversations:
+        if (
+            active_agent_load(db, user_id=user.id)
+            >= state.max_concurrent_conversations
+        ):
             continue
         assign_handoff_to_agent(
             db,
@@ -1279,9 +1636,14 @@ def queue_position(
     *,
     request_row: WebchatHandoffRequest,
 ) -> int | None:
-    from .agent_availability_service import queue_position as scoped_queue_position
+    from .agent_availability_service import (
+        queue_position as scoped_queue_position,
+    )
 
-    return scoped_queue_position(db, request_row=request_row)
+    return scoped_queue_position(
+        db,
+        request_row=request_row,
+    )
 
 
 def availability_summary(
@@ -1291,6 +1653,7 @@ def availability_summary(
     country_code: str | None,
     channel_key: str,
     request_row: WebchatHandoffRequest | None = None,
+    conversation_id: int | None = None,
 ) -> dict[str, Any]:
     from .agent_availability_service import (
         availability_summary as scoped_availability_summary,
@@ -1302,6 +1665,7 @@ def availability_summary(
         country_code=country_code,
         channel_key=channel_key,
         request_row=request_row,
+        conversation_id=conversation_id,
     )
 
 
@@ -1318,7 +1682,10 @@ def serialize_handoff(
             int(
                 (
                     (ensure_utc(utc_now()) or utc_now())
-                    - (ensure_utc(request_row.requested_at) or request_row.requested_at)
+                    - (
+                        ensure_utc(request_row.requested_at)
+                        or request_row.requested_at
+                    )
                 ).total_seconds()
             ),
         )
@@ -1331,7 +1698,8 @@ def serialize_handoff(
         active_offer = (
             db.query(VoiceRoutingOffer)
             .filter(
-                VoiceRoutingOffer.voice_session_id == voice_session.id,
+                VoiceRoutingOffer.voice_session_id
+                == voice_session.id,
                 VoiceRoutingOffer.status == "offered",
                 VoiceRoutingOffer.expires_at > utc_now(),
             )
@@ -1347,16 +1715,33 @@ def serialize_handoff(
         "trigger_type": request_row.trigger_type,
         "reason_code": request_row.reason_code,
         "reason_text": request_row.reason_text,
-        "recommended_agent_action": request_row.recommended_agent_action,
+        "recommended_agent_action": (
+            request_row.recommended_agent_action
+        ),
         "assigned_agent_id": request_row.assigned_agent_id,
         "waiting_seconds": waiting_seconds,
-        "queue_position": queue_position(db, request_row=request_row),
-        "requested_at": request_row.requested_at.isoformat() if request_row.requested_at else None,
-        "accepted_at": request_row.accepted_at.isoformat() if request_row.accepted_at else None,
+        "queue_position": queue_position(
+            db,
+            request_row=request_row,
+        ),
+        "requested_at": (
+            request_row.requested_at.isoformat()
+            if request_row.requested_at
+            else None
+        ),
+        "accepted_at": (
+            request_row.accepted_at.isoformat()
+            if request_row.accepted_at
+            else None
+        ),
         "handoff_status": conversation.handoff_status,
         "active_agent_id": conversation.active_agent_id,
         "ai_suspended": bool(conversation.ai_suspended),
-        "voice_session_id": voice_session.public_id if voice_session is not None else None,
+        "voice_session_id": (
+            voice_session.public_id
+            if voice_session is not None
+            else None
+        ),
         "voice_offer": (
             {
                 "id": active_offer.public_id,
@@ -1379,10 +1764,16 @@ def close_conversation(
 ) -> dict[str, Any]:
     normalized = str(outcome or "").strip().lower()
     if normalized not in CONVERSATION_OUTCOMES:
-        raise HTTPException(status_code=400, detail="invalid_conversation_outcome")
+        raise HTTPException(
+            status_code=400,
+            detail="invalid_conversation_outcome",
+        )
     control = _control_for_conversation(db, conversation)
     if not _scope_grant_exists(db, user=user, control=control):
-        raise HTTPException(status_code=403, detail="agent_scope_not_authorized")
+        raise HTTPException(
+            status_code=403,
+            detail="agent_scope_not_authorized",
+        )
     if conversation.status != "open":
         return {
             "conversation_id": conversation.public_id,
@@ -1394,34 +1785,41 @@ def close_conversation(
         conversation.active_agent_id not in {None, user.id}
         and not has_global_case_visibility(user, db)
     ):
-        raise HTTPException(status_code=403, detail="conversation_owned_by_another_agent")
+        raise HTTPException(
+            status_code=403,
+            detail="conversation_owned_by_another_agent",
+        )
 
     now = utc_now()
     request_row = None
     if conversation.current_handoff_request_id:
         request_row = _lock(
             db.query(WebchatHandoffRequest).filter(
-                WebchatHandoffRequest.id == conversation.current_handoff_request_id
+                WebchatHandoffRequest.id
+                == conversation.current_handoff_request_id
             ),
             db,
         ).first()
-    if request_row is not None and request_row.status in {"requested", "accepted"}:
+    if (
+        request_row is not None
+        and request_row.status in {"requested", "accepted"}
+    ):
         request_row.status = "closed"
         request_row.closed_at = now
         request_row.decision_note = (note or "")[:1000] or None
         request_row.lock_version += 1
         request_row.updated_at = now
-    db.query(VoiceRoutingOffer).filter(
-        VoiceRoutingOffer.handoff_request_id == request_row.id if request_row is not None else False,
-        VoiceRoutingOffer.status == "offered",
-    ).update(
-        {
-            VoiceRoutingOffer.status: "cancelled",
-            VoiceRoutingOffer.cancelled_at: now,
-            VoiceRoutingOffer.updated_at: now,
-        },
-        synchronize_session=False,
-    )
+        db.query(VoiceRoutingOffer).filter(
+            VoiceRoutingOffer.handoff_request_id == request_row.id,
+            VoiceRoutingOffer.status == "offered",
+        ).update(
+            {
+                VoiceRoutingOffer.status: "cancelled",
+                VoiceRoutingOffer.cancelled_at: now,
+                VoiceRoutingOffer.updated_at: now,
+            },
+            synchronize_session=False,
+        )
 
     previous_agent_id = conversation.active_agent_id
     conversation.status = "closed"
@@ -1454,7 +1852,10 @@ def close_conversation(
         action="conversation.closed",
         target_type="webchat_conversation",
         target_id=conversation.id,
-        new_value={"outcome": normalized, "ticket_id": conversation.ticket_id},
+        new_value={
+            "outcome": normalized,
+            "ticket_id": conversation.ticket_id,
+        },
     )
     db.flush()
     if previous_agent_id is not None:
