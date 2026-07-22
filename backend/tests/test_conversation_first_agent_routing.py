@@ -10,7 +10,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/nexus_conversation_routing_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/nexus_conversation_routing_tests.db",
+)
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,8 +34,16 @@ from app import (  # noqa: E402,F401
 from app.api.webchat_public import WebchatInitRequest  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
-from app.models import Customer, Ticket, User, UserCapabilityOverride  # noqa: E402
-from app.models_agent_routing import ConversationControl, OperatorAgentState  # noqa: E402
+from app.models import (  # noqa: E402
+    Customer,
+    Ticket,
+    User,
+    UserCapabilityOverride,
+)
+from app.models_agent_routing import (  # noqa: E402
+    ConversationControl,
+    OperatorAgentState,
+)
 from app.operator_models import OperatorQueueScopeGrant  # noqa: E402
 from app.services.agent_availability_service import availability_summary  # noqa: E402
 from app.services.agent_routing_service import (  # noqa: E402
@@ -41,7 +52,9 @@ from app.services.agent_routing_service import (  # noqa: E402
     request_handoff,
     set_agent_state,
 )
-from app.services.conversation_first_service import create_or_resume_conversation  # noqa: E402
+from app.services.conversation_first_service import (  # noqa: E402
+    create_or_resume_conversation,
+)
 from app.services.conversation_operator_service import (  # noqa: E402
     read_conversation_thread,
     reply_to_conversation,
@@ -242,7 +255,11 @@ def test_capacity_one_assigns_fifo_and_close_releases_next_slot(db_session):
 
     db_session.refresh(second_request)
     db_session.refresh(second)
-    state = db_session.query(OperatorAgentState).filter_by(user_id=agent.id).one()
+    state = (
+        db_session.query(OperatorAgentState)
+        .filter_by(user_id=agent.id)
+        .one()
+    )
 
     assert closed["outcome"] == "human_resolved"
     assert first.status == "closed"
@@ -253,7 +270,9 @@ def test_capacity_one_assigns_fifo_and_close_releases_next_slot(db_session):
     assert db_session.query(Ticket).count() == 0
 
 
-def test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation(db_session):
+def test_resume_ai_releases_capacity_and_assigns_next_waiting_conversation(
+    db_session,
+):
     agent = _agent(db_session, suffix="resume")
     first = _conversation(db_session, suffix="resume-first")
     second = _conversation(db_session, suffix="resume-second")
@@ -358,9 +377,10 @@ def test_ticketless_transition_authority_and_reply_capability(db_session):
         user=agent,
         body="I am handling this conversation now.",
     )
-    assert result["direction"] == "agent"
-    assert result["body_text"] == "I am handling this conversation now."
-    assert result["delivery_status"] == "sent"
+    message = result["message"]
+    assert message["direction"] == "agent"
+    assert message["body_text"] == "I am handling this conversation now."
+    assert message["delivery_status"] == "sent"
 
     db_session.add(
         UserCapabilityOverride(
@@ -387,7 +407,9 @@ def test_ticketless_transition_authority_and_reply_capability(db_session):
     assert db_session.query(Ticket).count() == 0
 
 
-def test_manager_without_explicit_scope_grant_cannot_receive_ticketless_work(db_session):
+def test_manager_without_explicit_scope_grant_cannot_receive_ticketless_work(
+    db_session,
+):
     manager = _agent(
         db_session,
         suffix="unscoped-manager",

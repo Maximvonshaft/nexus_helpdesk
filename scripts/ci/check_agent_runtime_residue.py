@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,12 @@ RETIRED_PATHS = (
     ROOT / "backend/app/services/nexus_osr/runtime_bridge.py",
     ROOT / "backend/app/services/nexus_osr/tool_execution_facade.py",
     ROOT / "backend/app/services/nexus_osr/escalation_orchestration_service.py",
+    ROOT / "backend/app/services/conversation_ai_service.py",
+    ROOT / "backend/app/services/llm_service.py",
+    ROOT / "backend/app/services/auto_reply_service.py",
+    ROOT / "backend/scripts/run_api_manual.py",
+    ROOT / "backend/scripts/run_worker_manual.py",
+    ROOT / "deploy/systemd/nexusdesk-worker.service",
     ROOT / "backend/evals/nexus_osr",
     ROOT / "backend/scripts/run_domain_runtime_eval.py",
     ROOT / "backend/scripts/run_nexus_osr_eval.py",
@@ -39,21 +47,34 @@ RETIRED_PATHS = (
     ROOT / "docs/ops/DOMAIN_RUNTIME_ROLLBACK_RUNBOOK.md",
     ROOT / "docs/ops/NEXUS_OSR_EVAL_RUNBOOK.md",
 )
-RUNTIME_PATHS = (
+
+# Retired Agent markers are contextual. Scan only modules that own Agent
+# generation/orchestration, not unrelated business integrations whose canonical
+# Tool names may contain the same words.
+AGENT_MARKER_PATHS = (
     ROOT / "backend/app/services/agent_runtime",
     ROOT / "backend/app/services/ai_runtime",
     ROOT / "backend/app/services/provider_runtime",
     ROOT / "backend/app/services/webchat_ai_decision_runtime",
     ROOT / "backend/app/services/webchat_ai_service.py",
-    ROOT / "backend/app/services/conversation_ai_service.py",
     ROOT / "backend/app/services/webchat_runtime_ai_service.py",
+    ROOT / "backend/app/services/webchat_ai_orchestration_service.py",
+    ROOT / "backend/app/services/background_jobs.py",
+    ROOT / "backend/app/services/background_job_transaction_boundary.py",
+    ROOT / "backend/app/services/lite_service.py",
+    ROOT / "backend/app/api/lite.py",
 )
-TOOL_GOVERNANCE_PATHS = (
-    ROOT / "backend/app/services/nexus_osr",
+DIRECT_MODEL_SCAN_PATHS = (
+    ROOT / "backend/app/services",
+    ROOT / "backend/app/api",
+    ROOT / "backend/scripts",
 )
-TEST_GOVERNANCE_PATHS = (
-    ROOT / "backend/tests",
+TOOL_GOVERNANCE_PATHS = (ROOT / "backend/app/services/nexus_osr",)
+TEST_GOVERNANCE_PATHS = (ROOT / "backend/tests",)
+ARCHITECTURE_PATHS = (
+    ROOT / "docs/architecture/conversation-first-agent-routing.md",
 )
+
 FORBIDDEN_RUNTIME_CONTENT = (
     "**_legacy",
     "customer_visible_runtime_fallback",
@@ -90,7 +111,16 @@ FORBIDDEN_RUNTIME_CONTENT = (
     '"assistant_name": "Speedy"',
     '"brand": "Speedaf"',
     "handoff_required=decision.handoff_required",
+    "AUTO_REPLY_JOB",
+    "enqueue_auto_reply_job",
+    "fire_and_forget_auto_reply",
+    "process_ticketless_ai_reply",
+    "from .conversation_ai_service",
+    "from ..services.conversation_ai_service",
+    "def list_lite_cases(",
+    "legacy: bool = Query",
 )
+
 FORBIDDEN_TOOL_GOVERNANCE_CONTENT = (
     "ai_decision: AIDecision | None = None",
     "ai_decision or _decision_for_policy_gate",
@@ -109,17 +139,23 @@ FORBIDDEN_TOOL_GOVERNANCE_CONTENT = (
     "tracking_status_without_mcp_current_status",
     "knowledge_answer_without_customer_visible_knowledge",
 )
+
 FORBIDDEN_TEST_GOVERNANCE_CONTENT = (
     "/tmp/nexus-backend/source-export",
     "bounded source export completed",
 )
-ARCHITECTURE_PATHS = (
-    ROOT / "docs/architecture/conversation-first-agent-routing.md",
-)
+
 FORBIDDEN_ARCHITECTURE_CONTENT = (
     "lazily creates or reuses the ticket required by the ticket-backed voice authority",
     "lazy ticket creation only when the existing voice workflow is initiated",
     "Initiating voice creates or reuses the necessary ticket",
+    "through revision `20260720_0067`",
+    "conversation_ai_service.py",
+)
+
+DIRECT_MODEL_CLI = re.compile(
+    r"subprocess\.(?:run|Popen|check_output)\s*\([^\n]*(?:gemini|ollama|llama|openai)",
+    flags=re.IGNORECASE,
 )
 
 
@@ -138,12 +174,77 @@ def _scan_markers(
 ) -> None:
     for root in roots:
         for path in _python_files(root):
+            if "__pycache__" in path.parts:
+                continue
             text = path.read_text(encoding="utf-8")
             for marker in markers:
                 if marker in text:
                     failures.append(
                         f"{path.relative_to(ROOT)}: contains retired marker {marker}"
                     )
+
+
+def _scan_direct_model_cli(failures: list[str]) -> None:
+    for root in DIRECT_MODEL_SCAN_PATHS:
+        for path in _python_files(root):
+            if "__pycache__" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if DIRECT_MODEL_CLI.search(text):
+                failures.append(
+                    f"{path.relative_to(ROOT)}: invokes a model CLI outside Provider Runtime"
+                )
+
+
+def _call_name(node: ast.Call) -> str | None:
+    target = node.func
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
+def _facade_failures() -> list[str]:
+    """Validate executable facade structure while ignoring comments/docstrings."""
+
+    path = ROOT / "backend/app/services/webchat_service.py"
+    if not path.is_file():
+        return ["backend/app/services/webchat_service.py: stable facade missing"]
+    relative = path.relative_to(ROOT)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative))
+    failures: list[str] = []
+    imported_aliases: set[tuple[str, str]] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            failures.append(
+                f"{relative}: stable facade owns executable definition {node.name}"
+            )
+        if isinstance(node, ast.ImportFrom):
+            imported_aliases.update(
+                (alias.name, alias.asname or alias.name) for alias in node.names
+            )
+    expected = {
+        ("read_ticket_conversation_thread", "admin_get_thread"),
+        ("reply_to_ticket_conversation", "admin_reply"),
+    }
+    if not expected.issubset(imported_aliases):
+        failures.append(
+            f"{relative}: stable operator aliases are not direct canonical imports"
+        )
+    forbidden_calls = {
+        "Ticket",
+        "Customer",
+        "create_customer_visible_message",
+        "evaluate_customer_visible_policy",
+        "generate_webchat_runtime_reply",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node) in forbidden_calls:
+            failures.append(
+                f"{relative}: stable facade executes business call {_call_name(node)}"
+            )
+    return failures
 
 
 def main() -> int:
@@ -154,7 +255,7 @@ def main() -> int:
                 f"retired path still exists: {path.relative_to(ROOT)}"
             )
     _scan_markers(
-        roots=RUNTIME_PATHS,
+        roots=AGENT_MARKER_PATHS,
         markers=FORBIDDEN_RUNTIME_CONTENT,
         failures=failures,
     )
@@ -168,6 +269,8 @@ def main() -> int:
         markers=FORBIDDEN_TEST_GOVERNANCE_CONTENT,
         failures=failures,
     )
+    _scan_direct_model_cli(failures)
+    failures.extend(_facade_failures())
     for path in ARCHITECTURE_PATHS:
         text = path.read_text(encoding="utf-8")
         for marker in FORBIDDEN_ARCHITECTURE_CONTENT:
@@ -176,7 +279,7 @@ def main() -> int:
                     f"{path.relative_to(ROOT)}: contains retired architecture marker {marker}"
                 )
     if failures:
-        print("\n".join(failures))
+        print("\n".join(sorted(set(failures))))
         return 1
     print("Agent Runtime residue check passed")
     return 0

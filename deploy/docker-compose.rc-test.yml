@@ -13,17 +13,9 @@ x-rc-app: &rc_app
 
 x-rc-worker-healthcheck: &rc_worker_healthcheck
   test:
-    - CMD-SHELL
-    - >-
-      python -c "from pathlib import Path;
-      cmd=Path('/proc/1/cmdline').read_text(errors='replace');
-      assert 'scripts/run_worker.py' in cmd, cmd;
-      from sqlalchemy import text;
-      from app.db import SessionLocal;
-      db=SessionLocal();
-      db.execute(text('select 1'));
-      db.close();
-      print('rc-worker-ok')"
+    - CMD
+    - python
+    - scripts/check_worker_progress.py
   interval: 10s
   timeout: 5s
   retries: 12
@@ -104,7 +96,10 @@ services:
 
   worker-outbound-rc:
     <<: *rc_app
-    command: python scripts/run_worker.py --worker-id worker-outbound-rc --queue outbound
+    environment:
+      NEXUS_WORKER_ID: worker-outbound-rc
+      NEXUS_WORKER_QUEUE: outbound
+    command: python scripts/run_worker_supervised.py --worker-id worker-outbound-rc --queue outbound
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:
@@ -112,7 +107,10 @@ services:
 
   worker-background-rc:
     <<: *rc_app
-    command: python scripts/run_worker.py --worker-id worker-background-rc --queue background
+    environment:
+      NEXUS_WORKER_ID: worker-background-rc
+      NEXUS_WORKER_QUEUE: background
+    command: python scripts/run_worker_supervised.py --worker-id worker-background-rc --queue background
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:
@@ -122,7 +120,10 @@ services:
 
   worker-webchat-ai-rc:
     <<: *rc_app
-    command: python scripts/run_worker.py --worker-id worker-webchat-ai-rc --queue webchat-ai
+    environment:
+      NEXUS_WORKER_ID: worker-webchat-ai-rc
+      NEXUS_WORKER_QUEUE: webchat-ai
+    command: python scripts/run_worker_supervised.py --worker-id worker-webchat-ai-rc --queue webchat-ai
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:
@@ -130,7 +131,10 @@ services:
 
   worker-handoff-snapshot-rc:
     <<: *rc_app
-    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot-rc --queue handoff-snapshot
+    environment:
+      NEXUS_WORKER_ID: worker-handoff-snapshot-rc
+      NEXUS_WORKER_QUEUE: handoff-snapshot
+    command: python scripts/run_worker_supervised.py --worker-id worker-handoff-snapshot-rc --queue handoff-snapshot
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:

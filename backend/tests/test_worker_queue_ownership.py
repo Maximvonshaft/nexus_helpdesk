@@ -26,16 +26,19 @@ def test_background_worker_claims_only_background_owned_job_types():
         "dispatch_pending_background_jobs",
     )
     for required in (
-        "AUTO_REPLY_JOB",
         "SPEEDAF_WORK_ORDER_CREATE_JOB",
         "SPEEDAF_ADDRESS_UPDATE_JOB",
         "SPEEDAF_VOICE_CALLBACK_JOB",
         "EMAIL_MAILBOX_SYNC_JOB",
     ):
         assert required in function
-    assert "WEBCHAT_AI_REPLY_JOB" not in function
-    assert "WEBCHAT_HANDOFF_SNAPSHOT_JOB" not in function
-    assert "EXTERNAL_CHANNEL_SYNC_JOB" not in function
+    for retired_or_other_queue in (
+        "AUTO_REPLY_JOB",
+        "WEBCHAT_AI_REPLY_JOB",
+        "WEBCHAT_HANDOFF_SNAPSHOT_JOB",
+        "EXTERNAL_CHANNEL_SYNC_JOB",
+    ):
+        assert retired_or_other_queue not in function
 
 
 def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
@@ -43,7 +46,7 @@ def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
     assert "dispatch_pending_webchat_ai_reply_jobs" in runner
     assert "dispatch_pending_webchat_handoff_snapshot_jobs" in runner
     assert 'if queue == "webchat-ai"' in runner
-    assert 'if queue in {"all", "handoff-snapshot"}' in runner
+    assert 'if queue == "handoff-snapshot"' in runner
 
 
 def test_processed_counts_never_write_the_queue_depth_gauge():
@@ -73,11 +76,13 @@ def test_real_queue_depth_is_sampled_once_by_background_worker():
     assert "_QUEUE_DEPTH_LABELS - current_labels" in function
 
 
-def test_controlled_services_use_one_queue_per_worker():
+def test_controlled_services_use_one_queue_per_supervised_worker():
     compose = CONTROLLED_COMPOSE.read_text(encoding="utf-8")
+    assert "run_worker_supervised.py" in compose
     assert "--queue outbound" in compose
     assert "--queue background" in compose
     assert "--queue webchat-ai" in compose
     assert "--queue handoff-snapshot" in compose
     controlled_services = compose.split("services:", 1)[1]
+    assert "scripts/run_worker.py" not in controlled_services
     assert "--queue all" not in controlled_services

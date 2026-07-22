@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -50,7 +48,7 @@ def test_public_webchat_rejects_unbounded_message_content() -> None:
     public_api = _read("backend/app/api/webchat_public.py")
     assert "class WebchatSendRequest" in public_api
     assert "body: str = Field(min_length=1, max_length=2000)" in public_api
-    assert "model_config = ConfigDict(extra=\"forbid\")" in public_api
+    assert 'model_config = ConfigDict(extra="forbid")' in public_api
 
 
 def test_websocket_has_bounded_connection_and_heartbeat_contracts() -> None:
@@ -72,7 +70,8 @@ def test_webchat_public_surface_is_not_an_operator_console() -> None:
     readme = _read("README.md")
     assert '"kind": "separate-public-product-surface"' in lifecycle
     assert "not-an-operator-console" in lifecycle
-    assert "separate public surface" in readme
+    assert "separate public channel surface" in readme
+    assert "not a second operator product" in readme
 
 
 def test_retired_parallel_webchat_authorities_are_absent() -> None:

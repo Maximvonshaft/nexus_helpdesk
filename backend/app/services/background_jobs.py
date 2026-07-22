@@ -9,16 +9,10 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
-from ..models import (
-    BackgroundJob,
-    SpeedafAddressUpdateIdempotency,
-    TicketEvent,
-    TicketOutboundMessage,
-)
+from ..enums import EventType, JobStatus
+from ..models import BackgroundJob, SpeedafAddressUpdateIdempotency, TicketEvent
 from ..settings import get_settings
 from ..utils.time import utc_now
-from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .speedaf.redactor import (
     mask_phone,
     safe_caller_payload,
@@ -28,7 +22,6 @@ from .speedaf.redactor import (
 )
 
 settings = get_settings()
-AUTO_REPLY_JOB = "auto_reply.send_update"
 WEBCHAT_AI_REPLY_JOB = "webchat.ai_reply"
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = "webchat.handoff_snapshot"
 SPEEDAF_WORK_ORDER_CREATE_JOB = "speedaf.work_order.create"
@@ -36,6 +29,11 @@ SPEEDAF_ADDRESS_UPDATE_JOB = "speedaf.address_update.submit"
 SPEEDAF_VOICE_CALLBACK_JOB = "speedaf.voice.callback"
 EMAIL_MAILBOX_SYNC_JOB = "email.mailbox_sync"
 SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
+SPEEDAF_SENSITIVE_JOB_TYPES = {
+    SPEEDAF_WORK_ORDER_CREATE_JOB,
+    SPEEDAF_ADDRESS_UPDATE_JOB,
+    SPEEDAF_VOICE_CALLBACK_JOB,
+}
 
 
 def _stable_hash_prefix(value: object, *, length: int = 16) -> str:
@@ -43,13 +41,6 @@ def _stable_hash_prefix(value: object, *, length: int = 16) -> str:
     return hashlib.sha256(
         cleaned.encode("utf-8", errors="ignore")
     ).hexdigest()[:length]
-
-
-SPEEDAF_SENSITIVE_JOB_TYPES = {
-    SPEEDAF_WORK_ORDER_CREATE_JOB,
-    SPEEDAF_ADDRESS_UPDATE_JOB,
-    SPEEDAF_VOICE_CALLBACK_JOB,
-}
 
 
 def _scrub_completed_speedaf_job_payload(job: BackgroundJob) -> None:
@@ -66,20 +57,15 @@ def _scrub_completed_speedaf_job_payload(job: BackgroundJob) -> None:
         "scrub_reason": "speedaf_job_completed",
         "job_type": job.job_type,
     }
-    if "ticket_id" in payload:
-        safe_payload["ticket_id"] = payload.get("ticket_id")
-    if "conversation_id" in payload:
-        safe_payload["conversation_id"] = payload.get("conversation_id")
-    if "request_id" in payload:
-        safe_payload["request_id"] = payload.get("request_id")
+    for key in ("ticket_id", "conversation_id", "request_id"):
+        if key in payload:
+            safe_payload[key] = payload.get(key)
     if job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
         safe_payload.update(
             {
                 "workOrderType": payload.get("workOrderType"),
                 "description_present": bool(payload.get("description")),
-                **safe_waybill_payload(
-                    str(payload.get("waybillCode") or "")
-                ),
+                **safe_waybill_payload(str(payload.get("waybillCode") or "")),
                 **safe_caller_payload(str(payload.get("callerID") or "")),
             }
         )
@@ -87,12 +73,8 @@ def _scrub_completed_speedaf_job_payload(job: BackgroundJob) -> None:
         phone = str(payload.get("whatsAppPhone") or "")
         safe_payload.update(
             {
-                "addressUpdateDedupeKey": payload.get(
-                    "addressUpdateDedupeKey"
-                ),
-                **safe_waybill_payload(
-                    str(payload.get("waybillCode") or "")
-                ),
+                "addressUpdateDedupeKey": payload.get("addressUpdateDedupeKey"),
+                **safe_waybill_payload(str(payload.get("waybillCode") or "")),
                 **safe_caller_payload(str(payload.get("callerID") or "")),
                 "whatsapp_phone": {
                     "redacted": True,
@@ -101,38 +83,25 @@ def _scrub_completed_speedaf_job_payload(job: BackgroundJob) -> None:
                 },
             }
         )
-    elif job.job_type == SPEEDAF_VOICE_CALLBACK_JOB:
-        action = (
-            payload.get("action")
-            if isinstance(payload.get("action"), dict)
-            else {}
-        )
-        waybill_code = str(action.get("waybillCode") or "")
+    else:
+        action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
         safe_payload.update(
             {
                 "voice_session_id": payload.get("voice_session_id"),
-                "voiceCallbackDedupeKey": payload.get(
-                    "voiceCallbackDedupeKey"
-                ),
+                "voiceCallbackDedupeKey": payload.get("voiceCallbackDedupeKey"),
                 "call_session": {
                     "redacted": True,
                     "suffix": suffix(payload.get("callSessionId")),
-                    "sha256_prefix": sha256_prefix(
-                        payload.get("callSessionId")
-                    ),
+                    "sha256_prefix": sha256_prefix(payload.get("callSessionId")),
                 },
-                "isTransferredToHuman": payload.get(
-                    "isTransferredToHuman"
-                ),
+                "isTransferredToHuman": payload.get("isTransferredToHuman"),
                 "action": {
                     "action": action.get("action"),
                     "actionStatus": action.get("actionStatus"),
                     "actionTime_present": bool(action.get("actionTime")),
-                    "aiActionSummary_present": bool(
-                        action.get("aiActionSummary")
-                    ),
+                    "aiActionSummary_present": bool(action.get("aiActionSummary")),
                     "errorCode_present": bool(action.get("errorCode")),
-                    **safe_waybill_payload(waybill_code),
+                    **safe_waybill_payload(str(action.get("waybillCode") or "")),
                 },
             }
         )
@@ -226,21 +195,6 @@ def enqueue_background_job(
     return job
 
 
-def enqueue_auto_reply_job(
-    db: Session,
-    *,
-    ticket_id: int,
-    user_id: int,
-) -> BackgroundJob:
-    return enqueue_background_job(
-        db,
-        queue_name="auto_reply",
-        job_type=AUTO_REPLY_JOB,
-        payload={"ticket_id": ticket_id, "user_id": user_id},
-        dedupe_key=f"auto-reply:{ticket_id}",
-    )
-
-
 def enqueue_webchat_ai_reply_job(
     db: Session,
     *,
@@ -302,19 +256,18 @@ def enqueue_speedaf_address_update_job(
     dedupe_key: str,
     request_id: str | None = None,
 ) -> BackgroundJob:
-    payload = {
-        "ticket_id": ticket_id,
-        "waybillCode": waybill_code,
-        "callerID": caller_id,
-        "whatsAppPhone": whatsapp_phone,
-        "addressUpdateDedupeKey": dedupe_key,
-        "request_id": request_id,
-    }
     return enqueue_background_job(
         db,
         queue_name="speedaf_address_update",
         job_type=SPEEDAF_ADDRESS_UPDATE_JOB,
-        payload=payload,
+        payload={
+            "ticket_id": ticket_id,
+            "waybillCode": waybill_code,
+            "callerID": caller_id,
+            "whatsAppPhone": whatsapp_phone,
+            "addressUpdateDedupeKey": dedupe_key,
+            "request_id": request_id,
+        },
         dedupe_key=dedupe_key,
     )
 
@@ -336,20 +289,19 @@ def enqueue_speedaf_voice_callback_job(
     )
     if existing is not None:
         return existing
-    payload = {
-        "ticket_id": ticket_id,
-        "voice_session_id": voice_session_id,
-        "callSessionId": call_session_id,
-        "isTransferredToHuman": 1 if is_transferred_to_human else 0,
-        "action": action,
-        "voiceCallbackDedupeKey": dedupe_key,
-        "request_id": request_id,
-    }
     return enqueue_background_job(
         db,
         queue_name="speedaf_voice_callback",
         job_type=SPEEDAF_VOICE_CALLBACK_JOB,
-        payload=payload,
+        payload={
+            "ticket_id": ticket_id,
+            "voice_session_id": voice_session_id,
+            "callSessionId": call_session_id,
+            "isTransferredToHuman": 1 if is_transferred_to_human else 0,
+            "action": action,
+            "voiceCallbackDedupeKey": dedupe_key,
+            "request_id": request_id,
+        },
         dedupe_key=dedupe_key,
     )
 
@@ -366,13 +318,7 @@ def claim_pending_jobs(
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.job_lock_seconds)
     normalized_job_types = tuple(
-        sorted(
-            {
-                str(job_type)
-                for job_type in (job_types or [])
-                if job_type
-            }
-        )
+        sorted({str(item) for item in (job_types or []) if item})
     )
     due_filter = or_(
         BackgroundJob.next_run_at.is_(None),
@@ -392,9 +338,7 @@ def claim_pending_jobs(
         )
     ]
     if normalized_job_types:
-        pending_filters.append(
-            BackgroundJob.job_type.in_(normalized_job_types)
-        )
+        pending_filters.append(BackgroundJob.job_type.in_(normalized_job_types))
     if db.bind and db.bind.dialect.name.startswith("postgresql"):
         rows = db.execute(
             select(BackgroundJob.id)
@@ -430,7 +374,7 @@ def claim_pending_jobs(
         ]
         claimed_ids: list[int] = []
         for job_id in candidate_ids:
-            updated = db.execute(
+            claimed = db.execute(
                 update(BackgroundJob)
                 .where(BackgroundJob.id == job_id, *pending_filters)
                 .values(
@@ -439,7 +383,7 @@ def claim_pending_jobs(
                     locked_by=worker_id,
                 )
             )
-            if updated.rowcount == 1:
+            if claimed.rowcount == 1:
                 claimed_ids.append(job_id)
         if not claimed_ids:
             db.rollback()
@@ -476,43 +420,6 @@ def _mark_retry(job: BackgroundJob, reason: str) -> None:
         job.status = JobStatus.pending
         job.next_run_at = utc_now() + timedelta(minutes=backoff_minutes)
     job.updated_at = utc_now()
-
-
-def _draft_ai_auto_reply(
-    db: Session,
-    *,
-    ticket,
-    user,
-    body: str,
-    channel: SourceChannel,
-) -> TicketOutboundMessage:
-    """Store AI-produced customer text as a review-required draft only."""
-    message = TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=channel,
-        status=MessageStatus.draft,
-        body=body,
-        provider_status="ai_review_required",
-        error_message=(
-            "AI-generated auto reply saved as draft by outbound safety gate"
-        ),
-        failure_code="ai_review_required",
-        failure_reason=(
-            "AI-generated outbound requires human review before direct send"
-        ),
-        created_by=user.id,
-        max_retries=settings.outbox_max_retries,
-    )
-    db.add(message)
-    db.flush()
-    if channel == SourceChannel.email:
-        ensure_outbound_mailbox_identity(
-            message,
-            ticket=ticket,
-            include_message_id=False,
-        )
-        db.flush()
-    return message
 
 
 def _append_ticket_event(
@@ -557,9 +464,11 @@ def _update_speedaf_address_idempotency_status(
     dedupe_key: str,
     status_value: str,
 ) -> None:
-    row = db.query(SpeedafAddressUpdateIdempotency).filter(
-        SpeedafAddressUpdateIdempotency.dedupe_key == dedupe_key
-    ).one_or_none()
+    row = (
+        db.query(SpeedafAddressUpdateIdempotency)
+        .filter(SpeedafAddressUpdateIdempotency.dedupe_key == dedupe_key)
+        .one_or_none()
+    )
     if row is None:
         raise RuntimeError("speedaf_address_update_idempotency_reservation_missing")
     row.status = status_value
@@ -572,10 +481,7 @@ def _process_speedaf_work_order_create_job(
     job: BackgroundJob,
     payload: dict,
 ) -> None:
-    from .speedaf.action_service import (
-        SpeedafActionDisabled,
-        SpeedafActionService,
-    )
+    from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
 
     ticket_id = int(payload["ticket_id"])
     conversation_id = _int_or_none(payload.get("conversation_id"))
@@ -593,9 +499,7 @@ def _process_speedaf_work_order_create_job(
             background_job_id=job.id,
         ).create_work_order(
             waybill_code=str(payload["waybillCode"]),
-            work_order_type=str(
-                payload.get("workOrderType") or "WT0103-05"
-            ),
+            work_order_type=str(payload.get("workOrderType") or "WT0103-05"),
             description=str(payload.get("description") or "")[
                 :SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH
             ],
@@ -640,12 +544,8 @@ def _process_speedaf_work_order_create_job(
         payload=result_payload,
         new_value="completed" if result.ok else "failed",
     )
-    if not result.ok:
-        if not result.retryable:
-            return
-        raise RuntimeError(
-            result.error_code or "speedaf_work_order_create_failed"
-        )
+    if not result.ok and result.retryable:
+        raise RuntimeError(result.error_code or "speedaf_work_order_create_failed")
 
 
 def _process_speedaf_address_update_job(
@@ -653,11 +553,7 @@ def _process_speedaf_address_update_job(
     job: BackgroundJob,
     payload: dict,
 ) -> None:
-    from .speedaf.action_service import (
-        SpeedafActionDisabled,
-        SpeedafActionService,
-    )
-    from .speedaf.redactor import safe_waybill_payload
+    from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
 
     ticket_id = int(payload["ticket_id"])
     dedupe_key = str(payload["addressUpdateDedupeKey"])
@@ -699,10 +595,7 @@ def _process_speedaf_address_update_job(
             ticket_id=ticket_id,
             field_name="speedaf_address_update",
             new_value="skipped",
-            note=(
-                "Speedaf address update confirmation request skipped by "
-                "feature gate."
-            ),
+            note="Speedaf address update confirmation request skipped by feature gate.",
             payload=result_payload,
         )
         _mark_done(job)
@@ -716,42 +609,26 @@ def _process_speedaf_address_update_job(
             "safe_payload": result.safe_payload,
         }
     )
-    if result.ok:
-        _update_speedaf_address_idempotency_status(
-            db,
-            dedupe_key=dedupe_key,
-            status_value="success",
-        )
-        _append_ticket_event(
-            db,
-            ticket_id=ticket_id,
-            field_name="speedaf_address_update",
-            new_value="completed",
-            note=(
-                "Speedaf address update confirmation request completed. "
-                "Final Speedaf confirmation may still be required."
-            ),
-            payload=result_payload,
-        )
-        return
+    status_value = "success" if result.ok else "failed"
     _update_speedaf_address_idempotency_status(
         db,
         dedupe_key=dedupe_key,
-        status_value="failed",
+        status_value=status_value,
     )
     _append_ticket_event(
         db,
         ticket_id=ticket_id,
         field_name="speedaf_address_update",
-        new_value="failed",
-        note="Speedaf address update confirmation request failed.",
+        new_value="completed" if result.ok else "failed",
+        note=(
+            "Speedaf address update confirmation request completed. Final Speedaf confirmation may still be required."
+            if result.ok
+            else "Speedaf address update confirmation request failed."
+        ),
         payload=result_payload,
     )
-    if not result.retryable:
-        return
-    raise RuntimeError(
-        result.error_code or "speedaf_address_update_failed"
-    )
+    if not result.ok and result.retryable:
+        raise RuntimeError(result.error_code or "speedaf_address_update_failed")
 
 
 def _process_speedaf_voice_callback_job(
@@ -759,11 +636,7 @@ def _process_speedaf_voice_callback_job(
     job: BackgroundJob,
     payload: dict,
 ) -> None:
-    from .speedaf.action_service import (
-        SpeedafActionDisabled,
-        SpeedafActionService,
-    )
-    from .speedaf.redactor import safe_waybill_payload
+    from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
 
     ticket_id = int(payload["ticket_id"])
     voice_session_id = _int_or_none(payload.get("voice_session_id"))
@@ -772,26 +645,19 @@ def _process_speedaf_voice_callback_job(
         or job.dedupe_key
         or f"speedaf-voice-callback:{job.id}"
     )
-    action = (
-        payload.get("action")
-        if isinstance(payload.get("action"), dict)
-        else {}
-    )
-    waybill_code = str(action.get("waybillCode") or "")
-    callback_payload = {
-        "callSessionId": str(payload.get("callSessionId") or ""),
-        "isTransferredToHuman": int(
-            payload.get("isTransferredToHuman") or 0
-        ),
-        "action": action,
-    }
+    action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
     result_payload: dict = {
         "job_id": job.id,
         "job_type": SPEEDAF_VOICE_CALLBACK_JOB,
         "ticket_id": ticket_id,
         "voice_session_id": voice_session_id,
         "dedupe_key": dedupe_key,
-        **safe_waybill_payload(waybill_code),
+        **safe_waybill_payload(str(action.get("waybillCode") or "")),
+    }
+    callback_payload = {
+        "callSessionId": str(payload.get("callSessionId") or ""),
+        "isTransferredToHuman": int(payload.get("isTransferredToHuman") or 0),
+        "action": action,
     }
     try:
         result = SpeedafActionService(
@@ -827,27 +693,20 @@ def _process_speedaf_voice_callback_job(
             "safe_payload": result.safe_payload,
         }
     )
-    if result.ok:
-        _append_ticket_event(
-            db,
-            ticket_id=ticket_id,
-            field_name="speedaf_voice_callback",
-            new_value="completed",
-            note="Speedaf voice callback completed.",
-            payload=result_payload,
-        )
-        return
     _append_ticket_event(
         db,
         ticket_id=ticket_id,
         field_name="speedaf_voice_callback",
-        new_value="failed",
-        note="Speedaf voice callback failed.",
+        new_value="completed" if result.ok else "failed",
+        note=(
+            "Speedaf voice callback completed."
+            if result.ok
+            else "Speedaf voice callback failed."
+        ),
         payload=result_payload,
     )
-    if not result.retryable:
-        return
-    raise RuntimeError(result.error_code or "speedaf_voice_callback_failed")
+    if not result.ok and result.retryable:
+        raise RuntimeError(result.error_code or "speedaf_voice_callback_failed")
 
 
 def process_background_job(
@@ -856,122 +715,47 @@ def process_background_job(
 ) -> BackgroundJob:
     payload = json.loads(job.payload_json or "{}")
     try:
-        if job.job_type == AUTO_REPLY_JOB:
-            from .bulletin_service import build_bulletin_context
-            from .llm_service import polish_reply_text
-            from .ticket_service import get_ticket_or_404, get_user_or_404
-
-            ticket = get_ticket_or_404(db, int(payload["ticket_id"]))
-            user = get_user_or_404(db, int(payload["user_id"]))
-            if not (
-                ticket.preferred_reply_contact
-                or ticket.source_chat_id
-                or (ticket.customer.phone if ticket.customer else None)
-            ):
-                _mark_done(job)
-                return job
-            human_note = (
-                ticket.customer_update
-                or ticket.resolution_summary
-                or ticket.last_human_update
-            )
-            if not human_note:
-                _mark_done(job)
-                return job
-            transcript_context = ticket.last_customer_message or ""
-            customer_request = (
-                transcript_context
-                or ticket.customer_request
-                or ticket.description
-                or ""
-            )
-            bulletin_context = build_bulletin_context(db, ticket=ticket)
-            polished_text = polish_reply_text(
-                customer_request,
-                human_note,
-                bulletin_context=bulletin_context,
-            )
-            if not polished_text:
-                _mark_done(job)
-                return job
-            channel_value = (
-                ticket.preferred_reply_channel or "whatsapp"
-            ).lower().strip()
-            try:
-                channel = SourceChannel(channel_value)
-            except Exception:
-                channel = SourceChannel.whatsapp
-            _draft_ai_auto_reply(
-                db,
-                ticket=ticket,
-                user=user,
-                body=polished_text,
-                channel=channel,
-            )
-            _mark_done(job)
-            return job
         if job.job_type == WEBCHAT_AI_REPLY_JOB:
-            from .webchat_ai_orchestration_service import (
-                process_webchat_ai_reply_job,
-            )
+            from .webchat_ai_orchestration_service import process_webchat_ai_reply_job
 
             raw_ticket_id = payload.get("ticket_id")
             process_webchat_ai_reply_job(
                 db,
                 conversation_id=int(payload["conversation_id"]),
-                ticket_id=(
-                    int(raw_ticket_id)
-                    if raw_ticket_id is not None
-                    else None
-                ),
+                ticket_id=int(raw_ticket_id) if raw_ticket_id is not None else None,
                 visitor_message_id=int(payload["visitor_message_id"]),
             )
-            _mark_done(job)
-            return job
-        if job.job_type == WEBCHAT_HANDOFF_SNAPSHOT_JOB:
+        elif job.job_type == WEBCHAT_HANDOFF_SNAPSHOT_JOB:
             from .webchat_handoff_snapshot_service import (
                 process_webchat_handoff_snapshot_job,
             )
 
             snapshot = payload.get("snapshot")
             if not isinstance(snapshot, dict):
-                raise RuntimeError(
-                    "webchat handoff snapshot payload is required"
-                )
+                raise RuntimeError("webchat handoff snapshot payload is required")
             process_webchat_handoff_snapshot_job(db, snapshot=snapshot)
-            _mark_done(job)
-            return job
-        if job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
+        elif job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
             _process_speedaf_work_order_create_job(db, job, payload)
-            _mark_done(job)
-            return job
-        if job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB:
+        elif job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB:
             _process_speedaf_address_update_job(db, job, payload)
-            _mark_done(job)
-            return job
-        if job.job_type == SPEEDAF_VOICE_CALLBACK_JOB:
+        elif job.job_type == SPEEDAF_VOICE_CALLBACK_JOB:
             _process_speedaf_voice_callback_job(db, job, payload)
-            _mark_done(job)
-            return job
-        if job.job_type == EMAIL_MAILBOX_SYNC_JOB:
-            from .email_mailbox_polling_service import (
-                process_email_mailbox_sync_job,
-            )
+        elif job.job_type == EMAIL_MAILBOX_SYNC_JOB:
+            from .email_mailbox_polling_service import process_email_mailbox_sync_job
 
             process_email_mailbox_sync_job(
                 db,
                 account_id=int(payload["account_id"]),
             )
-            _mark_done(job)
-            return job
-        raise RuntimeError(f"Unsupported job type: {job.job_type}")
+        else:
+            raise RuntimeError(f"Unsupported job type: {job.job_type}")
+        _mark_done(job)
+        return job
     except Exception as exc:
         _mark_retry(job, str(exc))
         return job
 
 
-# Compatibility names remain thin delegates only. The transaction-boundary
-# module is the sole owner of claim/lease/process/commit loops.
 def dispatch_pending_background_jobs(
     db: Session,
     *,

@@ -24,6 +24,7 @@ class _FakeQuery:
         self._db = db
 
     def filter(self, *args, **kwargs):
+        del args, kwargs
         return self
 
     def first(self):
@@ -39,6 +40,7 @@ class _FakeDB:
         self.fail_next_commit = False
 
     def query(self, model):
+        del model
         return _FakeQuery(self)
 
     def commit(self):
@@ -51,7 +53,11 @@ class _FakeDB:
         self.rollbacks += 1
 
 
-def _job(job_id: int, *, job_type: str = background_jobs.AUTO_REPLY_JOB) -> SimpleNamespace:
+def _job(
+    job_id: int,
+    *,
+    job_type: str = background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=job_id,
         job_type=job_type,
@@ -124,7 +130,10 @@ def test_worker_runtime_selects_boundaries_without_package_monkey_patch():
         "from app.services.background_jobs import dispatch_pending_background_jobs"
         not in runner
     )
-    assert "from app.services.message_dispatch import dispatch_pending_messages" not in runner
+    assert (
+        "from app.services.message_dispatch import dispatch_pending_messages"
+        not in runner
+    )
 
     _assert_thin_delegates(
         root / "backend/app/services/background_jobs.py",
@@ -141,7 +150,18 @@ def test_worker_runtime_selects_boundaries_without_package_monkey_patch():
     )
 
 
-def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_continues(monkeypatch):
+def test_background_worker_has_no_retired_auto_reply_job_type():
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "backend/app/services/background_job_transaction_boundary.py"
+    ).read_text(encoding="utf-8")
+    assert "AUTO_REPLY_JOB" not in source
+    assert "auto_reply.send_update" not in source
+
+
+def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_continues(
+    monkeypatch,
+):
     first = _job(1)
     second = _job(2)
     db = _FakeDB([first, second])
@@ -155,6 +175,7 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
     )
 
     def fake_process(db_arg, job):
+        del db_arg
         processed_ids.append(job.id)
         if job.id == 1:
             db.current_recovery_row = first
@@ -165,11 +186,7 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
         return job
 
     monkeypatch.setattr(background_jobs, "process_background_job", fake_process)
-
-    processed = dispatch_pending_background_jobs(
-        db,
-        worker_id="worker-test",
-    )
+    processed = dispatch_pending_background_jobs(db, worker_id="worker-test")
 
     assert processed_ids == [1, 2]
     assert [row.id for row in processed] == [1, 2]
@@ -183,7 +200,9 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
     assert second.status == JobStatus.done
 
 
-def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exhausts_retries(monkeypatch):
+def test_dispatch_pending_background_jobs_marks_dead_when_attempt_exhausts_retries(
+    monkeypatch,
+):
     row = _job(7)
     row.attempt_count = 2
     row.max_attempts = 3
@@ -202,11 +221,7 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
         lambda db, job: (_ for _ in ()).throw(RuntimeError("last retry failed")),
     )
 
-    processed = dispatch_pending_background_jobs(
-        db,
-        worker_id="worker-test",
-    )
-
+    processed = dispatch_pending_background_jobs(db, worker_id="worker-test")
     assert [item.id for item in processed] == [7]
     assert db.rollbacks == 1
     assert db.commits == 1
@@ -215,12 +230,10 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
     assert row.next_run_at is None
 
 
-
 def test_dispatch_pending_webchat_ai_jobs_uses_attempt_boundary(monkeypatch):
     row = _job(11, job_type=background_jobs.WEBCHAT_AI_REPLY_JOB)
     db = _FakeDB([row])
     db.current_recovery_row = row
-
     monkeypatch.setattr(
         background_jobs,
         "claim_pending_jobs",
@@ -236,7 +249,6 @@ def test_dispatch_pending_webchat_ai_jobs_uses_attempt_boundary(monkeypatch):
         db,
         worker_id="worker-webchat-ai-test",
     )
-
     assert [item.id for item in processed] == [11]
     assert db.rollbacks == 1
     assert db.commits == 1
@@ -251,7 +263,6 @@ def test_attempt_boundary_recovers_commit_failure(monkeypatch):
     db = _FakeDB([row])
     db.current_recovery_row = row
     db.fail_next_commit = True
-
     monkeypatch.setattr(
         background_jobs,
         "claim_pending_jobs",
@@ -259,18 +270,17 @@ def test_attempt_boundary_recovers_commit_failure(monkeypatch):
     )
 
     def fake_process(db_arg, job):
+        del db_arg
         job.status = JobStatus.done
         job.locked_at = None
         job.locked_by = None
         return job
 
     monkeypatch.setattr(background_jobs, "process_background_job", fake_process)
-
     processed = dispatch_pending_webchat_ai_reply_jobs(
         db,
         worker_id="worker-webchat-ai-test",
     )
-
     assert [item.id for item in processed] == [12]
     assert db.rollbacks == 1
     assert db.commits == 1
@@ -285,7 +295,7 @@ def test_claim_pending_jobs_reclaims_stale_processing_job(tmp_path, monkeypatch)
         connect_args={"check_same_thread": False},
         future=True,
     )
-    SessionLocal = sessionmaker(
+    Session = sessionmaker(
         bind=engine,
         autoflush=False,
         autocommit=False,
@@ -296,7 +306,7 @@ def test_claim_pending_jobs_reclaims_stale_processing_job(tmp_path, monkeypatch)
     monkeypatch.setattr(background_jobs.settings, "job_lock_seconds", 60)
 
     stale_time = utc_now() - timedelta(minutes=10)
-    with SessionLocal() as db:
+    with Session() as db:
         row = BackgroundJob(
             queue_name="webchat_ai_reply",
             job_type=background_jobs.WEBCHAT_AI_REPLY_JOB,
@@ -308,17 +318,14 @@ def test_claim_pending_jobs_reclaims_stale_processing_job(tmp_path, monkeypatch)
         )
         db.add(row)
         db.commit()
-
         claimed = background_jobs.claim_pending_jobs(
             db,
             limit=1,
             worker_id="new-worker",
             job_types=[background_jobs.WEBCHAT_AI_REPLY_JOB],
         )
-
         assert [job.id for job in claimed] == [row.id]
         assert claimed[0].status == JobStatus.processing
         assert claimed[0].locked_by == "new-worker"
         assert claimed[0].locked_at > stale_time
-
     engine.dispose()

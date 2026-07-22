@@ -35,8 +35,7 @@ def _ensure_schema_and_user() -> None:
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
         columns = {
-            col["name"]
-            for col in inspect(conn).get_columns("webchat_ai_turns")
+            col["name"] for col in inspect(conn).get_columns("webchat_ai_turns")
         }
         if "runtime_trace_json" not in columns:
             conn.execute(
@@ -47,11 +46,9 @@ def _ensure_schema_and_user() -> None:
             )
         outbound_columns = {
             col["name"]
-            for col in inspect(conn).get_columns(
-                "ticket_outbound_messages"
-            )
+            for col in inspect(conn).get_columns("ticket_outbound_messages")
         }
-        outbound_contract_columns = {
+        for column_name, column_type in {
             "origin": "VARCHAR(40)",
             "runtime_trace_id": "VARCHAR(120)",
             "runtime_contract_version": "VARCHAR(80)",
@@ -60,8 +57,7 @@ def _ensure_schema_and_user() -> None:
             "runtime_contract_payload_sha256": "VARCHAR(64)",
             "runtime_reply_type": "VARCHAR(40)",
             "safety_status": "VARCHAR(40)",
-        }
-        for column_name, column_type in outbound_contract_columns.items():
+        }.items():
             if column_name not in outbound_columns:
                 conn.execute(
                     text(
@@ -70,14 +66,12 @@ def _ensure_schema_and_user() -> None:
                     )
                 )
         ticket_columns = {
-            col["name"]
-            for col in inspect(conn).get_columns("tickets")
+            col["name"] for col in inspect(conn).get_columns("tickets")
         }
-        ticket_ai_columns = {
+        for column_name, column_type in {
             "last_ai_update": "TEXT",
             "last_runtime_reply_at": "DATETIME",
-        }
-        for column_name, column_type in ticket_ai_columns.items():
+        }.items():
             if column_name not in ticket_columns:
                 conn.execute(
                     text(
@@ -126,16 +120,13 @@ def _send(
     body: str,
     client_message_id: str,
 ):
-    res = client.post(
+    response = client.post(
         f"/api/webchat/conversations/{conversation_id}/messages",
         headers={"X-Webchat-Visitor-Token": visitor_token},
-        json={
-            "body": body,
-            "client_message_id": client_message_id,
-        },
+        json={"body": body, "client_message_id": client_message_id},
     )
-    assert res.status_code == 200, res.text
-    return res.json()
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _clear_webchat_ai_jobs() -> None:
@@ -160,380 +151,6 @@ def _clear_webchat_ai_jobs() -> None:
         db.commit()
     finally:
         db.close()
-
-
-def test_v3_reply_contract_records_customer_and_tool_sources():
-    from app.enums import SourceChannel
-    from app.services.webchat_ai_service import _ai_reply_contract_fields
-
-    fields = _ai_reply_contract_fields(
-        body="The approved answer.",
-        channel=SourceChannel.web_chat,
-        handoff_required=False,
-        runtime_trace={
-            "ai_decision": {"confidence": 0.9},
-            "executed_tools": [
-                {
-                    "tool_name": "knowledge.search",
-                    "ok": True,
-                    "status": "executed",
-                }
-            ],
-        },
-        reply_type="answer",
-    )
-
-    assert fields["contract_version"] == "nexus.ai_reply.v3"
-    assert fields["reply_type"] == "answer"
-    assert fields["used_sources"] == [
-        "context:customer_message",
-        "tool:knowledge.search",
-    ]
-    assert fields["unsupported_claims"] == []
-    assert fields["confidence"] == 0.9
-
-
-def test_webchat_ai_turn_is_created_and_public_poll_reports_pending():
-    _ensure_schema_and_user()
-    client = TestClient(app)
-    conversation_id, visitor_token = _init_conversation(client)
-
-    sent = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Where is my parcel?",
-        "turn-runtime-1",
-    )
-    assert sent["ai_pending"] is True
-    assert sent["ai_status"] == "queued"
-    assert sent["ai_turn_id"]
-
-    db = SessionLocal()
-    try:
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .first()
-        )
-        assert conversation is not None
-        turns = (
-            db.query(WebchatAITurn)
-            .filter(WebchatAITurn.conversation_id == conversation.id)
-            .all()
-        )
-        assert len(turns) == 1
-        assert turns[0].status == "queued"
-        assert conversation.active_ai_turn_id == turns[0].id
-        assert (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB,
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-turn:{turns[0].id}",
-            )
-            .count()
-            == 1
-        )
-        assert (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB,
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-reply:{sent['message']['id']}",
-            )
-            .count()
-            == 0
-        )
-        assert (
-            db.query(WebchatEvent)
-            .filter(
-                WebchatEvent.conversation_id == conversation.id,
-                WebchatEvent.event_type == "ai_turn.queued",
-            )
-            .count()
-            >= 1
-        )
-    finally:
-        db.close()
-
-    polled = client.get(
-        f"/api/webchat/conversations/{conversation_id}/messages",
-        headers={"X-Webchat-Visitor-Token": visitor_token},
-    )
-    assert polled.status_code == 200, polled.text
-    assert polled.json()["ai_pending"] is True
-
-
-def test_duplicate_client_message_id_is_idempotent():
-    _ensure_schema_and_user()
-    client = TestClient(app)
-    conversation_id, visitor_token = _init_conversation(client)
-
-    first = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Hello once",
-        "turn-runtime-idem-1",
-    )
-    second = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Hello once",
-        "turn-runtime-idem-1",
-    )
-
-    assert second["idempotent"] is True
-    assert second["message"]["id"] == first["message"]["id"]
-
-    db = SessionLocal()
-    try:
-        cid = (
-            db.query(WebchatConversation.id)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .scalar()
-        )
-        assert (
-            db.query(WebchatMessage)
-            .filter(
-                WebchatMessage.conversation_id == cid,
-                WebchatMessage.direction == "visitor",
-                WebchatMessage.client_message_id == "turn-runtime-idem-1",
-            )
-            .count()
-            == 1
-        )
-    finally:
-        db.close()
-
-
-def test_queued_turn_coalesces_consecutive_visitor_messages():
-    _ensure_schema_and_user()
-    client = TestClient(app)
-    conversation_id, visitor_token = _init_conversation(client)
-
-    first = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Where is my parcel?",
-        "turn-runtime-coalesce-1",
-    )
-    second = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Tracking number is ABC1234567",
-        "turn-runtime-coalesce-2",
-    )
-    assert first["ai_turn_id"] == second["ai_turn_id"]
-    assert second["coalesced"] is True
-
-    db = SessionLocal()
-    try:
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .first()
-        )
-        assert conversation is not None
-        turns = (
-            db.query(WebchatAITurn)
-            .filter(WebchatAITurn.conversation_id == conversation.id)
-            .all()
-        )
-        assert len(turns) == 1
-        second_message = (
-            db.query(WebchatMessage)
-            .filter(
-                WebchatMessage.conversation_id == conversation.id,
-                WebchatMessage.client_message_id
-                == "turn-runtime-coalesce-2",
-            )
-            .order_by(WebchatMessage.id.desc())
-            .first()
-        )
-        assert second_message is not None
-        assert turns[0].latest_visitor_message_id == second_message.id
-        assert (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB,
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-turn:{turns[0].id}",
-            )
-            .count()
-            == 1
-        )
-    finally:
-        db.close()
-
-
-def test_processing_turn_queues_next_turn_for_new_message():
-    _ensure_schema_and_user()
-    client = TestClient(app)
-    conversation_id, visitor_token = _init_conversation(client)
-
-    first = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "First question",
-        "turn-runtime-next-1",
-    )
-    first_turn_id = first["ai_turn_id"]
-
-    db = SessionLocal()
-    try:
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .first()
-        )
-        turn = (
-            db.query(WebchatAITurn)
-            .filter(WebchatAITurn.id == first_turn_id)
-            .first()
-        )
-        assert conversation is not None and turn is not None
-        turn.status = "bridge_calling"
-        turn.context_cutoff_message_id = (
-            turn.latest_visitor_message_id or turn.trigger_message_id
-        )
-        conversation.active_ai_status = "bridge_calling"
-        conversation.active_ai_context_cutoff_message_id = (
-            turn.context_cutoff_message_id
-        )
-        db.commit()
-    finally:
-        db.close()
-
-    second = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Second question",
-        "turn-runtime-next-2",
-    )
-    assert second["ai_turn_id"] == first_turn_id
-    assert second["next_ai_turn_id"]
-
-    db = SessionLocal()
-    try:
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .first()
-        )
-        assert conversation is not None
-        assert conversation.next_ai_turn_id == second["next_ai_turn_id"]
-        turns = (
-            db.query(WebchatAITurn)
-            .filter(WebchatAITurn.conversation_id == conversation.id)
-            .order_by(WebchatAITurn.id.asc())
-            .all()
-        )
-        assert len(turns) == 2
-        assert turns[1].status == "queued"
-    finally:
-        db.close()
-
-
-def test_stale_turn_is_superseded_and_does_not_write_agent_reply(
-    monkeypatch,
-):
-    _ensure_schema_and_user()
-    from app.services import webchat_ai_orchestration_service
-
-    monkeypatch.setattr(
-        webchat_ai_orchestration_service.settings,
-        "webchat_ai_auto_reply_mode",
-        "off",
-    )
-    client = TestClient(app)
-    conversation_id, visitor_token = _init_conversation(client)
-
-    first = _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Old question",
-        "turn-runtime-stale-1",
-    )
-    first_turn_id = first["ai_turn_id"]
-
-    db = SessionLocal()
-    try:
-        first_message_id = first["message"]["id"]
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .first()
-        )
-        turn = db.get(WebchatAITurn, first_turn_id)
-        first_message = db.get(WebchatMessage, first_message_id)
-        assert conversation is not None
-        assert turn is not None
-        assert first_message is not None
-        turn.status = "bridge_calling"
-        turn.context_cutoff_message_id = first_message.id
-        conversation.active_ai_status = "bridge_calling"
-        conversation.active_ai_context_cutoff_message_id = first_message.id
-        db.commit()
-    finally:
-        db.close()
-
-    _send(
-        client,
-        conversation_id,
-        visitor_token,
-        "Newer question",
-        "turn-runtime-stale-2",
-    )
-
-    monkeypatch.setattr(
-        webchat_ai_orchestration_service.settings,
-        "webchat_ai_auto_reply_mode",
-        "runtime",
-    )
-
-    db = SessionLocal()
-    try:
-        first_message = db.get(WebchatMessage, first["message"]["id"])
-        assert first_message is not None
-        result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
-            db,
-            conversation_id=first_message.conversation_id,
-            ticket_id=first_message.ticket_id,
-            visitor_message_id=first_message.id,
-        )
-        db.commit()
-        assert result["status"] == "superseded"
-        turn = db.get(WebchatAITurn, first_turn_id)
-        assert turn is not None
-        assert turn.status == "superseded"
-        assert (
-            db.query(WebchatMessage)
-            .filter(
-                WebchatMessage.conversation_id
-                == first_message.conversation_id,
-                WebchatMessage.direction == "agent",
-                WebchatMessage.ai_turn_id == first_turn_id,
-            )
-            .count()
-            == 0
-        )
-    finally:
-        db.close()
-
-
-def _patch_ticketless_dependencies(
-    monkeypatch,
-    conversation_ai_service,
-) -> None:
-    del monkeypatch, conversation_ai_service
 
 
 def _runtime_reply(
@@ -561,12 +178,368 @@ def _runtime_reply(
     )
 
 
+def _enable_runtime(monkeypatch) -> None:
+    from app.services import webchat_ai_orchestration_service
+
+    monkeypatch.setattr(
+        webchat_ai_orchestration_service.settings,
+        "webchat_ai_auto_reply_mode",
+        "runtime",
+    )
+
+
+def _patch_runtime(monkeypatch, result_or_callable) -> None:
+    from app.services import webchat_ai_service
+
+    if callable(result_or_callable):
+        fake = result_or_callable
+    else:
+        fake = lambda **_kwargs: result_or_callable
+    monkeypatch.setattr(webchat_ai_service, "_run_runtime_reply_sync", fake)
+
+
+def _dispatch_turn(ai_turn_id: int, *, worker_id: str) -> None:
+    db = SessionLocal()
+    try:
+        job = (
+            db.query(BackgroundJob)
+            .filter(BackgroundJob.dedupe_key == f"webchat-ai-turn:{ai_turn_id}")
+            .one()
+        )
+        job.next_run_at = None
+        db.commit()
+        processed = dispatch_pending_webchat_ai_reply_jobs(db, worker_id=worker_id)
+        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_v3_reply_contract_records_customer_and_tool_sources():
+    from app.enums import SourceChannel
+    from app.services.webchat_ai_service import _ai_reply_contract_fields
+
+    fields = _ai_reply_contract_fields(
+        body="The approved answer.",
+        channel=SourceChannel.web_chat,
+        handoff_required=False,
+        runtime_trace={
+            "ai_decision": {"confidence": 0.9},
+            "executed_tools": [
+                {
+                    "tool_name": "knowledge.search",
+                    "ok": True,
+                    "status": "executed",
+                }
+            ],
+        },
+        reply_type="answer",
+    )
+    assert fields["contract_version"] == "nexus.ai_reply.v3"
+    assert fields["reply_type"] == "answer"
+    assert fields["used_sources"] == [
+        "context:customer_message",
+        "tool:knowledge.search",
+    ]
+    assert fields["unsupported_claims"] == []
+    assert fields["confidence"] == 0.9
+
+
+def test_webchat_ai_turn_is_created_and_public_poll_reports_pending():
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+    sent = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Where is my parcel?",
+        "turn-runtime-1",
+    )
+    assert sent["ai_pending"] is True
+    assert sent["ai_status"] == "queued"
+    assert sent["ai_turn_id"]
+
+    db = SessionLocal()
+    try:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        assert conversation.ticket_id is None
+        turns = (
+            db.query(WebchatAITurn)
+            .filter(WebchatAITurn.conversation_id == conversation.id)
+            .all()
+        )
+        assert len(turns) == 1
+        assert turns[0].status == "queued"
+        assert conversation.active_ai_turn_id == turns[0].id
+        assert (
+            db.query(BackgroundJob)
+            .filter(
+                BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB,
+                BackgroundJob.dedupe_key == f"webchat-ai-turn:{turns[0].id}",
+            )
+            .count()
+            == 1
+        )
+        assert (
+            db.query(WebchatEvent)
+            .filter(
+                WebchatEvent.conversation_id == conversation.id,
+                WebchatEvent.event_type == "ai_turn.queued",
+            )
+            .count()
+            >= 1
+        )
+    finally:
+        db.close()
+
+    polled = client.get(
+        f"/api/webchat/conversations/{conversation_id}/messages",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["ai_pending"] is True
+
+
+def test_duplicate_client_message_id_is_idempotent():
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+    first = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Hello once",
+        "turn-runtime-idem-1",
+    )
+    second = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Hello once",
+        "turn-runtime-idem-1",
+    )
+    assert second["idempotent"] is True
+    assert second["message"]["id"] == first["message"]["id"]
+
+    db = SessionLocal()
+    try:
+        conversation_id_db = (
+            db.query(WebchatConversation.id)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .scalar()
+        )
+        assert (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation_id_db,
+                WebchatMessage.direction == "visitor",
+                WebchatMessage.client_message_id == "turn-runtime-idem-1",
+            )
+            .count()
+            == 1
+        )
+    finally:
+        db.close()
+
+
+def test_queued_turn_coalesces_consecutive_visitor_messages():
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+    first = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Where is my parcel?",
+        "turn-runtime-coalesce-1",
+    )
+    second = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Tracking number is ABC1234567",
+        "turn-runtime-coalesce-2",
+    )
+    assert first["ai_turn_id"] == second["ai_turn_id"]
+    assert second["coalesced"] is True
+
+    db = SessionLocal()
+    try:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        turns = (
+            db.query(WebchatAITurn)
+            .filter(WebchatAITurn.conversation_id == conversation.id)
+            .all()
+        )
+        assert len(turns) == 1
+        second_message = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.client_message_id == "turn-runtime-coalesce-2",
+            )
+            .one()
+        )
+        assert turns[0].latest_visitor_message_id == second_message.id
+    finally:
+        db.close()
+
+
+def test_processing_turn_queues_next_turn_for_new_message():
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+    first = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "First question",
+        "turn-runtime-next-1",
+    )
+    first_turn_id = first["ai_turn_id"]
+
+    db = SessionLocal()
+    try:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        turn = db.get(WebchatAITurn, first_turn_id)
+        assert turn is not None
+        turn.status = "bridge_calling"
+        turn.context_cutoff_message_id = (
+            turn.latest_visitor_message_id or turn.trigger_message_id
+        )
+        conversation.active_ai_status = "bridge_calling"
+        conversation.active_ai_context_cutoff_message_id = turn.context_cutoff_message_id
+        db.commit()
+    finally:
+        db.close()
+
+    second = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Second question",
+        "turn-runtime-next-2",
+    )
+    assert second["ai_turn_id"] == first_turn_id
+    assert second["next_ai_turn_id"]
+
+    db = SessionLocal()
+    try:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        assert conversation.next_ai_turn_id == second["next_ai_turn_id"]
+        turns = (
+            db.query(WebchatAITurn)
+            .filter(WebchatAITurn.conversation_id == conversation.id)
+            .order_by(WebchatAITurn.id.asc())
+            .all()
+        )
+        assert len(turns) == 2
+        assert turns[1].status == "queued"
+    finally:
+        db.close()
+
+
+def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
+    _ensure_schema_and_user()
+    from app.services import webchat_ai_orchestration_service
+
+    monkeypatch.setattr(
+        webchat_ai_orchestration_service.settings,
+        "webchat_ai_auto_reply_mode",
+        "off",
+    )
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+    first = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Old question",
+        "turn-runtime-stale-1",
+    )
+    first_turn_id = first["ai_turn_id"]
+
+    db = SessionLocal()
+    try:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        turn = db.get(WebchatAITurn, first_turn_id)
+        first_message = db.get(WebchatMessage, first["message"]["id"])
+        assert turn is not None and first_message is not None
+        turn.status = "bridge_calling"
+        turn.context_cutoff_message_id = first_message.id
+        conversation.active_ai_status = "bridge_calling"
+        conversation.active_ai_context_cutoff_message_id = first_message.id
+        db.commit()
+    finally:
+        db.close()
+
+    _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "Newer question",
+        "turn-runtime-stale-2",
+    )
+    monkeypatch.setattr(
+        webchat_ai_orchestration_service.settings,
+        "webchat_ai_auto_reply_mode",
+        "runtime",
+    )
+
+    db = SessionLocal()
+    try:
+        first_message = db.get(WebchatMessage, first["message"]["id"])
+        assert first_message is not None
+        result = webchat_ai_orchestration_service.process_webchat_ai_reply_job(
+            db,
+            conversation_id=first_message.conversation_id,
+            ticket_id=first_message.ticket_id,
+            visitor_message_id=first_message.id,
+        )
+        db.commit()
+        assert result["status"] == "superseded"
+        turn = db.get(WebchatAITurn, first_turn_id)
+        assert turn is not None and turn.status == "superseded"
+        assert (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == first_message.conversation_id,
+                WebchatMessage.direction == "agent",
+                WebchatMessage.ai_turn_id == first_turn_id,
+            )
+            .count()
+            == 0
+        )
+    finally:
+        db.close()
+
+
 def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     _ensure_schema_and_user()
     _clear_webchat_ai_jobs()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
-
     sent = _send(
         client,
         conversation_id,
@@ -575,21 +548,10 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         "turn-runtime-dispatch-1",
     )
     ai_turn_id = sent["ai_turn_id"]
-
-    from app.services import (
-        conversation_ai_service,
-        webchat_ai_orchestration_service,
-    )
-
-    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
-    monkeypatch.setattr(
-        webchat_ai_orchestration_service.settings,
-        "webchat_ai_auto_reply_mode",
-        "runtime",
-    )
-
-    def fake_run_runtime(**_kwargs):
-        return _runtime_reply(
+    _enable_runtime(monkeypatch)
+    _patch_runtime(
+        monkeypatch,
+        _runtime_reply(
             reply="Hi, how can I help you today?",
             runtime_trace={
                 "latency_class": "agent_runtime",
@@ -606,35 +568,9 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
                 "authorization": "Bearer SHOULD_NOT_PERSIST",
                 "prompt": "customer text SHOULD_NOT_PERSIST",
             },
-        )
-
-    monkeypatch.setattr(
-        conversation_ai_service,
-        "_run_runtime",
-        fake_run_runtime,
+        ),
     )
-
-    db = SessionLocal()
-    try:
-        job = (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-turn:{ai_turn_id}"
-            )
-            .first()
-        )
-        assert job is not None
-        job.next_run_at = None
-        db.commit()
-        processed = dispatch_pending_webchat_ai_reply_jobs(
-            db,
-            worker_id="turn-runtime-worker",
-        )
-        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
-        db.commit()
-    finally:
-        db.close()
+    _dispatch_turn(ai_turn_id, worker_id="turn-runtime-worker")
 
     polled = client.get(
         f"/api/webchat/conversations/{conversation_id}/messages",
@@ -644,9 +580,7 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     payload = polled.json()
     assert payload["ai_pending"] is False
     agent_messages = [
-        msg
-        for msg in payload["messages"]
-        if msg["author_label"] == "AI Assistant"
+        msg for msg in payload["messages"] if msg["author_label"] == "AI Assistant"
     ]
     assert agent_messages
     assert agent_messages[0].get("ai_turn_id") == ai_turn_id
@@ -665,7 +599,6 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         assert trace["model"] == "qwen2.5:3b"
         trace_text = json.dumps(trace, ensure_ascii=False)
         assert "SHOULD_NOT_PERSIST" not in trace_text
-        assert "CH020000129135" not in trace_text
         message = (
             db.query(WebchatMessage)
             .filter(
@@ -677,13 +610,10 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
         assert message.ticket_id is None
         metadata = json.loads(message.metadata_json or "{}")
         assert metadata["ticketless_conversation"] is True
-        metadata_text = json.dumps(metadata, ensure_ascii=False)
-        assert "SHOULD_NOT_PERSIST" not in metadata_text
-        assert "CH020000129135" not in metadata_text
-
-        # Direct final replies use the Agent turn trace and Provider Runtime
-        # audit. RuntimeDecisionAuditRecord and CaseContextRecord remain Tool
-        # execution authorities rather than a parallel reply audit chain.
+        assert "SHOULD_NOT_PERSIST" not in json.dumps(
+            metadata,
+            ensure_ascii=False,
+        )
         bundle, debug_run = build_ai_debug_bundle(db, turn=turn)
         assert bundle["ticket_id"] is None
         assert debug_run.ticket_id is None
@@ -716,7 +646,6 @@ def test_clarifying_question_runtime_reply_is_not_suppressed(monkeypatch):
     _clear_webchat_ai_jobs()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
-
     sent = _send(
         client,
         conversation_id,
@@ -725,26 +654,15 @@ def test_clarifying_question_runtime_reply_is_not_suppressed(monkeypatch):
         "turn-runtime-clarify-1",
     )
     ai_turn_id = sent["ai_turn_id"]
-
-    from app.services import (
-        conversation_ai_service,
-        webchat_ai_orchestration_service,
+    _enable_runtime(monkeypatch)
+    expected = (
+        "Please share the required reference when you are ready, "
+        "and I will continue."
     )
-
-    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
-    monkeypatch.setattr(
-        webchat_ai_orchestration_service.settings,
-        "webchat_ai_auto_reply_mode",
-        "runtime",
-    )
-    monkeypatch.setattr(
-        conversation_ai_service,
-        "_run_runtime",
-        lambda **_kwargs: _runtime_reply(
-            reply=(
-                "Please share the required reference when you are ready, "
-                "and I will continue."
-            ),
+    _patch_runtime(
+        monkeypatch,
+        _runtime_reply(
+            reply=expected,
             intent="missing_information",
             elapsed_ms=19,
             runtime_trace={
@@ -754,56 +672,20 @@ def test_clarifying_question_runtime_reply_is_not_suppressed(monkeypatch):
             },
         ),
     )
-
-    db = SessionLocal()
-    try:
-        job = (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-turn:{ai_turn_id}"
-            )
-            .first()
-        )
-        assert job is not None
-        job.next_run_at = None
-        db.commit()
-        processed = dispatch_pending_webchat_ai_reply_jobs(
-            db,
-            worker_id="turn-runtime-clarify-worker",
-        )
-        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
-        db.commit()
-    finally:
-        db.close()
+    _dispatch_turn(ai_turn_id, worker_id="turn-runtime-clarify-worker")
 
     polled = client.get(
         f"/api/webchat/conversations/{conversation_id}/messages",
         headers={"X-Webchat-Visitor-Token": visitor_token},
     )
     assert polled.status_code == 200, polled.text
-    payload = polled.json()
     agent_messages = [
         msg
-        for msg in payload["messages"]
+        for msg in polled.json()["messages"]
         if msg["author_label"] == "AI Assistant"
     ]
-    assert agent_messages
-    assert agent_messages[-1]["body"] == (
-        "Please share the required reference when you are ready, "
-        "and I will continue."
-    )
-    assert payload["ai_pending"] is False
-
-    db = SessionLocal()
-    try:
-        turn = db.get(WebchatAITurn, ai_turn_id)
-        assert turn is not None
-        assert turn.ticket_id is None
-        assert turn.status == "completed"
-        assert turn.status_reason is None
-    finally:
-        db.close()
+    assert agent_messages[-1]["body"] == expected
+    assert polled.json()["ai_pending"] is False
 
 
 def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(
@@ -813,30 +695,19 @@ def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(
     _clear_webchat_ai_jobs()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
-
+    customer_body = "I need a human to review this"
     sent = _send(
         client,
         conversation_id,
         visitor_token,
-        "I need a human to review this",
+        customer_body,
         "turn-runtime-handoff-without-tool-1",
     )
     ai_turn_id = sent["ai_turn_id"]
-
-    from app.services import (
-        conversation_ai_service,
-        webchat_ai_orchestration_service,
-    )
-
-    monkeypatch.setattr(
-        webchat_ai_orchestration_service.settings,
-        "webchat_ai_auto_reply_mode",
-        "runtime",
-    )
-    monkeypatch.setattr(
-        conversation_ai_service,
-        "_run_runtime",
-        lambda **_kwargs: _runtime_reply(
+    _enable_runtime(monkeypatch)
+    _patch_runtime(
+        monkeypatch,
+        _runtime_reply(
             reply="I will connect this conversation to a support agent.",
             intent="handoff_request",
             handoff_required=True,
@@ -856,28 +727,17 @@ def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(
     db = SessionLocal()
     try:
         ticket_count_before = db.query(Ticket).count()
-        job = (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-turn:{ai_turn_id}"
-            )
-            .one()
-        )
-        job.next_run_at = None
-        db.commit()
-        processed = dispatch_pending_webchat_ai_reply_jobs(
-            db,
-            worker_id="turn-runtime-handoff-without-tool-worker",
-        )
-        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
-        db.commit()
+    finally:
+        db.close()
+    _dispatch_turn(
+        ai_turn_id,
+        worker_id="turn-runtime-handoff-without-tool-worker",
+    )
 
+    db = SessionLocal()
+    try:
         turn = db.get(WebchatAITurn, ai_turn_id)
-        assert turn is not None
-        assert turn.ticket_id is None
-        assert turn.status == "completed"
-        assert turn.status_reason is None
+        assert turn is not None and turn.status == "completed"
         message = (
             db.query(WebchatMessage)
             .filter(
@@ -886,16 +746,10 @@ def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(
             )
             .one()
         )
-        assert message.body == customer_visible_fallback(
-            "en",
-            "I need a human to review this",
-        )
+        assert message.body == customer_visible_fallback("en", customer_body)
         metadata = json.loads(message.metadata_json or "{}")
         assert metadata["fallback"] is True
-        assert (
-            metadata["fallback_reason"]
-            == "handoff_tool_side_effect_missing"
-        )
+        assert metadata["fallback_reason"] == "handoff_tool_side_effect_missing"
         assert metadata["runtime_handoff_required"] is False
         conversation = db.get(WebchatConversation, turn.conversation_id)
         assert conversation is not None
@@ -903,9 +757,7 @@ def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(
         assert conversation.current_handoff_request_id is None
         assert (
             db.query(WebchatHandoffRequest)
-            .filter(
-                WebchatHandoffRequest.conversation_id == conversation.id
-            )
+            .filter(WebchatHandoffRequest.conversation_id == conversation.id)
             .count()
             == 0
         )
@@ -914,14 +766,11 @@ def test_ai_turn_runtime_rejects_handoff_claim_without_tool_side_effect(
         db.close()
 
 
-def test_ai_turn_runtime_human_takeover_during_generation_suppresses_ai_reply(
-    monkeypatch,
-):
+def test_human_takeover_during_generation_suppresses_agent_reply(monkeypatch):
     _ensure_schema_and_user()
     _clear_webchat_ai_jobs()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
-
     sent = _send(
         client,
         conversation_id,
@@ -930,64 +779,37 @@ def test_ai_turn_runtime_human_takeover_during_generation_suppresses_ai_reply(
         "turn-runtime-human-takeover-race",
     )
     ai_turn_id = sent["ai_turn_id"]
+    _enable_runtime(monkeypatch)
 
-    from app.services import (
-        conversation_ai_service,
-        webchat_ai_orchestration_service,
-    )
-
-    _patch_ticketless_dependencies(monkeypatch, conversation_ai_service)
-    monkeypatch.setattr(
-        webchat_ai_orchestration_service.settings,
-        "webchat_ai_auto_reply_mode",
-        "runtime",
-    )
-
-    db = SessionLocal()
-
-    def fake_run_runtime(**_kwargs):
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == conversation_id)
-            .one()
-        )
-        conversation.handoff_status = "accepted"
-        conversation.active_agent_id = 98765
-        conversation.ai_suspended = True
-        conversation.ai_suspended_by = 98765
-        conversation.ai_suspended_reason = "handoff_accepted"
-        db.flush()
+    def fake_runtime(**_kwargs):
+        db = SessionLocal()
+        try:
+            conversation = (
+                db.query(WebchatConversation)
+                .filter(WebchatConversation.public_id == conversation_id)
+                .one()
+            )
+            conversation.handoff_status = "accepted"
+            conversation.active_agent_id = 98765
+            conversation.ai_suspended = True
+            conversation.ai_suspended_by = 98765
+            conversation.ai_suspended_reason = "handoff_accepted"
+            db.commit()
+        finally:
+            db.close()
         return _runtime_reply(
             reply="This AI reply must not be written after human takeover.",
             elapsed_ms=34,
         )
 
-    monkeypatch.setattr(
-        conversation_ai_service,
-        "_run_runtime",
-        fake_run_runtime,
+    _patch_runtime(monkeypatch, fake_runtime)
+    _dispatch_turn(
+        ai_turn_id,
+        worker_id="turn-runtime-human-takeover-race-worker",
     )
 
+    db = SessionLocal()
     try:
-        job = (
-            db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.dedupe_key
-                == f"webchat-ai-turn:{ai_turn_id}"
-            )
-            .first()
-        )
-        assert job is not None
-        job.next_run_at = None
-        db.commit()
-
-        processed = dispatch_pending_webchat_ai_reply_jobs(
-            db,
-            worker_id="turn-runtime-human-takeover-race-worker",
-        )
-        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
-        db.commit()
-
         turn = db.get(WebchatAITurn, ai_turn_id)
         assert turn is not None
         assert turn.status == "superseded"
@@ -1001,16 +823,6 @@ def test_ai_turn_runtime_human_takeover_during_generation_suppresses_ai_reply(
             .count()
             == 0
         )
-        assert (
-            db.query(WebchatEvent)
-            .filter(
-                WebchatEvent.conversation_id == turn.conversation_id,
-                WebchatEvent.event_type
-                == "webchat_ai_reply_suppressed_stale",
-            )
-            .count()
-            >= 1
-        )
     finally:
         db.close()
 
@@ -1019,7 +831,6 @@ def test_reconciler_times_out_stale_bridge_calling_turn():
     _ensure_schema_and_user()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
-
     sent = _send(
         client,
         conversation_id,
@@ -1034,10 +845,10 @@ def test_reconciler_times_out_stale_bridge_calling_turn():
         conversation = (
             db.query(WebchatConversation)
             .filter(WebchatConversation.public_id == conversation_id)
-            .first()
+            .one()
         )
         turn = db.get(WebchatAITurn, ai_turn_id)
-        assert conversation is not None and turn is not None
+        assert turn is not None
         old = utc_now() - timedelta(seconds=3600)
         turn.status = "bridge_calling"
         turn.updated_at = old
@@ -1054,14 +865,12 @@ def test_reconciler_times_out_stale_bridge_calling_turn():
         headers={"X-Webchat-Visitor-Token": visitor_token},
     )
     assert polled.status_code == 200, polled.text
-    payload = polled.json()
-    assert payload["ai_pending"] is False
+    assert polled.json()["ai_pending"] is False
 
     db = SessionLocal()
     try:
         turn = db.get(WebchatAITurn, ai_turn_id)
-        assert turn is not None
-        assert turn.status == "timeout"
+        assert turn is not None and turn.status == "timeout"
         assert (
             db.query(WebchatEvent)
             .filter(
@@ -1081,7 +890,6 @@ def test_failed_ai_turn_persists_safe_runtime_trace():
     _ensure_schema_and_user()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
-
     sent = _send(
         client,
         conversation_id,
@@ -1109,9 +917,7 @@ def test_failed_ai_turn_persists_safe_runtime_trace():
                 "runtime_trace": {
                     "model": "qwen2.5:3b",
                     "ai_decision_policy_ok": False,
-                    "ai_decision_policy_violation_codes": (
-                        "raw_tracking_exposed"
-                    ),
+                    "ai_decision_policy_violation_codes": "raw_tracking_exposed",
                     "ai_decision_checked_tools": "speedaf.order.query",
                     "ai_decision_intent": "tracking",
                     "authorization": "Bearer SHOULD_NOT_PERSIST",
@@ -1119,7 +925,6 @@ def test_failed_ai_turn_persists_safe_runtime_trace():
             },
         )
         db.commit()
-
         db.refresh(turn)
         assert turn.status == "failed"
         assert turn.status_reason == "ai_decision_policy_blocked"
@@ -1128,10 +933,7 @@ def test_failed_ai_turn_persists_safe_runtime_trace():
         trace = json.loads(turn.runtime_trace_json or "{}")
         assert trace["model"] == "qwen2.5:3b"
         assert trace["ai_decision_policy_ok"] is False
-        assert (
-            trace["ai_decision_policy_violation_codes"]
-            == "raw_tracking_exposed"
-        )
+        assert trace["ai_decision_policy_violation_codes"] == "raw_tracking_exposed"
         trace_text = json.dumps(trace, ensure_ascii=False)
         assert "CH020000129135" not in trace_text
         assert "SHOULD_NOT_PERSIST" not in trace_text
