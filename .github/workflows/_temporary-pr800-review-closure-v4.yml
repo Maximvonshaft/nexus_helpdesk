@@ -1,0 +1,715 @@
+name: Temporary PR800 Review Closure V4
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/_temporary-pr800-review-closure-v4.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr800-final-review-closure-v4
+  cancel-in-progress: false
+
+jobs:
+  close-review-gaps:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DELIVERY_BRANCH: release/governed-operator-config-8cb56374
+      EXPECTED_PARENT: b147e5715b173e7d0a7e87141910ebf9004cdde3
+    steps:
+      - name: Checkout delivery branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+          ref: release/governed-operator-config-8cb56374
+          persist-credentials: true
+
+      - name: Verify bounded temporary head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          temporary_head="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only "$EXPECTED_PARENT" HEAD)" = ".github/workflows/_temporary-pr800-review-closure-v4.yml"
+          echo "TEMPORARY_HEAD=$temporary_head" >> "$GITHUB_ENV"
+
+      - name: Apply canonical root-cause fixes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git reset --hard "$EXPECTED_PARENT"
+          git clean -ffd
+          python - <<'PY'
+          from __future__ import annotations
+
+          import re
+          from pathlib import Path
+
+          def replace_once(source: str, old: str, new: str, label: str) -> str:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one anchor, got {count}')
+              return source.replace(old, new, 1)
+
+          def regex_once(source: str, pattern: str, replacement: str, label: str) -> str:
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.DOTALL)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, got {count}')
+              return updated
+
+          # Canonical knowledge services: tenant is an authoritative server argument.
+          path = Path('backend/app/services/knowledge_service.py')
+          source = path.read_text(encoding='utf-8')
+          source = replace_once(
+              source,
+              '''def list_items(
+              db: Session,
+              *,
+              status: Optional[str] = None,'''.replace('              ', ''),
+              '''def list_items(
+              db: Session,
+              *,
+              tenant_id: Optional[str] = None,
+              status: Optional[str] = None,'''.replace('              ', ''),
+              'knowledge list signature',
+          )
+          source = replace_once(
+              source,
+              '    query = db.query(KnowledgeItem)\n    if status:',
+              '    query = db.query(KnowledgeItem)\n'
+              '    if tenant_id is not None:\n'
+              '        query = query.filter(\n'
+              '            KnowledgeItem.tenant_id == _normalize_scope(tenant_id, "default")\n'
+              '        )\n'
+              '    if status:',
+              'knowledge list tenant filter',
+          )
+          source = replace_once(
+              source,
+              '''def get_item_or_404(db: Session, item_id: int) -> KnowledgeItem:
+              row = db.query(KnowledgeItem).filter(KnowledgeItem.id == item_id).first()'''.replace('              ', ''),
+              '''def get_item_or_404(
+              db: Session, item_id: int, *, tenant_id: str | None = None
+          ) -> KnowledgeItem:
+              query = db.query(KnowledgeItem).filter(KnowledgeItem.id == item_id)
+              if tenant_id is not None:
+                  query = query.filter(
+                      KnowledgeItem.tenant_id == _normalize_scope(tenant_id, "default")
+                  )
+              row = query.first()'''.replace('              ', ''),
+              'knowledge detail tenant filter',
+          )
+          source = replace_once(
+              source,
+              'def create_item(db: Session, payload, actor) -> KnowledgeItem:\n    key = _normalize_key(payload.item_key)',
+              'def create_item(\n'
+              '    db: Session, payload, actor, *, tenant_id: str | None = None\n'
+              ') -> KnowledgeItem:\n'
+              '    key = _normalize_key(payload.item_key)\n'
+              '    authoritative_tenant = _normalize_scope(\n'
+              '        tenant_id if tenant_id is not None else payload.tenant_id, "default"\n'
+              '    )',
+              'knowledge create authority',
+          )
+          source = replace_once(
+              source,
+              '        tenant_id=_normalize_scope(payload.tenant_id, "default"),',
+              '        tenant_id=authoritative_tenant,',
+              'knowledge create tenant value',
+          )
+          source = replace_once(
+              source,
+              '''    language: str | None = None,
+          ) -> KnowledgeItem:'''.replace('          ', ''),
+              '''    language: str | None = None,
+              tenant_id: str | None = None,
+          ) -> KnowledgeItem:'''.replace('          ', ''),
+              'knowledge upload create signature',
+          )
+          source = replace_once(
+              source,
+              '        tenant_id="default",',
+              '        tenant_id=_normalize_scope(tenant_id, "default"),',
+              'knowledge upload tenant value',
+          )
+          source = replace_once(
+              source,
+              'def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeItem:\n'
+              '    values = payload.model_dump(exclude_unset=True)',
+              'def update_item(\n'
+              '    db: Session, row: KnowledgeItem, payload, actor, *, tenant_id: str | None = None\n'
+              ') -> KnowledgeItem:\n'
+              '    authoritative_tenant = (\n'
+              '        _normalize_scope(tenant_id, "default") if tenant_id is not None else None\n'
+              '    )\n'
+              '    if authoritative_tenant is not None and row.tenant_id != authoritative_tenant:\n'
+              '        raise HTTPException(status_code=404, detail="Knowledge item not found")\n'
+              '    values = payload.model_dump(exclude_unset=True)\n'
+              '    values.pop("tenant_id", None)',
+              'knowledge update authority',
+          )
+          source = replace_once(
+              source,
+              '    row.updated_by = getattr(actor, "id", None)\n    db.flush()\n    return row\n\n\ndef publish_item',
+              '    if authoritative_tenant is not None:\n'
+              '        row.tenant_id = authoritative_tenant\n'
+              '    row.updated_by = getattr(actor, "id", None)\n'
+              '    db.flush()\n'
+              '    return row\n\n\ndef publish_item',
+              'knowledge update tenant preservation',
+          )
+          source = replace_once(
+              source,
+              '''def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes: Optional[str] = None) -> KnowledgeItemVersion:''',
+              '''def rollback_item(
+              db: Session,
+              row: KnowledgeItem,
+              *,
+              version: int,
+              actor,
+              notes: Optional[str] = None,
+              tenant_id: str | None = None,
+          ) -> KnowledgeItemVersion:'''.replace('          ', ''),
+              'knowledge rollback authority',
+          )
+          source = replace_once(
+              source,
+              '    row.draft_normalized_text = snapshot.get("normalized_text")\n'
+              '    return publish_item(db, row, actor, notes=notes or f"Rollback to v{version}")',
+              '    row.draft_normalized_text = snapshot.get("normalized_text")\n'
+              '    if tenant_id is not None:\n'
+              '        row.tenant_id = _normalize_scope(tenant_id, "default")\n'
+              '    return publish_item(db, row, actor, notes=notes or f"Rollback to v{version}")',
+              'knowledge rollback tenant preservation',
+          )
+          source = replace_once(
+              source,
+              '''    q: Optional[str] = None,
+              market_id: Optional[int] = None,'''.replace('              ', ''),
+              '''    q: Optional[str] = None,
+              tenant_id: Optional[str] = None,
+              market_id: Optional[int] = None,'''.replace('              ', ''),
+              'knowledge published search signature',
+          )
+          source = replace_once(
+              source,
+              '    query = db.query(KnowledgeItem).filter(\n'
+              '        KnowledgeItem.status == "active",',
+              '    query = db.query(KnowledgeItem).filter(\n'
+              '        KnowledgeItem.status == "active",',
+              'knowledge published search query anchor',
+          )
+          source = replace_once(
+              source,
+              '    if market_id is not None:\n'
+              '        query = query.filter(or_(KnowledgeItem.market_id.is_(None), KnowledgeItem.market_id == market_id))',
+              '    if tenant_id is not None:\n'
+              '        query = query.filter(\n'
+              '            KnowledgeItem.tenant_id == _normalize_scope(tenant_id, "default")\n'
+              '        )\n'
+              '    if market_id is not None:\n'
+              '        query = query.filter(or_(KnowledgeItem.market_id.is_(None), KnowledgeItem.market_id == market_id))',
+              'knowledge published search tenant filter',
+          )
+          path.write_text(source, encoding='utf-8')
+
+          # Canonical knowledge API: every operator read/write derives tenant from identity.
+          path = Path('backend/app/api/knowledge_items.py')
+          source = path.read_text(encoding='utf-8')
+          source = replace_once(
+              source,
+              'from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs\n',
+              'from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs\n'
+              'from ..services.agent_release_service import authoritative_tenant_key\n',
+              'knowledge API tenant import',
+          )
+          source = replace_once(
+              source,
+              'router = APIRouter(prefix="/api/knowledge-items", tags=["knowledge-items"])\n\n\n',
+              'router = APIRouter(prefix="/api/knowledge-items", tags=["knowledge-items"])\n\n\n'
+              'def _knowledge_tenant_key(db: Session, current_user) -> str:\n'
+              '    return authoritative_tenant_key(\n'
+              '        db, current_user, allow_platform_default=True\n'
+              '    )\n\n\n',
+              'knowledge API tenant helper',
+          )
+          source = replace_once(
+              source,
+              '    ensure_can_read_ai_configs(current_user, db)\n    rows, total = knowledge_service.list_items(\n        db,',
+              '    ensure_can_read_ai_configs(current_user, db)\n'
+              '    tenant_key = _knowledge_tenant_key(db, current_user)\n'
+              '    rows, total = knowledge_service.list_items(\n'
+              '        db,\n'
+              '        tenant_id=tenant_key,',
+              'knowledge API list scope',
+          )
+          source = replace_once(
+              source,
+              '    ensure_can_manage_ai_configs(current_user, db)\n    with managed_session(db):\n'
+              '        row = knowledge_service.create_item(db, payload, current_user)',
+              '    ensure_can_manage_ai_configs(current_user, db)\n'
+              '    tenant_key = _knowledge_tenant_key(db, current_user)\n'
+              '    with managed_session(db):\n'
+              '        row = knowledge_service.create_item(\n'
+              '            db, payload, current_user, tenant_id=tenant_key\n'
+              '        )',
+              'knowledge API create scope',
+          )
+          source = replace_once(
+              source,
+              '    ensure_can_manage_ai_configs(current_user, db)\n    with managed_session(db):\n'
+              '        row = knowledge_service.create_file_item_from_upload(',
+              '    ensure_can_manage_ai_configs(current_user, db)\n'
+              '    tenant_key = _knowledge_tenant_key(db, current_user)\n'
+              '    with managed_session(db):\n'
+              '        row = knowledge_service.create_file_item_from_upload(',
+              'knowledge API upload create scope setup',
+          )
+          source = replace_once(
+              source,
+              '            language=language,\n        )',
+              '            language=language,\n            tenant_id=tenant_key,\n        )',
+              'knowledge API upload create tenant',
+          )
+          source = replace_once(
+              source,
+              '    ensure_can_read_ai_configs(current_user, db)\n    rows, total = knowledge_service.search_published(\n        db,',
+              '    ensure_can_read_ai_configs(current_user, db)\n'
+              '    tenant_key = _knowledge_tenant_key(db, current_user)\n'
+              '    rows, total = knowledge_service.search_published(\n'
+              '        db,\n'
+              '        tenant_id=tenant_key,',
+              'knowledge API published search scope',
+          )
+          source = source.replace(
+              '    ensure_can_read_ai_configs(current_user, db)\n    retrieval = retrieve_published_chunks(\n        db,',
+              '    ensure_can_read_ai_configs(current_user, db)\n'
+              '    tenant_key = _knowledge_tenant_key(db, current_user)\n'
+              '    retrieval = retrieve_published_chunks(\n'
+              '        db,\n'
+              '        tenant_id=tenant_key,',
+          )
+          if source.count('tenant_id=tenant_key,') < 4:
+              raise SystemExit('knowledge retrieval tenant calls were not fully scoped')
+          source = replace_once(
+              source,
+              '            tenant_key=payload.tenant_key,',
+              '            tenant_key=authoritative_tenant_key(\n'
+              '                db,\n'
+              '                current_user,\n'
+              '                requested=payload.tenant_key,\n'
+              '                allow_platform_default=True,\n'
+              '            ),',
+              'knowledge runtime context tenant authority',
+          )
+          source = source.replace(
+              '    row = knowledge_service.get_item_or_404(db, item_id)',
+              '    tenant_key = _knowledge_tenant_key(db, current_user)\n'
+              '    row = knowledge_service.get_item_or_404(\n'
+              '        db, item_id, tenant_id=tenant_key\n'
+              '    )',
+          )
+          if source.count('get_item_or_404(\n        db, item_id, tenant_id=tenant_key') != 5:
+              raise SystemExit('knowledge item mutation/detail paths were not fully scoped')
+          source = replace_once(
+              source,
+              '        row = knowledge_service.update_item(db, row, payload, current_user)',
+              '        row = knowledge_service.update_item(\n'
+              '            db, row, payload, current_user, tenant_id=tenant_key\n'
+              '        )',
+              'knowledge API update tenant preservation',
+          )
+          source = replace_once(
+              source,
+              '        version_row = knowledge_service.rollback_item(db, row, version=payload.version, actor=current_user, notes=payload.notes)',
+              '        version_row = knowledge_service.rollback_item(\n'
+              '            db,\n'
+              '            row,\n'
+              '            version=payload.version,\n'
+              '            actor=current_user,\n'
+              '            notes=payload.notes,\n'
+              '            tenant_id=tenant_key,\n'
+              '        )',
+              'knowledge API rollback tenant preservation',
+          )
+          path.write_text(source, encoding='utf-8')
+
+          # Role description null semantics and one canonical tenant mutex.
+          path = Path('backend/app/services/governance_service.py')
+          source = path.read_text(encoding='utf-8')
+          source = replace_once(
+              source,
+              '    Team,\n    Ticket,\n    User,',
+              '    Team,\n    Tenant,\n    Ticket,\n    User,',
+              'governance tenant model import',
+          )
+          source = replace_once(
+              source,
+              'def list_role_templates(db: Session, actor: User) -> list[dict]:',
+              'def lock_governance_scope(db: Session, tenant_id: int | None) -> None:\n'
+              '    """Serialize governance capability removals for one canonical tenant."""\n\n'
+              '    if tenant_id is not None:\n'
+              '        tenant = (\n'
+              '            db.query(Tenant)\n'
+              '            .filter(Tenant.id == tenant_id)\n'
+              '            .with_for_update()\n'
+              '            .one_or_none()\n'
+              '        )\n'
+              '        if tenant is None:\n'
+              '            raise HTTPException(status_code=403, detail="authenticated_tenant_unavailable")\n'
+              '        return\n'
+              '    (\n'
+              '        apply_tenant_scope(db.query(User), User, None)\n'
+              '        .order_by(User.id.asc())\n'
+              '        .with_for_update()\n'
+              '        .all()\n'
+              '    )\n\n\n'
+              'def list_role_templates(db: Session, actor: User) -> list[dict]:',
+              'governance lock helper',
+          )
+          source = replace_once(
+              source,
+              '    description: str | None = None,\n    base_role: str | None = None,',
+              '    description: str | None | object = _UNSET,\n    base_role: str | None = None,',
+              'role description sentinel signature',
+          )
+          source = replace_once(
+              source,
+              '    if description is not None:\n        row.description = str(description).strip() or None',
+              '    if description is not _UNSET:\n'
+              '        row.description = (\n'
+              '            str(description).strip() or None\n'
+              '            if description is not None\n'
+              '            else None\n'
+              '        )',
+              'role description explicit null',
+          )
+          path.write_text(source, encoding='utf-8')
+
+          # Governance mutations acquire the tenant mutex before reading the governor set.
+          path = Path('backend/app/api/governance.py')
+          source = path.read_text(encoding='utf-8')
+          publish_pattern = (
+              r'@router\.post\("/role-templates/\{template_id\}/publish"\)\n'
+              r'def publish_role_template\(.*?\n\n@router\.post\("/role-templates/\{template_id\}/apply/\{user_id\}"\)'
+          )
+          publish_replacement = '''@router.post("/role-templates/{template_id}/publish")
+          def publish_role_template(
+              template_id: int,
+              payload: PublishRequest,
+              db: Session = Depends(get_db),
+              current_user=Depends(get_current_user),
+          ):
+              ensure_can_manage_users(current_user, db)
+              tenant_id = actor_tenant_id(db, current_user)
+              with managed_session(db):
+                  governance_service.lock_governance_scope(db, tenant_id)
+                  row = _template_for_actor(
+                      db, current_user, template_id, require_manageable=True
+                  )
+                  capabilities = governance_service.clean_capabilities(
+                      list(row.draft_capabilities_json or [])
+                  )
+                  base_role = governance_service.validate_base_role(row.base_role)
+                  assigned_users = _role_template_assigned_users(
+                      db, tenant_id=tenant_id, template_id=row.id
+                  )
+                  losing_governors = {
+                      user.id
+                      for user in assigned_users
+                      if user.is_active
+                      and CAP_USER_MANAGE in resolve_capabilities(user, db)
+                      and CAP_USER_MANAGE not in capabilities
+                  }
+                  if current_user.id in losing_governors:
+                      raise HTTPException(
+                          status_code=409, detail="cannot_remove_own_governance_access"
+                      )
+                  _ensure_governance_access_survives(
+                      db, tenant_id=tenant_id, losing_user_ids=losing_governors
+                  )
+                  version = governance_service.publish_role_template(
+                      db, row=row, actor=current_user, notes=payload.notes
+                  )
+                  now = utc_now()
+                  for user in assigned_users:
+                      user.role = base_role
+                      _apply_user_capability_overrides(
+                          db,
+                          user_id=user.id,
+                          role=user.role,
+                          requested_capabilities=capabilities,
+                      )
+                      assignment = db.get(RoleTemplateAssignment, user.id)
+                      if assignment is None:
+                          raise RuntimeError("role_template_assignment_missing")
+                      assignment.template_version = version.version
+                      assignment.assigned_by = current_user.id
+                      assignment.assigned_at = now
+                      advance_user_identity_version(user)
+                  db.flush()
+                  log_admin_audit(
+                      db,
+                      actor_id=current_user.id,
+                      action="role_template.publish",
+                      target_type="role_template",
+                      target_id=row.id,
+                      old_value={"published_version": version.version - 1},
+                      new_value={
+                          "published_version": version.version,
+                          "affected_users": len(assigned_users),
+                          "sessions_revoked": bool(assigned_users),
+                      },
+                  )
+              return {
+                  "template_id": row.id,
+                  "version": version.version,
+                  "published_at": version.published_at,
+                  "affected_users": len(assigned_users),
+              }
+
+
+          @router.post("/role-templates/{template_id}/apply/{user_id}")'''.replace('          ', '')
+          source = regex_once(source, publish_pattern, publish_replacement, 'serialized role publish')
+
+          apply_pattern = (
+              r'@router\.post\("/role-templates/\{template_id\}/apply/\{user_id\}"\)\n'
+              r'def apply_role_template\(.*?\n\n@router\.get\("/role-template-assignments"\)'
+          )
+          apply_replacement = '''@router.post("/role-templates/{template_id}/apply/{user_id}")
+          def apply_role_template(
+              template_id: int,
+              user_id: int,
+              db: Session = Depends(get_db),
+              current_user=Depends(get_current_user),
+          ):
+              ensure_can_manage_users(current_user, db)
+              tenant_id = actor_tenant_id(db, current_user)
+              with managed_session(db):
+                  governance_service.lock_governance_scope(db, tenant_id)
+                  template = _template_for_actor(db, current_user, template_id)
+                  if not template.is_active or template.published_version <= 0:
+                      raise HTTPException(
+                          status_code=409,
+                          detail="publish_role_template_before_assignment",
+                      )
+                  user = (
+                      apply_tenant_scope(db.query(User), User, tenant_id)
+                      .filter(User.id == user_id, User.is_active.is_(True))
+                      .one_or_none()
+                  )
+                  if user is None:
+                      raise HTTPException(status_code=404, detail="user_not_found")
+                  base_role, capabilities = governance_service.role_template_version_values(
+                      db, template_id=template.id, version=template.published_version
+                  )
+                  currently_governs = CAP_USER_MANAGE in resolve_capabilities(user, db)
+                  will_govern = CAP_USER_MANAGE in capabilities
+                  if user.id == current_user.id and not will_govern:
+                      raise HTTPException(
+                          status_code=409, detail="cannot_remove_own_governance_access"
+                      )
+                  if currently_governs and not will_govern:
+                      _ensure_governance_access_survives(
+                          db, tenant_id=tenant_id, losing_user_ids={user.id}
+                      )
+                  before = {
+                      "role": user.role.value,
+                      "capabilities": sorted(resolve_capabilities(user, db)),
+                      "assignment": governance_service.role_assignment_payload(db, user),
+                  }
+                  user.role = base_role
+                  _apply_user_capability_overrides(
+                      db,
+                      user_id=user.id,
+                      role=user.role,
+                      requested_capabilities=capabilities,
+                  )
+                  assignment = db.get(RoleTemplateAssignment, user.id)
+                  if assignment is None:
+                      assignment = RoleTemplateAssignment(user_id=user.id)
+                      db.add(assignment)
+                  assignment.template_id = template.id
+                  assignment.template_version = template.published_version
+                  assignment.assigned_by = current_user.id
+                  assignment.assigned_at = utc_now()
+                  advance_user_identity_version(user)
+                  db.flush()
+                  log_admin_audit(
+                      db,
+                      actor_id=current_user.id,
+                      action="role_template.apply",
+                      target_type="user",
+                      target_id=user.id,
+                      old_value=before,
+                      new_value={
+                          "role": user.role.value,
+                          "capabilities": capabilities,
+                          "template_id": template.id,
+                          "template_version": template.published_version,
+                          "sessions_revoked": True,
+                      },
+                  )
+              db.refresh(user)
+              return {
+                  "user_id": user.id,
+                  "role": user.role.value,
+                  "capabilities": sorted(resolve_capabilities(user, db)),
+                  "assignment": governance_service.role_assignment_payload(db, user),
+              }
+
+
+          @router.get("/role-template-assignments")'''.replace('          ', '')
+          source = regex_once(source, apply_pattern, apply_replacement, 'serialized role apply')
+          path.write_text(source, encoding='utf-8')
+
+          # Regression evidence for all three review findings.
+          path = Path('backend/tests/test_governance_review_regressions.py')
+          source = path.read_text(encoding='utf-8')
+          source = replace_once(
+              source,
+              'import pytest\n',
+              'import inspect\n\nimport pytest\n',
+              'regression inspect import',
+          )
+          source = replace_once(
+              source,
+              'from app.api.governance import (',
+              'from app.api import governance as governance_api\n'
+              'from app.api import knowledge_items as knowledge_items_api\n'
+              'from app.api.governance import (',
+              'regression API imports',
+          )
+          source = replace_once(
+              source,
+              'from app.services import governance_service\n',
+              'from app.services import governance_service, knowledge_service\n',
+              'regression service imports',
+          )
+          source += '''
+
+          def test_canonical_knowledge_service_is_tenant_scoped(db_session):
+              item_a = KnowledgeItem(
+                  item_key="tenant-a-knowledge",
+                  title="Tenant A",
+                  tenant_id="tenant-a",
+                  status="draft",
+              )
+              item_b = KnowledgeItem(
+                  item_key="tenant-b-knowledge",
+                  title="Tenant B",
+                  tenant_id="tenant-b",
+                  status="draft",
+              )
+              db_session.add_all([item_a, item_b])
+              db_session.commit()
+
+              rows, total = knowledge_service.list_items(
+                  db_session, tenant_id="tenant-a"
+              )
+              assert total == 1
+              assert [row.id for row in rows] == [item_a.id]
+              assert knowledge_service.get_item_or_404(
+                  db_session, item_a.id, tenant_id="tenant-a"
+              ).id == item_a.id
+              with pytest.raises(HTTPException) as hidden:
+                  knowledge_service.get_item_or_404(
+                      db_session, item_b.id, tenant_id="tenant-a"
+                  )
+              assert hidden.value.status_code == 404
+
+              api_source = inspect.getsource(knowledge_items_api)
+              assert "authoritative_tenant_key" in api_source
+              assert api_source.count("tenant_id=tenant_key") >= 10
+
+
+          def test_role_description_accepts_explicit_null_and_preserves_omission(db_session):
+              tenant = Tenant(tenant_key="review-description", display_name="Review Description")
+              actor = User(
+                  tenant=tenant,
+                  username="description-governor",
+                  display_name="Description Governor",
+                  password_hash="x",
+                  role=UserRole.admin,
+                  is_active=True,
+              )
+              template = RoleTemplate(
+                  tenant=tenant,
+                  role_key="description-role",
+                  display_name="Description Role",
+                  description="Remove me",
+                  base_role="agent",
+                  risk_level="standard",
+                  draft_capabilities_json=["ticket.read"],
+                  is_active=True,
+              )
+              db_session.add_all([tenant, actor, template])
+              db_session.commit()
+
+              governance_service.update_role_template(
+                  db_session, row=template, actor=actor, description=None
+              )
+              assert template.description is None
+              template.description = "Keep me"
+              governance_service.update_role_template(
+                  db_session, row=template, actor=actor
+              )
+              assert template.description == "Keep me"
+
+
+          def test_governance_access_removal_is_serialized_inside_mutations():
+              helper_source = inspect.getsource(governance_service.lock_governance_scope)
+              assert ".with_for_update()" in helper_source
+
+              for mutation in (
+                  governance_api.publish_role_template,
+                  governance_api.apply_role_template,
+              ):
+                  source = inspect.getsource(mutation)
+                  assert source.index("with managed_session") < source.index(
+                      "lock_governance_scope"
+                  )
+                  assert source.index("lock_governance_scope") < source.index(
+                      "_ensure_governance_access_survives"
+                  )
+          '''.replace('          ', '')
+          path.write_text(source, encoding='utf-8')
+          PY
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'backend/app/api/governance.py\nbackend/app/api/knowledge_items.py\nbackend/app/services/governance_service.py\nbackend/app/services/knowledge_service.py\nbackend/tests/test_governance_review_regressions.py'
+
+      - name: Run focused verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check -q -r backend/requirements.txt
+          python -m compileall -q backend/app backend/tests
+          PYTHONPATH=backend python -m pytest -q \
+            backend/tests/test_governance_review_regressions.py \
+            backend/tests/test_governance_completion_contract.py \
+            backend/tests/test_governance_operator_workflows.py \
+            backend/tests/test_knowledge_studio_contract.py \
+            backend/tests/test_knowledge_runtime_context.py
+
+      - name: Publish clean review-closure commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test ! -e .github/workflows/_temporary-pr800-review-closure-v4.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            backend/app/api/governance.py \
+            backend/app/api/knowledge_items.py \
+            backend/app/services/governance_service.py \
+            backend/app/services/knowledge_service.py \
+            backend/tests/test_governance_review_regressions.py
+          git commit -m "fix(governance): close tenant and concurrency review gaps"
+          git push --force-with-lease="refs/heads/$DELIVERY_BRANCH:$TEMPORARY_HEAD" \
+            origin "HEAD:refs/heads/$DELIVERY_BRANCH"
