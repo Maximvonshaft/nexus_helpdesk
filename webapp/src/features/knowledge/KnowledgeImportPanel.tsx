@@ -17,6 +17,7 @@ import { useMemo, useState } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
 import { governanceApi, type KnowledgeImportBatch } from '@/lib/governanceApi'
 import { supportApi } from '@/lib/supportApi'
+import { channelPresentation } from '@/lib/supportStatus'
 
 export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
   const queryClient = useQueryClient()
@@ -136,7 +137,7 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                 <Box>
                   <Typography variant="subtitle2">批次 #{batch.id} · {batch.total_files} 个文件</Typography>
-                  <Typography variant="caption" color="text.secondary">{new Date(batch.created_at).toLocaleString()} · {channelLabel(batch.channel)} · {audienceLabel(batch.audience_scope)}</Typography>
+                  <Typography variant="caption" color="text.secondary">{new Date(batch.created_at).toLocaleString()} · {batch.channel === 'all' ? '全部渠道' : channelPresentation(batch.channel).label} · {audienceLabel(batch.audience_scope)}</Typography>
                 </Box>
                 <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                   <Chip size="small" color={importStatusColor(batch.status)} label={importStatusLabel(batch.status)} />
@@ -169,15 +170,6 @@ function importStatusColor(status: KnowledgeImportBatch['status']): 'success' | 
   if (status === 'ready') return 'success'
   if (status === 'failed') return 'error'
   return 'warning'
-}
-
-function channelLabel(channel: string) {
-  if (channel === 'all') return '全部渠道'
-  if (channel === 'webchat') return '网页客服'
-  if (channel === 'email') return '邮件'
-  if (channel === 'voice') return '语音'
-  if (channel === 'website') return '网站'
-  return channel
 }
 
 function audienceLabel(audience: KnowledgeImportBatch['audience_scope']) {
