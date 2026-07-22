@@ -6,6 +6,7 @@ import secrets
 from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import User
@@ -16,7 +17,6 @@ from .audit_service import log_admin_audit
 from .voice_command_crypto import seal_voice_command_payload
 
 SUPPORTED_COMMANDS = {
-    "answer",
     "hangup",
     "hold",
     "resume",
@@ -54,30 +54,6 @@ def _safe_request(
     return payload
 
 
-def _stable_idempotency_key(
-    *,
-    session: WebchatVoiceSession,
-    actor: User,
-    action_type: str,
-    target: str | None,
-    digits: str | None,
-    note: str | None,
-) -> str:
-    material = json.dumps(
-        {
-            "session": session.public_id,
-            "actor": actor.id,
-            "action": action_type,
-            "target_hash": hashlib.sha256((target or "").encode("utf-8")).hexdigest(),
-            "digits_hash": hashlib.sha256((digits or "").encode("utf-8")).hexdigest(),
-            "note_hash": hashlib.sha256((note or "").encode("utf-8")).hexdigest(),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return "voice-command:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-
 def _validate_command(
     action_type: str,
     *,
@@ -95,12 +71,39 @@ def _validate_command(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="keypad digits are required",
         )
-    if requested in {"add_participant", "cold_transfer", "warm_transfer"} and not target:
+    if requested in {
+        "add_participant",
+        "remove_participant",
+        "cold_transfer",
+        "warm_transfer",
+    } and not target:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="action target is required",
         )
     return requested
+
+
+def _resolve_existing_command(
+    db: Session,
+    *,
+    idempotency_key: str,
+    session: WebchatVoiceSession,
+    actor: User,
+) -> WebchatVoiceSessionAction | None:
+    existing = (
+        db.query(WebchatVoiceSessionAction)
+        .filter(WebchatVoiceSessionAction.idempotency_key == idempotency_key)
+        .first()
+    )
+    if existing is None:
+        return None
+    if existing.voice_session_id != session.id or existing.actor_user_id != actor.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="voice action idempotency conflict",
+        )
+    return existing
 
 
 def enqueue_voice_command(
@@ -115,26 +118,19 @@ def enqueue_voice_command(
     idempotency_key: str | None = None,
 ) -> WebchatVoiceSessionAction:
     requested = _validate_command(action_type, target=target, digits=digits)
-    key = (idempotency_key or "").strip()[:160] or _stable_idempotency_key(
-        session=session,
-        actor=actor,
-        action_type=requested,
-        target=target,
-        digits=digits,
-        note=note,
-    )
-    existing = (
-        db.query(WebchatVoiceSessionAction)
-        .filter(WebchatVoiceSessionAction.idempotency_key == key)
-        .first()
-    )
-    if existing is not None:
-        if existing.voice_session_id != session.id or existing.actor_user_id != actor.id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="voice action idempotency conflict",
-            )
-        return existing
+    provided_key = (idempotency_key or "").strip()[:160]
+    key = provided_key or (
+        f"voice-command:{session.id}:{secrets.token_urlsafe(24)}"
+    )[:160]
+    if provided_key:
+        existing = _resolve_existing_command(
+            db,
+            idempotency_key=key,
+            session=session,
+            actor=actor,
+        )
+        if existing is not None:
+            return existing
 
     now = utc_now()
     safe_request = _safe_request(
@@ -166,8 +162,21 @@ def enqueue_voice_command(
         created_at=now,
         updated_at=now,
     )
-    db.add(command)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(command)
+            db.flush()
+    except IntegrityError:
+        existing = _resolve_existing_command(
+            db,
+            idempotency_key=key,
+            session=session,
+            actor=actor,
+        )
+        if existing is not None:
+            return existing
+        raise
+
     event = WebchatEvent(
         conversation_id=session.conversation_id,
         ticket_id=session.ticket_id,
