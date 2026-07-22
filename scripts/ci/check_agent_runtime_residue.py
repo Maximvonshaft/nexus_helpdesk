@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -195,22 +196,55 @@ def _scan_direct_model_cli(failures: list[str]) -> None:
                 )
 
 
+def _call_name(node: ast.Call) -> str | None:
+    target = node.func
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
 def _facade_failures() -> list[str]:
+    """Validate executable facade structure while ignoring comments/docstrings."""
+
     path = ROOT / "backend/app/services/webchat_service.py"
-    text = path.read_text(encoding="utf-8") if path.is_file() else ""
-    forbidden = (
-        "def create_or_resume_conversation(",
-        "Ticket(",
-        "Customer(",
-        "create_customer_visible_message(",
-        "evaluate_customer_visible_policy(",
-        "generate_webchat_runtime_reply(",
-    )
-    return [
-        f"{path.relative_to(ROOT)}: stable facade contains business marker {marker}"
-        for marker in forbidden
-        if marker in text
-    ]
+    if not path.is_file():
+        return ["backend/app/services/webchat_service.py: stable facade missing"]
+    relative = path.relative_to(ROOT)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative))
+    failures: list[str] = []
+    imported_aliases: set[tuple[str, str]] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            failures.append(
+                f"{relative}: stable facade owns executable definition {node.name}"
+            )
+        if isinstance(node, ast.ImportFrom):
+            imported_aliases.update(
+                (alias.name, alias.asname or alias.name) for alias in node.names
+            )
+    expected = {
+        ("read_ticket_conversation_thread", "admin_get_thread"),
+        ("reply_to_ticket_conversation", "admin_reply"),
+    }
+    if not expected.issubset(imported_aliases):
+        failures.append(
+            f"{relative}: stable operator aliases are not direct canonical imports"
+        )
+    forbidden_calls = {
+        "Ticket",
+        "Customer",
+        "create_customer_visible_message",
+        "evaluate_customer_visible_policy",
+        "generate_webchat_runtime_reply",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node) in forbidden_calls:
+            failures.append(
+                f"{relative}: stable facade executes business call {_call_name(node)}"
+            )
+    return failures
 
 
 def main() -> int:
