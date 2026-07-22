@@ -23,10 +23,8 @@ def _claim_token(worker_id: str | None) -> str:
 
 
 def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
-    """Renew only the attempt that still owns the processing row."""
     if not _is_sqlalchemy_session(db):
         return True
-
     from . import background_jobs
 
     now = background_jobs.utc_now()
@@ -34,7 +32,8 @@ def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
         update(background_jobs.BackgroundJob)
         .where(
             background_jobs.BackgroundJob.id == job_id,
-            background_jobs.BackgroundJob.status == background_jobs.JobStatus.processing,
+            background_jobs.BackgroundJob.status
+            == background_jobs.JobStatus.processing,
             background_jobs.BackgroundJob.locked_by == lease_token,
         )
         .values(locked_at=now, updated_at=now)
@@ -51,17 +50,10 @@ def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
 
 
 def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
-    """Read the durable owner without flushing a possibly terminal ORM object."""
     if not _is_sqlalchemy_session(db):
         return True
-
     from . import background_jobs
 
-    # Read through an independent connection. The worker Session may already
-    # hold uncommitted terminal ORM changes (including clearing ``locked_by``),
-    # while the committed row must still prove that this attempt owns the lease.
-    # An independent connection also observes a concurrent lease transfer and
-    # therefore preserves fencing across PostgreSQL and SQLite test databases.
     bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
     if bind is None:
         return False
@@ -76,8 +68,7 @@ def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
         ).first()
     if row is None:
         return False
-    locked_by = row[0]
-    status = row[1]
+    locked_by, status = row[0], row[1]
     status_value = status.value if hasattr(status, "value") else str(status)
     return (
         locked_by == lease_token
@@ -105,7 +96,6 @@ def _recover_unhandled_background_job_exception(
             },
         )
         return None
-
     job = (
         db.query(background_jobs.BackgroundJob)
         .filter(background_jobs.BackgroundJob.id == job_id)
@@ -122,7 +112,6 @@ def _recover_unhandled_background_job_exception(
             },
         )
         return None
-
     background_jobs._mark_retry(job, _exception_reason(exc))
     LOGGER.warning(
         "background_job_attempt_exception_recovered",
@@ -193,7 +182,7 @@ def dispatch_pending_background_jobs(
     limit: int | None = None,
     worker_id: str | None = None,
 ) -> list[Any]:
-    """Dispatch only the queues owned by the canonical background Worker."""
+    """Dispatch only the job types owned by the canonical background Worker."""
     from . import background_jobs
 
     if background_jobs.settings.email_mailbox_sync_enabled:
@@ -213,7 +202,6 @@ def dispatch_pending_background_jobs(
         limit=limit,
         worker_id=lease_token,
         job_types=[
-            background_jobs.AUTO_REPLY_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
             background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,
