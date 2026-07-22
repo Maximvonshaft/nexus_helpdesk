@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -17,11 +16,15 @@ from app.enums import UserRole
 from app.models import ChannelAccount, Market, Tenant, User
 from app.models_agent_routing import OperatorAgentState
 from app.operator_models import OperatorQueueScopeGrant
-from app.services.agent_routing_service import decline_voice_handoff_offer
-from app.services.livekit_telephony_service import process_livekit_webhook_payload
+from app.services.agent_routing_service import decline_voice_offer
 from app.services.mock_voice_provider import MockVoiceProvider
+from app.services.telephony_event_service import process_livekit_webhook_event
 from app.utils.time import utc_now
-from app.voice_models import VoiceChannelConfiguration, WebchatVoiceSession
+from app.voice_models import (
+    VoiceChannelConfiguration,
+    VoiceRoutingOffer,
+    WebchatVoiceSession,
+)
 from app.webchat_models import WebchatConversation, WebchatHandoffRequest
 
 
@@ -66,10 +69,14 @@ def _seed_human_voice_route(db):
             channel_account_id=account.id,
             inbound_trunk_id="ST_TEST_ME",
             outbound_trunk_id="ST_OUT_ME",
+            dispatch_rule_id="SDR_TEST_ME",
             routing_mode="human_first",
+            ai_agent_name="nexus-voice-controller",
             queue_timeout_seconds=90,
+            offer_timeout_seconds=20,
             wrap_up_seconds=30,
             recording_policy="disabled",
+            transcription_policy="disabled",
             enabled=True,
         )
     )
@@ -88,6 +95,7 @@ def _seed_human_voice_route(db):
             user_id=agent.id,
             status="online",
             max_concurrent_conversations=3,
+            voice_enabled=True,
             max_concurrent_voice_calls=1,
             voice_wrap_up_seconds=30,
             last_heartbeat_at=now,
@@ -110,80 +118,95 @@ def _seed_human_voice_route(db):
     return agent
 
 
-def test_livekit_sip_event_creates_ticketless_conversation_and_canonical_offer():
+def _inbound_payload(*, event_id: str, room_name: str, caller: str) -> dict:
+    return {
+        "id": event_id,
+        "event": "participant_joined",
+        "room": {"name": room_name},
+        "participant": {
+            "identity": f"sip-caller-{event_id}",
+            "attributes": {
+                "sip.phoneNumber": caller,
+                "sip.trunkPhoneNumber": "+38220000111",
+                "sip.trunkID": "ST_TEST_ME",
+                "sip.ruleID": "SDR_TEST_ME",
+                "sip.callID": f"call-{event_id}",
+                "sip.callStatus": "active",
+            },
+        },
+    }
+
+
+def test_livekit_sip_event_creates_ticketless_conversation_and_ringing_offer():
     db = SessionLocal()
     try:
         agent = _seed_human_voice_route(db)
-        payload = {
-            "id": "EVT-1",
-            "event": "participant_joined",
-            "room": {"name": "sip-room-me-1"},
-            "participant": {
-                "identity": "sip-caller-1",
-                "attributes": {
-                    "sip.phoneNumber": "+38267000111",
-                    "sip.trunkPhoneNumber": "+38220000111",
-                    "sip.trunkID": "ST_TEST_ME",
-                },
-            },
-        }
-        result = process_livekit_webhook_payload(
+        payload = _inbound_payload(
+            event_id="EVT-1",
+            room_name="sip-room-me-1",
+            caller="+38267000111",
+        )
+        result = process_livekit_webhook_event(
             db,
             payload=payload,
             raw_body=json.dumps(payload, sort_keys=True).encode("utf-8"),
         )
         db.commit()
+
         assert result["ok"] is True
         session = db.query(WebchatVoiceSession).one()
         conversation = db.query(WebchatConversation).one()
         handoff = db.query(WebchatHandoffRequest).one()
+        offer = db.query(VoiceRoutingOffer).one()
+
         assert conversation.ticket_id is None
         assert session.ticket_id is None
         assert session.handoff_request_id == handoff.id
-        assert handoff.status == "accepted"
-        assert handoff.assigned_agent_id == agent.id
-        assert conversation.active_agent_id == agent.id
-        assert session.accepted_by_user_id == agent.id
+        assert handoff.status == "requested"
+        assert handoff.assigned_agent_id is None
+        assert conversation.active_agent_id is None
+        assert offer.status == "offered"
+        assert offer.agent_id == agent.id
         assert session.status == "ringing"
+        assert session.ended_at is None
         assert session.caller_number_hash
         assert session.called_number == "+38220000111"
     finally:
         db.close()
 
 
-def test_voice_decline_returns_offer_to_queue_without_hanging_up_customer():
+def test_voice_decline_rotates_offer_without_hanging_up_customer():
     db = SessionLocal()
     try:
         agent = _seed_human_voice_route(db)
-        payload = {
-            "id": "EVT-2",
-            "event": "participant_joined",
-            "room": {"name": "sip-room-me-2"},
-            "participant": {
-                "identity": "sip-caller-2",
-                "attributes": {
-                    "sip.phoneNumber": "+38267000222",
-                    "sip.trunkPhoneNumber": "+38220000111",
-                    "sip.trunkID": "ST_TEST_ME",
-                },
-            },
-        }
-        process_livekit_webhook_payload(
+        payload = _inbound_payload(
+            event_id="EVT-2",
+            room_name="sip-room-me-2",
+            caller="+38267000222",
+        )
+        process_livekit_webhook_event(
             db,
             payload=payload,
             raw_body=json.dumps(payload, sort_keys=True).encode("utf-8"),
         )
         session = db.query(WebchatVoiceSession).one()
-        decline_voice_handoff_offer(db, voice_session=session, user=agent, note="busy")
+        decline_voice_offer(
+            db,
+            voice_session=session,
+            user=agent,
+            note="busy",
+        )
         db.commit()
         db.refresh(session)
+
         handoff = db.get(WebchatHandoffRequest, session.handoff_request_id)
+        offer = db.query(VoiceRoutingOffer).one()
         assert session.status == "ringing"
         assert session.ended_at is None
-        assert session.accepted_by_user_id is None
         assert handoff is not None
         assert handoff.status == "requested"
         assert handoff.assigned_agent_id is None
+        assert offer.status == "declined"
     finally:
         db.close()
 
