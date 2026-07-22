@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..models import ChannelAccount, Market, Tenant, Ticket, User
 from ..models_agent_routing import ConversationControl
+from ..operator_models import OperatorTask
 from ..settings import get_settings
 from ..utils.time import utc_now
 from ..voice_models import (
@@ -20,8 +21,15 @@ from ..voice_models import (
     WebchatVoiceParticipant,
     WebchatVoiceSession,
 )
-from ..webchat_models import WebchatConversation, WebchatEvent, WebchatHandoffRequest
-from ..webchat_voice_config import WebchatVoiceRuntimeConfig, load_webchat_voice_runtime_config
+from ..webchat_models import (
+    WebchatConversation,
+    WebchatEvent,
+    WebchatHandoffRequest,
+)
+from ..webchat_voice_config import (
+    WebchatVoiceRuntimeConfig,
+    load_webchat_voice_runtime_config,
+)
 from .agent_routing_service import (
     accept_voice_offer,
     decline_voice_offer,
@@ -49,6 +57,10 @@ from .permissions import (
 )
 from .voice_command_service import enqueue_voice_command, serialize_voice_command
 from .voice_provider import VoiceProvider, VoiceProviderError
+from .voice_room_control_service import (
+    dispatch_room_controller,
+    ensure_recording_command,
+)
 from .webchat_rate_limit import enforce_webchat_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -75,11 +87,17 @@ def _validate_visitor_token(
     token: str | None,
 ) -> None:
     if not token or _hash_token(token) != conversation.visitor_token_hash:
-        raise HTTPException(status_code=403, detail="invalid webchat visitor token")
+        raise HTTPException(
+            status_code=403,
+            detail="invalid webchat visitor token",
+        )
     expires_at = _aware_utc(conversation.visitor_token_expires_at)
     now = _aware_utc(utc_now())
     if expires_at is not None and now is not None and expires_at <= now:
-        raise HTTPException(status_code=403, detail="invalid webchat visitor token")
+        raise HTTPException(
+            status_code=403,
+            detail="invalid webchat visitor token",
+        )
 
 
 def _provider_for_name(
@@ -88,6 +106,11 @@ def _provider_for_name(
 ) -> VoiceProvider:
     provider = str(provider_name or "").strip().lower()
     if provider == "mock":
+        if get_settings().app_env == "production":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="voice_provider_unavailable",
+            )
         return MockVoiceProvider()
     if provider == "livekit":
         try:
@@ -152,7 +175,10 @@ def _assigned_agent_id(
 ) -> int | None:
     if session.handoff_request_id is None:
         return None
-    request_row = db.get(WebchatHandoffRequest, session.handoff_request_id)
+    request_row = db.get(
+        WebchatHandoffRequest,
+        session.handoff_request_id,
+    )
     if request_row is None or request_row.status != "accepted":
         return None
     return request_row.assigned_agent_id
@@ -207,8 +233,14 @@ def serialize_voice_session(
         "voice_session_id": session.public_id,
         "status": session.status,
         "provider": session.provider,
-        "media_plane": "livekit" if session.provider == "livekit" else "mock",
-        "livekit_url": config.livekit_url if session.provider == "livekit" else None,
+        "media_plane": (
+            "livekit" if session.provider == "livekit" else "mock"
+        ),
+        "livekit_url": (
+            config.livekit_url
+            if session.provider == "livekit"
+            else None
+        ),
         "voice_page_url": f"/webchat/voice/{session.public_id}",
         "room_name": session.provider_room_name,
         "provider_room_name": session.provider_room_name,
@@ -248,7 +280,10 @@ def serialize_voice_session(
             session.accepted_at or session.active_at,
             session.ended_at,
         ),
-        "total_duration_seconds": _duration(session.started_at, session.ended_at),
+        "total_duration_seconds": _duration(
+            session.started_at,
+            session.ended_at,
+        ),
     }
 
 
@@ -258,7 +293,11 @@ def _emit_observability(
     session: WebchatVoiceSession,
     event_type: str,
 ) -> None:
-    record_voice_session_event(session.provider, session.status, event_type)
+    record_voice_session_event(
+        session.provider,
+        session.status,
+        event_type,
+    )
     app_log_event(
         20,
         "voice_session_lifecycle",
@@ -273,14 +312,20 @@ def _emit_observability(
     )
 
 
-def _public_conversation(db: Session, public_id: str) -> WebchatConversation:
+def _public_conversation(
+    db: Session,
+    public_id: str,
+) -> WebchatConversation:
     row = (
         db.query(WebchatConversation)
         .filter(WebchatConversation.public_id == public_id)
         .first()
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="webchat conversation not found")
+        raise HTTPException(
+            status_code=404,
+            detail="webchat conversation not found",
+        )
     return row
 
 
@@ -293,10 +338,16 @@ def _session_query(db: Session, public_id: str):
     return query
 
 
-def load_voice_session(db: Session, public_id: str) -> WebchatVoiceSession:
+def load_voice_session(
+    db: Session,
+    public_id: str,
+) -> WebchatVoiceSession:
     row = _session_query(db, public_id).first()
     if row is None:
-        raise HTTPException(status_code=404, detail="webchat voice session not found")
+        raise HTTPException(
+            status_code=404,
+            detail="webchat voice session not found",
+        )
     return row
 
 
@@ -311,7 +362,10 @@ def _conversation_control(
         .first()
     )
     if row is None or not row.country_code:
-        raise HTTPException(status_code=409, detail="conversation_scope_unavailable")
+        raise HTTPException(
+            status_code=409,
+            detail="conversation_scope_unavailable",
+        )
     return row
 
 
@@ -325,7 +379,8 @@ def _voice_channel(
         db.query(ChannelAccount, VoiceChannelConfiguration)
         .join(
             VoiceChannelConfiguration,
-            VoiceChannelConfiguration.channel_account_id == ChannelAccount.id,
+            VoiceChannelConfiguration.channel_account_id
+            == ChannelAccount.id,
         )
         .join(Tenant, Tenant.id == ChannelAccount.tenant_id)
         .outerjoin(Market, Market.id == ChannelAccount.market_id)
@@ -335,9 +390,15 @@ def _voice_channel(
             ChannelAccount.provider == "voice",
             ChannelAccount.is_active.is_(True),
             VoiceChannelConfiguration.enabled.is_(True),
-            ((Market.id.is_(None)) | (Market.country_code == control.country_code)),
+            (
+                Market.id.is_(None)
+                | (Market.country_code == control.country_code)
+            ),
         )
-        .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
+        .order_by(
+            ChannelAccount.priority.asc(),
+            ChannelAccount.id.asc(),
+        )
     )
     result = query.first()
     if result is not None:
@@ -345,7 +406,10 @@ def _voice_channel(
     settings = get_settings()
     if runtime.provider == "mock" and settings.app_env != "production":
         return None, None
-    raise HTTPException(status_code=503, detail="voice_channel_unavailable")
+    raise HTTPException(
+        status_code=503,
+        detail="voice_channel_unavailable",
+    )
 
 
 def _issue_token(
@@ -354,8 +418,15 @@ def _issue_token(
     suffix: str,
 ) -> tuple[str, int, str]:
     runtime = load_webchat_voice_runtime_config()
-    identity = _participant_identity(session, participant_type, suffix)
-    token = _provider_for_name(session.provider, runtime).issue_participant_token(
+    identity = _participant_identity(
+        session,
+        participant_type,
+        suffix,
+    )
+    token = _provider_for_name(
+        session.provider,
+        runtime,
+    ).issue_participant_token(
         room_name=session.provider_room_name,
         participant_identity=identity,
         ttl_seconds=runtime.session_ttl_seconds,
@@ -379,6 +450,99 @@ def _active_session(
     )
 
 
+def _operator_task(
+    db: Session,
+    *,
+    conversation_id: int,
+) -> OperatorTask | None:
+    return (
+        db.query(OperatorTask)
+        .filter(
+            OperatorTask.webchat_conversation_id == conversation_id,
+            OperatorTask.task_type == "handoff",
+            OperatorTask.status.notin_(
+                [
+                    "resolved",
+                    "dropped",
+                    "replayed",
+                    "replay_failed",
+                    "cancelled",
+                ]
+            ),
+        )
+        .order_by(OperatorTask.id.desc())
+        .first()
+    )
+
+
+def _close_handoff_for_terminal_session(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+    keep_for_wrap_up: bool,
+    reason: str,
+) -> None:
+    if keep_for_wrap_up:
+        return
+    request_row = (
+        db.get(WebchatHandoffRequest, session.handoff_request_id)
+        if session.handoff_request_id is not None
+        else None
+    )
+    conversation = db.get(
+        WebchatConversation,
+        session.conversation_id,
+    )
+    now = utc_now()
+    previous_agent_id = (
+        request_row.assigned_agent_id
+        if request_row is not None
+        else None
+    )
+    if (
+        request_row is not None
+        and request_row.status in {"requested", "accepted"}
+    ):
+        request_row.status = "closed"
+        request_row.closed_at = now
+        request_row.decision_note = reason[:1000]
+        request_row.lock_version += 1
+        request_row.updated_at = now
+        db.query(VoiceRoutingOffer).filter(
+            VoiceRoutingOffer.handoff_request_id == request_row.id,
+            VoiceRoutingOffer.status == "offered",
+        ).update(
+            {
+                VoiceRoutingOffer.status: "cancelled",
+                VoiceRoutingOffer.cancelled_at: now,
+                VoiceRoutingOffer.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    if conversation is None:
+        return
+    if (
+        previous_agent_id is None
+        or conversation.active_agent_id == previous_agent_id
+    ):
+        conversation.active_agent_id = None
+    conversation.current_handoff_request_id = None
+    conversation.handoff_status = "closed"
+    conversation.takeover_mode = None
+    conversation.ai_suspended = True
+    conversation.ai_suspended_reason = "voice_call_ended"
+    conversation.updated_at = now
+    task = _operator_task(
+        db,
+        conversation_id=conversation.id,
+    )
+    if task is not None:
+        task.status = "resolved"
+        task.resolved_at = now
+        task.assignee_id = previous_agent_id or task.assignee_id
+        task.updated_at = now
+
+
 def _mark_terminal(
     db: Session,
     *,
@@ -398,19 +562,27 @@ def _mark_terminal(
     if session.ai_agent_status not in {None, "ended", "failed"}:
         session.ai_agent_status = "ended"
         session.ai_agent_ended_at = now
+
+    keep_for_wrap_up = False
     if previous_agent_id is not None and status_value == "ended":
-        state = get_or_create_agent_state(db, user_id=previous_agent_id, lock=True)
+        state = get_or_create_agent_state(
+            db,
+            user_id=previous_agent_id,
+            lock=True,
+        )
         wrap_up = max(0, int(state.voice_wrap_up_seconds or 0))
         session.wrap_up_expires_at = (
-            now + timedelta(seconds=wrap_up) if wrap_up else None
+            now + timedelta(seconds=wrap_up)
+            if wrap_up
+            else None
         )
-        if not wrap_up and session.handoff_request_id is not None:
-            request_row = db.get(WebchatHandoffRequest, session.handoff_request_id)
-            if request_row is not None and request_row.status == "accepted":
-                request_row.status = "closed"
-                request_row.closed_at = now
-                request_row.lock_version += 1
-                request_row.updated_at = now
+        keep_for_wrap_up = wrap_up > 0
+    _close_handoff_for_terminal_session(
+        db,
+        session=session,
+        keep_for_wrap_up=keep_for_wrap_up,
+        reason=reason,
+    )
     _write_event(
         db,
         session=session,
@@ -419,7 +591,9 @@ def _mark_terminal(
             "voice_session_id": session.public_id,
             "ended_by_user_id": ended_by_user_id,
             "reason": reason,
-            "wrap_up_expires_at": _serialize_dt(session.wrap_up_expires_at),
+            "wrap_up_expires_at": _serialize_dt(
+                session.wrap_up_expires_at
+            ),
         },
     )
     _emit_observability(
@@ -435,11 +609,18 @@ def _mark_terminal(
     record_voice_ringing_duration(
         session.provider,
         session.status,
-        _duration(session.ringing_at, session.accepted_at or session.ended_at),
+        _duration(
+            session.ringing_at,
+            session.accepted_at or session.ended_at,
+        ),
     )
 
 
-def _expire_session_if_needed(db: Session, *, session: WebchatVoiceSession) -> bool:
+def _expire_session_if_needed(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+) -> bool:
     if session.status not in {"created", "ringing"}:
         return False
     expires_at = _aware_utc(session.expires_at)
@@ -458,7 +639,10 @@ def _expire_session_if_needed(db: Session, *, session: WebchatVoiceSession) -> b
             room_name=session.provider_room_name
         )
     except Exception as exc:
-        record_voice_provider_error(session.provider, "close_room")
+        record_voice_provider_error(
+            session.provider,
+            "close_room",
+        )
         logger.warning(
             "voice_provider_room_close_failed",
             extra={
@@ -467,6 +651,23 @@ def _expire_session_if_needed(db: Session, *, session: WebchatVoiceSession) -> b
             },
         )
     return True
+
+
+def _controller_agent_name(
+    *,
+    channel_config: VoiceChannelConfiguration | None,
+    runtime: WebchatVoiceRuntimeConfig,
+) -> str:
+    configured = (
+        str(channel_config.ai_agent_name or "").strip()
+        if channel_config is not None
+        else ""
+    )
+    return (
+        configured
+        or str(runtime.livekit_agent_name or "").strip()
+        or "nexus-voice-agent"
+    )
 
 
 def create_public_voice_session(
@@ -480,21 +681,40 @@ def create_public_voice_session(
 ) -> dict[str, Any]:
     runtime = load_webchat_voice_runtime_config()
     if not runtime.human_call_enabled and not runtime.live_ai_voice_enabled:
-        raise HTTPException(status_code=404, detail="WebChat voice is disabled")
-    conversation = _public_conversation(db, conversation_public_id)
+        raise HTTPException(
+            status_code=404,
+            detail="WebChat voice is disabled",
+        )
+    conversation = _public_conversation(
+        db,
+        conversation_public_id,
+    )
     _validate_visitor_token(conversation, visitor_token)
-    control = _conversation_control(db, conversation=conversation)
+    control = _conversation_control(
+        db,
+        conversation=conversation,
+    )
     enforce_webchat_rate_limit(
         db,
         request,
         tenant_key=control.tenant_key,
         conversation_id=f"{conversation.public_id}:voice",
     )
-    existing = _active_session(db, conversation_id=conversation.id)
-    if existing is not None and _expire_session_if_needed(db, session=existing):
+    existing = _active_session(
+        db,
+        conversation_id=conversation.id,
+    )
+    if (
+        existing is not None
+        and _expire_session_if_needed(db, session=existing)
+    ):
         existing = None
     if existing is not None:
-        value, ttl, identity = _issue_token(existing, "visitor", "returning")
+        value, ttl, identity = _issue_token(
+            existing,
+            "visitor",
+            "returning",
+        )
         return serialize_voice_session(
             db,
             session=existing,
@@ -514,27 +734,46 @@ def create_public_voice_session(
     room_name = _room_name(public_id)
     provider.create_room(room_name=room_name)
     routing_mode = (
-        channel_config.routing_mode if channel_config is not None else runtime.routing_mode
+        channel_config.routing_mode
+        if channel_config is not None
+        else runtime.routing_mode
     )
-    ai_first = bool(runtime.live_ai_voice_enabled and routing_mode == "ai_first")
+    ai_first = bool(
+        runtime.live_ai_voice_enabled
+        and routing_mode == "ai_first"
+    )
     recording_policy = (
-        channel_config.recording_policy if channel_config is not None else "disabled"
+        channel_config.recording_policy
+        if channel_config is not None
+        else "disabled"
     )
     transcription_policy = (
-        channel_config.transcription_policy if channel_config is not None else "disabled"
+        channel_config.transcription_policy
+        if channel_config is not None
+        else "disabled"
     )
-    recording_allowed = recording_policy == "always" or (
-        recording_policy == "consent_required" and recording_consent
+    recording_allowed = (
+        recording_policy == "always"
+        or (
+            recording_policy == "consent_required"
+            and recording_consent
+        )
     )
-    transcription_allowed = transcription_policy == "always" or (
-        transcription_policy == "consent_required" and recording_consent
+    transcription_allowed = (
+        transcription_policy == "always"
+        or (
+            transcription_policy == "consent_required"
+            and recording_consent
+        )
     )
     try:
         session = WebchatVoiceSession(
             public_id=public_id,
             conversation_id=conversation.id,
             ticket_id=conversation.ticket_id,
-            channel_account_id=account.id if account is not None else None,
+            channel_account_id=(
+                account.id if account is not None else None
+            ),
             provider=provider.provider_name,
             provider_room_name=room_name,
             status="active" if ai_first else "ringing",
@@ -542,21 +781,35 @@ def create_public_voice_session(
             direction="inbound",
             locale=locale or None,
             recording_consent=bool(recording_consent),
-            recording_status="requested" if recording_allowed else "disabled",
-            transcript_status="active" if transcription_allowed else "disabled",
+            recording_status=(
+                "requested" if recording_allowed else "disabled"
+            ),
+            transcript_status=(
+                "active" if transcription_allowed else "disabled"
+            ),
             summary_status="pending",
-            ai_agent_status="dispatching" if ai_first else None,
-            ai_agent_started_at=now if ai_first else None,
+            ai_agent_status=(
+                "dispatching"
+                if ai_first
+                else "controller_dispatching"
+            ),
+            ai_agent_started_at=now,
             started_at=now,
             ringing_at=None if ai_first else now,
             active_at=now if ai_first else None,
-            expires_at=now + timedelta(seconds=runtime.session_ttl_seconds),
+            expires_at=now + timedelta(
+                seconds=runtime.session_ttl_seconds
+            ),
             created_at=now,
             updated_at=now,
         )
         db.add(session)
         db.flush()
-        value, ttl, identity = _issue_token(session, "visitor", "initial")
+        value, ttl, identity = _issue_token(
+            session,
+            "visitor",
+            "initial",
+        )
         db.add(
             WebchatVoiceParticipant(
                 voice_session_id=session.id,
@@ -581,37 +834,36 @@ def create_public_voice_session(
                 "mode": session.mode,
             },
         )
-        _emit_observability(db, session=session, event_type="voice.session.created")
-        if ai_first:
-            agent_name = (
-                channel_config.ai_agent_name
-                if channel_config is not None and channel_config.ai_agent_name
-                else runtime.livekit_agent_name or "nexus-voice-agent"
-            )
-            dispatch = provider.dispatch_agent(
-                room_name=room_name,
-                agent_name=agent_name,
-                metadata={
-                    "schema": "nexus.livekit-agent-session.v1",
-                    "voice_session_id": session.public_id,
-                    "conversation_id": conversation.public_id,
-                    "tenant_key": control.tenant_key,
-                    "country_code": control.country_code,
-                    "channel_key": control.channel_key,
-                    "locale": locale,
-                },
-            )
-            session.ai_agent_status = dispatch.provider_status
-            _write_event(
-                db,
-                session=session,
-                event_type="voice.ai_agent.dispatched",
-                payload={
-                    "voice_session_id": session.public_id,
-                    "provider_reference": dispatch.provider_reference,
-                },
-            )
-        else:
+        _emit_observability(
+            db,
+            session=session,
+            event_type="voice.session.created",
+        )
+        dispatch_room_controller(
+            db,
+            session=session,
+            provider=provider,
+            agent_name=_controller_agent_name(
+                channel_config=channel_config,
+                runtime=runtime,
+            ),
+            role=(
+                "ai_controller" if ai_first else "controller"
+            ),
+            metadata={
+                "conversation_public_id": conversation.public_id,
+                "tenant_key": control.tenant_key,
+                "country_code": control.country_code,
+                "channel_key": control.channel_key,
+                "locale": locale,
+            },
+        )
+        ensure_recording_command(
+            db,
+            session=session,
+            actor=None,
+        )
+        if not ai_first:
             handoff = request_handoff(
                 db,
                 conversation=conversation,
@@ -619,7 +871,9 @@ def create_public_voice_session(
                 trigger_type="voice_inbound",
                 reason_code="customer_requested_voice_support",
                 reason_text="Customer opened a live voice call.",
-                recommended_agent_action="Answer the live voice call.",
+                recommended_agent_action=(
+                    "Answer the live voice call."
+                ),
                 requested_by_actor_type="visitor",
             )
             session.handoff_request_id = handoff.id
@@ -656,19 +910,36 @@ def _visible_context(
     *,
     public_id: str,
     current_user: User,
-) -> tuple[WebchatVoiceSession, WebchatConversation, Ticket | None]:
+) -> tuple[
+    WebchatVoiceSession,
+    WebchatConversation,
+    Ticket | None,
+]:
     session = load_voice_session(db, public_id)
-    conversation = db.get(WebchatConversation, session.conversation_id)
+    conversation = db.get(
+        WebchatConversation,
+        session.conversation_id,
+    )
     if conversation is None:
-        raise HTTPException(status_code=404, detail="webchat conversation not found")
+        raise HTTPException(
+            status_code=404,
+            detail="webchat conversation not found",
+        )
     ticket = None
     if session.ticket_id is not None:
         ticket = db.get(Ticket, session.ticket_id)
         if ticket is None:
-            raise HTTPException(status_code=404, detail="ticket not found")
+            raise HTTPException(
+                status_code=404,
+                detail="ticket not found",
+            )
         ensure_ticket_visible(current_user, ticket, db)
     else:
-        ensure_conversation_visible(db, conversation=conversation, user=current_user)
+        ensure_conversation_visible(
+            db,
+            conversation=conversation,
+            user=current_user,
+        )
     return session, conversation, ticket
 
 
@@ -679,15 +950,28 @@ def end_public_voice_session(
     voice_session_public_id: str,
     visitor_token: str | None,
 ) -> dict[str, Any]:
-    conversation = _public_conversation(db, conversation_public_id)
+    conversation = _public_conversation(
+        db,
+        conversation_public_id,
+    )
     _validate_visitor_token(conversation, visitor_token)
-    session = load_voice_session(db, voice_session_public_id)
+    session = load_voice_session(
+        db,
+        voice_session_public_id,
+    )
     if session.conversation_id != conversation.id:
-        raise HTTPException(status_code=404, detail="webchat voice session not found")
+        raise HTTPException(
+            status_code=404,
+            detail="webchat voice session not found",
+        )
     _mark_terminal(
         db,
         session=session,
-        status_value="ended" if session.status in {"accepted", "active"} else "cancelled",
+        status_value=(
+            "ended"
+            if session.status in {"accepted", "active"}
+            else "cancelled"
+        ),
         ended_by_user_id=None,
         reason="customer_hangup",
     )
@@ -710,17 +994,32 @@ def accept_admin_voice_session(
         current_user=current_user,
     )
     if _expire_session_if_needed(db, session=session):
-        raise HTTPException(status_code=409, detail=DETAIL_EXPIRED)
+        raise HTTPException(
+            status_code=409,
+            detail=DETAIL_EXPIRED,
+        )
     if session.status in TERMINAL_STATUSES:
-        raise HTTPException(status_code=409, detail="voice session already closed")
-    accept_voice_offer(db, voice_session=session, user=current_user)
+        raise HTTPException(
+            status_code=409,
+            detail="voice session already closed",
+        )
+    accept_voice_offer(
+        db,
+        voice_session=session,
+        user=current_user,
+    )
     now = utc_now()
     session.status = "active"
     session.accepted_at = session.accepted_at or now
     session.active_at = session.active_at or now
     session.wrap_up_expires_at = None
+    session.ai_agent_status = "human_handoff"
     session.updated_at = now
-    value, ttl, identity = _issue_token(session, "agent", str(current_user.id))
+    value, ttl, identity = _issue_token(
+        session,
+        "agent",
+        str(current_user.id),
+    )
     leg = (
         db.query(WebchatVoiceParticipant)
         .filter(
@@ -749,7 +1048,9 @@ def accept_admin_voice_session(
         .filter(
             WebchatVoiceParticipant.voice_session_id == session.id,
             WebchatVoiceParticipant.participant_type == "ai",
-            WebchatVoiceParticipant.status.notin_(["ended", "left", "failed"]),
+            WebchatVoiceParticipant.status == "joined",
+            WebchatVoiceParticipant.joined_at.isnot(None),
+            WebchatVoiceParticipant.ended_at.is_(None),
         )
         .order_by(WebchatVoiceParticipant.id.desc())
         .first()
@@ -759,10 +1060,13 @@ def accept_admin_voice_session(
             db,
             session=session,
             actor=current_user,
-            action_type="remove_participant",
+            action_type="mute",
             target=ai_leg.provider_identity,
             note="canonical_human_handoff",
-            idempotency_key=f"voice-ai-remove:{session.id}:{current_user.id}",
+            idempotency_key=(
+                f"voice-ai-mute:{session.id}:"
+                f"{session.handoff_request_id}"
+            ),
         )
     db.flush()
     return serialize_voice_session(
@@ -789,7 +1093,10 @@ def reject_admin_voice_session(
         current_user=current_user,
     )
     if _expire_session_if_needed(db, session=session):
-        raise HTTPException(status_code=409, detail=DETAIL_EXPIRED)
+        raise HTTPException(
+            status_code=409,
+            detail=DETAIL_EXPIRED,
+        )
     if session.status in TERMINAL_STATUSES:
         return serialize_voice_session(db, session=session)
     decline_voice_offer(
@@ -826,7 +1133,9 @@ def end_admin_voice_session(
         session=session,
         actor=current_user,
         action_type="hangup",
-        idempotency_key=f"voice-hangup:{session.id}:{current_user.id}",
+        idempotency_key=(
+            f"voice-hangup:{session.id}:{current_user.id}"
+        ),
     )
     return {
         "ok": True,
@@ -845,7 +1154,10 @@ def list_admin_voice_sessions(
     ensure_can_read_webcall_voice(current_user, db)
     ticket = db.get(Ticket, ticket_id)
     if ticket is None:
-        raise HTTPException(status_code=404, detail="ticket not found")
+        raise HTTPException(
+            status_code=404,
+            detail="ticket not found",
+        )
     ensure_ticket_visible(current_user, ticket, db)
     sessions = (
         db.query(WebchatVoiceSession)
@@ -855,7 +1167,10 @@ def list_admin_voice_sessions(
         .all()
     )
     return {
-        "items": [serialize_voice_session(db, session=row) for row in sessions]
+        "items": [
+            serialize_voice_session(db, session=row)
+            for row in sessions
+        ]
     }
 
 
@@ -876,9 +1191,15 @@ def _incoming_payload(
     payload.pop("participant_identity", None)
     payload.update(
         {
-            "ticket_id": ticket.id if ticket is not None else None,
-            "ticket_no": ticket.ticket_no if ticket is not None else None,
-            "ticket_title": ticket.title if ticket is not None else None,
+            "ticket_id": (
+                ticket.id if ticket is not None else None
+            ),
+            "ticket_no": (
+                ticket.ticket_no if ticket is not None else None
+            ),
+            "ticket_title": (
+                ticket.title if ticket is not None else None
+            ),
             "conversation_id": conversation.public_id,
             "visitor_label": (
                 conversation.visitor_name
@@ -905,18 +1226,29 @@ def list_admin_incoming_voice_sessions(
     requested = str(status_filter or "ringing").strip().lower()
     safe_limit = max(1, min(int(limit or 50), 100))
     query = (
-        db.query(WebchatVoiceSession, Ticket, WebchatConversation)
-        .outerjoin(Ticket, Ticket.id == WebchatVoiceSession.ticket_id)
+        db.query(
+            WebchatVoiceSession,
+            Ticket,
+            WebchatConversation,
+        )
+        .outerjoin(
+            Ticket,
+            Ticket.id == WebchatVoiceSession.ticket_id,
+        )
         .join(
             WebchatConversation,
-            WebchatConversation.id == WebchatVoiceSession.conversation_id,
+            WebchatConversation.id
+            == WebchatVoiceSession.conversation_id,
         )
-        .filter(WebchatVoiceSession.mode != "internal_ai_demo")
+        .filter(
+            WebchatVoiceSession.mode != "internal_ai_demo"
+        )
     )
     if requested in {"incoming", "ringing"}:
         query = query.join(
             VoiceRoutingOffer,
-            VoiceRoutingOffer.voice_session_id == WebchatVoiceSession.id,
+            VoiceRoutingOffer.voice_session_id
+            == WebchatVoiceSession.id,
         ).filter(
             VoiceRoutingOffer.agent_id == current_user.id,
             VoiceRoutingOffer.status == "offered",
@@ -926,21 +1258,34 @@ def list_admin_incoming_voice_sessions(
     elif requested in {"my_active", "mine"}:
         query = query.join(
             WebchatHandoffRequest,
-            WebchatHandoffRequest.id == WebchatVoiceSession.handoff_request_id,
+            WebchatHandoffRequest.id
+            == WebchatVoiceSession.handoff_request_id,
         ).filter(
             WebchatHandoffRequest.status == "accepted",
-            WebchatHandoffRequest.assigned_agent_id == current_user.id,
+            WebchatHandoffRequest.assigned_agent_id
+            == current_user.id,
             WebchatVoiceSession.status.in_(["accepted", "active"]),
         )
     elif requested in {"all_active", "live"}:
-        query = query.filter(WebchatVoiceSession.status.in_(["accepted", "active"]))
+        query = query.filter(
+            WebchatVoiceSession.status.in_(["accepted", "active"])
+        )
     elif requested == "closed_recent":
-        query = query.filter(WebchatVoiceSession.status.in_(sorted(TERMINAL_STATUSES)))
+        query = query.filter(
+            WebchatVoiceSession.status.in_(
+                sorted(TERMINAL_STATUSES)
+            )
+        )
     elif requested != "all":
         allowed = TERMINAL_STATUSES | OPEN_STATUSES
         if requested not in allowed:
-            raise HTTPException(status_code=400, detail="invalid voice session status filter")
-        query = query.filter(WebchatVoiceSession.status == requested)
+            raise HTTPException(
+                status_code=400,
+                detail="invalid voice session status filter",
+            )
+        query = query.filter(
+            WebchatVoiceSession.status == requested
+        )
 
     order_column = (
         WebchatVoiceSession.ended_at.desc().nullslast()
@@ -948,7 +1293,11 @@ def list_admin_incoming_voice_sessions(
         else WebchatVoiceSession.id.desc()
     )
     items: list[dict[str, Any]] = []
-    for session, ticket, conversation in query.order_by(order_column).limit(safe_limit * 4).all():
+    for session, ticket, conversation in (
+        query.order_by(order_column)
+        .limit(safe_limit * 4)
+        .all()
+    ):
         try:
             if ticket is not None:
                 ensure_ticket_visible(current_user, ticket, db)
