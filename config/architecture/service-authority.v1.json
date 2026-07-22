@@ -63,6 +63,12 @@
       "compatibility_shims": []
     },
     {
+      "responsibility": "customer-visible-message-persistence",
+      "public_authority": "backend/app/services/customer_visible_message_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
       "responsibility": "webchat-application-facade",
       "public_authority": "backend/app/services/webchat_service.py",
       "private_implementation": null,
