@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from datetime import timedelta
 from typing import Any
@@ -18,16 +19,25 @@ from ..voice_models import (
     WebchatVoiceParticipant,
     WebchatVoiceSession,
 )
-from ..webchat_models import WebchatConversation, WebchatEvent, WebchatHandoffRequest
+from ..webchat_models import (
+    WebchatConversation,
+    WebchatEvent,
+    WebchatHandoffRequest,
+)
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from .agent_routing_service import accept_voice_offer
 from .identity_tenant_scope import actor_tenant_id
 from .livekit_voice_provider import LiveKitVoiceProvider
 from .mock_voice_provider import MockVoiceProvider
-from .telephony_projection_service import _dispatch_room_agent
 from .voice_command_service import enqueue_voice_command, serialize_voice_command
 from .voice_provider import VoiceProvider, VoiceProviderError
+from .voice_room_control_service import (
+    dispatch_room_controller,
+    ensure_recording_command,
+)
 from .voice_session_service import serialize_voice_session
+
+logger = logging.getLogger(__name__)
 
 _OUTBOUND_MODES = {"human", "ai"}
 
@@ -35,9 +45,18 @@ _OUTBOUND_MODES = {"human", "ai"}
 def _clean_phone(value: str) -> str:
     normalized = "".join(str(value or "").strip().split())
     if not normalized or len(normalized) > 32:
-        raise HTTPException(status_code=422, detail="invalid outbound phone number")
-    if any(character not in "+0123456789*#" for character in normalized):
-        raise HTTPException(status_code=422, detail="invalid outbound phone number")
+        raise HTTPException(
+            status_code=422,
+            detail="invalid outbound phone number",
+        )
+    if any(
+        character not in "+0123456789*#"
+        for character in normalized
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="invalid outbound phone number",
+        )
     return normalized
 
 
@@ -71,13 +90,19 @@ def _voice_account(
     *,
     actor: User,
     channel_account_id: int,
-) -> tuple[ChannelAccount, VoiceChannelConfiguration, Tenant, Market]:
+) -> tuple[
+    ChannelAccount,
+    VoiceChannelConfiguration,
+    Tenant,
+    Market,
+]:
     tenant_id = actor_tenant_id(db, actor)
     result = (
         db.query(ChannelAccount, VoiceChannelConfiguration)
         .join(
             VoiceChannelConfiguration,
-            VoiceChannelConfiguration.channel_account_id == ChannelAccount.id,
+            VoiceChannelConfiguration.channel_account_id
+            == ChannelAccount.id,
         )
         .filter(
             ChannelAccount.id == channel_account_id,
@@ -89,7 +114,10 @@ def _voice_account(
         .first()
     )
     if result is None:
-        raise HTTPException(status_code=404, detail="voice channel account not found")
+        raise HTTPException(
+            status_code=404,
+            detail="voice channel account not found",
+        )
     account, configuration = result
     if not configuration.outbound_trunk_id:
         raise HTTPException(
@@ -97,11 +125,21 @@ def _voice_account(
             detail="outbound SIP trunk is not configured",
         )
     tenant = db.get(Tenant, tenant_id)
-    market = db.get(Market, account.market_id) if account.market_id is not None else None
+    market = (
+        db.get(Market, account.market_id)
+        if account.market_id is not None
+        else None
+    )
     if tenant is None or not tenant.is_active:
-        raise HTTPException(status_code=409, detail="voice channel tenant unavailable")
+        raise HTTPException(
+            status_code=409,
+            detail="voice channel tenant unavailable",
+        )
     if market is None or market.tenant_id != tenant_id:
-        raise HTTPException(status_code=409, detail="voice channel market unavailable")
+        raise HTTPException(
+            status_code=409,
+            detail="voice channel market unavailable",
+        )
     return account, configuration, tenant, market
 
 
@@ -130,7 +168,10 @@ def _customer(
         name=f"Phone contact {phone_number[-4:]}",
         phone=phone_number,
         phone_normalized=phone_number,
-        external_ref=f"voice:{hashlib.sha256(phone_number.encode('utf-8')).hexdigest()[:24]}",
+        external_ref=(
+            f"voice:{tenant.id}:"
+            f"{hashlib.sha256(phone_number.encode('utf-8')).hexdigest()[:24]}"
+        ),
         created_at=now,
         updated_at=now,
     )
@@ -175,13 +216,17 @@ def _create_conversation(
     token = secrets.token_urlsafe(32)
     conversation = WebchatConversation(
         public_id=public_id,
-        visitor_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        visitor_token_hash=hashlib.sha256(
+            token.encode("utf-8")
+        ).hexdigest(),
         visitor_token_expires_at=now + timedelta(hours=24),
         tenant_key=tenant.tenant_key,
         channel_key="voice",
         visitor_name=customer.name,
         visitor_phone=phone_number,
-        visitor_ref=f"outbound:{public_id}",
+        visitor_ref=(
+            f"outbound:{tenant.id}:{public_id}"
+        )[:160],
         origin="operator_outbound_voice",
         status="open",
         handoff_status="none",
@@ -223,7 +268,9 @@ def _assign_outbound_operator(
         status="requested",
         reason_code="operator_outbound_call",
         reason_text="Operator initiated an outbound phone call.",
-        recommended_agent_action="Join the call and speak with the customer.",
+        recommended_agent_action=(
+            "Join the call and speak with the customer."
+        ),
         requested_by_actor_type="operator",
         requested_by_user_id=actor.id,
         requested_at=now,
@@ -246,13 +293,20 @@ def _assign_outbound_operator(
         sequence=1,
         status="offered",
         offered_at=now,
-        expires_at=now + timedelta(seconds=max(5, min(offer_timeout_seconds, 120))),
+        expires_at=now
+        + timedelta(
+            seconds=max(5, min(offer_timeout_seconds, 120))
+        ),
         created_at=now,
         updated_at=now,
     )
     db.add(offer)
     db.flush()
-    accept_voice_offer(db, voice_session=session, user=actor)
+    accept_voice_offer(
+        db,
+        voice_session=session,
+        user=actor,
+    )
 
 
 def create_outbound_call(
@@ -266,7 +320,10 @@ def create_outbound_call(
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "human").strip().lower()
     if normalized_mode not in _OUTBOUND_MODES:
-        raise HTTPException(status_code=422, detail="invalid outbound call mode")
+        raise HTTPException(
+            status_code=422,
+            detail="invalid outbound call mode",
+        )
     normalized_phone = _clean_phone(phone_number)
     account, configuration, tenant, market = _voice_account(
         db,
@@ -299,36 +356,68 @@ def create_outbound_call(
             provider=provider.provider_name,
             provider_room_name=room_name,
             status="ringing",
-            mode="sip_human" if normalized_mode == "human" else "sip_ai",
+            mode=(
+                "sip_human"
+                if normalized_mode == "human"
+                else "sip_ai"
+            ),
             direction="outbound",
             locale=locale,
             called_number=normalized_phone,
-            recording_consent=configuration.recording_policy == "always",
+            recording_consent=(
+                configuration.recording_policy == "always"
+            ),
             recording_status=(
-                "requested" if configuration.recording_policy == "always" else "disabled"
+                "requested"
+                if configuration.recording_policy == "always"
+                else "disabled"
             ),
             transcript_status=(
-                "active" if configuration.transcription_policy == "always" else "disabled"
+                "active"
+                if configuration.transcription_policy == "always"
+                else "disabled"
             ),
             summary_status="pending",
             ai_agent_status=(
-                "controller_dispatching" if normalized_mode == "human" else "dispatching"
+                "controller_dispatching"
+                if normalized_mode == "human"
+                else "dispatching"
             ),
             ai_agent_started_at=now,
             started_at=now,
             ringing_at=now,
-            expires_at=now + timedelta(seconds=configuration.queue_timeout_seconds),
+            expires_at=now + timedelta(
+                seconds=configuration.queue_timeout_seconds
+            ),
             created_at=now,
             updated_at=now,
         )
         db.add(session)
         db.flush()
-        _dispatch_room_agent(
+        dispatch_room_controller(
             db,
             session=session,
-            account=account,
-            configuration=configuration,
+            provider=provider,
+            agent_name=str(
+                configuration.ai_agent_name or ""
+            ).strip(),
+            role=(
+                "controller"
+                if normalized_mode == "human"
+                else "ai_controller"
+            ),
+            metadata={
+                "tenant_id": tenant.id,
+                "direction": "outbound",
+                "requested_by_user_id": actor.id,
+            },
         )
+        ensure_recording_command(
+            db,
+            session=session,
+            actor=actor,
+        )
+
         participant_token = None
         participant_identity = None
         expires_in_seconds = None
@@ -338,22 +427,31 @@ def create_outbound_call(
                 session=session,
                 conversation=conversation,
                 actor=actor,
-                offer_timeout_seconds=configuration.offer_timeout_seconds,
+                offer_timeout_seconds=(
+                    configuration.offer_timeout_seconds
+                ),
             )
-            participant_identity = f"agent_{session.public_id}_{actor.id}"[:160]
+            participant_identity = (
+                f"agent_{session.public_id}_{actor.id}"
+            )[:160]
             token = provider.issue_participant_token(
                 room_name=room_name,
                 participant_identity=participant_identity,
-                ttl_seconds=load_webchat_voice_runtime_config().session_ttl_seconds,
+                ttl_seconds=(
+                    load_webchat_voice_runtime_config()
+                    .session_ttl_seconds
+                ),
             )
             participant_token = token.participant_token
             expires_in_seconds = token.expires_in_seconds
             leg = (
                 db.query(WebchatVoiceParticipant)
                 .filter(
-                    WebchatVoiceParticipant.voice_session_id == session.id,
+                    WebchatVoiceParticipant.voice_session_id
+                    == session.id,
                     WebchatVoiceParticipant.user_id == actor.id,
-                    WebchatVoiceParticipant.participant_type == "human",
+                    WebchatVoiceParticipant.participant_type
+                    == "human",
                 )
                 .first()
             )
@@ -361,9 +459,13 @@ def create_outbound_call(
                 leg.provider_identity = participant_identity
                 leg.status = "invited"
                 leg.updated_at = now
-            session.status = "active"
+            # Handoff ownership is accepted, while the PSTN leg remains
+            # ringing until a provider event confirms the remote answer.
+            session.status = "accepted"
             session.accepted_at = session.accepted_at or now
-            session.active_at = session.active_at or now
+            session.active_at = None
+            session.updated_at = now
+
         command = enqueue_voice_command(
             db,
             session=session,
@@ -371,7 +473,9 @@ def create_outbound_call(
             action_type="add_participant",
             target=normalized_phone,
             note="canonical_outbound_call",
-            idempotency_key=f"outbound-call:{session.public_id}",
+            idempotency_key=(
+                f"outbound-call:{session.public_id}"
+            ),
         )
         _event(
             db,
@@ -381,7 +485,9 @@ def create_outbound_call(
                 "voice_session_id": session.public_id,
                 "channel_account_id": account.id,
                 "mode": normalized_mode,
-                "target_hash": hashlib.sha256(normalized_phone.encode("utf-8")).hexdigest(),
+                "target_hash": hashlib.sha256(
+                    normalized_phone.encode("utf-8")
+                ).hexdigest(),
                 "command_id": command.public_id,
                 "actor_user_id": actor.id,
             },
@@ -393,7 +499,11 @@ def create_outbound_call(
             participant_token=participant_token,
             expires_in_seconds=expires_in_seconds,
             participant_identity=participant_identity,
-            current_agent_id=actor.id if normalized_mode == "human" else None,
+            current_agent_id=(
+                actor.id
+                if normalized_mode == "human"
+                else None
+            ),
         )
         response["command"] = serialize_voice_command(command)
         return response
@@ -401,5 +511,11 @@ def create_outbound_call(
         try:
             provider.close_room(room_name=room_name)
         except Exception:
-            pass
+            logger.exception(
+                "outbound_voice_room_compensation_failed",
+                extra={
+                    "voice_session_id": public_id,
+                    "room_name": room_name,
+                },
+            )
         raise
