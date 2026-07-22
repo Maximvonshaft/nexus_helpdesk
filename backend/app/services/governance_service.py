@@ -411,35 +411,41 @@ def update_market_governance(
     expected_version: int | None = None,
 ) -> MarketGovernanceProfile:
     tenant_id = actor_tenant_id(db, actor)
+    profile_was_missing = db.get(MarketGovernanceProfile, market.id) is None
     profile = ensure_market_profile(db, market, actor.id)
     version_claimed = False
     if expected_version is not None:
         expected = int(expected_version)
-        claimed = (
-            db.query(MarketGovernanceProfile)
-            .filter(
-                MarketGovernanceProfile.market_id == market.id,
-                MarketGovernanceProfile.version == expected,
+        if profile_was_missing:
+            if expected != 0:
+                raise HTTPException(status_code=409, detail="market_configuration_changed")
+            version_claimed = True
+        else:
+            claimed = (
+                db.query(MarketGovernanceProfile)
+                .filter(
+                    MarketGovernanceProfile.market_id == market.id,
+                    MarketGovernanceProfile.version == expected,
+                )
+                .update(
+                    {
+                        MarketGovernanceProfile.version: expected + 1,
+                        MarketGovernanceProfile.updated_by: actor.id,
+                        MarketGovernanceProfile.updated_at: utc_now(),
+                    },
+                    synchronize_session=False,
+                )
             )
-            .update(
-                {
-                    MarketGovernanceProfile.version: expected + 1,
-                    MarketGovernanceProfile.updated_by: actor.id,
-                    MarketGovernanceProfile.updated_at: utc_now(),
-                },
-                synchronize_session=False,
-            )
-        )
-        if claimed != 1:
-            raise HTTPException(status_code=409, detail="market_configuration_changed")
-        db.refresh(profile)
-        version_claimed = True
+            if claimed != 1:
+                raise HTTPException(status_code=409, detail="market_configuration_changed")
+            db.refresh(profile)
+            version_claimed = True
     if name is not None:
         cleaned_name = str(name).strip()
         if not cleaned_name:
             raise HTTPException(status_code=400, detail="market_name_required")
         duplicate = (
-            apply_tenant_scope(db.query(Market), Market, tenant_id)
+            db.query(Market)
             .filter(func.lower(Market.name) == cleaned_name.lower(), Market.id != market.id)
             .first()
         )

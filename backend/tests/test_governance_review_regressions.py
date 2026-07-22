@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import app.api.governance as governance_api
 from app.api.governance import (
     _find_visible_knowledge_import_duplicate,
     _role_template_assigned_users,
@@ -297,3 +301,138 @@ def test_market_expected_version_is_claimed_atomically_before_mutation(db_sessio
     db_session.refresh(market)
     assert profile.version == 5
     assert market.name == "Claimed Market"
+
+
+def test_initial_market_version_zero_is_claimed_on_first_governance_edit(db_session):
+    tenant = Tenant(tenant_key="initial-market", display_name="Initial Market")
+    actor = User(
+        tenant=tenant,
+        username="initial-market-admin",
+        display_name="Initial Market Admin",
+        password_hash="x",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    market = Market(
+        tenant=tenant,
+        code="INITIAL-ME",
+        name="Initial Name",
+        country_code="ME",
+        language_code="en",
+        is_active=True,
+    )
+    country = CountryCatalog(
+        iso_alpha2="ME",
+        iso_alpha3="MNE",
+        iso_numeric="499",
+        canonical_name="Montenegro",
+        default_currency="EUR",
+        is_available=True,
+    )
+    db_session.add_all([tenant, actor, market, country])
+    db_session.flush()
+    db_session.add(MarketCountry(market_id=market.id, country_code="ME", is_primary=True))
+    db_session.commit()
+
+    profile = governance_service.update_market_governance(
+        db_session,
+        market=market,
+        actor=actor,
+        name="First Governed Name",
+        expected_version=0,
+    )
+    db_session.commit()
+    db_session.refresh(profile)
+    db_session.refresh(market)
+    assert profile.version == 1
+    assert market.name == "First Governed Name"
+
+
+def test_market_name_conflict_matches_database_wide_unique_constraint(db_session):
+    tenant_a = Tenant(tenant_key="market-name-a", display_name="Market Name A")
+    tenant_b = Tenant(tenant_key="market-name-b", display_name="Market Name B")
+    actor = User(
+        tenant=tenant_a,
+        username="market-name-admin",
+        display_name="Market Name Admin",
+        password_hash="x",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    market_a = Market(
+        tenant=tenant_a,
+        code="NAME-A",
+        name="Tenant A Market",
+        country_code="ME",
+        language_code="en",
+        is_active=True,
+    )
+    market_b = Market(
+        tenant=tenant_b,
+        code="NAME-B",
+        name="Reserved Global Name",
+        country_code="DE",
+        language_code="de",
+        is_active=True,
+    )
+    country = CountryCatalog(
+        iso_alpha2="ME",
+        iso_alpha3="MNE",
+        iso_numeric="499",
+        canonical_name="Montenegro",
+        default_currency="EUR",
+        is_available=True,
+    )
+    db_session.add_all([tenant_a, tenant_b, actor, market_a, market_b, country])
+    db_session.flush()
+    db_session.add(MarketCountry(market_id=market_a.id, country_code="ME", is_primary=True))
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as conflict:
+        governance_service.update_market_governance(
+            db_session,
+            market=market_a,
+            actor=actor,
+            name="Reserved Global Name",
+            expected_version=0,
+        )
+    assert conflict.value.status_code == 409
+    assert conflict.value.detail == "market_name_exists"
+    db_session.rollback()
+
+
+def test_pause_trial_preserves_candidate_release_with_zero_traffic(monkeypatch):
+    deployment = SimpleNamespace(active_release_id=11, canary_release_id=22)
+    active = SimpleNamespace(id=11)
+    candidate = SimpleNamespace(id=22)
+    captured = {}
+
+    monkeypatch.setattr(governance_api, "ensure_can_manage_runtime", lambda *_: None)
+    monkeypatch.setattr(governance_api, "managed_session", lambda *_: nullcontext())
+    monkeypatch.setattr(
+        governance_api, "_deployment_for_actor", lambda *_: ("tenant", deployment)
+    )
+    monkeypatch.setattr(
+        governance_api,
+        "_release_or_404",
+        lambda _db, release_id: active if release_id == 11 else candidate,
+    )
+    monkeypatch.setattr(governance_api, "_deployment_snapshot", lambda *_: {})
+
+    def apply_state(_db, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(revision=7)
+
+    monkeypatch.setattr(governance_api, "_apply_canary_state", apply_state)
+
+    result = governance_api.pause_trial(
+        1,
+        governance_api.CanaryActionRequest(reason="pause safely"),
+        db=object(),
+        current_user=SimpleNamespace(id=9),
+    )
+    assert result["ok"] is True
+    assert captured["active"] is active
+    assert captured["canary"] is candidate
+    assert captured["percent"] == 0
+    assert captured["action"] == "canary_pause"

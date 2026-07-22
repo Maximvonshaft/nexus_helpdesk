@@ -1122,12 +1122,13 @@ def pause_trial(
         if not deployment.canary_release_id:
             raise HTTPException(status_code=409, detail="trial_not_active")
         active = _release_or_404(db, deployment.active_release_id)
+        candidate = _release_or_404(db, deployment.canary_release_id)
         revision = _apply_canary_state(
             db,
             current_user=current_user,
             deployment=deployment,
             active=active,
-            canary=None,
+            canary=candidate,
             percent=0,
             action="canary_pause",
             reason=payload.reason,
