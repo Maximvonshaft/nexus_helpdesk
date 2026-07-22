@@ -13,6 +13,7 @@ from urllib.parse import SplitResult, urlsplit
 
 _WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _MAX_HEADER_BYTES = 65536
+_DEFAULT_PATH = "/api/webchat/ws"
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ def _request_target(base_url: str, path: str, query: str) -> tuple[SplitResult, 
     if parsed.query or parsed.fragment:
         raise ValueError("base URL must not contain a query string or fragment")
 
-    normalized_path = "/" + path.lstrip("/")
+    normalized_path = "/" + str(path or _DEFAULT_PATH).lstrip("/")
     base_path = parsed.path.rstrip("/")
     request_path = f"{base_path}{normalized_path}" or "/"
     clean_query = query.lstrip("?")
@@ -114,6 +115,7 @@ def _header_tokens(value: str) -> set[str]:
 def probe_websocket_upgrade(
     *,
     base_url: str,
+    path: str = _DEFAULT_PATH,
     query: str = "",
     timeout_seconds: float = 10.0,
     ssl_context: ssl.SSLContext | None = None,
@@ -180,9 +182,10 @@ def probe_websocket_upgrade(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Verify an HTTP WebSocket 101 upgrade without external dependencies."
+        description="Verify a canonical HTTP WebSocket 101 upgrade without external dependencies."
     )
     parser.add_argument("--base-url", required=True)
+    parser.add_argument("--path", default=_DEFAULT_PATH)
     parser.add_argument("--query", default="")
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     return parser
@@ -198,12 +201,12 @@ def main() -> int:
             timeout_seconds=args.timeout_seconds,
         )
     except (OSError, RuntimeError, ValueError) as exc:
-        print("LIVE_VOICE_WS_UPGRADE_PASS=false")
+        print("WEBSOCKET_UPGRADE_PASS=false")
         print(f"error_type={type(exc).__name__}")
         print(f"error={exc}")
         return 2
 
-    print("LIVE_VOICE_WS_UPGRADE_PASS=true")
+    print("WEBSOCKET_UPGRADE_PASS=true")
     print(f"status={result.status_code}")
     print(f"path={result.request_path}")
     return 0
