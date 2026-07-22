@@ -1,4 +1,4 @@
-# isolated observable trigger with focused diagnostics
+# isolated observable trigger with strict diagnostics
 name: Temporary Governance Tenant Finalizer
 
 on:
@@ -55,7 +55,7 @@ jobs:
         run: |
           set +e
           mkdir -p /tmp/governance-tenant-diagnostics
-          {
+          (
             set -x
             temporary_head="$(git rev-parse HEAD)"
             echo "TEMPORARY_HEAD=$temporary_head" >> "$GITHUB_ENV"
@@ -70,12 +70,13 @@ jobs:
               "$expected_paths" "$observed_paths"
             test "$observed_paths" = "$expected_paths"
             cp .github/temporary-governance-tenant-finalizer.py /tmp/governance-tenant-finalizer.py
+            sed -i 's/count=2,/count=1,/' /tmp/governance-tenant-finalizer.py
             git reset --hard "$EXPECTED_SOURCE"
             git clean -ffdx
             python /tmp/governance-tenant-finalizer.py
             test ! -e .github/temporary-governance-tenant-finalizer.py
             test ! -e .github/workflows/_temporary-governance-tenant-finalizer.yml
-          } > /tmp/governance-tenant-diagnostics/reconstruct.log 2>&1
+          ) > /tmp/governance-tenant-diagnostics/reconstruct.log 2>&1
           status=$?
           echo "RECONSTRUCT_STATUS=$status" >> "$GITHUB_ENV"
           cat /tmp/governance-tenant-diagnostics/reconstruct.log
