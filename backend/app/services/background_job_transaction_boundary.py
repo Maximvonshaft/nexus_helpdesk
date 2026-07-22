@@ -192,42 +192,13 @@ def _process_claimed_jobs_with_attempt_boundary(
     return processed
 
 
-def _dispatch_realtime_control_work(
-    db: Any,
-    *,
-    limit: int | None,
-    worker_id: str | None,
-) -> list[tuple[str, int]]:
-    """Reuse the background Worker for durable voice and Provider-event work."""
-
-    if not _is_sqlalchemy_session(db):
-        return []
-    from .telephony_event_service import reprocess_due_telephony_events
-    from .voice_command_dispatcher import dispatch_pending_voice_commands
-
-    bounded_limit = max(1, min(int(limit or 20), 100))
-    command_ids = dispatch_pending_voice_commands(
-        db,
-        worker_id=(worker_id or "background-worker")[:120],
-        limit=bounded_limit,
-    )
-    event_ids = reprocess_due_telephony_events(
-        db,
-        limit=bounded_limit,
-    )
-    return [
-        *(("voice_command", int(command_id)) for command_id in command_ids),
-        *(("telephony_event", int(event_id)) for event_id in event_ids),
-    ]
-
-
 def dispatch_pending_background_jobs(
     db: Any,
     *,
     limit: int | None = None,
     worker_id: str | None = None,
 ) -> list[Any]:
-    """Dispatch all work owned by the one canonical background Worker."""
+    """Dispatch only the job types owned by the canonical background Worker."""
     from . import background_jobs
 
     if background_jobs.settings.email_mailbox_sync_enabled:
@@ -253,19 +224,11 @@ def dispatch_pending_background_jobs(
             background_jobs.EMAIL_MAILBOX_SYNC_JOB,
         ],
     )
-    processed = _process_claimed_jobs_with_attempt_boundary(
+    return _process_claimed_jobs_with_attempt_boundary(
         db,
         claimed,
         lease_token=lease_token,
     )
-    processed.extend(
-        _dispatch_realtime_control_work(
-            db,
-            limit=limit,
-            worker_id=worker_id,
-        )
-    )
-    return processed
 
 
 def dispatch_pending_webchat_ai_reply_jobs(
