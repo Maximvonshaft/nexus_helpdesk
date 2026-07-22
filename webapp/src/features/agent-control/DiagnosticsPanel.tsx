@@ -58,42 +58,36 @@ export function DiagnosticsPanel({
 
   return (
     <Stack spacing={2}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <FactCheckRoundedIcon color="primary" />
-          <Typography component="h2" variant="h2">运行诊断</Typography>
+      <Paper component="section" variant="outlined" sx={{ p: 2 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <FactCheckRoundedIcon color="primary" aria-hidden="true" />
+            <Typography component="h2" variant="h2">连接诊断</Typography>
+          </Stack>
+          <Chip
+            color={snapshot.resolved_agent ? 'success' : 'warning'}
+            label={snapshot.resolved_agent ? '配置可检查' : '当前范围未生效'}
+          />
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-          使用当前作用域已部署的不可变 Agent Release 验证 MCP 生命周期、协议版本、Tool 发现和 Schema 漂移。诊断不会发布资源、扩展 Tool 权限或执行任何业务操作。
-        </Typography>
-        {snapshot.resolved_agent ? (
-          <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-            当前诊断绑定 Deployment 与 Release 摘要 {snapshot.resolved_agent_digest?.slice(0, 12)}。
-          </Alert>
-        ) : (
-          <Alert severity="warning" sx={{ mt: 2 }}>
-            当前作用域尚未解析到已部署 Agent Release，无法执行权威诊断。
-          </Alert>
-        )}
       </Paper>
 
       {!mcpResources.length ? (
         <OperatorEmptyState
-          title="没有已发布的 MCP 集成"
-          description="先在工具与集成中创建、发布 MCP over HTTP 资源，并绑定到 Agent Release。"
+          title="没有可检查的外部系统"
+          description="请先在工具与集成中发布连接配置，并将其加入处理方案。"
         />
       ) : (
-        <Paper variant="outlined" sx={{ p: 2 }}>
+        <Paper component="section" variant="outlined" sx={{ p: 2 }}>
           <Stack spacing={1.5}>
             <TextField
               select
-              label="MCP 集成"
+              label="外部系统"
               value={integrationKey}
               onChange={(event) => setIntegrationKey(event.target.value)}
             >
               {mcpResources.map((item) => (
                 <MenuItem key={item.id} value={item.resource_key}>
-                  {item.name} · {item.resource_key} · v{item.published_version}
+                  {item.name} · v{item.published_version}
                 </MenuItem>
               ))}
             </TextField>
@@ -103,13 +97,13 @@ export function DiagnosticsPanel({
               startIcon={doctor.isPending ? <CircularProgress color="inherit" size={16} /> : <FactCheckRoundedIcon />}
               onClick={() => doctor.mutate()}
             >
-              运行 MCP Doctor
+              检查连接
             </Button>
             {doctor.error ? (
               <OperatorErrorNotice
-                title="MCP 诊断失败"
+                title="连接检查失败"
                 error={doctor.error}
-                fallback="请检查当前 Deployment、凭据、主机白名单和 MCP Server"
+                fallback="请检查连接地址、凭据和访问范围"
               />
             ) : null}
           </Stack>
@@ -117,21 +111,21 @@ export function DiagnosticsPanel({
       )}
 
       {doctor.data ? (
-        <Paper variant="outlined" sx={{ p: 2 }}>
+        <Paper component="section" variant="outlined" sx={{ p: 2 }}>
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             spacing={1}
             sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}
           >
             <Box>
-              <Typography component="h2" variant="h3">诊断结果</Typography>
+              <Typography component="h2" variant="h3">检查结果</Typography>
               <Typography variant="caption" color="text.secondary">
-                Release v{doctor.data.agent_release_version} · {doctor.data.protocol_version || '协议未协商'} · {doctor.data.elapsed_ms} ms
+                用时 {doctor.data.elapsed_ms} ms
               </Typography>
             </Box>
             <Chip
               color={doctor.data.healthy ? 'success' : 'error'}
-              label={doctor.data.healthy ? '健康' : '阻断发布/运行'}
+              label={doctor.data.healthy ? '可用' : '需要处理'}
             />
           </Stack>
           <Stack spacing={1} sx={{ mt: 2 }}>
@@ -150,24 +144,24 @@ export function DiagnosticsPanel({
             }}
           >
             <Paper variant="outlined" sx={{ p: 1.5 }}>
-              <Typography variant="caption" color="text.secondary">已配置 / 已发现 Tool</Typography>
+              <Typography variant="caption" color="text.secondary">已配置 / 已发现工具</Typography>
               <Typography variant="h3">{doctor.data.configured_tool_count} / {doctor.data.discovered_tool_count}</Typography>
             </Paper>
             <Paper variant="outlined" sx={{ p: 1.5 }}>
-              <Typography variant="caption" color="text.secondary">缺失 / Schema 漂移</Typography>
+              <Typography variant="caption" color="text.secondary">缺失 / 配置不一致</Typography>
               <Typography variant="h3">{doctor.data.missing_tools.length} / {doctor.data.schema_mismatches.length}</Typography>
             </Paper>
             <Paper variant="outlined" sx={{ p: 1.5 }}>
-              <Typography variant="caption" color="text.secondary">未纳管 Tool</Typography>
+              <Typography variant="caption" color="text.secondary">未纳入配置</Typography>
               <Typography variant="h3">{doctor.data.unmanaged_tools.length}</Typography>
             </Paper>
           </Box>
           {doctor.data.unmanaged_tools.length ? (
             <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
-              Server 发现了未绑定到 Release 的 Tool：{doctor.data.unmanaged_tools.join(', ')}。这些 Tool 已被隔离，不会自动进入 Agent。
+              发现 {doctor.data.unmanaged_tools.length} 个未纳入当前配置的工具，系统不会调用这些工具。
             </Alert>
           ) : null}
-          <OperatorTechnicalDisclosure title="诊断证据">
+          <OperatorTechnicalDisclosure title="诊断详情" summary="协议、版本和检查证据">
             <Box component="pre" sx={{ m: 0, maxHeight: 480, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
               {JSON.stringify(doctor.data, null, 2)}
             </Box>
