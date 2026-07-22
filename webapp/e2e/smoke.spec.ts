@@ -303,8 +303,8 @@ test('canonical supporting routes render in one application shell', async ({ pag
   await expect(page.getByRole('button', { name: /Delivery status/ })).toBeVisible()
 
   await page.goto('/agent-control')
-  await expect(page.getByRole('heading', { level: 1, name: 'Agent 控制面' })).toBeVisible()
-  await expect(page.getByText('未找到匹配当前范围的 Agent Deployment。')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '自动处理配置' })).toBeVisible()
+  await expect(page.getByText('当前范围尚未配置已发布版本。')).toBeVisible()
 
   await page.goto('/channels')
   await expect(page.getByRole('heading', { level: 1, name: '渠道管理' })).toBeVisible()
