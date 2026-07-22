@@ -104,7 +104,17 @@ def _provider_for_name(provider_name: str, config: WebchatVoiceRuntimeConfig | N
         try:
             return LiveKitVoiceProvider.from_config(config or load_webchat_voice_runtime_config())
         except VoiceProviderError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+            logger.warning(
+                "voice_provider_initialization_failed",
+                extra={
+                    "provider": provider,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="voice_provider_unavailable",
+            ) from exc
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="voice provider is not available in this build")
 
 
@@ -862,8 +872,17 @@ def record_admin_voice_action(
     except VoiceProviderError as exc:
         action.status = "failed"
         action.provider_status = "failed"
-        action.provider_reason = str(exc)[:160] or "provider_command_failed"
+        action.provider_reason = "provider_command_failed"
         record_voice_provider_error(session.provider, requested)
+        logger.warning(
+            "voice_provider_action_failed",
+            extra={
+                "voice_session_id": session.public_id,
+                "provider": session.provider,
+                "action_type": requested,
+                "error_type": type(exc).__name__,
+            },
+        )
     action.completed_at = utc_now()
     action.payload_json = json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)
 
