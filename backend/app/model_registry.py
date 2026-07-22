@@ -6,9 +6,15 @@ Every merged ORM model family that contributes production tables to
 ``Base.metadata`` is required. Optional model loading is allowed only through an
 explicit, capability-named plugin declaration; an enabled plugin is imported
 fail-closed and must declare one representative table.
+
+The registry also installs bounded ORM value contracts that SQL dialects do not
+preserve uniformly. Those contracts normalize loaded values only; they do not
+create a second persistence or business authority.
 """
+
 from dataclasses import dataclass
 from importlib import import_module
+from typing import Any
 
 
 class ModelRegistryError(RuntimeError):
@@ -86,7 +92,9 @@ def validate_model_registry() -> tuple[str, ...]:
 
     modules = declared_model_modules()
     errors: list[str] = []
-    duplicate_modules = sorted({name for name in modules if modules.count(name) > 1})
+    duplicate_modules = sorted(
+        {name for name in modules if modules.count(name) > 1}
+    )
     if duplicate_modules:
         errors.append("duplicate model modules: " + ", ".join(duplicate_modules))
 
@@ -96,7 +104,8 @@ def validate_model_registry() -> tuple[str, ...]:
     stale_representatives = sorted(representative_modules - declared)
     if missing_representatives:
         errors.append(
-            "missing representative tables for: " + ", ".join(missing_representatives)
+            "missing representative tables for: "
+            + ", ".join(missing_representatives)
         )
     if stale_representatives:
         errors.append(
@@ -106,7 +115,11 @@ def validate_model_registry() -> tuple[str, ...]:
 
     representative_values = list(REPRESENTATIVE_TABLES.values())
     duplicate_tables = sorted(
-        {name for name in representative_values if representative_values.count(name) > 1}
+        {
+            name
+            for name in representative_values
+            if representative_values.count(name) > 1
+        }
     )
     if duplicate_tables:
         errors.append("duplicate representative tables: " + ", ".join(duplicate_tables))
@@ -131,6 +144,70 @@ def validate_model_registry() -> tuple[str, ...]:
     return modules
 
 
+def _normalize_voice_offer_expiry(target: Any, *_args: Any) -> None:
+    """Restore UTC awareness stripped by dialects such as SQLite."""
+
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    from .utils.time import ensure_utc
+
+    current = getattr(target, "expires_at", None)
+    normalized = ensure_utc(current)
+    if normalized is not None and normalized != current:
+        set_committed_value(target, "expires_at", normalized)
+    elif normalized is not None and getattr(current, "tzinfo", None) is None:
+        set_committed_value(target, "expires_at", normalized)
+
+
+def _normalize_voice_offer_expiry_set(
+    _target: Any,
+    value: Any,
+    _old_value: Any,
+    _initiator: Any,
+) -> Any:
+    from .utils.time import ensure_utc
+
+    return ensure_utc(value)
+
+
+def _install_model_value_contracts() -> None:
+    from sqlalchemy import event
+
+    from .voice_models import VoiceRoutingOffer
+
+    if not event.contains(
+        VoiceRoutingOffer,
+        "load",
+        _normalize_voice_offer_expiry,
+    ):
+        event.listen(
+            VoiceRoutingOffer,
+            "load",
+            _normalize_voice_offer_expiry,
+        )
+    if not event.contains(
+        VoiceRoutingOffer,
+        "refresh",
+        _normalize_voice_offer_expiry,
+    ):
+        event.listen(
+            VoiceRoutingOffer,
+            "refresh",
+            _normalize_voice_offer_expiry,
+        )
+    if not event.contains(
+        VoiceRoutingOffer.expires_at,
+        "set",
+        _normalize_voice_offer_expiry_set,
+    ):
+        event.listen(
+            VoiceRoutingOffer.expires_at,
+            "set",
+            _normalize_voice_offer_expiry_set,
+            retval=True,
+        )
+
+
 def register_all_models() -> tuple[str, ...]:
     """Import every required model family and every explicitly enabled plugin."""
 
@@ -146,4 +223,5 @@ def register_all_models() -> tuple[str, ...]:
                 f"missing module or dependency {missing_name!r}"
             ) from exc
         imported.append(module_name)
+    _install_model_value_contracts()
     return tuple(imported)
