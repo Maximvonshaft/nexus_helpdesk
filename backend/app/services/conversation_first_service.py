@@ -11,20 +11,19 @@ from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
 from .tenant_authority import stamp_runtime_tenant, tenant_runtime_authority_mode
-from .webchat_service import (
+from .webchat_session_identity import (
     MAX_FIELD_CHARS,
     MAX_MESSAGE_CHARS,
     MAX_URL_CHARS,
-    _clip,
-    _hash_token,
-    _new_public_id,
-    _new_token,
-    _new_token_expiry,
-    _origin_from_request,
-    _validate_token,
+    clip,
+    hash_token,
+    new_public_id,
+    new_visitor_token,
+    new_visitor_token_expiry,
+    origin_from_request,
+    validate_visitor_token,
 )
 from .webchat_tenant_binding import current_verified_webchat_scope
-
 
 LOGGER = logging.getLogger("nexusdesk")
 
@@ -32,14 +31,7 @@ LOGGER = logging.getLogger("nexusdesk")
 def _relational_tenant(db: Session) -> Tenant | None:
     scope = current_verified_webchat_scope(db)
     mode = tenant_runtime_authority_mode()
-    if scope is None:
-        if mode == "enforce":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="webchat_verified_scope_required",
-            )
-        return None
-    if scope.authority != "server_origin_binding":
+    if scope is None or scope.authority != "server_origin_binding":
         if mode == "enforce":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -105,7 +97,10 @@ def ensure_conversation_control(
     return row
 
 
-def _legacy_customer_id(db: Session, conversation: WebchatConversation) -> int | None:
+def _historical_customer_id(
+    db: Session,
+    conversation: WebchatConversation,
+) -> int | None:
     if conversation.ticket_id is None:
         return None
     ticket = db.get(Ticket, conversation.ticket_id)
@@ -121,15 +116,12 @@ def _assert_resume_scope(
 ) -> None:
     scope = current_verified_webchat_scope(db)
     expected_tenant_id = tenant.id if tenant is not None else None
-    customer_id = control.customer_id or _legacy_customer_id(db, conversation)
+    customer_id = control.customer_id or _historical_customer_id(db, conversation)
     customer = db.get(Customer, customer_id) if customer_id is not None else None
-    if (
-        scope is not None
-        and (
-            control.tenant_key != scope.tenant_key
-            or control.channel_key != scope.channel_key
-            or control.country_code != scope.country_code
-        )
+    if scope is not None and (
+        control.tenant_key != scope.tenant_key
+        or control.channel_key != scope.channel_key
+        or control.country_code != scope.country_code
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -150,20 +142,20 @@ def create_or_resume_conversation(
     request: Request,
 ) -> dict[str, Any]:
     scope = current_verified_webchat_scope(db)
-    tenant_key = _clip(
+    tenant_key = clip(
         (scope.tenant_key if scope else None)
         or getattr(payload, "tenant_key", None)
         or "default",
         120,
     ) or "default"
-    channel_key = _clip(
+    channel_key = clip(
         (scope.channel_key if scope else None)
         or getattr(payload, "channel_key", None)
         or "default",
         120,
     ) or "default"
     tenant = _relational_tenant(db)
-    public_id = _clip(getattr(payload, "conversation_id", None), 64)
+    public_id = clip(getattr(payload, "conversation_id", None), 64)
     visitor_token = getattr(payload, "visitor_token", None)
 
     if public_id:
@@ -173,17 +165,16 @@ def create_or_resume_conversation(
             .first()
         )
         if existing is not None:
-            _validate_token(existing, visitor_token)
-            legacy_customer_id = _legacy_customer_id(db, existing)
+            validate_visitor_token(existing, visitor_token)
+            customer_id = _historical_customer_id(db, existing)
             control = _conversation_control(db, conversation_id=existing.id)
             if control is None:
                 control = ensure_conversation_control(
                     db,
                     conversation=existing,
-                    customer_id=legacy_customer_id,
+                    customer_id=customer_id,
                 )
             else:
-                # Validate immutable stored routing scope before any refresh.
                 _assert_resume_scope(
                     db,
                     conversation=existing,
@@ -193,7 +184,7 @@ def create_or_resume_conversation(
                 control = ensure_conversation_control(
                     db,
                     conversation=existing,
-                    customer_id=legacy_customer_id,
+                    customer_id=customer_id,
                 )
             _assert_resume_scope(
                 db,
@@ -202,18 +193,21 @@ def create_or_resume_conversation(
                 tenant=tenant,
             )
             existing.last_seen_at = utc_now()
-            existing.visitor_token_expires_at = _new_token_expiry()
+            existing.visitor_token_expires_at = new_visitor_token_expiry()
             existing.updated_at = utc_now()
             existing.page_url = (
-                _clip(getattr(payload, "page_url", None), MAX_URL_CHARS)
+                clip(getattr(payload, "page_url", None), MAX_URL_CHARS)
                 or existing.page_url
             )
             existing.origin = (
-                _origin_from_request(request, getattr(payload, "origin", None))
+                origin_from_request(
+                    request,
+                    getattr(payload, "origin", None),
+                )
                 or existing.origin
             )
             existing.user_agent = (
-                _clip(request.headers.get("user-agent"), MAX_FIELD_CHARS)
+                clip(request.headers.get("user-agent"), MAX_FIELD_CHARS)
                 or existing.user_agent
             )
             db.flush()
@@ -238,18 +232,20 @@ def create_or_resume_conversation(
                 },
             }
 
-    token = _new_token()
-    public_id = _new_public_id()
-    visitor_name = _clip(getattr(payload, "visitor_name", None), 160)
-    visitor_email = _clip(getattr(payload, "visitor_email", None), 200)
-    visitor_phone = _clip(getattr(payload, "visitor_phone", None), 80)
-    visitor_ref = _clip(getattr(payload, "visitor_ref", None), 160)
+    token = new_visitor_token()
+    public_id = new_public_id()
+    visitor_name = clip(getattr(payload, "visitor_name", None), 160)
+    visitor_email = clip(getattr(payload, "visitor_email", None), 200)
+    visitor_phone = clip(getattr(payload, "visitor_phone", None), 80)
+    visitor_ref = clip(getattr(payload, "visitor_ref", None), 160)
 
     customer = Customer(
-        name=visitor_name
-        or visitor_email
-        or visitor_phone
-        or f"Webchat Visitor {public_id[-6:]}",
+        name=(
+            visitor_name
+            or visitor_email
+            or visitor_phone
+            or f"Webchat Visitor {public_id[-6:]}"
+        ),
         email=visitor_email,
         phone=visitor_phone,
         external_ref=visitor_ref or public_id,
@@ -260,8 +256,8 @@ def create_or_resume_conversation(
 
     conversation = WebchatConversation(
         public_id=public_id,
-        visitor_token_hash=_hash_token(token),
-        visitor_token_expires_at=_new_token_expiry(),
+        visitor_token_hash=hash_token(token),
+        visitor_token_expires_at=new_visitor_token_expiry(),
         tenant_key=tenant_key,
         channel_key=channel_key,
         ticket_id=None,
@@ -269,9 +265,9 @@ def create_or_resume_conversation(
         visitor_email=visitor_email,
         visitor_phone=visitor_phone,
         visitor_ref=visitor_ref,
-        origin=_origin_from_request(request, getattr(payload, "origin", None)),
-        page_url=_clip(getattr(payload, "page_url", None), MAX_URL_CHARS),
-        user_agent=_clip(request.headers.get("user-agent"), 300),
+        origin=origin_from_request(request, getattr(payload, "origin", None)),
+        page_url=clip(getattr(payload, "page_url", None), MAX_URL_CHARS),
+        user_agent=clip(request.headers.get("user-agent"), MAX_FIELD_CHARS),
         status="open",
         last_seen_at=utc_now(),
         created_at=utc_now(),
@@ -284,7 +280,6 @@ def create_or_resume_conversation(
         conversation=conversation,
         customer_id=customer.id,
     )
-
     LOGGER.info(
         "webchat_session_created",
         extra={
