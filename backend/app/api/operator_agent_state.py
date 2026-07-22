@@ -19,9 +19,7 @@ from ..services.conversation_operator_service import (
     read_conversation_thread,
     reply_to_conversation,
 )
-from ..services.operator_agent_capacity_service import (
-    set_operator_agent_capacity,
-)
+from ..services.operator_agent_capacity_service import set_operator_agent_capacity
 from ..services.operator_queue_scope import authorize_operator_scope
 from ..services.permissions import (
     CAP_USER_MANAGE,
@@ -33,7 +31,6 @@ from ..unit_of_work import managed_session
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .deps import get_current_user
 
-
 router = APIRouter(prefix="/api/operator", tags=["operator-agent-routing"])
 
 
@@ -41,6 +38,7 @@ class AgentStateUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str = Field(min_length=2, max_length=24)
     max_concurrent_conversations: int | None = Field(default=None, ge=1, le=20)
+    voice_enabled: bool | None = None
     max_concurrent_voice_calls: int | None = Field(default=None, ge=1, le=5)
     voice_wrap_up_seconds: int | None = Field(default=None, ge=0, le=900)
 
@@ -48,6 +46,7 @@ class AgentStateUpdateRequest(BaseModel):
 class AgentCapacityUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     max_concurrent_conversations: int = Field(ge=1, le=20)
+    voice_enabled: bool = False
     max_concurrent_voice_calls: int = Field(default=1, ge=1, le=5)
     voice_wrap_up_seconds: int = Field(default=30, ge=0, le=900)
 
@@ -121,6 +120,7 @@ def update_agent_state(
         current_state = read_agent_state(db, user_id=current_user.id)
         governed_fields = {
             "max_concurrent_conversations": payload.max_concurrent_conversations,
+            "voice_enabled": payload.voice_enabled,
             "max_concurrent_voice_calls": payload.max_concurrent_voice_calls,
             "voice_wrap_up_seconds": payload.voice_wrap_up_seconds,
         }
@@ -138,6 +138,7 @@ def update_agent_state(
             user=current_user,
             presence_status=payload.status,
             max_concurrent_conversations=payload.max_concurrent_conversations,
+            voice_enabled=payload.voice_enabled,
             max_concurrent_voice_calls=payload.max_concurrent_voice_calls,
             voice_wrap_up_seconds=payload.voice_wrap_up_seconds,
         )
@@ -185,6 +186,7 @@ def update_managed_agent_capacity(
             actor=current_user,
             target_user=target,
             max_concurrent_conversations=payload.max_concurrent_conversations,
+            voice_enabled=payload.voice_enabled,
             max_concurrent_voice_calls=payload.max_concurrent_voice_calls,
             voice_wrap_up_seconds=payload.voice_wrap_up_seconds,
         )
@@ -215,10 +217,7 @@ def get_operator_availability(
     if request_row is not None:
         control = (
             db.query(ConversationControl)
-            .filter(
-                ConversationControl.conversation_id
-                == request_row.conversation_id
-            )
+            .filter(ConversationControl.conversation_id == request_row.conversation_id)
             .first()
         )
         if control is None or (
@@ -253,10 +252,7 @@ def accept_operator_handoff(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="handoff_not_found",
             )
-        conversation = db.get(
-            WebchatConversation,
-            request_row.conversation_id,
-        )
+        conversation = db.get(WebchatConversation, request_row.conversation_id)
         if conversation is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -280,10 +276,7 @@ def get_operator_conversation_thread(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
-    conversation = _conversation_by_public_id(
-        db,
-        conversation_id=conversation_id,
-    )
+    conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
     return read_conversation_thread(
         db,
         conversation=conversation,
@@ -302,10 +295,7 @@ def reply_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(
-            db,
-            conversation_id=conversation_id,
-        )
+        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
         return reply_to_conversation(
             db,
             conversation=conversation,
@@ -323,15 +313,10 @@ def close_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(
-            db,
-            conversation_id=conversation_id,
-        )
+        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
         control = (
             db.query(ConversationControl)
-            .filter(
-                ConversationControl.conversation_id == conversation.id
-            )
+            .filter(ConversationControl.conversation_id == conversation.id)
             .first()
         )
         if control is None:
