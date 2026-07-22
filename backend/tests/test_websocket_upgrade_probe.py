@@ -111,7 +111,7 @@ def test_probe_accepts_valid_websocket_upgrade_and_preserves_base_path():
 
     result = PROBE.probe_websocket_upgrade(
         base_url=f"{base_url}/candidate",
-        query="lang_code=en&voice=bm_george&speed=1.0",
+        query="visitor=opaque",
         timeout_seconds=1,
     )
     _join_server(capture, thread)
@@ -119,13 +119,29 @@ def test_probe_accepts_valid_websocket_upgrade_and_preserves_base_path():
     request = capture["request"]
     assert isinstance(request, bytes)
     assert request.startswith(
-        b"GET /candidate/webchat/live/ws?lang_code=en&voice=bm_george&speed=1.0 HTTP/1.1\r\n"
+        b"GET /candidate/api/webchat/ws?visitor=opaque HTTP/1.1\r\n"
     )
     assert b"Upgrade: websocket\r\n" in request
     assert b"Connection: Upgrade\r\n" in request
     assert b"Sec-WebSocket-Version: 13\r\n" in request
     assert result.status_code == 101
-    assert result.request_path == "/candidate/webchat/live/ws"
+    assert result.request_path == "/candidate/api/webchat/ws"
+
+
+def test_probe_supports_explicit_canonical_path():
+    base_url, capture, thread = _start_server(_switching_protocols_response)
+
+    result = PROBE.probe_websocket_upgrade(
+        base_url=base_url,
+        path="/api/webchat/ws",
+        timeout_seconds=1,
+    )
+    _join_server(capture, thread)
+
+    request = capture["request"]
+    assert isinstance(request, bytes)
+    assert request.startswith(b"GET /api/webchat/ws HTTP/1.1\r\n")
+    assert result.request_path == "/api/webchat/ws"
 
 
 @pytest.mark.parametrize(
@@ -170,14 +186,12 @@ def test_secure_ssl_context_preserves_stricter_tls_minimum():
     assert secured.minimum_version == ssl.TLSVersion.TLSv1_3
 
 
-def test_secure_ssl_context_hardens_default_context(monkeypatch: pytest.MonkeyPatch):
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
-    monkeypatch.setattr(PROBE.ssl, "create_default_context", lambda: context)
-
+def test_secure_ssl_context_hardens_default_context():
     secured = PROBE._secure_ssl_context()
 
-    assert secured.minimum_version == ssl.TLSVersion.TLSv1_2
+    assert secured.check_hostname is True
+    assert secured.verify_mode == ssl.CERT_REQUIRED
+    assert secured.minimum_version >= ssl.TLSVersion.TLSv1_2
 
 
 def test_secure_ssl_context_fails_closed_without_tls_version_support(monkeypatch: pytest.MonkeyPatch):
