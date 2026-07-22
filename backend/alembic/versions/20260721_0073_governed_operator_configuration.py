@@ -8,6 +8,7 @@ Create Date: 2026-07-21
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
 import sqlalchemy as sa
 from alembic import op
@@ -33,6 +34,19 @@ def _as_datetime(value, fallback: datetime) -> datetime:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
     return fallback
+
+
+def _as_json_array(value) -> list:
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("role_template_capabilities_json_invalid") from exc
+        if isinstance(parsed, list):
+            return parsed
+    raise RuntimeError("role_template_capabilities_json_invalid")
 
 
 _COUNTRIES = [('AF', 'AFG', '004', 'Afghanistan', None, None),
@@ -611,7 +625,7 @@ def upgrade() -> None:
                     "description": row["description"],
                     "base_role": row["base_role"],
                     "risk_level": row["risk_level"],
-                    "capabilities": row["published_capabilities_json"],
+                    "capabilities": _as_json_array(row["published_capabilities_json"]),
                     "version": 1,
                     "published_at": now.isoformat(),
                 },

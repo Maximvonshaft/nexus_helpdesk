@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +18,7 @@ from app.api.governance import (
 from app.db import Base
 from app.enums import UserRole
 from app.models import Market, Tenant, User
+from app.models_agent_control import AgentDefinition, AgentRelease
 from app.models_control_plane import KnowledgeItem
 from app.models_governance import (
     CountryCatalog,
@@ -28,6 +31,7 @@ from app.models_governance import (
     RoleTemplateVersion,
 )
 from app.services import governance_service
+from app.services.agent_release_service import activate_deployment
 
 
 @pytest.fixture()
@@ -436,3 +440,78 @@ def test_pause_trial_preserves_candidate_release_with_zero_traffic(monkeypatch):
     assert captured["canary"] is candidate
     assert captured["percent"] == 0
     assert captured["action"] == "canary_pause"
+
+
+def test_activate_deployment_allows_a_paused_zero_percent_canary(db_session):
+    definition = AgentDefinition(
+        tenant_key="paused-canary",
+        definition_key="paused-canary-agent",
+        name="Paused Canary Agent",
+        draft_manifest_json={},
+    )
+    db_session.add(definition)
+    db_session.flush()
+    stable = AgentRelease(
+        definition_id=definition.id,
+        version=1,
+        status="approved",
+        manifest_json={},
+        manifest_sha256="a" * 64,
+        validation_json={},
+    )
+    candidate = AgentRelease(
+        definition_id=definition.id,
+        version=2,
+        status="approved",
+        manifest_json={},
+        manifest_sha256="b" * 64,
+        validation_json={},
+    )
+    db_session.add_all([stable, candidate])
+    db_session.flush()
+
+    deployment = activate_deployment(
+        db_session,
+        tenant_key="paused-canary",
+        environment="staging",
+        release=stable,
+        canary_release=candidate,
+        canary_percent=0,
+        actor_id=None,
+    )
+    assert deployment.active_release_id == stable.id
+    assert deployment.canary_release_id == candidate.id
+    assert deployment.canary_percent == 0
+
+    with pytest.raises(HTTPException) as invalid:
+        activate_deployment(
+            db_session,
+            tenant_key="paused-canary",
+            environment="production",
+            release=stable,
+            canary_release=None,
+            canary_percent=1,
+            actor_id=None,
+        )
+    assert invalid.value.status_code == 400
+    assert invalid.value.detail == "agent_canary_release_and_percent_must_match"
+
+
+def test_seeded_role_capabilities_decode_cross_database_json_arrays():
+    root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        root / "alembic" / "versions" / "20260721_0073_governed_operator_configuration.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "governed_operator_configuration_migration", migration_path
+    )
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    assert migration._as_json_array(["ticket.read"]) == ["ticket.read"]
+    assert migration._as_json_array(
+        '["ticket.read", "user.manage"]'
+    ) == ["ticket.read", "user.manage"]
+    with pytest.raises(RuntimeError, match="role_template_capabilities_json_invalid"):
+        migration._as_json_array('"ticket.read"')
