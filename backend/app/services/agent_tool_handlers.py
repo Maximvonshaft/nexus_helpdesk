@@ -9,8 +9,14 @@ from sqlalchemy.orm import Session
 
 from ..enums import EventType
 from ..models import Customer, Ticket, TicketEvent
+from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
-from ..webchat_models import WebchatConversation, WebchatMessage
+from ..webchat_models import (
+    WebchatConversation,
+    WebchatHandoffRequest,
+    WebchatMessage,
+)
+from .agent_availability_service import availability_summary
 from .agent_integration_service import (
     execute_integration_operation,
     list_integration_catalog,
@@ -102,6 +108,45 @@ def build_agent_tool_handlers(
             ),
             case_context=request.case_context,
             error_code=None if hits else "knowledge_not_found",
+        )
+
+    def support_availability(
+        request: ActionExecutionRequest,
+    ) -> ActionExecutionResult:
+        if conversation is None:
+            return _failure(request, "conversation_required")
+        control = (
+            db.query(ConversationControl)
+            .filter(ConversationControl.conversation_id == conversation.id)
+            .first()
+        )
+        if control is None:
+            return _failure(request, "conversation_control_required")
+        request_row = (
+            db.get(
+                WebchatHandoffRequest,
+                conversation.current_handoff_request_id,
+            )
+            if conversation.current_handoff_request_id is not None
+            else None
+        )
+        if request_row is not None and request_row.conversation_id != conversation.id:
+            request_row = None
+        summary = availability_summary(
+            db,
+            tenant_key=control.tenant_key,
+            country_code=control.country_code,
+            channel_key=control.channel_key,
+            request_row=request_row,
+            conversation_id=conversation.id,
+        )
+        return ActionExecutionResult(
+            ok=True,
+            tool_name=request.action.tool_name,
+            status="executed",
+            summary=summary,
+            customer_visible_summary=_availability_customer_summary(summary),
+            case_context=request.case_context,
         )
 
     def integration_search(request: ActionExecutionRequest) -> ActionExecutionResult:
@@ -358,6 +403,7 @@ def build_agent_tool_handlers(
 
     return {
         "knowledge.search": knowledge_search,
+        "support.availability": support_availability,
         "integration.search": integration_search,
         "integration.read": integration_read,
         "integration.write": integration_write,
@@ -373,6 +419,25 @@ def extension_executable_tool_names() -> tuple[str, ...]:
         "integration.write",
         "specialist.delegate",
         "speedaf.workOrder.create",
+    )
+
+
+def _availability_customer_summary(summary: dict[str, Any]) -> str:
+    if summary.get("available"):
+        return "A support specialist is available now."
+    wait_range = summary.get("estimated_wait_range_seconds")
+    if isinstance(wait_range, dict):
+        lower = max(0, int(wait_range.get("min") or 0))
+        upper = max(lower, int(wait_range.get("max") or lower))
+        if upper > 0:
+            return (
+                "All eligible specialists are currently busy. "
+                f"The evidence-based wait estimate is about {lower // 60}–"
+                f"{max(1, (upper + 59) // 60)} minutes."
+            )
+    return (
+        "All eligible specialists are currently busy, and there is not yet "
+        "enough recent evidence to provide a reliable wait estimate."
     )
 
 
