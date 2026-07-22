@@ -39,6 +39,9 @@ class AgentExecutionContext:
     granted_permissions: frozenset[str] = frozenset()
     actor_capabilities: frozenset[str] = frozenset()
     customer_confirmation_granted: bool = False
+    customer_confirmation_id: str | None = None
+    customer_confirmation_tool_name: str | None = None
+    customer_confirmation_arguments_sha256: str | None = None
     human_confirmation_granted: bool = False
     release_snapshot: dict[str, Any] | None = None
 
@@ -182,6 +185,11 @@ def _execute_with_db(
                         else frozenset()
                     ),
                     customer_confirmation_granted=context.customer_confirmation_granted,
+                    customer_confirmation_id=context.customer_confirmation_id,
+                    customer_confirmation_tool_name=context.customer_confirmation_tool_name,
+                    customer_confirmation_arguments_sha256=(
+                        context.customer_confirmation_arguments_sha256
+                    ),
                     human_confirmation_granted=context.human_confirmation_granted,
                     allowed_tool_names=frozenset(context.allowed_tools),
                     granted_permissions=frozenset(context.granted_permissions),
