@@ -1,3 +1,4 @@
+# isolated trigger
 name: Temporary Governance Tenant Finalizer
 
 on:
