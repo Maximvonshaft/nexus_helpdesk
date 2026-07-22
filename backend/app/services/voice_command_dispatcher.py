@@ -35,11 +35,17 @@ def _provider_for_session(session: WebchatVoiceSession) -> VoiceProvider:
     if session.provider == "mock":
         return MockVoiceProvider()
     if session.provider == "livekit":
-        return LiveKitVoiceProvider.from_config(load_webchat_voice_runtime_config())
+        return LiveKitVoiceProvider.from_config(
+            load_webchat_voice_runtime_config()
+        )
     raise VoiceProviderError(f"unsupported voice provider: {session.provider}")
 
 
-def _outbound_trunk_id(db: Session, *, session: WebchatVoiceSession) -> str | None:
+def _outbound_trunk_id(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+) -> str | None:
     if session.channel_account_id is None:
         return None
     configuration = (
@@ -49,22 +55,32 @@ def _outbound_trunk_id(db: Session, *, session: WebchatVoiceSession) -> str | No
             ChannelAccount.id == VoiceChannelConfiguration.channel_account_id,
         )
         .filter(
-            VoiceChannelConfiguration.channel_account_id == session.channel_account_id,
+            VoiceChannelConfiguration.channel_account_id
+            == session.channel_account_id,
             VoiceChannelConfiguration.enabled.is_(True),
             ChannelAccount.provider == "voice",
         )
         .first()
     )
-    return configuration.outbound_trunk_id if configuration is not None else None
+    return (
+        configuration.outbound_trunk_id
+        if configuration is not None
+        else None
+    )
 
 
-def _caller_identity(db: Session, *, session: WebchatVoiceSession) -> str | None:
+def _caller_identity(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+) -> str | None:
     leg = (
         db.query(WebchatVoiceParticipant)
         .filter(
             WebchatVoiceParticipant.voice_session_id == session.id,
             WebchatVoiceParticipant.participant_type.in_(["caller", "visitor"]),
             WebchatVoiceParticipant.status.notin_(["ended", "left", "failed"]),
+            WebchatVoiceParticipant.ended_at.is_(None),
         )
         .order_by(WebchatVoiceParticipant.id.asc())
         .first()
@@ -72,15 +88,24 @@ def _caller_identity(db: Session, *, session: WebchatVoiceSession) -> str | None
     return leg.provider_identity if leg is not None else session.provider_call_id
 
 
-def _controller_identity(db: Session, *, session: WebchatVoiceSession) -> str | None:
+def _controller_identity(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+) -> str | None:
     leg = (
         db.query(WebchatVoiceParticipant)
         .filter(
             WebchatVoiceParticipant.voice_session_id == session.id,
             WebchatVoiceParticipant.participant_type.in_(["controller", "ai"]),
-            WebchatVoiceParticipant.status.notin_(["ended", "left", "failed"]),
+            WebchatVoiceParticipant.status == "joined",
+            WebchatVoiceParticipant.joined_at.isnot(None),
+            WebchatVoiceParticipant.ended_at.is_(None),
         )
-        .order_by(WebchatVoiceParticipant.joined_at.desc().nullslast(), WebchatVoiceParticipant.id.desc())
+        .order_by(
+            WebchatVoiceParticipant.joined_at.desc(),
+            WebchatVoiceParticipant.id.desc(),
+        )
         .first()
     )
     return leg.provider_identity if leg is not None else None
@@ -111,9 +136,17 @@ def _write_event(
 
 def _provider_error_retryable(exc: VoiceProviderError) -> bool:
     text = str(exc).lower()
+    transient_markers = (
+        "active telephony controller identity is required",
+        "participant has no published media track",
+        "participant identity is required",
+        "participant not found",
+        "room not found",
+    )
+    if any(marker in text for marker in transient_markers):
+        return True
     permanent_markers = (
         "unsupported",
-        "required",
         "invalid",
         "missing required configuration",
         "not configured",
@@ -144,7 +177,9 @@ def _finish(
     command.status = command_status
     command.provider_status = provider_status
     command.provider_reason = provider_reason
-    command.provider_reference = provider_reference or command.provider_reference
+    command.provider_reference = (
+        provider_reference or command.provider_reference
+    )
     command.result_json = json.dumps(
         result,
         ensure_ascii=False,
@@ -152,7 +187,9 @@ def _finish(
         default=str,
     )
     command.completed_at = (
-        now if command_status in {"succeeded", "failed", "cancelled"} else None
+        now
+        if command_status in {"succeeded", "failed", "cancelled"}
+        else None
     )
     command.next_attempt_at = None
     command.lease_owner = None
@@ -173,7 +210,9 @@ def _await_provider_event(
     command.status = "dispatching"
     command.provider_status = provider_status
     command.provider_reason = "awaiting_provider_event"
-    command.provider_reference = provider_reference or command.provider_reference
+    command.provider_reference = (
+        provider_reference or command.provider_reference
+    )
     command.result_json = json.dumps(
         result,
         ensure_ascii=False,
@@ -183,11 +222,17 @@ def _await_provider_event(
     command.completed_at = None
     command.next_attempt_at = None
     command.lease_owner = None
-    command.lease_expires_at = now + timedelta(seconds=COMMAND_ACK_TIMEOUT_SECONDS)
+    command.lease_expires_at = now + timedelta(
+        seconds=COMMAND_ACK_TIMEOUT_SECONDS
+    )
     command.updated_at = now
 
 
-def _retry(command: WebchatVoiceSessionAction, *, reason: str) -> None:
+def _retry(
+    command: WebchatVoiceSessionAction,
+    *,
+    reason: str,
+) -> None:
     command.status = "retryable"
     command.provider_status = "failed"
     command.provider_reason = reason
@@ -277,7 +322,9 @@ def _claim_due_commands(
         command.attempt_count += 1
         command.last_attempt_at = now
         command.lease_owner = worker_id[:120]
-        command.lease_expires_at = now + timedelta(seconds=COMMAND_LEASE_SECONDS)
+        command.lease_expires_at = now + timedelta(
+            seconds=COMMAND_LEASE_SECONDS
+        )
         command.updated_at = now
         claimed_ids.append(command.id)
     db.commit()
@@ -299,7 +346,11 @@ def _project_direct_result(
         session.updated_at = now
 
 
-def _dispatch_one(db: Session, *, command_id: int) -> None:
+def _dispatch_one(
+    db: Session,
+    *,
+    command_id: int,
+) -> None:
     command = db.get(WebchatVoiceSessionAction, command_id)
     if command is None or command.status != "dispatching":
         return
@@ -453,8 +504,11 @@ def resolve_voice_command_from_provider_event(
     _finish(
         command,
         command_status="succeeded" if succeeded else "failed",
-        provider_status=(provider_status or ("succeeded" if succeeded else "failed"))[:40],
-        provider_reason=(provider_reason or None),
+        provider_status=(
+            provider_status
+            or ("succeeded" if succeeded else "failed")
+        )[:40],
+        provider_reason=provider_reason or None,
         provider_reference=reference,
         provider_result=provider_result,
     )
@@ -466,7 +520,9 @@ def resolve_voice_command_from_provider_event(
             db,
             session=session,
             event_type=(
-                "voice.command.succeeded" if succeeded else "voice.command.failed"
+                "voice.command.succeeded"
+                if succeeded
+                else "voice.command.failed"
             ),
             payload={
                 "voice_session_id": session.public_id,
