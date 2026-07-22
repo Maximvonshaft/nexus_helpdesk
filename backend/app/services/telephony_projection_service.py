@@ -7,6 +7,7 @@ import secrets
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..models import ChannelAccount, Customer, Market, Tenant
@@ -17,20 +18,34 @@ from ..voice_models import (
     WebchatVoiceParticipant,
     WebchatVoiceSession,
 )
-from ..webchat_models import WebchatConversation, WebchatEvent, WebchatHandoffRequest
+from ..webchat_models import WebchatConversation, WebchatEvent
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from .agent_routing_service import request_handoff
 from .livekit_voice_provider import LiveKitVoiceProvider
 from .mock_voice_provider import MockVoiceProvider
-from .voice_command_dispatcher import resolve_voice_command_from_provider_event
+from .voice_command_dispatcher import (
+    resolve_voice_command_from_provider_event,
+)
 from .voice_provider import VoiceProvider, VoiceProviderError
+from .voice_room_control_service import (
+    dispatch_room_controller,
+    ensure_recording_command,
+)
+from .voice_session_service import _mark_terminal
 
 logger = logging.getLogger(__name__)
 
 _TERMINAL_SESSION_STATUSES = {"ended", "missed", "failed", "cancelled"}
 _SIP_ACTIVE_STATUSES = {"active", "answered", "connected"}
 _SIP_RINGING_STATUSES = {"ringing", "automation", "dialing"}
-_SIP_FAILURE_STATUSES = {"hangup", "disconnected", "failed", "busy", "no-answer", "no_answer"}
+_SIP_FAILURE_STATUSES = {
+    "hangup",
+    "disconnected",
+    "failed",
+    "busy",
+    "no-answer",
+    "no_answer",
+}
 
 
 def _clean(value: Any, *, limit: int = 180) -> str | None:
@@ -39,7 +54,11 @@ def _clean(value: Any, *, limit: int = 180) -> str | None:
 
 
 def _hash(value: str | None) -> str | None:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest() if value else None
+    return (
+        hashlib.sha256(value.encode("utf-8")).hexdigest()
+        if value
+        else None
+    )
 
 
 def _provider() -> VoiceProvider:
@@ -75,20 +94,49 @@ def _event(
     return row
 
 
-def _tenant(account: ChannelAccount, db: Session) -> Tenant:
+def _tenant(
+    account: ChannelAccount,
+    db: Session,
+) -> Tenant:
     row = db.get(Tenant, account.tenant_id)
     if row is None or not row.is_active:
         raise RuntimeError("voice_channel_tenant_unavailable")
     return row
 
 
-def _country_code(account: ChannelAccount, db: Session) -> str:
+def _country_code(
+    account: ChannelAccount,
+    db: Session,
+) -> str:
     if account.market_id is None:
         raise RuntimeError("voice_channel_market_required")
     market = db.get(Market, account.market_id)
     if market is None or market.tenant_id != account.tenant_id:
         raise RuntimeError("voice_channel_market_tenant_mismatch")
-    return str(market.country_code or "").strip().upper()
+    country_code = str(market.country_code or "").strip().upper()
+    if not country_code:
+        raise RuntimeError("voice_channel_country_required")
+    return country_code
+
+
+def _advisory_call_lock(
+    db: Session,
+    *,
+    provider_call_id: str,
+) -> None:
+    if not (
+        db.bind
+        and db.bind.dialect.name.startswith("postgresql")
+    ):
+        return
+    raw = hashlib.sha256(
+        f"nexus.telephony.call\x00{provider_call_id}".encode("utf-8")
+    ).digest()[:8]
+    key = int.from_bytes(raw, byteorder="big", signed=True)
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"),
+        {"key": key},
+    )
 
 
 def _customer(
@@ -112,20 +160,62 @@ def _customer(
         )
     if row is not None:
         return row
+    now = utc_now()
     row = Customer(
         tenant_id=tenant.id,
         tenant_assignment_source="server_provider_mapping",
         tenant_assignment_version="telephony.v1",
-        name=(f"Caller {normalized_phone[-4:]}" if normalized_phone else "Phone caller"),
+        name=(
+            f"Caller {normalized_phone[-4:]}"
+            if normalized_phone
+            else "Phone caller"
+        ),
         phone=normalized_phone,
         phone_normalized=normalized_phone,
-        external_ref=f"livekit-sip:{provider_call_id}"[:120],
-        created_at=utc_now(),
-        updated_at=utc_now(),
+        external_ref=(
+            f"livekit-sip:{tenant.id}:{provider_call_id}"
+        )[:120],
+        created_at=now,
+        updated_at=now,
     )
     db.add(row)
     db.flush()
     return row
+
+
+def _session_by_room_or_call(
+    db: Session,
+    *,
+    room_name: str | None,
+    provider_call_id: str | None,
+    lock: bool = False,
+) -> WebchatVoiceSession | None:
+    if provider_call_id:
+        query = db.query(WebchatVoiceSession).filter(
+            WebchatVoiceSession.provider == "livekit",
+            WebchatVoiceSession.provider_call_id == provider_call_id,
+        )
+        if (
+            lock
+            and db.bind
+            and db.bind.dialect.name.startswith("postgresql")
+        ):
+            query = query.with_for_update()
+        row = query.order_by(WebchatVoiceSession.id.desc()).first()
+        if row is not None:
+            return row
+    if room_name:
+        query = db.query(WebchatVoiceSession).filter(
+            WebchatVoiceSession.provider_room_name == room_name
+        )
+        if (
+            lock
+            and db.bind
+            and db.bind.dialect.name.startswith("postgresql")
+        ):
+            query = query.with_for_update()
+        return query.order_by(WebchatVoiceSession.id.desc()).first()
+    return None
 
 
 def _conversation(
@@ -135,17 +225,23 @@ def _conversation(
     provider_call_id: str,
     caller_number: str | None,
 ) -> tuple[WebchatConversation, ConversationControl]:
-    existing_session = (
-        db.query(WebchatVoiceSession)
-        .filter(WebchatVoiceSession.provider_call_id == provider_call_id)
-        .order_by(WebchatVoiceSession.id.desc())
-        .first()
+    existing_session = _session_by_room_or_call(
+        db,
+        room_name=None,
+        provider_call_id=provider_call_id,
+        lock=True,
     )
     if existing_session is not None:
-        conversation = db.get(WebchatConversation, existing_session.conversation_id)
+        conversation = db.get(
+            WebchatConversation,
+            existing_session.conversation_id,
+        )
         control = (
             db.query(ConversationControl)
-            .filter(ConversationControl.conversation_id == existing_session.conversation_id)
+            .filter(
+                ConversationControl.conversation_id
+                == existing_session.conversation_id
+            )
             .first()
         )
         if conversation is None or control is None:
@@ -165,16 +261,20 @@ def _conversation(
     visitor_token = secrets.token_urlsafe(32)
     conversation = WebchatConversation(
         public_id=public_id,
-        visitor_token_hash=hashlib.sha256(visitor_token.encode("utf-8")).hexdigest(),
+        visitor_token_hash=hashlib.sha256(
+            visitor_token.encode("utf-8")
+        ).hexdigest(),
         visitor_token_expires_at=now + timedelta(hours=24),
         tenant_key=tenant.tenant_key,
         channel_key="voice",
         visitor_name=customer.name,
         visitor_phone=caller_number,
-        visitor_ref=f"livekit-sip:{provider_call_id}"[:160],
+        visitor_ref=(
+            f"livekit-sip:{tenant.id}:{provider_call_id}"
+        )[:160],
         origin="livekit_sip",
         status="open",
-        runtime_session_id=provider_call_id[:120],
+        runtime_session_id=f"sip:{provider_call_id}"[:120],
         handoff_status="none",
         ai_suspended=False,
         last_seen_at=now,
@@ -197,30 +297,6 @@ def _conversation(
     return conversation, control
 
 
-def _session_by_room_or_call(
-    db: Session,
-    *,
-    room_name: str | None,
-    provider_call_id: str | None,
-) -> WebchatVoiceSession | None:
-    query = db.query(WebchatVoiceSession)
-    if provider_call_id:
-        row = (
-            query.filter(WebchatVoiceSession.provider_call_id == provider_call_id)
-            .order_by(WebchatVoiceSession.id.desc())
-            .first()
-        )
-        if row is not None:
-            return row
-    if room_name:
-        return (
-            query.filter(WebchatVoiceSession.provider_room_name == room_name)
-            .order_by(WebchatVoiceSession.id.desc())
-            .first()
-        )
-    return None
-
-
 def _create_inbound_session(
     db: Session,
     *,
@@ -231,6 +307,19 @@ def _create_inbound_session(
     caller_number: str | None,
     called_number: str | None,
 ) -> WebchatVoiceSession:
+    _advisory_call_lock(
+        db,
+        provider_call_id=provider_call_id,
+    )
+    existing = _session_by_room_or_call(
+        db,
+        room_name=room_name,
+        provider_call_id=provider_call_id,
+        lock=True,
+    )
+    if existing is not None:
+        return existing
+
     conversation, _control = _conversation(
         db,
         account=account,
@@ -252,20 +341,32 @@ def _create_inbound_session(
         direction="inbound",
         caller_number_hash=_hash(caller_number),
         called_number=called_number,
-        recording_consent=configuration.recording_policy == "always",
+        recording_consent=(
+            configuration.recording_policy == "always"
+        ),
         recording_status=(
-            "requested" if configuration.recording_policy == "always" else "disabled"
+            "requested"
+            if configuration.recording_policy == "always"
+            else "disabled"
         ),
         transcript_status=(
-            "active" if configuration.transcription_policy == "always" else "disabled"
+            "active"
+            if configuration.transcription_policy == "always"
+            else "disabled"
         ),
         summary_status="pending",
-        ai_agent_status="dispatching" if ai_first else "controller_dispatching",
+        ai_agent_status=(
+            "dispatching"
+            if ai_first
+            else "controller_dispatching"
+        ),
         ai_agent_started_at=now,
         started_at=now,
         ringing_at=None if ai_first else now,
         active_at=now if ai_first else None,
-        expires_at=now + timedelta(seconds=configuration.queue_timeout_seconds),
+        expires_at=now + timedelta(
+            seconds=configuration.queue_timeout_seconds
+        ),
         created_at=now,
         updated_at=now,
     )
@@ -283,11 +384,21 @@ def _create_inbound_session(
             "routing_mode": configuration.routing_mode,
         },
     )
-    _dispatch_room_agent(
+    dispatch_room_controller(
         db,
         session=session,
-        account=account,
-        configuration=configuration,
+        provider=_provider(),
+        agent_name=str(configuration.ai_agent_name or "").strip(),
+        role="ai_controller" if ai_first else "controller",
+        metadata={
+            "tenant_id": account.tenant_id,
+            "direction": "inbound",
+        },
+    )
+    ensure_recording_command(
+        db,
+        session=session,
+        actor=None,
     )
     if not ai_first:
         handoff = request_handoff(
@@ -297,7 +408,9 @@ def _create_inbound_session(
             trigger_type="sip_inbound",
             reason_code="inbound_voice_call",
             reason_text="Inbound phone call waiting for an operator.",
-            recommended_agent_action="Answer the inbound phone call.",
+            recommended_agent_action=(
+                "Answer the inbound phone call."
+            ),
             requested_by_actor_type="provider",
         )
         session.handoff_request_id = handoff.id
@@ -305,59 +418,9 @@ def _create_inbound_session(
     return session
 
 
-def _dispatch_room_agent(
-    db: Session,
-    *,
-    session: WebchatVoiceSession,
-    account: ChannelAccount,
-    configuration: VoiceChannelConfiguration,
-) -> None:
-    agent_name = _clean(configuration.ai_agent_name, limit=160)
-    if not agent_name:
-        raise RuntimeError("telephony_controller_agent_missing")
-    role = "ai_controller" if configuration.routing_mode == "ai_first" else "controller"
-    dispatch = _provider().dispatch_agent(
-        room_name=session.provider_room_name,
-        agent_name=agent_name,
-        metadata={
-            "schema": "nexus.livekit-agent-session.v1",
-            "role": role,
-            "voice_session_id": session.public_id,
-            "conversation_id": session.conversation_id,
-            "channel_account_id": account.id,
-        },
-    )
-    now = utc_now()
-    reference = dispatch.provider_reference or secrets.token_urlsafe(12)
-    db.add(
-        WebchatVoiceParticipant(
-            voice_session_id=session.id,
-            participant_type="ai" if role == "ai_controller" else "controller",
-            provider_identity=f"dispatch:{reference}"[:160],
-            direction="internal",
-            status="invited",
-            metadata_json=json.dumps(
-                {"dispatch_reference": reference, "role": role},
-                sort_keys=True,
-            ),
-            started_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    _event(
-        db,
-        session=session,
-        event_type="voice.controller.dispatched",
-        payload={
-            "voice_session_id": session.public_id,
-            "role": role,
-            "provider_reference": reference,
-        },
-    )
-
-
-def _participant_attributes(participant: dict[str, Any] | None) -> dict[str, str]:
+def _participant_attributes(
+    participant: dict[str, Any] | None,
+) -> dict[str, str]:
     if not isinstance(participant, dict):
         return {}
     attributes = participant.get("attributes")
@@ -370,7 +433,9 @@ def _participant_attributes(participant: dict[str, Any] | None) -> dict[str, str
     }
 
 
-def _participant_metadata(participant: dict[str, Any] | None) -> dict[str, Any]:
+def _participant_metadata(
+    participant: dict[str, Any] | None,
+) -> dict[str, Any]:
     if not isinstance(participant, dict):
         return {}
     raw = participant.get("metadata")
@@ -385,6 +450,31 @@ def _participant_metadata(participant: dict[str, Any] | None) -> dict[str, Any]:
     return {}
 
 
+def _infer_participant_type(
+    *,
+    session: WebchatVoiceSession,
+    identity: str,
+    sip_call_id: str | None,
+    metadata: dict[str, Any],
+) -> tuple[str, str]:
+    if sip_call_id:
+        return "caller", session.direction
+    role = str(
+        metadata.get("role")
+        or metadata.get("nexus_role")
+        or ""
+    ).lower()
+    if role == "controller":
+        return "controller", "internal"
+    if role in {"ai", "ai_controller"}:
+        return "ai", "internal"
+    if identity.startswith("agent_") or identity.startswith("agent:"):
+        return "human", "internal"
+    if identity.startswith("visitor_"):
+        return "visitor", "inbound"
+    return "service", "internal"
+
+
 def _upsert_leg(
     db: Session,
     *,
@@ -392,35 +482,32 @@ def _upsert_leg(
     participant: dict[str, Any],
     joined: bool,
 ) -> WebchatVoiceParticipant:
-    identity = _clean(participant.get("identity"), limit=160)
+    identity = _clean(
+        participant.get("identity"),
+        limit=160,
+    )
     if not identity:
         raise RuntimeError("provider_participant_identity_missing")
     attrs = _participant_attributes(participant)
     metadata = _participant_metadata(participant)
     sip_call_id = _clean(attrs.get("sip.callID"), limit=160)
-    if sip_call_id:
-        participant_type = "caller"
-        direction = session.direction
-    else:
-        role = str(metadata.get("role") or metadata.get("nexus_role") or "").lower()
-        participant_type = (
-            "controller"
-            if role == "controller"
-            else "ai"
-            if role in {"ai", "ai_controller"} or session.mode.endswith("_ai")
-            else "service"
-        )
-        direction = "internal"
     row = (
         db.query(WebchatVoiceParticipant)
         .filter(
             WebchatVoiceParticipant.voice_session_id == session.id,
             WebchatVoiceParticipant.provider_identity == identity,
         )
+        .order_by(WebchatVoiceParticipant.id.desc())
         .first()
     )
     now = utc_now()
     if row is None:
+        participant_type, direction = _infer_participant_type(
+            session=session,
+            identity=identity,
+            sip_call_id=sip_call_id,
+            metadata=metadata,
+        )
         row = WebchatVoiceParticipant(
             voice_session_id=session.id,
             participant_type=participant_type,
@@ -430,7 +517,10 @@ def _upsert_leg(
             status="joined" if joined else "ended",
             metadata_json=json.dumps(
                 {
-                    "role": metadata.get("role") or metadata.get("nexus_role"),
+                    "role": (
+                        metadata.get("role")
+                        or metadata.get("nexus_role")
+                    ),
                     "sip_call_id_hash": _hash(sip_call_id),
                 },
                 sort_keys=True,
@@ -456,55 +546,6 @@ def _upsert_leg(
     return row
 
 
-def _close_handoff_after_call(db: Session, session: WebchatVoiceSession) -> None:
-    if session.handoff_request_id is None:
-        return
-    request_row = db.get(WebchatHandoffRequest, session.handoff_request_id)
-    if request_row is None or request_row.status not in {"requested", "accepted"}:
-        return
-    now = utc_now()
-    request_row.status = "closed"
-    request_row.closed_at = now
-    request_row.lock_version += 1
-    request_row.updated_at = now
-    conversation = db.get(WebchatConversation, session.conversation_id)
-    if conversation is not None:
-        conversation.current_handoff_request_id = None
-        conversation.handoff_status = "closed"
-        conversation.active_agent_id = None
-        conversation.takeover_mode = None
-        conversation.ai_suspended = True
-        conversation.ai_suspended_reason = "voice_call_ended"
-        conversation.updated_at = now
-
-
-def _mark_call_terminal(
-    db: Session,
-    *,
-    session: WebchatVoiceSession,
-    status_value: str,
-    reason: str,
-) -> None:
-    if session.status in _TERMINAL_SESSION_STATUSES:
-        return
-    now = utc_now()
-    session.status = status_value
-    session.ended_at = session.ended_at or now
-    session.ai_agent_ended_at = session.ai_agent_ended_at or now
-    session.ai_agent_status = "ended" if status_value == "ended" else "failed"
-    session.updated_at = now
-    _close_handoff_after_call(db, session)
-    _event(
-        db,
-        session=session,
-        event_type=f"voice.session.{status_value}",
-        payload={
-            "voice_session_id": session.public_id,
-            "reason": reason,
-        },
-    )
-
-
 def _project_sip_status(
     db: Session,
     *,
@@ -512,26 +553,60 @@ def _project_sip_status(
     call_status: str | None,
 ) -> None:
     normalized = str(call_status or "").strip().lower()
-    if not normalized or session.status in _TERMINAL_SESSION_STATUSES:
+    if (
+        not normalized
+        or session.status in _TERMINAL_SESSION_STATUSES
+    ):
         return
     now = utc_now()
     if normalized in _SIP_ACTIVE_STATUSES:
         session.active_at = session.active_at or now
-        if session.handoff_request_id is None or session.mode.endswith("_ai"):
+        if (
+            session.direction == "outbound"
+            or session.handoff_request_id is None
+            or session.mode.endswith("_ai")
+        ):
             session.status = "active"
         session.updated_at = now
-    elif normalized in _SIP_RINGING_STATUSES and session.status == "created":
+    elif (
+        normalized in _SIP_RINGING_STATUSES
+        and session.status == "created"
+    ):
         session.status = "ringing"
         session.ringing_at = session.ringing_at or now
         session.updated_at = now
     elif normalized in _SIP_FAILURE_STATUSES:
-        status_value = "failed" if normalized in {"failed", "busy", "no-answer", "no_answer"} else "ended"
-        _mark_call_terminal(
+        terminal_status = (
+            "failed"
+            if normalized
+            in {"failed", "busy", "no-answer", "no_answer"}
+            else "ended"
+        )
+        _mark_terminal(
             db,
             session=session,
-            status_value=status_value,
+            status_value=terminal_status,
+            ended_by_user_id=None,
             reason=f"sip_status:{normalized}",
         )
+
+
+def _event_room_name(payload: dict[str, Any]) -> str | None:
+    room = payload.get("room")
+    if isinstance(room, dict):
+        name = _clean(room.get("name"), limit=160)
+        if name:
+            return name
+    direct = _clean(payload.get("roomName"), limit=160)
+    if direct:
+        return direct
+    egress = payload.get("egressInfo") or payload.get("egress")
+    if isinstance(egress, dict):
+        return _clean(
+            egress.get("roomName") or egress.get("room_name"),
+            limit=160,
+        )
+    return None
 
 
 def project_livekit_event(
@@ -542,22 +617,41 @@ def project_livekit_event(
     account: ChannelAccount | None,
     configuration: VoiceChannelConfiguration | None,
 ) -> WebchatVoiceSession | None:
-    participant = payload.get("participant") if isinstance(payload.get("participant"), dict) else {}
-    room = payload.get("room") if isinstance(payload.get("room"), dict) else {}
+    participant = (
+        payload.get("participant")
+        if isinstance(payload.get("participant"), dict)
+        else {}
+    )
     attrs = _participant_attributes(participant)
-    room_name = _clean(room.get("name") or payload.get("roomName"), limit=160)
-    provider_call_id = _clean(attrs.get("sip.callID"), limit=160)
+    room_name = _event_room_name(payload)
+    provider_call_id = _clean(
+        attrs.get("sip.callID"),
+        limit=160,
+    )
     called_number = _clean(
-        attrs.get("sip.trunkPhoneNumber") or attrs.get("sip.callTo"),
+        attrs.get("sip.trunkPhoneNumber")
+        or attrs.get("sip.callTo"),
         limit=32,
     )
-    caller_number = _clean(attrs.get("sip.phoneNumber"), limit=60)
-    call_status = _clean(attrs.get("sip.callStatus"), limit=40)
+    caller_number = _clean(
+        attrs.get("sip.phoneNumber"),
+        limit=60,
+    )
+    call_status = _clean(
+        attrs.get("sip.callStatus"),
+        limit=40,
+    )
 
+    if provider_call_id:
+        _advisory_call_lock(
+            db,
+            provider_call_id=provider_call_id,
+        )
     session = _session_by_room_or_call(
         db,
         room_name=room_name,
         provider_call_id=provider_call_id,
+        lock=True,
     )
     if session is None and provider_call_id and room_name:
         if account is None or configuration is None:
@@ -589,10 +683,18 @@ def project_livekit_event(
             joined=True,
         )
         if leg.participant_type in {"ai", "controller"}:
-            session.ai_agent_status = "active" if leg.participant_type == "ai" else "controller_active"
+            session.ai_agent_status = (
+                "active"
+                if leg.participant_type == "ai"
+                else "controller_active"
+            )
             session.ai_agent_worker_id = leg.provider_identity
             session.ai_agent_last_heartbeat_at = utc_now()
-        _project_sip_status(db, session=session, call_status=call_status)
+        _project_sip_status(
+            db,
+            session=session,
+            call_status=call_status,
+        )
         _event(
             db,
             session=session,
@@ -600,7 +702,9 @@ def project_livekit_event(
             payload={
                 "voice_session_id": session.public_id,
                 "participant_type": leg.participant_type,
-                "provider_identity_hash": _hash(leg.provider_identity),
+                "provider_identity_hash": _hash(
+                    leg.provider_identity
+                ),
                 "call_status": call_status,
             },
         )
@@ -612,10 +716,11 @@ def project_livekit_event(
             joined=False,
         )
         if leg.participant_type == "caller":
-            _mark_call_terminal(
+            _mark_terminal(
                 db,
                 session=session,
                 status_value="ended",
+                ended_by_user_id=None,
                 reason="caller_participant_left",
             )
         elif leg.participant_type in {"ai", "controller"}:
@@ -629,34 +734,56 @@ def project_livekit_event(
             payload={
                 "voice_session_id": session.public_id,
                 "participant_type": leg.participant_type,
-                "provider_identity_hash": _hash(leg.provider_identity),
+                "provider_identity_hash": _hash(
+                    leg.provider_identity
+                ),
             },
         )
     elif normalized_event in {"room_finished", "room_ended"}:
-        _mark_call_terminal(
+        _mark_terminal(
             db,
             session=session,
             status_value="ended",
+            ended_by_user_id=None,
             reason=normalized_event,
         )
-    elif normalized_event in {"egress_started", "egress_updated", "egress_ended"}:
+    elif normalized_event in {
+        "egress_started",
+        "egress_updated",
+        "egress_ended",
+    }:
         egress = payload.get("egressInfo") or payload.get("egress") or {}
-        egress_id = _clean(egress.get("egressId") or egress.get("egress_id"), limit=180)
-        egress_status = str(egress.get("status") or "").strip().lower()
-        session.recording_provider_ref = egress_id or session.recording_provider_ref
+        egress_id = _clean(
+            egress.get("egressId") or egress.get("egress_id"),
+            limit=180,
+        )
+        egress_status = str(
+            egress.get("status") or ""
+        ).strip().lower()
+        session.recording_provider_ref = (
+            egress_id or session.recording_provider_ref
+        )
         if normalized_event == "egress_started":
             session.recording_status = "recording"
         elif normalized_event == "egress_ended":
             session.recording_status = (
-                "recorded" if egress_status not in {"failed", "aborted"} else "failed"
+                "recorded"
+                if egress_status not in {"failed", "aborted"}
+                else "failed"
             )
         else:
-            session.recording_status = egress_status[:40] or session.recording_status
+            session.recording_status = (
+                egress_status[:40]
+                or session.recording_status
+            )
         session.updated_at = utc_now()
         _event(
             db,
             session=session,
-            event_type=f"voice.recording.{normalized_event.removeprefix('egress_')}",
+            event_type=(
+                "voice.recording."
+                f"{normalized_event.removeprefix('egress_')}"
+            ),
             payload={
                 "voice_session_id": session.public_id,
                 "provider_reference": egress_id,
@@ -664,7 +791,11 @@ def project_livekit_event(
             },
         )
     else:
-        _project_sip_status(db, session=session, call_status=call_status)
+        _project_sip_status(
+            db,
+            session=session,
+            call_status=call_status,
+        )
     db.flush()
     return session
 
@@ -674,21 +805,35 @@ def project_controller_event(
     *,
     payload: dict[str, Any],
 ) -> WebchatVoiceSession | None:
-    room_name = _clean(payload.get("room_name"), limit=160)
+    room_name = _clean(
+        payload.get("room_name"),
+        limit=160,
+    )
     session = _session_by_room_or_call(
         db,
         room_name=room_name,
         provider_call_id=None,
+        lock=True,
     )
     if session is None:
         return None
-    event_type = str(payload.get("event_type") or "").strip().lower()
-    controller_identity = _clean(payload.get("controller_identity"), limit=160)
+    event_type = str(
+        payload.get("event_type") or ""
+    ).strip().lower()
+    controller_identity = _clean(
+        payload.get("controller_identity"),
+        limit=160,
+    )
     now = utc_now()
-    if event_type in {"controller.joined", "controller.heartbeat"} and controller_identity:
+    if (
+        event_type in {"controller.joined", "controller.heartbeat"}
+        and controller_identity
+    ):
         participant = {
             "identity": controller_identity,
-            "metadata": {"role": str(payload.get("role") or "controller")},
+            "metadata": {
+                "role": str(payload.get("role") or "controller")
+            },
             "attributes": {},
         }
         leg = _upsert_leg(
@@ -703,13 +848,17 @@ def project_controller_event(
         session.ai_agent_worker_id = controller_identity
         session.ai_agent_last_heartbeat_at = now
         session.ai_agent_status = (
-            "active" if leg.participant_type == "ai" else "controller_active"
+            "active"
+            if leg.participant_type == "ai"
+            else "controller_active"
         )
         session.updated_at = now
     elif event_type == "controller.left" and controller_identity:
         participant = {
             "identity": controller_identity,
-            "metadata": {"role": str(payload.get("role") or "controller")},
+            "metadata": {
+                "role": str(payload.get("role") or "controller")
+            },
             "attributes": {},
         }
         _upsert_leg(
@@ -722,17 +871,29 @@ def project_controller_event(
         session.ai_agent_ended_at = now
         session.updated_at = now
     elif event_type in {"command.succeeded", "command.failed"}:
-        reference = _clean(payload.get("command_reference"), limit=180)
+        reference = _clean(
+            payload.get("command_reference"),
+            limit=180,
+        )
         if reference:
             resolve_voice_command_from_provider_event(
                 db,
                 command_reference=reference,
-                succeeded=event_type == "command.succeeded",
-                provider_status=str(payload.get("provider_status") or event_type.split(".")[-1]),
-                provider_reason=_clean(payload.get("provider_reason"), limit=160),
+                succeeded=(event_type == "command.succeeded"),
+                provider_status=str(
+                    payload.get("provider_status")
+                    or event_type.split(".")[-1]
+                ),
+                provider_reason=_clean(
+                    payload.get("provider_reason"),
+                    limit=160,
+                ),
                 provider_result=(
                     payload.get("safe_result")
-                    if isinstance(payload.get("safe_result"), dict)
+                    if isinstance(
+                        payload.get("safe_result"),
+                        dict,
+                    )
                     else {}
                 ),
             )
@@ -740,7 +901,10 @@ def project_controller_event(
         _project_sip_status(
             db,
             session=session,
-            call_status=_clean(payload.get("call_status"), limit=40),
+            call_status=_clean(
+                payload.get("call_status"),
+                limit=40,
+            ),
         )
     _event(
         db,
@@ -750,7 +914,10 @@ def project_controller_event(
             "voice_session_id": session.public_id,
             "event_type": event_type,
             "controller_identity_hash": _hash(controller_identity),
-            "command_reference": _clean(payload.get("command_reference"), limit=180),
+            "command_reference": _clean(
+                payload.get("command_reference"),
+                limit=180,
+            ),
         },
     )
     db.flush()
