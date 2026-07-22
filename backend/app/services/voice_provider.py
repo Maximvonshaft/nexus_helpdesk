@@ -15,6 +15,13 @@ class VoiceParticipantToken:
 
 @dataclass(frozen=True)
 class VoiceProviderActionResult:
+    """Provider dispatch result.
+
+    ``status=succeeded`` means the provider API completed the requested action.
+    ``status=awaiting_event`` means a room controller accepted the command and a
+    normalized provider/controller event must confirm the final outcome.
+    """
+
     status: str
     provider_status: str
     provider_reason: str | None = None
@@ -64,7 +71,9 @@ class VoiceProvider:
         target: str | None = None,
         digits: str | None = None,
         participant_identity: str | None = None,
+        controller_identity: str | None = None,
         outbound_trunk_id: str | None = None,
+        recording_reference: str | None = None,
         idempotency_key: str | None = None,
     ) -> VoiceProviderActionResult:
         raise NotImplementedError
