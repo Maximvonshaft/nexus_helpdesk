@@ -1,0 +1,39 @@
+name: Temporary PR800 Focused Test Log
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/_temporary-pr800-test-log.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download failed job log tail
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_ID: "88922773827"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/jobs/${JOB_ID}/logs" \
+            --output /tmp/focused-test.log
+          tail -n 320 /tmp/focused-test.log | tee /tmp/focused-test-tail.log
+      - name: Upload failure tail
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr800-focused-test-failure-tail
+          path: /tmp/focused-test-tail.log
+          if-no-files-found: error
+          retention-days: 1
