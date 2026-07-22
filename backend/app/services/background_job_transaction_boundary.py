@@ -23,10 +23,8 @@ def _claim_token(worker_id: str | None) -> str:
 
 
 def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
-    """Renew only the attempt that still owns the processing row."""
     if not _is_sqlalchemy_session(db):
         return True
-
     from . import background_jobs
 
     now = background_jobs.utc_now()
@@ -34,7 +32,8 @@ def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
         update(background_jobs.BackgroundJob)
         .where(
             background_jobs.BackgroundJob.id == job_id,
-            background_jobs.BackgroundJob.status == background_jobs.JobStatus.processing,
+            background_jobs.BackgroundJob.status
+            == background_jobs.JobStatus.processing,
             background_jobs.BackgroundJob.locked_by == lease_token,
         )
         .values(locked_at=now, updated_at=now)
@@ -50,18 +49,27 @@ def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
     return True
 
 
+def commit_webchat_agent_provider_boundary(db: Any) -> None:
+    """Persist bridge state and release database locks before Provider I/O.
+
+    WebChat Agent generation is an external call that may overlap an operator
+    takeover. Keeping the bridge-state transaction open would hold Conversation
+    and Agent-turn locks for the entire Provider latency window. This explicit
+    attempt boundary makes the in-flight state durable, releases those locks,
+    and lets the post-Provider phase re-read committed human ownership before a
+    public reply is persisted.
+    """
+
+    if not _is_sqlalchemy_session(db):
+        return
+    db.commit()
+
+
 def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
-    """Read the durable owner without flushing a possibly terminal ORM object."""
     if not _is_sqlalchemy_session(db):
         return True
-
     from . import background_jobs
 
-    # Read through an independent connection. The worker Session may already
-    # hold uncommitted terminal ORM changes (including clearing ``locked_by``),
-    # while the committed row must still prove that this attempt owns the lease.
-    # An independent connection also observes a concurrent lease transfer and
-    # therefore preserves fencing across PostgreSQL and SQLite test databases.
     bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
     if bind is None:
         return False
@@ -76,8 +84,7 @@ def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
         ).first()
     if row is None:
         return False
-    locked_by = row[0]
-    status = row[1]
+    locked_by, status = row[0], row[1]
     status_value = status.value if hasattr(status, "value") else str(status)
     return (
         locked_by == lease_token
@@ -105,7 +112,6 @@ def _recover_unhandled_background_job_exception(
             },
         )
         return None
-
     job = (
         db.query(background_jobs.BackgroundJob)
         .filter(background_jobs.BackgroundJob.id == job_id)
@@ -122,7 +128,6 @@ def _recover_unhandled_background_job_exception(
             },
         )
         return None
-
     background_jobs._mark_retry(job, _exception_reason(exc))
     LOGGER.warning(
         "background_job_attempt_exception_recovered",
@@ -187,13 +192,42 @@ def _process_claimed_jobs_with_attempt_boundary(
     return processed
 
 
+def _dispatch_realtime_control_work(
+    db: Any,
+    *,
+    limit: int | None,
+    worker_id: str | None,
+) -> list[tuple[str, int]]:
+    """Reuse the background Worker for durable voice and Provider-event work."""
+
+    if not _is_sqlalchemy_session(db):
+        return []
+    from .telephony_event_service import reprocess_due_telephony_events
+    from .voice_command_dispatcher import dispatch_pending_voice_commands
+
+    bounded_limit = max(1, min(int(limit or 20), 100))
+    command_ids = dispatch_pending_voice_commands(
+        db,
+        worker_id=(worker_id or "background-worker")[:120],
+        limit=bounded_limit,
+    )
+    event_ids = reprocess_due_telephony_events(
+        db,
+        limit=bounded_limit,
+    )
+    return [
+        *(("voice_command", int(command_id)) for command_id in command_ids),
+        *(("telephony_event", int(event_id)) for event_id in event_ids),
+    ]
+
+
 def dispatch_pending_background_jobs(
     db: Any,
     *,
     limit: int | None = None,
     worker_id: str | None = None,
 ) -> list[Any]:
-    """Dispatch only the queues owned by the canonical background Worker."""
+    """Dispatch all work owned by the one canonical background Worker."""
     from . import background_jobs
 
     if background_jobs.settings.email_mailbox_sync_enabled:
@@ -213,18 +247,25 @@ def dispatch_pending_background_jobs(
         limit=limit,
         worker_id=lease_token,
         job_types=[
-            background_jobs.AUTO_REPLY_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
             background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,
             background_jobs.EMAIL_MAILBOX_SYNC_JOB,
         ],
     )
-    return _process_claimed_jobs_with_attempt_boundary(
+    processed = _process_claimed_jobs_with_attempt_boundary(
         db,
         claimed,
         lease_token=lease_token,
     )
+    processed.extend(
+        _dispatch_realtime_control_work(
+            db,
+            limit=limit,
+            worker_id=worker_id,
+        )
+    )
+    return processed
 
 
 def dispatch_pending_webchat_ai_reply_jobs(
