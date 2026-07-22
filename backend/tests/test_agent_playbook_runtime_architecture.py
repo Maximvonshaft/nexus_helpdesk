@@ -79,7 +79,10 @@ def test_agent_turn_contract_distinguishes_tool_and_final_turns() -> None:
                 "customer_reply": "I already answered.",
                 "next_action": "call_tool",
                 "tool_calls": [
-                    {"tool_name": "knowledge.search", "arguments": {"query": "x"}}
+                    {
+                        "tool_name": "knowledge.search",
+                        "arguments": {"query": "x"},
+                    }
                 ],
             }
         )
@@ -88,7 +91,16 @@ def test_agent_turn_contract_distinguishes_tool_and_final_turns() -> None:
 def test_output_contract_does_not_infer_business_truth_from_words() -> None:
     parsed = OutputContracts.validate_and_parse(
         "nexus.agent_turn.v1",
-        '{"customer_reply":"您的包裹正在运输中。","intent":"shipment_tracking","next_action":"reply","tool_calls":[],"handoff_required":false}',
+        json.dumps(
+            {
+                "customer_reply": "您的包裹正在运输中。",
+                "intent": "shipment_tracking",
+                "next_action": "reply",
+                "tool_calls": [],
+                "handoff_required": False,
+            },
+            ensure_ascii=False,
+        ),
     )
     assert parsed["customer_reply"] == "您的包裹正在运输中。"
     credential_text = ("Bear" + "er ") + ("a" * 26)
@@ -120,11 +132,7 @@ def _bind_release_runtime(monkeypatch) -> None:
         "schema_version": "nexus.agent_release.v1",
         "source": "deployment",
         "tenant_key": "tenant",
-        "release": {
-            "id": 1,
-            "version": 1,
-            "manifest_sha256": "a" * 64,
-        },
+        "release": {"id": 1, "version": 1, "manifest_sha256": "a" * 64},
         "deployment": {"id": 1, "environment": "production"},
         "manifest": {"integrations": [], "knowledge": []},
         "resolved": {"allowed_tools": ["speedaf.order.query"]},
@@ -156,10 +164,26 @@ def _bind_release_runtime(monkeypatch) -> None:
         final_action=None,
         error_code=None,
     )
-    monkeypatch.setattr(agent_runtime, "start_agent_run", lambda *_args, **_kwargs: run)
-    monkeypatch.setattr(agent_runtime, "bind_agent_run_release", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(agent_runtime, "append_agent_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(agent_runtime, "finish_agent_run", lambda *_args, **_kwargs: run)
+    monkeypatch.setattr(
+        agent_runtime,
+        "start_agent_run",
+        lambda *_args, **_kwargs: run,
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "bind_agent_run_release",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "append_agent_event",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        agent_runtime,
+        "finish_agent_run",
+        lambda *_args, **_kwargs: run,
+    )
     monkeypatch.setattr(
         agent_runtime,
         "_runtime_policy",
@@ -315,17 +339,19 @@ def test_canonical_agent_runtime_has_no_static_skill_chain() -> None:
     assert "prompt_playbook_catalog" in runtime
 
 
-def test_webchat_agent_callers_use_configured_persona_and_server_access_policy() -> None:
-    for relative in (
-        "backend/app/services/webchat_ai_service.py",
-        "backend/app/services/conversation_ai_service.py",
-    ):
-        source = (ROOT / relative).read_text(encoding="utf-8")
-        assert "resolve_webchat_agent_access" in source
-        assert "build_agent_context" in source
-        assert "_permissions_for_tools" not in source
-        assert '"assistant_name": "Speedy"' not in source
-        assert '"brand": "Speedaf"' not in source
+def test_webchat_uses_one_configured_agent_reply_authority() -> None:
+    path = ROOT / "backend/app/services/webchat_ai_service.py"
+    source = path.read_text(encoding="utf-8")
+    assert path.exists()
+    assert not (ROOT / "backend/app/services/conversation_ai_service.py").exists()
+    assert "resolve_webchat_agent_access" in source
+    assert "build_agent_context" in source
+    assert "ticket_id: int | None" in source
+    assert "_persist_ticket_reply(" in source
+    assert "_persist_ticketless_reply(" in source
+    assert "_permissions_for_tools" not in source
+    assert '"assistant_name": "Speedy"' not in source
+    assert '"brand": "Speedaf"' not in source
 
 
 def test_canonical_executor_separates_execution_arguments_from_audit_projection() -> None:
