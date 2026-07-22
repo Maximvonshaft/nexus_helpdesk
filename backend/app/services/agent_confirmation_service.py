@@ -20,6 +20,19 @@ ConfirmationDecision = Literal["confirmed", "denied", "ambiguous"]
 
 _DEFAULT_TTL_SECONDS = 10 * 60
 _MAX_TTL_SECONDS = 30 * 60
+_RECENT_RESULT_SECONDS = 15 * 60
+_SENSITIVE_KEYS = {
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+    "credential",
+    "api_key",
+    "raw_payload",
+    "provider_payload",
+    "encrypted_arguments",
+}
 
 _POSITIVE_RESPONSES = {
     "yes",
@@ -160,6 +173,27 @@ def _safe_summary(tool_name: str, arguments: dict[str, Any], digest: str) -> dic
     }
 
 
+def _bounded_safe_value(value: Any, *, depth: int = 0) -> Any:
+    if depth > 5:
+        return "[TRUNCATED]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return " ".join(value.split())[:1000]
+    if isinstance(value, (list, tuple, set)):
+        return [
+            _bounded_safe_value(item, depth=depth + 1)
+            for item in list(value)[:20]
+        ]
+    if isinstance(value, dict):
+        return {
+            str(key)[:120]: _bounded_safe_value(item, depth=depth + 1)
+            for key, item in list(value.items())[:40]
+            if str(key).strip().lower() not in _SENSITIVE_KEYS
+        }
+    return str(value)[:240]
+
+
 def _active_query(db: Session, *, conversation_id: int):
     query = db.query(AgentToolConfirmation).filter(
         AgentToolConfirmation.conversation_id == conversation_id,
@@ -266,18 +300,37 @@ def resolve_confirmation_from_customer_message(
     return confirmation_projection(row, decision=decision)
 
 
+def _recent_confirmation(
+    db: Session,
+    *,
+    conversation_id: int,
+) -> AgentToolConfirmation | None:
+    cutoff = utc_now() - timedelta(seconds=_RECENT_RESULT_SECONDS)
+    return (
+        db.query(AgentToolConfirmation)
+        .filter(
+            AgentToolConfirmation.conversation_id == conversation_id,
+            AgentToolConfirmation.status.in_(["consumed", "denied", "expired"]),
+            AgentToolConfirmation.updated_at >= cutoff,
+        )
+        .order_by(AgentToolConfirmation.updated_at.desc(), AgentToolConfirmation.id.desc())
+        .first()
+    )
+
+
 def active_confirmation_context(
     db: Session,
     *,
     conversation: WebchatConversation,
 ) -> dict[str, Any] | None:
     row = _active_query(db, conversation_id=conversation.id).first()
-    if row is None:
-        return None
-    if expire_confirmation_if_needed(row):
-        db.flush()
-        return None
-    return confirmation_projection(row)
+    if row is not None:
+        if expire_confirmation_if_needed(row):
+            db.flush()
+        else:
+            return confirmation_projection(row)
+    recent = _recent_confirmation(db, conversation_id=conversation.id)
+    return confirmation_projection(recent) if recent is not None else None
 
 
 def confirmation_projection(
@@ -326,6 +379,28 @@ def validate_confirmation_grant(
         return None
     if row.arguments_sha256 != tool_arguments_sha256(arguments):
         return None
+    return row
+
+
+def record_confirmation_execution_result(
+    db: Session,
+    *,
+    confirmation_id: str,
+    execution: dict[str, Any],
+) -> AgentToolConfirmation | None:
+    query = db.query(AgentToolConfirmation).filter(
+        AgentToolConfirmation.public_id == confirmation_id
+    )
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+        query = query.with_for_update()
+    row = query.first()
+    if row is None:
+        return None
+    summary = dict(row.safe_summary_json or {})
+    summary["execution"] = _bounded_safe_value(execution)
+    row.safe_summary_json = summary
+    row.updated_at = utc_now()
+    db.flush()
     return row
 
 
