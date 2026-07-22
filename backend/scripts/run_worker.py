@@ -26,6 +26,9 @@ from app.services.observability import (  # noqa: E402
     record_worker_result,
 )
 from app.services.queue_health import collect_queue_health  # noqa: E402
+from app.services.telephony_event_service import (  # noqa: E402
+    reprocess_due_telephony_events,
+)
 from app.services.voice_command_dispatcher import (  # noqa: E402
     dispatch_pending_voice_commands,
 )
@@ -106,6 +109,19 @@ def _run_background(worker_id: str) -> int:
                 len(voice_command_ids),
             )
         processed += len(voice_command_ids)
+    with db_context() as db:
+        if _is_sqlalchemy_session(db):
+            telephony_event_ids = reprocess_due_telephony_events(db)
+        else:
+            telephony_event_ids = []
+        if telephony_event_ids:
+            record_worker_result(
+                worker_id,
+                "telephony_event",
+                "processed",
+                len(telephony_event_ids),
+            )
+        processed += len(telephony_event_ids)
     return processed
 
 
