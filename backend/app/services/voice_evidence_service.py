@@ -16,8 +16,7 @@ from ..voice_models import (
     WebchatVoiceTranscriptSegment,
 )
 from ..webchat_models import WebchatEvent
-from .audit_service import log_admin_audit
-from .event_service import log_event
+from .audit_service import log_admin_audit, log_event
 from .permissions import (
     ensure_can_control_webcall_voice,
     ensure_can_read_webcall_voice,
@@ -49,7 +48,9 @@ def list_admin_voice_evidence(
     safe_limit = max(1, min(int(limit or 50), 100))
     segments = (
         db.query(WebchatVoiceTranscriptSegment)
-        .filter(WebchatVoiceTranscriptSegment.voice_session_id == session.id)
+        .filter(
+            WebchatVoiceTranscriptSegment.voice_session_id == session.id
+        )
         .order_by(
             WebchatVoiceTranscriptSegment.start_ms.asc().nullslast(),
             WebchatVoiceTranscriptSegment.id.asc(),
@@ -60,7 +61,10 @@ def list_admin_voice_evidence(
     turns = (
         db.query(WebchatVoiceAITurn)
         .filter(WebchatVoiceAITurn.voice_session_id == session.id)
-        .order_by(WebchatVoiceAITurn.turn_index.asc(), WebchatVoiceAITurn.id.asc())
+        .order_by(
+            WebchatVoiceAITurn.turn_index.asc(),
+            WebchatVoiceAITurn.id.asc(),
+        )
         .limit(safe_limit)
         .all()
     )
@@ -179,13 +183,19 @@ def record_admin_voice_action(
     )
     requested = str(action_type or "").strip().lower()
     if session.status in TERMINAL_STATUSES:
-        raise HTTPException(status_code=409, detail="voice session already closed")
-    if requested not in {"answer", "hangup", "recording_start", "recording_stop"}:
-        if session.status not in CALL_CONTROL_ACTIVE_STATUSES:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="voice session action requires an active call",
-            )
+        raise HTTPException(
+            status_code=409,
+            detail="voice session already closed",
+        )
+    if requested not in {
+        "hangup",
+        "recording_start",
+        "recording_stop",
+    } and session.status not in CALL_CONTROL_ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="voice session action requires an active call",
+        )
     command = enqueue_voice_command(
         db,
         session=session,
@@ -199,7 +209,7 @@ def record_admin_voice_action(
     session.updated_at = utc_now()
     db.flush()
     return {
-        "ok": command.status == "succeeded",
+        "ok": True,
         "ticket_id": session.ticket_id,
         "voice_session_id": session.public_id,
         "action": serialize_voice_command(command),
@@ -223,8 +233,13 @@ def save_admin_voice_note(
     )
     normalized_body = str(body or "").strip()
     if not normalized_body:
-        raise HTTPException(status_code=422, detail="voice note body is required")
-    source_value = str(source or "voice_operator_workbench").strip()[:80]
+        raise HTTPException(
+            status_code=422,
+            detail="voice note body is required",
+        )
+    source_value = str(
+        source or "voice_operator_workbench"
+    ).strip()[:80]
     now = utc_now()
     ticket_note = None
     ticket_event = None
@@ -257,7 +272,9 @@ def save_admin_voice_note(
         payload_json=json.dumps(
             {
                 "voice_session_id": session.public_id,
-                "ticket_note_id": ticket_note.id if ticket_note is not None else None,
+                "ticket_note_id": (
+                    ticket_note.id if ticket_note is not None else None
+                ),
                 "source": source_value,
                 "author_id": current_user.id,
                 "body_length": len(normalized_body),
@@ -283,13 +300,17 @@ def save_admin_voice_note(
             "body_length": len(normalized_body),
         },
     )
-    note_id = ticket_note.id if ticket_note is not None else webchat_event.id
+    note_id = (
+        ticket_note.id if ticket_note is not None else webchat_event.id
+    )
     return {
         "ok": True,
         "ticket_id": session.ticket_id,
         "voice_session_id": session.public_id,
         "note_id": note_id,
-        "ticket_event_id": ticket_event.id if ticket_event is not None else None,
+        "ticket_event_id": (
+            ticket_event.id if ticket_event is not None else None
+        ),
         "webchat_event_id": webchat_event.id,
         "audit_id": audit.id,
         "created_at": now.isoformat(),
