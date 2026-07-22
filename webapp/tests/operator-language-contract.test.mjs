@@ -50,7 +50,7 @@ test('task-oriented labels remain present on high-risk administration surfaces',
 test('technical identifiers use named progressive disclosure on governed editors', () => {
   const requirements = {
     'webapp/src/features/agent-control/OverviewPanel.tsx': '系统信息',
-    'webapp/src/features/agent-control/ToolsIntegrationsPanel.tsx': '连接详情',
+    'webapp/src/features/agent-control/ToolsIntegrationsPanel.tsx': '连接设置',
     'webapp/src/features/agent-control/RunExplorerPanel.tsx': '运行详情',
     'webapp/src/features/administration/UserGovernance.tsx': '权限代码',
   }
