@@ -1,0 +1,59 @@
+name: Temporary Export Governance Source
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/_temporary-export-governance-source.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: temporary-export-governance-source
+  cancel-in-progress: true
+
+jobs:
+  export:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Export source-only diff
+        shell: bash
+        env:
+          EXPECTED_MAIN: 613f712bf328e21ffc7a4036a1e7a9cb34e42d49
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin main
+          observed_main="$(git rev-parse origin/main)"
+          test "$observed_main" = "$EXPECTED_MAIN"
+          mkdir -p /tmp/governance-source
+          git diff --binary "$EXPECTED_MAIN"...HEAD -- backend webapp \
+            > /tmp/governance-source/current-governance.patch
+          test -s /tmp/governance-source/current-governance.patch
+          git diff --name-only "$EXPECTED_MAIN"...HEAD -- backend webapp \
+            > /tmp/governance-source/current-files.txt
+          sha256sum /tmp/governance-source/current-governance.patch \
+            > /tmp/governance-source/current-governance.patch.sha256
+          printf 'head=%s\nmain=%s\n' "$(git rev-parse HEAD)" "$observed_main" \
+            > /tmp/governance-source/identity.txt
+          cat /tmp/governance-source/identity.txt
+          cat /tmp/governance-source/current-governance.patch.sha256
+          cat /tmp/governance-source/current-files.txt
+
+      - name: Upload source diff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: governance-current-source
+          path: /tmp/governance-source
+          if-no-files-found: error
+          retention-days: 1
