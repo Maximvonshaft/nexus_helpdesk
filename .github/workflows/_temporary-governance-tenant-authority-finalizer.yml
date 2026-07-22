@@ -2,6 +2,7 @@ name: Temporary Governance Tenant Authority Finalizer
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
     branches: [main]
     paths:
       - .github/temporary-governance-tenant-authority-finalizer.py
