@@ -12,49 +12,6 @@ def bootstrap_agent_tool_contracts() -> None:
     if _BOOTSTRAPPED:
         return
     contracts = {
-        "customer.confirmation.request": registry.ToolContract(
-            name="customer.confirmation.request",
-            classification="system",
-            description=(
-                "Ask the customer to confirm one exact confirmation-required Tool "
-                "action. The server binds the challenge to the target Tool and "
-                "argument digest; a later customer response cannot authorize any "
-                "other action."
-            ),
-            input_schema=registry._schema(
-                {
-                    "tool_name": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 160,
-                    },
-                    "arguments": {
-                        "type": "object",
-                        "maxProperties": 100,
-                    },
-                    "question": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 1000,
-                    },
-                },
-                required=("tool_name", "arguments", "question"),
-            ),
-            required_permissions=("webchat:confirmation:create",),
-            idempotency_key_strategy=(
-                "active_confirmation_per_conversation_and_argument_digest"
-            ),
-            risk_level="low",
-            allowed_auto_execution_mode="auto",
-            controlled_action_required=True,
-            customer_visible_result=True,
-            redaction_requirements=(
-                "encrypted_target_arguments",
-                "safe_argument_keys_only",
-                "no_secret",
-                "bounded_question",
-            ),
-        ),
         "integration.search": registry.ToolContract(
             name="integration.search",
             classification="read",
