@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import hashlib
 import json
@@ -17,9 +18,14 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 CANONICAL_WORKFLOW = ".github/workflows/canonical-acceptance.yml"
 CURRENT_COMPATIBILITY_REGISTRY = "config/governance/legacy-surface-domains.v2.json"
+RATIONALIZATION_INVENTORY = "docs/ai/codebase-rationalization-inventory.v2.yaml"
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
-PINNED_ACTION = re.compile(r"^\s*-?\s*uses:\s*[^\s@]+@[0-9a-f]{40}(?:\s+#.*)?$")
-EXACT_REQUIREMENT = re.compile(r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s;]+(?:\s*;.*)?$")
+PINNED_ACTION = re.compile(
+    r"^\s*-?\s*uses:\s*[^\s@]+@[0-9a-f]{40}(?:\s+#.*)?$"
+)
+EXACT_REQUIREMENT = re.compile(
+    r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s;]+(?:\s*;.*)?$"
+)
 
 RETIRED_PATHS = (
     "frontend",
@@ -43,17 +49,24 @@ RETIRED_PATHS = (
     "webapp/src/features/runtime/runtime-evidence-audit.css",
     "webapp/src/lib/cn.ts",
     "backend/app/services/outbound_adapters/whatsapp.py",
-    "backend/app/static/webchat/live-voice-capture-worklet.js",
-    "backend/app/services/live_voice_orchestration_service.py",
-    "backend/app/api/webchat_live_voice.py",
     "backend/app/services/webchat_ai_decision_runtime/prompt_builder.py",
     "backend/app/services/canonical_ticket_service.py",
     "backend/app/services/canonical_operator_work_queue.py",
     "backend/app/services/canonical_webchat_handoff_service.py",
     "backend/app/services/control_tower_service.py",
     "backend/app/services/qa_training_service.py",
+    "backend/app/services/conversation_ai_service.py",
+    "backend/app/services/llm_service.py",
+    "backend/app/services/auto_reply_service.py",
     "backend/app/api/osr_admin.py",
     "backend/app/api/integration.py",
+    "backend/scripts/run_api_manual.py",
+    "backend/scripts/run_worker_manual.py",
+    "deploy/systemd/nexusdesk-worker.service",
+    "docs/legacy-frontend-deprecation.md",
+    "docs/backend-refactor-roadmap.md",
+    "docs/backend-module-split-plan.md",
+    "docs/ai/codebase-rationalization-inventory.v1.yaml",
     "config/governance/legacy-surface-domains.v1.json",
     "deploy/docker-compose.server.yml",
     "deploy/docker-compose.candidate.yml",
@@ -107,10 +120,19 @@ REQUIRED_PATHS = (
     "backend/app/api/ticket_closure.py",
     "backend/app/services/operator_work_queue.py",
     "backend/app/services/operator_work_queue_core.py",
+    "backend/app/services/webchat_session_identity.py",
+    "backend/app/services/conversation_first_service.py",
+    "backend/app/services/webchat_message_service.py",
+    "backend/app/services/webchat_service.py",
+    "backend/app/services/webchat_ai_orchestration_service.py",
+    "backend/app/services/webchat_ai_service.py",
+    "backend/app/services/webchat_runtime_ai_service.py",
+    "backend/app/services/conversation_operator_service.py",
     "backend/app/services/webchat_handoff_service.py",
     "backend/app/services/webchat_handoff_service_core.py",
     "backend/app/services/worker_progress.py",
     "backend/alembic/versions/20260720_0063_retire_legacy_channel_persistence.py",
+    "backend/alembic/versions/20260722_0074_retire_auto_reply_jobs.py",
     "backend/tests/test_retired_persistence_absence.py",
     "backend/scripts/run_worker.py",
     "backend/scripts/run_worker_supervised.py",
@@ -132,7 +154,6 @@ REQUIRED_PATHS = (
     CURRENT_COMPATIBILITY_REGISTRY,
     "scripts/ci/check_legacy_surface_registry.py",
     "scripts/ci/check_agent_runtime_residue.py",
-    "scripts/ci/check_telephony_authority_residue.py",
     "scripts/qualification/service_authority.py",
     "scripts/qualification/route_authority.py",
     "scripts/qualification/database_capacity.py",
@@ -143,7 +164,7 @@ REQUIRED_PATHS = (
     "deploy/docker-compose.controlled.yml",
     "deploy/docker-compose.controlled-postgres.yml",
     "deploy/nexus-prod-compose.sh",
-    "docs/ai/codebase-rationalization-inventory.v1.yaml",
+    RATIONALIZATION_INVENTORY,
 )
 
 FOCUSED_BACKEND_TESTS = (
@@ -154,9 +175,25 @@ FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_migration_0062_runtime_contract_provenance.py",
     "backend/tests/test_retired_persistence_absence.py",
     "backend/tests/test_migration_0063_legacy_channel_retirement.py",
+    "backend/tests/test_agent_runtime_residue.py",
     "backend/tests/test_controlled_least_privilege.py",
     "backend/tests/test_supply_chain_qualification.py",
 )
+
+TEXT_SUFFIXES = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".mjs",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".md",
+    ".sh",
+    ".service",
+    ".env",
+}
 
 
 class VerificationCommandError(RuntimeError):
@@ -280,13 +317,19 @@ def _workflow_failures() -> list[str]:
         "continue-on-error: true",
     ):
         if forbidden in content:
-            failures.append(f"canonical workflow contains forbidden marker: {forbidden}")
+            failures.append(
+                f"canonical workflow contains forbidden marker: {forbidden}"
+            )
     for line in (
         line for line in content.splitlines() if re.match(r"^\s*-?\s*uses:", line)
     ):
         if not PINNED_ACTION.fullmatch(line):
-            failures.append(f"workflow action is not pinned to a full SHA: {line.strip()}")
-    job_count = len(re.findall(r"^  [a-zA-Z0-9_-]+:\s*$", content, re.MULTILINE))
+            failures.append(
+                f"workflow action is not pinned to a full SHA: {line.strip()}"
+            )
+    job_count = len(
+        re.findall(r"^  [a-zA-Z0-9_-]+:\s*$", content, re.MULTILINE)
+    )
     if job_count == 0 or content.count("timeout-minutes:") < job_count:
         failures.append("every workflow job must set timeout-minutes")
     return failures
@@ -294,15 +337,25 @@ def _workflow_failures() -> list[str]:
 
 def _compatibility_failures() -> list[str]:
     failures: list[str] = []
-    payload = _load_json("config/architecture/compatibility-lifecycle.v1.json", failures)
+    payload = _load_json(
+        "config/architecture/compatibility-lifecycle.v1.json",
+        failures,
+    )
     if payload is None:
         return failures
     if payload.get("schema") != "nexus.compatibility-lifecycle.v1":
         failures.append("compatibility lifecycle schema is invalid")
     if payload.get("detailed_registry") != CURRENT_COMPATIBILITY_REGISTRY:
-        failures.append("compatibility lifecycle does not point to the current registry")
-    if payload.get("enforcement_entrypoint") != "scripts/ci/check_legacy_surface_registry.py":
-        failures.append("compatibility lifecycle enforcement entrypoint is not canonical")
+        failures.append(
+            "compatibility lifecycle does not point to the current registry"
+        )
+    if (
+        payload.get("enforcement_entrypoint")
+        != "scripts/ci/check_legacy_surface_registry.py"
+    ):
+        failures.append(
+            "compatibility lifecycle enforcement entrypoint is not canonical"
+        )
     assets = payload.get("assets")
     if not isinstance(assets, list) or not assets:
         return [*failures, "compatibility lifecycle assets are missing"]
@@ -314,7 +367,9 @@ def _compatibility_failures() -> list[str]:
             continue
         relative = str(item.get("path") or "")
         if not relative or relative in seen:
-            failures.append(f"compatibility lifecycle path missing or duplicate: {relative}")
+            failures.append(
+                f"compatibility lifecycle path missing or duplicate: {relative}"
+            )
             continue
         seen.add(relative)
         if not (ROOT / relative).exists():
@@ -326,11 +381,14 @@ def _compatibility_failures() -> list[str]:
             try:
                 deadline = date.fromisoformat(str(remove_after))
             except ValueError:
-                failures.append(f"compatibility lifecycle deadline invalid: {relative}")
+                failures.append(
+                    f"compatibility lifecycle deadline invalid: {relative}"
+                )
             else:
                 if deadline <= today:
                     failures.append(
-                        f"compatibility lifecycle deadline expired: {relative}:{deadline.isoformat()}"
+                        "compatibility lifecycle deadline expired: "
+                        f"{relative}:{deadline.isoformat()}"
                     )
     return failures
 
@@ -349,14 +407,19 @@ def _path_failures() -> list[str]:
     for path in _tracked_files():
         if path.startswith("backend/alembic/versions/"):
             continue
-        if any(fnmatch.fnmatchcase(path.casefold(), pattern.casefold()) for pattern in RETIRED_HISTORY_GLOBS):
+        if any(
+            fnmatch.fnmatchcase(path.casefold(), pattern.casefold())
+            for pattern in RETIRED_HISTORY_GLOBS
+        ):
             failures.append(f"historical delivery residue exists: {path}")
     return failures
 
 
 def _migration_authority_failures() -> list[str]:
     failures: list[str] = []
-    tracked_sql = [line for line in _git("ls-files", "*.sql").splitlines() if line.strip()]
+    tracked_sql = [
+        line for line in _git("ls-files", "*.sql").splitlines() if line.strip()
+    ]
     if tracked_sql:
         failures.append(
             "Alembic is the only schema mutation authority; tracked raw SQL exists: "
@@ -370,7 +433,11 @@ def _migration_authority_failures() -> list[str]:
     ]
     if ddl_offenders:
         failures.append(f"runtime DDL exists outside Alembic: {ddl_offenders}")
-    migration = ROOT / "backend/alembic/versions/20260716_0062_canonical_runtime_contracts.py"
+
+    migration = (
+        ROOT
+        / "backend/alembic/versions/20260716_0062_canonical_runtime_contracts.py"
+    )
     if migration.is_file():
         source = migration.read_text(encoding="utf-8")
         for marker in (
@@ -380,9 +447,14 @@ def _migration_authority_failures() -> list[str]:
             "sa.String(length=36)",
         ):
             if marker not in source:
-                failures.append(f"migration 0062 provenance marker missing: {marker}")
+                failures.append(
+                    f"migration 0062 provenance marker missing: {marker}"
+                )
 
-    retirement = ROOT / "backend/alembic/versions/20260720_0063_retire_legacy_channel_persistence.py"
+    retirement = (
+        ROOT
+        / "backend/alembic/versions/20260720_0063_retire_legacy_channel_persistence.py"
+    )
     if retirement.is_file():
         source = retirement.read_text(encoding="utf-8")
         for marker in (
@@ -393,35 +465,54 @@ def _migration_authority_failures() -> list[str]:
             "_delete_canonical_refs",
         ):
             if marker not in source:
-                failures.append(f"migration 0063 retirement marker missing: {marker}")
+                failures.append(
+                    f"migration 0063 retirement marker missing: {marker}"
+                )
+
+    auto_reply_retirement = (
+        ROOT
+        / "backend/alembic/versions/20260722_0074_retire_auto_reply_jobs.py"
+    )
+    if auto_reply_retirement.is_file():
+        source = auto_reply_retirement.read_text(encoding="utf-8")
+        for marker in (
+            "auto_reply.send_update",
+            "canonical_agent_runtime_only",
+            "status = 'dead'",
+            "not resurrected",
+        ):
+            if marker not in source:
+                failures.append(
+                    f"migration 0074 retirement marker missing: {marker}"
+                )
     return failures
 
 
 def _retired_persistence_failures() -> list[str]:
-    """Reject reintroduction outside protected schema history and its proof tests."""
-
     failures: list[str] = []
-    snake = "external" + "_channel"
-    pascal = "External" + "Channel"
-    kebab = "external" + "-channel"
-    markers = (snake, pascal, kebab)
+    markers = (
+        "external" + "_channel",
+        "External" + "Channel",
+        "external" + "-channel",
+    )
     allowed = {
         "backend/tests/test_migration_0063_legacy_channel_retirement.py",
         "backend/tests/test_retired_persistence_absence.py",
     }
-    text_suffixes = {".py", ".ts", ".tsx", ".js", ".mjs", ".json", ".yaml", ".yml", ".md", ".sh"}
     for relative in _tracked_files():
         if relative.startswith("backend/alembic/versions/") or relative in allowed:
             continue
         path = ROOT / relative
-        if path.suffix.lower() not in text_suffixes or not path.is_file():
+        if path.suffix.lower() not in TEXT_SUFFIXES or not path.is_file():
             continue
         try:
             source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
         if any(marker in source or marker in relative for marker in markers):
-            failures.append(f"retired channel persistence residue exists: {relative}")
+            failures.append(
+                f"retired channel persistence residue exists: {relative}"
+            )
     return failures
 
 
@@ -432,7 +523,9 @@ def _frontend_failures() -> list[str]:
         return failures
     package = json.loads(package_path.read_text(encoding="utf-8"))
     scripts = package.get("scripts") or {}
-    if "assert-http-transport-authority.mjs" not in str(scripts.get("architecture") or ""):
+    if "assert-http-transport-authority.mjs" not in str(
+        scripts.get("architecture") or ""
+    ):
         failures.append("frontend architecture command omits transport authority")
     if "npm run architecture" not in str(scripts.get("verify") or ""):
         failures.append("frontend verify command bypasses architecture authority")
@@ -443,14 +536,85 @@ def _frontend_failures() -> list[str]:
                 str(version),
             ):
                 failures.append(
-                    f"frontend direct dependency is not exact: {section}:{name}:{version}"
+                    "frontend direct dependency is not exact: "
+                    f"{section}:{name}:{version}"
                 )
+    return failures
+
+
+def _facade_failures() -> list[str]:
+    failures: list[str] = []
+    relative = "backend/app/services/webchat_service.py"
+    path = ROOT / relative
+    if not path.is_file():
+        return failures
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            failures.append(
+                f"WebChat application facade owns business definition: {node.name}"
+            )
+    return failures
+
+
+def _runtime_residue_failures() -> list[str]:
+    failures: list[str] = []
+    production_roots = (
+        ROOT / "backend/app",
+        ROOT / "backend/scripts",
+        ROOT / "deploy",
+    )
+    forbidden_markers = {
+        "AUTO_REPLY_JOB": "retired standalone AI job",
+        "enqueue_auto_reply_job": "retired standalone AI enqueue path",
+        "fire_and_forget_auto_reply": "retired standalone AI trigger",
+        "process_ticketless_ai_reply": "duplicate ticketless Agent service",
+        "from .conversation_ai_service": "duplicate ticketless Agent import",
+        "legacy: bool = Query": "legacy Lite response switch",
+        "def list_lite_cases(": "legacy Lite list implementation",
+    }
+    for root in production_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            if relative.startswith("backend/alembic/versions/"):
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for marker, label in forbidden_markers.items():
+                if marker in source:
+                    failures.append(f"{label} returned: {relative}:{marker}")
+            if relative.startswith("backend/app/"):
+                if re.search(
+                    r"subprocess\.(?:run|Popen|check_output)\s*\([^\n]*(?:gemini|ollama|llama|openai)",
+                    source,
+                    flags=re.IGNORECASE,
+                ):
+                    failures.append(
+                        f"direct model CLI invocation returned: {relative}"
+                    )
+            if relative.startswith("deploy/"):
+                if re.search(r"(?:python\s+)?scripts/run_worker\.py\b", source):
+                    failures.append(
+                        f"deployment invokes unsupervised Worker core: {relative}"
+                    )
+                if "--queue all" in source:
+                    failures.append(
+                        f"deployment reintroduced queue-all Worker: {relative}"
+                    )
     return failures
 
 
 def _worker_and_closure_failures() -> list[str]:
     failures: list[str] = []
-    compose = (ROOT / "deploy/docker-compose.controlled.yml").read_text(encoding="utf-8")
+    compose = (ROOT / "deploy/docker-compose.controlled.yml").read_text(
+        encoding="utf-8"
+    )
     for marker in (
         "run_worker_supervised.py",
         "scripts/check_worker_progress.py",
@@ -459,11 +623,20 @@ def _worker_and_closure_failures() -> list[str]:
     ):
         if marker not in compose:
             failures.append(f"controlled worker progress marker missing: {marker}")
-    for forbidden in ("/proc/1/cmdline", "controlled-worker-ok", "--queue all"):
+    for forbidden in (
+        "/proc/1/cmdline",
+        "controlled-worker-ok",
+        "--queue all",
+        "scripts/run_worker.py",
+    ):
         if forbidden in compose:
-            failures.append(f"retired worker health/runtime marker returned: {forbidden}")
+            failures.append(
+                f"retired worker health/runtime marker returned: {forbidden}"
+            )
 
-    closure = (ROOT / "backend/app/services/ticket_service.py").read_text(encoding="utf-8")
+    closure = (ROOT / "backend/app/services/ticket_service.py").read_text(
+        encoding="utf-8"
+    )
     for marker in (
         "require_closure_ready",
         "append_closure_receipt_event",
@@ -471,6 +644,61 @@ def _worker_and_closure_failures() -> list[str]:
     ):
         if marker not in closure:
             failures.append(f"safe closure authority marker missing: {marker}")
+    return failures
+
+
+def _documentation_failures() -> list[str]:
+    failures: list[str] = []
+    checks = {
+        "docs/webcall-current-state.md": (
+            "No LiveKit room connection yet",
+            "No real browser audio transport",
+            "current implementation is not production real voice",
+        ),
+        "docs/architecture/conversation-first-agent-routing.md": (
+            "through revision `20260720_0067`",
+            "conversation_ai_service.py",
+        ),
+        "README.md": (
+            "retained `legacy-worker`",
+            "`backend/scripts/run_worker.py` — queue worker entrypoint",
+        ),
+    }
+    for relative, markers in checks.items():
+        path = ROOT / relative
+        if not path.is_file():
+            failures.append(f"current-state documentation missing: {relative}")
+            continue
+        source = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker in source:
+                failures.append(
+                    f"stale current-state statement returned: {relative}:{marker}"
+                )
+    return failures
+
+
+def _environment_failures() -> list[str]:
+    failures: list[str] = []
+    root_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for marker in (
+        "WEBCHAT_FAST_AI_PROVIDER=",
+        "WEBCHAT_FAST_AI_FALLBACK_PROVIDER=",
+        "GEMINI_ENABLED=",
+        "GEMINI_API_KEY_FILE=",
+        "CODEX_APP_SERVER_PROVIDER_ENABLED=",
+        "OPENAI_RESPONSES_ENABLED=",
+    ):
+        if marker in root_example:
+            failures.append(
+                f"duplicate or unconsumed root environment variable returned: {marker}"
+            )
+    for required in (
+        "backend/.env.example",
+        "deploy/.env.controlled.example",
+    ):
+        if required not in root_example:
+            failures.append(f"root environment authority pointer missing: {required}")
     return failures
 
 
@@ -484,7 +712,10 @@ def _supply_input_failures() -> list[str]:
     )
     for line in effective.splitlines():
         stripped = line.strip()
-        if stripped.upper().startswith("FROM ") and "@sha256:" not in stripped.split()[1]:
+        if (
+            stripped.upper().startswith("FROM ")
+            and "@sha256:" not in stripped.split()[1]
+        ):
             failures.append(f"Dockerfile contains an unpinned base image: {stripped}")
     if re.search(r"\bapk\s+upgrade\b", effective):
         failures.append("Dockerfile reintroduced mutable apk upgrade")
@@ -496,14 +727,18 @@ def _supply_input_failures() -> list[str]:
         if not stripped or stripped.startswith("#") or stripped.startswith("--"):
             continue
         if not EXACT_REQUIREMENT.fullmatch(stripped):
-            failures.append(f"Python requirement is not exact at line {number}: {stripped[:120]}")
+            failures.append(
+                f"Python requirement is not exact at line {number}: {stripped[:120]}"
+            )
     return failures
 
 
 def _governance_truth_failures() -> list[str]:
     failures: list[str] = []
-    path = ROOT / "docs/ai/codebase-rationalization-inventory.v1.yaml"
+    path = ROOT / RATIONALIZATION_INVENTORY
     source = path.read_text(encoding="utf-8")
+    if "schema: nexus.osr.codebase-rationalization-inventory.v2" not in source:
+        failures.append("rationalization inventory schema/path version mismatch")
     for stale_key in (
         "canonical_pr:",
         "canonical_branch:",
@@ -512,7 +747,9 @@ def _governance_truth_failures() -> list[str]:
         "candidate_in_progress",
     ):
         if stale_key in source:
-            failures.append(f"mutable delivery status returned to authority inventory: {stale_key}")
+            failures.append(
+                f"mutable delivery status returned to authority inventory: {stale_key}"
+            )
     return failures
 
 
@@ -521,14 +758,23 @@ def static_failures() -> list[str]:
     failures.extend(_workflow_failures())
     failures.extend(_path_failures())
     failures.extend(_compatibility_failures())
-    failures.extend(_qualification_failures("scripts/qualification/service_authority.py"))
-    failures.extend(_qualification_failures("scripts/ci/check_legacy_surface_registry.py"))
-    failures.extend(_qualification_failures("scripts/ci/check_agent_runtime_residue.py"))
-    failures.extend(_qualification_failures("scripts/ci/check_telephony_authority_residue.py"))
+    failures.extend(
+        _qualification_failures("scripts/qualification/service_authority.py")
+    )
+    failures.extend(
+        _qualification_failures("scripts/ci/check_legacy_surface_registry.py")
+    )
+    failures.extend(
+        _qualification_failures("scripts/ci/check_agent_runtime_residue.py")
+    )
     failures.extend(_migration_authority_failures())
     failures.extend(_retired_persistence_failures())
     failures.extend(_frontend_failures())
+    failures.extend(_facade_failures())
+    failures.extend(_runtime_residue_failures())
     failures.extend(_worker_and_closure_failures())
+    failures.extend(_documentation_failures())
+    failures.extend(_environment_failures())
     failures.extend(_supply_input_failures())
     failures.extend(_governance_truth_failures())
     return failures
@@ -553,7 +799,9 @@ def _write_evidence(path: Path | None, payload: dict[str, Any]) -> None:
         return
     resolved = path.expanduser().resolve()
     if _inside_repository(resolved):
-        raise ValueError("verification evidence output must remain outside candidate tree")
+        raise ValueError(
+            "verification evidence output must remain outside candidate tree"
+        )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -575,15 +823,24 @@ def _argument_failures(args: argparse.Namespace) -> list[str]:
         failures.append("expected SHA must be exactly 40 lowercase hex characters")
     if args.acceptance_evidence_dir is not None:
         if args.static_only or args.focused_backend or args.skip_browser:
-            failures.append("final acceptance requires the complete verification profile")
+            failures.append(
+                "final acceptance requires the complete verification profile"
+            )
         if not args.expected_sha:
             failures.append("final acceptance requires --expected-sha")
         if args.release_evidence_dir is None:
             failures.append("final acceptance requires --release-evidence-dir")
         if not args.acceptance_database_url:
-            failures.append("final acceptance requires --acceptance-database-url or DATABASE_URL")
-        if args.acceptance_upload_source is None or args.acceptance_upload_backup is None:
-            failures.append("final acceptance requires upload source and backup paths")
+            failures.append(
+                "final acceptance requires --acceptance-database-url or DATABASE_URL"
+            )
+        if (
+            args.acceptance_upload_source is None
+            or args.acceptance_upload_backup is None
+        ):
+            failures.append(
+                "final acceptance requires upload source and backup paths"
+            )
     return failures
 
 
@@ -598,10 +855,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--evidence-out", type=Path)
     parser.add_argument("--expected-sha")
     parser.add_argument("--acceptance-evidence-dir", type=Path)
-    parser.add_argument("--acceptance-database-url", default=os.getenv("DATABASE_URL", ""))
+    parser.add_argument(
+        "--acceptance-database-url",
+        default=os.getenv("DATABASE_URL", ""),
+    )
     parser.add_argument("--acceptance-upload-source", type=Path)
     parser.add_argument("--acceptance-upload-backup", type=Path)
-    parser.add_argument("--acceptance-manifest-name", default="acceptance-manifest.json")
+    parser.add_argument(
+        "--acceptance-manifest-name",
+        default="acceptance-manifest.json",
+    )
     parser.add_argument("--allow-remote-acceptance-database", action="store_true")
     args = parser.parse_args(argv)
 
@@ -638,9 +901,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         failures.append("candidate working tree is not clean before verification")
     if args.expected_sha and start["source_sha"] != args.expected_sha:
         failures.append(
-            f"candidate source SHA mismatch: expected={args.expected_sha} actual={start['source_sha']}"
+            "candidate source SHA mismatch: "
+            f"expected={args.expected_sha} actual={start['source_sha']}"
         )
-    static_payload = {"static_ok": not failures, "failures": failures, "candidate": start}
+    static_payload = {
+        "static_ok": not failures,
+        "failures": failures,
+        "candidate": start,
+    }
     print(json.dumps(static_payload, ensure_ascii=False, indent=2))
     if failures:
         payload = {
@@ -655,22 +923,43 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     acceptance_result: str | None = None
     try:
-        supply_chain = [sys.executable, "scripts/qualification/supply_chain.py"]
+        supply_chain = [
+            sys.executable,
+            "scripts/qualification/supply_chain.py",
+        ]
         if args.release_evidence_dir:
             supply_chain.extend(
-                ["--release", "--evidence-dir", str(args.release_evidence_dir.resolve())]
+                [
+                    "--release",
+                    "--evidence-dir",
+                    str(args.release_evidence_dir.resolve()),
+                ]
             )
         run("supply_chain", supply_chain)
         if not args.static_only:
-            run("service_authority", [sys.executable, "scripts/qualification/service_authority.py"])
-            run("route_authority", [sys.executable, "scripts/qualification/route_authority.py"])
-            run("alembic_heads", [sys.executable, "-m", "alembic", "heads"], cwd=ROOT / "backend")
+            run(
+                "service_authority",
+                [sys.executable, "scripts/qualification/service_authority.py"],
+            )
+            run(
+                "route_authority",
+                [sys.executable, "scripts/qualification/route_authority.py"],
+            )
+            run(
+                "alembic_heads",
+                [sys.executable, "-m", "alembic", "heads"],
+                cwd=ROOT / "backend",
+            )
             run(
                 "frontend_install",
                 ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
                 cwd=ROOT / "webapp",
             )
-            run("frontend_verify", ["npm", "run", "verify"], cwd=ROOT / "webapp")
+            run(
+                "frontend_verify",
+                ["npm", "run", "verify"],
+                cwd=ROOT / "webapp",
+            )
             run(
                 "python_compile",
                 [
@@ -683,10 +972,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "scripts/release",
                 ],
             )
-            backend_tests = list(FOCUSED_BACKEND_TESTS) if args.focused_backend else ["backend/tests"]
-            run("backend_tests", [sys.executable, "-m", "pytest", "-q", *backend_tests])
+            backend_tests = (
+                list(FOCUSED_BACKEND_TESTS)
+                if args.focused_backend
+                else ["backend/tests"]
+            )
+            run(
+                "backend_tests",
+                [sys.executable, "-m", "pytest", "-q", *backend_tests],
+            )
             if not args.skip_browser:
-                run("browser_tests", ["npm", "run", "e2e"], cwd=ROOT / "webapp")
+                run(
+                    "browser_tests",
+                    ["npm", "run", "e2e"],
+                    cwd=ROOT / "webapp",
+                )
 
         if args.acceptance_evidence_dir is not None:
             acceptance_dir = _prepare_external_directory(
@@ -739,7 +1039,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     str(acceptance_dir / "exact-head-acceptance.json"),
                 ],
             )
-            acceptance_result = str(acceptance_dir / "exact-head-acceptance.json")
+            acceptance_result = str(
+                acceptance_dir / "exact-head-acceptance.json"
+            )
     except VerificationCommandError as exc:
         payload = {
             "schema": "nexus.canonical-verification.v3",
