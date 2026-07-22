@@ -77,7 +77,7 @@ export function MarketGovernancePanel() {
     onSuccess: invalidate,
   })
 
-  if (markets.isLoading || countries.isLoading || teams.isLoading) return <Stack alignItems="center" sx={{ py: 6 }}><CircularProgress /></Stack>
+  if (markets.isLoading || countries.isLoading || teams.isLoading) return <Stack sx={{ alignItems: 'center', py: 6 }}><CircularProgress /></Stack>
   const error = markets.error || countries.error || teams.error
   if (error) return <OperatorErrorNotice title="无法读取市场治理配置" error={error} fallback="请稍后重试" />
 
@@ -104,7 +104,7 @@ export function MarketGovernancePanel() {
   return (
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
           <Box>
             <Typography component="h2" variant="h2">市场与国家</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -133,7 +133,7 @@ export function MarketGovernancePanel() {
           {selected ? (
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Stack spacing={2}>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                   <Box>
                     <Typography variant="h3">{selected.name}</Typography>
                     <Typography variant="caption" color="text.secondary">{selected.code} · 配置版本 {selected.version} · {selected.countries.join(', ')}</Typography>
@@ -178,7 +178,7 @@ export function MarketGovernancePanel() {
                 <TextField label="运营备注" multiline minRows={2} value={draft.notes || ''} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />
                 <Box>
                   <Typography variant="subtitle2">退役影响</Typography>
-                  <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1} sx={{ mt: 1 }}>
+                  <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 1 }}>
                     {Object.entries(selected.impact).map(([key, value]) => <Chip key={key} color={value ? 'warning' : 'default'} label={`${key}: ${value}`} />)}
                   </Stack>
                 </Box>

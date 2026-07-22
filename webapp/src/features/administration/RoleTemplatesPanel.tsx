@@ -23,7 +23,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { OperatorEmptyState, OperatorErrorNotice } from '@/app/OperatorPresentation'
-import { governanceApi, type RoleTemplate, type RoleTemplateDraft } from '@/lib/governanceApi'
+import { governanceApi, type RoleTemplateDraft } from '@/lib/governanceApi'
 
 const EMPTY_DRAFT: RoleTemplateDraft = {
   role_key: '',
@@ -107,7 +107,7 @@ export function RoleTemplatesPanel() {
   }
 
   if (templates.isLoading || capabilities.isLoading || assignments.isLoading) {
-    return <Stack alignItems="center" sx={{ py: 6 }}><CircularProgress /></Stack>
+    return <Stack sx={{ alignItems: 'center', py: 6 }}><CircularProgress /></Stack>
   }
   const error = templates.error || capabilities.error || assignments.error
   if (error) return <OperatorErrorNotice title="无法读取角色模板" error={error} fallback="请稍后重试" />
@@ -115,7 +115,7 @@ export function RoleTemplatesPanel() {
   return (
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
           <Box>
             <Typography component="h2" variant="h2">角色模板</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -152,7 +152,7 @@ export function RoleTemplatesPanel() {
           {selected ? (
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Stack spacing={2}>
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }}>
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ alignItems: { md: 'center' } }}>
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="h3">{selected.display_name}</Typography>
                     <Typography variant="caption" color="text.secondary">

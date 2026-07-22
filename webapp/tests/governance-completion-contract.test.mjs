@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const read = (path) => readFileSync(path, 'utf8')
-const governanceApi = read('webapp/src/lib/governanceApi.ts')
-const administration = read('webapp/src/features/administration/AdministrationPage.tsx')
-const agentControl = read('webapp/src/features/agent-control/AgentControlPage.tsx')
-const knowledgeLazy = read('webapp/src/features/knowledge/lazy.tsx')
-const navigation = read('webapp/src/app/navigation.ts')
-const routes = read('webapp/src/routes/administration.tsx')
+const governanceApi = read('src/lib/governanceApi.ts')
+const administration = read('src/features/administration/AdministrationPage.tsx')
+const agentControl = read('src/features/agent-control/AgentControlPage.tsx')
+const knowledgeLazy = read('src/features/knowledge/lazy.tsx')
+const navigation = read('src/app/navigation.ts')
+const routes = read('src/routes/administration.tsx')
 
 for (const endpoint of [
   '/api/governance/role-templates',

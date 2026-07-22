@@ -68,7 +68,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
   return (
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <RocketLaunchRoundedIcon color="primary" />
           <Typography component="h2" variant="h2">小范围发布</Typography>
         </Stack>
@@ -84,7 +84,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
             {deployments.map((item) => <MenuItem key={item.id} value={item.id}>{deploymentLabel(item)}</MenuItem>)}
           </TextField>
           {selected ? (
-            <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}>
+            <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
               <Chip label={`稳定 Release #${selected.active_release_id}`} color="success" />
               <Chip label={trialActive ? `试验 Release #${delivery.data?.deployment.canary_release_id || selected.canary_release_id}` : '无试验 Release'} color={trialActive ? 'warning' : 'default'} />
               <Chip label={`流量 ${delivery.data?.deployment.canary_percent ?? selected.canary_percent}%`} />
@@ -99,7 +99,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
             </TextField>
           ) : null}
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <TextField fullWidth type="number" label="试验流量百分比" value={percent} inputProps={{ min: 1, max: 99 }} onChange={(event) => setPercent(Math.min(99, Math.max(1, Number(event.target.value) || 1)))} />
+            <TextField fullWidth type="number" label="试验流量百分比" value={percent} slotProps={{ htmlInput: { min: 1, max: 99 } }} onChange={(event) => setPercent(Math.min(99, Math.max(1, Number(event.target.value) || 1)))} />
             <TextField fullWidth label="变更原因" value={reason} onChange={(event) => setReason(event.target.value)} helperText="至少 2 个字符，将进入不可变修订证据。" />
           </Stack>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
@@ -117,7 +117,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
         </Stack>
       </Paper>
 
-      {delivery.isLoading ? <Stack alignItems="center" sx={{ py: 4 }}><CircularProgress /></Stack> : null}
+      {delivery.isLoading ? <Stack sx={{ alignItems: 'center', py: 4 }}><CircularProgress /></Stack> : null}
       {delivery.error ? <OperatorErrorNotice title="无法读取发布运行证据" error={delivery.error} fallback="请稍后重试" /> : null}
       {delivery.data ? (
         <>
@@ -132,7 +132,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
             <Stack spacing={1} sx={{ mt: 1 }}>
               {delivery.data.revisions.map((row) => (
                 <Paper key={row.id} variant="outlined" sx={{ p: 1.5 }}>
-                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                     <Box>
                       <Typography variant="subtitle2">#{row.revision} · {row.action}</Typography>
                       <Typography variant="body2">{row.reason || '未填写原因'}</Typography>

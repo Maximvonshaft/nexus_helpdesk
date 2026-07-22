@@ -52,7 +52,7 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
   if (!canManage) return null
   return (
     <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ md: 'center' }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}>
         <Box>
           <Typography component="h2" variant="h2">批量导入知识文件</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -65,7 +65,7 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
       </Stack>
 
       {latest ? (
-        <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1} sx={{ mt: 1.5 }}>
+        <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', mt: 1.5 }}>
           <Chip label={`最近批次 #${latest.id}`} />
           <Chip color={latest.status === 'ready' ? 'success' : latest.status === 'failed' ? 'error' : 'warning'} label={latest.status} />
           <Chip label={`草稿 ${latest.succeeded_files}`} />
@@ -89,14 +89,14 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
             已选择 {files.length} 个文件，共 {(selectedBytes / 1024 / 1024).toFixed(2)} MB。
           </Typography>
           {files.length ? (
-            <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}>
+            <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
               {files.map((file) => <Chip key={`${file.name}-${file.lastModified}`} label={file.name} onDelete={() => setFiles((current) => current.filter((item) => item !== file))} />)}
             </Stack>
           ) : null}
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
             <TextField select fullWidth label="市场" value={marketId} onChange={(event) => setMarketId(event.target.value ? Number(event.target.value) : '')}>
               <MenuItem value="">全局知识</MenuItem>
-              {(markets.data || []).filter((item) => item.is_active).map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
+              {(markets.data || []).map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
             </TextField>
             <TextField select fullWidth label="渠道" value={channel} onChange={(event) => setChannel(event.target.value)}>
               {['all', 'webchat', 'whatsapp', 'email', 'voice', 'website'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
@@ -123,12 +123,12 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
       </Collapse>
 
       {imports.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取导入历史" error={imports.error} fallback="请稍后重试" /></Box> : null}
-      {imports.isLoading ? <Stack alignItems="center" sx={{ py: 2 }}><CircularProgress size={24} /></Stack> : null}
+      {imports.isLoading ? <Stack sx={{ alignItems: 'center', py: 2 }}><CircularProgress size={24} /></Stack> : null}
       {imports.data?.length ? (
         <Stack spacing={1} sx={{ mt: 2 }}>
           {imports.data.map((batch) => (
             <Paper key={batch.id} variant="outlined" sx={{ p: 1.5 }}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                 <Box>
                   <Typography variant="subtitle2">批次 #{batch.id} · {batch.total_files} 个文件</Typography>
                   <Typography variant="caption" color="text.secondary">{new Date(batch.created_at).toLocaleString()} · {batch.channel} · {batch.audience_scope}</Typography>
