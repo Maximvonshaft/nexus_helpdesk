@@ -181,21 +181,16 @@ export function RuntimePanel({ snapshot, canManage }: { snapshot: AgentControlSn
 
   return (
     <Stack spacing={2}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper component="section" variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ justifyContent: 'space-between' }}>
-          <Box>
-            <Typography component="h2" variant="h3">运行状态</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              配置保存在版本化控制面；环境变量只作为部署级硬安全上限和 Secret File 入口。
-            </Typography>
-          </Box>
+          <Typography component="h2" variant="h3">运行状态</Typography>
           <Chip color={status.data?.ok ? 'success' : 'warning'} label={status.isLoading ? '检查中' : status.data?.ok ? '可用' : '需要检查'} />
         </Stack>
-        {status.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取运行状态" error={status.error} fallback="请检查部署环境" /></Box> : null}
+        {status.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="无法读取运行状态" error={status.error} fallback="请检查模型服务和网络连接" /></Box> : null}
         <Box sx={{ mt: 2 }}>
           <OperatorFactGrid facts={[
-            ['服务提供方', selectedProvider?.name || status.data?.configured_provider || '未配置'],
-            ['模型配置', selectedProvider?.configured ? '已配置' : '需要检查'],
+            ['模型服务', selectedProvider?.name || status.data?.configured_provider || '未配置'],
+            ['连接状态', selectedProvider?.configured ? '已配置' : '需要检查'],
             ['自动处理', status.data?.webchat_runtime_enabled ? '启用' : '停用'],
             ['备用服务', status.data?.fallback_provider || '无'],
           ]} />
@@ -206,26 +201,30 @@ export function RuntimePanel({ snapshot, canManage }: { snapshot: AgentControlSn
         <Paper component="section" variant="outlined" sx={{ p: 2 }}>
           <Typography component="h2" variant="h3">模型配置</Typography>
           {!canManage ? <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>当前为只读视图。</Alert> : null}
-          {saveModel.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="模型配置保存失败" error={saveModel.error} fallback="请检查地址和参数" /></Box> : null}
+          {saveModel.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="模型配置保存失败" error={saveModel.error} fallback="请检查模型名称和服务地址" /></Box> : null}
           <Stack spacing={1.5} sx={{ mt: 2 }}>
             <TextField label="模型名称" required disabled={!canManage} value={model.model} onChange={(event) => setModel((current) => ({ ...current, model: event.target.value }))} />
-            <TextField label="推理服务地址" disabled={!canManage} value={model.endpoint_url} onChange={(event) => setModel((current) => ({ ...current, endpoint_url: event.target.value }))} helperText="留空使用部署默认地址" />
-            <TextField label="凭据引用" disabled={!canManage} value={model.credential_ref} onChange={(event) => setModel((current) => ({ ...current, credential_ref: event.target.value }))} helperText="只保存 Secret 引用，不保存 Token" />
-            <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
-              <TextField label="请求路径" disabled={!canManage} value={model.request_path} onChange={(event) => setModel((current) => ({ ...current, request_path: event.target.value }))} />
-              <TextField select label="请求格式" disabled={!canManage} value={model.request_shape} onChange={(event) => setModel((current) => ({ ...current, request_shape: event.target.value }))}>
-                <MenuItem value="ollama_chat">Ollama Chat</MenuItem><MenuItem value="messages">Messages</MenuItem><MenuItem value="system_input">System/Input</MenuItem><MenuItem value="question">Question</MenuItem>
-              </TextField>
-              <TextField label="Temperature" type="number" disabled={!canManage} value={model.temperature} onChange={(event) => setModel((current) => ({ ...current, temperature: event.target.value }))} />
-              <TextField label="Top P" type="number" disabled={!canManage} value={model.top_p} onChange={(event) => setModel((current) => ({ ...current, top_p: event.target.value }))} />
-              <TextField label="上下文长度" type="number" disabled={!canManage} value={model.num_ctx} onChange={(event) => setModel((current) => ({ ...current, num_ctx: event.target.value }))} />
-              <TextField label="最大生成 Token" type="number" disabled={!canManage} value={model.num_predict} onChange={(event) => setModel((current) => ({ ...current, num_predict: event.target.value }))} />
-              <TextField label="最大 Prompt 字符" type="number" disabled={!canManage} value={model.max_prompt_chars} onChange={(event) => setModel((current) => ({ ...current, max_prompt_chars: event.target.value }))} />
-              <TextField label="最大回复字符" type="number" disabled={!canManage} value={model.max_output_chars} onChange={(event) => setModel((current) => ({ ...current, max_output_chars: event.target.value }))} />
-              <TextField label="超时秒数" type="number" disabled={!canManage} value={model.timeout_seconds} onChange={(event) => setModel((current) => ({ ...current, timeout_seconds: event.target.value }))} />
-              <TextField label="Keep Alive" disabled={!canManage} value={model.keep_alive} onChange={(event) => setModel((current) => ({ ...current, keep_alive: event.target.value }))} />
-            </Box>
+            <TextField label="模型服务地址" disabled={!canManage} value={model.endpoint_url} onChange={(event) => setModel((current) => ({ ...current, endpoint_url: event.target.value }))} helperText="留空使用系统默认地址" />
             <FormControlLabel control={<Switch disabled={!canManage} checked={model.is_active} onChange={(event) => setModel((current) => ({ ...current, is_active: event.target.checked }))} />} label="启用模型配置" />
+            <OperatorTechnicalDisclosure title="高级参数" summary="连接、采样和容量限制">
+              <Stack spacing={1.5}>
+                <TextField label="凭据引用" disabled={!canManage} value={model.credential_ref} onChange={(event) => setModel((current) => ({ ...current, credential_ref: event.target.value }))} helperText="仅填写系统密钥引用，不填写真实密钥" />
+                <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
+                  <TextField label="请求路径" disabled={!canManage} value={model.request_path} onChange={(event) => setModel((current) => ({ ...current, request_path: event.target.value }))} />
+                  <TextField select label="请求格式" disabled={!canManage} value={model.request_shape} onChange={(event) => setModel((current) => ({ ...current, request_shape: event.target.value }))}>
+                    <MenuItem value="ollama_chat">Ollama Chat</MenuItem><MenuItem value="messages">Messages</MenuItem><MenuItem value="system_input">System/Input</MenuItem><MenuItem value="question">Question</MenuItem>
+                  </TextField>
+                  <TextField label="随机度" type="number" disabled={!canManage} value={model.temperature} onChange={(event) => setModel((current) => ({ ...current, temperature: event.target.value }))} />
+                  <TextField label="采样范围" type="number" disabled={!canManage} value={model.top_p} onChange={(event) => setModel((current) => ({ ...current, top_p: event.target.value }))} />
+                  <TextField label="上下文长度" type="number" disabled={!canManage} value={model.num_ctx} onChange={(event) => setModel((current) => ({ ...current, num_ctx: event.target.value }))} />
+                  <TextField label="最大生成长度" type="number" disabled={!canManage} value={model.num_predict} onChange={(event) => setModel((current) => ({ ...current, num_predict: event.target.value }))} />
+                  <TextField label="最大输入字符" type="number" disabled={!canManage} value={model.max_prompt_chars} onChange={(event) => setModel((current) => ({ ...current, max_prompt_chars: event.target.value }))} />
+                  <TextField label="最大回复字符" type="number" disabled={!canManage} value={model.max_output_chars} onChange={(event) => setModel((current) => ({ ...current, max_output_chars: event.target.value }))} />
+                  <TextField label="超时秒数" type="number" disabled={!canManage} value={model.timeout_seconds} onChange={(event) => setModel((current) => ({ ...current, timeout_seconds: event.target.value }))} />
+                  <TextField label="保持加载时间" disabled={!canManage} value={model.keep_alive} onChange={(event) => setModel((current) => ({ ...current, keep_alive: event.target.value }))} />
+                </Box>
+              </Stack>
+            </OperatorTechnicalDisclosure>
             <TextField label="版本摘要" multiline minRows={2} disabled={!canManage} value={model.draft_summary} onChange={(event) => setModel((current) => ({ ...current, draft_summary: event.target.value }))} />
             {canManage ? <Stack direction="row" spacing={1}>
               <Button variant="contained" disabled={saveModel.isPending} startIcon={saveModel.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />} onClick={() => saveModel.mutate(false)}>保存草稿</Button>
@@ -235,12 +234,12 @@ export function RuntimePanel({ snapshot, canManage }: { snapshot: AgentControlSn
         </Paper>
 
         <Paper component="section" variant="outlined" sx={{ p: 2 }}>
-          <Typography component="h2" variant="h3">运行策略</Typography>
-          {saveRuntime.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="运行策略保存失败" error={saveRuntime.error} fallback="请检查工具与安全边界" /></Box> : null}
+          <Typography component="h2" variant="h3">运行限制</Typography>
+          {saveRuntime.error ? <Box sx={{ mt: 2 }}><OperatorErrorNotice title="运行限制保存失败" error={saveRuntime.error} fallback="请检查工具和风险设置" /></Box> : null}
           <Stack spacing={1.5} sx={{ mt: 2 }}>
             <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' } }}>
               <TextField
-                label="最大工具轮次"
+                label="单次最多调用工具"
                 type="number"
                 slotProps={{ htmlInput: { min: 1, max: 6 } }}
                 disabled={!canManage}
@@ -248,7 +247,7 @@ export function RuntimePanel({ snapshot, canManage }: { snapshot: AgentControlSn
                 onChange={(event) => setRuntime((current) => ({ ...current, max_tool_rounds: event.target.value }))}
               />
               <TextField
-                label="Provider 超时毫秒"
+                label="处理超时（毫秒）"
                 type="number"
                 slotProps={{ htmlInput: { min: 1000, max: 30000 } }}
                 disabled={!canManage}
@@ -258,7 +257,7 @@ export function RuntimePanel({ snapshot, canManage }: { snapshot: AgentControlSn
             </Box>
             <TextField
               select
-              label="运行策略允许的工具"
+              label="允许使用的工具"
               slotProps={{
                 select: {
                   multiple: true,
@@ -272,19 +271,19 @@ export function RuntimePanel({ snapshot, canManage }: { snapshot: AgentControlSn
               disabled={!canManage}
               value={runtime.allowed_tools}
               onChange={(event) => setRuntime((current) => ({ ...current, allowed_tools: typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value }))}
-              helperText="留空表示不额外收窄；仍受主调用方权限和 ToolExecutionPolicy 约束"
+              helperText="留空表示不额外限制"
             >
-              {snapshot.tools.map((tool) => <MenuItem key={tool.name} value={tool.name}>{tool.name} · {tool.risk_level}</MenuItem>)}
+              {snapshot.tools.map((tool) => <MenuItem key={tool.name} value={tool.name}>{tool.name}</MenuItem>)}
             </TextField>
-            <FormControlLabel control={<Checkbox disabled={!canManage} checked={runtime.allow_high_risk_writes} onChange={(event) => setRuntime((current) => ({ ...current, allow_high_risk_writes: event.target.checked }))} />} label="允许高风险写操作（仍需部署硬开关、权限、策略和确认）" />
-            <Alert severity="warning" variant="outlined">前端配置不能突破部署级高风险写开关，也不能绕过客户确认或人工确认。</Alert>
-            <FormControlLabel control={<Switch disabled={!canManage} checked={runtime.is_active} onChange={(event) => setRuntime((current) => ({ ...current, is_active: event.target.checked }))} />} label="启用运行策略" />
+            <FormControlLabel control={<Checkbox disabled={!canManage} checked={runtime.allow_high_risk_writes} onChange={(event) => setRuntime((current) => ({ ...current, allow_high_risk_writes: event.target.checked }))} />} label="允许高风险操作" />
+            {runtime.allow_high_risk_writes ? <Alert severity="warning" variant="outlined">高风险操作仍需相应权限和明确确认。</Alert> : null}
+            <FormControlLabel control={<Switch disabled={!canManage} checked={runtime.is_active} onChange={(event) => setRuntime((current) => ({ ...current, is_active: event.target.checked }))} />} label="启用运行限制" />
             <TextField label="版本摘要" multiline minRows={2} disabled={!canManage} value={runtime.draft_summary} onChange={(event) => setRuntime((current) => ({ ...current, draft_summary: event.target.value }))} />
             {canManage ? <Stack direction="row" spacing={1}>
               <Button variant="contained" disabled={saveRuntime.isPending} startIcon={saveRuntime.isPending ? <CircularProgress color="inherit" size={16} /> : <SaveRoundedIcon />} onClick={() => saveRuntime.mutate(false)}>保存草稿</Button>
               <Button variant="outlined" disabled={saveRuntime.isPending} startIcon={<PublishRoundedIcon />} onClick={() => saveRuntime.mutate(true)}>保存并发布</Button>
             </Stack> : null}
-            <OperatorTechnicalDisclosure title="安全配置与诊断">
+            <OperatorTechnicalDisclosure title="系统信息" summary="安全边界和连接诊断">
               <Box component="pre" sx={{ m: 0, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify({ boundary: status.data?.boundary, diagnostics: selectedProvider?.diagnostics }, null, 2)}</Box>
             </OperatorTechnicalDisclosure>
           </Stack>
