@@ -197,6 +197,11 @@ def _resolve_customer_confirmation(
         )
     )
     db.flush()
+    # The Agent Runtime and Tool worker intentionally use independent Sessions.
+    # Customer authorization is a durable fact that must be committed before
+    # either side effect boundary reads it. This also preserves the decision if
+    # the Provider call fails and the background job is retried.
+    db.commit()
 
 
 def process_webchat_ai_reply_job(
