@@ -20,20 +20,22 @@ from ..voice_schemas import (
     WebchatVoiceRejectRequest,
 )
 from ..webchat_voice_config import load_webchat_voice_runtime_config
-from ..services.webchat_voice_service import (
+from ..services.voice_business_action_service import queue_speedaf_voice_callback
+from ..services.voice_evidence_service import (
+    list_admin_voice_actions,
+    list_admin_voice_evidence,
+    record_admin_voice_action,
+    save_admin_voice_note,
+)
+from ..services.voice_session_service import (
     DETAIL_EXPIRED,
     accept_admin_voice_session,
     create_public_voice_session,
     end_admin_voice_session,
     end_public_voice_session,
     list_admin_incoming_voice_sessions,
-    list_admin_voice_actions,
-    list_admin_voice_evidence,
     list_admin_voice_sessions,
-    queue_speedaf_voice_callback,
-    record_admin_voice_action,
     reject_admin_voice_session,
-    save_admin_voice_note,
 )
 from .deps import get_current_user
 
@@ -43,7 +45,10 @@ router = APIRouter(prefix="/api/webchat", tags=["webchat-voice"])
 
 def _require_visitor_token(header_token: str | None) -> str:
     if not header_token:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="invalid webchat visitor token",
+        )
     return header_token
 
 
@@ -53,7 +58,10 @@ def create_voice_session(
     payload: WebchatVoiceCreateRequest,
     request: Request,
     db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+    x_webchat_visitor_token: str | None = Header(
+        default=None,
+        alias="X-Webchat-Visitor-Token",
+    ),
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
@@ -72,7 +80,10 @@ def end_visitor_voice_session(
     conversation_id: str,
     voice_session_id: str,
     db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+    x_webchat_visitor_token: str | None = Header(
+        default=None,
+        alias="X-Webchat-Visitor-Token",
+    ),
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
@@ -90,7 +101,11 @@ def list_ticket_voice_sessions(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    return list_admin_voice_sessions(db, ticket_id=ticket_id, current_user=current_user)
+    return list_admin_voice_sessions(
+        db,
+        ticket_id=ticket_id,
+        current_user=current_user,
+    )
 
 
 @router.get("/admin/voice/sessions")
@@ -109,7 +124,10 @@ def list_incoming_voice_sessions(
         )
 
 
-@router.get("/admin/voice/{voice_session_id}/evidence", response_model=WebchatVoiceEvidenceResponse)
+@router.get(
+    "/admin/voice/{voice_session_id}/evidence",
+    response_model=WebchatVoiceEvidenceResponse,
+)
 def read_voice_evidence(
     voice_session_id: str,
     limit: int = 50,
@@ -124,7 +142,10 @@ def read_voice_evidence(
     )
 
 
-@router.get("/admin/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionList)
+@router.get(
+    "/admin/voice/{voice_session_id}/actions",
+    response_model=WebchatVoiceActionList,
+)
 def read_voice_actions(
     voice_session_id: str,
     limit: int = 20,
@@ -163,7 +184,10 @@ def accept_voice_session(
         db.rollback()
         logger.exception(
             "voice_accept_failed",
-            extra={"voice_session_id": voice_session_id, "actor_user_id": getattr(current_user, "id", None)},
+            extra={
+                "voice_session_id": voice_session_id,
+                "actor_user_id": getattr(current_user, "id", None),
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -187,7 +211,10 @@ def reject_voice_session(
         )
 
 
-@router.post("/admin/voice/{voice_session_id}/notes", response_model=WebchatVoiceNoteResponse)
+@router.post(
+    "/admin/voice/{voice_session_id}/notes",
+    response_model=WebchatVoiceNoteResponse,
+)
 def save_voice_note(
     voice_session_id: str,
     payload: WebchatVoiceNoteRequest,
@@ -204,7 +231,10 @@ def save_voice_note(
         )
 
 
-@router.post("/admin/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionResponse)
+@router.post(
+    "/admin/voice/{voice_session_id}/actions",
+    response_model=WebchatVoiceActionResponse,
+)
 def create_voice_action(
     voice_session_id: str,
     payload: WebchatVoiceActionRequest,
@@ -240,7 +270,10 @@ def create_voice_action(
         ) from None
 
 
-@router.post("/admin/voice/{voice_session_id}/speedaf/callback", response_model=SpeedafVoiceCallbackResponse)
+@router.post(
+    "/admin/voice/{voice_session_id}/speedaf/callback",
+    response_model=SpeedafVoiceCallbackResponse,
+)
 def queue_voice_speedaf_callback(
     voice_session_id: str,
     payload: SpeedafVoiceCallbackRequest,
