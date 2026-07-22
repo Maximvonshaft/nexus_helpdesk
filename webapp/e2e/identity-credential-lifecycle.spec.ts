@@ -166,7 +166,7 @@ test('administrator forces rotation and revokes sessions from the one credential
   await mockAdministration(page, commands)
   await page.goto('/administration')
 
-  await page.getByRole('tab', { name: '凭据与会话' }).click()
+  await page.getByRole('tab', { name: '登录与会话' }).click()
   await expect(page.getByRole('heading', { level: 2, name: '凭据与会话' })).toBeVisible()
   const row = page.getByRole('row', { name: /Agent One/ })
 
