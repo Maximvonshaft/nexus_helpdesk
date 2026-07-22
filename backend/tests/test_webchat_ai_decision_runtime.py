@@ -111,18 +111,24 @@ def test_confirmation_and_high_risk_write_policy_are_tool_contract_driven():
     blocked = validate_ai_decision(decision)
     codes = {item.code for item in blocked.violations}
     assert blocked.ok is False
-    assert "write_tool_confirmation_required" in codes
+    assert "customer_confirmation_required" in codes
     assert "high_risk_write_tool_blocked" in codes
 
     confirmed = decision.model_copy(
         update={
-            "tool_calls": [decision.tool_calls[0].model_copy(update={"requires_confirmation": True})]
+            "tool_calls": [
+                decision.tool_calls[0].model_copy(
+                    update={"requires_confirmation": True}
+                )
+            ]
         }
     )
     allowed = validate_ai_decision(
         confirmed,
         allow_high_risk_write_execution=True,
-        allowed_high_risk_write_tools={"speedaf.order.updateAddress.request"},
+        allowed_high_risk_write_tools={
+            "speedaf.order.updateAddress.request"
+        },
         granted_permissions={"speedaf:order:update_address"},
         customer_confirmation_granted=True,
     )
