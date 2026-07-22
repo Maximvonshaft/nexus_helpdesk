@@ -45,12 +45,14 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_operations_dispatch",
     "app.models_agent_control",
     "app.models_agent_runtime",
+    "app.models_governance",
 )
 
 # There are currently no optional production model plugins. Future plugins must
 # be declared here with an explicit capability and enabled state; do not restore
 # file-existence-based discovery.
 MODEL_PLUGINS: tuple[ModelPlugin, ...] = ()
+
 
 REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models": "tickets",
@@ -67,6 +69,7 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_operations_dispatch": "operations_dispatch_outbox",
     "app.models_agent_control": "agent_definitions",
     "app.models_agent_runtime": "agent_session_checkpoints",
+    "app.models_governance": "role_templates",
 }
 
 
@@ -83,7 +86,6 @@ def validate_model_registry() -> tuple[str, ...]:
 
     modules = declared_model_modules()
     errors: list[str] = []
-
     duplicate_modules = sorted({name for name in modules if modules.count(name) > 1})
     if duplicate_modules:
         errors.append("duplicate model modules: " + ", ".join(duplicate_modules))
