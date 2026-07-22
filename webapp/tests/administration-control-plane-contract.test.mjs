@@ -87,7 +87,7 @@ test('forced rotation is fail closed through one shared recovery guard', () => {
   assert.match(workspace, /usePasswordRecoveryGuard/)
   assert.match(workspace, /enabled: Boolean\(session\.data\) && !passwordRecoveryRequired/)
   assert.match(boundary, /passwordRecoveryRequired \? '正在进入凭据恢复…'/)
-  assert.match(account, /完成密码修改前，业务页面和实时工作连接均不可使用/)
+  assert.match(account, /当前密码需要更新。完成密码修改前，暂不能访问其他页面。/)
   assert.match(account, /更新密码并重新登录/)
   assert.match(account, /退出所有设备/)
   assert.equal((api.match(/\/api\/auth\/change-password/g) ?? []).length, 1)
