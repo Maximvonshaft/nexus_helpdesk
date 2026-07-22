@@ -49,6 +49,24 @@ jobs:
           expected_paths=$'.github/temporary-governance-tenant-authority-finalizer.py\n.github/workflows/_temporary-governance-tenant-authority-finalizer.yml'
           test "$(git diff --name-only "$EXPECTED_SOURCE..$temporary_head")" = "$expected_paths"
           cp .github/temporary-governance-tenant-authority-finalizer.py /tmp/finalizer.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/finalizer.py')
+          text = path.read_text(encoding='utf-8')
+          old = '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
+          new = (
+              '    changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())\n'
+              '    changed.update(\n'
+              '        subprocess.check_output(\n'
+              '            ["git", "ls-files", "--others", "--exclude-standard"], text=True\n'
+              '        ).splitlines()\n'
+              '    )\n'
+          )
+          if text.count(old) != 1:
+              raise SystemExit('finalizer changed-path authority anchor mismatch')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           git reset --hard "$EXPECTED_SOURCE"
           git clean -ffdx
           python /tmp/finalizer.py
@@ -58,7 +76,7 @@ jobs:
           echo "TEMPORARY_HEAD=$temporary_head" >> "$GITHUB_ENV"
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        uses: actions/setup-python@a26af6901bbe5b1630ceea73d27597364c9af683
         with:
           python-version: '3.11'
           cache: pip
