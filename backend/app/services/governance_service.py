@@ -178,7 +178,7 @@ def update_role_template(
     row: RoleTemplate,
     actor: User,
     display_name: str | None = None,
-    description: str | None = None,
+    description: str | None | object = _UNSET,
     base_role: str | None = None,
     risk_level: str | None = None,
     capabilities: list[str] | None = None,
@@ -194,8 +194,10 @@ def update_role_template(
         if not cleaned:
             raise HTTPException(status_code=400, detail="role_template_name_required")
         row.display_name = cleaned
-    if description is not None:
-        row.description = str(description).strip() or None
+    if description is not _UNSET:
+        row.description = (
+            str(description).strip() or None if description is not None else None
+        )
     if base_role is not None:
         row.base_role = validate_base_role(base_role).value
     if risk_level is not None:

@@ -158,6 +158,15 @@ def _find_visible_knowledge_import_duplicate(
     )
 
 
+def _lock_governance_scope(db: Session, tenant_id: int | None) -> None:
+    if tenant_id is not None:
+        tenant = (db.query(Tenant).filter(Tenant.id == tenant_id).with_for_update().one_or_none())
+        if tenant is None or not tenant.is_active:
+            raise HTTPException(status_code=403, detail="authenticated_tenant_unavailable")
+        return
+    (apply_tenant_scope(db.query(User), User, None).filter(User.is_active.is_(True)).order_by(User.id.asc()).with_for_update().all())
+
+
 def _active_governor_ids(db: Session, tenant_id: int | None) -> set[int]:
     users = (
         apply_tenant_scope(db.query(User), User, tenant_id)
@@ -298,31 +307,17 @@ def publish_role_template(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    row = _template_for_actor(db, current_user, template_id, require_manageable=True)
     tenant_id = actor_tenant_id(db, current_user)
-    capabilities = governance_service.clean_capabilities(
-        list(row.draft_capabilities_json or [])
-    )
-    base_role = governance_service.validate_base_role(row.base_role)
-    assigned_users = _role_template_assigned_users(
-        db, tenant_id=tenant_id, template_id=row.id
-    )
-    losing_governors = {
-        user.id
-        for user in assigned_users
-        if user.is_active
-        and CAP_USER_MANAGE in resolve_capabilities(user, db)
-        and CAP_USER_MANAGE not in capabilities
-    }
-    if current_user.id in losing_governors:
-        raise HTTPException(
-            status_code=409, detail="cannot_remove_own_governance_access"
-        )
-    _ensure_governance_access_survives(
-        db, tenant_id=tenant_id, losing_user_ids=losing_governors
-    )
-
     with managed_session(db):
+        _lock_governance_scope(db, tenant_id)
+        row = _template_for_actor(db, current_user, template_id, require_manageable=True)
+        capabilities = governance_service.clean_capabilities(list(row.draft_capabilities_json or []))
+        base_role = governance_service.validate_base_role(row.base_role)
+        assigned_users = _role_template_assigned_users(db, tenant_id=tenant_id, template_id=row.id)
+        losing_governors = {u.id for u in assigned_users if u.is_active and CAP_USER_MANAGE in resolve_capabilities(u, db) and CAP_USER_MANAGE not in capabilities}
+        if current_user.id in losing_governors:
+            raise HTTPException(status_code=409, detail="cannot_remove_own_governance_access")
+        _ensure_governance_access_survives(db, tenant_id=tenant_id, losing_user_ids=losing_governors)
         version = governance_service.publish_role_template(
             db, row=row, actor=current_user, notes=payload.notes
         )
@@ -371,34 +366,36 @@ def apply_role_template(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    template = _template_for_actor(db, current_user, template_id)
-    if not template.is_active or template.published_version <= 0:
-        raise HTTPException(status_code=409, detail="publish_role_template_before_assignment")
     tenant_id = actor_tenant_id(db, current_user)
-    user = (
-        apply_tenant_scope(db.query(User), User, tenant_id)
-        .filter(User.id == user_id, User.is_active.is_(True))
-        .one_or_none()
-    )
-    if user is None:
-        raise HTTPException(status_code=404, detail="user_not_found")
-    base_role, capabilities = governance_service.role_template_version_values(
-        db, template_id=template.id, version=template.published_version
-    )
-    currently_governs = CAP_USER_MANAGE in resolve_capabilities(user, db)
-    will_govern = CAP_USER_MANAGE in capabilities
-    if user.id == current_user.id and not will_govern:
-        raise HTTPException(status_code=409, detail="cannot_remove_own_governance_access")
-    if currently_governs and not will_govern:
-        _ensure_governance_access_survives(
-            db, tenant_id=tenant_id, losing_user_ids={user.id}
-        )
-    before = {
-        "role": user.role.value,
-        "capabilities": sorted(resolve_capabilities(user, db)),
-        "assignment": governance_service.role_assignment_payload(db, user),
-    }
     with managed_session(db):
+        _lock_governance_scope(db, tenant_id)
+        template = _template_for_actor(db, current_user, template_id)
+        if not template.is_active or template.published_version <= 0:
+            raise HTTPException(status_code=409, detail="publish_role_template_before_assignment")
+        tenant_id = actor_tenant_id(db, current_user)
+        user = (
+            apply_tenant_scope(db.query(User), User, tenant_id)
+            .filter(User.id == user_id, User.is_active.is_(True))
+            .one_or_none()
+        )
+        if user is None:
+            raise HTTPException(status_code=404, detail="user_not_found")
+        base_role, capabilities = governance_service.role_template_version_values(
+            db, template_id=template.id, version=template.published_version
+        )
+        currently_governs = CAP_USER_MANAGE in resolve_capabilities(user, db)
+        will_govern = CAP_USER_MANAGE in capabilities
+        if user.id == current_user.id and not will_govern:
+            raise HTTPException(status_code=409, detail="cannot_remove_own_governance_access")
+        if currently_governs and not will_govern:
+            _ensure_governance_access_survives(
+                db, tenant_id=tenant_id, losing_user_ids={user.id}
+            )
+        before = {
+            "role": user.role.value,
+            "capabilities": sorted(resolve_capabilities(user, db)),
+            "assignment": governance_service.role_assignment_payload(db, user),
+        }
         user.role = base_role
         _apply_user_capability_overrides(
             db,
@@ -769,8 +766,8 @@ def create_knowledge_import(
                         channel=normalized_channel,
                         audience_scope=batch.audience_scope,
                         language=batch.language,
+                        tenant_id=tenant_key,
                     )
-                    item.tenant_id = tenant_key
                     item.status = "draft"
                     item.fact_status = "draft"
                     db.flush()
