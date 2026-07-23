@@ -24,6 +24,7 @@ from app.livekit_agent_worker import (
     parse_agent_job_metadata,
     parse_controller_command,
     publish_dtmf_sequence,
+    set_bidirectional_hold_subscriptions,
 )
 
 
@@ -98,9 +99,9 @@ def test_controller_command_protocol_is_exact_and_bounded():
             {
                 "schema": "nexus.telephony.command.v1",
                 "command_id": "vc_123",
-                "action": "keypad",
-                "digits": "12#",
+                "action": "hold",
                 "participant_identity": "caller_1",
+                "human_identity": "agent_1",
             }
         ).encode("utf-8"),
     )
@@ -108,10 +109,11 @@ def test_controller_command_protocol_is_exact_and_bounded():
 
     assert command == {
         "command_id": "vc_123",
-        "action": "keypad",
+        "action": "hold",
         "target": None,
-        "digits": "12#",
+        "digits": None,
         "participant_identity": "caller_1",
+        "human_identity": "agent_1",
         "outbound_trunk_id": None,
     }
     assert parse_controller_command(
@@ -144,6 +146,120 @@ async def test_dtmf_sequence_executes_real_room_control():
         await publish_dtmf_sequence(participant, "X")
 
 
+class FakeRoomService:
+    def __init__(self, *, fail_on_call: int | None = None) -> None:
+        self.fail_on_call = fail_on_call
+        self.update_calls: list[dict] = []
+        self.participants = {
+            "caller_1": SimpleNamespace(
+                tracks=[SimpleNamespace(sid="caller_audio")]
+            ),
+            "agent_1": SimpleNamespace(
+                tracks=[SimpleNamespace(sid="agent_audio")]
+            ),
+        }
+
+    async def get_participant(self, request):
+        return self.participants[request.identity]
+
+    async def update_subscriptions(self, request):
+        call = {
+            "room": request.room,
+            "identity": request.identity,
+            "track_sids": list(request.track_sids),
+            "subscribe": request.subscribe,
+        }
+        self.update_calls.append(call)
+        if self.fail_on_call == len(self.update_calls):
+            raise RuntimeError("subscription_update_failed")
+
+
+@pytest.mark.asyncio
+async def test_hold_unsubscribes_both_directions_and_resume_restores_them():
+    room = FakeRoomService()
+    lkapi = SimpleNamespace(room=room)
+
+    held = await set_bidirectional_hold_subscriptions(
+        lkapi,
+        room_name="room_1",
+        caller_identity="caller_1",
+        human_identity="agent_1",
+        subscribe=False,
+    )
+    resumed = await set_bidirectional_hold_subscriptions(
+        lkapi,
+        room_name="room_1",
+        caller_identity="caller_1",
+        human_identity="agent_1",
+        subscribe=True,
+    )
+
+    assert held == {"caller_track_count": 1, "human_track_count": 1}
+    assert resumed == held
+    assert room.update_calls == [
+        {
+            "room": "room_1",
+            "identity": "agent_1",
+            "track_sids": ["caller_audio"],
+            "subscribe": False,
+        },
+        {
+            "room": "room_1",
+            "identity": "caller_1",
+            "track_sids": ["agent_audio"],
+            "subscribe": False,
+        },
+        {
+            "room": "room_1",
+            "identity": "agent_1",
+            "track_sids": ["caller_audio"],
+            "subscribe": True,
+        },
+        {
+            "room": "room_1",
+            "identity": "caller_1",
+            "track_sids": ["agent_audio"],
+            "subscribe": True,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hold_compensates_the_first_direction_when_second_update_fails():
+    room = FakeRoomService(fail_on_call=2)
+    lkapi = SimpleNamespace(room=room)
+
+    with pytest.raises(RuntimeError, match="subscription_update_failed"):
+        await set_bidirectional_hold_subscriptions(
+            lkapi,
+            room_name="room_1",
+            caller_identity="caller_1",
+            human_identity="agent_1",
+            subscribe=False,
+        )
+
+    assert room.update_calls == [
+        {
+            "room": "room_1",
+            "identity": "agent_1",
+            "track_sids": ["caller_audio"],
+            "subscribe": False,
+        },
+        {
+            "room": "room_1",
+            "identity": "caller_1",
+            "track_sids": ["agent_audio"],
+            "subscribe": False,
+        },
+        {
+            "room": "room_1",
+            "identity": "agent_1",
+            "track_sids": ["caller_audio"],
+            "subscribe": True,
+        },
+    ]
+
+
 def test_latest_user_text_reads_only_the_latest_customer_message():
     chat_ctx = SimpleNamespace(
         items=[
@@ -167,4 +283,6 @@ def test_worker_source_has_no_second_business_llm_authority():
     assert "llm=inference.LLM" not in source.split("class NexusVoiceAgent", 1)[1].split(
         "class TelephonyController", 1
     )[0]
-    assert "AgentServer(host=\"0.0.0.0\", port=8081)" in source
+    assert 'AgentServer(host="0.0.0.0", port=8081)' in source
+    assert "UpdateSubscriptionsRequest" in source
+    assert "BuiltinAudioClip.HOLD_MUSIC" in source
