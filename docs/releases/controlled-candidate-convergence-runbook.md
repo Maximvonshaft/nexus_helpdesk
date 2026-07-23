@@ -137,6 +137,7 @@ preflight. Acceptance must prove:
 - image/source/frontend/migration equality;
 - App and dedicated Worker health;
 - queue and database-pool health;
+- authenticated `/metrics` succeeds and unauthenticated `/metrics` returns 401;
 - fresh local-storage equality backup or approved remote storage;
 - migration and recovery evidence;
 - zero Provider, AI, Voice, outbound, WhatsApp, Speedaf and Operations effects.

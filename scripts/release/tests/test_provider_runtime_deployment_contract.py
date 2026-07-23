@@ -17,10 +17,7 @@ def _load_module(name: str, path: Path):
 
 def _read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    for number, raw in enumerate(
-        path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -35,55 +32,50 @@ def _read_env(path: Path) -> dict[str, str]:
 
 
 class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
-    def test_each_deployment_profile_is_explicit_and_fail_closed(self) -> None:
+    def test_supported_environment_profiles_are_explicit_and_fail_closed(self) -> None:
         profiles = (
-            "deploy/.env.prod.example",
-            "deploy/.env.candidate.example",
             "deploy/.env.controlled.example",
+            "deploy/.env.controlled.local-postgres.example",
             "deploy/.env.rc-test.example",
         )
         for relative in profiles:
             values = _read_env(ROOT / relative)
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_ENABLED"),
-                "false",
-                relative,
-            )
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_TRAFFIC_MODE"),
-                "control",
-                relative,
-            )
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_CANARY_PERCENT"),
-                "0",
-                relative,
-            )
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_KILL_SWITCH"),
-                "true",
-                relative,
-            )
+            self.assertEqual(values.get("PROVIDER_RUNTIME_ENABLED"), "false", relative)
+            self.assertEqual(values.get("PROVIDER_RUNTIME_TRAFFIC_MODE"), "control", relative)
+            self.assertEqual(values.get("PROVIDER_RUNTIME_CANARY_PERCENT"), "0", relative)
+            self.assertEqual(values.get("PROVIDER_RUNTIME_KILL_SWITCH"), "true", relative)
 
-    def test_compose_profiles_consume_their_single_env_authority(self) -> None:
-        expected = {
-            "deploy/docker-compose.server.yml": ".env.prod",
-            "deploy/docker-compose.candidate.yml": ".env.candidate",
-            "deploy/docker-compose.controlled.yml": ".env.controlled",
-            "deploy/docker-compose.rc-test.yml": ".env.rc-test",
-        }
-        for relative, env_name in expected.items():
-            source = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn(f"- {env_name}", source, relative)
-            self.assertNotIn(
-                "PROVIDER_RUNTIME_TRAFFIC_MODE:",
-                source,
-                relative,
-            )
+    def test_retired_parallel_deployment_profiles_remain_absent(self) -> None:
+        for relative in (
+            "deploy/.env.prod.example",
+            "deploy/.env.candidate.example",
+            "deploy/docker-compose.server.yml",
+            "deploy/docker-compose.candidate.yml",
+        ):
+            self.assertFalse((ROOT / relative).exists(), relative)
 
-    def test_rc_generator_and_controlled_preflight_share_fail_closed_mode(
-        self,
-    ) -> None:
+    def test_controlled_compose_owns_fail_closed_runtime_interpolation(self) -> None:
+        source = (ROOT / "deploy/docker-compose.controlled.yml").read_text(encoding="utf-8")
+        self.assertNotIn("env_file:", source)
+        for marker in (
+            "PROVIDER_RUNTIME_ENABLED: ${PROVIDER_RUNTIME_ENABLED:-false}",
+            "PROVIDER_RUNTIME_TRAFFIC_MODE: ${PROVIDER_RUNTIME_TRAFFIC_MODE:-control}",
+            "PROVIDER_RUNTIME_KILL_SWITCH: ${PROVIDER_RUNTIME_KILL_SWITCH:-true}",
+            "PROVIDER_RUNTIME_CANARY_PERCENT: ${PROVIDER_RUNTIME_CANARY_PERCENT:-0}",
+            'ENABLE_OUTBOUND_DISPATCH: "false"',
+            'WHATSAPP_NATIVE_ENABLED: "false"',
+            'SPEEDAF_WORK_ORDER_CREATE_ENABLED: "false"',
+            "OPERATIONS_DISPATCH_MODE: disabled",
+        ):
+            self.assertIn(marker, source)
+
+    def test_rc_compose_consumes_only_the_generated_rc_environment(self) -> None:
+        source = (ROOT / "deploy/docker-compose.rc-test.yml").read_text(encoding="utf-8")
+        self.assertIn("env_file:\n    - .env.rc-test", source)
+        self.assertNotIn("PROVIDER_RUNTIME_TRAFFIC_MODE:", source)
+        self.assertNotIn("PROVIDER_RUNTIME_KILL_SWITCH:", source)
+
+    def test_rc_generator_and_controlled_preflight_share_fail_closed_mode(self) -> None:
         generator = _load_module(
             "provider_runtime_rc_env",
             ROOT / "scripts/release/generate_rc_test_env.py",
@@ -98,29 +90,15 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
             origin="http://127.0.0.1:18083",
             expected_migration_head="contract_head",
         )
-        self.assertEqual(values["PROVIDER_RUNTIME_ENABLED"], "false")
-        self.assertEqual(
-            values["PROVIDER_RUNTIME_TRAFFIC_MODE"],
-            "control",
-        )
-        self.assertEqual(values["PROVIDER_RUNTIME_CANARY_PERCENT"], "0")
-        self.assertEqual(values["PROVIDER_RUNTIME_KILL_SWITCH"], "true")
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_ENABLED"],
-            "false",
-        )
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_TRAFFIC_MODE"],
-            "control",
-        )
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_CANARY_PERCENT"],
-            "0",
-        )
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_KILL_SWITCH"],
-            "true",
-        )
+        expected = {
+            "PROVIDER_RUNTIME_ENABLED": "false",
+            "PROVIDER_RUNTIME_TRAFFIC_MODE": "control",
+            "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
+            "PROVIDER_RUNTIME_KILL_SWITCH": "true",
+        }
+        for key, value in expected.items():
+            self.assertEqual(values[key], value)
+            self.assertEqual(preflight.SAFE_CONTROLS[key], value)
 
 
 if __name__ == "__main__":

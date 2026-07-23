@@ -4,7 +4,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "canonical-acceptance.yml"
 WORKFLOW = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -47,14 +46,8 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertFalse((ROOT / ".github" / "controlled-candidate-request.json").exists())
 
     def test_release_jobs_are_exact_main_post_gate_and_least_privilege(self) -> None:
-        self.assertGreaterEqual(
-            WORKFLOW.count("needs.required-gate.result == 'success'"),
-            2,
-        )
-        self.assertGreaterEqual(
-            WORKFLOW.count("github.ref == 'refs/heads/main'"),
-            3,
-        )
+        self.assertGreaterEqual(WORKFLOW.count("needs.required-gate.result == 'success'"), 2)
+        self.assertGreaterEqual(WORKFLOW.count("github.ref == 'refs/heads/main'"), 3)
         self.assertIn("packages: write", WORKFLOW)
         self.assertIn("attestations: write", WORKFLOW)
         self.assertIn("id-token: write", WORKFLOW)
@@ -73,10 +66,9 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             self.assertNotIn(mutable, WORKFLOW)
 
     def test_existing_rc_build_is_reused_inside_publication_phase(self) -> None:
-        release_block = WORKFLOW.split(
-            "  controlled-build-assure-publish:",
-            1,
-        )[1].split("  controlled-recovery:", 1)[0]
+        release_block = WORKFLOW.split("  controlled-build-assure-publish:", 1)[1].split(
+            "  controlled-recovery:", 1
+        )[0]
         combined = release_block + "\n" + HELPERS
         self.assertIn("scripts/release/run_controlled_rc_gate.sh", combined)
         self.assertNotIn("docker build ", release_block)
@@ -88,7 +80,10 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("id: controlled_rc", WORKFLOW)
         self.assertIn("capture_controlled_rc_failure.py", WORKFLOW)
         self.assertIn("steps.controlled_rc.outcome == 'failure'", WORKFLOW)
-        self.assertIn("controlled-rc-failure-${{ needs.candidate-identity.outputs.source_sha }}", WORKFLOW)
+        self.assertIn(
+            "controlled-rc-failure-${{ needs.candidate-identity.outputs.source_sha }}",
+            WORKFLOW,
+        )
         self.assertIn("id: image_assurance", WORKFLOW)
         self.assertIn("capture_controlled_image_assurance_failure.py", WORKFLOW)
         self.assertIn("steps.image_assurance.outcome == 'failure'", WORKFLOW)
@@ -107,21 +102,27 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("registry-publish-receipt.json", combined)
         self.assertIn("LOCAL_IMAGE_ENV_JSON", combined)
         self.assertIn("PULLED_IMAGE_ENV_JSON", combined)
-        self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
+        self.assertIn(
+            "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373",
+            WORKFLOW,
+        )
         self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
         self.assertIn("push-to-registry: true", WORKFLOW)
         self.assertIn("scripts/release/run_controlled_recovery_gate.sh", combined)
-        self.assertIn("controlled-recovery-${{ needs.candidate-identity.outputs.source_sha }}", WORKFLOW)
-        self.assertIn("controlled-candidate-${{ needs.candidate-identity.outputs.source_sha }}", WORKFLOW)
+        self.assertIn(
+            "controlled-recovery-${{ needs.candidate-identity.outputs.source_sha }}",
+            WORKFLOW,
+        )
+        self.assertIn(
+            "controlled-candidate-${{ needs.candidate-identity.outputs.source_sha }}",
+            WORKFLOW,
+        )
 
     def test_release_trace_is_bounded_and_does_not_claim_deployment(self) -> None:
         self.assertIn('"repos/${GH_REPO}/issues/724/comments"', WORKFLOW)
         self.assertIn("## CONTROLLED_CANDIDATE_PUBLISHED", WORKFLOW)
-        self.assertIn("- Source:", WORKFLOW)
-        self.assertIn("- Image:", WORKFLOW)
-        self.assertIn("- Migration:", WORKFLOW)
-        self.assertIn("- Run:", WORKFLOW)
-        self.assertIn("- URL:", WORKFLOW)
+        for marker in ("- Source:", "- Image:", "- Migration:", "- Run:", "- URL:"):
+            self.assertIn(marker, WORKFLOW)
         self.assertIn("- Production ready: `false`", WORKFLOW)
         self.assertIn("- Deployment performed: `false`", WORKFLOW)
         self.assertIn("- External effects authorized: `false`", WORKFLOW)
@@ -139,8 +140,14 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, ENV_EXAMPLE)
 
-        self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
-        self.assertIn("${NEXUS_RUNTIME_SECRETS_HOST_PATH:?", COMPOSE)
+        for marker in (
+            "${CONTROLLED_IMAGE:?",
+            "${SECRET_KEY:?set Web JWT secret}",
+            "${METRICS_TOKEN:?set dedicated metrics token}",
+            "${NEXUS_UPLOADS_HOST_PATH:?set uploads path}",
+            "${NEXUS_UPLOAD_BACKUP_HOST_PATH:?set upload backup path}",
+        ):
+            self.assertIn(marker, COMPOSE)
         self.assertNotRegex(COMPOSE, r"(?m)^\s*build\s*:")
         self.assertNotIn(":latest", COMPOSE)
         self.assertNotIn("external: true", COMPOSE)
