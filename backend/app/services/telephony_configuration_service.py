@@ -14,9 +14,9 @@ from .audit_service import log_admin_audit
 from .identity_tenant_scope import actor_tenant_id, ensure_resource_tenant
 
 _ROUTING_MODES = {"ai_first", "human_first"}
-_RECORDING_POLICIES = {"disabled", "consent_required", "always"}
-_TRANSCRIPTION_POLICIES = {"disabled", "consent_required", "always"}
-_OVERFLOW_ACTIONS = {"ai", "voicemail", "disconnect"}
+_RECORDING_POLICIES = {"disabled", "notice", "explicit_consent"}
+_TRANSCRIPTION_POLICIES = {"disabled", "notice", "explicit_consent"}
+_OVERFLOW_ACTIONS = {"ai", "disconnect"}
 
 
 def _clean_optional(value: str | None, *, limit: int) -> str | None:
@@ -133,7 +133,6 @@ def serialize_voice_configuration(
         "offer_timeout_seconds": row.offer_timeout_seconds if row is not None else 20,
         "wrap_up_seconds": row.wrap_up_seconds if row is not None else 30,
         "overflow_action": row.overflow_action if row is not None else "ai",
-        "voicemail_enabled": bool(row.voicemail_enabled) if row is not None else False,
         "recording_policy": row.recording_policy if row is not None else "disabled",
         "transcription_policy": row.transcription_policy if row is not None else "disabled",
         "enabled": bool(row.enabled) if row is not None else False,
@@ -218,7 +217,6 @@ def upsert_voice_configuration(
     offer_timeout_seconds: int,
     wrap_up_seconds: int,
     overflow_action: str,
-    voicemail_enabled: bool,
     recording_policy: str,
     transcription_policy: str,
     enabled: bool,
@@ -270,11 +268,6 @@ def upsert_voice_configuration(
             status_code=422,
             detail="LiveKit Agent name is required for telephony control",
         )
-    if normalized_overflow == "voicemail" and not voicemail_enabled:
-        raise HTTPException(
-            status_code=422,
-            detail="voicemail must be enabled for voicemail overflow",
-        )
 
     row_query = db.query(VoiceChannelConfiguration).filter(
         VoiceChannelConfiguration.channel_account_id == account.id
@@ -303,7 +296,6 @@ def upsert_voice_configuration(
     row.offer_timeout_seconds = int(offer_timeout_seconds)
     row.wrap_up_seconds = int(wrap_up_seconds)
     row.overflow_action = normalized_overflow
-    row.voicemail_enabled = bool(voicemail_enabled)
     row.recording_policy = normalized_recording
     row.transcription_policy = normalized_transcription
     row.enabled = bool(enabled)
