@@ -7,16 +7,11 @@ from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from ..settings import get_settings
+from .telephony_control_secret import load_telephony_control_secret
 
 
 def _cipher() -> Fernet:
-    settings = get_settings()
-    root_secret = settings.jwt_secret_key
-    if not root_secret:
-        if settings.app_env == "production":
-            raise RuntimeError("application secret is required for telephony events")
-        root_secret = "development-only-telephony-event-root"
+    root_secret = load_telephony_control_secret()
     derived = hashlib.sha256(
         f"nexus.telephony-event.v1\x00{root_secret}".encode("utf-8")
     ).digest()
