@@ -11,7 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import create_engine, text  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
-from app.services.release_readiness import evaluate_release_readiness  # noqa: E402
+from app.services.activation_evidence_policy import (  # noqa: E402
+    finalize_release_readiness,
+)
+from app.services.release_readiness import (  # noqa: E402
+    evaluate_release_readiness as collect_release_readiness,
+)
 from app.services.storage_readiness import check_storage_readiness  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
@@ -51,7 +56,9 @@ def _storage_warnings(storage: dict) -> list[str]:
     warnings: list[str] = []
     if storage.get("status") in {"ok", "ready"}:
         return warnings
-    for issue in list(storage.get("errors") or []) + list(storage.get("warnings") or []):
+    for issue in list(storage.get("errors") or []) + list(
+        storage.get("warnings") or []
+    ):
         if not isinstance(issue, dict):
             continue
         code = str(issue.get("code") or "storage_not_ready")
@@ -81,7 +88,9 @@ def main() -> int:
         settings.app_env == "production"
         and settings.webchat_ai_auto_reply_mode not in {"off", "runtime"}
     ):
-        warnings.append("WEBCHAT_AI_AUTO_REPLY_MODE should be off or runtime in production")
+        warnings.append(
+            "WEBCHAT_AI_AUTO_REPLY_MODE should be off or runtime in production"
+        )
     if settings.webchat_allow_legacy_token_transport:
         warnings.append("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must remain false")
 
@@ -125,7 +134,8 @@ def main() -> int:
     }
     db = SessionLocal()
     try:
-        release_readiness = evaluate_release_readiness(db, profile=profile)
+        collected = collect_release_readiness(db, profile=profile)
+        release_readiness = finalize_release_readiness(collected)
     except Exception as exc:
         warnings.append(
             "Release readiness evaluation failed: "
@@ -157,7 +167,9 @@ def main() -> int:
         "storage_readiness": storage,
         "metrics_enabled": settings.metrics_enabled,
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),
-        "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
+        "webchat_allow_legacy_token_transport": (
+            settings.webchat_allow_legacy_token_transport
+        ),
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,
         "webchat_ai_auto_reply_mode": settings.webchat_ai_auto_reply_mode,
         "outbound_email_production_pilot_enabled": (
