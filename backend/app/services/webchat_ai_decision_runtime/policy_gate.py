@@ -56,9 +56,8 @@ def validate_ai_decision(
     checked_tools: list[str] = []
     allowed_high_risk = set(allowed_high_risk_write_tools or set())
     permissions = None if granted_permissions is None else set(granted_permissions)
-    trusted_confirmation = bool(
-        customer_confirmation_granted or human_confirmation_granted
-    )
+    trusted_customer_confirmation = bool(customer_confirmation_granted)
+    trusted_human_confirmation = bool(human_confirmation_granted)
 
     if decision.customer_reply:
         customer_policy = evaluate_customer_visible_policy(decision.customer_reply)
@@ -90,7 +89,8 @@ def validate_ai_decision(
             continue
         _validate_contract_authority(
             contract,
-            trusted_confirmation=trusted_confirmation,
+            trusted_customer_confirmation=trusted_customer_confirmation,
+            trusted_human_confirmation=trusted_human_confirmation,
             allow_high_risk_write_execution=allow_high_risk_write_execution,
             allowed_high_risk=allowed_high_risk,
             permissions=permissions,
@@ -147,7 +147,8 @@ def _validate_tool_input_schema(
 def _validate_contract_authority(
     contract: ToolContract,
     *,
-    trusted_confirmation: bool,
+    trusted_customer_confirmation: bool,
+    trusted_human_confirmation: bool,
     allow_high_risk_write_execution: bool,
     allowed_high_risk: set[str],
     permissions: set[str] | None,
@@ -177,19 +178,29 @@ def _validate_contract_authority(
                 risk_level=contract.risk_level,
             )
         )
-    if (
-        enforce_confirmation_requirements
-        and contract.confirmation_required
-        and not trusted_confirmation
-    ):
-        violations.append(
-            PolicyViolation(
-                code="write_tool_confirmation_required",
-                message="The requested action requires trusted server-side confirmation.",
-                tool_name=contract.name,
-                risk_level=contract.risk_level,
+    if enforce_confirmation_requirements and contract.confirmation_required:
+        if contract.allowed_auto_execution_mode == "confirmation_required":
+            if not trusted_customer_confirmation:
+                violations.append(
+                    PolicyViolation(
+                        code="customer_confirmation_required",
+                        message=(
+                            "The requested action requires an exact one-time "
+                            "server-side customer confirmation."
+                        ),
+                        tool_name=contract.name,
+                        risk_level=contract.risk_level,
+                    )
+                )
+        elif not (trusted_customer_confirmation or trusted_human_confirmation):
+            violations.append(
+                PolicyViolation(
+                    code="trusted_confirmation_required",
+                    message="The requested action requires trusted server-side confirmation.",
+                    tool_name=contract.name,
+                    risk_level=contract.risk_level,
+                )
             )
-        )
     if contract.is_write_tool and contract.risk_level == "high":
         if (
             not allow_high_risk_write_execution
