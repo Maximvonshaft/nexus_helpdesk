@@ -659,7 +659,7 @@ def _first_remote_identity(room: rtc.Room) -> str | None:
     return None
 
 
-server = AgentServer(host="0.0.0.0", port=8081)
+server = AgentServer(host="127.0.0.1", port=8081)
 
 
 @server.rtc_session(agent_name=livekit_agent_registration_name())
