@@ -89,8 +89,7 @@ class WebchatVoiceRuntimeConfig:
 
 
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
-    legacy_enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
-    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", legacy_enabled)
+    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", False)
     live_ai_voice_enabled = _env_bool("WEBCHAT_LIVE_AI_VOICE_ENABLED", False)
     provider = os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock"
     read_livekit_credentials = bool(
@@ -103,7 +102,7 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
             _parse_csv(
                 os.getenv(
                     "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
-                    "/webchat,/api/webchat,/api/telephony",
+                    "/webchat,/webcall,/api/webchat,/api/telephony",
                 )
             )
         ),
@@ -144,10 +143,18 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
             if read_livekit_credentials
             else None
         ),
-        livekit_agent_name=(os.getenv("LIVEKIT_AGENT_NAME") or "").strip() or None,
-        livekit_agent_shared_secret=_secret_value(
-            LIVEKIT_AGENT_SECRET_ENV,
-            LIVEKIT_AGENT_SECRET_FILE_ENV,
+        livekit_agent_name=(
+            (os.getenv("LIVEKIT_AGENT_NAME") or "").strip() or None
+            if provider == "livekit" and live_ai_voice_enabled
+            else None
+        ),
+        livekit_agent_shared_secret=(
+            _secret_value(
+                LIVEKIT_AGENT_SECRET_ENV,
+                LIVEKIT_AGENT_SECRET_FILE_ENV,
+            )
+            if provider == "livekit" and live_ai_voice_enabled
+            else None
         ),
         livekit_webhook_enabled=_env_bool("LIVEKIT_WEBHOOK_ENABLED", False),
     )
