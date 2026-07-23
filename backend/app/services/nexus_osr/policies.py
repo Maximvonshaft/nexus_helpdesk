@@ -150,7 +150,9 @@ class ToolExecutionPolicy:
         missing: list[str] = []
         if not self.enabled:
             return ToolPolicyDecision(False, self.tool_name, "tool_disabled")
-        if not self.ai_auto_executable:
+        if not self.ai_auto_executable and not (
+            self.requires_customer_confirmation or self.requires_human_confirmation
+        ):
             return ToolPolicyDecision(False, self.tool_name, "tool_not_ai_auto_executable")
         if self.allowed_channels and (channel or "") not in self.allowed_channels:
             return ToolPolicyDecision(False, self.tool_name, "channel_not_allowed")
