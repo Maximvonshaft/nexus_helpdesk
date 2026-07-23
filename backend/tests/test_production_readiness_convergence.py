@@ -13,31 +13,46 @@ def test_controlled_templates_use_current_telephony_migration_head() -> None:
         assert "EXPECTED_MIGRATION_HEAD=20260723_tel6" in text
 
 
-def test_release_authorization_is_derived_and_evidence_gated() -> None:
-    service = (ROOT / "backend/app/services/release_readiness.py").read_text(
+def test_release_authorization_is_derived_by_one_evidence_policy() -> None:
+    collector = (ROOT / "backend/app/services/release_readiness.py").read_text(
         encoding="utf-8"
     )
-    assert "nexus.release-readiness.v2" in service
-    assert "production_authorized = status ==" in service
-    assert "PRODUCTION_E2E_EVIDENCE_URL" in service
-    assert "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL" in service
+    policy = (
+        ROOT / "backend/app/services/activation_evidence_policy.py"
+    ).read_text(encoding="utf-8")
+
+    assert "without granting activation authority" in collector
+    assert '"production_authorized": False' in collector
+    assert "PRODUCTION_E2E_EVIDENCE_URL" not in collector
+    assert "production_authorized = status ==" in policy
+    assert "PRODUCTION_E2E_EVIDENCE_URL" in policy
+    assert "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL" in policy
+    assert "ACTIVATION_EVIDENCE_SOURCE_SHA" in policy
+    assert "ACTIVATION_EVIDENCE_IMAGE_DIGEST" in policy
 
 
 def test_storage_and_activation_use_one_readiness_authority() -> None:
     script = (ROOT / "backend/scripts/validate_production_readiness.py").read_text(
         encoding="utf-8"
     )
-    assert "check_storage_readiness(settings)" in script
-    assert "evaluate_release_readiness(db, profile=profile)" in script
-    assert "STORAGE_BACKEND is local" not in script
-
     router = (ROOT / "backend/app/api/release_readiness.py").read_text(
         encoding="utf-8"
     )
+    activation_preflight = (
+        ROOT / "scripts/deploy/validate_production_activation.py"
+    ).read_text(encoding="utf-8")
     registry = (ROOT / "backend/app/bootstrap/routers.py").read_text(
         encoding="utf-8"
     )
+
+    assert "check_storage_readiness(settings)" in script
+    assert "collect_release_readiness(db, profile=profile)" in script
+    assert "finalize_release_readiness(collected)" in script
+    assert "STORAGE_BACKEND is local" not in script
     assert "/api/admin/release-readiness" in router
+    assert "collect_release_readiness(db, profile=profile)" in router
+    assert "finalize_release_readiness(collected)" in router
+    assert "activation_evidence_policy" in activation_preflight
     assert "release_readiness_router" in registry
     assert "/api/admin/production-readiness" in registry
     assert "/api/admin/signoff-checklist" in registry
