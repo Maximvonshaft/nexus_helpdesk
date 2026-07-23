@@ -132,6 +132,8 @@ def _configuration_snapshot(profile: str) -> dict[str, Any]:
             reason_codes.append("canary_provider_kill_switch_active")
         if not 1 <= provider_canary_percent <= 25:
             reason_codes.append("canary_percent_outside_approved_range")
+        if webchat_ai_enabled:
+            reason_codes.append("canary_webchat_ai_must_remain_disabled")
         if outbound_enabled or outbound_provider != "disabled":
             reason_codes.append("canary_outbound_must_remain_disabled")
         if voice_enabled:
