@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 from ..enums import EventType
 from ..models import TicketInternalNote, User
 from ..utils.time import utc_now
+from ..voice_compliance_models import VoiceComplianceEvidence
 from ..voice_models import (
+    VoiceChannelConfiguration,
     WebchatVoiceAIAction,
     WebchatVoiceAITurn,
     WebchatVoiceSessionAction,
@@ -23,6 +25,7 @@ from .permissions import (
     ensure_can_write_internal_note,
 )
 from .voice_command_service import enqueue_voice_command, serialize_voice_command
+from .voice_compliance_service import capability_authorized, evidence_projection
 from .voice_session_service import TERMINAL_STATUSES, _visible_context
 
 CALL_CONTROL_ACTIVE_STATUSES = {"accepted", "active"}
@@ -46,6 +49,16 @@ def list_admin_voice_evidence(
         current_user=current_user,
     )
     safe_limit = max(1, min(int(limit or 50), 100))
+    compliance_rows = (
+        db.query(VoiceComplianceEvidence)
+        .filter(VoiceComplianceEvidence.voice_session_id == session.id)
+        .order_by(
+            VoiceComplianceEvidence.evidence_at.asc(),
+            VoiceComplianceEvidence.id.asc(),
+        )
+        .limit(safe_limit)
+        .all()
+    )
     segments = (
         db.query(WebchatVoiceTranscriptSegment)
         .filter(
@@ -86,6 +99,10 @@ def list_admin_voice_evidence(
         "summary_status": session.summary_status,
         "ai_agent_status": session.ai_agent_status,
         "ai_turn_count": session.ai_turn_count,
+        "compliance_evidence": [
+            evidence_projection(row)
+            for row in compliance_rows
+        ],
         "transcript_segments": [
             {
                 "id": row.id,
@@ -196,6 +213,32 @@ def record_admin_voice_action(
             status_code=status.HTTP_409_CONFLICT,
             detail="voice session action requires an active call",
         )
+    if requested == "recording_start":
+        configuration = (
+            db.query(VoiceChannelConfiguration)
+            .filter(
+                VoiceChannelConfiguration.channel_account_id
+                == session.channel_account_id
+            )
+            .first()
+            if session.channel_account_id is not None
+            else None
+        )
+        policy = (
+            configuration.recording_policy
+            if configuration is not None
+            else "disabled"
+        )
+        if not capability_authorized(
+            db,
+            session=session,
+            capability="recording",
+            policy=policy,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="voice recording compliance evidence is required",
+            )
     command = enqueue_voice_command(
         db,
         session=session,
