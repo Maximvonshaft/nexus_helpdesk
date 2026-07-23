@@ -4,6 +4,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -35,51 +36,45 @@ def _read_env(path: Path) -> dict[str, str]:
 
 
 class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
-    def test_each_deployment_profile_is_explicit_and_fail_closed(self) -> None:
+    def test_current_deployment_profiles_are_explicit_and_fail_closed(self) -> None:
         profiles = (
-            "deploy/.env.prod.example",
-            "deploy/.env.candidate.example",
             "deploy/.env.controlled.example",
+            "deploy/.env.controlled.local-postgres.example",
             "deploy/.env.rc-test.example",
         )
+        expected = {
+            "PROVIDER_RUNTIME_ENABLED": "false",
+            "PROVIDER_RUNTIME_TRAFFIC_MODE": "control",
+            "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
+            "PROVIDER_RUNTIME_KILL_SWITCH": "true",
+            "WEBCHAT_AI_ENABLED": "false",
+            "ENABLE_OUTBOUND_DISPATCH": "false",
+            "OPERATIONS_DISPATCH_MODE": "disabled",
+        }
         for relative in profiles:
             values = _read_env(ROOT / relative)
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_ENABLED"),
-                "false",
-                relative,
-            )
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_TRAFFIC_MODE"),
-                "control",
-                relative,
-            )
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_CANARY_PERCENT"),
-                "0",
-                relative,
-            )
-            self.assertEqual(
-                values.get("PROVIDER_RUNTIME_KILL_SWITCH"),
-                "true",
-                relative,
-            )
+            for key, value in expected.items():
+                self.assertEqual(values.get(key), value, f"{relative}:{key}")
 
-    def test_compose_profiles_consume_their_single_env_authority(self) -> None:
-        expected = {
-            "deploy/docker-compose.server.yml": ".env.prod",
-            "deploy/docker-compose.candidate.yml": ".env.candidate",
-            "deploy/docker-compose.controlled.yml": ".env.controlled",
-            "deploy/docker-compose.rc-test.yml": ".env.rc-test",
-        }
-        for relative, env_name in expected.items():
-            source = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn(f"- {env_name}", source, relative)
-            self.assertNotIn(
-                "PROVIDER_RUNTIME_TRAFFIC_MODE:",
-                source,
-                relative,
-            )
+    def test_controlled_and_rc_compose_have_distinct_explicit_authorities(self) -> None:
+        controlled = (ROOT / "deploy/docker-compose.controlled.yml").read_text(
+            encoding="utf-8"
+        )
+        rc = (ROOT / "deploy/docker-compose.rc-test.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("${CONTROLLED_IMAGE:?", controlled)
+        self.assertNotRegex(controlled, r"(?m)^\s*build\s*:")
+        self.assertNotIn("env_file:", controlled)
+        self.assertIn("DATABASE_URL_APP", controlled)
+        self.assertIn("DATABASE_URL_WEBCHAT_AI", controlled)
+
+        self.assertIn("${RC_IMAGE_TAG:?", rc)
+        self.assertIn("- .env.rc-test", rc)
+        self.assertNotRegex(rc, r"(?m)^\s*build\s*:")
+        self.assertIn("postgres-rc:", rc)
+        self.assertIn("worker-webchat-ai-rc:", rc)
 
     def test_rc_generator_and_controlled_preflight_share_fail_closed_mode(
         self,
@@ -98,29 +93,15 @@ class ProviderRuntimeDeploymentContractTests(unittest.TestCase):
             origin="http://127.0.0.1:18083",
             expected_migration_head="contract_head",
         )
-        self.assertEqual(values["PROVIDER_RUNTIME_ENABLED"], "false")
-        self.assertEqual(
-            values["PROVIDER_RUNTIME_TRAFFIC_MODE"],
-            "control",
-        )
-        self.assertEqual(values["PROVIDER_RUNTIME_CANARY_PERCENT"], "0")
-        self.assertEqual(values["PROVIDER_RUNTIME_KILL_SWITCH"], "true")
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_ENABLED"],
-            "false",
-        )
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_TRAFFIC_MODE"],
-            "control",
-        )
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_CANARY_PERCENT"],
-            "0",
-        )
-        self.assertEqual(
-            preflight.SAFE_CONTROLS["PROVIDER_RUNTIME_KILL_SWITCH"],
-            "true",
-        )
+        expected = {
+            "PROVIDER_RUNTIME_ENABLED": "false",
+            "PROVIDER_RUNTIME_TRAFFIC_MODE": "control",
+            "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
+            "PROVIDER_RUNTIME_KILL_SWITCH": "true",
+        }
+        for key, value in expected.items():
+            self.assertEqual(values[key], value)
+            self.assertEqual(preflight.SAFE_CONTROLS[key], value)
 
 
 if __name__ == "__main__":
