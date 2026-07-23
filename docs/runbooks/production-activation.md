@@ -40,7 +40,12 @@ Required evidence by profile or capability:
 - `OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL` when outbound dispatch is enabled.
 - `OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL` when Operations dispatch is enabled.
 
-A placeholder, plain HTTP URL or missing capability-specific evidence fails closed.
+The activation environment also binds all evidence to:
+
+- `ACTIVATION_EVIDENCE_SOURCE_SHA`, exactly equal to `GIT_SHA`;
+- `ACTIVATION_EVIDENCE_IMAGE_DIGEST`, exactly equal to the digest suffix of `CONTROLLED_IMAGE`.
+
+A placeholder, plain HTTP URL, wrong candidate binding or missing capability-specific evidence fails closed.
 
 ## 3. Validate the activation environment
 
@@ -53,7 +58,7 @@ python scripts/deploy/validate_production_activation.py \
   --output /tmp/nexus-production-activation-preflight.json
 ```
 
-This command performs no external effects and emits no secret values. It validates the exact rollout profile, Provider mode, kill switch, canary percentage, enabled capability dependencies and evidence URLs.
+This command performs no external effects and emits no secret values. It validates the exact rollout profile, candidate identity, Provider mode, kill switch, canary percentage, enabled capability dependencies and evidence URLs.
 
 ## 4. Apply the activation overlay
 
@@ -65,6 +70,8 @@ docker compose \
   -f deploy/docker-compose.production-activation.yml \
   up -d
 ```
+
+The activation overlay starts an isolated, networkless `production-activation-preflight` container first. `app-controlled` depends on its successful completion. Skipping the manual command above therefore does not bypass the gate: invalid controls, candidate binding, Provider prerequisites or evidence prevent the Web process from starting.
 
 Start the `telephony` profile only when the real LiveKit/SIP/STT/TTS prerequisites and telephony E2E evidence are present.
 
@@ -89,7 +96,7 @@ In the operator product, open **系统运行 → 上线与激活**. The page eva
 - queue health;
 - local-storage backup equality or remote storage;
 - telephony configuration and channel readiness;
-- required activation evidence;
+- required activation evidence and exact candidate binding;
 - database pool state.
 
 `production_authorized=true` is emitted only for the `full` profile when every collector passes. Capability-specific authorization remains false unless that capability is enabled, configured and backed by its own E2E evidence.
