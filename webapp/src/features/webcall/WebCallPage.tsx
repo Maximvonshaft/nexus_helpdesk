@@ -29,6 +29,7 @@ interface VisitorBootstrap extends VoiceSessionBootstrap {
 }
 
 type TransferAction = 'cold_transfer' | 'warm_transfer'
+type ConsultationAction = 'warm_transfer_complete' | 'warm_transfer_cancel'
 type PendingAction = VoiceCommandRequest['action_type'] | 'visitor_hangup' | null
 
 const COMMAND_POLL_INTERVAL_MS = 500
@@ -61,6 +62,13 @@ function commandFailure(command: VoiceCommandRead) {
   return new Error(`通话操作未完成：${reason}`)
 }
 
+function providerPhase(command: VoiceCommandRead) {
+  const providerResult = command.result?.provider_result
+  if (!providerResult || typeof providerResult !== 'object') return null
+  const phase = (providerResult as Record<string, unknown>).phase
+  return typeof phase === 'string' ? phase : null
+}
+
 export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
   const roomRef = useRef<Room | null>(null)
   const [bootstrap] = useState(readVisitorBootstrap)
@@ -68,6 +76,7 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [muted, setMuted] = useState(false)
   const [held, setHeld] = useState(false)
+  const [consulting, setConsulting] = useState(false)
   const [digits, setDigits] = useState('')
   const [connected, setConnected] = useState(false)
   const [transferTarget, setTransferTarget] = useState('')
@@ -160,8 +169,6 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     const next = !muted
     setError(null)
     try {
-      // Agent self-mute is a local media publication control. Sending a Provider
-      // mute command here would target another participant and create false semantics.
       await setLocalMicrophoneState(next, held)
       setMuted(next)
       setStatus(next ? '你的麦克风已静音' : '你的麦克风已恢复')
@@ -177,7 +184,6 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     setPendingAction(action)
     setStatus(next ? '正在等待 Provider 确认保持状态…' : '正在等待 Provider 确认恢复状态…')
     try {
-      // Keep the operator microphone closed until the durable Provider result is final.
       await setLocalMicrophoneState(muted, true)
       const result = await recordAction(action)
       if (!result) throw new Error('坐席通话控制不可用')
@@ -223,15 +229,51 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     if (!target) return
     setPendingAction(action)
     setError(null)
-    setStatus(action === 'cold_transfer' ? '正在执行直接转接…' : '正在执行咨询后转接…')
+    setStatus(action === 'cold_transfer' ? '正在执行直接转接…' : '正在呼叫咨询目标，客户保持中…')
     try {
       const result = await recordAction(action, { target })
       if (!result) throw new Error('转接命令不可用')
-      setStatus(action === 'cold_transfer' ? 'Provider 已确认直接转接' : 'Provider 已确认咨询转接完成')
+      if (action === 'warm_transfer') {
+        if (providerPhase(result) !== 'consulting') throw new Error('咨询线路未得到 Provider 确认')
+        setConsulting(true)
+        setHeld(true)
+        await setLocalMicrophoneState(muted, false)
+        setStatus('咨询线路已接通。客户仍保持中，请完成说明后选择完成转接或取消咨询。')
+      } else {
+        setStatus('Provider 已确认直接转接')
+      }
       setTransferTarget('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '转接失败')
-      setStatus('转接未完成，当前通话保持连接')
+      setStatus('转接未完成，当前客户通话保持连接')
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const finishConsultation = async (action: ConsultationAction) => {
+    setPendingAction(action)
+    setError(null)
+    setStatus(action === 'warm_transfer_complete' ? '正在完成咨询转接…' : '正在取消咨询并恢复客户通话…')
+    try {
+      const result = await recordAction(action)
+      if (!result) throw new Error('咨询控制命令不可用')
+      const phase = providerPhase(result)
+      if (action === 'warm_transfer_complete') {
+        if (phase !== 'completed') throw new Error('Provider 尚未确认转接完成')
+        setConsulting(false)
+        setHeld(false)
+        setStatus('Provider 已确认咨询转接完成')
+      } else {
+        if (phase !== 'cancelled') throw new Error('Provider 尚未确认咨询取消')
+        setConsulting(false)
+        setHeld(false)
+        await setLocalMicrophoneState(muted, false)
+        setStatus('咨询已取消，客户通话已恢复')
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '咨询操作失败')
+      setStatus(consulting ? '咨询状态未改变，请核对 Provider 状态后重试' : '当前通话状态未改变')
     } finally {
       setPendingAction(null)
     }
@@ -276,11 +318,12 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
           </Box>
           {(!connected && !error) || commandBusy ? <CircularProgress size={28} /> : null}
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {consulting ? <Alert severity="warning">客户目前处于保持状态，只有完成或取消咨询后才能恢复正常通话。</Alert> : null}
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
             <Button variant={muted ? 'contained' : 'outlined'} startIcon={muted ? <MicOffRoundedIcon /> : <MicRoundedIcon />} disabled={!connected || commandBusy} onClick={() => void toggleMute()}>
               {muted ? '取消静音' : '静音'}
             </Button>
-            {!bootstrap ? (
+            {!bootstrap && !consulting ? (
               <Button variant={held ? 'contained' : 'outlined'} startIcon={held ? <PlayArrowRoundedIcon /> : <PauseRoundedIcon />} disabled={!connected || commandBusy} onClick={() => void toggleHold()}>
                 {pendingAction === 'hold' || pendingAction === 'resume' ? '确认中…' : held ? '恢复通话' : '保持'}
               </Button>
@@ -296,33 +339,57 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
           {!bootstrap ? (
             <Stack spacing={1}>
               <Typography component="h2" variant="h4">转接通话</Typography>
-              <TextField
-                fullWidth
-                label="目标坐席、队列或电话号码"
-                value={transferTarget}
-                disabled={commandBusy}
-                helperText="内部目标使用系统身份；外部目标使用完整电话号码。只有 Provider 最终确认后才显示转接成功。"
-                slotProps={{ htmlInput: { maxLength: 240 } }}
-                onChange={(event) => setTransferTarget(event.target.value)}
-              />
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                <Button
-                  variant="outlined"
-                  startIcon={<PhoneForwardedRoundedIcon />}
-                  disabled={!connected || !transferTarget.trim() || commandBusy}
-                  onClick={() => void transferCall('cold_transfer')}
-                >
-                  {pendingAction === 'cold_transfer' ? '执行中…' : '直接转接'}
-                </Button>
-                <Button
-                  variant="outlined"
-                  startIcon={<SwapCallsRoundedIcon />}
-                  disabled={!connected || !transferTarget.trim() || commandBusy}
-                  onClick={() => void transferCall('warm_transfer')}
-                >
-                  {pendingAction === 'warm_transfer' ? '咨询中…' : '咨询后转接'}
-                </Button>
-              </Stack>
+              {!consulting ? (
+                <>
+                  <TextField
+                    fullWidth
+                    label="目标坐席、队列或电话号码"
+                    value={transferTarget}
+                    disabled={commandBusy}
+                    helperText="内部目标使用系统身份；外部目标使用完整电话号码。咨询线路建立不等于转接完成。"
+                    slotProps={{ htmlInput: { maxLength: 240 } }}
+                    onChange={(event) => setTransferTarget(event.target.value)}
+                  />
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<PhoneForwardedRoundedIcon />}
+                      disabled={!connected || !transferTarget.trim() || commandBusy}
+                      onClick={() => void transferCall('cold_transfer')}
+                    >
+                      {pendingAction === 'cold_transfer' ? '执行中…' : '直接转接'}
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      startIcon={<SwapCallsRoundedIcon />}
+                      disabled={!connected || !transferTarget.trim() || commandBusy}
+                      onClick={() => void transferCall('warm_transfer')}
+                    >
+                      {pendingAction === 'warm_transfer' ? '呼叫中…' : '开始咨询'}
+                    </Button>
+                  </Stack>
+                </>
+              ) : (
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                  <Button
+                    variant="contained"
+                    startIcon={<PhoneForwardedRoundedIcon />}
+                    disabled={!connected || commandBusy}
+                    onClick={() => void finishConsultation('warm_transfer_complete')}
+                  >
+                    {pendingAction === 'warm_transfer_complete' ? '完成中…' : '完成转接'}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    startIcon={<SwapCallsRoundedIcon />}
+                    disabled={!connected || commandBusy}
+                    onClick={() => void finishConsultation('warm_transfer_cancel')}
+                  >
+                    {pendingAction === 'warm_transfer_cancel' ? '取消中…' : '取消咨询'}
+                  </Button>
+                </Stack>
+              )}
             </Stack>
           ) : null}
           <Alert severity="info" variant="outlined">请勿在通话中披露密码、支付验证码或其他高敏感凭证。</Alert>
