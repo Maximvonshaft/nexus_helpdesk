@@ -56,6 +56,15 @@
       "owner": "open-source-compliance",
       "expires_on": "2026-09-30",
       "reason": "Exact unmodified component is permitted only with the machine-verified LGPL compliance record and retained notices."
+    },
+    {
+      "purl": "pkg:pypi/livekit-local-inference@0.2.6",
+      "package": "livekit-local-inference",
+      "version": "0.2.6",
+      "license": "Other-Proprietary-License",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "reason": "Exact unmodified LiveKit local VAD/EOT model component is permitted only inside the LiveKit Agents framework. Standalone use, model export, use with another framework, and use of the model or its outputs to train or improve non-LiveKit models are prohibited. Retained model-license notices and an exact-version review are mandatory."
     }
   ]
 }
