@@ -16,6 +16,17 @@ POLICIES = {"disabled", "notice", "explicit_consent"}
 SOURCES = {"browser", "sip_controller", "migration"}
 DECISIONS = {"notice_delivered", "accepted", "declined", "timeout"}
 
+
+class VoiceComplianceEvidenceError(ValueError):
+    """Typed validation failure with a stable public representation."""
+
+    public_code = "voice_compliance_evidence_invalid"
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(self.public_code)
+
+
 _PROMPTS = {
     ("recording", "notice"): (
         "This call may be recorded for service quality and dispute resolution. "
@@ -166,26 +177,28 @@ def record_evidence(
     idempotency_key = _clean(idempotency_key, limit=180)
     confirmation_public_id = _clean(confirmation_public_id, limit=64) or None
     if capability not in CAPABILITIES:
-        raise ValueError("voice_compliance_capability_invalid")
+        raise VoiceComplianceEvidenceError("voice_compliance_capability_invalid")
     if policy not in POLICIES:
-        raise ValueError("voice_compliance_policy_invalid")
+        raise VoiceComplianceEvidenceError("voice_compliance_policy_invalid")
     if source not in SOURCES:
-        raise ValueError("voice_compliance_source_invalid")
+        raise VoiceComplianceEvidenceError("voice_compliance_source_invalid")
     if decision not in DECISIONS:
-        raise ValueError("voice_compliance_decision_invalid")
+        raise VoiceComplianceEvidenceError("voice_compliance_decision_invalid")
     if not idempotency_key:
-        raise ValueError("voice_compliance_idempotency_required")
+        raise VoiceComplianceEvidenceError("voice_compliance_idempotency_required")
     expected = policy_prompt(capability, policy)
     if policy_version != expected["policy_version"]:
-        raise ValueError("voice_compliance_policy_version_mismatch")
+        raise VoiceComplianceEvidenceError("voice_compliance_policy_version_mismatch")
     if prompt_sha256 != expected["prompt_sha256"]:
-        raise ValueError("voice_compliance_prompt_mismatch")
+        raise VoiceComplianceEvidenceError("voice_compliance_prompt_mismatch")
     if policy == "disabled":
-        raise ValueError("voice_compliance_evidence_not_allowed_for_disabled_policy")
+        raise VoiceComplianceEvidenceError(
+            "voice_compliance_evidence_not_allowed_for_disabled_policy"
+        )
     if policy == "notice" and decision not in {"notice_delivered", "declined", "timeout"}:
-        raise ValueError("voice_compliance_notice_decision_invalid")
+        raise VoiceComplianceEvidenceError("voice_compliance_notice_decision_invalid")
     if policy == "explicit_consent" and decision not in {"accepted", "declined", "timeout"}:
-        raise ValueError("voice_compliance_consent_decision_invalid")
+        raise VoiceComplianceEvidenceError("voice_compliance_consent_decision_invalid")
 
     existing = (
         db.query(VoiceComplianceEvidence)
@@ -202,7 +215,9 @@ def record_evidence(
             or existing.source != source
             or existing.decision != decision
         ):
-            raise ValueError("voice_compliance_idempotency_payload_mismatch")
+            raise VoiceComplianceEvidenceError(
+                "voice_compliance_idempotency_payload_mismatch"
+            )
         return existing
 
     row = VoiceComplianceEvidence(
