@@ -9,6 +9,7 @@ LOCAL_DB = ROOT / "deploy" / "docker-compose.controlled-postgres.yml"
 CONTROLLED_ENV = ROOT / "deploy" / ".env.controlled.example"
 LOCAL_ENV = ROOT / "deploy" / ".env.controlled.local-postgres.example"
 
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -111,9 +112,11 @@ def test_controlled_profile_keeps_external_effects_and_credentials_absent():
         "OUTBOUND_PROVIDER=disabled",
         "WHATSAPP_NATIVE_ENABLED=false",
         "WHATSAPP_DISPATCH_MODE=disabled",
-        "WEBCHAT_VOICE_ENABLED=false",
+        "WEBCHAT_HUMAN_CALL_ENABLED=false",
+        "WEBCHAT_LIVE_AI_VOICE_ENABLED=false",
     ):
         assert marker in env
+    assert "WEBCHAT_VOICE_ENABLED" not in env
     for forbidden in (
         "env_file:",
         "/run/secrets",
