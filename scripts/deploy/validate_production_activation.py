@@ -182,6 +182,8 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             raise ActivationError("provider_canary_controls_invalid")
         if not 1 <= percent <= 25:
             raise ActivationError("provider_canary_percent_invalid")
+        if webchat_ai_enabled:
+            raise ActivationError("provider_canary_webchat_ai_forbidden")
         if voice_enabled or outbound_enabled or operations_mode != "disabled":
             raise ActivationError("provider_canary_external_capability_forbidden")
     else:
