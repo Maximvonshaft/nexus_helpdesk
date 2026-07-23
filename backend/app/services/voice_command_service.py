@@ -17,6 +17,7 @@ from .audit_service import log_admin_audit
 from .voice_command_crypto import seal_voice_command_payload
 
 SUPPORTED_COMMANDS = {
+    "ai_suspend",
     "hangup",
     "hold",
     "resume",
