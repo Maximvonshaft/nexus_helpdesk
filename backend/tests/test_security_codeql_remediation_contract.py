@@ -48,7 +48,8 @@ def test_voice_paths_and_html_are_bounded() -> None:
     live_voice = (
         ROOT / "infra/private-ai-runtime/live_voice_runtime/app.py"
     ).read_text(encoding="utf-8")
-    assert "html.escape(safe_session_id, quote=True)" in main
+    assert '@app.get("/webchat/voice/' not in main
+    assert "voice-redirect.js" not in main
     assert "tempfile.mkstemp" in live_voice
     assert "self.voice_session_id}_{turn_id}" not in live_voice
 
