@@ -146,7 +146,7 @@ def _create_session(
     response = client.post(
         f"/api/webchat/conversations/{conversation_id}/voice/sessions",
         headers={"X-Webchat-Visitor-Token": visitor_token},
-        json={"locale": "en", "recording_consent": False},
+        json={"locale": "en"},
     )
     assert response.status_code == 200, response.text
     return conversation_id, visitor_token, response.json()
