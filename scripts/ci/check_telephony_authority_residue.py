@@ -11,6 +11,7 @@ RETIRED_PATHS = (
     "backend/app/services/livekit_telephony_service.py",
     "backend/app/services/webchat_voice_service.py",
     "backend/app/static/webchat/live-voice-capture-worklet.js",
+    "backend/app/static/webchat/voice-redirect.js",
     "scripts/_temporary_apply_canonical_telephony.py.gz.b64",
     "scripts/_temporary_telephony_backend_convergence.py",
 )
@@ -44,6 +45,8 @@ FORBIDDEN_MARKERS = (
     "/webchat/live/ws",
     "/webchat/live",
     "/webcall-ai",
+    "/webchat/voice/",
+    "voice-redirect.js",
     "LIVE_VOICE_UPSTREAM_",
     "WEBCALL_AI_",
     "WEBCHAT_VOICE_ENABLED",
@@ -148,9 +151,9 @@ def main() -> int:
     compose_path = "deploy/docker-compose.controlled.yml"
     requirements_path = "backend/requirements.txt"
     _require_marker(findings, worker_path, '"/api/telephony/internal/agent-turn"')
-    _require_marker(findings, worker_path, 'AgentServer(host="0.0.0.0", port=8081)')
+    _require_marker(findings, worker_path, 'AgentServer(host="127.0.0.1", port=8081)')
     _require_marker(findings, worker_path, 'event_type="controller.heartbeat"')
-    _require_marker(findings, worker_path, 'publish_dtmf')
+    _require_marker(findings, worker_path, "publish_dtmf")
     _forbid_marker(findings, worker_path, "livekit.plugins.openai")
     _forbid_marker(findings, worker_path, "livekit.plugins.anthropic")
     _forbid_marker(findings, worker_path, "ProviderRuntimeRouter")
