@@ -26,6 +26,11 @@ from .telephony_projection_service import (
     project_controller_event,
     project_livekit_event,
 )
+from .voice_compliance_service import (
+    apply_session_compliance_state,
+    record_evidence,
+)
+from .voice_room_control_service import ensure_recording_command
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +469,65 @@ def _project_livekit_row(
     )
 
 
+def _project_controller_compliance(
+    db: Session,
+    *,
+    row: TelephonyEventInbox,
+    payload: dict[str, Any],
+    session: WebchatVoiceSession,
+    configuration: VoiceChannelConfiguration,
+) -> None:
+    safe_result = (
+        payload.get("safe_result")
+        if isinstance(payload.get("safe_result"), dict)
+        else {}
+    )
+    capability = _clean(safe_result.get("capability"), limit=32)
+    expected_policy = (
+        configuration.recording_policy
+        if capability == "recording"
+        else (
+            configuration.transcription_policy
+            if capability == "transcript_persistence"
+            else None
+        )
+    )
+    if expected_policy is None:
+        raise ValueError("voice_compliance_capability_invalid")
+    supplied_policy = _clean(safe_result.get("policy"), limit=32)
+    if supplied_policy != expected_policy:
+        raise ValueError("voice_compliance_policy_mismatch")
+    record_evidence(
+        db,
+        session=session,
+        capability=capability,
+        policy=supplied_policy,
+        policy_version=safe_result.get("policy_version"),
+        prompt_sha256=safe_result.get("prompt_sha256"),
+        source="sip_controller",
+        decision=safe_result.get("decision"),
+        participant_identity=_clean(
+            payload.get("controller_identity"),
+            limit=160,
+        ),
+        idempotency_key=(
+            _clean(safe_result.get("idempotency_key"), limit=180)
+            or f"controller-compliance:{row.provider_event_id}:{capability}"
+        ),
+        confirmation_public_id=_clean(
+            safe_result.get("confirmation_id"),
+            limit=64,
+        ),
+    )
+    apply_session_compliance_state(
+        db,
+        session=session,
+        recording_policy=configuration.recording_policy,
+        transcription_policy=configuration.transcription_policy,
+    )
+    ensure_recording_command(db, session=session, actor=None)
+
+
 def _project_controller_row(
     db: Session,
     *,
@@ -488,13 +552,29 @@ def _project_controller_row(
         )
         return
     account = db.get(ChannelAccount, session.channel_account_id)
-    if account is None:
+    configuration = (
+        db.query(VoiceChannelConfiguration)
+        .filter(
+            VoiceChannelConfiguration.channel_account_id
+            == session.channel_account_id
+        )
+        .first()
+    )
+    if account is None or configuration is None:
         _retry(row, error_code="controller_channel_missing")
         return
     row.tenant_id = account.tenant_id
     row.channel_account_id = account.id
     try:
         with db.begin_nested():
+            if row.event_type == "compliance.evidence":
+                _project_controller_compliance(
+                    db,
+                    row=row,
+                    payload=payload,
+                    session=session,
+                    configuration=configuration,
+                )
             projected = project_controller_event(db, payload=payload)
     except Exception as exc:
         logger.exception(
