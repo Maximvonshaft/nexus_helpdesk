@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTROLLED = ROOT / "deploy" / "docker-compose.controlled.yml"
 LOCAL_DB = ROOT / "deploy" / "docker-compose.controlled-postgres.yml"
@@ -12,6 +14,13 @@ LOCAL_ENV = ROOT / "deploy" / ".env.controlled.local-postgres.example"
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _compose(path: Path) -> dict:
+    document = yaml.safe_load(_read(path))
+    assert isinstance(document, dict)
+    assert isinstance(document.get("services"), dict)
+    return document
 
 
 def _env(path: Path) -> dict[str, str]:
@@ -38,22 +47,22 @@ def test_retired_deployment_aliases_are_physically_absent():
 
 
 def test_canonical_app_worker_topology_exists_in_one_file_only():
-    controlled = _read(CONTROLLED)
-    local_db = _read(LOCAL_DB)
+    controlled = _compose(CONTROLLED)["services"]
+    local_db = _compose(LOCAL_DB)["services"]
 
-    for service in (
-        "app-controlled:",
-        "worker-outbound-controlled:",
-        "worker-background-controlled:",
-        "worker-webchat-ai-controlled:",
-        "worker-handoff-snapshot-controlled:",
-    ):
-        assert service in controlled
-        assert service not in local_db
-    assert "postgres-controlled:" not in controlled
-    assert "postgres-controlled:" in local_db
-    assert "migrate-controlled:" in local_db
-    assert "condition: service_healthy" in local_db
+    expected_runtime = {
+        "app-controlled",
+        "worker-outbound-controlled",
+        "worker-background-controlled",
+        "worker-webchat-ai-controlled",
+        "worker-handoff-snapshot-controlled",
+    }
+    assert expected_runtime.issubset(controlled)
+    assert expected_runtime.isdisjoint(local_db)
+    assert "postgres-controlled" not in controlled
+    assert "postgres-controlled" in local_db
+    assert "migrate-controlled" in local_db
+    assert local_db["migrate-controlled"]["depends_on"]["postgres-controlled"]["condition"] == "service_healthy"
 
 
 def test_external_and_local_controlled_envs_use_distinct_service_identities():
@@ -99,30 +108,56 @@ def test_local_postgres_overlay_bootstraps_only_database_authority():
     assert "DROP ROLE" not in bootstrap
 
 
-def test_controlled_profile_keeps_external_effects_and_credentials_absent():
-    compose = _read(CONTROLLED)
-    env = _read(CONTROLLED_ENV)
+def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_scoped():
+    document = _compose(CONTROLLED)
+    services = document["services"]
+    env = _env(CONTROLLED_ENV)
 
-    for marker in (
-        "PROVIDER_RUNTIME_ENABLED=false",
-        "PROVIDER_RUNTIME_TRAFFIC_MODE=control",
-        "PROVIDER_RUNTIME_KILL_SWITCH=true",
-        "PROVIDER_RUNTIME_CANARY_PERCENT=0",
-        "ENABLE_OUTBOUND_DISPATCH=false",
-        "OUTBOUND_PROVIDER=disabled",
-        "WHATSAPP_NATIVE_ENABLED=false",
-        "WHATSAPP_DISPATCH_MODE=disabled",
-        "WEBCHAT_HUMAN_CALL_ENABLED=false",
-        "WEBCHAT_LIVE_AI_VOICE_ENABLED=false",
-    ):
-        assert marker in env
+    expected_disabled = {
+        "PROVIDER_RUNTIME_ENABLED": "false",
+        "PROVIDER_RUNTIME_TRAFFIC_MODE": "control",
+        "PROVIDER_RUNTIME_KILL_SWITCH": "true",
+        "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
+        "ENABLE_OUTBOUND_DISPATCH": "false",
+        "OUTBOUND_PROVIDER": "disabled",
+        "WHATSAPP_NATIVE_ENABLED": "false",
+        "WHATSAPP_DISPATCH_MODE": "disabled",
+        "WEBCHAT_HUMAN_CALL_ENABLED": "false",
+        "WEBCHAT_LIVE_AI_VOICE_ENABLED": "false",
+    }
+    for key, value in expected_disabled.items():
+        assert env[key] == value
     assert "WEBCHAT_VOICE_ENABLED" not in env
+
+    app_environment = services["app-controlled"]["environment"]
+    assert "RUNTIME_CONTRACT_SIGNING_SECRET" in app_environment
+    assert "SECRET_KEY" in app_environment
+
+    non_http_services = {
+        name: service
+        for name, service in services.items()
+        if name != "app-controlled"
+    }
+    for service_name, service in non_http_services.items():
+        environment = service.get("environment") or {}
+        assert "SECRET_KEY" not in environment, service_name
+        assert "RUNTIME_CONTRACT_SIGNING_SECRET" not in environment, service_name
+        assert "METRICS_TOKEN" not in environment, service_name
+
+    for service_name, service in services.items():
+        assert "env_file" not in service, service_name
+        command = service.get("command")
+        if isinstance(command, list):
+            assert "all" not in (
+                command[command.index("--queue") + 1 : command.index("--queue") + 2]
+                if "--queue" in command
+                else []
+            ), service_name
+
+    raw = _read(CONTROLLED).lower()
     for forbidden in (
-        "env_file:",
         "/run/secrets",
         "ai_runtime_token",
         "live_voice_token",
-        "RUNTIME_CONTRACT_SIGNING_SECRET",
-        "--queue all",
     ):
-        assert forbidden not in compose
+        assert forbidden not in raw
