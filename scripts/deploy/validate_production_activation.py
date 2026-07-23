@@ -9,13 +9,26 @@ import os
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+
+ROOT = Path(__file__).resolve().parents[2]
+BACKEND = ROOT / "backend"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
+
+from app.services.activation_evidence_policy import (  # noqa: E402
+    activation_evidence_snapshot,
+)
 
 _PROFILES = {"provider_canary", "full"}
 _TOKEN = re.compile(r"^[a-z0-9_.-]{1,80}$")
-_SHA40 = re.compile(r"^[0-9a-f]{40}$")
-_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
-_DIGEST_IMAGE = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
+_EVIDENCE_LABELS = {
+    "production_e2e_evidence_url": "production",
+    "provider_canary_e2e_evidence_url": "provider_canary",
+    "webchat_ai_production_e2e_evidence_url": "webchat_ai",
+    "telephony_production_e2e_evidence_url": "telephony",
+    "outbound_production_e2e_evidence_url": "outbound",
+    "operations_production_e2e_evidence_url": "operations",
+}
 
 
 class ActivationError(ValueError):
@@ -89,23 +102,7 @@ def _placeholder(value: str) -> bool:
         or ">" in normalized
         or "placeholder" in normalized
         or "replace-with" in normalized
-        or normalized in {
-            "changeme",
-            "change-me",
-            "replace-me",
-            "example-secret",
-        }
     )
-
-
-def _require_https(values: dict[str, str], key: str) -> str:
-    value = values.get(key, "").strip()
-    if _placeholder(value) or any(char in value for char in "\r\n\x00"):
-        raise ActivationError(f"evidence_missing:{key}")
-    parsed = urlsplit(value)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ActivationError(f"evidence_url_invalid:{key}")
-    return value
 
 
 def _require_value(values: dict[str, str], key: str) -> str:
@@ -123,36 +120,25 @@ def _require_one_of(values: dict[str, str], *keys: str) -> str:
     raise ActivationError(f"configuration_missing_one_of:{','.join(keys)}")
 
 
-def _evidence_binding(values: dict[str, str]) -> dict[str, str]:
-    source_sha = _require_value(values, "GIT_SHA").lower()
-    evidence_source_sha = _require_value(
-        values,
-        "ACTIVATION_EVIDENCE_SOURCE_SHA",
-    ).lower()
-    if not _SHA40.fullmatch(source_sha):
-        raise ActivationError("source_sha_invalid:GIT_SHA")
-    if not _SHA40.fullmatch(evidence_source_sha):
-        raise ActivationError("source_sha_invalid:ACTIVATION_EVIDENCE_SOURCE_SHA")
-    if evidence_source_sha != source_sha:
-        raise ActivationError("activation_evidence_source_sha_mismatch")
-
-    image = _require_value(values, "CONTROLLED_IMAGE").lower()
-    match = _DIGEST_IMAGE.fullmatch(image)
-    if match is None:
-        raise ActivationError("controlled_image_not_digest_pinned")
-    image_digest = match.group(1)
-    evidence_image_digest = _require_value(
-        values,
-        "ACTIVATION_EVIDENCE_IMAGE_DIGEST",
-    ).lower()
-    if not _SHA256.fullmatch(evidence_image_digest):
-        raise ActivationError("activation_evidence_image_digest_invalid")
-    if evidence_image_digest != image_digest:
-        raise ActivationError("activation_evidence_image_digest_mismatch")
-    return {
-        "source_sha": source_sha,
-        "image_digest": image_digest,
-    }
+def _activation_evidence(
+    values: dict[str, str],
+    *,
+    profile: str,
+    configuration: dict[str, object],
+) -> dict[str, object]:
+    snapshot = activation_evidence_snapshot(
+        profile=profile,
+        configuration=configuration,
+        identity={
+            "source_sha": values.get("GIT_SHA"),
+            "image": values.get("CONTROLLED_IMAGE"),
+        },
+        environment=values,
+    )
+    if snapshot["status"] != "ready":
+        reasons = snapshot.get("reason_codes") or ["activation_evidence_not_ready"]
+        raise ActivationError(str(reasons[0]))
+    return snapshot
 
 
 def validate(values: dict[str, str]) -> dict[str, object]:
@@ -160,7 +146,6 @@ def validate(values: dict[str, str]) -> dict[str, object]:
     if profile not in _PROFILES:
         raise ActivationError("production_profile_invalid")
 
-    binding = _evidence_binding(values)
     provider_enabled = _bool(values, "PROVIDER_RUNTIME_ENABLED")
     provider_mode = _token(
         values,
@@ -192,7 +177,6 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         "disabled",
     )
 
-    evidence: dict[str, str] = {}
     if profile == "provider_canary":
         if not provider_enabled or provider_mode != "canary" or kill_switch:
             raise ActivationError("provider_canary_controls_invalid")
@@ -200,10 +184,6 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             raise ActivationError("provider_canary_percent_invalid")
         if voice_enabled or outbound_enabled or operations_mode != "disabled":
             raise ActivationError("provider_canary_external_capability_forbidden")
-        evidence["provider_canary"] = _require_https(
-            values,
-            "PROVIDER_CANARY_E2E_EVIDENCE_URL",
-        )
     else:
         if (
             not provider_enabled
@@ -212,17 +192,10 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             or percent != 100
         ):
             raise ActivationError("full_provider_controls_invalid")
-        evidence["production"] = _require_https(
-            values,
-            "PRODUCTION_E2E_EVIDENCE_URL",
-        )
-        if webchat_ai_enabled:
-            if _token(values, "WEBCHAT_AI_AUTO_REPLY_MODE", "off") != "runtime":
-                raise ActivationError("webchat_ai_runtime_mode_invalid")
-            evidence["webchat_ai"] = _require_https(
-                values,
-                "WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL",
-            )
+        if webchat_ai_enabled and (
+            _token(values, "WEBCHAT_AI_AUTO_REPLY_MODE", "off") != "runtime"
+        ):
+            raise ActivationError("webchat_ai_runtime_mode_invalid")
         if voice_enabled:
             if _token(values, "WEBCHAT_VOICE_PROVIDER", "mock") != "livekit":
                 raise ActivationError("voice_provider_not_livekit")
@@ -246,30 +219,35 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             if live_ai_voice_enabled:
                 _require_value(values, "NEXUS_VOICE_STT_MODEL")
                 _require_value(values, "NEXUS_VOICE_TTS_MODEL")
-            evidence["telephony"] = _require_https(
-                values,
-                "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL",
-            )
-        if outbound_enabled:
-            if outbound_provider == "disabled":
-                raise ActivationError("outbound_provider_disabled")
-            evidence["outbound"] = _require_https(
-                values,
-                "OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL",
-            )
-        if operations_mode != "disabled":
-            if operations_adapter == "disabled":
-                raise ActivationError("operations_adapter_disabled")
-            evidence["operations"] = _require_https(
-                values,
-                "OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL",
-            )
+        if outbound_enabled and outbound_provider == "disabled":
+            raise ActivationError("outbound_provider_disabled")
+        if operations_mode != "disabled" and operations_adapter == "disabled":
+            raise ActivationError("operations_adapter_disabled")
+
+    configuration: dict[str, object] = {
+        "webchat_ai_enabled": webchat_ai_enabled,
+        "voice_enabled": voice_enabled,
+        "outbound": {
+            "enabled": outbound_enabled,
+            "provider": outbound_provider,
+        },
+        "operations_mode": operations_mode,
+    }
+    activation = _activation_evidence(
+        values,
+        profile=profile,
+        configuration=configuration,
+    )
+    evidence = {
+        _EVIDENCE_LABELS.get(key, key): value
+        for key, value in dict(activation.get("references") or {}).items()
+    }
 
     return {
         "schema": "nexus.production-activation-preflight.v2",
         "status": "pass",
         "profile": profile,
-        "candidate": binding,
+        "candidate": activation.get("candidate") or {},
         "provider": {
             "enabled": provider_enabled,
             "mode": provider_mode,
@@ -306,7 +284,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         payload = validate(_input_values(args))
-    except (ActivationError, OSError, UnicodeError) as exc:
+    except (ActivationError, OSError, UnicodeError, ValueError) as exc:
         print(f"production_activation_preflight_error:{exc}", file=sys.stderr)
         return 2
     encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
