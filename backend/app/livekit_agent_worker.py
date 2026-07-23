@@ -36,7 +36,14 @@ from .livekit_agent_config import (
 logger = logging.getLogger("nexus.livekit-agent")
 _COMMAND_TOPIC = "nexus.telephony.command.v1"
 _ALLOWED_ROLES = {"ai_controller", "controller"}
-_ALLOWED_COMMANDS = {"hold", "resume", "keypad", "warm_transfer"}
+_ALLOWED_COMMANDS = {
+    "hold",
+    "resume",
+    "keypad",
+    "warm_transfer",
+    "warm_transfer_complete",
+    "warm_transfer_cancel",
+}
 _DTMF_CODE = {
     "0": 0,
     "1": 1,
@@ -55,6 +62,7 @@ _DTMF_CODE = {
     "C": 14,
     "D": 15,
 }
+_CONSULTATION_IDENTITY_PREFIX = "consult_"
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,18 @@ class AgentJobMetadata:
     voice_session_id: str
     conversation_public_id: str
     channel_account_id: int | None = None
+
+
+@dataclass(frozen=True)
+class WarmConsultationState:
+    command_id: str
+    target_identity: str
+    caller_identity: str
+    human_identity: str
+
+    @property
+    def safe_id(self) -> str:
+        return hashlib.sha256(self.target_identity.encode("utf-8")).hexdigest()[:20]
 
 
 def parse_agent_job_metadata(raw: str | None) -> AgentJobMetadata:
@@ -335,6 +355,7 @@ def _request(request_name: str, **kwargs: Any):
     candidates = (
         livekit_api,
         getattr(livekit_api, "proto_room", None),
+        getattr(livekit_api, "proto_sip", None),
         getattr(livekit_api, "proto_models", None),
     )
     for module in candidates:
@@ -362,6 +383,32 @@ async def _participant_track_sids(
         for track in getattr(participant, "tracks", [])
         if str(getattr(track, "sid", "") or "").strip()
     ]
+
+
+async def _wait_for_participant_tracks(
+    lkapi: Any,
+    *,
+    room_name: str,
+    participant_identity: str,
+    timeout_seconds: float = 8.0,
+) -> list[str]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_error: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            tracks = await _participant_track_sids(
+                lkapi,
+                room_name=room_name,
+                participant_identity=participant_identity,
+            )
+            if tracks:
+                return tracks
+        except Exception as exc:
+            last_error = exc
+        await asyncio.sleep(0.2)
+    if last_error is not None:
+        raise RuntimeError("participant_media_not_ready") from last_error
+    raise RuntimeError("participant_media_not_ready")
 
 
 async def _update_subscriptions(
@@ -445,6 +492,36 @@ async def set_bidirectional_hold_subscriptions(
     }
 
 
+async def _remove_participant(
+    lkapi: Any,
+    *,
+    room_name: str,
+    participant_identity: str,
+) -> None:
+    await lkapi.room.remove_participant(
+        _request(
+            "RoomParticipantIdentity",
+            room=room_name,
+            identity=participant_identity,
+        )
+    )
+
+
+def _consultation_identity(command_id: str) -> str:
+    digest = hashlib.sha256(command_id.encode("utf-8")).hexdigest()[:40]
+    return f"{_CONSULTATION_IDENTITY_PREFIX}{digest}"
+
+
+def _bounded_reason(exc: Exception) -> str:
+    value = str(exc or type(exc).__name__).strip().lower().replace(" ", "_")
+    safe = "".join(
+        character
+        for character in value
+        if character.isalnum() or character in "_-:"
+    )
+    return (safe or type(exc).__name__.lower())[:160]
+
+
 class TelephonyController:
     def __init__(
         self,
@@ -464,25 +541,54 @@ class TelephonyController:
         self._background_audio = background_audio
         self._hold_handle: Any = None
         self._hold_lock = asyncio.Lock()
+        self._consultation_lock = asyncio.Lock()
+        self._consultation: WarmConsultationState | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
+
+    def _spawn(self, coroutine) -> None:
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def register(self) -> None:
         @self._ctx.room.on("data_received")
         def _on_data(packet: rtc.DataPacket) -> None:
             command = parse_controller_command(packet)
-            if command is None:
-                return
-            task = asyncio.create_task(self._execute(command))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            if command is not None:
+                self._spawn(self._execute(command))
+
+        @self._ctx.room.on("participant_disconnected")
+        def _on_participant_disconnected(participant: Any) -> None:
+            identity = str(getattr(participant, "identity", "") or "").strip()
+            if identity:
+                self._spawn(self._recover_disconnected_consultation(identity))
 
     async def close(self) -> None:
         for task in list(self._tasks):
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._stop_hold_audio()
+        self._consultation = None
+
+    def _start_hold_audio(self) -> None:
+        if self._hold_handle is None or self._hold_handle.done():
+            self._hold_handle = self._background_audio.play(
+                BuiltinAudioClip.HOLD_MUSIC.path(),
+                loop=True,
+            )
+
+    def _stop_hold_audio(self) -> None:
         if self._hold_handle is not None and not self._hold_handle.done():
             self._hold_handle.stop()
+        self._hold_handle = None
+
+    def _livekit_api(self):
+        return livekit_api.LiveKitAPI(
+            url=_server_api_url(os.environ["LIVEKIT_URL"]),
+            api_key=os.environ["LIVEKIT_API_KEY"],
+            api_secret=os.environ["LIVEKIT_API_SECRET"],
+        )
 
     async def _execute(self, command: dict[str, Any]) -> None:
         command_id = command["command_id"]
@@ -530,7 +636,11 @@ class TelephonyController:
         if action in {"hold", "resume"}:
             return await self._set_hold_state(command, held=action == "hold")
         if action == "warm_transfer":
-            return await self._warm_transfer(command)
+            return await self._start_warm_consultation(command)
+        if action == "warm_transfer_complete":
+            return await self._complete_warm_consultation(command)
+        if action == "warm_transfer_cancel":
+            return await self._cancel_warm_consultation(command)
         raise RuntimeError("unsupported_controller_action")
 
     async def _set_hold_state(
@@ -544,17 +654,12 @@ class TelephonyController:
         if not caller_identity or not human_identity:
             raise RuntimeError("hold_participant_identity_missing")
         async with self._hold_lock:
-            if held and (self._hold_handle is None or self._hold_handle.done()):
-                self._hold_handle = self._background_audio.play(
-                    BuiltinAudioClip.HOLD_MUSIC.path(),
-                    loop=True,
-                )
+            if self._consultation is not None:
+                raise RuntimeError("hold_state_owned_by_warm_consultation")
+            if held:
+                self._start_hold_audio()
             try:
-                async with livekit_api.LiveKitAPI(
-                    url=_server_api_url(os.environ["LIVEKIT_URL"]),
-                    api_key=os.environ["LIVEKIT_API_KEY"],
-                    api_secret=os.environ["LIVEKIT_API_SECRET"],
-                ) as lkapi:
+                async with self._livekit_api() as lkapi:
                     counts = await set_bidirectional_hold_subscriptions(
                         lkapi,
                         room_name=self._ctx.room.name,
@@ -563,66 +668,273 @@ class TelephonyController:
                         subscribe=not held,
                     )
             except Exception:
-                if held and self._hold_handle is not None:
-                    self._hold_handle.stop()
-                    self._hold_handle = None
+                if held:
+                    self._stop_hold_audio()
                 raise
-            if not held and self._hold_handle is not None:
-                self._hold_handle.stop()
-                self._hold_handle = None
+            if not held:
+                self._stop_hold_audio()
             return {
                 "action": "hold" if held else "resume",
                 "held": held,
                 **counts,
             }
 
-    async def _warm_transfer(self, command: dict[str, Any]) -> dict[str, Any]:
-        if self._session is None:
-            raise RuntimeError("agent_session_unavailable_for_warm_transfer")
-        target = command.get("target")
-        trunk_id = command.get("outbound_trunk_id")
+    async def _start_warm_consultation(
+        self,
+        command: dict[str, Any],
+    ) -> dict[str, Any]:
+        caller_identity = str(command.get("participant_identity") or "").strip()
+        human_identity = str(command.get("human_identity") or "").strip()
+        target = str(command.get("target") or "").strip()
+        trunk_id = str(command.get("outbound_trunk_id") or "").strip()
+        if not caller_identity or not human_identity:
+            raise RuntimeError("warm_transfer_participant_identity_missing")
         if not target or not trunk_id:
             raise RuntimeError("warm_transfer_target_or_trunk_missing")
-        transfer_model = str(self._config.transfer_llm_model or "").strip()
-        if not transfer_model:
-            raise RuntimeError("warm_transfer_consultation_model_not_configured")
-        from livekit.agents.beta.workflows import WarmTransferTask
+        command_id = str(command["command_id"])
+        target_identity = _consultation_identity(command_id)
+        async with self._consultation_lock:
+            if self._consultation is not None:
+                if self._consultation.command_id == command_id:
+                    return {
+                        "action": "warm_transfer",
+                        "phase": "consulting",
+                        "consultation_id": self._consultation.safe_id,
+                        "idempotent": True,
+                    }
+                raise RuntimeError("warm_transfer_consultation_already_active")
+            self._start_hold_audio()
+            caller_human_isolated = False
+            target_created = False
+            try:
+                async with self._livekit_api() as lkapi:
+                    await set_bidirectional_hold_subscriptions(
+                        lkapi,
+                        room_name=self._ctx.room.name,
+                        caller_identity=caller_identity,
+                        human_identity=human_identity,
+                        subscribe=False,
+                    )
+                    caller_human_isolated = True
+                    await lkapi.sip.create_sip_participant(
+                        _request(
+                            "CreateSIPParticipantRequest",
+                            room_name=self._ctx.room.name,
+                            participant_identity=target_identity,
+                            participant_name="Nexus transfer consultation",
+                            sip_trunk_id=trunk_id,
+                            sip_call_to=target,
+                            wait_until_answered=True,
+                        )
+                    )
+                    target_created = True
+                    await _wait_for_participant_tracks(
+                        lkapi,
+                        room_name=self._ctx.room.name,
+                        participant_identity=target_identity,
+                    )
+                    await set_bidirectional_hold_subscriptions(
+                        lkapi,
+                        room_name=self._ctx.room.name,
+                        caller_identity=caller_identity,
+                        human_identity=target_identity,
+                        subscribe=False,
+                    )
+            except Exception:
+                try:
+                    async with self._livekit_api() as lkapi:
+                        if target_created:
+                            try:
+                                await _remove_participant(
+                                    lkapi,
+                                    room_name=self._ctx.room.name,
+                                    participant_identity=target_identity,
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "livekit_warm_consult_target_cleanup_failed",
+                                    extra={"voice_session_id": self._metadata.voice_session_id},
+                                )
+                        if caller_human_isolated:
+                            await set_bidirectional_hold_subscriptions(
+                                lkapi,
+                                room_name=self._ctx.room.name,
+                                caller_identity=caller_identity,
+                                human_identity=human_identity,
+                                subscribe=True,
+                            )
+                finally:
+                    self._stop_hold_audio()
+                raise
+            self._consultation = WarmConsultationState(
+                command_id=command_id,
+                target_identity=target_identity,
+                caller_identity=caller_identity,
+                human_identity=human_identity,
+            )
+            return {
+                "action": "warm_transfer",
+                "phase": "consulting",
+                "consultation_id": self._consultation.safe_id,
+                "customer_isolated": True,
+            }
 
-        current_agent = getattr(self._session, "current_agent", None)
-        chat_ctx = getattr(current_agent, "chat_ctx", None)
-        result = await WarmTransferTask(
-            sip_call_to=target,
-            sip_trunk_id=trunk_id,
-            chat_ctx=chat_ctx,
-            stt=inference.STT(model=self._config.stt_model),
-            llm=inference.LLM(model=transfer_model),
-            tts=inference.TTS(model=self._config.tts_model),
-            ringing_timeout=30.0,
-            extra_instructions=(
-                "This is an operational transfer consultation. Brief the human only "
-                "with the bounded conversation context and ask whether they can accept. "
-                "Do not make business decisions or promise an outcome."
-            ),
-        )
-        identity = str(getattr(result, "human_agent_identity", "") or "")
-        return {
-            "action": "warm_transfer",
-            "human_agent_identity_hash": (
-                hashlib.sha256(identity.encode("utf-8")).hexdigest()
-                if identity
+    def _find_consultation_target(self) -> str | None:
+        if self._consultation is not None:
+            return self._consultation.target_identity
+        for identity in self._ctx.room.remote_participants:
+            if str(identity).startswith(_CONSULTATION_IDENTITY_PREFIX):
+                return str(identity)
+        return None
+
+    async def _complete_warm_consultation(
+        self,
+        command: dict[str, Any],
+    ) -> dict[str, Any]:
+        caller_identity = str(command.get("participant_identity") or "").strip()
+        human_identity = str(command.get("human_identity") or "").strip()
+        if not caller_identity or not human_identity:
+            raise RuntimeError("warm_transfer_participant_identity_missing")
+        async with self._consultation_lock:
+            target_identity = self._find_consultation_target()
+            if not target_identity:
+                raise RuntimeError("warm_transfer_consultation_not_active")
+            async with self._livekit_api() as lkapi:
+                await set_bidirectional_hold_subscriptions(
+                    lkapi,
+                    room_name=self._ctx.room.name,
+                    caller_identity=caller_identity,
+                    human_identity=target_identity,
+                    subscribe=True,
+                )
+                try:
+                    await _remove_participant(
+                        lkapi,
+                        room_name=self._ctx.room.name,
+                        participant_identity=human_identity,
+                    )
+                except Exception:
+                    await set_bidirectional_hold_subscriptions(
+                        lkapi,
+                        room_name=self._ctx.room.name,
+                        caller_identity=caller_identity,
+                        human_identity=target_identity,
+                        subscribe=False,
+                    )
+                    raise
+            safe_id = hashlib.sha256(target_identity.encode("utf-8")).hexdigest()[:20]
+            self._consultation = None
+            self._stop_hold_audio()
+            return {
+                "action": "warm_transfer_complete",
+                "phase": "completed",
+                "consultation_id": safe_id,
+                "customer_bridged": True,
+                "previous_operator_removed": True,
+            }
+
+    async def _cancel_warm_consultation(
+        self,
+        command: dict[str, Any],
+    ) -> dict[str, Any]:
+        caller_identity = str(command.get("participant_identity") or "").strip()
+        human_identity = str(command.get("human_identity") or "").strip()
+        if not caller_identity or not human_identity:
+            raise RuntimeError("warm_transfer_participant_identity_missing")
+        async with self._consultation_lock:
+            target_identity = self._find_consultation_target()
+            async with self._livekit_api() as lkapi:
+                if target_identity:
+                    try:
+                        await _remove_participant(
+                            lkapi,
+                            room_name=self._ctx.room.name,
+                            participant_identity=target_identity,
+                        )
+                    except Exception:
+                        logger.info(
+                            "livekit_warm_consult_target_already_absent",
+                            extra={"voice_session_id": self._metadata.voice_session_id},
+                        )
+                await set_bidirectional_hold_subscriptions(
+                    lkapi,
+                    room_name=self._ctx.room.name,
+                    caller_identity=caller_identity,
+                    human_identity=human_identity,
+                    subscribe=True,
+                )
+            safe_id = (
+                hashlib.sha256(target_identity.encode("utf-8")).hexdigest()[:20]
+                if target_identity
                 else None
-            ),
-        }
+            )
+            self._consultation = None
+            self._stop_hold_audio()
+            return {
+                "action": "warm_transfer_cancel",
+                "phase": "cancelled",
+                "consultation_id": safe_id,
+                "customer_restored": True,
+            }
 
-
-def _bounded_reason(exc: Exception) -> str:
-    value = str(exc or type(exc).__name__).strip().lower().replace(" ", "_")
-    safe = "".join(
-        character
-        for character in value
-        if character.isalnum() or character in "_-:"
-    )
-    return (safe or type(exc).__name__.lower())[:160]
+    async def _recover_disconnected_consultation(self, identity: str) -> None:
+        state = self._consultation
+        if state is None or identity not in {
+            state.target_identity,
+            state.caller_identity,
+            state.human_identity,
+        }:
+            return
+        async with self._consultation_lock:
+            state = self._consultation
+            if state is None:
+                return
+            try:
+                async with self._livekit_api() as lkapi:
+                    if identity == state.target_identity:
+                        await set_bidirectional_hold_subscriptions(
+                            lkapi,
+                            room_name=self._ctx.room.name,
+                            caller_identity=state.caller_identity,
+                            human_identity=state.human_identity,
+                            subscribe=True,
+                        )
+                    else:
+                        try:
+                            await _remove_participant(
+                                lkapi,
+                                room_name=self._ctx.room.name,
+                                participant_identity=state.target_identity,
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                logger.exception(
+                    "livekit_warm_consult_disconnect_recovery_failed",
+                    extra={"voice_session_id": self._metadata.voice_session_id},
+                )
+            finally:
+                self._consultation = None
+                self._stop_hold_audio()
+            try:
+                await self._client.controller_event(
+                    event_type="consultation.failed",
+                    room_name=self._ctx.room.name,
+                    controller_identity=self._ctx.room.local_participant.identity,
+                    role=self._metadata.role,
+                    provider_status="failed",
+                    provider_reason=(
+                        "consultation_target_disconnected"
+                        if identity == state.target_identity
+                        else "consultation_call_leg_disconnected"
+                    ),
+                    safe_result={"consultation_id": state.safe_id},
+                )
+            except Exception:
+                logger.warning(
+                    "livekit_warm_consult_failure_event_failed",
+                    extra={"voice_session_id": self._metadata.voice_session_id},
+                )
 
 
 async def _heartbeat_loop(
