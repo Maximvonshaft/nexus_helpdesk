@@ -60,7 +60,6 @@ class WebchatCapabilitySettings:
 class VoiceCapabilitySettings:
     human_call_enabled: bool
     live_ai_voice_enabled: bool
-    legacy_aggregate_enabled: bool
 
 
 def _scheme(value: str) -> str:
@@ -119,7 +118,6 @@ def capability_groups(settings: Any) -> dict[str, Any]:
         "voice": VoiceCapabilitySettings(
             human_call_enabled=human_call_enabled,
             live_ai_voice_enabled=live_ai_voice_enabled,
-            legacy_aggregate_enabled=bool(getattr(settings, "webchat_voice_enabled", False)),
         ),
     }
 
