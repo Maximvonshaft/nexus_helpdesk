@@ -7,9 +7,14 @@ from sqlalchemy.orm import Session
 
 from ..models import User
 from ..utils.time import utc_now
-from ..voice_models import WebchatVoiceParticipant, WebchatVoiceSession
+from ..voice_models import (
+    VoiceChannelConfiguration,
+    WebchatVoiceParticipant,
+    WebchatVoiceSession,
+)
 from ..webchat_models import WebchatConversation, WebchatEvent
 from .voice_command_service import enqueue_voice_command
+from .voice_compliance_service import capability_authorized
 from .voice_provider import VoiceProvider
 
 _CONTROLLER_ROLES = {"controller", "ai_controller"}
@@ -155,6 +160,39 @@ def ensure_recording_command(
     actor: User | None = None,
 ) -> None:
     if session.recording_status != "requested":
+        return
+    configuration = (
+        db.query(VoiceChannelConfiguration)
+        .filter(
+            VoiceChannelConfiguration.channel_account_id
+            == session.channel_account_id
+        )
+        .first()
+        if session.channel_account_id is not None
+        else None
+    )
+    policy = (
+        configuration.recording_policy
+        if configuration is not None
+        else "disabled"
+    )
+    if not capability_authorized(
+        db,
+        session=session,
+        capability="recording",
+        policy=policy,
+    ):
+        session.recording_status = (
+            "disabled"
+            if policy == "disabled"
+            else (
+                "notice_required"
+                if policy == "notice"
+                else "consent_required"
+            )
+        )
+        session.updated_at = utc_now()
+        db.flush()
         return
     command = enqueue_voice_command(
         db,
