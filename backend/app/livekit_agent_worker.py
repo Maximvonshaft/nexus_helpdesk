@@ -5,22 +5,18 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
 import httpx
-from livekit import api as livekit_api
 from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
     BackgroundAudioPlayer,
-    BuiltinAudioClip,
     JobContext,
     cli,
     inference,
@@ -32,37 +28,27 @@ from .livekit_agent_config import (
     load_livekit_agent_worker_config,
     materialize_livekit_worker_credentials,
 )
+from .livekit_telephony_controller import (
+    TelephonyController,
+    parse_controller_command,
+    publish_dtmf_sequence,
+    set_bidirectional_hold_subscriptions,
+)
 
 logger = logging.getLogger("nexus.livekit-agent")
-_COMMAND_TOPIC = "nexus.telephony.command.v1"
 _ALLOWED_ROLES = {"ai_controller", "controller"}
-_ALLOWED_COMMANDS = {
-    "hold",
-    "resume",
-    "keypad",
-    "warm_transfer",
-    "warm_transfer_complete",
-    "warm_transfer_cancel",
-}
-_DTMF_CODE = {
-    "0": 0,
-    "1": 1,
-    "2": 2,
-    "3": 3,
-    "4": 4,
-    "5": 5,
-    "6": 6,
-    "7": 7,
-    "8": 8,
-    "9": 9,
-    "*": 10,
-    "#": 11,
-    "A": 12,
-    "B": 13,
-    "C": 14,
-    "D": 15,
-}
-_CONSULTATION_IDENTITY_PREFIX = "consult_"
+_ALLOWED_POLICIES = {"disabled", "notice", "explicit_consent"}
+_COMPLIANCE_CAPABILITIES = ("recording", "transcript_persistence")
+_DTMF_TIMEOUT_SECONDS = 15.0
+
+
+@dataclass(frozen=True)
+class ComplianceRequirement:
+    capability: str
+    policy: str
+    policy_version: str
+    prompt: str | None
+    prompt_sha256: str
 
 
 @dataclass(frozen=True)
@@ -71,18 +57,58 @@ class AgentJobMetadata:
     voice_session_id: str
     conversation_public_id: str
     channel_account_id: int | None = None
+    media_origin: str = "unknown"
+    compliance: tuple[ComplianceRequirement, ...] = ()
 
 
-@dataclass(frozen=True)
-class WarmConsultationState:
-    command_id: str
-    target_identity: str
-    caller_identity: str
-    human_identity: str
+def _clean(value: Any, *, limit: int) -> str:
+    return " ".join(str(value or "").strip().split())[:limit]
 
-    @property
-    def safe_id(self) -> str:
-        return hashlib.sha256(self.target_identity.encode("utf-8")).hexdigest()[:20]
+
+def _prompt_sha256(prompt: str | None) -> str:
+    return hashlib.sha256(str(prompt or "").encode("utf-8")).hexdigest()
+
+
+def _parse_compliance(value: Any) -> tuple[ComplianceRequirement, ...]:
+    if value in (None, {}):
+        return ()
+    if not isinstance(value, dict):
+        raise RuntimeError("livekit_agent_compliance_invalid")
+    if value.get("schema") != "nexus.voice-compliance-policy.v1":
+        raise RuntimeError("livekit_agent_compliance_schema_invalid")
+    bundle_version = _clean(value.get("policy_version"), limit=80)
+    if not bundle_version:
+        raise RuntimeError("livekit_agent_compliance_version_missing")
+    requirements: list[ComplianceRequirement] = []
+    for capability in _COMPLIANCE_CAPABILITIES:
+        item = value.get(capability)
+        if not isinstance(item, dict):
+            raise RuntimeError("livekit_agent_compliance_capability_missing")
+        observed_capability = _clean(item.get("capability"), limit=32)
+        policy = _clean(item.get("policy"), limit=32).lower()
+        policy_version = _clean(item.get("policy_version"), limit=80)
+        prompt = _clean(item.get("prompt"), limit=1000) or None
+        prompt_sha256 = _clean(item.get("prompt_sha256"), limit=64).lower()
+        if observed_capability != capability:
+            raise RuntimeError("livekit_agent_compliance_capability_invalid")
+        if policy not in _ALLOWED_POLICIES:
+            raise RuntimeError("livekit_agent_compliance_policy_invalid")
+        if policy_version != bundle_version:
+            raise RuntimeError("livekit_agent_compliance_version_mismatch")
+        if prompt_sha256 != _prompt_sha256(prompt):
+            raise RuntimeError("livekit_agent_compliance_prompt_digest_mismatch")
+        if policy != "disabled" and not prompt:
+            raise RuntimeError("livekit_agent_compliance_prompt_missing")
+        requirements.append(
+            ComplianceRequirement(
+                capability=capability,
+                policy=policy,
+                policy_version=policy_version,
+                prompt=prompt,
+                prompt_sha256=prompt_sha256,
+            )
+        )
+    return tuple(requirements)
 
 
 def parse_agent_job_metadata(raw: str | None) -> AgentJobMetadata:
@@ -94,11 +120,12 @@ def parse_agent_job_metadata(raw: str | None) -> AgentJobMetadata:
         raise RuntimeError("livekit_agent_job_metadata_invalid")
     if value.get("schema") != "nexus.livekit-agent-session.v1":
         raise RuntimeError("livekit_agent_job_schema_invalid")
-    role = str(value.get("role") or "").strip().lower()
-    voice_session_id = str(value.get("voice_session_id") or "").strip()
-    conversation_public_id = str(
-        value.get("conversation_public_id") or ""
-    ).strip()
+    role = _clean(value.get("role"), limit=40).lower()
+    voice_session_id = _clean(value.get("voice_session_id"), limit=64)
+    conversation_public_id = _clean(
+        value.get("conversation_public_id"),
+        limit=64,
+    )
     if role not in _ALLOWED_ROLES:
         raise RuntimeError("livekit_agent_role_invalid")
     if not voice_session_id or not conversation_public_id:
@@ -109,11 +136,21 @@ def parse_agent_job_metadata(raw: str | None) -> AgentJobMetadata:
         if isinstance(raw_account_id, int) and raw_account_id > 0
         else None
     )
+    explicit_origin = _clean(value.get("media_origin"), limit=20).lower()
+    media_origin = explicit_origin or (
+        "browser"
+        if value.get("tenant_key")
+        else ("sip" if value.get("tenant_id") else "unknown")
+    )
+    if media_origin not in {"browser", "sip", "unknown"}:
+        raise RuntimeError("livekit_agent_media_origin_invalid")
     return AgentJobMetadata(
         role=role,
-        voice_session_id=voice_session_id[:64],
-        conversation_public_id=conversation_public_id[:64],
+        voice_session_id=voice_session_id,
+        conversation_public_id=conversation_public_id,
         channel_account_id=channel_account_id,
+        media_origin=media_origin,
+        compliance=_parse_compliance(value.get("compliance")),
     )
 
 
@@ -209,6 +246,22 @@ class NexusRuntimeClient:
         return value if isinstance(value, dict) else {}
 
 
+class NexusControllerAgent(Agent):
+    """TTS-capable controller with no business reasoning authority."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=(
+                "You are a deterministic LiveKit media controller. Never answer a "
+                "customer request and never perform business reasoning."
+            )
+        )
+
+    async def llm_node(self, chat_ctx, tools, model_settings=None):
+        del chat_ctx, tools, model_settings
+        return ""
+
+
 class NexusVoiceAgent(Agent):
     """LiveKit speech pipeline whose only reasoning authority is Nexus Runtime."""
 
@@ -219,6 +272,7 @@ class NexusVoiceAgent(Agent):
         metadata: AgentJobMetadata,
         config: LiveKitAgentWorkerConfig,
         room: rtc.Room,
+        compliance_ready: asyncio.Event,
     ) -> None:
         super().__init__(
             instructions=(
@@ -231,18 +285,14 @@ class NexusVoiceAgent(Agent):
         self._metadata = metadata
         self._config = config
         self._room = room
+        self._compliance_ready = compliance_ready
         self._turn_id = 0
         self._handoff_wait_announced = False
 
-    async def on_enter(self) -> None:
-        await self.session.say(
-            self._config.greeting,
-            allow_interruptions=True,
-            add_to_chat_ctx=False,
-        )
-
     async def llm_node(self, chat_ctx, tools, model_settings=None):
         del tools, model_settings
+        if not self._compliance_ready.is_set():
+            return ""
         transcript = latest_user_text(chat_ctx)
         if not transcript:
             return ""
@@ -291,650 +341,111 @@ def latest_user_text(chat_ctx: Any) -> str:
     return ""
 
 
-def parse_controller_command(packet: Any) -> dict[str, Any] | None:
-    if str(getattr(packet, "topic", "") or "") != _COMMAND_TOPIC:
-        return None
-    raw = getattr(packet, "data", b"")
-    try:
-        value = json.loads(bytes(raw).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-        return None
-    if not isinstance(value, dict):
-        return None
-    if value.get("schema") != _COMMAND_TOPIC:
-        return None
-    command_id = str(value.get("command_id") or "").strip()
-    action = str(value.get("action") or "").strip().lower()
-    if not command_id or action not in _ALLOWED_COMMANDS:
-        return None
-    return {
-        "command_id": command_id[:180],
-        "action": action,
-        "target": str(value.get("target") or "").strip()[:240] or None,
-        "digits": str(value.get("digits") or "").strip()[:64] or None,
-        "participant_identity": str(
-            value.get("participant_identity") or ""
-        ).strip()[:160]
-        or None,
-        "human_identity": str(value.get("human_identity") or "").strip()[:160]
-        or None,
-        "outbound_trunk_id": str(
-            value.get("outbound_trunk_id") or ""
-        ).strip()[:160]
-        or None,
-    }
+class SIPComplianceController:
+    """Deterministic notice/DTMF compliance flow for the SIP caller leg."""
 
-
-async def publish_dtmf_sequence(local_participant: Any, digits: str) -> int:
-    sent = 0
-    for raw_digit in str(digits or ""):
-        if raw_digit in {"w", "W"}:
-            await asyncio.sleep(0.5)
-            continue
-        digit = raw_digit.upper()
-        code = _DTMF_CODE.get(digit)
-        if code is None:
-            raise ValueError("invalid_dtmf_digit")
-        await local_participant.publish_dtmf(code=code, digit=digit)
-        sent += 1
-    if sent == 0:
-        raise ValueError("dtmf_digits_required")
-    return sent
-
-
-def _server_api_url(value: str) -> str:
-    parsed = urlparse(str(value or "").strip().rstrip("/"))
-    if parsed.scheme == "wss":
-        return urlunparse(parsed._replace(scheme="https"))
-    if parsed.scheme == "ws":
-        return urlunparse(parsed._replace(scheme="http"))
-    return str(value or "").strip().rstrip("/")
-
-
-def _request(request_name: str, **kwargs: Any):
-    candidates = (
-        livekit_api,
-        getattr(livekit_api, "proto_room", None),
-        getattr(livekit_api, "proto_sip", None),
-        getattr(livekit_api, "proto_models", None),
-    )
-    for module in candidates:
-        request_cls = getattr(module, request_name, None) if module is not None else None
-        if request_cls is not None:
-            return request_cls(**kwargs)
-    raise RuntimeError(f"livekit_api_missing_{request_name}")
-
-
-async def _participant_track_sids(
-    lkapi: Any,
-    *,
-    room_name: str,
-    participant_identity: str,
-) -> list[str]:
-    participant = await lkapi.room.get_participant(
-        _request(
-            "RoomParticipantIdentity",
-            room=room_name,
-            identity=participant_identity,
-        )
-    )
-    return [
-        str(getattr(track, "sid", "") or "").strip()
-        for track in getattr(participant, "tracks", [])
-        if str(getattr(track, "sid", "") or "").strip()
-    ]
-
-
-async def _wait_for_participant_tracks(
-    lkapi: Any,
-    *,
-    room_name: str,
-    participant_identity: str,
-    timeout_seconds: float = 8.0,
-) -> list[str]:
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    last_error: Exception | None = None
-    while asyncio.get_running_loop().time() < deadline:
-        try:
-            tracks = await _participant_track_sids(
-                lkapi,
-                room_name=room_name,
-                participant_identity=participant_identity,
-            )
-            if tracks:
-                return tracks
-        except Exception as exc:
-            last_error = exc
-        await asyncio.sleep(0.2)
-    if last_error is not None:
-        raise RuntimeError("participant_media_not_ready") from last_error
-    raise RuntimeError("participant_media_not_ready")
-
-
-async def _update_subscriptions(
-    lkapi: Any,
-    *,
-    room_name: str,
-    subscriber_identity: str,
-    track_sids: list[str],
-    subscribe: bool,
-) -> None:
-    if not track_sids:
-        raise RuntimeError("participant_has_no_published_media_track")
-    await lkapi.room.update_subscriptions(
-        _request(
-            "UpdateSubscriptionsRequest",
-            room=room_name,
-            identity=subscriber_identity,
-            track_sids=track_sids,
-            subscribe=subscribe,
-        )
-    )
-
-
-async def set_bidirectional_hold_subscriptions(
-    lkapi: Any,
-    *,
-    room_name: str,
-    caller_identity: str,
-    human_identity: str,
-    subscribe: bool,
-) -> dict[str, int]:
-    caller_tracks = await _participant_track_sids(
-        lkapi,
-        room_name=room_name,
-        participant_identity=caller_identity,
-    )
-    human_tracks = await _participant_track_sids(
-        lkapi,
-        room_name=room_name,
-        participant_identity=human_identity,
-    )
-    operations = (
-        (human_identity, caller_tracks),
-        (caller_identity, human_tracks),
-    )
-    completed: list[tuple[str, list[str]]] = []
-    try:
-        for subscriber_identity, track_sids in operations:
-            await _update_subscriptions(
-                lkapi,
-                room_name=room_name,
-                subscriber_identity=subscriber_identity,
-                track_sids=track_sids,
-                subscribe=subscribe,
-            )
-            completed.append((subscriber_identity, track_sids))
-    except Exception:
-        for subscriber_identity, track_sids in reversed(completed):
-            try:
-                await _update_subscriptions(
-                    lkapi,
-                    room_name=room_name,
-                    subscriber_identity=subscriber_identity,
-                    track_sids=track_sids,
-                    subscribe=not subscribe,
-                )
-            except Exception:
-                logger.exception(
-                    "livekit_hold_subscription_compensation_failed",
-                    extra={
-                        "room_name": room_name,
-                        "subscriber_identity_hash": hashlib.sha256(
-                            subscriber_identity.encode("utf-8")
-                        ).hexdigest(),
-                    },
-                )
-        raise
-    return {
-        "caller_track_count": len(caller_tracks),
-        "human_track_count": len(human_tracks),
-    }
-
-
-async def _remove_participant(
-    lkapi: Any,
-    *,
-    room_name: str,
-    participant_identity: str,
-) -> None:
-    await lkapi.room.remove_participant(
-        _request(
-            "RoomParticipantIdentity",
-            room=room_name,
-            identity=participant_identity,
-        )
-    )
-
-
-def _consultation_identity(command_id: str) -> str:
-    digest = hashlib.sha256(command_id.encode("utf-8")).hexdigest()[:40]
-    return f"{_CONSULTATION_IDENTITY_PREFIX}{digest}"
-
-
-def _bounded_reason(exc: Exception) -> str:
-    value = str(exc or type(exc).__name__).strip().lower().replace(" ", "_")
-    safe = "".join(
-        character
-        for character in value
-        if character.isalnum() or character in "_-:"
-    )
-    return (safe or type(exc).__name__.lower())[:160]
-
-
-class TelephonyController:
     def __init__(
         self,
         *,
-        ctx: JobContext,
+        room: rtc.Room,
+        session: AgentSession,
         client: NexusRuntimeClient,
         metadata: AgentJobMetadata,
-        config: LiveKitAgentWorkerConfig,
-        session: AgentSession | None,
-        background_audio: BackgroundAudioPlayer,
     ) -> None:
-        self._ctx = ctx
+        self._room = room
+        self._session = session
         self._client = client
         self._metadata = metadata
-        self._config = config
-        self._session = session
-        self._background_audio = background_audio
-        self._hold_handle: Any = None
-        self._hold_lock = asyncio.Lock()
-        self._consultation_lock = asyncio.Lock()
-        self._consultation: WarmConsultationState | None = None
-        self._tasks: set[asyncio.Task[Any]] = set()
-
-    def _spawn(self, coroutine) -> None:
-        task = asyncio.create_task(coroutine)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._pending: asyncio.Future[tuple[str, str | None]] | None = None
+        self._closed = False
 
     def register(self) -> None:
-        @self._ctx.room.on("data_received")
-        def _on_data(packet: rtc.DataPacket) -> None:
-            command = parse_controller_command(packet)
-            if command is not None:
-                self._spawn(self._execute(command))
-
-        @self._ctx.room.on("participant_disconnected")
-        def _on_participant_disconnected(participant: Any) -> None:
-            identity = str(getattr(participant, "identity", "") or "").strip()
-            if identity:
-                self._spawn(self._recover_disconnected_consultation(identity))
+        @self._room.on("sip_dtmf_received")
+        def _on_dtmf(event: rtc.SipDTMF) -> None:
+            pending = self._pending
+            if pending is None or pending.done() or event.digit not in {"1", "2"}:
+                return
+            participant_identity = (
+                str(event.participant.identity)
+                if event.participant is not None
+                else None
+            )
+            pending.set_result((event.digit, participant_identity))
 
     async def close(self) -> None:
-        for task in list(self._tasks):
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._stop_hold_audio()
-        self._consultation = None
+        self._closed = True
+        if self._pending is not None and not self._pending.done():
+            self._pending.cancel()
 
-    def _start_hold_audio(self) -> None:
-        if self._hold_handle is None or self._hold_handle.done():
-            self._hold_handle = self._background_audio.play(
-                BuiltinAudioClip.HOLD_MUSIC.path(),
-                loop=True,
+    async def run(self) -> None:
+        if self._metadata.media_origin != "sip":
+            return
+        for requirement in self._metadata.compliance:
+            if self._closed or requirement.policy == "disabled":
+                continue
+            await self._run_requirement(requirement)
+
+    async def _run_requirement(self, requirement: ComplianceRequirement) -> None:
+        decision = "timeout"
+        participant_identity: str | None = None
+        if requirement.policy == "notice":
+            handle = self._session.say(
+                str(requirement.prompt),
+                allow_interruptions=False,
+                add_to_chat_ctx=False,
             )
-
-    def _stop_hold_audio(self) -> None:
-        if self._hold_handle is not None and not self._hold_handle.done():
-            self._hold_handle.stop()
-        self._hold_handle = None
-
-    def _livekit_api(self):
-        return livekit_api.LiveKitAPI(
-            url=_server_api_url(os.environ["LIVEKIT_URL"]),
-            api_key=os.environ["LIVEKIT_API_KEY"],
-            api_secret=os.environ["LIVEKIT_API_SECRET"],
-        )
-
-    async def _execute(self, command: dict[str, Any]) -> None:
-        command_id = command["command_id"]
+            await handle.wait_for_playout()
+            decision = "notice_delivered"
+        else:
+            loop = asyncio.get_running_loop()
+            self._pending = loop.create_future()
+            handle = self._session.say(
+                f"{requirement.prompt} Press 1 to accept or 2 to decline.",
+                allow_interruptions=False,
+                add_to_chat_ctx=False,
+            )
+            await handle.wait_for_playout()
+            try:
+                digit, participant_identity = await asyncio.wait_for(
+                    self._pending,
+                    timeout=_DTMF_TIMEOUT_SECONDS,
+                )
+                decision = "accepted" if digit == "1" else "declined"
+            except asyncio.TimeoutError:
+                decision = "timeout"
+            finally:
+                self._pending = None
+        idempotency_key = (
+            f"sip-compliance:{self._metadata.voice_session_id}:"
+            f"{requirement.capability}:{requirement.policy_version}:"
+            f"{requirement.prompt_sha256}"
+        )[:180]
         try:
-            result = await self._execute_action(command)
+            await self._client.controller_event(
+                event_type="compliance.evidence",
+                room_name=self._room.name,
+                controller_identity=self._room.local_participant.identity,
+                role=self._metadata.role,
+                provider_status="succeeded",
+                safe_result={
+                    "capability": requirement.capability,
+                    "policy": requirement.policy,
+                    "policy_version": requirement.policy_version,
+                    "prompt_sha256": requirement.prompt_sha256,
+                    "decision": decision,
+                    "idempotency_key": idempotency_key,
+                    "participant_identity": participant_identity,
+                },
+            )
         except Exception as exc:
             logger.exception(
-                "livekit_controller_command_failed",
+                "livekit_compliance_evidence_failed",
                 extra={
                     "voice_session_id": self._metadata.voice_session_id,
-                    "command_id": command_id,
-                    "action": command["action"],
+                    "capability": requirement.capability,
                     "error_type": type(exc).__name__,
                 },
             )
-            await self._client.controller_event(
-                event_type="command.failed",
-                room_name=self._ctx.room.name,
-                controller_identity=self._ctx.room.local_participant.identity,
-                role=self._metadata.role,
-                command_reference=command_id,
-                provider_status="failed",
-                provider_reason=_bounded_reason(exc),
-                safe_result={"action": command["action"]},
-            )
-            return
-        await self._client.controller_event(
-            event_type="command.succeeded",
-            room_name=self._ctx.room.name,
-            controller_identity=self._ctx.room.local_participant.identity,
-            role=self._metadata.role,
-            command_reference=command_id,
-            provider_status="succeeded",
-            safe_result=result,
-        )
-
-    async def _execute_action(self, command: dict[str, Any]) -> dict[str, Any]:
-        action = command["action"]
-        if action == "keypad":
-            sent = await publish_dtmf_sequence(
-                self._ctx.room.local_participant,
-                command.get("digits") or "",
-            )
-            return {"action": action, "digits_sent": sent}
-        if action in {"hold", "resume"}:
-            return await self._set_hold_state(command, held=action == "hold")
-        if action == "warm_transfer":
-            return await self._start_warm_consultation(command)
-        if action == "warm_transfer_complete":
-            return await self._complete_warm_consultation(command)
-        if action == "warm_transfer_cancel":
-            return await self._cancel_warm_consultation(command)
-        raise RuntimeError("unsupported_controller_action")
-
-    async def _set_hold_state(
-        self,
-        command: dict[str, Any],
-        *,
-        held: bool,
-    ) -> dict[str, Any]:
-        caller_identity = str(command.get("participant_identity") or "").strip()
-        human_identity = str(command.get("human_identity") or "").strip()
-        if not caller_identity or not human_identity:
-            raise RuntimeError("hold_participant_identity_missing")
-        async with self._hold_lock:
-            if self._consultation is not None:
-                raise RuntimeError("hold_state_owned_by_warm_consultation")
-            if held:
-                self._start_hold_audio()
-            try:
-                async with self._livekit_api() as lkapi:
-                    counts = await set_bidirectional_hold_subscriptions(
-                        lkapi,
-                        room_name=self._ctx.room.name,
-                        caller_identity=caller_identity,
-                        human_identity=human_identity,
-                        subscribe=not held,
-                    )
-            except Exception:
-                if held:
-                    self._stop_hold_audio()
-                raise
-            if not held:
-                self._stop_hold_audio()
-            return {
-                "action": "hold" if held else "resume",
-                "held": held,
-                **counts,
-            }
-
-    async def _start_warm_consultation(
-        self,
-        command: dict[str, Any],
-    ) -> dict[str, Any]:
-        caller_identity = str(command.get("participant_identity") or "").strip()
-        human_identity = str(command.get("human_identity") or "").strip()
-        target = str(command.get("target") or "").strip()
-        trunk_id = str(command.get("outbound_trunk_id") or "").strip()
-        if not caller_identity or not human_identity:
-            raise RuntimeError("warm_transfer_participant_identity_missing")
-        if not target or not trunk_id:
-            raise RuntimeError("warm_transfer_target_or_trunk_missing")
-        command_id = str(command["command_id"])
-        target_identity = _consultation_identity(command_id)
-        async with self._consultation_lock:
-            if self._consultation is not None:
-                if self._consultation.command_id == command_id:
-                    return {
-                        "action": "warm_transfer",
-                        "phase": "consulting",
-                        "consultation_id": self._consultation.safe_id,
-                        "idempotent": True,
-                    }
-                raise RuntimeError("warm_transfer_consultation_already_active")
-            self._start_hold_audio()
-            caller_human_isolated = False
-            target_created = False
-            try:
-                async with self._livekit_api() as lkapi:
-                    await set_bidirectional_hold_subscriptions(
-                        lkapi,
-                        room_name=self._ctx.room.name,
-                        caller_identity=caller_identity,
-                        human_identity=human_identity,
-                        subscribe=False,
-                    )
-                    caller_human_isolated = True
-                    await lkapi.sip.create_sip_participant(
-                        _request(
-                            "CreateSIPParticipantRequest",
-                            room_name=self._ctx.room.name,
-                            participant_identity=target_identity,
-                            participant_name="Nexus transfer consultation",
-                            sip_trunk_id=trunk_id,
-                            sip_call_to=target,
-                            wait_until_answered=True,
-                        )
-                    )
-                    target_created = True
-                    await _wait_for_participant_tracks(
-                        lkapi,
-                        room_name=self._ctx.room.name,
-                        participant_identity=target_identity,
-                    )
-                    await set_bidirectional_hold_subscriptions(
-                        lkapi,
-                        room_name=self._ctx.room.name,
-                        caller_identity=caller_identity,
-                        human_identity=target_identity,
-                        subscribe=False,
-                    )
-            except Exception:
-                try:
-                    async with self._livekit_api() as lkapi:
-                        if target_created:
-                            try:
-                                await _remove_participant(
-                                    lkapi,
-                                    room_name=self._ctx.room.name,
-                                    participant_identity=target_identity,
-                                )
-                            except Exception:
-                                logger.warning(
-                                    "livekit_warm_consult_target_cleanup_failed",
-                                    extra={"voice_session_id": self._metadata.voice_session_id},
-                                )
-                        if caller_human_isolated:
-                            await set_bidirectional_hold_subscriptions(
-                                lkapi,
-                                room_name=self._ctx.room.name,
-                                caller_identity=caller_identity,
-                                human_identity=human_identity,
-                                subscribe=True,
-                            )
-                finally:
-                    self._stop_hold_audio()
-                raise
-            self._consultation = WarmConsultationState(
-                command_id=command_id,
-                target_identity=target_identity,
-                caller_identity=caller_identity,
-                human_identity=human_identity,
-            )
-            return {
-                "action": "warm_transfer",
-                "phase": "consulting",
-                "consultation_id": self._consultation.safe_id,
-                "customer_isolated": True,
-            }
-
-    def _find_consultation_target(self) -> str | None:
-        if self._consultation is not None:
-            return self._consultation.target_identity
-        for identity in self._ctx.room.remote_participants:
-            if str(identity).startswith(_CONSULTATION_IDENTITY_PREFIX):
-                return str(identity)
-        return None
-
-    async def _complete_warm_consultation(
-        self,
-        command: dict[str, Any],
-    ) -> dict[str, Any]:
-        caller_identity = str(command.get("participant_identity") or "").strip()
-        human_identity = str(command.get("human_identity") or "").strip()
-        if not caller_identity or not human_identity:
-            raise RuntimeError("warm_transfer_participant_identity_missing")
-        async with self._consultation_lock:
-            target_identity = self._find_consultation_target()
-            if not target_identity:
-                raise RuntimeError("warm_transfer_consultation_not_active")
-            async with self._livekit_api() as lkapi:
-                await set_bidirectional_hold_subscriptions(
-                    lkapi,
-                    room_name=self._ctx.room.name,
-                    caller_identity=caller_identity,
-                    human_identity=target_identity,
-                    subscribe=True,
-                )
-                try:
-                    await _remove_participant(
-                        lkapi,
-                        room_name=self._ctx.room.name,
-                        participant_identity=human_identity,
-                    )
-                except Exception:
-                    await set_bidirectional_hold_subscriptions(
-                        lkapi,
-                        room_name=self._ctx.room.name,
-                        caller_identity=caller_identity,
-                        human_identity=target_identity,
-                        subscribe=False,
-                    )
-                    raise
-            safe_id = hashlib.sha256(target_identity.encode("utf-8")).hexdigest()[:20]
-            self._consultation = None
-            self._stop_hold_audio()
-            return {
-                "action": "warm_transfer_complete",
-                "phase": "completed",
-                "consultation_id": safe_id,
-                "customer_bridged": True,
-                "previous_operator_removed": True,
-            }
-
-    async def _cancel_warm_consultation(
-        self,
-        command: dict[str, Any],
-    ) -> dict[str, Any]:
-        caller_identity = str(command.get("participant_identity") or "").strip()
-        human_identity = str(command.get("human_identity") or "").strip()
-        if not caller_identity or not human_identity:
-            raise RuntimeError("warm_transfer_participant_identity_missing")
-        async with self._consultation_lock:
-            target_identity = self._find_consultation_target()
-            async with self._livekit_api() as lkapi:
-                if target_identity:
-                    try:
-                        await _remove_participant(
-                            lkapi,
-                            room_name=self._ctx.room.name,
-                            participant_identity=target_identity,
-                        )
-                    except Exception:
-                        logger.info(
-                            "livekit_warm_consult_target_already_absent",
-                            extra={"voice_session_id": self._metadata.voice_session_id},
-                        )
-                await set_bidirectional_hold_subscriptions(
-                    lkapi,
-                    room_name=self._ctx.room.name,
-                    caller_identity=caller_identity,
-                    human_identity=human_identity,
-                    subscribe=True,
-                )
-            safe_id = (
-                hashlib.sha256(target_identity.encode("utf-8")).hexdigest()[:20]
-                if target_identity
-                else None
-            )
-            self._consultation = None
-            self._stop_hold_audio()
-            return {
-                "action": "warm_transfer_cancel",
-                "phase": "cancelled",
-                "consultation_id": safe_id,
-                "customer_restored": True,
-            }
-
-    async def _recover_disconnected_consultation(self, identity: str) -> None:
-        state = self._consultation
-        if state is None or identity not in {
-            state.target_identity,
-            state.caller_identity,
-            state.human_identity,
-        }:
-            return
-        async with self._consultation_lock:
-            state = self._consultation
-            if state is None:
-                return
-            try:
-                async with self._livekit_api() as lkapi:
-                    if identity == state.target_identity:
-                        await set_bidirectional_hold_subscriptions(
-                            lkapi,
-                            room_name=self._ctx.room.name,
-                            caller_identity=state.caller_identity,
-                            human_identity=state.human_identity,
-                            subscribe=True,
-                        )
-                    else:
-                        try:
-                            await _remove_participant(
-                                lkapi,
-                                room_name=self._ctx.room.name,
-                                participant_identity=state.target_identity,
-                            )
-                        except Exception:
-                            pass
-            except Exception:
-                logger.exception(
-                    "livekit_warm_consult_disconnect_recovery_failed",
-                    extra={"voice_session_id": self._metadata.voice_session_id},
-                )
-            finally:
-                self._consultation = None
-                self._stop_hold_audio()
-            try:
-                await self._client.controller_event(
-                    event_type="consultation.failed",
-                    room_name=self._ctx.room.name,
-                    controller_identity=self._ctx.room.local_participant.identity,
-                    role=self._metadata.role,
-                    provider_status="failed",
-                    provider_reason=(
-                        "consultation_target_disconnected"
-                        if identity == state.target_identity
-                        else "consultation_call_leg_disconnected"
-                    ),
-                    safe_result={"consultation_id": state.safe_id},
-                )
-            except Exception:
-                logger.warning(
-                    "livekit_warm_consult_failure_event_failed",
-                    extra={"voice_session_id": self._metadata.voice_session_id},
-                )
 
 
 async def _heartbeat_loop(
@@ -984,44 +495,48 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
         "role": metadata.role,
     }
     client = NexusRuntimeClient(config)
-    session: AgentSession | None = None
+    compliance_ready = asyncio.Event()
     disconnected = asyncio.Event()
 
     @ctx.room.on("disconnected")
     def _on_disconnected(_reason: Any) -> None:
         disconnected.set()
 
+    session = AgentSession(
+        stt=inference.STT(model=config.stt_model),
+        tts=inference.TTS(model=config.tts_model),
+        turn_detection=config.turn_detection,
+    )
+    agent: Agent
     if metadata.role == "ai_controller":
-        session = AgentSession(
-            stt=inference.STT(model=config.stt_model),
-            tts=inference.TTS(model=config.tts_model),
-            turn_detection=config.turn_detection,
-        )
         agent = NexusVoiceAgent(
             client=client,
             metadata=metadata,
             config=config,
             room=ctx.room,
+            compliance_ready=compliance_ready,
         )
-        await session.start(agent=agent, room=ctx.room)
-        await ctx.connect()
     else:
-        await ctx.connect()
+        agent = NexusControllerAgent()
+    await session.start(agent=agent, room=ctx.room)
+    await ctx.connect()
 
     background_audio = BackgroundAudioPlayer()
-    if session is None:
-        await background_audio.start(room=ctx.room)
-    else:
-        await background_audio.start(room=ctx.room, agent_session=session)
+    await background_audio.start(room=ctx.room, agent_session=session)
     controller = TelephonyController(
         ctx=ctx,
         client=client,
         metadata=metadata,
-        config=config,
-        session=session,
         background_audio=background_audio,
     )
     controller.register()
+    compliance = SIPComplianceController(
+        room=ctx.room,
+        session=session,
+        client=client,
+        metadata=metadata,
+    )
+    compliance.register()
     heartbeat_task: asyncio.Task[Any] | None = None
     try:
         await client.controller_event(
@@ -1038,11 +553,27 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
                 interval_seconds=config.heartbeat_seconds,
             )
         )
+        await compliance.run()
+        compliance_ready.set()
+        if metadata.role == "ai_controller":
+            await session.say(
+                config.greeting,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
+        elif metadata.media_origin == "sip":
+            await session.say(
+                config.handoff_wait_message,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
         await disconnected.wait()
     finally:
+        compliance_ready.set()
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
+        await compliance.close()
         await controller.close()
         await background_audio.aclose()
         try:
