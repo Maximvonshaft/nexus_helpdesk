@@ -37,7 +37,11 @@ REQUIRED_PATHS = (
 
 FORBIDDEN_MARKERS = (
     "/webchat/live/ws",
+    "/webchat/live",
+    "/webcall-ai",
     "LIVE_VOICE_UPSTREAM_",
+    "WEBCALL_AI_",
+    "WEBCHAT_VOICE_ENABLED",
     "nexus_media_edge",
     "provider_adapter_pending",
     "not_executed",
@@ -45,16 +49,20 @@ FORBIDDEN_MARKERS = (
     "edge-card",
     "live-voice-capture-worklet",
     "livekit_telephony_service",
+    "webchat_live_voice",
+    "webcall_ai_production",
     "webchat_voice_service",
     "from .event_service import",
     "WebchatVoiceSession.accepted_by_user_id",
     "temporary_telephony",
     "canonical_telephony_finalizer",
     "telephony_payload",
+    "human_firstfalse",
 )
 
 SCAN_ROOTS = (
     "backend/app",
+    "backend/scripts",
     "backend/.env.example",
     "deploy",
     "webapp/src",
