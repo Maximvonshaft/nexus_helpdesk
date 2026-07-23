@@ -102,7 +102,7 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
             _parse_csv(
                 os.getenv(
                     "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
-                    "/webchat,/webcall,/api/webchat,/api/telephony",
+                    "/webcall",
                 )
             )
         ),
@@ -191,6 +191,10 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
         if not prefix.startswith("/"):
             raise RuntimeError(
                 "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES entries must start with /"
+            )
+        if prefix != "/webcall":
+            raise RuntimeError(
+                "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES may only grant microphone access to /webcall"
             )
     for source in config.connect_src:
         if "*" in source:
