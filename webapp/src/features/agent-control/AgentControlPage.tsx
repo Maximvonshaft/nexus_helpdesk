@@ -27,7 +27,7 @@ export type AgentControlTab = 'overview' | 'delivery' | 'persona' | 'playbooks' 
 export function AgentControlPage({ canManage }: { canManage: boolean }) {
   const [tab, setTab] = useState<AgentControlTab>('overview')
   const [tenantKey, setTenantKey] = useState('')
-  const [environment, setEnvironment] = useState<'test' | 'staging' | 'production'>('production')
+  const [environment, setEnvironment] = useState<'test' | 'staging' | 'production'>('test')
   const [marketId, setMarketId] = useState('')
   const [channel, setChannel] = useState('webchat')
   const [language, setLanguage] = useState('')
