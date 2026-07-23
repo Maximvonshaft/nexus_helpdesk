@@ -64,7 +64,6 @@ const DEFAULT_DRAFT: VoiceConfigurationUpdate = {
   offer_timeout_seconds: 20,
   wrap_up_seconds: 30,
   overflow_action: 'ai',
-  voicemail_enabled: false,
   recording_policy: 'disabled',
   transcription_policy: 'disabled',
   enabled: false,
@@ -125,7 +124,6 @@ export function TelephonyConfigurationPanel({ accounts }: { accounts: ChannelAcc
       offer_timeout_seconds: selected.offer_timeout_seconds,
       wrap_up_seconds: selected.wrap_up_seconds,
       overflow_action: selected.overflow_action,
-      voicemail_enabled: selected.voicemail_enabled,
       recording_policy: selected.recording_policy,
       transcription_policy: selected.transcription_policy,
       enabled: selected.enabled,
@@ -146,7 +144,7 @@ export function TelephonyConfigurationPanel({ accounts }: { accounts: ChannelAcc
         <Box>
           <Typography id="telephony-title" component="h2" variant="h3">电话与实时语音</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            配置 AI/人工接听、工作时间、等待与无人接听策略。电话号码仍由统一渠道账号管理。
+            配置 AI/人工接听、工作时间、等待策略以及号码级录音与转写合规政策。
           </Typography>
         </Box>
         <Chip label="单一 LiveKit 媒体平面" color="primary" variant="outlined" />
@@ -175,18 +173,17 @@ export function TelephonyConfigurationPanel({ accounts }: { accounts: ChannelAcc
             <TextField type="number" label="通话后整理（秒）" value={draft.wrap_up_seconds} slotProps={{ htmlInput: { min: 0, max: 900 } }} onChange={(event) => setDraft((value) => ({ ...value, wrap_up_seconds: Number(event.target.value) }))} />
             <TextField select label="无人接听" value={draft.overflow_action} onChange={(event) => setDraft((value) => ({ ...value, overflow_action: event.target.value as VoiceOverflowAction }))}>
               <MenuItem value="ai">继续由 AI 服务</MenuItem>
-              <MenuItem value="voicemail">转语音留言</MenuItem>
               <MenuItem value="disconnect">说明原因后结束通话</MenuItem>
             </TextField>
             <TextField select label="录音策略" value={draft.recording_policy} onChange={(event) => setDraft((value) => ({ ...value, recording_policy: event.target.value as VoiceRecordingPolicy }))}>
               <MenuItem value="disabled">关闭</MenuItem>
-              <MenuItem value="consent_required">客户同意后录音</MenuItem>
-              <MenuItem value="always">始终录音（仅限已批准市场）</MenuItem>
+              <MenuItem value="notice">完成明确告知后启用</MenuItem>
+              <MenuItem value="explicit_consent">取得明确同意后启用</MenuItem>
             </TextField>
-            <TextField select label="转写策略" value={draft.transcription_policy} onChange={(event) => setDraft((value) => ({ ...value, transcription_policy: event.target.value as VoiceTranscriptionPolicy }))}>
-              <MenuItem value="disabled">关闭</MenuItem>
-              <MenuItem value="consent_required">客户同意后转写</MenuItem>
-              <MenuItem value="always">始终转写（仅限已批准市场）</MenuItem>
+            <TextField select label="转写留存策略" value={draft.transcription_policy} onChange={(event) => setDraft((value) => ({ ...value, transcription_policy: event.target.value as VoiceTranscriptionPolicy }))}>
+              <MenuItem value="disabled">关闭留存</MenuItem>
+              <MenuItem value="notice">完成明确告知后留存</MenuItem>
+              <MenuItem value="explicit_consent">取得明确同意后留存</MenuItem>
             </TextField>
           </Box>
 
@@ -210,12 +207,8 @@ export function TelephonyConfigurationPanel({ accounts }: { accounts: ChannelAcc
             </Stack>
           </Box>
 
-          {draft.overflow_action === 'voicemail' ? (
-            <FormControlLabel control={<Switch checked={draft.voicemail_enabled} onChange={(_, checked) => setDraft((value) => ({ ...value, voicemail_enabled: checked }))} />} label="启用语音留言" />
-          ) : null}
-
           <Alert severity="info" variant="outlined">
-            录音或转写只有在对应国家的告知、同意、访问权限、保留期和删除策略完成审批后才能启用。
+            录音与转写留存由号码级合规策略控制。未记录匹配的告知或明确同意证据时，系统会继续通话但保持对应能力关闭。
           </Alert>
 
           <OperatorTechnicalDisclosure
