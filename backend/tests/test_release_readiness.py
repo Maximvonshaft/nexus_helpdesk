@@ -18,6 +18,19 @@ def _controlled_env(monkeypatch):
     monkeypatch.setenv("OPERATIONS_DISPATCH_MODE", "disabled")
 
 
+def _activation_binding_env(monkeypatch):
+    source_sha = "a" * 40
+    image_digest = "sha256:" + "b" * 64
+    monkeypatch.setenv("GIT_SHA", source_sha)
+    monkeypatch.setenv(
+        "IMAGE_TAG",
+        f"ghcr.io/maximvonshaft/nexus_helpdesk@{image_digest}",
+    )
+    monkeypatch.setenv("ACTIVATION_EVIDENCE_SOURCE_SHA", source_sha)
+    monkeypatch.setenv("ACTIVATION_EVIDENCE_IMAGE_DIGEST", image_digest)
+    return source_sha, image_digest
+
+
 def test_controlled_profile_is_ready_only_when_every_write_path_is_fail_closed(
     monkeypatch,
 ):
@@ -150,6 +163,7 @@ def test_full_profile_grants_authority_only_after_every_collector_passes(
 
 
 def test_full_profile_requires_https_activation_evidence(monkeypatch):
+    _activation_binding_env(monkeypatch)
     for key in (
         "PRODUCTION_E2E_EVIDENCE_URL",
         "WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL",
@@ -189,6 +203,27 @@ def test_full_profile_requires_https_activation_evidence(monkeypatch):
     assert result["reason_codes"] == [
         "activation_evidence_invalid:production_e2e_evidence_url"
     ]
+
+
+def test_runtime_activation_evidence_rejects_candidate_mismatch(monkeypatch):
+    source_sha, image_digest = _activation_binding_env(monkeypatch)
+    monkeypatch.setenv("PRODUCTION_E2E_EVIDENCE_URL", "https://evidence.example/full")
+    monkeypatch.setenv("ACTIVATION_EVIDENCE_SOURCE_SHA", "c" * 40)
+
+    result = readiness._activation_evidence_snapshot(
+        "full",
+        {
+            "webchat_ai_enabled": False,
+            "voice_enabled": False,
+            "outbound": {"enabled": False, "provider": "disabled"},
+            "operations_mode": "disabled",
+        },
+    )
+
+    assert result["status"] == "not_ready"
+    assert "activation_evidence_source_sha_mismatch" in result["reason_codes"]
+    assert result["candidate"]["runtime_source_sha"] == source_sha
+    assert result["candidate"]["runtime_image_digest"] == image_digest
 
 
 def test_collector_failures_are_namespaced_and_deduplicated(monkeypatch):
