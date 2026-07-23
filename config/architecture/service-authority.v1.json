@@ -129,15 +129,15 @@
       "compatibility_shims": []
     },
     {
-      "responsibility": "human-webcall",
-      "public_authority": "backend/app/api/webchat_voice.py",
-      "private_implementation": "backend/app/services/webchat_voice_service.py",
+      "responsibility": "canonical-voice-session-lifecycle",
+      "public_authority": "backend/app/services/voice_session_service.py",
+      "private_implementation": null,
       "compatibility_shims": []
     },
     {
-      "responsibility": "live-ai-voice",
-      "public_authority": "backend/app/api/webchat_live_voice.py",
-      "private_implementation": "backend/app/services/live_voice_orchestration_service.py",
+      "responsibility": "canonical-livekit-agent-turn",
+      "public_authority": "backend/app/services/livekit_agent_turn_service.py",
+      "private_implementation": null,
       "compatibility_shims": []
     }
   ],
