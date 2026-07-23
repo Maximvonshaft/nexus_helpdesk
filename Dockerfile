@@ -6,9 +6,8 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-# LiveKit Agents and its native media/tokenization dependencies publish manylinux
-# wheels. Build them once on the same glibc generation as the final distroless
-# runtime, then install from the closed wheel set without carrying compilers.
+# LiveKit Agents and native media/tokenization dependencies publish manylinux
+# wheels. Build them once on the same glibc generation as the distroless runtime.
 FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS python-wheel-builder
 WORKDIR /build
 COPY backend/requirements.txt /build/requirements.txt
@@ -43,9 +42,36 @@ RUN python -m pip install \
         pip \
     && rm -rf /wheels /tmp/requirements.txt /root/.cache
 
-# Assemble the complete immutable application tree before entering the shell-less
-# runtime stage. Empty writable mount points are created here and owned by the
-# fixed distroless non-root identity (65532).
+# Distroless cc contains the base C runtime but not every library used by CPython
+# and accepted native wheels. Compute the exact transitive dynamic-library closure
+# in the compatible builder, fail closed on unresolved dependencies, and preserve
+# each absolute loader path for the final shell-less image.
+RUN set -eux; \
+    mkdir -p /runtime-libs; \
+    { \
+      printf '%s\n' /usr/local/bin/python3.11; \
+      find /usr/local/lib/python3.11 -type f -name '*.so' -print; \
+    } | sort -u > /tmp/native-targets; \
+    : > /tmp/ldd-report; \
+    while IFS= read -r target; do \
+      ldd "$target" >> /tmp/ldd-report; \
+    done < /tmp/native-targets; \
+    if grep -F 'not found' /tmp/ldd-report; then \
+      echo 'unresolved native runtime dependency' >&2; \
+      exit 1; \
+    fi; \
+    awk \
+      '/=> \/[^ ]+/ {print $3} \
+       /^[[:space:]]*\/[^ ]+[[:space:]]+\(0x/ {print $1}' \
+      /tmp/ldd-report \
+      | sort -u > /tmp/runtime-library-paths; \
+    while IFS= read -r library; do \
+      test -f "$library"; \
+      cp -L --parents "$library" /runtime-libs; \
+    done < /tmp/runtime-library-paths; \
+    test -s /tmp/runtime-library-paths
+
+# Assemble the immutable application tree before entering the shell-less runtime.
 FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime-layout
 COPY backend/ /layout/app/backend/
 COPY scripts/ /layout/app/scripts/
@@ -58,9 +84,6 @@ RUN mkdir -p \
     && cp -r /layout/app/backend/app/static/webchat/. /layout/app/frontend_dist/static/webchat/ \
     && chown -R 65532:65532 /layout/app /layout/var/run/nexus-prometheus
 
-# Distroless contains no shell, package manager, compiler, login user or unrelated
-# OS utilities. Copy the exact CPython runtime from the compatible official builder
-# and run permanently as the image's non-root identity.
 FROM gcr.io/distroless/cc-debian12:nonroot@sha256:8f02d47496256aca25168c508024a60d81af996bbd2d89db4cf5cdf13dff2821
 
 ARG GIT_SHA=unknown
@@ -84,6 +107,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     FRONTEND_BUILD_SHA=${FRONTEND_BUILD_SHA}
 
 COPY --from=python-runtime-builder /usr/local/ /usr/local/
+COPY --from=python-runtime-builder /runtime-libs/ /
 COPY --from=runtime-layout --chown=65532:65532 /layout/ /
 
 WORKDIR /app/backend
