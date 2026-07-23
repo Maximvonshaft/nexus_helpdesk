@@ -28,11 +28,10 @@ from app.webchat_models import WebchatConversation, WebchatHandoffRequest
 
 @pytest.fixture(autouse=True)
 def isolated_voice_queue(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_LIVE_AI_VOICE_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
-    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice")
+    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webcall")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test")
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
@@ -121,7 +120,7 @@ def _create_ringing_session(client: TestClient) -> tuple[str, str, str]:
     )
 
 
-def test_agent_ringing_queue_never_exposes_room_credentials():
+def test_agent_ringing_queue_never_exposes_room_credentials_or_page_metadata():
     client = TestClient(app)
     _conversation_id, _visitor_token, voice_session_id = _create_ringing_session(client)
 
@@ -141,6 +140,8 @@ def test_agent_ringing_queue_never_exposes_room_credentials():
     assert item["voice_offer"] is not None
     assert "participant_token" not in item
     assert "participant_identity" not in item
+    assert "origin" not in item
+    assert "page_url" not in item
 
 
 def test_declining_offer_is_idempotent_and_does_not_end_customer_call():
