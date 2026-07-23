@@ -300,6 +300,9 @@ def test_latest_user_text_reads_only_the_latest_customer_message():
 
 def test_worker_source_has_no_second_business_llm_authority():
     source = (ROOT / "app" / "livekit_agent_worker.py").read_text(encoding="utf-8")
+    controller_source = (ROOT / "app" / "livekit_telephony_controller.py").read_text(
+        encoding="utf-8"
+    )
     config_source = (ROOT / "app" / "livekit_agent_config.py").read_text(encoding="utf-8")
 
     assert '"/api/telephony/internal/agent-turn"' in source
@@ -312,7 +315,9 @@ def test_worker_source_has_no_second_business_llm_authority():
     assert "NEXUS_VOICE_TRANSFER_LLM_MODEL" not in source
     assert "NEXUS_VOICE_TRANSFER_LLM_MODEL" not in config_source
     assert 'AgentServer(host="127.0.0.1", port=8081)' in source
-    assert "UpdateSubscriptionsRequest" in source
-    assert "BuiltinAudioClip.HOLD_MUSIC" in source
-    assert "warm_transfer_complete" in source
-    assert "warm_transfer_cancel" in source
+    assert "from .livekit_telephony_controller import" in source
+    assert "class TelephonyController" not in source
+    assert "UpdateSubscriptionsRequest" in controller_source
+    assert "BuiltinAudioClip.HOLD_MUSIC" in controller_source
+    assert "warm_transfer_complete" in controller_source
+    assert "warm_transfer_cancel" in controller_source
