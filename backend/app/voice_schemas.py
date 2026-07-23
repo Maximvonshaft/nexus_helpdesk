@@ -58,6 +58,8 @@ class WebchatVoiceActionRequest(BaseModel):
         "remove_participant",
         "cold_transfer",
         "warm_transfer",
+        "warm_transfer_complete",
+        "warm_transfer_cancel",
         "recording_start",
         "recording_stop",
     ]
@@ -259,14 +261,24 @@ class WebchatVoiceSessionList(BaseModel):
     items: list[WebchatVoiceSessionRead]
 
 
-class WebchatVoiceIncomingSessionRead(WebchatVoiceSessionRead):
+class WebchatVoiceIncomingSessionRead(BaseModel):
+    ok: bool = True
+    voice_session_id: str
+    status: str
+    provider: str
+    media_plane: str = "livekit"
+    voice_offer: VoiceRoutingOfferRead
     ticket_id: int | None = None
     ticket_no: str | None = None
     ticket_title: str | None = None
     conversation_id: str | None = None
     visitor_label: str | None = None
-    origin: str | None = None
-    page_url: str | None = None
+    direction: str = "inbound"
+    mode: str
+    started_at: str | None = None
+    ringing_at: str | None = None
+    recording_status: str | None = None
+    transcript_status: str | None = None
 
 
 class WebchatVoiceIncomingSessionList(BaseModel):
