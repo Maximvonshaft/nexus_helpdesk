@@ -450,6 +450,17 @@ def _participant_metadata(
     return {}
 
 
+def _is_primary_sip_leg(
+    session: WebchatVoiceSession,
+    sip_call_id: str | None,
+) -> bool:
+    return bool(
+        sip_call_id
+        and session.provider_call_id
+        and sip_call_id == session.provider_call_id
+    )
+
+
 def _infer_participant_type(
     *,
     session: WebchatVoiceSession,
@@ -457,8 +468,10 @@ def _infer_participant_type(
     sip_call_id: str | None,
     metadata: dict[str, Any],
 ) -> tuple[str, str]:
-    if sip_call_id:
+    if _is_primary_sip_leg(session, sip_call_id):
         return "caller", session.direction
+    if sip_call_id:
+        return "transfer", "outbound"
     role = str(
         metadata.get("role")
         or metadata.get("nexus_role")
@@ -690,11 +703,12 @@ def project_livekit_event(
             )
             session.ai_agent_worker_id = leg.provider_identity
             session.ai_agent_last_heartbeat_at = utc_now()
-        _project_sip_status(
-            db,
-            session=session,
-            call_status=call_status,
-        )
+        if _is_primary_sip_leg(session, leg.provider_call_id):
+            _project_sip_status(
+                db,
+                session=session,
+                call_status=call_status,
+            )
         _event(
             db,
             session=session,
@@ -791,11 +805,12 @@ def project_livekit_event(
             },
         )
     else:
-        _project_sip_status(
-            db,
-            session=session,
-            call_status=call_status,
-        )
+        if _is_primary_sip_leg(session, provider_call_id):
+            _project_sip_status(
+                db,
+                session=session,
+                call_status=call_status,
+            )
     db.flush()
     return session
 
