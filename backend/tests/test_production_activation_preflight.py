@@ -13,9 +13,23 @@ assert SPEC and SPEC.loader
 activation = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(activation)
 
+SOURCE_SHA = "a" * 40
+IMAGE_DIGEST = "sha256:" + "b" * 64
+CONTROLLED_IMAGE = f"ghcr.io/maximvonshaft/nexus_helpdesk@{IMAGE_DIGEST}"
+
+
+def _candidate_binding() -> dict[str, str]:
+    return {
+        "GIT_SHA": SOURCE_SHA,
+        "CONTROLLED_IMAGE": CONTROLLED_IMAGE,
+        "ACTIVATION_EVIDENCE_SOURCE_SHA": SOURCE_SHA,
+        "ACTIVATION_EVIDENCE_IMAGE_DIGEST": IMAGE_DIGEST,
+    }
+
 
 def _full_values() -> dict[str, str]:
     return {
+        **_candidate_binding(),
         "PRODUCTION_PROFILE": "full",
         "PROVIDER_RUNTIME_ENABLED": "true",
         "PROVIDER_RUNTIME_TRAFFIC_MODE": "full",
@@ -37,8 +51,13 @@ def _full_values() -> dict[str, str]:
 def test_full_activation_passes_with_exact_controls_and_evidence() -> None:
     result = activation.validate(_full_values())
 
+    assert result["schema"] == "nexus.production-activation-preflight.v2"
     assert result["status"] == "pass"
     assert result["profile"] == "full"
+    assert result["candidate"] == {
+        "source_sha": SOURCE_SHA,
+        "image_digest": IMAGE_DIGEST,
+    }
     assert result["capabilities"]["webchat_ai"] is True
     assert result["evidence"] == {
         "production": "https://evidence.example/production",
@@ -53,6 +72,31 @@ def test_full_activation_fails_closed_without_production_evidence() -> None:
     values.pop("PRODUCTION_E2E_EVIDENCE_URL")
 
     with pytest.raises(activation.ActivationError, match="evidence_missing"):
+        activation.validate(values)
+
+
+def test_activation_rejects_placeholder_and_wrong_candidate_binding() -> None:
+    values = _full_values()
+    values["PRODUCTION_E2E_EVIDENCE_URL"] = (
+        "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/<run-id>"
+    )
+    with pytest.raises(activation.ActivationError, match="evidence_missing"):
+        activation.validate(values)
+
+    values = _full_values()
+    values["ACTIVATION_EVIDENCE_SOURCE_SHA"] = "c" * 40
+    with pytest.raises(
+        activation.ActivationError,
+        match="activation_evidence_source_sha_mismatch",
+    ):
+        activation.validate(values)
+
+    values = _full_values()
+    values["ACTIVATION_EVIDENCE_IMAGE_DIGEST"] = "sha256:" + "d" * 64
+    with pytest.raises(
+        activation.ActivationError,
+        match="activation_evidence_image_digest_mismatch",
+    ):
         activation.validate(values)
 
 
@@ -84,6 +128,7 @@ def test_voice_activation_requires_livekit_credentials_models_and_evidence() -> 
 
 def test_provider_canary_rejects_unbounded_or_parallel_external_effects() -> None:
     values = {
+        **_candidate_binding(),
         "PRODUCTION_PROFILE": "provider_canary",
         "PROVIDER_RUNTIME_ENABLED": "true",
         "PROVIDER_RUNTIME_TRAFFIC_MODE": "canary",
@@ -97,8 +142,15 @@ def test_provider_canary_rejects_unbounded_or_parallel_external_effects() -> Non
         "OPERATIONS_DISPATCH_MODE": "disabled",
         "OPERATIONS_DISPATCH_ADAPTER": "disabled",
     }
-    assert activation.validate(values)["status"] == "pass"
+    result = activation.validate(values)
+    assert result["status"] == "pass"
+    assert result["evidence"] == {
+        "provider_canary": "https://evidence.example/provider-canary"
+    }
 
     values["PROVIDER_RUNTIME_CANARY_PERCENT"] = "50"
-    with pytest.raises(activation.ActivationError, match="provider_canary_percent_invalid"):
+    with pytest.raises(
+        activation.ActivationError,
+        match="provider_canary_percent_invalid",
+    ):
         activation.validate(values)
