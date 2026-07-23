@@ -8,15 +8,31 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "canonical-acceptance.yml"
 
 
+def _trigger_contract(workflow: str) -> str:
+    lines = workflow.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("on:"):
+            block = [line]
+            for candidate in lines[index + 1 :]:
+                if candidate.strip() and not candidate[:1].isspace():
+                    break
+                block.append(candidate)
+            return " ".join(part.strip() for part in block if part.strip())
+    raise AssertionError("canonical workflow trigger is missing")
+
+
+def _assert_main_branch_trigger(contract: str, event_name: str) -> None:
+    pattern = rf"{re.escape(event_name)}:\s*(?:\{{[^}}]*branches:\s*\[main\][^}}]*\}}|branches:\s*\[main\])"
+    assert re.search(pattern, contract), contract
+
+
 def test_canonical_acceptance_covers_pull_request_main_push_and_manual_runs() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    trigger = re.search(r"(?m)^on:\s*\{[^\n]+\}\s*$", workflow)
+    trigger = _trigger_contract(workflow)
 
-    assert trigger is not None
-    trigger_contract = trigger.group(0)
-    assert "pull_request: {branches: [main]}" in trigger_contract
-    assert "push: {branches: [main]}" in trigger_contract
-    assert "workflow_dispatch: {}" in trigger_contract
+    _assert_main_branch_trigger(trigger, "pull_request")
+    _assert_main_branch_trigger(trigger, "push")
+    assert "workflow_dispatch:" in trigger
 
 
 def test_main_push_uses_the_exact_merge_commit_as_candidate_identity() -> None:
