@@ -3,8 +3,8 @@
 
 This read-only qualification consumes the canonical manifest and rejects
 independently callable private implementations, business-bearing shims,
-role-name authorization in declared authorities, and import-time mutation of
-another module.
+role-name authorization in declared authorities, import-time mutation of
+another module, and active Telephony compatibility/residue paths.
 """
 
 from __future__ import annotations
@@ -12,12 +12,15 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "backend" / "app"
 MANIFEST = ROOT / "config" / "architecture" / "service-authority.v1.json"
+TELEPHONY_RESIDUE = ROOT / "scripts" / "ci" / "check_telephony_authority_residue.py"
 
 
 def _module_name(path: Path) -> str:
@@ -134,15 +137,34 @@ def _shim_findings(path: Path, expected_authority: str) -> list[str]:
     return findings
 
 
+def _telephony_residue_findings() -> list[str]:
+    if not TELEPHONY_RESIDUE.is_file():
+        return ["telephony_residue_qualification_missing"]
+    completed = subprocess.run(
+        [sys.executable, str(TELEPHONY_RESIDUE)],
+        cwd=ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode == 0:
+        return []
+    details = (completed.stdout or completed.stderr).strip().splitlines()
+    if not details:
+        return [f"telephony_residue_qualification_failed:{completed.returncode}"]
+    return [f"telephony_residue:{line[:500]}" for line in details]
+
+
 def qualification_payload() -> dict[str, Any]:
-    findings: list[str] = []
+    findings: list[str] = _telephony_residue_findings()
     try:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {
             "schema": "nexus.service-authority-qualification.v1",
             "status": "fail",
-            "findings": [f"manifest_unavailable:{type(exc).__name__}"],
+            "findings": [*findings, f"manifest_unavailable:{type(exc).__name__}"],
         }
 
     if manifest.get("schema") != "nexus.service-authority.v1":
