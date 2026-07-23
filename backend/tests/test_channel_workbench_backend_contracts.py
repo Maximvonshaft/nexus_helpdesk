@@ -770,7 +770,7 @@ def test_formal_webcall_uses_scope_offer_handoff_and_durable_commands(
     created = client.post(
         f"/api/webchat/conversations/{conversation.public_id}/voice/sessions",
         headers={"X-Webchat-Visitor-Token": visitor_token},
-        json={"recording_consent": False},
+        json={},
     )
     assert created.status_code == 200, created.text
     voice_session_id = created.json()["voice_session_id"]
