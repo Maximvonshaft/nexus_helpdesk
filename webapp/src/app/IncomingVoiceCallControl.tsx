@@ -39,8 +39,6 @@ function safeContext(offer: IncomingVoiceSession): IncomingVoiceContext {
     ticket_no: offer.ticket_no || null,
     ticket_title: offer.ticket_title || null,
     visitor_label: offer.visitor_label || null,
-    origin: offer.origin || null,
-    page_url: null,
   }
 }
 
