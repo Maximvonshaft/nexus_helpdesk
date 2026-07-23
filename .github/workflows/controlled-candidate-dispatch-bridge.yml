@@ -1,0 +1,114 @@
+name: controlled-candidate-dispatch-bridge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/controlled-candidate-request.json
+
+permissions: {}
+
+concurrency:
+  group: controlled-candidate-dispatch-bridge-main
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Validate exact-main bounded request
+        env:
+          REQUEST_PATH: .github/controlled-candidate-request.json
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_EVENT_NAME" = "push"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+
+          parent_sha="$(git rev-parse "${SOURCE_SHA}^1")"
+          test "$(git diff --name-only "$parent_sha" "$SOURCE_SHA" -- "$REQUEST_PATH")" = "$REQUEST_PATH"
+          test "$(jq -er '.schema' "$REQUEST_PATH")" = "nexus.osr.controlled-candidate-request.v1"
+          test "$(jq -er '.intent' "$REQUEST_PATH")" = "dispatch-controlled-candidate"
+          test "$(jq -er '.candidate_workflow' "$REQUEST_PATH")" = "controlled-candidate-convergence.yml"
+          test "$(jq -er '.requested_ref' "$REQUEST_PATH")" = "main"
+          test "$(jq -er '.base_sha' "$REQUEST_PATH")" = "$parent_sha"
+          test "$(jq -er '.issue_533' "$REQUEST_PATH")" = "NO_GO"
+          jq -e '
+            (.request_id | type == "string" and test("^[a-z0-9][a-z0-9._-]{7,63}$")) and
+            (.deployment_authorized == false) and
+            (.production_authority == false) and
+            (.external_actions_authorized == false)
+          ' "$REQUEST_PATH" >/dev/null
+
+      - name: Dispatch exact-main candidate workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          gh api \
+            --method POST \
+            "repos/${GH_REPO}/actions/workflows/controlled-candidate-convergence.yml/dispatches" \
+            --raw-field ref=main
+
+      - name: Report exact candidate run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUEST_PATH: .github/controlled-candidate-request.json
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          request_id="$(jq -er '.request_id' "$REQUEST_PATH")"
+          run_id=""
+          run_state=""
+          response="${RUNNER_TEMP}/controlled-candidate-runs.json"
+          for _attempt in $(seq 1 45); do
+            gh api \
+              "repos/${GH_REPO}/actions/workflows/controlled-candidate-convergence.yml/runs?branch=main&event=workflow_dispatch&per_page=20" \
+              > "$response"
+            run_id="$(jq -r --arg sha "$SOURCE_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .head_branch == "main")] | sort_by(.created_at) | reverse | .[0].id // empty' "$response")"
+            run_state="$(jq -r --arg sha "$SOURCE_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .head_branch == "main")] | sort_by(.created_at) | reverse | .[0].status // empty' "$response")"
+            if [[ "$run_id" =~ ^[0-9]+$ ]] && [[ "$run_state" =~ ^(queued|in_progress|completed|requested|waiting|pending)$ ]]; then
+              break
+            fi
+            sleep 2
+          done
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          [[ "$run_state" =~ ^(queued|in_progress|completed|requested|waiting|pending)$ ]]
+          run_url="https://github.com/${GH_REPO}/actions/runs/${run_id}"
+          body="$(printf '%s\n' \
+            '## CONTROLLED_CANDIDATE_RUN' \
+            "- Request: \`${request_id}\`" \
+            "- Source: \`${SOURCE_SHA}\`" \
+            "- Run: \`${run_id}\`" \
+            "- Initial state: \`${run_state}\`" \
+            "- URL: ${run_url}" \
+            '- Deployment performed: `false`' \
+            '- External actions authorized: `false`' \
+            '- #533 GO: `false`')"
+          gh api \
+            --method POST \
+            "repos/${GH_REPO}/issues/724/comments" \
+            --raw-field body="$body" \
+            >/dev/null
