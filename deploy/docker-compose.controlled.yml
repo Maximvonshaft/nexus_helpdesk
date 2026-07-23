@@ -39,7 +39,7 @@ x-controlled-app: &controlled_app
     WEBCHAT_LIVE_AI_VOICE_ENABLED: ${WEBCHAT_LIVE_AI_VOICE_ENABLED:-false}
     WEBCHAT_VOICE_PROVIDER: ${WEBCHAT_VOICE_PROVIDER:-mock}
     WEBCHAT_VOICE_ROUTING_MODE: ${WEBCHAT_VOICE_ROUTING_MODE:-human_first}
-    WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES: ${WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES:-/webchat,/webcall,/api/webchat,/api/telephony}
+    WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES: ${WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES:-/webcall}
     WEBCHAT_VOICE_CONNECT_SRC: ${WEBCHAT_VOICE_CONNECT_SRC:-}
     WEBCHAT_VOICE_RECORDING_ENABLED: "false"
     WEBCHAT_VOICE_TRANSCRIPTION_ENABLED: "false"
@@ -115,13 +115,11 @@ services:
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
     command:
-      - /bin/sh
-      - -ec
-      - >-
-        find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete &&
-        cd /app/backend &&
-        alembic upgrade head &&
-        alembic current
+      - python
+      - -m
+      - alembic
+      - upgrade
+      - head
 
   app-controlled:
     <<: *controlled_app
@@ -132,6 +130,7 @@ services:
       DATABASE_URL: ${DATABASE_URL_APP:?set Web PostgreSQL URL}
       SECRET_KEY: ${SECRET_KEY:?set Web JWT secret}
       RUNTIME_CONTRACT_SIGNING_SECRET: ${RUNTIME_CONTRACT_SIGNING_SECRET:-}
+      TELEPHONY_CONTROL_SECRET: ${TELEPHONY_CONTROL_SECRET:-}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
       LIVEKIT_API_KEY_FILE: ${LIVEKIT_API_KEY_FILE:-}
@@ -159,15 +158,20 @@ services:
     ports:
       - "127.0.0.1:${CONTROLLED_APP_PORT:-18095}:8080"
     command:
-      - /bin/sh
-      - -ec
-      - >-
-        exec gunicorn app.main:app
-        --config /app/backend/gunicorn.conf.py
-        -k uvicorn.workers.UvicornWorker
-        --workers "$${WEB_CONCURRENCY:-2}"
-        --timeout "$${WEB_TIMEOUT:-30}"
-        --bind 0.0.0.0:8080
+      - python
+      - -m
+      - gunicorn
+      - app.main:app
+      - --config
+      - /app/backend/gunicorn.conf.py
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - --workers
+      - "2"
+      - --timeout
+      - "30"
+      - --bind
+      - 0.0.0.0:8080
     healthcheck:
       test:
         - CMD
@@ -239,7 +243,13 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-outbound-controlled --queue outbound
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-outbound-controlled
+      - --queue
+      - outbound
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -254,13 +264,11 @@ services:
       NEXUS_WORKER_ID: worker-background-controlled
       NEXUS_WORKER_QUEUE: background
       DATABASE_URL: ${DATABASE_URL_BACKGROUND:?set Background Worker PostgreSQL URL}
-      SECRET_KEY: ${SECRET_KEY:?set Background Worker application secret}
+      TELEPHONY_CONTROL_SECRET: ${TELEPHONY_CONTROL_SECRET:-}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
       LIVEKIT_API_KEY_FILE: ${LIVEKIT_API_KEY_FILE:-}
       LIVEKIT_API_SECRET_FILE: ${LIVEKIT_API_SECRET_FILE:-}
-      LIVEKIT_AGENT_SHARED_SECRET: ${LIVEKIT_AGENT_SHARED_SECRET:-}
-      LIVEKIT_AGENT_SHARED_SECRET_FILE: ${LIVEKIT_AGENT_SHARED_SECRET_FILE:-}
       METRICS_ENABLED: "false"
       QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS: ${QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS:-15}
       DB_POOL_SIZE: ${DB_POOL_SIZE_BACKGROUND:-3}
@@ -268,7 +276,13 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:rw
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-background-controlled --queue background
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-background-controlled
+      - --queue
+      - background
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -289,7 +303,13 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEBCHAT_AI:-1}
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-webchat-ai-controlled --queue webchat-ai
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-webchat-ai-controlled
+      - --queue
+      - webchat-ai
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -309,7 +329,13 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_HANDOFF:-1}
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-handoff-snapshot-controlled --queue handoff-snapshot
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-handoff-snapshot-controlled
+      - --queue
+      - handoff-snapshot
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
