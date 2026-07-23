@@ -23,6 +23,12 @@ from ..services.operator_agent_capacity_service import set_operator_agent_capaci
 from ..services.operator_queue_scope import authorize_operator_scope
 from ..services.permissions import (
     CAP_USER_MANAGE,
+    CAP_WEBCALL_VOICE_ACCEPT,
+    CAP_WEBCALL_VOICE_CONTROL,
+    CAP_WEBCALL_VOICE_END,
+    CAP_WEBCALL_VOICE_QUEUE_VIEW,
+    CAP_WEBCALL_VOICE_READ,
+    CAP_WEBCALL_VOICE_REJECT,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_capability,
     resolve_capabilities,
@@ -32,6 +38,17 @@ from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/operator", tags=["operator-agent-routing"])
+
+_VOICE_OPT_IN_CAPABILITIES = frozenset(
+    {
+        CAP_WEBCALL_VOICE_READ,
+        CAP_WEBCALL_VOICE_QUEUE_VIEW,
+        CAP_WEBCALL_VOICE_ACCEPT,
+        CAP_WEBCALL_VOICE_REJECT,
+        CAP_WEBCALL_VOICE_END,
+        CAP_WEBCALL_VOICE_CONTROL,
+    }
+)
 
 
 class AgentStateUpdateRequest(BaseModel):
@@ -66,6 +83,28 @@ def _ensure_agent_capability(user: User, db: Session) -> None:
     ensure_capability(user, CAP_WEBCHAT_HANDOFF_ACCEPT, db)
 
 
+def _ensure_agent_state_capability(user: User, db: Session) -> set[str]:
+    capabilities = resolve_capabilities(user, db)
+    if (
+        CAP_WEBCHAT_HANDOFF_ACCEPT not in capabilities
+        and CAP_WEBCALL_VOICE_QUEUE_VIEW not in capabilities
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_agent_state_requires_capability",
+        )
+    return capabilities
+
+
+def _ensure_voice_opt_in_capability(capabilities: set[str]) -> None:
+    missing = sorted(_VOICE_OPT_IN_CAPABILITIES - capabilities)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_voice_opt_in_requires_complete_capability_bundle",
+        )
+
+
 def _managed_operator(db: Session, *, user_id: int) -> User:
     target = db.get(User, user_id)
     if target is None:
@@ -73,7 +112,11 @@ def _managed_operator(db: Session, *, user_id: int) -> User:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="operator_not_found",
         )
-    if CAP_WEBCHAT_HANDOFF_ACCEPT not in resolve_capabilities(target, db):
+    capabilities = resolve_capabilities(target, db)
+    if (
+        CAP_WEBCHAT_HANDOFF_ACCEPT not in capabilities
+        and CAP_WEBCALL_VOICE_QUEUE_VIEW not in capabilities
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="target_user_is_not_operator",
@@ -104,7 +147,7 @@ def get_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_agent_capability(current_user, db)
+    _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
         return read_agent_state(db, user_id=current_user.id)
 
@@ -115,24 +158,29 @@ def update_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_agent_capability(current_user, db)
+    capabilities = _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
         current_state = read_agent_state(db, user_id=current_user.id)
-        governed_fields = {
+        governed_capacity_fields = {
             "max_concurrent_conversations": payload.max_concurrent_conversations,
-            "voice_enabled": payload.voice_enabled,
             "max_concurrent_voice_calls": payload.max_concurrent_voice_calls,
             "voice_wrap_up_seconds": payload.voice_wrap_up_seconds,
         }
         capacity_changed = any(
             value is not None and value != current_state.get(name)
-            for name, value in governed_fields.items()
+            for name, value in governed_capacity_fields.items()
         )
-        if capacity_changed and CAP_USER_MANAGE not in resolve_capabilities(current_user, db):
+        if capacity_changed and CAP_USER_MANAGE not in capabilities:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="agent_capacity_update_requires_user_manage",
             )
+        voice_opt_in_requested = (
+            payload.voice_enabled is True
+            and payload.voice_enabled != current_state.get("voice_enabled")
+        )
+        if voice_opt_in_requested:
+            _ensure_voice_opt_in_capability(capabilities)
         return set_agent_state(
             db,
             user=current_user,
@@ -149,7 +197,7 @@ def heartbeat_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_agent_capability(current_user, db)
+    _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
         return heartbeat_agent(db, user=current_user)
 
