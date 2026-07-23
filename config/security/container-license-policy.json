@@ -65,7 +65,7 @@
       "license": "Other-Proprietary-License",
       "owner": "open-source-compliance",
       "expires_on": "2026-09-30",
-      "reason": "Exact unmodified LiveKit local VAD/EOT model component is permitted only inside the LiveKit Agents framework. Standalone use, model export, use with another framework, and use of the model or its outputs to train or improve non-LiveKit models are prohibited. Retained model-license notices and an exact-version review are mandatory."
+      "reason": "Exact unmodified LiveKit VAD/EOT model is approved only within LiveKit Agents. Standalone, cross-framework, model-export, or non-LiveKit model-training use is prohibited; retained license notices and exact-version review are mandatory."
     }
   ]
 }
