@@ -399,6 +399,10 @@ def test_process_role_authority_is_explicit_in_settings():
 
 
 def test_external_database_network_remains_reachable():
-    network = _compose_document()["networks"]["controlled-net"]
+    networks = _compose_document()["networks"]
+    assert isinstance(networks, dict)
+    assert len(networks) == 1
+    network = next(iter(networks.values()))
+    assert isinstance(network, dict)
     assert network.get("driver") == "bridge"
     assert network.get("internal") is not True
