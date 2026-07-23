@@ -246,7 +246,7 @@ class ControlledServerPreflightTests(unittest.TestCase):
             lambda values: values.update(
                 DATABASE_URL="postgresql+psycopg://generic:generic-pass@10.2.64.2:5432/nexusdesk"
             ),
-            "generic_database_url_forbidden",
+            "disabled_capability_credential_forbidden:DATABASE_URL",
         )
         self._assert_env_failure(
             lambda values: values.update(
