@@ -36,6 +36,24 @@
         "provide_upstream_source_reference",
         "allow_component_replacement"
       ]
+    },
+    {
+      "package": "livekit-local-inference",
+      "version": "0.2.6",
+      "purl": "pkg:pypi/livekit-local-inference@0.2.6",
+      "license": "Other-Proprietary-License",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "source": "https://pypi.org/project/livekit-local-inference/0.2.6/",
+      "notice_path": "THIRD_PARTY_NOTICES.md",
+      "modified": false,
+      "replacement_supported": true,
+      "obligations": [
+        "retain_license_text",
+        "retain_copyright_notice",
+        "provide_upstream_source_reference",
+        "allow_component_replacement"
+      ]
     }
   ]
 }
