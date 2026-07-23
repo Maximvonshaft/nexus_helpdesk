@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -19,7 +20,8 @@ settings = get_settings()
 
 _PROFILE_VALUES = {"controlled", "provider_canary", "full"}
 _HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
-_DIGEST_IMAGE_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_IMAGE_RE = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -67,7 +69,6 @@ def _migration_snapshot(db: Session) -> dict[str, Any]:
             "observed": None,
             "reason_codes": ["migration_head_unavailable"],
         }
-
     observed_heads = [str(row[0]).strip() for row in rows if row and row[0]]
     reason_codes: list[str] = []
     if len(observed_heads) != 1:
@@ -85,9 +86,7 @@ def _migration_snapshot(db: Session) -> dict[str, Any]:
 
 def _configuration_snapshot(profile: str) -> dict[str, Any]:
     provider_enabled = _env_bool("PROVIDER_RUNTIME_ENABLED", False)
-    provider_mode = (
-        _env_token("PROVIDER_RUNTIME_TRAFFIC_MODE", "control") or "control"
-    )
+    provider_mode = _env_token("PROVIDER_RUNTIME_TRAFFIC_MODE", "control") or "control"
     provider_kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", True)
     provider_canary_percent = _env_int(
         "PROVIDER_RUNTIME_CANARY_PERCENT",
@@ -101,9 +100,7 @@ def _configuration_snapshot(profile: str) -> dict[str, Any]:
     human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", False)
     live_ai_voice_enabled = _env_bool("WEBCHAT_LIVE_AI_VOICE_ENABLED", False)
     voice_enabled = human_call_enabled or live_ai_voice_enabled
-    operations_mode = (
-        _env_token("OPERATIONS_DISPATCH_MODE", "disabled") or "disabled"
-    )
+    operations_mode = _env_token("OPERATIONS_DISPATCH_MODE", "disabled") or "disabled"
 
     reason_codes: list[str] = []
     if profile == "controlled":
@@ -267,6 +264,101 @@ def _telephony_snapshot(db: Session) -> dict[str, Any]:
     }
 
 
+def _evidence_url(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    if len(value) > 2048 or any(char in value for char in "\r\n\x00"):
+        raise RuntimeError(f"{name}_invalid")
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise RuntimeError(f"{name}_invalid")
+    if "<" in value or ">" in value or "placeholder" in value.lower():
+        raise RuntimeError(f"{name}_invalid")
+    return value
+
+
+def _activation_candidate_binding() -> tuple[dict[str, str | None], list[str]]:
+    source_sha = os.getenv("GIT_SHA", "").strip().lower()
+    image = os.getenv("IMAGE_TAG", "").strip().lower()
+    evidence_source_sha = os.getenv(
+        "ACTIVATION_EVIDENCE_SOURCE_SHA",
+        "",
+    ).strip().lower()
+    evidence_image_digest = os.getenv(
+        "ACTIVATION_EVIDENCE_IMAGE_DIGEST",
+        "",
+    ).strip().lower()
+    reason_codes: list[str] = []
+
+    image_match = _DIGEST_IMAGE_RE.fullmatch(image)
+    runtime_image_digest = image_match.group(1) if image_match else None
+    if not _HEX40_RE.fullmatch(evidence_source_sha):
+        reason_codes.append("activation_evidence_source_sha_invalid")
+    elif evidence_source_sha != source_sha:
+        reason_codes.append("activation_evidence_source_sha_mismatch")
+    if not _SHA256_RE.fullmatch(evidence_image_digest):
+        reason_codes.append("activation_evidence_image_digest_invalid")
+    elif evidence_image_digest != runtime_image_digest:
+        reason_codes.append("activation_evidence_image_digest_mismatch")
+
+    return (
+        {
+            "source_sha": evidence_source_sha or None,
+            "image_digest": evidence_image_digest or None,
+            "runtime_source_sha": source_sha or None,
+            "runtime_image_digest": runtime_image_digest,
+        },
+        reason_codes,
+    )
+
+
+def _activation_evidence_snapshot(
+    profile: str,
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    required: list[str] = []
+    if profile == "provider_canary":
+        required.append("PROVIDER_CANARY_E2E_EVIDENCE_URL")
+    elif profile == "full":
+        required.append("PRODUCTION_E2E_EVIDENCE_URL")
+        if configuration.get("webchat_ai_enabled"):
+            required.append("WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL")
+        if configuration.get("voice_enabled"):
+            required.append("TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL")
+        outbound = configuration.get("outbound") or {}
+        if outbound.get("enabled"):
+            required.append("OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL")
+        if configuration.get("operations_mode") not in {None, "", "disabled"}:
+            required.append("OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL")
+
+    references: dict[str, str] = {}
+    reason_codes: list[str] = []
+    candidate: dict[str, str | None] | None = None
+    if required:
+        candidate, binding_reasons = _activation_candidate_binding()
+        reason_codes.extend(binding_reasons)
+    for key in required:
+        try:
+            value = _evidence_url(key)
+        except RuntimeError:
+            reason_codes.append(f"activation_evidence_invalid:{key.lower()}")
+            continue
+        if value is None:
+            reason_codes.append(f"activation_evidence_missing:{key.lower()}")
+        else:
+            references[key.lower()] = value
+
+    return {
+        "status": "ready" if not reason_codes else "not_ready",
+        "required": [key.lower() for key in required],
+        "references": references,
+        "candidate": candidate,
+        "reason_codes": reason_codes,
+        "contains_secrets": False,
+    }
+
+
 def _identity_snapshot() -> dict[str, Any]:
     identity = runtime_identity_status(default_app_version=settings.app_version)
     source_sha = str(
@@ -279,7 +371,6 @@ def _identity_snapshot() -> dict[str, Any]:
     image = str(
         identity.get("image_tag") or os.getenv("IMAGE_TAG", "")
     ).strip().lower()
-
     reason_codes: list[str] = []
     if not _HEX40_RE.fullmatch(source_sha):
         reason_codes.append("source_sha_invalid")
@@ -307,12 +398,6 @@ def evaluate_release_readiness(
     *,
     profile: str = "controlled",
 ) -> dict[str, Any]:
-    """Collect runtime facts without granting activation authority.
-
-    Activation evidence and all authorization booleans are finalized exclusively
-    by ``activation_evidence_policy.finalize_release_readiness``.
-    """
-
     normalized_profile = profile.strip().lower()
     if normalized_profile not in _PROFILE_VALUES:
         raise ValueError("release_profile_invalid")
@@ -321,6 +406,10 @@ def evaluate_release_readiness(
     migration = _migration_snapshot(db)
     configuration = _configuration_snapshot(normalized_profile)
     telephony = _telephony_snapshot(db)
+    activation_evidence = _activation_evidence_snapshot(
+        normalized_profile,
+        configuration,
+    )
     queue = collect_queue_health(db)
     storage = check_storage_readiness().as_dict()
     database_pool = database_pool_snapshot()
@@ -331,6 +420,7 @@ def evaluate_release_readiness(
         ("migration", migration),
         ("configuration", configuration),
         ("telephony", telephony),
+        ("activation", activation_evidence),
         ("queue", queue),
         ("storage", storage),
     ):
@@ -344,24 +434,50 @@ def evaluate_release_readiness(
             else:
                 reason_codes.append(f"{prefix}:not_ready")
 
+    status = "ready" if not reason_codes else "not_ready"
+    production_authorized = status == "ready" and normalized_profile == "full"
+    provider_authorized = status == "ready" and normalized_profile in {
+        "provider_canary",
+        "full",
+    }
+    outbound = configuration.get("outbound") or {}
+    outbound_authorized = bool(
+        production_authorized
+        and outbound.get("enabled")
+        and outbound.get("provider") != "disabled"
+    )
+    webchat_ai_authorized = bool(
+        production_authorized and configuration.get("webchat_ai_enabled")
+    )
+    voice_authorized = bool(
+        production_authorized
+        and telephony.get("enabled")
+        and telephony.get("status") == "ready"
+    )
+    operations_authorized = bool(
+        production_authorized
+        and configuration.get("operations_mode") not in {None, "", "disabled"}
+    )
+
     return {
         "schema": "nexus.release-readiness.v2",
         "profile": normalized_profile,
-        "status": "ready" if not reason_codes else "not_ready",
+        "status": status,
         "reason_codes": sorted(set(reason_codes)),
         "collectors": {
             "identity": identity,
             "migration": migration,
             "configuration": configuration,
             "telephony": telephony,
+            "activation_evidence": activation_evidence,
             "queue": queue,
             "storage": storage,
             "database_pool": database_pool,
         },
-        "production_authorized": False,
-        "provider_enablement_authorized": False,
-        "webchat_ai_enablement_authorized": False,
-        "voice_enablement_authorized": False,
-        "outbound_enablement_authorized": False,
-        "operations_enablement_authorized": False,
+        "production_authorized": production_authorized,
+        "provider_enablement_authorized": provider_authorized,
+        "webchat_ai_enablement_authorized": webchat_ai_authorized,
+        "voice_enablement_authorized": voice_authorized,
+        "outbound_enablement_authorized": outbound_authorized,
+        "operations_enablement_authorized": operations_authorized,
     }
