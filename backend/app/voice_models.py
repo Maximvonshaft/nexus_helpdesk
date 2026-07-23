@@ -100,7 +100,6 @@ class WebchatVoiceSession(Base):
     called_number: Mapped[Optional[str]] = mapped_column(
         String(32), nullable=True, index=True
     )
-    recording_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     recording_status: Mapped[str] = mapped_column(
         String(40), default="disabled", index=True
     )
@@ -536,15 +535,15 @@ class VoiceChannelConfiguration(Base):
             name="ck_voice_channel_configuration_wrap_up",
         ),
         CheckConstraint(
-            "recording_policy IN ('disabled', 'consent_required', 'always')",
+            "recording_policy IN ('disabled', 'notice', 'explicit_consent')",
             name="ck_voice_channel_configuration_recording_policy",
         ),
         CheckConstraint(
-            "transcription_policy IN ('disabled', 'consent_required', 'always')",
+            "transcription_policy IN ('disabled', 'notice', 'explicit_consent')",
             name="ck_voice_channel_configuration_transcription_policy",
         ),
         CheckConstraint(
-            "overflow_action IN ('ai', 'voicemail', 'disconnect')",
+            "overflow_action IN ('ai', 'disconnect')",
             name="ck_voice_channel_configuration_overflow_action",
         ),
     )
@@ -584,9 +583,6 @@ class VoiceChannelConfiguration(Base):
     )
     overflow_action: Mapped[str] = mapped_column(
         String(24), nullable=False, default="ai"
-    )
-    voicemail_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
     )
     recording_policy: Mapped[str] = mapped_column(
         String(32), nullable=False, default="disabled"
