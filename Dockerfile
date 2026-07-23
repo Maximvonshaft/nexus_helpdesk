@@ -45,16 +45,26 @@ RUN python -m pip install \
 # Distroless cc contains the base C runtime but not every library used by CPython
 # and accepted native wheels. Compute the exact transitive dynamic-library closure
 # in the compatible builder, fail closed on unresolved dependencies, and preserve
-# each absolute loader path for the final shell-less image.
+# each absolute loader path for the final shell-less image. Some installed native
+# artifacts are intentionally static/non-dynamic; those are copied with /usr/local
+# but must not make ldd discovery fail.
 RUN set -eux; \
     mkdir -p /runtime-libs; \
     { \
       printf '%s\n' /usr/local/bin/python3.11; \
-      find /usr/local/lib/python3.11 -type f -name '*.so' -print; \
+      find /usr/local/lib/python3.11 -type f \( -name '*.so' -o -name '*.so.*' \) -print; \
     } | sort -u > /tmp/native-targets; \
     : > /tmp/ldd-report; \
     while IFS= read -r target; do \
-      ldd "$target" >> /tmp/ldd-report; \
+      output="$(ldd "$target" 2>&1)" && status=0 || status=$?; \
+      if [ "$status" -eq 0 ]; then \
+        printf '%s\n' "$output" >> /tmp/ldd-report; \
+      elif printf '%s\n' "$output" | grep -Eq 'not a dynamic executable|statically linked'; then \
+        printf 'static-or-nondynamic %s\n' "$target" >> /tmp/ldd-report; \
+      else \
+        printf 'ldd failed for %s: %s\n' "$target" "$output" >&2; \
+        exit "$status"; \
+      fi; \
     done < /tmp/native-targets; \
     if grep -F 'not found' /tmp/ldd-report; then \
       echo 'unresolved native runtime dependency' >&2; \
@@ -69,7 +79,8 @@ RUN set -eux; \
       test -f "$library"; \
       cp -L --parents "$library" /runtime-libs; \
     done < /tmp/runtime-library-paths; \
-    test -s /tmp/runtime-library-paths
+    test -s /tmp/runtime-library-paths; \
+    /usr/local/bin/python -c "import alembic, gunicorn, livekit, sqlalchemy, uvicorn"
 
 # Assemble the immutable application tree before entering the shell-less runtime.
 FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime-layout
@@ -114,8 +125,8 @@ WORKDIR /app/backend
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()"]
+    CMD ["/usr/local/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()"]
 
 USER 65532:65532
 
-CMD ["python", "-m", "gunicorn", "app.main:app", "--config", "/app/backend/gunicorn.conf.py", "-k", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "60"]
+CMD ["/usr/local/bin/python", "-m", "gunicorn", "app.main:app", "--config", "/app/backend/gunicorn.conf.py", "-k", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "60"]
