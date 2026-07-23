@@ -11,12 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import create_engine, text  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
-from app.services.activation_evidence_policy import (  # noqa: E402
-    finalize_release_readiness,
-)
-from app.services.release_readiness import (  # noqa: E402
-    evaluate_release_readiness as collect_release_readiness,
-)
+from app.services.release_readiness import evaluate_release_readiness  # noqa: E402
 from app.services.storage_readiness import check_storage_readiness  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
@@ -134,8 +129,7 @@ def main() -> int:
     }
     db = SessionLocal()
     try:
-        collected = collect_release_readiness(db, profile=profile)
-        release_readiness = finalize_release_readiness(collected)
+        release_readiness = evaluate_release_readiness(db, profile=profile)
     except Exception as exc:
         warnings.append(
             "Release readiness evaluation failed: "
