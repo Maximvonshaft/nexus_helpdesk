@@ -22,7 +22,7 @@ livekit-agents==1.6.6
 prometheus-client==0.22.1
 cryptography==48.0.1
 jsonschema==4.21.1
-pypdf==6.14.0
+pypdf==6.14.2
 defusedxml==0.7.1
 
 pytest-asyncio==1.4.0
