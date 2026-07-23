@@ -27,10 +27,8 @@ LIVEKIT_SECRET_FILE_ENV = "LIVEKIT_API_SECRET_FILE"
 VOICE_ENV_KEYS = [
     "WEBCHAT_HUMAN_CALL_ENABLED",
     "WEBCHAT_LIVE_AI_VOICE_ENABLED",
-    "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
     "WEBCHAT_VOICE_CONNECT_SRC",
     "WEBCHAT_VOICE_PROVIDER",
-    "WEBCHAT_VOICE_RECORDING_ENABLED",
     LIVEKIT_URL_ENV,
     LIVEKIT_KEY_ENV,
     LIVEKIT_KEY_FILE_ENV,
@@ -92,6 +90,9 @@ def test_retired_pcm_health_route_is_always_absent(monkeypatch):
     assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
     assert runtime_config.status_code == 200
     assert runtime_config.json()["media_plane"] == "mock"
+    assert runtime_config.json()["voice_policy_authority"] == "channel_account"
+    assert "recording_enabled" not in runtime_config.json()
+    assert "transcription_enabled" not in runtime_config.json()
     assert "upstream" not in runtime_config.text.lower()
 
 
@@ -187,20 +188,22 @@ def test_only_webcall_path_receives_microphone_and_livekit_sources(monkeypatch):
     assert "unsafe-eval" not in policy
 
 
-def test_retired_path_environment_cannot_override_webcall(monkeypatch):
+def test_retired_environment_controls_cannot_override_webcall(monkeypatch):
     for key in VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/voice/webchat")
+    monkeypatch.setenv("WEBCHAT_VOICE_RECORDING_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", "true")
 
     import app.webchat_voice_config as voice_config_module
 
     voice_config_module = importlib.reload(voice_config_module)
     config = voice_config_module.load_webchat_voice_runtime_config()
 
-    assert config.allowed_path_prefixes == (
-        voice_config_module.CANONICAL_WEBCALL_PATH,
-    )
+    assert not hasattr(config, "allowed_path_prefixes")
+    assert not hasattr(config, "recording_enabled")
+    assert not hasattr(config, "transcription_enabled")
     assert voice_config_module.is_webchat_voice_path(
         "/webcall/session_demo",
         config=config,
