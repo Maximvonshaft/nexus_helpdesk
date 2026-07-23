@@ -225,6 +225,9 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      - name: Reconfirm exact current main before registry publication
+        run: bash scripts/release/require_exact_current_main.sh
+
       - name: Publish and pull back the assured binary
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -360,6 +363,9 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "local_id=$local_id" >> "$GITHUB_OUTPUT"
           echo "pulled_id=$pulled_id" >> "$GITHUB_OUTPUT"
+
+      - name: Reconfirm exact current main before provenance attestation
+        run: bash scripts/release/require_exact_current_main.sh
 
       - name: Authenticate GHCR for registry attestation
         env:
