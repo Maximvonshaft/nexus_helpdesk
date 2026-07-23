@@ -88,6 +88,29 @@ def _caller_identity(
     return leg.provider_identity if leg is not None else session.provider_call_id
 
 
+def _human_identity(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+) -> str | None:
+    leg = (
+        db.query(WebchatVoiceParticipant)
+        .filter(
+            WebchatVoiceParticipant.voice_session_id == session.id,
+            WebchatVoiceParticipant.participant_type == "human",
+            WebchatVoiceParticipant.status == "joined",
+            WebchatVoiceParticipant.joined_at.isnot(None),
+            WebchatVoiceParticipant.ended_at.is_(None),
+        )
+        .order_by(
+            WebchatVoiceParticipant.joined_at.desc(),
+            WebchatVoiceParticipant.id.desc(),
+        )
+        .first()
+    )
+    return leg.provider_identity if leg is not None else None
+
+
 def _controller_identity(
     db: Session,
     *,
@@ -138,6 +161,7 @@ def _provider_error_retryable(exc: VoiceProviderError) -> bool:
     text = str(exc).lower()
     transient_markers = (
         "active telephony controller identity is required",
+        "active human participant identity is required",
         "participant has no published media track",
         "participant identity is required",
         "participant not found",
@@ -385,6 +409,7 @@ def _dispatch_one(
             target=payload.get("target"),
             digits=payload.get("digits"),
             participant_identity=_caller_identity(db, session=session),
+            human_identity=_human_identity(db, session=session),
             controller_identity=_controller_identity(db, session=session),
             outbound_trunk_id=_outbound_trunk_id(db, session=session),
             recording_reference=session.recording_provider_ref,
