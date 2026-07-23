@@ -201,7 +201,7 @@ def _seed_qa_training(db_session):
             status="ended",
             mode="browser_human",
             direction="inbound",
-            recording_consent=False,
+            recording_status="disabled",
             transcript_status="disabled",
             summary_status="pending",
             ai_handoff_reason="identity check incomplete",
