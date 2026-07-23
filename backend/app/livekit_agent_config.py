@@ -13,6 +13,7 @@ _ALLOWED_HTTP_INTERNAL_HOSTS = {
     "127.0.0.1",
     "::1",
 }
+_DEFAULT_AGENT_NAME = "nexus-voice-agent"
 
 
 def _read_secret(name: str, file_name: str) -> str | None:
@@ -40,6 +41,12 @@ def _positive_int(name: str, default: int, *, minimum: int, maximum: int) -> int
     return value
 
 
+def livekit_agent_registration_name() -> str:
+    """Return a stable decorator name; full validation occurs at worker startup."""
+
+    return str(os.getenv("LIVEKIT_AGENT_NAME") or _DEFAULT_AGENT_NAME).strip() or _DEFAULT_AGENT_NAME
+
+
 @dataclass(frozen=True)
 class LiveKitAgentWorkerConfig:
     agent_name: str
@@ -47,6 +54,7 @@ class LiveKitAgentWorkerConfig:
     nexus_internal_api_url: str
     stt_model: str
     tts_model: str
+    transfer_llm_model: str | None
     turn_detection: str
     request_timeout_seconds: int
     heartbeat_seconds: int
@@ -69,6 +77,10 @@ def load_livekit_agent_worker_config() -> LiveKitAgentWorkerConfig:
         ).strip().rstrip("/"),
         stt_model=str(os.getenv("NEXUS_VOICE_STT_MODEL") or "").strip(),
         tts_model=str(os.getenv("NEXUS_VOICE_TTS_MODEL") or "").strip(),
+        transfer_llm_model=(
+            str(os.getenv("NEXUS_VOICE_TRANSFER_LLM_MODEL") or "").strip()
+            or None
+        ),
         turn_detection=str(
             os.getenv("NEXUS_VOICE_TURN_DETECTION") or "stt"
         ).strip().lower(),
