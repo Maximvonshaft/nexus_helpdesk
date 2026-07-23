@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -287,13 +288,24 @@ def validate(values: dict[str, str]) -> dict[str, object]:
     }
 
 
+def _input_values(args: argparse.Namespace) -> dict[str, str]:
+    if args.environment:
+        if args.env_file:
+            raise ActivationError("activation_input_modes_conflict")
+        return dict(os.environ)
+    if not args.env_file:
+        raise ActivationError("activation_input_required")
+    return _parse_env(args.env_file)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env-file", action="append", type=Path, required=True)
+    parser.add_argument("--env-file", action="append", type=Path)
+    parser.add_argument("--environment", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
-        payload = validate(_parse_env(args.env_file))
+        payload = validate(_input_values(args))
     except (ActivationError, OSError, UnicodeError) as exc:
         print(f"production_activation_preflight_error:{exc}", file=sys.stderr)
         return 2
