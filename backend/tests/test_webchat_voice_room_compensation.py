@@ -97,7 +97,6 @@ def _seed_voice_channel() -> None:
                 offer_timeout_seconds=20,
                 wrap_up_seconds=30,
                 overflow_action="ai",
-                voicemail_enabled=False,
                 recording_policy="disabled",
                 transcription_policy="disabled",
                 enabled=True,
