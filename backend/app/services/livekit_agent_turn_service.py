@@ -56,6 +56,8 @@ def _record_segment(
     text: str,
     language: str | None,
 ) -> None:
+    if session.transcript_status != "active":
+        return
     exists = (
         db.query(WebchatVoiceTranscriptSegment.id)
         .filter(
