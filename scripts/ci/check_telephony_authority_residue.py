@@ -45,7 +45,6 @@ FORBIDDEN_MARKERS = (
     "/webchat/live/ws",
     "/webchat/live",
     "/webcall-ai",
-    "/webchat/voice/",
     "voice-redirect.js",
     "LIVE_VOICE_UPSTREAM_",
     "WEBCALL_AI_",
@@ -70,6 +69,15 @@ FORBIDDEN_MARKERS = (
     "telephony_payload",
     "human_firstfalse",
     "/proc/1/cmdline",
+)
+
+# The canonical public API remains /api/webchat/voice/*. These exact markers
+# forbid only the retired browser page /webchat/voice/* and cannot match /api/*.
+RETIRED_PAGE_ROUTE_MARKERS = (
+    '"/webchat/voice/',
+    "'/webchat/voice/",
+    "`/webchat/voice/",
+    "href=/webchat/voice/",
 )
 
 SCAN_ROOTS = (
@@ -148,7 +156,7 @@ def main() -> int:
             source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        for marker in FORBIDDEN_MARKERS:
+        for marker in (*FORBIDDEN_MARKERS, *RETIRED_PAGE_ROUTE_MARKERS):
             if marker in source:
                 findings.append(
                     "retired telephony marker "
