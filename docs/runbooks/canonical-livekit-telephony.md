@@ -51,7 +51,7 @@ WEBCHAT_HUMAN_CALL_ENABLED=true
 WEBCHAT_LIVE_AI_VOICE_ENABLED=true
 WEBCHAT_VOICE_PROVIDER=livekit
 WEBCHAT_VOICE_ROUTING_MODE=ai_first
-WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webchat,/webcall,/api/webchat,/api/telephony
+WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webcall
 WEBCHAT_VOICE_CONNECT_SRC=wss://<livekit-host>
 LIVEKIT_URL=wss://<livekit-host>
 LIVEKIT_API_KEY_FILE=/run/secrets/livekit_api_key
@@ -94,7 +94,7 @@ docker compose \
 
 The AgentServer exposes its readiness endpoint at `http://127.0.0.1:8081/` inside the container. It returns success only when the Agent server is connected and operating. The Compose health check uses this endpoint; process-name or `/proc` probes are forbidden.
 
-The Web process and Agent worker must use the same `LIVEKIT_AGENT_SHARED_SECRET`. The worker calls the internal Agent-turn endpoint with Bearer authentication and signs controller events with timestamped HMAC.
+The Web process and Agent worker must use the same `LIVEKIT_AGENT_SHARED_SECRET`. The worker authenticates the internal Agent-turn request through the Authorization header and signs controller events with timestamped HMAC. Secret values must never appear in logs, examples or evidence bundles.
 
 ## Configure a phone number
 
@@ -106,7 +106,7 @@ The Web process and Agent worker must use the same `LIVEKIT_AGENT_SHARED_SECRET`
    - Maximum customer wait.
    - Per-agent ringing timeout.
    - After-call work time.
-   - Overflow: continue AI, voicemail, or explain and disconnect.
+   - Overflow: continue with the canonical AI runtime when ready, or explain and disconnect.
    - Recording and transcription policy.
 4. In **Advanced Provider diagnostics**, configure:
    - LiveKit project reference.
@@ -206,19 +206,18 @@ Hold, resume, DTMF and warm transfer wait for a joined Room controller and a sig
 Every signed event is recorded with:
 
 - Provider event ID and payload digest.
-- Safe redacted summary.
-- Encrypted replay envelope.
-- Raw object-storage evidence.
+- Minimal safe redacted summary.
+- One authenticated encrypted replay envelope.
 - Tenant and ChannelAccount projection.
 - Attempt count, lease, retry and dead-letter state.
 
-A duplicate ID with a different payload is rejected and audited. Projection uses a savepoint so a transient projection failure does not destroy Inbox evidence. The existing background worker replays retryable or stale events.
+The raw Provider body is not duplicated into object storage. A duplicate ID with a different payload is rejected and audited. Projection uses a savepoint so a transient projection failure does not destroy Inbox evidence. The existing background worker replays retryable or stale events.
 
 ## Recording and transcription
 
-Recording and transcription are disabled unless the configured channel policy permits them. System-originated recording commands use the same durable outbox and audit trail as operator commands.
+Recording and transcription remain disabled unless the configured channel policy, required customer notice or consent, scoped access control, retention and deletion policy are all active. System-originated recording commands use the same durable outbox and audit trail as operator commands.
 
-LiveKit egress events update recording status. Storage retention and access control must match the approved market policy before `always` is enabled.
+LiveKit Egress events update recording status. Enabling recording does not itself prove notice or consent; the approved runtime sequence must complete before recording starts.
 
 ## Failure behavior
 
