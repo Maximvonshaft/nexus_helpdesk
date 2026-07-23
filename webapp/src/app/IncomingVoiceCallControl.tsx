@@ -40,18 +40,21 @@ function safeContext(offer: IncomingVoiceSession): IncomingVoiceContext {
     ticket_title: offer.ticket_title || null,
     visitor_label: offer.visitor_label || null,
     origin: offer.origin || null,
-    page_url: offer.page_url || null,
+    page_url: null,
   }
 }
 
 export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<string> }) {
   const queryClient = useQueryClient()
-  const enabled = capabilities.has('webchat.handoff.accept')
+  const canViewQueue = capabilities.has('webcall.voice.queue.view')
+  const canAccept = capabilities.has('webcall.voice.accept')
+  const canReject = capabilities.has('webcall.voice.reject')
+  const canAct = canAccept || canReject
   const [now, setNow] = useState(() => Date.now())
   const offers = useQuery({
     queryKey: INCOMING_QUERY_KEY,
     queryFn: () => telephonyApi.incomingOffers(10),
-    enabled,
+    enabled: canViewQueue,
     refetchInterval: 2_000,
     retry: false,
   })
@@ -71,6 +74,7 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
 
   const reject = useMutation({
     mutationFn: () => {
+      if (!canReject) throw new Error('当前账号无权拒绝来电')
       if (!current) throw new Error('来电已失效')
       return telephonyApi.rejectOffer(current.voice_session_id)
     },
@@ -79,7 +83,7 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
     },
   })
 
-  if (!enabled) return null
+  if (!canViewQueue) return null
   if (offers.isError) {
     return (
       <Box
@@ -103,6 +107,7 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
   if (!current) return null
 
   const accept = () => {
+    if (!canAccept) return
     sessionStorage.setItem(
       `${INCOMING_VOICE_CONTEXT_PREFIX}${current.voice_session_id}`,
       JSON.stringify(safeContext(current)),
@@ -121,7 +126,7 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
         aria-label="有新的语音来电"
       />
       <Dialog
-        open
+        open={canAct}
         aria-labelledby="incoming-voice-title"
         aria-describedby="incoming-voice-description"
         sx={{
@@ -172,24 +177,28 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button
-            color="inherit"
-            variant="outlined"
-            startIcon={reject.isPending ? <CircularProgress size={16} /> : <PhoneDisabledRoundedIcon />}
-            disabled={reject.isPending || seconds <= 0}
-            onClick={() => reject.mutate()}
-          >
-            暂不接听
-          </Button>
-          <Button
-            color="error"
-            variant="contained"
-            startIcon={<PhoneInTalkRoundedIcon />}
-            disabled={reject.isPending || seconds <= 0}
-            onClick={accept}
-          >
-            接听通话
-          </Button>
+          {canReject ? (
+            <Button
+              color="inherit"
+              variant="outlined"
+              startIcon={reject.isPending ? <CircularProgress size={16} /> : <PhoneDisabledRoundedIcon />}
+              disabled={reject.isPending || seconds <= 0}
+              onClick={() => reject.mutate()}
+            >
+              暂不接听
+            </Button>
+          ) : null}
+          {canAccept ? (
+            <Button
+              color="error"
+              variant="contained"
+              startIcon={<PhoneInTalkRoundedIcon />}
+              disabled={reject.isPending || seconds <= 0}
+              onClick={accept}
+            >
+              接听通话
+            </Button>
+          ) : null}
         </DialogActions>
       </Dialog>
     </>
