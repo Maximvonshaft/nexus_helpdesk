@@ -56,6 +56,12 @@ from .permissions import (
     ensure_ticket_visible,
 )
 from .voice_command_service import enqueue_voice_command, serialize_voice_command
+from .voice_compliance_service import (
+    apply_session_compliance_state,
+    latest_evidence,
+    policy_bundle,
+    record_evidence,
+)
 from .voice_provider import VoiceProvider, VoiceProviderError
 from .voice_room_control_service import (
     dispatch_room_controller,
@@ -212,6 +218,40 @@ def _duration(started_at: Any, ended_at: Any) -> int | None:
     return max(0, int((end - start).total_seconds()))
 
 
+def _configuration_for_session(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+) -> VoiceChannelConfiguration | None:
+    if session.channel_account_id is None:
+        return None
+    return (
+        db.query(VoiceChannelConfiguration)
+        .filter(
+            VoiceChannelConfiguration.channel_account_id
+            == session.channel_account_id
+        )
+        .first()
+    )
+
+
+def _compliance_bundle(
+    configuration: VoiceChannelConfiguration | None,
+) -> dict[str, Any]:
+    return policy_bundle(
+        recording_policy=(
+            configuration.recording_policy
+            if configuration is not None
+            else "disabled"
+        ),
+        transcription_policy=(
+            configuration.transcription_policy
+            if configuration is not None
+            else "disabled"
+        ),
+    )
+
+
 def serialize_voice_session(
     db: Session,
     *,
@@ -241,7 +281,6 @@ def serialize_voice_session(
             if session.provider == "livekit"
             else None
         ),
-        "voice_page_url": f"/webcall/{session.public_id}",
         "room_name": session.provider_room_name,
         "provider_room_name": session.provider_room_name,
         "participant_identity": participant_identity,
@@ -254,6 +293,9 @@ def serialize_voice_session(
         "direction": session.direction,
         "mode": session.mode,
         "ai_agent_status": session.ai_agent_status,
+        "compliance": _compliance_bundle(
+            _configuration_for_session(db, session=session)
+        ),
         "voice_offer": (
             {
                 "id": offer.public_id,
@@ -410,6 +452,26 @@ def _voice_channel(
         status_code=503,
         detail="voice_channel_unavailable",
     )
+
+
+def public_voice_policy(
+    db: Session,
+    *,
+    conversation_public_id: str,
+    visitor_token: str | None,
+) -> dict[str, Any]:
+    runtime = load_webchat_voice_runtime_config()
+    if not runtime.human_call_enabled and not runtime.live_ai_voice_enabled:
+        raise HTTPException(status_code=404, detail="WebChat voice is disabled")
+    conversation = _public_conversation(db, conversation_public_id)
+    _validate_visitor_token(conversation, visitor_token)
+    control = _conversation_control(db, conversation=conversation)
+    _account, configuration = _voice_channel(
+        db,
+        control=control,
+        runtime=runtime,
+    )
+    return _compliance_bundle(configuration)
 
 
 def _issue_token(
@@ -670,6 +732,87 @@ def _controller_agent_name(
     )
 
 
+def _matching_evidence_exists(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+    requirement: dict[str, Any],
+) -> bool:
+    row = latest_evidence(
+        db,
+        session=session,
+        capability=requirement["capability"],
+    )
+    return bool(
+        row is not None
+        and row.policy == requirement["policy"]
+        and row.policy_version == requirement["policy_version"]
+        and row.prompt_sha256 == requirement["prompt_sha256"]
+    )
+
+
+def _apply_browser_compliance(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+    conversation: WebchatConversation,
+    configuration: VoiceChannelConfiguration | None,
+    submitted: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    bundle = _compliance_bundle(configuration)
+    items = {
+        str(item.get("capability") or "").strip(): item
+        for item in list(submitted or [])
+        if isinstance(item, dict)
+    }
+    for key in ("recording", "transcript_persistence"):
+        requirement = bundle[key]
+        policy = requirement["policy"]
+        if policy == "disabled":
+            continue
+        item = items.get(requirement["capability"])
+        if item is None:
+            if _matching_evidence_exists(
+                db,
+                session=session,
+                requirement=requirement,
+            ):
+                continue
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "voice_compliance_decision_required",
+                    "capability": requirement["capability"],
+                    "policy_version": requirement["policy_version"],
+                },
+            )
+        try:
+            record_evidence(
+                db,
+                session=session,
+                capability=item.get("capability"),
+                policy=item.get("policy"),
+                policy_version=item.get("policy_version"),
+                prompt_sha256=item.get("prompt_sha256"),
+                source="browser",
+                decision=item.get("decision"),
+                participant_identity=f"visitor:{conversation.public_id}",
+                idempotency_key=item.get("idempotency_key"),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+    apply_session_compliance_state(
+        db,
+        session=session,
+        recording_policy=bundle["recording"]["policy"],
+        transcription_policy=bundle["transcript_persistence"]["policy"],
+    )
+    return bundle
+
+
 def create_public_voice_session(
     db: Session,
     *,
@@ -677,7 +820,7 @@ def create_public_voice_session(
     visitor_token: str | None,
     request: Request,
     locale: str | None = None,
-    recording_consent: bool = False,
+    compliance_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     runtime = load_webchat_voice_runtime_config()
     if not runtime.human_call_enabled and not runtime.live_ai_voice_enabled:
@@ -700,6 +843,11 @@ def create_public_voice_session(
         tenant_key=control.tenant_key,
         conversation_id=f"{conversation.public_id}:voice",
     )
+    account, channel_config = _voice_channel(
+        db,
+        control=control,
+        runtime=runtime,
+    )
     existing = _active_session(
         db,
         conversation_id=conversation.id,
@@ -710,6 +858,18 @@ def create_public_voice_session(
     ):
         existing = None
     if existing is not None:
+        existing_configuration = _configuration_for_session(
+            db,
+            session=existing,
+        )
+        _apply_browser_compliance(
+            db,
+            session=existing,
+            conversation=conversation,
+            configuration=existing_configuration,
+            submitted=compliance_evidence,
+        )
+        ensure_recording_command(db, session=existing, actor=None)
         value, ttl, identity = _issue_token(
             existing,
             "visitor",
@@ -723,11 +883,6 @@ def create_public_voice_session(
             participant_identity=identity,
         )
 
-    account, channel_config = _voice_channel(
-        db,
-        control=control,
-        runtime=runtime,
-    )
     provider = _provider_for_name(runtime.provider, runtime)
     now = utc_now()
     public_id = _new_public_id()
@@ -742,30 +897,7 @@ def create_public_voice_session(
         runtime.live_ai_voice_enabled
         and routing_mode == "ai_first"
     )
-    recording_policy = (
-        channel_config.recording_policy
-        if channel_config is not None
-        else "disabled"
-    )
-    transcription_policy = (
-        channel_config.transcription_policy
-        if channel_config is not None
-        else "disabled"
-    )
-    recording_allowed = (
-        recording_policy == "always"
-        or (
-            recording_policy == "consent_required"
-            and recording_consent
-        )
-    )
-    transcription_allowed = (
-        transcription_policy == "always"
-        or (
-            transcription_policy == "consent_required"
-            and recording_consent
-        )
-    )
+    bundle = _compliance_bundle(channel_config)
     try:
         session = WebchatVoiceSession(
             public_id=public_id,
@@ -780,13 +912,8 @@ def create_public_voice_session(
             mode="browser_ai" if ai_first else "browser_human",
             direction="inbound",
             locale=locale or None,
-            recording_consent=bool(recording_consent),
-            recording_status=(
-                "requested" if recording_allowed else "disabled"
-            ),
-            transcript_status=(
-                "active" if transcription_allowed else "disabled"
-            ),
+            recording_status="disabled",
+            transcript_status="disabled",
             summary_status="pending",
             ai_agent_status=(
                 "dispatching"
@@ -805,6 +932,13 @@ def create_public_voice_session(
         )
         db.add(session)
         db.flush()
+        _apply_browser_compliance(
+            db,
+            session=session,
+            conversation=conversation,
+            configuration=channel_config,
+            submitted=compliance_evidence,
+        )
         value, ttl, identity = _issue_token(
             session,
             "visitor",
@@ -856,6 +990,7 @@ def create_public_voice_session(
                 "country_code": control.country_code,
                 "channel_key": control.channel_key,
                 "locale": locale,
+                "compliance": bundle,
             },
         )
         ensure_recording_command(
@@ -1189,7 +1324,6 @@ def _incoming_payload(
     )
     for forbidden in (
         "livekit_url",
-        "voice_page_url",
         "room_name",
         "provider_room_name",
         "participant_identity",
@@ -1200,6 +1334,7 @@ def _incoming_payload(
         "ended_by_user_id",
         "channel_account_id",
         "ai_agent_status",
+        "compliance",
         "accepted_at",
         "active_at",
         "ended_at",
