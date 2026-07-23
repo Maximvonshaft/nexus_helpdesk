@@ -16,6 +16,7 @@ from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli, in
 
 from .livekit_agent_config import (
     LiveKitAgentWorkerConfig,
+    livekit_agent_registration_name,
     load_livekit_agent_worker_config,
     materialize_livekit_worker_credentials,
 )
@@ -185,7 +186,7 @@ class NexusVoiceAgent(Agent):
         client: NexusRuntimeClient,
         metadata: AgentJobMetadata,
         config: LiveKitAgentWorkerConfig,
-        participant_identity: str | None,
+        room: rtc.Room,
     ) -> None:
         super().__init__(
             instructions=(
@@ -197,7 +198,7 @@ class NexusVoiceAgent(Agent):
         self._client = client
         self._metadata = metadata
         self._config = config
-        self._participant_identity = participant_identity
+        self._room = room
         self._turn_id = 0
         self._handoff_wait_announced = False
 
@@ -219,7 +220,7 @@ class NexusVoiceAgent(Agent):
                 metadata=self._metadata,
                 turn_id=self._turn_id,
                 transcript=transcript,
-                participant_identity=self._participant_identity,
+                participant_identity=_first_remote_identity(self._room),
             )
         except (httpx.HTTPError, RuntimeError) as exc:
             logger.exception(
@@ -403,17 +404,17 @@ class TelephonyController:
         trunk_id = command.get("outbound_trunk_id")
         if not target or not trunk_id:
             raise RuntimeError("warm_transfer_target_or_trunk_missing")
-        transfer_model = str(
-            getattr(self._config, "transfer_llm_model", None) or ""
-        ).strip()
+        transfer_model = str(self._config.transfer_llm_model or "").strip()
         if not transfer_model:
             raise RuntimeError("warm_transfer_consultation_model_not_configured")
         from livekit.agents.beta.workflows import WarmTransferTask
 
+        current_agent = getattr(self._session, "current_agent", None)
+        chat_ctx = getattr(current_agent, "chat_ctx", None)
         result = await WarmTransferTask(
             sip_call_to=target,
             sip_trunk_id=trunk_id,
-            chat_ctx=self._session.current_agent.chat_ctx,
+            chat_ctx=chat_ctx,
             stt=inference.STT(model=self._config.stt_model),
             llm=inference.LLM(model=transfer_model),
             tts=inference.TTS(model=self._config.tts_model),
@@ -437,7 +438,11 @@ class TelephonyController:
 
 def _bounded_reason(exc: Exception) -> str:
     value = str(exc or type(exc).__name__).strip().lower().replace(" ", "_")
-    safe = "".join(character for character in value if character.isalnum() or character in "_-:")
+    safe = "".join(
+        character
+        for character in value
+        if character.isalnum() or character in "_-:"
+    )
     return (safe or type(exc).__name__.lower())[:160]
 
 
@@ -450,12 +455,21 @@ async def _heartbeat_loop(
 ) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
-        await client.controller_event(
-            event_type="controller.heartbeat",
-            room_name=ctx.room.name,
-            controller_identity=ctx.room.local_participant.identity,
-            role=metadata.role,
-        )
+        try:
+            await client.controller_event(
+                event_type="controller.heartbeat",
+                room_name=ctx.room.name,
+                controller_identity=ctx.room.local_participant.identity,
+                role=metadata.role,
+            )
+        except Exception as exc:
+            logger.warning(
+                "livekit_controller_heartbeat_failed",
+                extra={
+                    "voice_session_id": metadata.voice_session_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
 
 
 def _first_remote_identity(room: rtc.Room) -> str | None:
@@ -466,20 +480,19 @@ def _first_remote_identity(room: rtc.Room) -> str | None:
     return None
 
 
-materialize_livekit_worker_credentials()
-_WORKER_CONFIG = load_livekit_agent_worker_config()
 server = AgentServer()
 
 
-@server.rtc_session(agent_name=_WORKER_CONFIG.agent_name)
+@server.rtc_session(agent_name=livekit_agent_registration_name())
 async def nexus_livekit_agent(ctx: JobContext) -> None:
+    config = load_livekit_agent_worker_config()
     metadata = parse_agent_job_metadata(ctx.job.metadata)
     ctx.log_context_fields = {
         "room": ctx.room.name,
         "voice_session_id": metadata.voice_session_id,
         "role": metadata.role,
     }
-    client = NexusRuntimeClient(_WORKER_CONFIG)
+    client = NexusRuntimeClient(config)
     session: AgentSession | None = None
     disconnected = asyncio.Event()
 
@@ -489,15 +502,15 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
 
     if metadata.role == "ai_controller":
         session = AgentSession(
-            stt=inference.STT(model=_WORKER_CONFIG.stt_model),
-            tts=inference.TTS(model=_WORKER_CONFIG.tts_model),
-            turn_detection=_WORKER_CONFIG.turn_detection,
+            stt=inference.STT(model=config.stt_model),
+            tts=inference.TTS(model=config.tts_model),
+            turn_detection=config.turn_detection,
         )
         agent = NexusVoiceAgent(
             client=client,
             metadata=metadata,
-            config=_WORKER_CONFIG,
-            participant_identity=_first_remote_identity(ctx.room),
+            config=config,
+            room=ctx.room,
         )
         await session.start(agent=agent, room=ctx.room)
         await ctx.connect()
@@ -508,7 +521,7 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
         ctx=ctx,
         client=client,
         metadata=metadata,
-        config=_WORKER_CONFIG,
+        config=config,
         session=session,
     )
     controller.register()
@@ -525,7 +538,7 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
                 client=client,
                 ctx=ctx,
                 metadata=metadata,
-                interval_seconds=_WORKER_CONFIG.heartbeat_seconds,
+                interval_seconds=config.heartbeat_seconds,
             )
         )
         await disconnected.wait()
@@ -550,4 +563,6 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
+    materialize_livekit_worker_credentials()
+    load_livekit_agent_worker_config()
     cli.run_app(server)
