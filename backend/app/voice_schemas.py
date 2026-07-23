@@ -5,11 +5,40 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+VoiceCompliancePolicy = Literal["disabled", "notice", "explicit_consent"]
+VoiceComplianceCapability = Literal["recording", "transcript_persistence"]
+VoiceComplianceDecision = Literal[
+    "notice_delivered",
+    "accepted",
+    "declined",
+    "timeout",
+]
+
+
+class VoiceComplianceEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capability: VoiceComplianceCapability
+    policy: VoiceCompliancePolicy
+    policy_version: str = Field(min_length=1, max_length=80)
+    prompt_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    decision: VoiceComplianceDecision
+    idempotency_key: str = Field(min_length=1, max_length=180)
+
+    @field_validator("policy_version", "idempotency_key", mode="before")
+    @classmethod
+    def strip_compliance_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
 class WebchatVoiceCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     locale: str | None = Field(default=None, max_length=20)
-    recording_consent: bool = False
+    compliance_evidence: list[VoiceComplianceEvidenceInput] = Field(
+        default_factory=list,
+        max_length=2,
+    )
 
 
 class WebchatVoiceRejectRequest(BaseModel):
@@ -228,7 +257,6 @@ class WebchatVoiceSessionRead(BaseModel):
     provider: str
     media_plane: str = "livekit"
     livekit_url: str | None = None
-    voice_page_url: str | None = None
     room_name: str
     provider_room_name: str | None = None
     participant_identity: str | None = None
@@ -241,6 +269,7 @@ class WebchatVoiceSessionRead(BaseModel):
     direction: str = "inbound"
     mode: str
     ai_agent_status: str | None = None
+    compliance: dict | None = None
     voice_offer: VoiceRoutingOfferRead | None = None
     started_at: str | None = None
     ringing_at: str | None = None
