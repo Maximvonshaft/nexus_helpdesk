@@ -194,7 +194,11 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
                 rf"(?ms)^  {re.escape(service)}:\n.*?^    <<: \*rc_app$",
             )
         self.assertIn(
-            "COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist",
+            "COPY --from=webapp-builder /build/frontend_dist /layout/app/frontend_dist",
+            self.dockerfile,
+        )
+        self.assertIn(
+            "COPY --from=runtime-layout --chown=65532:65532 /layout/ /",
             self.dockerfile,
         )
         for forbidden in ("RC_FRONTEND_IMAGE", "frontend-rc:", "sync-daemon-rc:", "event-daemon-rc:"):
