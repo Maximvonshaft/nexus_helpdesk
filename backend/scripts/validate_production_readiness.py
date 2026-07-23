@@ -135,54 +135,51 @@ def main() -> int:
             )
 
     voice = None
-    voice_worker = None
+    voice_worker_ready = False
     voice_channels = {
         "enabled_channels": 0,
         "inbound_ready_channels": 0,
         "outbound_ready_channels": 0,
         "invalid_ai_first_channels": 0,
     }
+    telephony_reason_codes: list[str] = []
     try:
         voice = load_webchat_voice_runtime_config()
-    except Exception as exc:
-        warnings.append(f"Canonical LiveKit voice config invalid: {exc}")
+    except Exception:
+        telephony_reason_codes.append("voice_runtime_configuration_invalid")
 
     if voice is not None and voice.enabled:
         if voice.provider != "livekit":
-            warnings.append(
-                "Enabled production voice requires WEBCHAT_VOICE_PROVIDER=livekit"
-            )
+            telephony_reason_codes.append("voice_provider_not_livekit")
         if not voice.livekit_webhook_enabled:
-            warnings.append(
-                "Enabled production telephony requires LIVEKIT_WEBHOOK_ENABLED=true"
-            )
+            telephony_reason_codes.append("voice_webhook_disabled")
         if voice.live_ai_voice_enabled:
             try:
-                voice_worker = load_livekit_agent_worker_config()
-            except Exception as exc:
-                warnings.append(
-                    "Enabled Live AI voice requires a complete canonical media worker: "
-                    f"{exc}"
-                )
+                load_livekit_agent_worker_config()
+                voice_worker_ready = True
+            except Exception:
+                telephony_reason_codes.append("voice_media_worker_configuration_invalid")
         try:
             voice_channels = _canonical_voice_channel_readiness(settings.database_url)
-        except Exception as exc:
-            warnings.append(
-                "Canonical voice ChannelAccount readiness query failed: "
-                f"{exc.__class__.__name__}"
-            )
+        except Exception:
+            telephony_reason_codes.append("voice_channel_readiness_unavailable")
         if voice_channels["enabled_channels"] < 1:
-            warnings.append(
-                "Enabled production voice requires one active voice ChannelAccount with an enabled VoiceChannelConfiguration"
-            )
+            telephony_reason_codes.append("voice_channel_not_enabled")
         if voice_channels["inbound_ready_channels"] < 1:
-            warnings.append(
-                "Enabled production telephony requires one voice channel with inbound trunk and dispatch rule"
-            )
+            telephony_reason_codes.append("voice_inbound_route_not_ready")
         if voice_channels["invalid_ai_first_channels"]:
-            warnings.append(
-                "Every enabled ai_first voice channel requires an explicit deployed AI Agent name"
-            )
+            telephony_reason_codes.append("voice_ai_first_agent_missing")
+
+    warnings.extend(f"Telephony readiness: {code}" for code in telephony_reason_codes)
+    telephony_enabled = bool(voice and voice.enabled)
+    telephony_ready = bool(
+        voice is not None
+        and not telephony_reason_codes
+        and (
+            not voice.live_ai_voice_enabled
+            or voice_worker_ready
+        )
+    )
 
     payload = {
         "app_env": settings.app_env,
@@ -190,7 +187,6 @@ def main() -> int:
         "is_postgres": settings.is_postgres,
         "storage_backend": settings.storage_backend,
         "metrics_enabled": settings.metrics_enabled,
-        "metrics_token_configured": bool(settings.metrics_token),
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),
         "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,
@@ -204,36 +200,16 @@ def main() -> int:
         "outbound_email_test_send_max_age_hours": (
             settings.outbound_email_test_send_max_age_hours
         ),
-        "telephony": None
-        if voice is None
-        else {
-            "enabled": voice.enabled,
-            "human_call_enabled": voice.human_call_enabled,
-            "live_ai_voice_enabled": voice.live_ai_voice_enabled,
-            "provider": voice.provider,
-            "routing_mode": voice.routing_mode,
-            "livekit_url_configured": bool(voice.livekit_url),
-            "livekit_api_key_configured": bool(voice.livekit_api_key),
-            "livekit_api_secret_configured": bool(voice.livekit_api_secret),
-            "livekit_agent_name_configured": bool(voice.livekit_agent_name),
-            "livekit_agent_secret_configured": bool(
-                voice.livekit_agent_shared_secret
-            ),
-            "livekit_webhook_enabled": voice.livekit_webhook_enabled,
-            "media_worker": None
-            if voice_worker is None
-            else {
-                "agent_name": voice_worker.agent_name,
-                "internal_api_url_configured": bool(
-                    voice_worker.nexus_internal_api_url
-                ),
-                "stt_model_configured": bool(voice_worker.stt_model),
-                "tts_model_configured": bool(voice_worker.tts_model),
-                "warm_transfer_model_configured": bool(
-                    voice_worker.transfer_llm_model
-                ),
-                "turn_detection": voice_worker.turn_detection,
-            },
+        "telephony": {
+            "enabled": telephony_enabled,
+            "ready": telephony_ready,
+            "human_call_enabled": bool(voice and voice.human_call_enabled),
+            "live_ai_voice_enabled": bool(voice and voice.live_ai_voice_enabled),
+            "provider": voice.provider if voice is not None else None,
+            "routing_mode": voice.routing_mode if voice is not None else None,
+            "webhook_enabled": bool(voice and voice.livekit_webhook_enabled),
+            "media_worker_ready": voice_worker_ready,
+            "reason_codes": sorted(set(telephony_reason_codes)),
             **voice_channels,
         },
         "warnings": warnings,
