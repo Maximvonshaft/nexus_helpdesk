@@ -21,6 +21,7 @@ REQUIRED_PATHS = (
     "backend/app/api/webchat_voice.py",
     "backend/app/livekit_agent_config.py",
     "backend/app/livekit_agent_worker.py",
+    "backend/app/livekit_telephony_controller.py",
     "backend/app/services/telephony_configuration_service.py",
     "backend/app/services/telephony_event_service.py",
     "backend/app/services/telephony_projection_service.py",
@@ -164,15 +165,19 @@ def main() -> int:
                 )
 
     worker_path = "backend/app/livekit_agent_worker.py"
+    controller_path = "backend/app/livekit_telephony_controller.py"
     compose_path = "deploy/docker-compose.controlled.yml"
     requirements_path = "backend/requirements.txt"
     _require_marker(findings, worker_path, '"/api/telephony/internal/agent-turn"')
     _require_marker(findings, worker_path, 'AgentServer(host="127.0.0.1", port=8081)')
     _require_marker(findings, worker_path, 'event_type="controller.heartbeat"')
-    _require_marker(findings, worker_path, "publish_dtmf")
-    _require_marker(findings, worker_path, '"warm_transfer_complete"')
-    _require_marker(findings, worker_path, '"warm_transfer_cancel"')
-    _forbid_marker(findings, worker_path, "inference.LLM")
+    _require_marker(findings, worker_path, "from .livekit_telephony_controller import")
+    _forbid_marker(findings, worker_path, "class TelephonyController")
+    _forbid_marker(findings, worker_path, "class WarmConsultationState")
+    _require_marker(findings, controller_path, "class TelephonyController")
+    _require_marker(findings, controller_path, "publish_dtmf_sequence")
+    _require_marker(findings, controller_path, '"warm_transfer_complete"')
+    _require_marker(findings, controller_path, '"warm_transfer_cancel"')
     _forbid_marker(findings, worker_path, "livekit.plugins.openai")
     _forbid_marker(findings, worker_path, "livekit.plugins.anthropic")
     _forbid_marker(findings, worker_path, "ProviderRuntimeRouter")
