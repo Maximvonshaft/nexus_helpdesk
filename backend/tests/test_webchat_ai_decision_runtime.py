@@ -111,7 +111,7 @@ def test_confirmation_and_high_risk_write_policy_are_tool_contract_driven():
     blocked = validate_ai_decision(decision)
     codes = {item.code for item in blocked.violations}
     assert blocked.ok is False
-    assert "write_tool_confirmation_required" in codes
+    assert "customer_confirmation_required" in codes
     assert "high_risk_write_tool_blocked" in codes
 
     confirmed = decision.model_copy(
