@@ -42,7 +42,6 @@ VOICE_ENV_KEYS = [
 def _client(monkeypatch, **env: str) -> TestClient:
     for key in VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webcall")
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
@@ -188,26 +187,34 @@ def test_only_webcall_path_receives_microphone_and_livekit_sources(monkeypatch):
     assert "unsafe-eval" not in policy
 
 
-def test_noncanonical_voice_prefix_is_rejected(monkeypatch):
+def test_retired_path_environment_cannot_override_webcall(monkeypatch):
     for key in VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/voice/webchat")
 
-    from app.webchat_voice_config import load_webchat_voice_runtime_config
+    import app.webchat_voice_config as voice_config_module
 
-    with pytest.raises(
-        RuntimeError,
-        match="may only grant microphone access to /webcall",
-    ):
-        load_webchat_voice_runtime_config()
+    voice_config_module = importlib.reload(voice_config_module)
+    config = voice_config_module.load_webchat_voice_runtime_config()
+
+    assert config.allowed_path_prefixes == (
+        voice_config_module.CANONICAL_WEBCALL_PATH,
+    )
+    assert voice_config_module.is_webchat_voice_path(
+        "/webcall/session_demo",
+        config=config,
+    )
+    assert not voice_config_module.is_webchat_voice_path(
+        "/voice/webchat/session_demo",
+        config=config,
+    )
 
 
 def test_voice_connect_src_rejects_wildcards(monkeypatch):
     for key in VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
-    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webcall")
     monkeypatch.setenv(
         "WEBCHAT_VOICE_CONNECT_SRC",
         "wss://voice.example.test *",
