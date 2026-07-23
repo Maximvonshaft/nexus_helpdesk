@@ -39,6 +39,9 @@ def test_storage_and_activation_use_one_readiness_authority() -> None:
     )
     assert "/api/admin/release-readiness" in router
     assert "release_readiness_router" in registry
+    assert "/api/admin/production-readiness" in registry
+    assert "/api/admin/signoff-checklist" in registry
+    assert "_retire_legacy_admin_readiness_routes()" in registry
 
 
 def test_production_activation_overlay_requires_evidence() -> None:
