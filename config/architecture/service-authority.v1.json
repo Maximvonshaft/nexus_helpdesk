@@ -135,6 +135,66 @@
       "compatibility_shims": []
     },
     {
+      "responsibility": "canonical-telephony-configuration",
+      "public_authority": "backend/app/services/telephony_configuration_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-telephony-outbound-origination",
+      "public_authority": "backend/app/services/telephony_outbound_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-telephony-provider-event-inbox",
+      "public_authority": "backend/app/services/telephony_event_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-telephony-provider-event-projection",
+      "public_authority": "backend/app/services/telephony_projection_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-voice-command-lifecycle",
+      "public_authority": "backend/app/services/voice_command_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-voice-command-dispatch",
+      "public_authority": "backend/app/services/voice_command_dispatcher.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-voice-operator-routing",
+      "public_authority": "backend/app/services/agent_routing_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-livekit-provider-adapter",
+      "public_authority": "backend/app/services/livekit_voice_provider.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-voice-room-control",
+      "public_authority": "backend/app/services/voice_room_control_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "canonical-voice-evidence-governance",
+      "public_authority": "backend/app/services/voice_evidence_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
       "responsibility": "canonical-livekit-agent-turn",
       "public_authority": "backend/app/services/livekit_agent_turn_service.py",
       "private_implementation": null,
