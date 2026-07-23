@@ -20,6 +20,7 @@ const knowledgeRoutePath = path.join(srcRoot, 'routes', 'knowledge.tsx')
 const workspacePath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspacePage.tsx')
 const workspaceCommonPath = path.join(srcRoot, 'features', 'operator-workspace', 'OperatorWorkspaceCommon.tsx')
 const canonicalWorkflowPath = path.join(repositoryRoot, '.github', 'workflows', 'canonical-acceptance.yml')
+const controlledCandidateWorkflowPath = path.join(repositoryRoot, '.github', 'workflows', 'controlled-candidate-convergence.yml')
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.css'])
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts'])
@@ -172,9 +173,33 @@ function assertCanonicalActions(failures) {
   const workflowFiles = fs.existsSync(workflowDir)
     ? walk(workflowDir).filter((file) => fs.statSync(file).isFile()).map(relative).sort()
     : []
-  const expected = [relative(canonicalWorkflowPath)]
-  if (workflowFiles.length !== 1 || workflowFiles[0] !== expected[0]) {
-    failures.push(`exactly one canonical GitHub Actions workflow is required: expected=${expected.join(', ')} actual=${workflowFiles.join(', ') || 'none'}`)
+  const expected = [relative(canonicalWorkflowPath), relative(controlledCandidateWorkflowPath)].sort()
+  if (JSON.stringify(workflowFiles) !== JSON.stringify(expected)) {
+    failures.push(`GitHub Actions authority set is invalid: expected=${expected.join(', ')} actual=${workflowFiles.join(', ') || 'none'}`)
+    return
+  }
+
+  const canonical = fs.readFileSync(canonicalWorkflowPath, 'utf8')
+  for (const marker of ['name: Canonical Acceptance', 'pull_request:', 'push:', 'workflow_dispatch:', 'required-gate:']) {
+    if (!canonical.includes(marker)) failures.push(`canonical acceptance workflow marker is missing: ${marker}`)
+  }
+
+  const candidate = fs.readFileSync(controlledCandidateWorkflowPath, 'utf8')
+  for (const marker of [
+    'name: controlled-candidate-convergence',
+    'workflow_run:',
+    '- Canonical Acceptance',
+    "github.event.workflow_run.conclusion == 'success'",
+    "github.event.workflow_run.event == 'push'",
+    "github.event.workflow_run.head_branch == 'main'",
+    'scripts/release/run_controlled_rc_gate.sh',
+    'scripts/release/run_controlled_recovery_gate.sh',
+    'controlled-candidate.env',
+  ]) {
+    if (!candidate.includes(marker)) failures.push(`controlled candidate workflow marker is missing: ${marker}`)
+  }
+  for (const forbidden of ['pull_request:', 'workflow_dispatch:', 'issue_comment:', 'repository_dispatch:']) {
+    if (candidate.includes(forbidden)) failures.push(`controlled candidate workflow contains forbidden trigger: ${forbidden}`)
   }
 }
 
@@ -450,7 +475,7 @@ console.log(JSON.stringify({
   production_files: files.length,
   reachable_files: reachable.size,
   canonical_entrypoint: relative(entrypoint),
-  github_actions: relative(canonicalWorkflowPath),
+  github_actions: [relative(canonicalWorkflowPath), relative(controlledCandidateWorkflowPath)],
   http_transport_authority: 'webapp/src/lib/apiClient.ts',
   ui_authority: '@mui/material@9.2.0',
   theme_authority: 'webapp/src/theme/nexusTheme.ts',
