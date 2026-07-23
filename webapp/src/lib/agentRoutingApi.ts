@@ -10,12 +10,20 @@ export interface AgentState {
   max_concurrent_conversations: number
   active_conversations: number
   available_capacity: number
+  voice_enabled: boolean
+  voice_assignable: boolean
   max_concurrent_voice_calls: number
   active_voice_calls: number
+  reserved_voice_offers: number
   available_voice_capacity: number
   voice_wrap_up_seconds: number
   last_heartbeat_at?: string | null
   heartbeat_ttl_seconds: number
+}
+
+export interface AgentStateUpdate {
+  status: AgentPresenceStatus
+  voiceEnabled?: boolean
 }
 
 export interface ConversationCloseResult {
@@ -30,18 +38,11 @@ export const agentRoutingApi = {
     requestIdPrefix: 'agent-state',
   }),
 
-  updateState: (
-    status: AgentPresenceStatus,
-    maxConcurrentConversations?: number,
-    maxConcurrentVoiceCalls?: number,
-    voiceWrapUpSeconds?: number,
-  ) => apiRequest<AgentState>('/api/operator/agent-state', {
+  updateState: ({ status, voiceEnabled }: AgentStateUpdate) => apiRequest<AgentState>('/api/operator/agent-state', {
     method: 'PUT',
     body: JSON.stringify({
       status,
-      max_concurrent_conversations: maxConcurrentConversations,
-      max_concurrent_voice_calls: maxConcurrentVoiceCalls,
-      voice_wrap_up_seconds: voiceWrapUpSeconds,
+      ...(voiceEnabled === undefined ? {} : { voice_enabled: voiceEnabled }),
     }),
     requestIdPrefix: 'agent-state',
   }),
