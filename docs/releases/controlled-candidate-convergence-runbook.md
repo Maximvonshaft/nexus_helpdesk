@@ -150,6 +150,8 @@ Verify:
 
 - `/healthz`;
 - `/readyz`;
+- unauthenticated `/metrics` returns 401;
+- authenticated `/metrics` succeeds with the dedicated metrics token;
 - exact source, frontend, image and migration identity;
 - queue health;
 - storage backup equality or remote storage;
