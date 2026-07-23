@@ -52,6 +52,9 @@ The exact candidate includes this unmodified runtime dependency required by
 
 - `pkg:pypi/livekit-local-inference@0.2.6` —
   `Apache-2.0 AND LicenseRef-LiveKit-Model`
+- The candidate SBOM normalizes `LicenseRef-LiveKit-Model` to the review label
+  `Other-Proprietary-License`; both identifiers refer to the same bundled model
+  license for this exact component and version.
 
 Upstream package, framework and model-license authorities:
 
