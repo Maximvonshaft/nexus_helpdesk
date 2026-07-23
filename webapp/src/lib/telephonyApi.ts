@@ -1,5 +1,6 @@
 import { apiRequest } from '@/lib/apiClient'
 import type {
+  IncomingVoiceSessionList,
   VoiceCommandList,
   VoiceCommandResponse,
   VoiceEndResponse,
@@ -7,6 +8,7 @@ import type {
 
 export interface VoiceCommandRequest {
   action_type:
+    | 'ai_suspend'
     | 'hangup'
     | 'hold'
     | 'resume'
@@ -26,6 +28,22 @@ export interface VoiceCommandRequest {
 }
 
 export const telephonyApi = {
+  incomingOffers: (limit = 10) =>
+    apiRequest<IncomingVoiceSessionList>(
+      `/api/webchat/admin/voice/sessions?status=ringing&limit=${Math.max(1, Math.min(limit, 50))}`,
+      { requestIdPrefix: 'incoming-voice' },
+    ),
+
+  rejectOffer: (voiceSessionId: string, reason = 'operator_declined_voice_offer') =>
+    apiRequest(
+      `/api/webchat/admin/voice/${encodeURIComponent(voiceSessionId)}/reject`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+        requestIdPrefix: 'incoming-voice',
+      },
+    ),
+
   recordCommand: (voiceSessionId: string, payload: VoiceCommandRequest) =>
     apiRequest<VoiceCommandResponse>(
       `/api/webchat/admin/voice/${encodeURIComponent(voiceSessionId)}/actions`,

@@ -1,10 +1,16 @@
 import { createRoute } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
+import { WebCallOperatorContext } from '@/features/webcall/WebCallOperatorContext'
 import { WebCallPage } from '@/features/webcall/WebCallPage'
 
 function WebCallRoutePage() {
   const { voiceSessionId } = Route.useParams()
-  return <WebCallPage voiceSessionId={voiceSessionId} />
+  return (
+    <>
+      <WebCallOperatorContext voiceSessionId={voiceSessionId} />
+      <WebCallPage voiceSessionId={voiceSessionId} />
+    </>
+  )
 }
 
 export const Route = createRoute({

@@ -1,3 +1,5 @@
+export const INCOMING_VOICE_CONTEXT_PREFIX = 'nexus-incoming-voice-context:'
+
 export type VoiceRoutingMode = 'ai_first' | 'human_first'
 export type VoiceRecordingPolicy = 'disabled' | 'consent_required' | 'always'
 export type VoiceTranscriptionPolicy = 'disabled' | 'consent_required' | 'always'
@@ -60,16 +62,52 @@ export interface VoiceConfigurationUpdate {
   enabled: boolean
 }
 
+export interface VoiceOfferRead {
+  id: string
+  expires_at: string
+}
+
 export interface VoiceSessionBootstrap {
   voice_session_id: string
   status: string
   provider: string
+  media_plane?: string | null
   livekit_url?: string | null
   participant_token?: string | null
   participant_identity?: string | null
   conversation_id?: string | null
+  ticket_id?: number | null
+  ticket_no?: string | null
+  ticket_title?: string | null
+  visitor_label?: string | null
+  origin?: string | null
+  page_url?: string | null
   accepted_by_user_id?: number | null
   handoff_request_id?: number | null
+  voice_offer?: VoiceOfferRead | null
+}
+
+export interface IncomingVoiceSession extends VoiceSessionBootstrap {
+  voice_offer: VoiceOfferRead
+  started_at?: string | null
+  ringing_at?: string | null
+  recording_status?: string | null
+  transcript_status?: string | null
+}
+
+export interface IncomingVoiceSessionList {
+  items: IncomingVoiceSession[]
+}
+
+export interface IncomingVoiceContext {
+  voice_session_id: string
+  conversation_id: string | null
+  ticket_id: number | null
+  ticket_no: string | null
+  ticket_title: string | null
+  visitor_label: string | null
+  origin: string | null
+  page_url: string | null
 }
 
 export type VoiceCommandStatus =
