@@ -369,6 +369,5 @@ def voice_runtime_config() -> dict:
         "livekit_url": (
             config.livekit_url if config.provider == "livekit" else None
         ),
-        "recording_enabled": config.recording_enabled,
-        "transcription_enabled": config.transcription_enabled,
+        "voice_policy_authority": "channel_account",
     }
