@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 from pathlib import Path
 
@@ -98,6 +99,30 @@ def test_activation_rejects_placeholder_and_wrong_candidate_binding() -> None:
         match="activation_evidence_image_digest_mismatch",
     ):
         activation.validate(values)
+
+
+def test_environment_mode_uses_the_ephemeral_container_environment(monkeypatch) -> None:
+    values = _full_values()
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+    args = argparse.Namespace(environment=True, env_file=None)
+    observed = activation._input_values(args)
+
+    assert observed["GIT_SHA"] == SOURCE_SHA
+    assert activation.validate(observed)["status"] == "pass"
+
+
+def test_input_modes_are_mutually_exclusive() -> None:
+    args = argparse.Namespace(
+        environment=True,
+        env_file=[Path("activation.env")],
+    )
+    with pytest.raises(
+        activation.ActivationError,
+        match="activation_input_modes_conflict",
+    ):
+        activation._input_values(args)
 
 
 def test_voice_activation_requires_livekit_credentials_models_and_evidence() -> None:
