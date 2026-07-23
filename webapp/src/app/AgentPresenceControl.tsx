@@ -13,7 +13,7 @@ import {
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, type ChangeEvent } from 'react'
 import {
   agentRoutingApi,
   type AgentPresenceStatus,
@@ -70,7 +70,7 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
   const handleChange = (event: SelectChangeEvent<AgentPresenceStatus>) => {
     update.mutate({ status: event.target.value as AgentPresenceStatus })
   }
-  const handleVoiceChange = (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
+  const handleVoiceChange = (_event: ChangeEvent<HTMLInputElement>, checked: boolean) => {
     update.mutate({ status: state.data.status, voiceEnabled: checked })
   }
   const capacity = `${state.data.active_conversations}/${state.data.max_concurrent_conversations}`
