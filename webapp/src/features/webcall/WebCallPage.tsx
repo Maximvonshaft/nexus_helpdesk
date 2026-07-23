@@ -115,17 +115,30 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     }
   }, [bootstrap, voiceSessionId])
 
+  const setLocalMicrophoneState = async (nextMuted: boolean, nextHeld: boolean) => {
+    await roomRef.current?.localParticipant.setMicrophoneEnabled(!(nextMuted || nextHeld))
+  }
   const toggleMute = async () => {
     const next = !muted
-    await roomRef.current?.localParticipant.setMicrophoneEnabled(!next)
-    setMuted(next)
-    await recordAction(next ? 'mute' : 'unmute')
+    setError(null)
+    try {
+      await setLocalMicrophoneState(next, held)
+      setMuted(next)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '静音操作失败')
+    }
   }
   const toggleHold = async () => {
     const next = !held
-    await roomRef.current?.localParticipant.setMicrophoneEnabled(!next)
-    setHeld(next)
-    await recordAction(next ? 'hold' : 'resume')
+    setError(null)
+    try {
+      await setLocalMicrophoneState(muted, next)
+      await recordAction(next ? 'hold' : 'resume')
+      setHeld(next)
+    } catch (cause) {
+      await setLocalMicrophoneState(muted, held).catch(() => undefined)
+      setError(cause instanceof Error ? cause.message : '保持操作失败')
+    }
   }
   const sendDigits = async () => {
     const room = roomRef.current
