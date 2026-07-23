@@ -283,6 +283,6 @@ def test_worker_source_has_no_second_business_llm_authority():
     assert "llm=inference.LLM" not in source.split("class NexusVoiceAgent", 1)[1].split(
         "class TelephonyController", 1
     )[0]
-    assert 'AgentServer(host="0.0.0.0", port=8081)' in source
+    assert 'AgentServer(host="127.0.0.1", port=8081)' in source
     assert "UpdateSubscriptionsRequest" in source
     assert "BuiltinAudioClip.HOLD_MUSIC" in source
