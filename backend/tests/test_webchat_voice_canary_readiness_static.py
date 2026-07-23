@@ -73,7 +73,8 @@ def test_webcall_canary_runbook_documents_release_blocker_policy():
     text = _read(RUNBOOK)
     required = [
         "non-production readiness gate",
-        "must not deploy or modify production",
+        "The canary must not:",
+        "- deploy or modify production;",
         "microphone permission before an explicit join or accept action",
         "Any failed gate or missing Provider evidence blocks release promotion",
         "/webcall/{voice_session_id}",
