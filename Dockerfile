@@ -6,14 +6,20 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/python:3.11.15-alpine3.24@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4 AS python-wheel-builder
+# LiveKit Agents and its native media/tokenization dependencies publish manylinux
+# wheels, not musllinux wheels. Keep both the wheel build and runtime on one
+# immutable glibc-based Python authority so the exact dependency graph is
+# reproducible and the production image can actually install the accepted lock.
+FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS python-wheel-builder
 WORKDIR /build
 COPY backend/requirements.txt /build/requirements.txt
-RUN apk add --no-cache --virtual .build-deps \
-        build-base \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
         cargo \
         libffi-dev \
-        openssl-dev \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/* \
     && python -m pip install --upgrade \
         "pip==26.1.1" \
         "setuptools==82.0.0" \
@@ -23,7 +29,7 @@ RUN apk add --no-cache --virtual .build-deps \
         --wheel-dir /wheels \
         --requirement /build/requirements.txt
 
-FROM docker.io/library/python:3.11.15-alpine3.24@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4
+FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
@@ -49,11 +55,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Security updates are performed by reviewing and advancing the immutable base
-# digest. The build itself must not mutate package resolution with apk upgrade.
-# Install only prebuilt wheels; compilers, Cargo and development headers remain
-# in the discarded wheel-builder stage. Packaging/build tools, including pip,
-# are removed from the runtime after installation because the service never
-# resolves or builds packages after image construction.
+# digest. The build itself must not mutate package resolution with an upgrade.
+# Install only repository-built wheels; compilers, Cargo and development headers
+# remain in the discarded wheel-builder stage. The bounded native runtime
+# libraries below are required by accepted media wheels and contain no compiler.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgcc-s1 \
+        libgomp1 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/requirements.txt /tmp/requirements.txt
 COPY --from=python-wheel-builder /wheels /wheels
 RUN python -m pip install \
@@ -76,16 +89,20 @@ COPY scripts/ /app/scripts/
 COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
-# Round B webchat widget static export. Keep embeddable public files outside SPA
-# fallback while retaining the non-root runtime boundary. The metrics directory
-# is a runtime mount point shared only by processes in one controlled release.
+# Export the bounded public widget beside the SPA, create only required runtime
+# directories, then drop permanently to a non-login, non-root identity.
 RUN mkdir -p \
         /app/frontend_dist/static/webchat \
         /app/backend/uploads \
         /var/run/nexus-prometheus \
     && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/ \
-    && addgroup -S appgroup \
-    && adduser -S -D -H -s /sbin/nologin -G appgroup appuser \
+    && groupadd --system appgroup \
+    && useradd --system \
+        --gid appgroup \
+        --no-create-home \
+        --home-dir /nonexistent \
+        --shell /usr/sbin/nologin \
+        appuser \
     && chown -R appuser:appgroup /app /var/run/nexus-prometheus
 
 WORKDIR /app/backend
