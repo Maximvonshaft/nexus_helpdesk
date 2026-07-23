@@ -72,10 +72,18 @@ export interface VoiceSessionBootstrap {
   handoff_request_id?: number | null
 }
 
+export type VoiceCommandStatus =
+  | 'requested'
+  | 'dispatching'
+  | 'retryable'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+
 export interface VoiceCommandRead {
   id: string
   action_type: string
-  status: string
+  status: VoiceCommandStatus
   provider_status: string
   provider_reason?: string | null
   provider_reference?: string | null
@@ -93,4 +101,15 @@ export interface VoiceCommandResponse {
   ticket_id?: number | null
   voice_session_id: string
   action: VoiceCommandRead
+}
+
+export interface VoiceCommandList {
+  items: VoiceCommandRead[]
+}
+
+export interface VoiceEndResponse {
+  ok: boolean
+  status: string
+  voice_session_id: string
+  command?: VoiceCommandRead
 }
