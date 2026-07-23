@@ -1,11 +1,4 @@
 {
   "schema_version": "nexus_container_license_metadata_overrides_v1",
-  "entries": [
-    {
-      "purl": "pkg:pypi/annotated-types@0.7.0",
-      "license": "MIT",
-      "source": "https://pypi.org/project/annotated-types/0.7.0/",
-      "reason": "The exact PyPI release metadata identifies annotated-types 0.7.0 as MIT licensed."
-    }
-  ]
+  "entries": []
 }
