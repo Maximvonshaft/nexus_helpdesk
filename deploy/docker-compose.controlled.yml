@@ -209,9 +209,13 @@ services:
       - start
     healthcheck:
       test:
-        - CMD-SHELL
+        - CMD
+        - python
+        - -c
         - >-
-          grep -aq 'app.livekit_agent_worker' /proc/1/cmdline
+          import urllib.request;
+          response=urllib.request.urlopen('http://127.0.0.1:8081/', timeout=4);
+          assert response.status == 200
       interval: 20s
       timeout: 5s
       retries: 6
