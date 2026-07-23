@@ -5,14 +5,26 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
+from livekit import api as livekit_api
 from livekit import rtc
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli, inference
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    BackgroundAudioPlayer,
+    BuiltinAudioClip,
+    JobContext,
+    cli,
+    inference,
+)
 
 from .livekit_agent_config import (
     LiveKitAgentWorkerConfig,
@@ -284,6 +296,8 @@ def parse_controller_command(packet: Any) -> dict[str, Any] | None:
             value.get("participant_identity") or ""
         ).strip()[:160]
         or None,
+        "human_identity": str(value.get("human_identity") or "").strip()[:160]
+        or None,
         "outbound_trunk_id": str(
             value.get("outbound_trunk_id") or ""
         ).strip()[:160]
@@ -308,6 +322,129 @@ async def publish_dtmf_sequence(local_participant: Any, digits: str) -> int:
     return sent
 
 
+def _server_api_url(value: str) -> str:
+    parsed = urlparse(str(value or "").strip().rstrip("/"))
+    if parsed.scheme == "wss":
+        return urlunparse(parsed._replace(scheme="https"))
+    if parsed.scheme == "ws":
+        return urlunparse(parsed._replace(scheme="http"))
+    return str(value or "").strip().rstrip("/")
+
+
+def _request(request_name: str, **kwargs: Any):
+    candidates = (
+        livekit_api,
+        getattr(livekit_api, "proto_room", None),
+        getattr(livekit_api, "proto_models", None),
+    )
+    for module in candidates:
+        request_cls = getattr(module, request_name, None) if module is not None else None
+        if request_cls is not None:
+            return request_cls(**kwargs)
+    raise RuntimeError(f"livekit_api_missing_{request_name}")
+
+
+async def _participant_track_sids(
+    lkapi: Any,
+    *,
+    room_name: str,
+    participant_identity: str,
+) -> list[str]:
+    participant = await lkapi.room.get_participant(
+        _request(
+            "RoomParticipantIdentity",
+            room=room_name,
+            identity=participant_identity,
+        )
+    )
+    return [
+        str(getattr(track, "sid", "") or "").strip()
+        for track in getattr(participant, "tracks", [])
+        if str(getattr(track, "sid", "") or "").strip()
+    ]
+
+
+async def _update_subscriptions(
+    lkapi: Any,
+    *,
+    room_name: str,
+    subscriber_identity: str,
+    track_sids: list[str],
+    subscribe: bool,
+) -> None:
+    if not track_sids:
+        raise RuntimeError("participant_has_no_published_media_track")
+    await lkapi.room.update_subscriptions(
+        _request(
+            "UpdateSubscriptionsRequest",
+            room=room_name,
+            identity=subscriber_identity,
+            track_sids=track_sids,
+            subscribe=subscribe,
+        )
+    )
+
+
+async def set_bidirectional_hold_subscriptions(
+    lkapi: Any,
+    *,
+    room_name: str,
+    caller_identity: str,
+    human_identity: str,
+    subscribe: bool,
+) -> dict[str, int]:
+    caller_tracks = await _participant_track_sids(
+        lkapi,
+        room_name=room_name,
+        participant_identity=caller_identity,
+    )
+    human_tracks = await _participant_track_sids(
+        lkapi,
+        room_name=room_name,
+        participant_identity=human_identity,
+    )
+    operations = (
+        (human_identity, caller_tracks),
+        (caller_identity, human_tracks),
+    )
+    completed: list[tuple[str, list[str]]] = []
+    try:
+        for subscriber_identity, track_sids in operations:
+            await _update_subscriptions(
+                lkapi,
+                room_name=room_name,
+                subscriber_identity=subscriber_identity,
+                track_sids=track_sids,
+                subscribe=subscribe,
+            )
+            completed.append((subscriber_identity, track_sids))
+    except Exception:
+        for subscriber_identity, track_sids in reversed(completed):
+            try:
+                await _update_subscriptions(
+                    lkapi,
+                    room_name=room_name,
+                    subscriber_identity=subscriber_identity,
+                    track_sids=track_sids,
+                    subscribe=not subscribe,
+                )
+            except Exception:
+                logger.exception(
+                    "livekit_hold_subscription_compensation_failed",
+                    extra={
+                        "room_name": room_name,
+                        "subscriber_identity_hash": hashlib.sha256(
+                            subscriber_identity.encode("utf-8")
+                        ).hexdigest(),
+                    },
+                )
+        raise
+    return {
+        "caller_track_count": len(caller_tracks),
+        "human_track_count": len(human_tracks),
+    }
+
+
 class TelephonyController:
     def __init__(
         self,
@@ -317,12 +454,16 @@ class TelephonyController:
         metadata: AgentJobMetadata,
         config: LiveKitAgentWorkerConfig,
         session: AgentSession | None,
+        background_audio: BackgroundAudioPlayer,
     ) -> None:
         self._ctx = ctx
         self._client = client
         self._metadata = metadata
         self._config = config
         self._session = session
+        self._background_audio = background_audio
+        self._hold_handle: Any = None
+        self._hold_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
 
     def register(self) -> None:
@@ -340,6 +481,8 @@ class TelephonyController:
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+        if self._hold_handle is not None and not self._hold_handle.done():
+            self._hold_handle.stop()
 
     async def _execute(self, command: dict[str, Any]) -> None:
         command_id = command["command_id"]
@@ -385,17 +528,53 @@ class TelephonyController:
             )
             return {"action": action, "digits_sent": sent}
         if action in {"hold", "resume"}:
-            if self._session is None:
-                raise RuntimeError("agent_session_unavailable_for_hold_control")
-            enabled = action == "resume"
-            if not enabled:
-                await self._session.interrupt()
-            self._session.input.set_audio_enabled(enabled)
-            self._session.output.set_audio_enabled(enabled)
-            return {"action": action, "audio_enabled": enabled}
+            return await self._set_hold_state(command, held=action == "hold")
         if action == "warm_transfer":
             return await self._warm_transfer(command)
         raise RuntimeError("unsupported_controller_action")
+
+    async def _set_hold_state(
+        self,
+        command: dict[str, Any],
+        *,
+        held: bool,
+    ) -> dict[str, Any]:
+        caller_identity = str(command.get("participant_identity") or "").strip()
+        human_identity = str(command.get("human_identity") or "").strip()
+        if not caller_identity or not human_identity:
+            raise RuntimeError("hold_participant_identity_missing")
+        async with self._hold_lock:
+            if held and (self._hold_handle is None or self._hold_handle.done()):
+                self._hold_handle = self._background_audio.play(
+                    BuiltinAudioClip.HOLD_MUSIC.path(),
+                    loop=True,
+                )
+            try:
+                async with livekit_api.LiveKitAPI(
+                    url=_server_api_url(os.environ["LIVEKIT_URL"]),
+                    api_key=os.environ["LIVEKIT_API_KEY"],
+                    api_secret=os.environ["LIVEKIT_API_SECRET"],
+                ) as lkapi:
+                    counts = await set_bidirectional_hold_subscriptions(
+                        lkapi,
+                        room_name=self._ctx.room.name,
+                        caller_identity=caller_identity,
+                        human_identity=human_identity,
+                        subscribe=not held,
+                    )
+            except Exception:
+                if held and self._hold_handle is not None:
+                    self._hold_handle.stop()
+                    self._hold_handle = None
+                raise
+            if not held and self._hold_handle is not None:
+                self._hold_handle.stop()
+                self._hold_handle = None
+            return {
+                "action": "hold" if held else "resume",
+                "held": held,
+                **counts,
+            }
 
     async def _warm_transfer(self, command: dict[str, Any]) -> dict[str, Any]:
         if self._session is None:
@@ -517,12 +696,18 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
     else:
         await ctx.connect()
 
+    background_audio = BackgroundAudioPlayer()
+    if session is None:
+        await background_audio.start(room=ctx.room)
+    else:
+        await background_audio.start(room=ctx.room, agent_session=session)
     controller = TelephonyController(
         ctx=ctx,
         client=client,
         metadata=metadata,
         config=config,
         session=session,
+        background_audio=background_audio,
     )
     controller.register()
     heartbeat_task: asyncio.Task[Any] | None = None
@@ -547,6 +732,7 @@ async def nexus_livekit_agent(ctx: JobContext) -> None:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
         await controller.close()
+        await background_audio.aclose()
         try:
             await client.controller_event(
                 event_type="controller.left",
