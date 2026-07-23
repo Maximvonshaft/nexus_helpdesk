@@ -1,9 +1,9 @@
 export const INCOMING_VOICE_CONTEXT_PREFIX = 'nexus-incoming-voice-context:'
 
 export type VoiceRoutingMode = 'ai_first' | 'human_first'
-export type VoiceRecordingPolicy = 'disabled' | 'consent_required' | 'always'
-export type VoiceTranscriptionPolicy = 'disabled' | 'consent_required' | 'always'
-export type VoiceOverflowAction = 'ai' | 'voicemail' | 'disconnect'
+export type VoiceRecordingPolicy = 'disabled' | 'notice' | 'explicit_consent'
+export type VoiceTranscriptionPolicy = 'disabled' | 'notice' | 'explicit_consent'
+export type VoiceOverflowAction = 'ai' | 'disconnect'
 
 export interface VoiceBusinessHourWindow {
   start: string
@@ -36,7 +36,6 @@ export interface VoiceConfiguration {
   offer_timeout_seconds: number
   wrap_up_seconds: number
   overflow_action: VoiceOverflowAction
-  voicemail_enabled: boolean
   recording_policy: VoiceRecordingPolicy
   transcription_policy: VoiceTranscriptionPolicy
   enabled: boolean
@@ -56,10 +55,36 @@ export interface VoiceConfigurationUpdate {
   offer_timeout_seconds: number
   wrap_up_seconds: number
   overflow_action: VoiceOverflowAction
-  voicemail_enabled: boolean
   recording_policy: VoiceRecordingPolicy
   transcription_policy: VoiceTranscriptionPolicy
   enabled: boolean
+}
+
+export interface VoiceCompliancePrompt {
+  capability: 'recording' | 'transcript_persistence'
+  policy: VoiceRecordingPolicy | VoiceTranscriptionPolicy
+  policy_version: string
+  prompt?: string | null
+  prompt_sha256: string
+  decision_required: boolean
+}
+
+export interface VoiceCompliancePolicyBundle {
+  schema: 'nexus.voice-compliance-policy.v1'
+  policy_version: string
+  recording: VoiceCompliancePrompt
+  transcript_persistence: VoiceCompliancePrompt
+}
+
+export type VoiceComplianceDecision = 'notice_delivered' | 'accepted' | 'declined' | 'timeout'
+
+export interface VoiceComplianceEvidenceInput {
+  capability: 'recording' | 'transcript_persistence'
+  policy: VoiceRecordingPolicy | VoiceTranscriptionPolicy
+  policy_version: string
+  prompt_sha256: string
+  decision: VoiceComplianceDecision
+  idempotency_key: string
 }
 
 export interface VoiceOfferRead {
@@ -83,6 +108,7 @@ export interface VoiceSessionBootstrap {
   accepted_by_user_id?: number | null
   handoff_request_id?: number | null
   voice_offer?: VoiceOfferRead | null
+  compliance?: VoiceCompliancePolicyBundle | null
 }
 
 export interface IncomingVoiceSession {
