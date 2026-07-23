@@ -108,8 +108,12 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
         disableEscapeKeyDown
         aria-labelledby="incoming-voice-title"
         aria-describedby="incoming-voice-description"
-        maxWidth="xs"
-        fullWidth
+        sx={{
+          '& .MuiDialog-paper': {
+            width: 'calc(100% - 32px)',
+            maxWidth: 444,
+          },
+        }}
       >
         <DialogTitle id="incoming-voice-title">
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
