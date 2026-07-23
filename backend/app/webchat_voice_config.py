@@ -12,6 +12,7 @@ LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
 LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
 LIVEKIT_AGENT_SECRET_ENV = "LIVEKIT_AGENT_SHARED_SECRET"
 LIVEKIT_AGENT_SECRET_FILE_ENV = LIVEKIT_AGENT_SECRET_ENV + "_FILE"
+CANONICAL_WEBCALL_PATH = "/webcall"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -19,10 +20,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _parse_csv(raw: str) -> list[str]:
-    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _parse_sources(raw: str) -> list[str]:
@@ -98,14 +95,7 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
     config = WebchatVoiceRuntimeConfig(
         human_call_enabled=human_call_enabled,
         live_ai_voice_enabled=live_ai_voice_enabled,
-        allowed_path_prefixes=tuple(
-            _parse_csv(
-                os.getenv(
-                    "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
-                    "/webcall",
-                )
-            )
-        ),
+        allowed_path_prefixes=(CANONICAL_WEBCALL_PATH,),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
         provider=provider,
         routing_mode=(
@@ -183,19 +173,8 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
         raise RuntimeError(
             "WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS must be between 1 and 60"
         )
-    if config.enabled and not config.allowed_path_prefixes:
-        raise RuntimeError(
-            "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES must be set when voice is enabled"
-        )
-    for prefix in config.allowed_path_prefixes:
-        if not prefix.startswith("/"):
-            raise RuntimeError(
-                "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES entries must start with /"
-            )
-        if prefix != "/webcall":
-            raise RuntimeError(
-                "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES may only grant microphone access to /webcall"
-            )
+    if config.allowed_path_prefixes != (CANONICAL_WEBCALL_PATH,):
+        raise RuntimeError("WebCall microphone policy must remain fixed to /webcall")
     for source in config.connect_src:
         if "*" in source:
             raise RuntimeError(
@@ -269,9 +248,10 @@ def is_webchat_voice_path(
     config: WebchatVoiceRuntimeConfig | None = None,
 ) -> bool:
     runtime_config = config or load_webchat_voice_runtime_config()
-    return any(
-        path == prefix or path.startswith(f"{prefix}/")
-        for prefix in runtime_config.allowed_path_prefixes
+    if runtime_config.allowed_path_prefixes != (CANONICAL_WEBCALL_PATH,):
+        return False
+    return path == CANONICAL_WEBCALL_PATH or path.startswith(
+        f"{CANONICAL_WEBCALL_PATH}/"
     )
 
 
