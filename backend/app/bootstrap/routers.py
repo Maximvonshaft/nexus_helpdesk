@@ -32,6 +32,7 @@ from ..api.operator_agent_state import router as operator_agent_state_router
 from ..api.operator_queue import router as operator_queue_router
 from ..api.outbound_channels import router as outbound_channels_router
 from ..api.persona_profiles import router as persona_profiles_router
+from ..api.release_readiness import router as release_readiness_router
 from ..api.speedaf_actions import router as speedaf_actions_router
 from ..api.speedaf_cancel import router as speedaf_cancel_router
 from ..api.stats import router as stats_router
@@ -74,6 +75,7 @@ def register_api_routers(app: FastAPI) -> None:
         dependencies=[Depends(enforce_admin_password_request_policy)]
     )
     app.include_router(admin_router, dependencies=admin_dependencies)
+    app.include_router(release_readiness_router, dependencies=admin_dependencies)
     app.include_router(governance_router, dependencies=admin_dependencies)
     for router in (
         admin_queue_router,
