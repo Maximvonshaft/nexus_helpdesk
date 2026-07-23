@@ -29,6 +29,8 @@ import type {
   OutboundEmailTestSendResult,
   ProviderRuntimeStatus,
   QueueSummary,
+  ReleaseReadiness,
+  ReleaseReadinessProfile,
   RolePolicy,
   SecurityAudit,
   SupportConversationMetrics,
@@ -269,6 +271,7 @@ export const supportApi = {
     method: 'POST',
   }),
   providerRuntimeStatus: () => apiRequest<ProviderRuntimeStatus>('/api/admin/provider-runtime/status'),
+  releaseReadiness: (profile: ReleaseReadinessProfile) => apiRequest<ReleaseReadiness>(`/api/admin/release-readiness?profile=${encodeURIComponent(profile)}`),
   queueSummary: () => apiRequest<QueueSummary>('/api/admin/queues/summary'),
   requeueDeadJobs: (limit = 50) => apiRequest<{ ok: boolean; requeued: number; job_type?: string | null }>(`/api/admin/jobs/requeue-dead?limit=${Math.max(1, Math.min(limit, 200))}`, {
     method: 'POST',

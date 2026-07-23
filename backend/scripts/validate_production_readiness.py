@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -9,10 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
-from app.livekit_agent_config import load_livekit_agent_worker_config  # noqa: E402
+from app.db import SessionLocal  # noqa: E402
+from app.services.activation_evidence_policy import (  # noqa: E402
+    finalize_release_readiness,
+)
+from app.services.release_readiness import (  # noqa: E402
+    evaluate_release_readiness as collect_release_readiness,
+)
+from app.services.storage_readiness import check_storage_readiness  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
-from app.webchat_voice_config import load_webchat_voice_runtime_config  # noqa: E402
 
 
 def _outbound_email_successful_test_send_count(
@@ -45,46 +52,20 @@ def _outbound_email_successful_test_send_count(
         engine.dispose()
 
 
-def _canonical_voice_channel_readiness(database_url: str) -> dict[str, int]:
-    engine = create_engine(database_url)
-    try:
-        with engine.connect() as conn:
-            row = conn.execute(
-                text(
-                    """
-                    SELECT
-                      COUNT(*) AS enabled_channels,
-                      SUM(CASE
-                        WHEN NULLIF(TRIM(v.inbound_trunk_id), '') IS NOT NULL
-                         AND NULLIF(TRIM(v.dispatch_rule_id), '') IS NOT NULL
-                        THEN 1 ELSE 0 END
-                      ) AS inbound_ready_channels,
-                      SUM(CASE
-                        WHEN NULLIF(TRIM(v.outbound_trunk_id), '') IS NOT NULL
-                        THEN 1 ELSE 0 END
-                      ) AS outbound_ready_channels,
-                      SUM(CASE
-                        WHEN v.routing_mode = 'ai_first'
-                         AND NULLIF(TRIM(v.ai_agent_name), '') IS NULL
-                        THEN 1 ELSE 0 END
-                      ) AS invalid_ai_first_channels
-                    FROM channel_accounts AS c
-                    JOIN voice_channel_configurations AS v
-                      ON v.channel_account_id = c.id
-                    WHERE c.provider = 'voice'
-                      AND c.is_active = true
-                      AND v.enabled = true
-                    """
-                )
-            ).mappings().one()
-            return {
-                "enabled_channels": int(row["enabled_channels"] or 0),
-                "inbound_ready_channels": int(row["inbound_ready_channels"] or 0),
-                "outbound_ready_channels": int(row["outbound_ready_channels"] or 0),
-                "invalid_ai_first_channels": int(row["invalid_ai_first_channels"] or 0),
-            }
-    finally:
-        engine.dispose()
+def _storage_warnings(storage: dict) -> list[str]:
+    warnings: list[str] = []
+    if storage.get("status") in {"ok", "ready"}:
+        return warnings
+    for issue in list(storage.get("errors") or []) + list(
+        storage.get("warnings") or []
+    ):
+        if not isinstance(issue, dict):
+            continue
+        code = str(issue.get("code") or "storage_not_ready")
+        warnings.append(f"Storage readiness: {code}")
+    if not warnings:
+        warnings.append("Storage readiness: not_ready")
+    return warnings
 
 
 def main() -> int:
@@ -92,8 +73,6 @@ def main() -> int:
     warnings: list[str] = []
     if not settings.is_postgres:
         warnings.append("DATABASE_URL is not PostgreSQL")
-    if settings.storage_backend == "local":
-        warnings.append("STORAGE_BACKEND is local")
     if settings.metrics_enabled and not settings.metrics_token:
         warnings.append("METRICS_ENABLED=true but METRICS_TOKEN is missing")
     if settings.app_env == "production" and not settings.webchat_allowed_origins:
@@ -109,9 +88,14 @@ def main() -> int:
         settings.app_env == "production"
         and settings.webchat_ai_auto_reply_mode not in {"off", "runtime"}
     ):
-        warnings.append("WEBCHAT_AI_AUTO_REPLY_MODE should be off or runtime in production")
+        warnings.append(
+            "WEBCHAT_AI_AUTO_REPLY_MODE should be off or runtime in production"
+        )
     if settings.webchat_allow_legacy_token_transport:
         warnings.append("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must remain false")
+
+    storage = check_storage_readiness(settings).as_dict()
+    warnings.extend(_storage_warnings(storage))
 
     outbound_email_successful_test_send_accounts = 0
     if settings.outbound_email_production_pilot_enabled:
@@ -134,48 +118,45 @@ def main() -> int:
                 f"{settings.outbound_email_test_send_max_age_hours} hours"
             )
 
-    voice = None
-    voice_worker_ready = False
-    voice_channels = {
-        "enabled_channels": 0,
-        "inbound_ready_channels": 0,
-        "outbound_ready_channels": 0,
-        "invalid_ai_first_channels": 0,
+    profile = os.getenv("PRODUCTION_PROFILE", "full").strip().lower() or "full"
+    release_readiness: dict = {
+        "schema": "nexus.release-readiness.v2",
+        "profile": profile,
+        "status": "not_ready",
+        "reason_codes": ["release_readiness_unavailable"],
+        "collectors": {},
+        "production_authorized": False,
+        "provider_enablement_authorized": False,
+        "webchat_ai_enablement_authorized": False,
+        "voice_enablement_authorized": False,
+        "outbound_enablement_authorized": False,
+        "operations_enablement_authorized": False,
     }
-    telephony_reason_codes: list[str] = []
+    db = SessionLocal()
     try:
-        voice = load_webchat_voice_runtime_config()
-    except Exception:
-        telephony_reason_codes.append("voice_runtime_configuration_invalid")
+        collected = collect_release_readiness(db, profile=profile)
+        release_readiness = finalize_release_readiness(collected)
+    except Exception as exc:
+        warnings.append(
+            "Release readiness evaluation failed: "
+            f"{exc.__class__.__name__}"
+        )
+    finally:
+        db.close()
 
-    if voice is not None and voice.enabled:
-        if voice.provider != "livekit":
-            telephony_reason_codes.append("voice_provider_not_livekit")
-        if not voice.livekit_webhook_enabled:
-            telephony_reason_codes.append("voice_webhook_disabled")
-        if voice.live_ai_voice_enabled:
-            try:
-                load_livekit_agent_worker_config()
-                voice_worker_ready = True
-            except Exception:
-                telephony_reason_codes.append("voice_media_worker_configuration_invalid")
-        try:
-            voice_channels = _canonical_voice_channel_readiness(settings.database_url)
-        except Exception:
-            telephony_reason_codes.append("voice_channel_readiness_unavailable")
-        if voice_channels["enabled_channels"] < 1:
-            telephony_reason_codes.append("voice_channel_not_enabled")
-        if voice_channels["inbound_ready_channels"] < 1:
-            telephony_reason_codes.append("voice_inbound_route_not_ready")
-        if voice_channels["invalid_ai_first_channels"]:
-            telephony_reason_codes.append("voice_ai_first_agent_missing")
+    if release_readiness.get("status") != "ready":
+        for code in release_readiness.get("reason_codes") or ["release_not_ready"]:
+            warnings.append(f"Release readiness: {code}")
+    if profile == "full" and not release_readiness.get("production_authorized"):
+        warnings.append("Full production activation is not authorized")
 
-    warnings.extend(f"Telephony readiness: {code}" for code in telephony_reason_codes)
-    telephony_enabled = bool(voice and voice.enabled)
-    telephony_ready = bool(
-        voice is not None
-        and not telephony_reason_codes
-        and (not voice.live_ai_voice_enabled or voice_worker_ready)
+    telephony = dict(
+        (release_readiness.get("collectors") or {}).get("telephony")
+        or {
+            "status": "not_ready",
+            "enabled": False,
+            "reason_codes": ["telephony_readiness_unavailable"],
+        }
     )
 
     payload = {
@@ -183,9 +164,12 @@ def main() -> int:
         "database_url_scheme": settings.database_url.split(":", 1)[0],
         "is_postgres": settings.is_postgres,
         "storage_backend": settings.storage_backend,
+        "storage_readiness": storage,
         "metrics_enabled": settings.metrics_enabled,
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),
-        "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
+        "webchat_allow_legacy_token_transport": (
+            settings.webchat_allow_legacy_token_transport
+        ),
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,
         "webchat_ai_auto_reply_mode": settings.webchat_ai_auto_reply_mode,
         "outbound_email_production_pilot_enabled": (
@@ -197,19 +181,9 @@ def main() -> int:
         "outbound_email_test_send_max_age_hours": (
             settings.outbound_email_test_send_max_age_hours
         ),
-        "telephony": {
-            "enabled": telephony_enabled,
-            "ready": telephony_ready,
-            "human_call_enabled": bool(voice and voice.human_call_enabled),
-            "live_ai_voice_enabled": bool(voice and voice.live_ai_voice_enabled),
-            "provider": voice.provider if voice is not None else None,
-            "routing_mode": voice.routing_mode if voice is not None else None,
-            "webhook_enabled": bool(voice and voice.livekit_webhook_enabled),
-            "media_worker_ready": voice_worker_ready,
-            "reason_codes": sorted(set(telephony_reason_codes)),
-            **voice_channels,
-        },
-        "warnings": warnings,
+        "release_readiness": release_readiness,
+        "telephony": telephony,
+        "warnings": sorted(set(warnings)),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not warnings else 2

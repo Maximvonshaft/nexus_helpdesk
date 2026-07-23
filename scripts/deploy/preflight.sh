@@ -4,7 +4,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR/backend"
 
-python scripts/validate_production_readiness.py
+PRODUCTION_PROFILE="${PRODUCTION_PROFILE:-controlled}" \
+  python scripts/validate_production_readiness.py
 python - <<'PY'
 from app.settings import get_settings
 

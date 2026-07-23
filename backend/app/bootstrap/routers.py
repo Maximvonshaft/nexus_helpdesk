@@ -32,6 +32,7 @@ from ..api.operator_agent_state import router as operator_agent_state_router
 from ..api.operator_queue import router as operator_queue_router
 from ..api.outbound_channels import router as outbound_channels_router
 from ..api.persona_profiles import router as persona_profiles_router
+from ..api.release_readiness import router as release_readiness_router
 from ..api.speedaf_actions import router as speedaf_actions_router
 from ..api.speedaf_cancel import router as speedaf_cancel_router
 from ..api.stats import router as stats_router
@@ -48,6 +49,12 @@ from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
 
 
+_RETIRED_ADMIN_READINESS_PATHS = {
+    "/api/admin/production-readiness",
+    "/api/admin/signoff-checklist",
+}
+
+
 def _compose_admin_dependencies(*, dependencies: list) -> list:
     """Return the one ordered policy chain for the canonical admin router."""
 
@@ -55,6 +62,16 @@ def _compose_admin_dependencies(*, dependencies: list) -> list:
         Depends(enforce_admin_tenant_query_scope),
         Depends(enforce_admin_identity_request_policy),
         *dependencies,
+    ]
+
+
+def _retire_legacy_admin_readiness_routes() -> None:
+    """Remove superseded readiness APIs before the admin router is registered."""
+
+    admin_router.routes[:] = [
+        route
+        for route in admin_router.routes
+        if getattr(route, "path", None) not in _RETIRED_ADMIN_READINESS_PATHS
     ]
 
 
@@ -73,7 +90,9 @@ def register_api_routers(app: FastAPI) -> None:
     admin_dependencies = _compose_admin_dependencies(
         dependencies=[Depends(enforce_admin_password_request_policy)]
     )
+    _retire_legacy_admin_readiness_routes()
     app.include_router(admin_router, dependencies=admin_dependencies)
+    app.include_router(release_readiness_router, dependencies=admin_dependencies)
     app.include_router(governance_router, dependencies=admin_dependencies)
     for router in (
         admin_queue_router,

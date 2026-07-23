@@ -76,6 +76,25 @@ export interface SignoffChecklist {
   checks: Record<string, boolean>
   warnings: string[]
 }
+export type ReleaseReadinessProfile = 'controlled' | 'provider_canary' | 'full'
+export interface ReleaseReadinessCollector {
+  status?: string
+  reason_codes?: string[]
+  [key: string]: unknown
+}
+export interface ReleaseReadiness {
+  schema: string
+  profile: ReleaseReadinessProfile
+  status: 'ready' | 'not_ready'
+  reason_codes: string[]
+  collectors: Record<string, ReleaseReadinessCollector>
+  production_authorized: boolean
+  provider_enablement_authorized: boolean
+  webchat_ai_enablement_authorized: boolean
+  voice_enablement_authorized: boolean
+  outbound_enablement_authorized: boolean
+  operations_enablement_authorized: boolean
+}
 export interface BackgroundJob {
   id: number
   queue_name: string
