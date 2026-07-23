@@ -63,7 +63,6 @@ def _livekit_wss_source(livekit_url: str | None) -> str | None:
 class WebchatVoiceRuntimeConfig:
     human_call_enabled: bool
     live_ai_voice_enabled: bool
-    allowed_path_prefixes: tuple[str, ...]
     connect_src: tuple[str, ...]
     provider: str
     routing_mode: str
@@ -71,8 +70,6 @@ class WebchatVoiceRuntimeConfig:
     max_active_per_conversation: int
     rate_limit_window_seconds: int
     rate_limit_max_requests: int
-    recording_enabled: bool
-    transcription_enabled: bool
     livekit_url: str | None
     livekit_api_key: str | None
     livekit_api_secret: str | None
@@ -95,7 +92,6 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
     config = WebchatVoiceRuntimeConfig(
         human_call_enabled=human_call_enabled,
         live_ai_voice_enabled=live_ai_voice_enabled,
-        allowed_path_prefixes=(CANONICAL_WEBCALL_PATH,),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
         provider=provider,
         routing_mode=(
@@ -113,10 +109,6 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
         ),
         rate_limit_max_requests=int(
             os.getenv("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS", "5")
-        ),
-        recording_enabled=_env_bool("WEBCHAT_VOICE_RECORDING_ENABLED", False),
-        transcription_enabled=_env_bool(
-            "WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", False
         ),
         livekit_url=(
             _normalize_url(os.getenv(LIVEKIT_URL_ENV))
@@ -173,8 +165,6 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
         raise RuntimeError(
             "WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS must be between 1 and 60"
         )
-    if config.allowed_path_prefixes != (CANONICAL_WEBCALL_PATH,):
-        raise RuntimeError("WebCall microphone policy must remain fixed to /webcall")
     for source in config.connect_src:
         if "*" in source:
             raise RuntimeError(
@@ -190,10 +180,6 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
                 "WEBCHAT_VOICE_CONNECT_SRC entries must be https://, wss://, or self"
             )
     app_env = os.getenv("APP_ENV", "development").strip().lower()
-    if app_env == "production" and config.recording_enabled:
-        raise RuntimeError(
-            "WEBCHAT_VOICE_RECORDING_ENABLED must remain false in production until a consent policy is implemented"
-        )
     if config.enabled and config.provider == "livekit":
         _validate_livekit_runtime_config(config, app_env=app_env)
     if (
@@ -247,9 +233,7 @@ def is_webchat_voice_path(
     path: str,
     config: WebchatVoiceRuntimeConfig | None = None,
 ) -> bool:
-    runtime_config = config or load_webchat_voice_runtime_config()
-    if runtime_config.allowed_path_prefixes != (CANONICAL_WEBCALL_PATH,):
-        return False
+    del config
     return path == CANONICAL_WEBCALL_PATH or path.startswith(
         f"{CANONICAL_WEBCALL_PATH}/"
     )
