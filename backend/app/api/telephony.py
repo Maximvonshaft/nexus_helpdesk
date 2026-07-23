@@ -47,17 +47,16 @@ class VoiceChannelConfigurationUpdate(BaseModel):
     queue_timeout_seconds: int = Field(default=90, ge=15, le=3600)
     offer_timeout_seconds: int = Field(default=20, ge=5, le=120)
     wrap_up_seconds: int = Field(default=30, ge=0, le=900)
-    overflow_action: Literal["ai", "voicemail", "disconnect"] = "ai"
-    voicemail_enabled: bool = False
+    overflow_action: Literal["ai", "disconnect"] = "ai"
     recording_policy: Literal[
         "disabled",
-        "consent_required",
-        "always",
+        "notice",
+        "explicit_consent",
     ] = "disabled"
     transcription_policy: Literal[
         "disabled",
-        "consent_required",
-        "always",
+        "notice",
+        "explicit_consent",
     ] = "disabled"
     enabled: bool = False
 
@@ -93,6 +92,7 @@ class ControllerEventRequest(BaseModel):
         "command.succeeded",
         "command.failed",
         "call.status",
+        "compliance.evidence",
     ]
     room_name: str = Field(min_length=1, max_length=160)
     controller_identity: str | None = Field(default=None, max_length=160)
@@ -328,16 +328,16 @@ async def receive_controller_event(
         signature_header=x_nexus_controller_signature,
     )
     try:
-        payload = ControllerEventRequest.model_validate_json(body).model_dump()
+        payload = ControllerEventRequest.model_validate_json(body)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="invalid controller event payload",
+            detail="invalid LiveKit controller event",
         ) from exc
     with managed_session(db):
         result = process_controller_event(
             db,
-            payload=payload,
+            payload=payload.model_dump(),
             raw_body=body,
         )
     return _event_http_result(result)
