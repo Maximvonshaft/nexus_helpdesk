@@ -16,11 +16,11 @@ def test_provider_exceptions_never_cross_customer_or_operator_api_boundaries():
     provider_boundary = "\n".join((api, commands, provider))
     combined = "\n".join((api, session, commands, provider))
 
-    assert "detail=str(exc)" not in provider_boundary
+    assert "detail=str(exc)" not in combined
     assert "provider_reason = str(exc)" not in combined
     assert "except ValueError as exc:" in session
     assert "record_evidence(" in session
-    assert "detail=str(exc)" in session
+    assert 'detail="voice_compliance_evidence_invalid"' in session
     assert "VoiceProviderError" in api
     assert "voice_room_cleanup_deferred" in api
     assert "serialize_voice_session" in api
