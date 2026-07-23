@@ -61,7 +61,6 @@ LIVEKIT_AGENT_SHARED_SECRET_FILE=/run/secrets/livekit_agent_shared_secret
 LIVEKIT_WEBHOOK_ENABLED=true
 NEXUS_VOICE_STT_MODEL=<livekit-inference-stt-model>
 NEXUS_VOICE_TTS_MODEL=<livekit-inference-tts-model-and-voice>
-NEXUS_VOICE_TRANSFER_LLM_MODEL=<optional-consultation-model>
 NEXUS_VOICE_TURN_DETECTION=stt
 NEXUS_VOICE_AGENT_REQUEST_TIMEOUT_SECONDS=30
 NEXUS_VOICE_AGENT_HEARTBEAT_SECONDS=30
@@ -69,7 +68,7 @@ NEXUS_VOICE_AGENT_HEARTBEAT_SECONDS=30
 
 `LIVEKIT_URL` must use `wss://` in production. The LiveKit WebSocket origin must be present in the controlled CSP/connect-src configuration.
 
-`NEXUS_VOICE_TRANSFER_LLM_MODEL` is optional and is used only for LiveKit's bounded warm-transfer consultation task. It is not used for normal customer support turns. If it is absent, warm transfer fails closed while cold transfer and normal handoff remain available.
+Warm transfer uses the same joined Room controller and no additional LLM. The controller creates one consultation SIP leg, keeps the customer isolated on hold while the current human operator briefs the target, and completes or cancels only through separate durable commands and Provider acknowledgements.
 
 ## Controlled deployment
 
@@ -127,7 +126,7 @@ Every operator who can receive a voice call must have:
 - `OperatorAgentState.status=online`.
 - Fresh heartbeat within the configured TTL.
 - `voice_enabled=true`.
-- Governed `max_concurrent_voice_calls` and after-call work duration.
+- One-call Voice capacity and governed after-call work duration.
 
 The availability Tool counts active accepted Handoffs and unexpired VoiceRoutingOffer reservations. It does not use a second telephony presence table.
 
@@ -182,7 +181,7 @@ Ambiguous replies do not grant execution. A denial closes the challenge. Success
 - The customer Room remains open.
 - Handoff Assignment and `Conversation.active_agent_id` are written only after explicit accept under transaction locks.
 - Concurrent accepts resolve to one winner.
-- AI audio is muted on human takeover, while the Room controller remains available for call controls.
+- Human takeover durably suspends the AI turn path before further Tool or customer-visible side effects, while the Room controller remains available for call controls.
 
 ## Durable call controls
 
@@ -199,7 +198,7 @@ API
 → Timeline/AdminAudit
 ```
 
-Hold, resume, DTMF and warm transfer wait for a joined Room controller and a signed acknowledgement. Server delivery is not reported as call completion.
+Hold, resume, DTMF and every warm-consultation phase wait for a joined Room controller and a signed acknowledgement. Server delivery is not reported as call completion. A consultation target answering means only that consultation began; transfer completion requires the explicit `warm_transfer_complete` command.
 
 ## Provider Event Inbox
 
@@ -230,6 +229,7 @@ LiveKit Egress events update recording status. Enabling recording does not itsel
 | No eligible operator | Keep Room and AI/wait strategy active; do not assign owner |
 | Operator decline/offer expiry | Route the next offer; do not hang up caller |
 | Controller not joined | Keep command retryable; do not report execution |
+| Consultation target fails or leaves | Remove the consult leg, restore the original customer/operator media path, and keep the customer call active |
 | Provider command failure | Retry when classified transient, otherwise fail with audit evidence |
 | Duplicate/out-of-order event | Idempotently project one canonical call |
 | Customer hangs up | End call projection and close pending Handoff/offers/tasks |
@@ -255,7 +255,7 @@ After deploying with real Provider credentials, run a controlled call matrix:
 5. Decline and timeout rotation without customer disconnect.
 6. Busy operators with evidence-based wait response.
 7. Explicit confirmed follow-up Ticket creation.
-8. Hold, resume, DTMF, cold transfer and warm transfer.
+8. Hold, resume, DTMF, cold transfer and warm consultation start/complete/cancel.
 9. Customer and authorized operator hangup.
 10. Recording/transcription policy and evidence events.
 11. Outbound call success, busy, no-answer and Provider failure.
