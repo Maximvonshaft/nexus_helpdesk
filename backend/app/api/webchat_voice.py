@@ -39,6 +39,7 @@ from ..services.voice_session_service import (
     list_admin_incoming_voice_sessions,
     list_admin_voice_sessions,
     load_voice_session,
+    public_voice_policy,
     reject_admin_voice_session,
     serialize_voice_session,
 )
@@ -75,6 +76,23 @@ def _require_visitor_token(header_token: str | None) -> str:
     return header_token
 
 
+@router.get("/conversations/{conversation_id}/voice/policy")
+def read_voice_policy(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    x_webchat_visitor_token: str | None = Header(
+        default=None,
+        alias="X-Webchat-Visitor-Token",
+    ),
+) -> dict:
+    visitor_token = _require_visitor_token(x_webchat_visitor_token)
+    return public_voice_policy(
+        db,
+        conversation_public_id=conversation_id,
+        visitor_token=visitor_token,
+    )
+
+
 @router.post("/conversations/{conversation_id}/voice/sessions")
 def create_voice_session(
     conversation_id: str,
@@ -95,7 +113,10 @@ def create_voice_session(
                 visitor_token=visitor_token,
                 request=request,
                 locale=payload.locale,
-                recording_consent=payload.recording_consent,
+                compliance_evidence=[
+                    item.model_dump()
+                    for item in payload.compliance_evidence
+                ],
             )
         )
 
