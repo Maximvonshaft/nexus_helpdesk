@@ -8,11 +8,19 @@ from sqlalchemy.orm import Session
 from ..models import User
 from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceParticipant, WebchatVoiceSession
-from ..webchat_models import WebchatEvent
+from ..webchat_models import WebchatConversation, WebchatEvent
 from .voice_command_service import enqueue_voice_command
 from .voice_provider import VoiceProvider
 
 _CONTROLLER_ROLES = {"controller", "ai_controller"}
+_RESERVED_METADATA_KEYS = {
+    "schema",
+    "role",
+    "voice_session_id",
+    "conversation_id",
+    "conversation_public_id",
+    "channel_account_id",
+}
 
 
 def _write_event(
@@ -70,13 +78,21 @@ def dispatch_room_controller(
     if existing is not None:
         return existing
 
+    conversation = db.get(WebchatConversation, session.conversation_id)
+    if conversation is None or not conversation.public_id:
+        raise RuntimeError("telephony_conversation_authority_missing")
+    extra_metadata = {
+        str(key)[:80]: value
+        for key, value in dict(metadata or {}).items()
+        if str(key) not in _RESERVED_METADATA_KEYS
+    }
     dispatch_metadata = {
+        **extra_metadata,
         "schema": "nexus.livekit-agent-session.v1",
         "role": normalized_role,
         "voice_session_id": session.public_id,
-        "conversation_id": session.conversation_id,
+        "conversation_public_id": conversation.public_id,
         "channel_account_id": session.channel_account_id,
-        **(metadata or {}),
     }
     dispatch = provider.dispatch_agent(
         room_name=session.provider_room_name,
