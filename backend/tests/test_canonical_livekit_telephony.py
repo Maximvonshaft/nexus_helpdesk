@@ -23,6 +23,7 @@ from app.utils.time import utc_now
 from app.voice_models import (
     VoiceChannelConfiguration,
     VoiceRoutingOffer,
+    WebchatVoiceParticipant,
     WebchatVoiceSession,
 )
 from app.webchat_models import WebchatConversation, WebchatHandoffRequest
@@ -207,6 +208,127 @@ def test_voice_decline_rotates_offer_without_hanging_up_customer():
         assert handoff.status == "requested"
         assert handoff.assigned_agent_id is None
         assert offer.status == "declined"
+    finally:
+        db.close()
+
+
+def _process_provider_event(db, payload: dict) -> dict:
+    return process_livekit_webhook_event(
+        db,
+        payload=payload,
+        raw_body=json.dumps(payload, sort_keys=True).encode("utf-8"),
+    )
+
+
+def _sip_participant_event(
+    *,
+    event_id: str,
+    event_type: str,
+    room_name: str,
+    identity: str,
+    call_id: str,
+    call_status: str,
+    phone_number: str,
+) -> dict:
+    return {
+        "id": event_id,
+        "event": event_type,
+        "room": {"name": room_name},
+        "participant": {
+            "identity": identity,
+            "attributes": {
+                "sip.phoneNumber": phone_number,
+                "sip.callTo": phone_number,
+                "sip.callID": call_id,
+                "sip.callStatus": call_status,
+            },
+        },
+    }
+
+
+def test_secondary_sip_transfer_leg_cannot_terminate_primary_customer_call():
+    db = SessionLocal()
+    try:
+        _seed_human_voice_route(db)
+        room_name = "sip-room-me-transfer"
+        inbound = _inbound_payload(
+            event_id="EVT-TRANSFER",
+            room_name=room_name,
+            caller="+38267000333",
+        )
+        _process_provider_event(db, inbound)
+        db.commit()
+
+        session = db.query(WebchatVoiceSession).one()
+        primary_call_id = session.provider_call_id
+        assert primary_call_id == "call-EVT-TRANSFER"
+        assert session.status == "ringing"
+
+        secondary_joined = _sip_participant_event(
+            event_id="EVT-TRANSFER-SECONDARY-JOINED",
+            event_type="participant_joined",
+            room_name=room_name,
+            identity="sip-transfer-target",
+            call_id="call-transfer-target",
+            call_status="active",
+            phone_number="+38267000999",
+        )
+        _process_provider_event(db, secondary_joined)
+
+        secondary_busy = _sip_participant_event(
+            event_id="EVT-TRANSFER-SECONDARY-BUSY",
+            event_type="participant_updated",
+            room_name=room_name,
+            identity="sip-transfer-target",
+            call_id="call-transfer-target",
+            call_status="busy",
+            phone_number="+38267000999",
+        )
+        _process_provider_event(db, secondary_busy)
+
+        secondary_left = _sip_participant_event(
+            event_id="EVT-TRANSFER-SECONDARY-LEFT",
+            event_type="participant_left",
+            room_name=room_name,
+            identity="sip-transfer-target",
+            call_id="call-transfer-target",
+            call_status="disconnected",
+            phone_number="+38267000999",
+        )
+        _process_provider_event(db, secondary_left)
+        db.commit()
+        db.refresh(session)
+
+        transfer_leg = (
+            db.query(WebchatVoiceParticipant)
+            .filter(
+                WebchatVoiceParticipant.voice_session_id == session.id,
+                WebchatVoiceParticipant.provider_call_id == "call-transfer-target",
+            )
+            .one()
+        )
+        assert transfer_leg.participant_type == "transfer"
+        assert transfer_leg.direction == "outbound"
+        assert transfer_leg.status == "ended"
+        assert session.provider_call_id == primary_call_id
+        assert session.status == "ringing"
+        assert session.ended_at is None
+
+        primary_left = _sip_participant_event(
+            event_id="EVT-TRANSFER-PRIMARY-LEFT",
+            event_type="participant_left",
+            room_name=room_name,
+            identity="sip-caller-EVT-TRANSFER",
+            call_id=primary_call_id,
+            call_status="disconnected",
+            phone_number="+38267000333",
+        )
+        _process_provider_event(db, primary_left)
+        db.commit()
+        db.refresh(session)
+
+        assert session.status == "ended"
+        assert session.ended_at is not None
     finally:
         db.close()
 
