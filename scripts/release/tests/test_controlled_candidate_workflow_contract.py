@@ -170,7 +170,8 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self,
     ) -> None:
         self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
-        self.assertIn("${NEXUS_RUNTIME_SECRETS_HOST_PATH:?", COMPOSE)
+        self.assertNotIn("NEXUS_RUNTIME_SECRETS_HOST_PATH", COMPOSE)
+        self.assertNotIn("env_file:", COMPOSE)
         self.assertNotRegex(COMPOSE, r"(?m)^\s*build\s*:")
         self.assertNotIn(":latest", COMPOSE)
         self.assertNotIn("external: true", COMPOSE)
