@@ -30,6 +30,30 @@ RUN apt-get update \
 FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS python-runtime-builder
 COPY backend/requirements.txt /tmp/requirements.txt
 COPY --from=python-wheel-builder /wheels /wheels
+
+# The pinned Python base predates the current Bookworm OpenSSL security release.
+# Install and vendor the exact Debian-fixed runtime package, including its complete
+# file set and Distroless-compatible package metadata. The final scanner therefore
+# evaluates the exact bytes shipped, without a CVE exception or forged version.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libssl3=3.0.20-1~deb12u2; \
+    mkdir -p \
+        /tmp/libssl-package \
+        /tmp/libssl-control \
+        /runtime-debian-root \
+        /runtime-package-metadata; \
+    cd /tmp/libssl-package; \
+    apt-get download libssl3=3.0.20-1~deb12u2; \
+    package="$(find . -maxdepth 1 -type f -name 'libssl3_*.deb' -print -quit)"; \
+    test -n "$package"; \
+    dpkg-deb --extract "$package" /runtime-debian-root; \
+    dpkg-deb --field "$package" > /runtime-package-metadata/libssl3; \
+    dpkg-deb --control "$package" /tmp/libssl-control; \
+    cp /tmp/libssl-control/md5sums /runtime-package-metadata/libssl3.md5sums; \
+    grep -F 'Version: 3.0.20-1~deb12u2' /runtime-package-metadata/libssl3; \
+    rm -rf /tmp/libssl-package /tmp/libssl-control /var/lib/apt/lists/*
+
 RUN python -m pip install \
         --no-index \
         --find-links=/wheels \
@@ -130,6 +154,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     FRONTEND_BUILD_SHA=${FRONTEND_BUILD_SHA}
 
 COPY --from=python-runtime-builder /usr/local/ /usr/local/
+COPY --from=python-runtime-builder /runtime-debian-root/ /
+COPY --from=python-runtime-builder /runtime-package-metadata/libssl3 /var/lib/dpkg/status.d/libssl3
+COPY --from=python-runtime-builder /runtime-package-metadata/libssl3.md5sums /var/lib/dpkg/status.d/libssl3.md5sums
 COPY --from=python-runtime-builder /runtime-libs/ /
 COPY --from=runtime-layout --chown=65532:65532 /layout/ /
 
@@ -143,6 +170,6 @@ USER 65532:65532
 
 # Execute the real final image, as its fixed non-root identity, during build. This
 # proves the copied CPython/native closure rather than only the discarded builder.
-RUN ["/usr/local/bin/python", "-c", "import alembic, av, cryptography, gunicorn, livekit, livekit.agents, psycopg, sqlalchemy, uvicorn"]
+RUN ["/usr/local/bin/python", "-c", "import alembic, av, cryptography, gunicorn, livekit, livekit.agents, psycopg, sqlalchemy, ssl, uvicorn; assert ssl.OPENSSL_VERSION.startswith('OpenSSL 3.0.20')"]
 
 CMD ["/usr/local/bin/python", "-m", "gunicorn", "app.main:app", "--config", "/app/backend/gunicorn.conf.py", "-k", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "60"]
