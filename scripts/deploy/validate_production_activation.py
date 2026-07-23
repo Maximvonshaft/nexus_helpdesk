@@ -12,6 +12,9 @@ from urllib.parse import urlsplit
 
 _PROFILES = {"provider_canary", "full"}
 _TOKEN = re.compile(r"^[a-z0-9_.-]{1,80}$")
+_SHA40 = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_IMAGE = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
 
 
 class ActivationError(ValueError):
@@ -23,7 +26,10 @@ def _parse_env(paths: list[Path]) -> dict[str, str]:
     for path in paths:
         if not path.is_file() or path.is_symlink():
             raise ActivationError(f"env_file_invalid:{path.name}")
-        for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        for number, raw in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
@@ -78,9 +84,16 @@ def _placeholder(value: str) -> bool:
     normalized = value.strip().lower()
     return (
         not normalized
-        or (normalized.startswith("<") and normalized.endswith(">"))
+        or "<" in normalized
+        or ">" in normalized
         or "placeholder" in normalized
         or "replace-with" in normalized
+        or normalized in {
+            "changeme",
+            "change-me",
+            "replace-me",
+            "example-secret",
+        }
     )
 
 
@@ -109,13 +122,50 @@ def _require_one_of(values: dict[str, str], *keys: str) -> str:
     raise ActivationError(f"configuration_missing_one_of:{','.join(keys)}")
 
 
+def _evidence_binding(values: dict[str, str]) -> dict[str, str]:
+    source_sha = _require_value(values, "GIT_SHA").lower()
+    evidence_source_sha = _require_value(
+        values,
+        "ACTIVATION_EVIDENCE_SOURCE_SHA",
+    ).lower()
+    if not _SHA40.fullmatch(source_sha):
+        raise ActivationError("source_sha_invalid:GIT_SHA")
+    if not _SHA40.fullmatch(evidence_source_sha):
+        raise ActivationError("source_sha_invalid:ACTIVATION_EVIDENCE_SOURCE_SHA")
+    if evidence_source_sha != source_sha:
+        raise ActivationError("activation_evidence_source_sha_mismatch")
+
+    image = _require_value(values, "CONTROLLED_IMAGE").lower()
+    match = _DIGEST_IMAGE.fullmatch(image)
+    if match is None:
+        raise ActivationError("controlled_image_not_digest_pinned")
+    image_digest = match.group(1)
+    evidence_image_digest = _require_value(
+        values,
+        "ACTIVATION_EVIDENCE_IMAGE_DIGEST",
+    ).lower()
+    if not _SHA256.fullmatch(evidence_image_digest):
+        raise ActivationError("activation_evidence_image_digest_invalid")
+    if evidence_image_digest != image_digest:
+        raise ActivationError("activation_evidence_image_digest_mismatch")
+    return {
+        "source_sha": source_sha,
+        "image_digest": image_digest,
+    }
+
+
 def validate(values: dict[str, str]) -> dict[str, object]:
     profile = _token(values, "PRODUCTION_PROFILE", "full")
     if profile not in _PROFILES:
         raise ActivationError("production_profile_invalid")
 
+    binding = _evidence_binding(values)
     provider_enabled = _bool(values, "PROVIDER_RUNTIME_ENABLED")
-    provider_mode = _token(values, "PROVIDER_RUNTIME_TRAFFIC_MODE", "control")
+    provider_mode = _token(
+        values,
+        "PROVIDER_RUNTIME_TRAFFIC_MODE",
+        "control",
+    )
     kill_switch = _bool(values, "PROVIDER_RUNTIME_KILL_SWITCH", True)
     percent = _int(
         values,
@@ -130,8 +180,16 @@ def validate(values: dict[str, str]) -> dict[str, object]:
     voice_enabled = human_voice_enabled or live_ai_voice_enabled
     outbound_enabled = _bool(values, "ENABLE_OUTBOUND_DISPATCH")
     outbound_provider = _token(values, "OUTBOUND_PROVIDER", "disabled")
-    operations_mode = _token(values, "OPERATIONS_DISPATCH_MODE", "disabled")
-    operations_adapter = _token(values, "OPERATIONS_DISPATCH_ADAPTER", "disabled")
+    operations_mode = _token(
+        values,
+        "OPERATIONS_DISPATCH_MODE",
+        "disabled",
+    )
+    operations_adapter = _token(
+        values,
+        "OPERATIONS_DISPATCH_ADAPTER",
+        "disabled",
+    )
 
     evidence: dict[str, str] = {}
     if profile == "provider_canary":
@@ -146,7 +204,12 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             "PROVIDER_CANARY_E2E_EVIDENCE_URL",
         )
     else:
-        if not provider_enabled or provider_mode != "full" or kill_switch or percent != 100:
+        if (
+            not provider_enabled
+            or provider_mode != "full"
+            or kill_switch
+            or percent != 100
+        ):
             raise ActivationError("full_provider_controls_invalid")
         evidence["production"] = _require_https(
             values,
@@ -169,7 +232,11 @@ def validate(values: dict[str, str]) -> dict[str, object]:
                 raise ActivationError("livekit_webhook_disabled")
             _require_value(values, "LIVEKIT_AGENT_NAME")
             _require_one_of(values, "LIVEKIT_API_KEY", "LIVEKIT_API_KEY_FILE")
-            _require_one_of(values, "LIVEKIT_API_SECRET", "LIVEKIT_API_SECRET_FILE")
+            _require_one_of(
+                values,
+                "LIVEKIT_API_SECRET",
+                "LIVEKIT_API_SECRET_FILE",
+            )
             _require_one_of(
                 values,
                 "LIVEKIT_AGENT_SHARED_SECRET",
@@ -198,9 +265,10 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             )
 
     return {
-        "schema": "nexus.production-activation-preflight.v1",
+        "schema": "nexus.production-activation-preflight.v2",
         "status": "pass",
         "profile": profile,
+        "candidate": binding,
         "provider": {
             "enabled": provider_enabled,
             "mode": provider_mode,
