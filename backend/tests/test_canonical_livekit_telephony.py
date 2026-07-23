@@ -346,6 +346,7 @@ def test_mock_provider_executes_idempotent_command_contract():
         "target_present": False,
         "digits_length": 3,
         "participant_identity_present": False,
+        "human_identity_present": False,
         "controller_identity_present": False,
         "recording_reference_present": False,
     }
