@@ -228,6 +228,7 @@ class LiveKitVoiceProvider(VoiceProvider):
         target: str | None = None,
         digits: str | None = None,
         participant_identity: str | None = None,
+        human_identity: str | None = None,
         controller_identity: str | None = None,
         outbound_trunk_id: str | None = None,
         recording_reference: str | None = None,
@@ -275,6 +276,7 @@ class LiveKitVoiceProvider(VoiceProvider):
                 target=target,
                 digits=digits,
                 participant_identity=participant_identity,
+                human_identity=human_identity,
                 outbound_trunk_id=outbound_trunk_id,
                 idempotency_key=idempotency_key,
             )
@@ -445,11 +447,17 @@ class LiveKitVoiceProvider(VoiceProvider):
         target: str | None,
         digits: str | None,
         participant_identity: str | None,
+        human_identity: str | None,
         outbound_trunk_id: str | None,
         idempotency_key: str | None,
     ) -> VoiceProviderActionResult:
         if not controller_identity:
             raise VoiceProviderError("active telephony controller identity is required")
+        if action in {"hold", "resume"}:
+            if not participant_identity:
+                raise VoiceProviderError("participant identity is required")
+            if not human_identity:
+                raise VoiceProviderError("active human participant identity is required")
         if action == "keypad" and not digits:
             raise VoiceProviderError("DTMF digits are required")
         if action == "warm_transfer" and (not target or not outbound_trunk_id):
@@ -461,6 +469,7 @@ class LiveKitVoiceProvider(VoiceProvider):
                     "action": action,
                     "controller": controller_identity,
                     "participant": participant_identity,
+                    "human": human_identity,
                 },
                 sort_keys=True,
             ).encode("utf-8")
@@ -472,6 +481,7 @@ class LiveKitVoiceProvider(VoiceProvider):
             "target": target,
             "digits": digits if action == "keypad" else None,
             "participant_identity": participant_identity,
+            "human_identity": human_identity if action in {"hold", "resume"} else None,
             "outbound_trunk_id": outbound_trunk_id if action == "warm_transfer" else None,
         }
         self._run(
@@ -487,6 +497,8 @@ class LiveKitVoiceProvider(VoiceProvider):
             provider_reference=reference,
             safe_payload={
                 "controller_identity_present": True,
+                "participant_identity_present": bool(participant_identity),
+                "human_identity_present": bool(human_identity),
                 "target_present": bool(target),
                 "digits_length": len(digits or ""),
             },
