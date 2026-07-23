@@ -71,6 +71,7 @@ class VoiceProvider:
         target: str | None = None,
         digits: str | None = None,
         participant_identity: str | None = None,
+        human_identity: str | None = None,
         controller_identity: str | None = None,
         outbound_trunk_id: str | None = None,
         recording_reference: str | None = None,
