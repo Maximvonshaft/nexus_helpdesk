@@ -8,9 +8,9 @@ RUN npm run build
 
 # LiveKit Agents and its native media/tokenization dependencies publish manylinux
 # wheels, not musllinux wheels. Keep both the wheel build and runtime on one
-# immutable glibc-based Python authority so the exact dependency graph is
-# reproducible and the production image can actually install the accepted lock.
-FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS python-wheel-builder
+# immutable, current glibc-based Python authority so the exact dependency graph
+# is reproducible and the production image can install the accepted lock.
+FROM docker.io/library/python:3.11.15-slim-trixie@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca AS python-wheel-builder
 WORKDIR /build
 COPY backend/requirements.txt /build/requirements.txt
 RUN apt-get update \
@@ -29,7 +29,7 @@ RUN apt-get update \
         --wheel-dir /wheels \
         --requirement /build/requirements.txt
 
-FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba
+FROM docker.io/library/python:3.11.15-slim-trixie@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
