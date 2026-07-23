@@ -7,10 +7,9 @@ COPY webapp/ ./
 RUN npm run build
 
 # LiveKit Agents and its native media/tokenization dependencies publish manylinux
-# wheels, not musllinux wheels. Keep both the wheel build and runtime on one
-# immutable, current glibc-based Python authority so the exact dependency graph
-# is reproducible and the production image can install the accepted lock.
-FROM docker.io/library/python:3.11.15-slim-trixie@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca AS python-wheel-builder
+# wheels. Build them once on the same glibc generation as the final distroless
+# runtime, then install from the closed wheel set without carrying compilers.
+FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS python-wheel-builder
 WORKDIR /build
 COPY backend/requirements.txt /build/requirements.txt
 RUN apt-get update \
@@ -29,44 +28,7 @@ RUN apt-get update \
         --wheel-dir /wheels \
         --requirement /build/requirements.txt
 
-FROM docker.io/library/python:3.11.15-slim-trixie@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca
-
-ARG GIT_SHA=unknown
-ARG BUILD_TIME=unknown
-ARG IMAGE_TAG=nexusdesk/helpdesk:server
-ARG APP_VERSION=server
-ARG FRONTEND_BUILD_SHA=unknown
-
-LABEL org.opencontainers.image.revision=${GIT_SHA}
-LABEL org.opencontainers.image.created=${BUILD_TIME}
-LABEL org.opencontainers.image.version=${APP_VERSION}
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=180 \
-    GIT_SHA=${GIT_SHA} \
-    BUILD_TIME=${BUILD_TIME} \
-    IMAGE_TAG=${IMAGE_TAG} \
-    APP_VERSION=${APP_VERSION} \
-    FRONTEND_BUILD_SHA=${FRONTEND_BUILD_SHA}
-
-WORKDIR /app
-
-# Security updates are performed by reviewing and advancing the immutable base
-# digest. The build itself must not mutate package resolution with an upgrade.
-# Install only repository-built wheels; compilers, Cargo and development headers
-# remain in the discarded wheel-builder stage. The bounded native runtime
-# libraries below are required by accepted media wheels and contain no compiler.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libgcc-s1 \
-        libgomp1 \
-        libstdc++6 \
-    && rm -rf /var/lib/apt/lists/*
-
+FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS python-runtime-builder
 COPY backend/requirements.txt /tmp/requirements.txt
 COPY --from=python-wheel-builder /wheels /wheels
 RUN python -m pip install \
@@ -81,37 +43,55 @@ RUN python -m pip install \
         pip \
     && rm -rf /wheels /tmp/requirements.txt /root/.cache
 
-# Keep the runtime image deterministic. Do not COPY the whole repository because
-# that can bake local caches, VCS metadata, env files, uploads, or secrets into
-# the image when .dockerignore drifts.
-COPY backend/ /app/backend/
-COPY scripts/ /app/scripts/
-COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
-COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
-
-# Export the bounded public widget beside the SPA, create only required runtime
-# directories, then drop permanently to a non-login, non-root identity.
+# Assemble the complete immutable application tree before entering the shell-less
+# runtime stage. Empty writable mount points are created here and owned by the
+# fixed distroless non-root identity (65532).
+FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime-layout
+COPY backend/ /layout/app/backend/
+COPY scripts/ /layout/app/scripts/
+COPY THIRD_PARTY_NOTICES.md /layout/app/THIRD_PARTY_NOTICES.md
+COPY --from=webapp-builder /build/frontend_dist /layout/app/frontend_dist
 RUN mkdir -p \
-        /app/frontend_dist/static/webchat \
-        /app/backend/uploads \
-        /var/run/nexus-prometheus \
-    && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/ \
-    && groupadd --system appgroup \
-    && useradd --system \
-        --gid appgroup \
-        --no-create-home \
-        --home-dir /nonexistent \
-        --shell /usr/sbin/nologin \
-        appuser \
-    && chown -R appuser:appgroup /app /var/run/nexus-prometheus
+        /layout/app/frontend_dist/static/webchat \
+        /layout/app/backend/uploads \
+        /layout/var/run/nexus-prometheus \
+    && cp -r /layout/app/backend/app/static/webchat/. /layout/app/frontend_dist/static/webchat/ \
+    && chown -R 65532:65532 /layout/app /layout/var/run/nexus-prometheus
+
+# Distroless contains no shell, package manager, compiler, login user or unrelated
+# OS utilities. Copy the exact CPython runtime from the compatible official builder
+# and run permanently as the image's non-root identity.
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:8f02d47496256aca25168c508024a60d81af996bbd2d89db4cf5cdf13dff2821
+
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG IMAGE_TAG=nexusdesk/helpdesk:server
+ARG APP_VERSION=server
+ARG FRONTEND_BUILD_SHA=unknown
+
+LABEL org.opencontainers.image.revision=${GIT_SHA}
+LABEL org.opencontainers.image.created=${BUILD_TIME}
+LABEL org.opencontainers.image.version=${APP_VERSION}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/usr/local/bin:/usr/bin \
+    PYTHONPATH=/app/backend \
+    GIT_SHA=${GIT_SHA} \
+    BUILD_TIME=${BUILD_TIME} \
+    IMAGE_TAG=${IMAGE_TAG} \
+    APP_VERSION=${APP_VERSION} \
+    FRONTEND_BUILD_SHA=${FRONTEND_BUILD_SHA}
+
+COPY --from=python-runtime-builder /usr/local/ /usr/local/
+COPY --from=runtime-layout --chown=65532:65532 /layout/ /
 
 WORKDIR /app/backend
-
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()" || exit 1
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()"]
 
-USER appuser
+USER 65532:65532
 
-CMD ["sh", "-c", "gunicorn app.main:app -c /app/backend/gunicorn.conf.py -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-2} -b 0.0.0.0:8080 --timeout ${WEB_TIMEOUT:-60}"]
+CMD ["python", "-m", "gunicorn", "app.main:app", "--config", "/app/backend/gunicorn.conf.py", "-k", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "60"]
