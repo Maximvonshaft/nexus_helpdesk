@@ -17,10 +17,13 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { telephonyApi } from '@/lib/telephonyApi'
-import type { IncomingVoiceSession } from '@/lib/telephonyTypes'
+import {
+  INCOMING_VOICE_CONTEXT_PREFIX,
+  type IncomingVoiceContext,
+  type IncomingVoiceSession,
+} from '@/lib/telephonyTypes'
 
 const INCOMING_QUERY_KEY = ['incomingVoiceOffers'] as const
-export const INCOMING_VOICE_CONTEXT_PREFIX = 'nexus-incoming-voice-context:'
 
 function remainingSeconds(offer: IncomingVoiceSession, now: number) {
   const expiresAt = Date.parse(offer.voice_offer.expires_at)
@@ -28,7 +31,7 @@ function remainingSeconds(offer: IncomingVoiceSession, now: number) {
   return Math.max(0, Math.ceil((expiresAt - now) / 1000))
 }
 
-function safeContext(offer: IncomingVoiceSession) {
+function safeContext(offer: IncomingVoiceSession): IncomingVoiceContext {
   return {
     voice_session_id: offer.voice_session_id,
     conversation_id: offer.conversation_id || null,
