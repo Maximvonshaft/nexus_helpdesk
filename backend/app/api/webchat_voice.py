@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -46,6 +47,24 @@ from .deps import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webchat", tags=["webchat-voice"])
 
+_EMPTY_CREDENTIAL_FIELDS = {
+    "participant_token",
+    "participant_identity",
+    "expires_in_seconds",
+}
+
+
+def _omit_unissued_voice_credentials(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_omit_unissued_voice_credentials(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _omit_unissued_voice_credentials(item)
+        for key, item in value.items()
+        if not (key in _EMPTY_CREDENTIAL_FIELDS and item is None)
+    }
+
 
 def _require_visitor_token(header_token: str | None) -> str:
     if not header_token:
@@ -69,13 +88,15 @@ def create_voice_session(
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
-        return create_public_voice_session(
-            db,
-            conversation_public_id=conversation_id,
-            visitor_token=visitor_token,
-            request=request,
-            locale=payload.locale,
-            recording_consent=payload.recording_consent,
+        return _omit_unissued_voice_credentials(
+            create_public_voice_session(
+                db,
+                conversation_public_id=conversation_id,
+                visitor_token=visitor_token,
+                request=request,
+                locale=payload.locale,
+                recording_consent=payload.recording_consent,
+            )
         )
 
 
@@ -92,11 +113,13 @@ def end_visitor_voice_session(
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
         try:
-            return end_public_voice_session(
-                db,
-                conversation_public_id=conversation_id,
-                voice_session_public_id=voice_session_id,
-                visitor_token=visitor_token,
+            return _omit_unissued_voice_credentials(
+                end_public_voice_session(
+                    db,
+                    conversation_public_id=conversation_id,
+                    voice_session_public_id=voice_session_id,
+                    visitor_token=visitor_token,
+                )
             )
         except VoiceProviderError:
             session = load_voice_session(db, voice_session_id)
@@ -110,7 +133,9 @@ def end_visitor_voice_session(
                     "provider": session.provider,
                 },
             )
-            return serialize_voice_session(db, session=session)
+            return _omit_unissued_voice_credentials(
+                serialize_voice_session(db, session=session)
+            )
 
 
 @router.get("/admin/tickets/{ticket_id}/voice/sessions")
@@ -119,10 +144,12 @@ def list_ticket_voice_sessions(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    return list_admin_voice_sessions(
-        db,
-        ticket_id=ticket_id,
-        current_user=current_user,
+    return _omit_unissued_voice_credentials(
+        list_admin_voice_sessions(
+            db,
+            ticket_id=ticket_id,
+            current_user=current_user,
+        )
     )
 
 
@@ -134,11 +161,13 @@ def list_incoming_voice_sessions(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return list_admin_incoming_voice_sessions(
-            db,
-            current_user=current_user,
-            status_filter=status,
-            limit=limit,
+        return _omit_unissued_voice_credentials(
+            list_admin_incoming_voice_sessions(
+                db,
+                current_user=current_user,
+                status_filter=status,
+                limit=limit,
+            )
         )
 
 
@@ -191,7 +220,7 @@ def accept_voice_session(
             current_user=current_user,
         )
         db.commit()
-        return result
+        return _omit_unissued_voice_credentials(result)
     except HTTPException as exc:
         if (
             exc.status_code == status.HTTP_409_CONFLICT
@@ -221,11 +250,13 @@ def reject_voice_session(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return reject_admin_voice_session(
-            db,
-            voice_session_public_id=voice_session_id,
-            current_user=current_user,
-            reason=payload.reason if payload else None,
+        return _omit_unissued_voice_credentials(
+            reject_admin_voice_session(
+                db,
+                voice_session_public_id=voice_session_id,
+                current_user=current_user,
+                reason=payload.reason if payload else None,
+            )
         )
 
 
@@ -314,10 +345,12 @@ def end_voice_session(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return end_admin_voice_session(
-            db,
-            voice_session_public_id=voice_session_id,
-            current_user=current_user,
+        return _omit_unissued_voice_credentials(
+            end_admin_voice_session(
+                db,
+                voice_session_public_id=voice_session_id,
+                current_user=current_user,
+            )
         )
 
 
