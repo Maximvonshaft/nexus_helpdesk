@@ -80,15 +80,25 @@ export interface VoiceSessionBootstrap {
   ticket_no?: string | null
   ticket_title?: string | null
   visitor_label?: string | null
-  origin?: string | null
-  page_url?: string | null
   accepted_by_user_id?: number | null
   handoff_request_id?: number | null
   voice_offer?: VoiceOfferRead | null
 }
 
-export interface IncomingVoiceSession extends VoiceSessionBootstrap {
+export interface IncomingVoiceSession {
+  ok: boolean
+  voice_session_id: string
+  status: string
+  provider: string
+  media_plane: 'livekit'
   voice_offer: VoiceOfferRead
+  ticket_id?: number | null
+  ticket_no?: string | null
+  ticket_title?: string | null
+  conversation_id?: string | null
+  visitor_label?: string | null
+  direction: string
+  mode: string
   started_at?: string | null
   ringing_at?: string | null
   recording_status?: string | null
@@ -106,8 +116,6 @@ export interface IncomingVoiceContext {
   ticket_no: string | null
   ticket_title: string | null
   visitor_label: string | null
-  origin: string | null
-  page_url: string | null
 }
 
 export type VoiceCommandStatus =
