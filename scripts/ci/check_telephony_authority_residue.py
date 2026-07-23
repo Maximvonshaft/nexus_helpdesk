@@ -18,6 +18,8 @@ RETIRED_PATHS = (
 REQUIRED_PATHS = (
     "backend/app/api/telephony.py",
     "backend/app/api/webchat_voice.py",
+    "backend/app/livekit_agent_config.py",
+    "backend/app/livekit_agent_worker.py",
     "backend/app/services/telephony_configuration_service.py",
     "backend/app/services/telephony_event_service.py",
     "backend/app/services/telephony_projection_service.py",
@@ -31,6 +33,9 @@ REQUIRED_PATHS = (
     "backend/app/services/agent_routing_service.py",
     "backend/app/services/agent_availability_service.py",
     "backend/app/services/agent_confirmation_service.py",
+    "backend/tests/test_livekit_agent_worker.py",
+    "deploy/docker-compose.controlled.yml",
+    "docs/runbooks/canonical-livekit-telephony.md",
     "webapp/src/features/webcall/WebCallPage.tsx",
     "webapp/src/features/channels/TelephonyConfigurationPanel.tsx",
 )
@@ -58,6 +63,7 @@ FORBIDDEN_MARKERS = (
     "canonical_telephony_finalizer",
     "telephony_payload",
     "human_firstfalse",
+    "/proc/1/cmdline",
 )
 
 SCAN_ROOTS = (
@@ -83,6 +89,24 @@ TEXT_SUFFIXES = {
     ".template",
     ".example",
 }
+
+
+def _require_marker(findings: list[str], path: str, marker: str) -> None:
+    source_path = ROOT / path
+    if not source_path.is_file():
+        return
+    source = source_path.read_text(encoding="utf-8")
+    if marker not in source:
+        findings.append(f"canonical telephony marker missing {marker!r}: {path}")
+
+
+def _forbid_marker(findings: list[str], path: str, marker: str) -> None:
+    source_path = ROOT / path
+    if not source_path.is_file():
+        return
+    source = source_path.read_text(encoding="utf-8")
+    if marker in source:
+        findings.append(f"parallel telephony authority marker {marker!r}: {path}")
 
 
 def main() -> int:
@@ -119,6 +143,23 @@ def main() -> int:
                     "retired telephony marker "
                     f"{marker!r}: {path.relative_to(ROOT)}"
                 )
+
+    worker_path = "backend/app/livekit_agent_worker.py"
+    compose_path = "deploy/docker-compose.controlled.yml"
+    requirements_path = "backend/requirements.txt"
+    _require_marker(findings, worker_path, '"/api/telephony/internal/agent-turn"')
+    _require_marker(findings, worker_path, 'AgentServer(host="0.0.0.0", port=8081)')
+    _require_marker(findings, worker_path, 'event_type="controller.heartbeat"')
+    _require_marker(findings, worker_path, 'publish_dtmf')
+    _forbid_marker(findings, worker_path, "livekit.plugins.openai")
+    _forbid_marker(findings, worker_path, "livekit.plugins.anthropic")
+    _forbid_marker(findings, worker_path, "ProviderRuntimeRouter")
+    _require_marker(findings, compose_path, "livekit-agent-controlled:")
+    _require_marker(findings, compose_path, "- telephony")
+    _require_marker(findings, compose_path, "app.livekit_agent_worker")
+    _require_marker(findings, compose_path, "http://127.0.0.1:8081/")
+    _require_marker(findings, requirements_path, "livekit-agents==1.6.6")
+
     if findings:
         print("\n".join(findings))
         return 1
