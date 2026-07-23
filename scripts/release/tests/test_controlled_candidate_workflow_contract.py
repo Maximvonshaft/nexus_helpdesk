@@ -26,6 +26,7 @@ HELPERS = "\n".join(
         "scripts/release/finalize_controlled_candidate.sh",
         "scripts/release/run_controlled_rc_gate.sh",
         "scripts/release/run_controlled_recovery_gate.sh",
+        "scripts/release/require_exact_current_main.sh",
         "scripts/release/build_controlled_candidate_manifest.py",
         "scripts/release/capture_controlled_image_assurance_failure.py",
         "scripts/deploy/validate_controlled_server_preflight.py",
@@ -104,6 +105,30 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             WORKFLOW.index("Upload bounded image-assurance failure evidence"),
             WORKFLOW.index("Publish and pull back the assured binary"),
         )
+
+    def test_irreversible_steps_recheck_exact_current_main(self) -> None:
+        guard = "bash scripts/release/require_exact_current_main.sh"
+        self.assertEqual(WORKFLOW.count(guard), 2)
+        publish_guard = WORKFLOW.index(
+            "Reconfirm exact current main before registry publication"
+        )
+        publish = WORKFLOW.index("Publish and pull back the assured binary")
+        attest_guard = WORKFLOW.index(
+            "Reconfirm exact current main before provenance attestation"
+        )
+        login = WORKFLOW.index("Authenticate GHCR for registry attestation")
+        attest = WORKFLOW.index("Attest exact registry digest")
+        self.assertLess(publish_guard, publish)
+        self.assertLess(attest_guard, login)
+        self.assertLess(login, attest)
+        for marker in (
+            ': "${SOURCE_SHA:?SOURCE_SHA required}"',
+            'git fetch --no-tags origin main',
+            'git rev-parse origin/main',
+            'git diff --quiet',
+            'git diff --cached --quiet',
+        ):
+            self.assertIn(marker, HELPERS)
 
     def test_same_binary_recovery_and_provenance_are_bound(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
