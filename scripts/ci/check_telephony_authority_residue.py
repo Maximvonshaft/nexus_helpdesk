@@ -50,6 +50,9 @@ FORBIDDEN_MARKERS = (
     "LIVE_VOICE_UPSTREAM_",
     "WEBCALL_AI_",
     "WEBCHAT_VOICE_ENABLED",
+    "NEXUS_VOICE_TRANSFER_LLM_MODEL",
+    "WarmTransferTask",
+    "livekit.agents.beta",
     "nexus_media_edge",
     "provider_adapter_pending",
     "not_executed",
@@ -70,10 +73,15 @@ FORBIDDEN_MARKERS = (
 )
 
 SCAN_ROOTS = (
+    ".github/workflows",
     "backend/app",
     "backend/scripts",
     "backend/.env.example",
     "deploy",
+    "docs/runbooks",
+    "docs/webcall-architecture.md",
+    "docs/webchat-voice-readiness-audit.md",
+    "docs/webchat-voice-runtime.md",
     "webapp/src",
 )
 
@@ -154,6 +162,9 @@ def main() -> int:
     _require_marker(findings, worker_path, 'AgentServer(host="127.0.0.1", port=8081)')
     _require_marker(findings, worker_path, 'event_type="controller.heartbeat"')
     _require_marker(findings, worker_path, "publish_dtmf")
+    _require_marker(findings, worker_path, '"warm_transfer_complete"')
+    _require_marker(findings, worker_path, '"warm_transfer_cancel"')
+    _forbid_marker(findings, worker_path, "inference.LLM")
     _forbid_marker(findings, worker_path, "livekit.plugins.openai")
     _forbid_marker(findings, worker_path, "livekit.plugins.anthropic")
     _forbid_marker(findings, worker_path, "ProviderRuntimeRouter")
@@ -161,6 +172,7 @@ def main() -> int:
     _require_marker(findings, compose_path, "- telephony")
     _require_marker(findings, compose_path, "app.livekit_agent_worker")
     _require_marker(findings, compose_path, "http://127.0.0.1:8081/")
+    _forbid_marker(findings, compose_path, "NEXUS_VOICE_TRANSFER_LLM_MODEL")
     _require_marker(findings, requirements_path, "livekit-agents==1.6.6")
 
     if findings:
