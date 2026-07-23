@@ -13,13 +13,14 @@ def _controlled_env(monkeypatch):
     monkeypatch.setenv("ENABLE_OUTBOUND_DISPATCH", "false")
     monkeypatch.setenv("OUTBOUND_PROVIDER", "disabled")
     monkeypatch.setenv("WEBCHAT_AI_ENABLED", "false")
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_LIVE_AI_VOICE_ENABLED", "false")
     monkeypatch.setenv("OPERATIONS_DISPATCH_MODE", "disabled")
 
 
-def test_controlled_profile_is_ready_only_when_every_write_path_is_fail_closed(monkeypatch):
+def test_controlled_profile_is_ready_only_when_every_write_path_is_fail_closed(
+    monkeypatch,
+):
     _controlled_env(monkeypatch)
 
     result = readiness._configuration_snapshot("controlled")
@@ -32,7 +33,10 @@ def test_controlled_profile_is_ready_only_when_every_write_path_is_fail_closed(m
         "kill_switch": True,
         "canary_percent": 0,
     }
-    assert result["outbound"] == {"enabled": False, "provider": "disabled"}
+    assert result["outbound"] == {
+        "enabled": False,
+        "provider": "disabled",
+    }
     assert result["contains_secrets"] is False
 
 
@@ -71,7 +75,9 @@ def test_provider_canary_profile_allows_only_bounded_provider_traffic(monkeypatc
     assert "canary_percent_outside_approved_range" in result["reason_codes"]
 
 
-def test_full_profile_never_grants_production_authority(monkeypatch):
+def test_full_profile_grants_authority_only_after_every_collector_passes(
+    monkeypatch,
+):
     monkeypatch.setattr(
         readiness,
         "_identity_snapshot",
@@ -85,7 +91,34 @@ def test_full_profile_never_grants_production_authority(monkeypatch):
     monkeypatch.setattr(
         readiness,
         "_configuration_snapshot",
-        lambda profile: {"status": "ready", "reason_codes": []},
+        lambda profile: {
+            "status": "ready",
+            "reason_codes": [],
+            "webchat_ai_enabled": False,
+            "voice_enabled": False,
+            "outbound": {"enabled": False, "provider": "disabled"},
+            "operations_mode": "disabled",
+        },
+    )
+    monkeypatch.setattr(
+        readiness,
+        "_telephony_snapshot",
+        lambda db: {
+            "status": "ready",
+            "enabled": False,
+            "reason_codes": [],
+        },
+    )
+    monkeypatch.setattr(
+        readiness,
+        "_activation_evidence_snapshot",
+        lambda profile, configuration: {
+            "status": "ready",
+            "reason_codes": [],
+            "references": {
+                "production_e2e_evidence_url": "https://evidence.example/full",
+            },
+        },
     )
     monkeypatch.setattr(
         readiness,
@@ -105,11 +138,57 @@ def test_full_profile_never_grants_production_authority(monkeypatch):
 
     result = readiness.evaluate_release_readiness(object(), profile="full")
 
+    assert result["schema"] == "nexus.release-readiness.v2"
     assert result["status"] == "ready"
     assert result["reason_codes"] == []
-    assert result["production_authorized"] is False
-    assert result["provider_enablement_authorized"] is False
+    assert result["production_authorized"] is True
+    assert result["provider_enablement_authorized"] is True
+    assert result["webchat_ai_enablement_authorized"] is False
+    assert result["voice_enablement_authorized"] is False
     assert result["outbound_enablement_authorized"] is False
+    assert result["operations_enablement_authorized"] is False
+
+
+def test_full_profile_requires_https_activation_evidence(monkeypatch):
+    for key in (
+        "PRODUCTION_E2E_EVIDENCE_URL",
+        "WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL",
+        "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL",
+        "OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL",
+        "OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    result = readiness._activation_evidence_snapshot(
+        "full",
+        {
+            "webchat_ai_enabled": True,
+            "voice_enabled": True,
+            "outbound": {"enabled": True, "provider": "smtp"},
+            "operations_mode": "enabled",
+        },
+    )
+
+    assert result["status"] == "not_ready"
+    assert len(result["reason_codes"]) == 5
+    assert all(
+        item.startswith("activation_evidence_missing:")
+        for item in result["reason_codes"]
+    )
+
+    monkeypatch.setenv("PRODUCTION_E2E_EVIDENCE_URL", "http://unsafe.example")
+    result = readiness._activation_evidence_snapshot(
+        "full",
+        {
+            "webchat_ai_enabled": False,
+            "voice_enabled": False,
+            "outbound": {"enabled": False, "provider": "disabled"},
+            "operations_mode": "disabled",
+        },
+    )
+    assert result["reason_codes"] == [
+        "activation_evidence_invalid:production_e2e_evidence_url"
+    ]
 
 
 def test_collector_failures_are_namespaced_and_deduplicated(monkeypatch):
@@ -121,17 +200,40 @@ def test_collector_failures_are_namespaced_and_deduplicated(monkeypatch):
     monkeypatch.setattr(
         readiness,
         "_migration_snapshot",
-        lambda db: {"status": "not_ready", "reason_codes": ["migration_head_mismatch"]},
+        lambda db: {
+            "status": "not_ready",
+            "reason_codes": ["migration_head_mismatch"],
+        },
     )
     monkeypatch.setattr(
         readiness,
         "_configuration_snapshot",
-        lambda profile: {"status": "not_ready", "reason_codes": ["controlled_outbound_enabled"]},
+        lambda profile: {
+            "status": "not_ready",
+            "reason_codes": ["controlled_outbound_enabled"],
+            "webchat_ai_enabled": False,
+            "voice_enabled": False,
+            "outbound": {"enabled": False, "provider": "disabled"},
+            "operations_mode": "disabled",
+        },
+    )
+    monkeypatch.setattr(
+        readiness,
+        "_telephony_snapshot",
+        lambda db: {"status": "ready", "reason_codes": [], "enabled": False},
+    )
+    monkeypatch.setattr(
+        readiness,
+        "_activation_evidence_snapshot",
+        lambda profile, configuration: {"status": "ready", "reason_codes": []},
     )
     monkeypatch.setattr(
         readiness,
         "collect_queue_health",
-        lambda db: {"status": "not_ready", "reason_codes": ["outbound_stale_processing"]},
+        lambda db: {
+            "status": "not_ready",
+            "reason_codes": ["outbound_stale_processing"],
+        },
     )
     monkeypatch.setattr(
         readiness,
@@ -143,6 +245,7 @@ def test_collector_failures_are_namespaced_and_deduplicated(monkeypatch):
     result = readiness.evaluate_release_readiness(object(), profile="controlled")
 
     assert result["status"] == "not_ready"
+    assert result["production_authorized"] is False
     assert result["reason_codes"] == sorted(
         {
             "identity:source_sha_invalid",
