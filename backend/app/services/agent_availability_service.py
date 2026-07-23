@@ -261,7 +261,9 @@ def _wait_estimate(
     median_seconds = max(10, int(statistics.median(samples)))
     lower_seconds = max(10, _percentile(samples, 0.25))
     upper_seconds = max(median_seconds, _percentile(samples, 0.75))
-    confidence = "high" if len(samples) >= 30 else "medium" if len(samples) >= 10 else "low"
+    confidence = (
+        "high" if len(samples) >= 30 else "medium" if len(samples) >= 10 else "low"
+    )
     return {
         "estimated_wait_seconds": median_seconds * waves,
         "estimated_wait_range_seconds": {
@@ -325,10 +327,13 @@ def availability_summary(
                 reserved_voice_offer_count(db, user_id=user.id),
             )
 
-    requires_voice = _conversation_requires_voice(
-        db,
-        conversation_id=conversation_id,
-        request_row=request_row,
+    requires_voice = (
+        str(channel_key or "").strip().lower() == "voice"
+        or _conversation_requires_voice(
+            db,
+            conversation_id=conversation_id,
+            request_row=request_row,
+        )
     )
     queue_count = _scoped_queue_count(
         db,
