@@ -62,7 +62,12 @@ def test_canonical_app_worker_topology_exists_in_one_file_only():
     assert "postgres-controlled" not in controlled
     assert "postgres-controlled" in local_db
     assert "migrate-controlled" in local_db
-    assert local_db["migrate-controlled"]["depends_on"]["postgres-controlled"]["condition"] == "service_healthy"
+    assert (
+        local_db["migrate-controlled"]["depends_on"]["postgres-controlled"][
+            "condition"
+        ]
+        == "service_healthy"
+    )
 
 
 def test_external_and_local_controlled_envs_use_distinct_service_identities():
@@ -108,6 +113,14 @@ def test_local_postgres_overlay_bootstraps_only_database_authority():
     assert "DROP ROLE" not in bootstrap
 
 
+def _secret_holders(services: dict[str, dict], key: str) -> set[str]:
+    return {
+        service_name
+        for service_name, service in services.items()
+        if key in (service.get("environment") or {})
+    }
+
+
 def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_scoped():
     document = _compose(CONTROLLED)
     services = document["services"]
@@ -129,30 +142,57 @@ def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_sco
         assert env[key] == value
     assert "WEBCHAT_VOICE_ENABLED" not in env
 
-    app_environment = services["app-controlled"]["environment"]
-    assert "RUNTIME_CONTRACT_SIGNING_SECRET" in app_environment
-    assert "SECRET_KEY" in app_environment
-
-    non_http_services = {
-        name: service
-        for name, service in services.items()
-        if name != "app-controlled"
+    expected_secret_holders = {
+        "SECRET_KEY": {"app-controlled"},
+        "RUNTIME_CONTRACT_SIGNING_SECRET": {
+            "app-controlled",
+            "worker-webchat-ai-controlled",
+        },
+        "TELEPHONY_CONTROL_SECRET": {
+            "app-controlled",
+            "worker-background-controlled",
+        },
+        "LIVEKIT_API_KEY": {
+            "app-controlled",
+            "livekit-agent-controlled",
+            "worker-background-controlled",
+        },
+        "LIVEKIT_API_SECRET": {
+            "app-controlled",
+            "livekit-agent-controlled",
+            "worker-background-controlled",
+        },
+        "LIVEKIT_API_KEY_FILE": {
+            "app-controlled",
+            "livekit-agent-controlled",
+            "worker-background-controlled",
+        },
+        "LIVEKIT_API_SECRET_FILE": {
+            "app-controlled",
+            "livekit-agent-controlled",
+            "worker-background-controlled",
+        },
+        "LIVEKIT_AGENT_SHARED_SECRET": {
+            "app-controlled",
+            "livekit-agent-controlled",
+        },
+        "LIVEKIT_AGENT_SHARED_SECRET_FILE": {
+            "app-controlled",
+            "livekit-agent-controlled",
+        },
+        "METRICS_TOKEN": {"app-controlled"},
     }
-    for service_name, service in non_http_services.items():
-        environment = service.get("environment") or {}
-        assert "SECRET_KEY" not in environment, service_name
-        assert "RUNTIME_CONTRACT_SIGNING_SECRET" not in environment, service_name
-        assert "METRICS_TOKEN" not in environment, service_name
+    for secret_name, expected_holders in expected_secret_holders.items():
+        assert _secret_holders(services, secret_name) == expected_holders, secret_name
 
     for service_name, service in services.items():
         assert "env_file" not in service, service_name
         command = service.get("command")
         if isinstance(command, list):
-            assert "all" not in (
-                command[command.index("--queue") + 1 : command.index("--queue") + 2]
-                if "--queue" in command
-                else []
-            ), service_name
+            assert not {"sh", "bash", "/bin/sh", "/bin/bash"}.intersection(command)
+            if "--queue" in command:
+                queue_index = command.index("--queue")
+                assert command[queue_index + 1] != "all", service_name
 
     raw = _read(CONTROLLED).lower()
     for forbidden in (
