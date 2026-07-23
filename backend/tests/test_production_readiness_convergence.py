@@ -53,5 +53,8 @@ def test_production_activation_overlay_requires_evidence() -> None:
     )
     assert "PRODUCTION_PROFILE=full" in env
     assert "PRODUCTION_E2E_EVIDENCE_URL=https://" in env
-    assert "PRODUCTION_E2E_EVIDENCE_URL" in compose
+    assert (
+        "PRODUCTION_E2E_EVIDENCE_URL: "
+        "${PRODUCTION_E2E_EVIDENCE_URL:?set full production E2E evidence URL}"
+    ) in compose
     assert "WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL" in compose
