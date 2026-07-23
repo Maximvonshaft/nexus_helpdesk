@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+import yaml
+
 MAX_FILE_BYTES = 2 * 1024 * 1024
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -51,7 +53,8 @@ SAFE_CONTROLS = {
     "WEBCHAT_AI_ENABLED": "false",
     "WEBCHAT_AI_AUTO_REPLY_MODE": "off",
     "WEBCHAT_AI_RECONCILER_ENABLED": "false",
-    "WEBCHAT_VOICE_ENABLED": "false",
+    "WEBCHAT_HUMAN_CALL_ENABLED": "false",
+    "WEBCHAT_LIVE_AI_VOICE_ENABLED": "false",
     "WEBCHAT_WS_ENABLED": "false",
     "WEBCHAT_WS_PUBLIC_ENABLED": "false",
     "WEBCHAT_WS_ADMIN_ENABLED": "false",
@@ -96,12 +99,78 @@ FORBIDDEN_DISABLED_CAPABILITY_KEYS = {
     "NEXUS_RUNTIME_SECRETS_HOST_PATH",
     "AI_RUNTIME_TOKEN_HOST_PATH",
     "LIVE_VOICE_TOKEN_HOST_PATH",
-    "RUNTIME_CONTRACT_SIGNING_SECRET",
     "PRIVATE_AI_RUNTIME_TOKEN_FILE",
     "WHATSAPP_SIDECAR_TOKEN",
     "WHATSAPP_CONNECTOR_HMAC_SECRET",
     "KNOWLEDGE_EMBEDDING_API_KEY",
     "KNOWLEDGE_EMBEDDING_API_KEY_FILE",
+}
+
+_SENSITIVE_COMPOSE_KEYS = {
+    "SECRET_KEY",
+    "RUNTIME_CONTRACT_SIGNING_SECRET",
+    "METRICS_TOKEN",
+    "ALLOWED_ORIGINS",
+    "WEBCHAT_ALLOWED_ORIGINS",
+    "TELEPHONY_CONTROL_SECRET",
+    "LIVEKIT_API_KEY",
+    "LIVEKIT_API_SECRET",
+    "LIVEKIT_API_KEY_FILE",
+    "LIVEKIT_API_SECRET_FILE",
+    "LIVEKIT_AGENT_SHARED_SECRET",
+    "LIVEKIT_AGENT_SHARED_SECRET_FILE",
+}
+
+_SERVICE_SECRET_ALLOWLIST = {
+    "migrate-controlled": set(),
+    "app-controlled": {
+        "SECRET_KEY",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
+        "METRICS_TOKEN",
+        "ALLOWED_ORIGINS",
+        "WEBCHAT_ALLOWED_ORIGINS",
+        "TELEPHONY_CONTROL_SECRET",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_API_KEY_FILE",
+        "LIVEKIT_API_SECRET_FILE",
+        "LIVEKIT_AGENT_SHARED_SECRET",
+        "LIVEKIT_AGENT_SHARED_SECRET_FILE",
+    },
+    "livekit-agent-controlled": {
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_API_KEY_FILE",
+        "LIVEKIT_API_SECRET_FILE",
+        "LIVEKIT_AGENT_SHARED_SECRET",
+        "LIVEKIT_AGENT_SHARED_SECRET_FILE",
+    },
+    "worker-outbound-controlled": set(),
+    "worker-background-controlled": {
+        "TELEPHONY_CONTROL_SECRET",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_API_KEY_FILE",
+        "LIVEKIT_API_SECRET_FILE",
+    },
+    "worker-webchat-ai-controlled": {"RUNTIME_CONTRACT_SIGNING_SECRET"},
+    "worker-handoff-snapshot-controlled": set(),
+}
+
+_SERVICE_DATABASE_KEYS = {
+    "migrate-controlled": "DATABASE_URL_MIGRATION",
+    "app-controlled": "DATABASE_URL_APP",
+    "worker-outbound-controlled": "DATABASE_URL_OUTBOUND",
+    "worker-background-controlled": "DATABASE_URL_BACKGROUND",
+    "worker-webchat-ai-controlled": "DATABASE_URL_WEBCHAT_AI",
+    "worker-handoff-snapshot-controlled": "DATABASE_URL_HANDOFF",
+}
+
+_SERVICE_QUEUE_KEYS = {
+    "worker-outbound-controlled": "outbound",
+    "worker-background-controlled": "background",
+    "worker-webchat-ai-controlled": "webchat-ai",
+    "worker-handoff-snapshot-controlled": "handoff-snapshot",
 }
 
 
@@ -148,16 +217,88 @@ def _parse_env(path: Path) -> dict[str, str]:
     return values
 
 
-def _validate_compose(path: Path) -> None:
+def _load_compose(path: Path) -> dict:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_FILE_BYTES:
         raise PreflightError("compose_file_invalid")
-    text = path.read_text(encoding="utf-8")
-    if re.search(r"(?m)^\s*build\s*:", text):
-        raise PreflightError("compose_build_forbidden")
-    if re.search(r"(?m)^\s*env_file\s*:", text):
-        raise PreflightError("compose_shared_env_file_forbidden")
-    if "${CONTROLLED_IMAGE:?" not in text:
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise PreflightError("compose_yaml_invalid") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("services"), dict):
+        raise PreflightError("compose_services_invalid")
+    return document
+
+
+def _command_vector(service_name: str, service: dict) -> list[str]:
+    command = service.get("command")
+    if not isinstance(command, list) or not command:
+        raise PreflightError(f"compose_exec_vector_required:{service_name}")
+    rendered = [str(item) for item in command]
+    lowered = " ".join(rendered).lower()
+    if "/bin/sh" in lowered or "sh -c" in lowered or "bash -c" in lowered:
+        raise PreflightError(f"compose_shell_command_forbidden:{service_name}")
+    return rendered
+
+
+def _validate_compose(path: Path) -> None:
+    document = _load_compose(path)
+    services: dict[str, dict] = document["services"]
+    required_services = set(_SERVICE_SECRET_ALLOWLIST)
+    missing = sorted(required_services - set(services))
+    if missing:
+        raise PreflightError(f"compose_service_missing:{','.join(missing)}")
+
+    for service_name, raw_service in services.items():
+        if not isinstance(raw_service, dict):
+            raise PreflightError(f"compose_service_invalid:{service_name}")
+        if "build" in raw_service:
+            raise PreflightError(f"compose_build_forbidden:{service_name}")
+        if "env_file" in raw_service:
+            raise PreflightError("compose_shared_env_file_forbidden")
+        if raw_service.get("read_only") is not True:
+            raise PreflightError(f"compose_read_only_required:{service_name}")
+        if raw_service.get("cap_drop") != ["ALL"]:
+            raise PreflightError(f"compose_cap_drop_required:{service_name}")
+        if "no-new-privileges:true" not in (raw_service.get("security_opt") or []):
+            raise PreflightError(f"compose_no_new_privileges_required:{service_name}")
+        if raw_service.get("pids_limit") != 256:
+            raise PreflightError(f"compose_pids_limit_invalid:{service_name}")
+        if not any(
+            str(value).startswith("/tmp:rw,noexec,nosuid")
+            for value in (raw_service.get("tmpfs") or [])
+        ):
+            raise PreflightError(f"compose_tmpfs_hardening_missing:{service_name}")
+
+        environment = raw_service.get("environment") or {}
+        if not isinstance(environment, dict):
+            raise PreflightError(f"compose_environment_invalid:{service_name}")
+        allowed = _SERVICE_SECRET_ALLOWLIST.get(service_name, set())
+        for key in _SENSITIVE_COMPOSE_KEYS:
+            if key in environment and key not in allowed:
+                raise PreflightError(f"compose_secret_not_allowed:{service_name}:{key}")
+        if service_name in _SERVICE_DATABASE_KEYS:
+            value = str(environment.get("DATABASE_URL") or "")
+            expected = _SERVICE_DATABASE_KEYS[service_name]
+            if expected not in value:
+                raise PreflightError(f"compose_database_role_missing:{service_name}:{expected}")
+        elif "DATABASE_URL" in environment:
+            raise PreflightError(f"compose_database_forbidden:{service_name}")
+
+        command = _command_vector(service_name, raw_service)
+        if service_name in _SERVICE_QUEUE_KEYS:
+            expected_queue = _SERVICE_QUEUE_KEYS[service_name]
+            try:
+                queue_index = command.index("--queue")
+                observed_queue = command[queue_index + 1]
+            except (ValueError, IndexError) as exc:
+                raise PreflightError(f"compose_worker_queue_missing:{service_name}") from exc
+            if observed_queue != expected_queue or observed_queue == "all":
+                raise PreflightError(f"compose_worker_queue_invalid:{service_name}:{observed_queue}")
+
+    image_value = str(services["app-controlled"].get("image") or "")
+    if "${CONTROLLED_IMAGE:?" not in image_value:
         raise PreflightError("compose_digest_variable_missing")
+    text = path.read_text(encoding="utf-8")
     for forbidden in (
         "external: true",
         "production_runtime",
@@ -168,29 +309,21 @@ def _validate_compose(path: Path) -> None:
         "/run/secrets",
         "AI_RUNTIME_TOKEN_HOST_PATH",
         "LIVE_VOICE_TOKEN_HOST_PATH",
-        "RUNTIME_CONTRACT_SIGNING_SECRET",
         "PRIVATE_AI_RUNTIME_TOKEN_FILE",
-        "--queue all",
     ):
         if forbidden in text:
             raise PreflightError(f"compose_forbidden:{forbidden}")
-    required_services = (
-        "migrate-controlled:",
-        "app-controlled:",
-        "worker-outbound-controlled:",
-        "worker-background-controlled:",
-        "worker-webchat-ai-controlled:",
-        "worker-handoff-snapshot-controlled:",
-    )
-    for service in required_services:
-        if service not in text:
-            raise PreflightError(f"compose_service_missing:{service[:-1]}")
-    for key in DATABASE_ROLE_KEYS.values():
-        if f"${{{key}:?" not in text:
-            raise PreflightError(f"compose_database_role_missing:{key}")
-    for queue in ("outbound", "background", "webchat-ai", "handoff-snapshot"):
-        if f"--queue {queue}" not in text:
-            raise PreflightError(f"compose_worker_queue_missing:{queue}")
+
+    networks = document.get("networks") or {}
+    if not isinstance(networks, dict) or not networks:
+        raise PreflightError("compose_network_missing")
+    if not any(
+        isinstance(network, dict)
+        and network.get("driver", "bridge") == "bridge"
+        and network.get("internal") is not True
+        for network in networks.values()
+    ):
+        raise PreflightError("compose_external_database_network_unreachable")
 
 
 def _placeholder(value: str) -> bool:
@@ -359,9 +492,8 @@ def validate(
     pull_image = str(candidate.get("registry_pull_image_id") or "")
     if not _SHA256.fullmatch(local_image) or pull_image != local_image:
         raise PreflightError("manifest_binary_identity_invalid")
-    for key in ("config_digest",):
-        if not _SHA256.fullmatch(str(candidate.get(key) or "")):
-            raise PreflightError(f"manifest_candidate_field_invalid:{key}")
+    if not _SHA256.fullmatch(str(candidate.get("config_digest") or "")):
+        raise PreflightError("manifest_candidate_field_invalid:config_digest")
     for key in ("postgres_image_digest", "nginx_image_digest"):
         if not _DIGEST_REFERENCE.fullmatch(str(candidate.get(key) or "")):
             raise PreflightError(f"manifest_candidate_field_invalid:{key}")
@@ -407,6 +539,7 @@ def validate(
     if values.get("READINESS_REQUIRE_RELEASE_METADATA", "").lower() != "true":
         raise PreflightError("readiness_metadata_gate_required")
     _require_secret(values, "SECRET_KEY", minimum_length=32)
+    _require_secret(values, "RUNTIME_CONTRACT_SIGNING_SECRET", minimum_length=32)
     _require_secret(values, "METRICS_TOKEN", minimum_length=32)
 
     for key in FORBIDDEN_DISABLED_CAPABILITY_KEYS:
