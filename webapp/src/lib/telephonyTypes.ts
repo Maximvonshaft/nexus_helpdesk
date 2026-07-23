@@ -1,3 +1,5 @@
+export const INCOMING_VOICE_CONTEXT_PREFIX = 'nexus-incoming-voice-context:'
+
 export type VoiceRoutingMode = 'ai_first' | 'human_first'
 export type VoiceRecordingPolicy = 'disabled' | 'consent_required' | 'always'
 export type VoiceTranscriptionPolicy = 'disabled' | 'consent_required' | 'always'
@@ -95,6 +97,17 @@ export interface IncomingVoiceSession extends VoiceSessionBootstrap {
 
 export interface IncomingVoiceSessionList {
   items: IncomingVoiceSession[]
+}
+
+export interface IncomingVoiceContext {
+  voice_session_id: string
+  conversation_id: string | null
+  ticket_id: number | null
+  ticket_no: string | null
+  ticket_title: string | null
+  visitor_label: string | null
+  origin: string | null
+  page_url: string | null
 }
 
 export type VoiceCommandStatus =
