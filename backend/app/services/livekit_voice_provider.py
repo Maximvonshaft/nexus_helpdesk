@@ -21,7 +21,14 @@ from .voice_provider import (
 
 logger = logging.getLogger(__name__)
 
-_CONTROLLER_ACTIONS = {"hold", "resume", "keypad", "warm_transfer"}
+_CONTROLLER_ACTIONS = {
+    "hold",
+    "resume",
+    "keypad",
+    "warm_transfer",
+    "warm_transfer_complete",
+    "warm_transfer_cancel",
+}
 _DIRECT_ACTIONS = {
     "hangup",
     "mute",
@@ -31,6 +38,11 @@ _DIRECT_ACTIONS = {
     "cold_transfer",
     "recording_start",
     "recording_stop",
+}
+_WARM_TRANSFER_ACTIONS = {
+    "warm_transfer",
+    "warm_transfer_complete",
+    "warm_transfer_cancel",
 }
 
 
@@ -417,7 +429,7 @@ class LiveKitVoiceProvider(VoiceProvider):
             status="succeeded",
             provider_status="recording_started",
             provider_reference=reference,
-            safe_payload={"object_key": filepath},
+            safe_payload={"artifact_pending": True},
         )
 
     def _stop_recording(
@@ -453,7 +465,7 @@ class LiveKitVoiceProvider(VoiceProvider):
     ) -> VoiceProviderActionResult:
         if not controller_identity:
             raise VoiceProviderError("active telephony controller identity is required")
-        if action in {"hold", "resume"}:
+        if action in {"hold", "resume"} | _WARM_TRANSFER_ACTIONS:
             if not participant_identity:
                 raise VoiceProviderError("participant identity is required")
             if not human_identity:
@@ -478,11 +490,17 @@ class LiveKitVoiceProvider(VoiceProvider):
             "schema": "nexus.telephony.command.v1",
             "command_id": reference,
             "action": action,
-            "target": target,
+            "target": target if action == "warm_transfer" else None,
             "digits": digits if action == "keypad" else None,
             "participant_identity": participant_identity,
-            "human_identity": human_identity if action in {"hold", "resume"} else None,
-            "outbound_trunk_id": outbound_trunk_id if action == "warm_transfer" else None,
+            "human_identity": (
+                human_identity
+                if action in {"hold", "resume"} | _WARM_TRANSFER_ACTIONS
+                else None
+            ),
+            "outbound_trunk_id": (
+                outbound_trunk_id if action == "warm_transfer" else None
+            ),
         }
         self._run(
             self._send_command_async(
