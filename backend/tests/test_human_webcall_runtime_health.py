@@ -30,7 +30,6 @@ def db_session():
 @pytest.fixture(autouse=True)
 def voice_env(monkeypatch):
     for key in [
-        "WEBCHAT_VOICE_ENABLED",
         "WEBCHAT_HUMAN_CALL_ENABLED",
         "WEBCHAT_LIVE_AI_VOICE_ENABLED",
         "WEBCHAT_VOICE_PROVIDER",
@@ -42,6 +41,7 @@ def voice_env(monkeypatch):
         "WEBCHAT_VOICE_CONNECT_SRC",
     ]:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webcall")
 
 
 def _session(public_id: str, status: str, expires_delta: timedelta) -> WebchatVoiceSession:
@@ -51,7 +51,7 @@ def _session(public_id: str, status: str, expires_delta: timedelta) -> WebchatVo
         conversation_id=1,
         ticket_id=1,
         provider="mock",
-        provider_room_name=f"webchat_{public_id}",
+        provider_room_name=f"webcall_{public_id}",
         status=status,
         expires_at=now + expires_delta,
         created_at=now,
@@ -85,8 +85,7 @@ def test_human_webcall_runtime_health_reports_stale_counts_and_disabled_verdict(
     assert status["warnings"] == []
 
 
-def test_human_webcall_runtime_health_ready_when_voice_enabled(monkeypatch, db_session):
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
+def test_human_webcall_runtime_health_ready_when_human_calls_enabled(monkeypatch, db_session):
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
 
