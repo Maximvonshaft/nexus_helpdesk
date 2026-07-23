@@ -35,3 +35,11 @@ test('WebCall binds transfer feedback to the canonical Voice Command contract', 
   assert.match(telephonyTypes, /provider_status: string/)
   assert.match(telephonyTypes, /provider_reason\?: string \| null/)
 })
+
+
+test('operator mute is local media state and never targets the customer participant', () => {
+  assert.match(page, /setLocalMicrophoneState/)
+  assert.match(page, /setMicrophoneEnabled\(!\(nextMuted \|\| nextHeld\)\)/)
+  assert.doesNotMatch(page, /recordAction\(next \? 'mute' : 'unmute'\)/)
+  assert.match(page, /recordAction\(next \? 'hold' : 'resume'\)/)
+})
