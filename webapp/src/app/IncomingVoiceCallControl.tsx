@@ -105,7 +105,6 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
       />
       <Dialog
         open
-        disableEscapeKeyDown
         aria-labelledby="incoming-voice-title"
         aria-describedby="incoming-voice-description"
         sx={{
