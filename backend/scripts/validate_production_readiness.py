@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
+from app.livekit_agent_config import load_livekit_agent_worker_config  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 from app.webchat_voice_config import load_webchat_voice_runtime_config  # noqa: E402
@@ -134,6 +135,7 @@ def main() -> int:
             )
 
     voice = None
+    voice_worker = None
     voice_channels = {
         "enabled_channels": 0,
         "inbound_ready_channels": 0,
@@ -154,6 +156,14 @@ def main() -> int:
             warnings.append(
                 "Enabled production telephony requires LIVEKIT_WEBHOOK_ENABLED=true"
             )
+        if voice.live_ai_voice_enabled:
+            try:
+                voice_worker = load_livekit_agent_worker_config()
+            except Exception as exc:
+                warnings.append(
+                    "Enabled Live AI voice requires a complete canonical media worker: "
+                    f"{exc}"
+                )
         try:
             voice_channels = _canonical_voice_channel_readiness(settings.database_url)
         except Exception as exc:
@@ -210,6 +220,20 @@ def main() -> int:
                 voice.livekit_agent_shared_secret
             ),
             "livekit_webhook_enabled": voice.livekit_webhook_enabled,
+            "media_worker": None
+            if voice_worker is None
+            else {
+                "agent_name": voice_worker.agent_name,
+                "internal_api_url_configured": bool(
+                    voice_worker.nexus_internal_api_url
+                ),
+                "stt_model_configured": bool(voice_worker.stt_model),
+                "tts_model_configured": bool(voice_worker.tts_model),
+                "warm_transfer_model_configured": bool(
+                    voice_worker.transfer_llm_model
+                ),
+                "turn_detection": voice_worker.turn_detection,
+            },
             **voice_channels,
         },
         "warnings": warnings,
