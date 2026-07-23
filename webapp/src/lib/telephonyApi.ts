@@ -19,6 +19,8 @@ export interface VoiceCommandRequest {
     | 'remove_participant'
     | 'cold_transfer'
     | 'warm_transfer'
+    | 'warm_transfer_complete'
+    | 'warm_transfer_cancel'
     | 'recording_start'
     | 'recording_stop'
   target?: string | null
