@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
@@ -13,7 +14,11 @@ from app.services.agent_runtime.terminal_reply import customer_visible_fallback
 from app.services.background_job_transaction_boundary import (
     _finalize_dead_webchat_ai_job,
 )
-from app.services.background_jobs import dispatch_pending_webchat_ai_reply_jobs
+from app.services.background_jobs import (
+    WEBCHAT_AI_REPLY_JOB,
+    dispatch_pending_webchat_ai_reply_jobs,
+)
+from app.utils.time import utc_now
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 
 
@@ -61,6 +66,18 @@ def _rows(public_id: str):
     return db, conversation, turn, job
 
 
+def _make_only_job_runnable(db, job: BackgroundJob) -> None:
+    db.query(BackgroundJob).filter(
+        BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB,
+        BackgroundJob.id != job.id,
+        BackgroundJob.status.in_([JobStatus.pending, JobStatus.failed]),
+    ).update(
+        {BackgroundJob.next_run_at: utc_now() + timedelta(days=1)},
+        synchronize_session=False,
+    )
+    job.next_run_at = None
+
+
 def test_terminal_fallback_authority_supports_portuguese():
     body = customer_visible_fallback("pt-BR", "Onde está o meu pacote?")
     assert body == (
@@ -89,7 +106,7 @@ def test_exhausted_webchat_ai_job_commits_one_safe_ticketless_terminal_outcome(
     db, conversation, turn, job = _rows(public_id)
     try:
         job.attempt_count = job.max_attempts - 1
-        job.next_run_at = None
+        _make_only_job_runnable(db, job)
         db.commit()
         processed = dispatch_pending_webchat_ai_reply_jobs(
             db,
