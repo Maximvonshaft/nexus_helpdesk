@@ -49,7 +49,6 @@ def test_worker_configuration_preserves_one_runtime_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ):
     _configure_worker(monkeypatch)
-    monkeypatch.delenv("NEXUS_VOICE_TRANSFER_LLM_MODEL", raising=False)
 
     config = load_livekit_agent_worker_config()
 
@@ -57,7 +56,7 @@ def test_worker_configuration_preserves_one_runtime_boundary(
     assert config.nexus_internal_api_url == "http://app-controlled:8080"
     assert config.stt_model == "deepgram/nova-3"
     assert config.tts_model == "cartesia/sonic-3:test-voice"
-    assert config.transfer_llm_model is None
+    assert not hasattr(config, "transfer_llm_model")
     assert livekit_agent_registration_name() == "nexus-voice-agent"
 
 
@@ -125,6 +124,32 @@ def test_controller_command_protocol_is_exact_and_bounded():
             data=b'{"schema":"nexus.telephony.command.v1","command_id":"x","action":"answer"}',
         )
     ) is None
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["warm_transfer", "warm_transfer_complete", "warm_transfer_cancel"],
+)
+def test_controller_accepts_only_explicit_warm_consultation_phases(action: str):
+    command = parse_controller_command(
+        SimpleNamespace(
+            topic="nexus.telephony.command.v1",
+            data=json.dumps(
+                {
+                    "schema": "nexus.telephony.command.v1",
+                    "command_id": f"vc_{action}",
+                    "action": action,
+                    "participant_identity": "caller_1",
+                    "human_identity": "agent_1",
+                    "target": "+38267000111" if action == "warm_transfer" else None,
+                    "outbound_trunk_id": "trunk_1" if action == "warm_transfer" else None,
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert command is not None
+    assert command["action"] == action
 
 
 @pytest.mark.asyncio
@@ -275,14 +300,19 @@ def test_latest_user_text_reads_only_the_latest_customer_message():
 
 def test_worker_source_has_no_second_business_llm_authority():
     source = (ROOT / "app" / "livekit_agent_worker.py").read_text(encoding="utf-8")
+    config_source = (ROOT / "app" / "livekit_agent_config.py").read_text(encoding="utf-8")
 
     assert '"/api/telephony/internal/agent-turn"' in source
     assert "class NexusVoiceAgent" in source
     assert "async def llm_node" in source
     assert "AgentSession(" in source
-    assert "llm=inference.LLM" not in source.split("class NexusVoiceAgent", 1)[1].split(
-        "class TelephonyController", 1
-    )[0]
+    assert "WarmTransferTask" not in source
+    assert "livekit.agents.beta" not in source
+    assert "inference.LLM" not in source
+    assert "NEXUS_VOICE_TRANSFER_LLM_MODEL" not in source
+    assert "NEXUS_VOICE_TRANSFER_LLM_MODEL" not in config_source
     assert 'AgentServer(host="127.0.0.1", port=8081)' in source
     assert "UpdateSubscriptionsRequest" in source
     assert "BuiltinAudioClip.HOLD_MUSIC" in source
+    assert "warm_transfer_complete" in source
+    assert "warm_transfer_cancel" in source
