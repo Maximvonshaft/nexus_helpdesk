@@ -130,110 +130,91 @@
   var voiceBtn = document.createElement('button');
   voiceBtn.className = 'nd-webchat-voice';
   voiceBtn.type = 'button';
-  voiceBtn.setAttribute('aria-label', liveVoiceLabel);
   voiceBtn.setAttribute('data-visible', liveVoiceMode === 'livekit-room' ? 'true' : 'false');
-  voiceBtn.innerHTML = '<span aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.07 21 3 13.93 3 5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.19 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span><span>' + escapeHtml(liveVoiceLabel) + '</span>';
+  voiceBtn.setAttribute('aria-label', liveVoiceLabel);
+  voiceBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.08.36 2.24.56 3.44.56a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.53 21 3 13.47 3 4.16a1 1 0 0 1 1-1H7.5a1 1 0 0 1 1 1c0 1.2.2 2.36.56 3.44a1 1 0 0 1-.24 1Z"/></svg><span>VOIP<br/>Call</span>';
   var close = document.createElement('button');
   close.className = 'nd-webchat-close';
   close.type = 'button';
-  close.setAttribute('aria-label', closeLabel);
-  close.setAttribute('title', closeLabel);
+  close.setAttribute('aria-label', 'Close');
   header.appendChild(avatar);
   header.appendChild(headerText);
   header.appendChild(voiceBtn);
   header.appendChild(close);
+  panel.appendChild(header);
 
   var voicePanel = document.createElement('div');
   voicePanel.className = 'nd-webchat-voice-panel';
-  voicePanel.innerHTML = ''
-    + '<div class="nd-webchat-voice-row">'
-    + '<div class="nd-webchat-voice-auto">Language is detected automatically.</div>'
-    + '<button class="nd-webchat-voice-start" type="button">Start</button>'
-    + '</div>'
-    + '<div class="nd-webchat-voice-status">Tap Start to open the secure LiveKit call window.</div>'
-    + '<div class="nd-webchat-voice-transcript"></div>'
-    + '<div class="nd-webchat-voice-foot">Voice uses the canonical LiveKit room. Do not share passwords or payment codes.</div>';
+  voicePanel.innerHTML = '<div class="nd-webchat-voice-row"><div class="nd-webchat-voice-auto">Secure LiveKit voice room with server-owned recording and transcript policy.</div><button type="button" class="nd-webchat-voice-start">Start call</button></div><div class="nd-webchat-voice-status">Voice is idle.</div><div class="nd-webchat-voice-transcript"></div><div class="nd-webchat-voice-foot">Microphone access is requested only in the dedicated call window.</div>';
+  panel.appendChild(voicePanel);
+
   var messagesEl = document.createElement('div');
   messagesEl.className = 'nd-webchat-messages';
-  messagesEl.setAttribute('role', 'log');
-  messagesEl.setAttribute('aria-live', 'polite');
+  panel.appendChild(messagesEl);
+  var statusEl = document.createElement('div');
+  statusEl.className = 'nd-webchat-status';
+  panel.appendChild(statusEl);
   var composerWrap = document.createElement('div');
   composerWrap.className = 'nd-webchat-composer-wrap';
-  var formEl = document.createElement('form');
-  formEl.className = 'nd-webchat-form';
-  var attachIcon = document.createElement('span');
-  attachIcon.className = 'nd-webchat-attach';
-  attachIcon.setAttribute('aria-hidden', 'true');
-  attachIcon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.7 5.7L9.2 18.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/></svg>';
+  var form = document.createElement('form');
+  form.className = 'nd-webchat-form';
+  var attach = document.createElement('span');
+  attach.className = 'nd-webchat-attach';
+  attach.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/></svg>';
   var inputEl = document.createElement('input');
   inputEl.className = 'nd-webchat-input';
+  inputEl.type = 'text';
   inputEl.maxLength = 2000;
-  inputEl.placeholder = script.getAttribute('data-input-placeholder') || 'Message';
+  inputEl.placeholder = 'Type your message...';
   inputEl.autocomplete = 'off';
   var sendEl = document.createElement('button');
   sendEl.className = 'nd-webchat-send';
   sendEl.type = 'submit';
-  sendEl.setAttribute('aria-label', script.getAttribute('data-send-label') || 'Send');
-  sendEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 16-8-5 16-3.2-6.2L4 12Z" fill="currentColor"/></svg>';
-  formEl.appendChild(attachIcon);
-  formEl.appendChild(inputEl);
-  formEl.appendChild(sendEl);
-  var securityEl = document.createElement('div');
-  securityEl.className = 'nd-webchat-security';
-  securityEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>' + escapeHtml(securityNote) + '</span>';
-  composerWrap.appendChild(formEl);
-  composerWrap.appendChild(securityEl);
-  var statusEl = document.createElement('div');
-  statusEl.className = 'nd-webchat-status';
-  panel.appendChild(header);
-  panel.appendChild(voicePanel);
-  panel.appendChild(messagesEl);
+  sendEl.setAttribute('aria-label', 'Send');
+  sendEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>';
+  form.appendChild(attach);
+  form.appendChild(inputEl);
+  form.appendChild(sendEl);
+  composerWrap.appendChild(form);
+  var security = document.createElement('div');
+  security.className = 'nd-webchat-security';
+  security.textContent = '🔒 ' + securityNote;
+  composerWrap.appendChild(security);
   panel.appendChild(composerWrap);
-  panel.appendChild(statusEl);
-  document.body.appendChild(panel);
   document.body.appendChild(button);
+  document.body.appendChild(panel);
 
-  setStatus('');
-  if (welcome) appendMessage('agent', welcome);
+  var voiceStart = voicePanel.querySelector('.nd-webchat-voice-start');
 
-  button.addEventListener('click', function () { openPanel(); });
-  close.addEventListener('click', function () { stopLiveVoice('Voice stopped.'); openPanel(false); });
+  button.addEventListener('click', function () { openPanel(true); });
+  close.addEventListener('click', function () { openPanel(false); });
   voiceBtn.addEventListener('click', function () { toggleVoicePanel(); });
-  var voiceStartBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-  if (voiceStartBtn) voiceStartBtn.addEventListener('click', startLiveVoice);
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden' && state.liveVoice) {
-      stopLiveVoice('Voice stopped while the page is hidden.');
-    }
-  });
-  window.addEventListener('pagehide', function () {
-    if (state.liveVoice) stopLiveVoice('Voice stopped.');
-  });
+  voiceStart.addEventListener('click', startLiveVoice);
+  messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
+  document.addEventListener('visibilitychange', function () { if (state.open) scheduleLegacyPoll(); });
   inputEl.addEventListener('compositionstart', function () { state.composing = true; });
   inputEl.addEventListener('compositionend', function () { state.composing = false; });
-  messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
-  formEl.addEventListener('submit', function (event) {
+  inputEl.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && !event.shiftKey && !state.composing) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.addEventListener('submit', function (event) {
     event.preventDefault();
-    if (state.composing || event.isComposing || state.busy) return;
-    var body = inputEl.value.trim();
-    if (!body) return;
+    var body = String(inputEl.value || '').trim();
+    if (!body || state.busy) return;
     sendConversationMessage(body);
   });
 
+  if (welcome) appendMessage('agent', welcome);
   restoreLegacySession();
-  bindPageTriggers();
   exposePublicApi();
-  if (autoOpen) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { openPanel(true); }, { once: true });
-    } else {
-      setTimeout(function () { openPanel(true); }, 0);
-    }
-  }
+  bindPageTriggers();
+  if (autoOpen) setTimeout(function () { openPanel(true); }, 150);
 
   function setStatus(text) {
-    statusEl.textContent = text;
-    panel.setAttribute('data-status', String(text || '').toLowerCase().replace(/\s+/g, '-'));
+    statusEl.textContent = text || '';
   }
 
   function escapeHtml(value) {
@@ -292,17 +273,17 @@
     });
 
     document.addEventListener('submit', function (event) {
-      var form = findClosest(event.target, '[data-webchat-form]');
-      if (!form) return;
+      var pageForm = findClosest(event.target, '[data-webchat-form]');
+      if (!pageForm) return;
       event.preventDefault();
-      var inputSelector = form.getAttribute('data-webchat-input') || 'input,textarea';
-      var source = form.querySelector(inputSelector) || document.querySelector(inputSelector);
+      var inputSelector = pageForm.getAttribute('data-webchat-input') || 'input,textarea';
+      var source = pageForm.querySelector(inputSelector) || document.querySelector(inputSelector);
       var value = source && source.value ? String(source.value).trim() : '';
       if (!value) {
         if (source && source.focus) source.focus();
         return;
       }
-      if (form.getAttribute('data-webchat-submit') === 'prefill') {
+      if (pageForm.getAttribute('data-webchat-submit') === 'prefill') {
         window.NexusDeskWebChat.prefill(value);
       } else {
         window.NexusDeskWebChat.send(value);
@@ -474,15 +455,56 @@
     return encoded;
   }
 
+  function voiceComplianceEvidence(requirement) {
+    if (!requirement || requirement.policy === 'disabled') return null;
+    var prompt = String(requirement.prompt || '').trim();
+    if (!prompt) throw new Error('Voice compliance prompt is unavailable.');
+    var accepted = window.confirm(
+      prompt + '\n\nSelect OK to enable this capability, or Cancel to continue the call without it.'
+    );
+    var decision = accepted
+      ? (requirement.policy === 'notice' ? 'notice_delivered' : 'accepted')
+      : 'declined';
+    return {
+      capability: requirement.capability,
+      policy: requirement.policy,
+      policy_version: requirement.policy_version,
+      prompt_sha256: requirement.prompt_sha256,
+      decision: decision,
+      idempotency_key: [
+        'browser-compliance',
+        state.sessionId,
+        state.legacyConversationId,
+        requirement.capability,
+        requirement.policy_version,
+        String(requirement.prompt_sha256 || '').slice(0, 32)
+      ].join(':').slice(0, 180)
+    };
+  }
+
+  function collectVoiceCompliance(policy) {
+    var evidence = [];
+    ['recording', 'transcript_persistence'].forEach(function (key) {
+      var item = voiceComplianceEvidence(policy && policy[key]);
+      if (item) evidence.push(item);
+    });
+    return evidence;
+  }
+
   function startLiveVoice() {
     if (liveVoiceMode !== 'livekit-room') return;
     toggleVoicePanel(true);
     voiceStatus('Preparing a secure LiveKit room...');
     ensureLegacySession().then(function () {
+      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/voice/policy', {
+        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken }
+      }, 12000);
+    }).then(function (policy) {
+      var evidence = collectVoiceCompliance(policy);
       return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/voice/sessions', {
         method: 'POST',
         headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
-        body: JSON.stringify({ locale: locale || null, recording_consent: false })
+        body: JSON.stringify({ locale: locale || null, compliance_evidence: evidence })
       }, 12000);
     }).then(function (session) {
       if (!session.livekit_url || !session.participant_token) throw new Error('LiveKit voice is unavailable.');
@@ -503,7 +525,6 @@
       voiceStatus('Voice start failed: ' + (err && err.message ? err.message : 'unknown'));
     });
   }
-
 
   function api(path, options, timeoutMs) {
     options = options || {};
