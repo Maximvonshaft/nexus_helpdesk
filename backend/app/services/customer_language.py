@@ -138,6 +138,14 @@ def _detect_latin_language(text: str) -> CustomerLanguageDecision:
                 " hi ",
                 " thanks ",
                 " thank ",
+                " need ",
+                " help ",
+                " human ",
+                " review ",
+                " support ",
+                " agent ",
+                " speak ",
+                " want ",
                 " parcel ",
                 " package ",
                 " shipment ",
@@ -149,7 +157,32 @@ def _detect_latin_language(text: str) -> CustomerLanguageDecision:
         "fr": _score_markers(joined, (" le ", " la ", " les ", " est ", " bonjour ", " colis ", " livraison ", " suivi ")),
         "es": _score_markers(joined, (" el ", " la ", " los ", " está ", " esta ", " hola ", " paquete ", " entrega ", " seguimiento ")),
         "it": _score_markers(joined, (" il ", " lo ", " la ", " ciao ", " pacco ", " consegna ", " tracciamento ")),
-        "pt": _score_markers(joined, (" o ", " a ", " olá ", " ola ", " pacote ", " entrega ", " rastreamento ")),
+        # Single-letter articles such as "a" and "o" are not language evidence:
+        # they occur in English and several other supported languages. Portuguese
+        # must win from language-specific words or diacritics, never from an article.
+        "pt": _score_markers(
+            joined,
+            (
+                " olá ",
+                " ola ",
+                " pacote ",
+                " entrega ",
+                " rastreamento ",
+                " preciso ",
+                " ajuda ",
+                " humano ",
+                " agente ",
+                " por favor ",
+                " obrigado ",
+                " obrigada ",
+                " meu ",
+                " minha ",
+                " não ",
+                " nao ",
+                " quero ",
+                " falar ",
+            ),
+        ),
     }
     best_language, best_score = max(scores.items(), key=lambda item: item[1])
     if best_score > 0:
