@@ -272,8 +272,9 @@ def test_generic_runtime_context_does_not_prefetch_knowledge(db_session):
         language="zh",
     )
 
-    assert context["context_version"] == "nexus.agent_context.v3"
+    assert context["context_version"] == "nexus.agent_context.v4"
     assert context["agent_release_error"] == "agent_deployment_unavailable"
+    assert context["customer_confirmation"] is None
     assert "session_checkpoint" not in context
     assert "knowledge_context" not in context
     assert "locked_facts" not in str(context)

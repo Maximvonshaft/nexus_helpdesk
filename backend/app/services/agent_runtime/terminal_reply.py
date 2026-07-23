@@ -10,4 +10,6 @@ def customer_visible_fallback(language: str | None, body: str | None) -> str:
         return "抱歉，我暂时无法完成这次处理。请稍后重试，或者告诉我是否需要转人工客服。"
     if hint.startswith("de"):
         return "Entschuldigung, ich konnte diese Anfrage gerade nicht abschließen. Bitte versuchen Sie es erneut oder bitten Sie um menschlichen Support."
+    if hint.startswith("pt"):
+        return "Desculpe, não consegui concluir este atendimento agora. Tente novamente ou peça atendimento humano."
     return "Sorry, I could not complete that request right now. Please try again or ask for human support."

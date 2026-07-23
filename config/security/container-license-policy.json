@@ -35,7 +35,8 @@
     "LGPL-2.1-only",
     "LGPL-2.1-or-later",
     "LGPL-3.0-only",
-    "LGPL-3.0-or-later"
+    "LGPL-3.0-or-later",
+    "Other-Proprietary-License"
   ],
   "unknown_action": "review",
   "exceptions": [
@@ -56,6 +57,15 @@
       "owner": "open-source-compliance",
       "expires_on": "2026-09-30",
       "reason": "Exact unmodified component is permitted only with the machine-verified LGPL compliance record and retained notices."
+    },
+    {
+      "purl": "pkg:pypi/livekit-local-inference@0.2.6",
+      "package": "livekit-local-inference",
+      "version": "0.2.6",
+      "license": "Other-Proprietary-License",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "reason": "Exact unmodified LiveKit VAD/EOT model is approved only within LiveKit Agents. Standalone, cross-framework, model-export, or non-LiveKit model-training use is prohibited; retained license notices and exact-version review are mandatory."
     }
   ]
 }

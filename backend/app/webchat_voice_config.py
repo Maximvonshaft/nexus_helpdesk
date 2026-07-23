@@ -10,10 +10,9 @@ LIVEKIT_KEY_ENV = "LIVEKIT_API_" + "KEY"
 LIVEKIT_KEY_FILE_ENV = LIVEKIT_KEY_ENV + "_FILE"
 LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
 LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
-LIVE_VOICE_UPSTREAM_WS_URL_ENV = "LIVE_VOICE_UPSTREAM_WS_URL"
-LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV = "LIVE_VOICE_UPSTREAM_HEALTH_URL"
-LIVE_VOICE_UPSTREAM_TOKEN_ENV = "LIVE_VOICE_UPSTREAM_TOKEN"
-LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV = LIVE_VOICE_UPSTREAM_TOKEN_ENV + "_FILE"
+LIVEKIT_AGENT_SECRET_ENV = "LIVEKIT_AGENT_SHARED_SECRET"
+LIVEKIT_AGENT_SECRET_FILE_ENV = LIVEKIT_AGENT_SECRET_ENV + "_FILE"
+CANONICAL_WEBCALL_PATH = "/webcall"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -21,10 +20,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _parse_csv(raw: str) -> list[str]:
-    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _parse_sources(raw: str) -> list[str]:
@@ -48,7 +43,9 @@ def _secret_value(name: str, file_name: str) -> str | None:
     try:
         return Path(path).read_text(encoding="utf-8").strip() or None
     except OSError as exc:
-        raise RuntimeError(f"{file_name} is configured but cannot be read: {type(exc).__name__}") from exc
+        raise RuntimeError(
+            f"{file_name} is configured but cannot be read: {type(exc).__name__}"
+        ) from exc
 
 
 def _livekit_wss_source(livekit_url: str | None) -> str | None:
@@ -66,65 +63,82 @@ def _livekit_wss_source(livekit_url: str | None) -> str | None:
 class WebchatVoiceRuntimeConfig:
     human_call_enabled: bool
     live_ai_voice_enabled: bool
-    allowed_path_prefixes: tuple[str, ...]
     connect_src: tuple[str, ...]
     provider: str
+    routing_mode: str
     session_ttl_seconds: int
     max_active_per_conversation: int
     rate_limit_window_seconds: int
     rate_limit_max_requests: int
-    recording_enabled: bool
-    transcription_enabled: bool
     livekit_url: str | None
     livekit_api_key: str | None
     livekit_api_secret: str | None
-    live_voice_upstream_ws_url: str | None
-    live_voice_upstream_health_url: str | None
-    live_voice_upstream_token: str | None
+    livekit_agent_name: str | None
+    livekit_agent_shared_secret: str | None
+    livekit_webhook_enabled: bool
 
     @property
     def enabled(self) -> bool:
-        """Compatibility aggregate for shared headers only."""
         return self.human_call_enabled or self.live_ai_voice_enabled
 
 
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
-    legacy_enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
-    human_call_explicit = os.getenv("WEBCHAT_HUMAN_CALL_ENABLED")
-    live_ai_explicit = os.getenv("WEBCHAT_LIVE_AI_VOICE_ENABLED")
-    app_env = os.getenv("APP_ENV", "development").strip().lower()
-    if app_env == "production" and legacy_enabled and human_call_explicit is None and live_ai_explicit is None:
-        raise RuntimeError(
-            "WEBCHAT_VOICE_ENABLED is ambiguous in production; set WEBCHAT_HUMAN_CALL_ENABLED and WEBCHAT_LIVE_AI_VOICE_ENABLED explicitly"
-        )
-    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", legacy_enabled)
-    legacy_live_ai_default = bool(
-        legacy_enabled
-        and os.getenv(LIVE_VOICE_UPSTREAM_WS_URL_ENV)
-        and os.getenv(LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV)
-        and (os.getenv(LIVE_VOICE_UPSTREAM_TOKEN_ENV) or os.getenv(LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV))
+    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", False)
+    live_ai_voice_enabled = _env_bool("WEBCHAT_LIVE_AI_VOICE_ENABLED", False)
+    provider = os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock"
+    read_livekit_credentials = bool(
+        provider == "livekit" and (human_call_enabled or live_ai_voice_enabled)
     )
-    live_ai_voice_enabled = _env_bool("WEBCHAT_LIVE_AI_VOICE_ENABLED", legacy_live_ai_default)
-    provider = (os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock")
-    read_livekit_credentials = bool(human_call_enabled and provider == "livekit")
     config = WebchatVoiceRuntimeConfig(
         human_call_enabled=human_call_enabled,
         live_ai_voice_enabled=live_ai_voice_enabled,
-        allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat,/api/webchat"))),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
         provider=provider,
-        session_ttl_seconds=int(os.getenv("WEBCHAT_VOICE_SESSION_TTL_SECONDS", "900")),
-        max_active_per_conversation=int(os.getenv("WEBCHAT_VOICE_MAX_ACTIVE_PER_CONVERSATION", "1")),
-        rate_limit_window_seconds=int(os.getenv("WEBCHAT_VOICE_RATE_LIMIT_WINDOW_SECONDS", "60")),
-        rate_limit_max_requests=int(os.getenv("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS", "5")),
-        recording_enabled=_env_bool("WEBCHAT_VOICE_RECORDING_ENABLED", False),
-        transcription_enabled=_env_bool("WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", False),
-        livekit_url=_normalize_url(os.getenv(LIVEKIT_URL_ENV)) if read_livekit_credentials else None,
-        livekit_api_key=_secret_value(LIVEKIT_KEY_ENV, LIVEKIT_KEY_FILE_ENV) if read_livekit_credentials else None,
-        livekit_api_secret=_secret_value(LIVEKIT_SECRET_ENV, LIVEKIT_SECRET_FILE_ENV) if read_livekit_credentials else None,
-        live_voice_upstream_ws_url=_normalize_ws_url(os.getenv(LIVE_VOICE_UPSTREAM_WS_URL_ENV)),
-        live_voice_upstream_health_url=_normalize_url(os.getenv(LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV)),
-        live_voice_upstream_token=_secret_value(LIVE_VOICE_UPSTREAM_TOKEN_ENV, LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV),
+        routing_mode=(
+            os.getenv("WEBCHAT_VOICE_ROUTING_MODE", "human_first").strip().lower()
+            or "human_first"
+        ),
+        session_ttl_seconds=int(
+            os.getenv("WEBCHAT_VOICE_SESSION_TTL_SECONDS", "900")
+        ),
+        max_active_per_conversation=int(
+            os.getenv("WEBCHAT_VOICE_MAX_ACTIVE_PER_CONVERSATION", "1")
+        ),
+        rate_limit_window_seconds=int(
+            os.getenv("WEBCHAT_VOICE_RATE_LIMIT_WINDOW_SECONDS", "60")
+        ),
+        rate_limit_max_requests=int(
+            os.getenv("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS", "5")
+        ),
+        livekit_url=(
+            _normalize_url(os.getenv(LIVEKIT_URL_ENV))
+            if read_livekit_credentials
+            else None
+        ),
+        livekit_api_key=(
+            _secret_value(LIVEKIT_KEY_ENV, LIVEKIT_KEY_FILE_ENV)
+            if read_livekit_credentials
+            else None
+        ),
+        livekit_api_secret=(
+            _secret_value(LIVEKIT_SECRET_ENV, LIVEKIT_SECRET_FILE_ENV)
+            if read_livekit_credentials
+            else None
+        ),
+        livekit_agent_name=(
+            (os.getenv("LIVEKIT_AGENT_NAME") or "").strip() or None
+            if provider == "livekit" and live_ai_voice_enabled
+            else None
+        ),
+        livekit_agent_shared_secret=(
+            _secret_value(
+                LIVEKIT_AGENT_SECRET_ENV,
+                LIVEKIT_AGENT_SECRET_FILE_ENV,
+            )
+            if provider == "livekit" and live_ai_voice_enabled
+            else None
+        ),
+        livekit_webhook_enabled=_env_bool("LIVEKIT_WEBHOOK_ENABLED", False),
     )
     validate_webchat_voice_runtime_config(config)
     return config
@@ -133,51 +147,74 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
 def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> None:
     if config.provider not in {"mock", "livekit"}:
         raise RuntimeError("WEBCHAT_VOICE_PROVIDER must be mock or livekit")
-    if config.session_ttl_seconds < 60 or config.session_ttl_seconds > 3600:
-        raise RuntimeError("WEBCHAT_VOICE_SESSION_TTL_SECONDS must be between 60 and 3600")
+    if config.routing_mode not in {"ai_first", "human_first"}:
+        raise RuntimeError("WEBCHAT_VOICE_ROUTING_MODE must be ai_first or human_first")
+    if not 60 <= config.session_ttl_seconds <= 3600:
+        raise RuntimeError(
+            "WEBCHAT_VOICE_SESSION_TTL_SECONDS must be between 60 and 3600"
+        )
     if config.max_active_per_conversation < 1:
-        raise RuntimeError("WEBCHAT_VOICE_MAX_ACTIVE_PER_CONVERSATION must be at least 1")
-    if config.rate_limit_window_seconds < 10 or config.rate_limit_window_seconds > 3600:
-        raise RuntimeError("WEBCHAT_VOICE_RATE_LIMIT_WINDOW_SECONDS must be between 10 and 3600")
-    if config.rate_limit_max_requests < 1 or config.rate_limit_max_requests > 60:
-        raise RuntimeError("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS must be between 1 and 60")
-    if config.enabled and not config.allowed_path_prefixes:
-        raise RuntimeError("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES must be set when any WebChat voice capability is enabled")
-    if config.live_ai_voice_enabled and not config.live_voice_upstream_token:
-        raise RuntimeError("LIVE_VOICE_UPSTREAM_TOKEN must be configured when WEBCHAT_LIVE_AI_VOICE_ENABLED=true")
-    if config.live_ai_voice_enabled and not config.live_voice_upstream_ws_url:
-        raise RuntimeError("LIVE_VOICE_UPSTREAM_WS_URL must be configured when WEBCHAT_LIVE_AI_VOICE_ENABLED=true")
-    if config.live_ai_voice_enabled and not config.live_voice_upstream_health_url:
-        raise RuntimeError("LIVE_VOICE_UPSTREAM_HEALTH_URL must be configured when WEBCHAT_LIVE_AI_VOICE_ENABLED=true")
-    for prefix in config.allowed_path_prefixes:
-        if not prefix.startswith("/"):
-            raise RuntimeError("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES entries must start with /")
+        raise RuntimeError(
+            "WEBCHAT_VOICE_MAX_ACTIVE_PER_CONVERSATION must be at least 1"
+        )
+    if not 10 <= config.rate_limit_window_seconds <= 3600:
+        raise RuntimeError(
+            "WEBCHAT_VOICE_RATE_LIMIT_WINDOW_SECONDS must be between 10 and 3600"
+        )
+    if not 1 <= config.rate_limit_max_requests <= 60:
+        raise RuntimeError(
+            "WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS must be between 1 and 60"
+        )
     for source in config.connect_src:
         if "*" in source:
-            raise RuntimeError("WEBCHAT_VOICE_CONNECT_SRC must not contain wildcard sources")
+            raise RuntimeError(
+                "WEBCHAT_VOICE_CONNECT_SRC must not contain wildcard sources"
+            )
         normalized = source.strip().lower().strip("'")
         if normalized == "self":
             continue
-        if not (normalized.startswith("https://") or normalized.startswith("wss://")):
-            raise RuntimeError("WEBCHAT_VOICE_CONNECT_SRC entries must be https://, wss://, or self")
+        if not (
+            normalized.startswith("https://") or normalized.startswith("wss://")
+        ):
+            raise RuntimeError(
+                "WEBCHAT_VOICE_CONNECT_SRC entries must be https://, wss://, or self"
+            )
     app_env = os.getenv("APP_ENV", "development").strip().lower()
-    if app_env == "production" and config.recording_enabled:
-        raise RuntimeError("WEBCHAT_VOICE_RECORDING_ENABLED must remain false in production until a consent policy is implemented")
-    if config.human_call_enabled and config.provider == "livekit":
+    if config.enabled and config.provider == "livekit":
         _validate_livekit_runtime_config(config, app_env=app_env)
-    if config.live_voice_upstream_ws_url:
-        _validate_live_voice_ws_url(config.live_voice_upstream_ws_url, app_env=app_env)
-    if config.live_voice_upstream_health_url:
-        _validate_live_voice_health_url(config.live_voice_upstream_health_url, app_env=app_env)
+    if (
+        config.provider == "livekit"
+        and config.live_ai_voice_enabled
+        and not config.livekit_agent_name
+    ):
+        raise RuntimeError(
+            "LIVEKIT_AGENT_NAME must be set when LiveKit AI voice is enabled"
+        )
+    if (
+        config.provider == "livekit"
+        and config.live_ai_voice_enabled
+        and not config.livekit_agent_shared_secret
+    ):
+        raise RuntimeError(
+            "LIVEKIT_AGENT_SHARED_SECRET must be set when LiveKit AI voice is enabled"
+        )
 
 
-def _validate_livekit_runtime_config(config: WebchatVoiceRuntimeConfig, *, app_env: str) -> None:
+def _validate_livekit_runtime_config(
+    config: WebchatVoiceRuntimeConfig,
+    *,
+    app_env: str,
+) -> None:
     if not config.livekit_url:
         raise RuntimeError("LIVEKIT_URL must be set when WEBCHAT_VOICE_PROVIDER=livekit")
     if not config.livekit_api_key:
-        raise RuntimeError("LIVEKIT_API_KEY must be set when WEBCHAT_VOICE_PROVIDER=livekit")
+        raise RuntimeError(
+            "LIVEKIT_API_KEY must be set when WEBCHAT_VOICE_PROVIDER=livekit"
+        )
     if not config.livekit_api_secret:
-        raise RuntimeError("LIVEKIT_API_SECRET must be set when WEBCHAT_VOICE_PROVIDER=livekit")
+        raise RuntimeError(
+            "LIVEKIT_API_SECRET must be set when WEBCHAT_VOICE_PROVIDER=livekit"
+        )
     parsed = urlparse(config.livekit_url)
     if parsed.scheme not in {"wss", "ws", "https", "http"} or not parsed.netloc:
         raise RuntimeError("LIVEKIT_URL must be a valid LiveKit URL")
@@ -187,43 +224,27 @@ def _validate_livekit_runtime_config(config: WebchatVoiceRuntimeConfig, *, app_e
     if required_wss:
         normalized_sources = {source.rstrip("/") for source in config.connect_src}
         if required_wss not in normalized_sources:
-            raise RuntimeError("WEBCHAT_VOICE_CONNECT_SRC must include the LiveKit wss URL when WEBCHAT_VOICE_PROVIDER=livekit")
+            raise RuntimeError(
+                "WEBCHAT_VOICE_CONNECT_SRC must include the LiveKit wss URL when WEBCHAT_VOICE_PROVIDER=livekit"
+            )
 
 
-def _normalize_ws_url(raw: str | None) -> str | None:
-    value = _normalize_url(raw)
-    if not value:
-        return None
-    parsed = urlparse(value)
-    if parsed.scheme == "http":
-        return urlunparse(parsed._replace(scheme="ws"))
-    if parsed.scheme == "https":
-        return urlunparse(parsed._replace(scheme="wss"))
-    return value
+def is_webchat_voice_path(
+    path: str,
+    config: WebchatVoiceRuntimeConfig | None = None,
+) -> bool:
+    del config
+    return path == CANONICAL_WEBCALL_PATH or path.startswith(
+        f"{CANONICAL_WEBCALL_PATH}/"
+    )
 
 
-def _validate_live_voice_ws_url(value: str, *, app_env: str) -> None:
-    parsed = urlparse(value)
-    if parsed.scheme not in {"ws", "wss"} or not parsed.netloc:
-        raise RuntimeError("LIVE_VOICE_UPSTREAM_WS_URL must be a valid ws:// or wss:// URL")
-
-
-def _validate_live_voice_health_url(value: str, *, app_env: str) -> None:
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise RuntimeError("LIVE_VOICE_UPSTREAM_HEALTH_URL must be a valid http:// or https:// URL")
-
-
-def is_webchat_voice_path(path: str, config: WebchatVoiceRuntimeConfig | None = None) -> bool:
+def webchat_voice_connect_sources(
+    config: WebchatVoiceRuntimeConfig | None = None,
+) -> list[str]:
     runtime_config = config or load_webchat_voice_runtime_config()
-    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in runtime_config.allowed_path_prefixes)
-
-
-def webchat_voice_connect_sources(config: WebchatVoiceRuntimeConfig | None = None) -> list[str]:
-    runtime_config = config or load_webchat_voice_runtime_config()
-    sources = []
-    for source in runtime_config.connect_src:
-        if source.strip().lower().strip("'") == "self":
-            continue
-        sources.append(source)
-    return sources
+    return [
+        source
+        for source in runtime_config.connect_src
+        if source.strip().lower().strip("'") != "self"
+    ]

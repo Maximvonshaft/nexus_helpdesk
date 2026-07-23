@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import html
 import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -402,36 +401,6 @@ def readyz():
 
 
 register_api_routers(app)
-
-@app.get("/webchat/voice/{voice_session_id}", response_class=HTMLResponse)
-def serve_webchat_voice_placeholder(voice_session_id: str):
-    config = load_webchat_voice_runtime_config()
-    route_path = f"/webchat/voice/{voice_session_id}"
-    if not config.human_call_enabled or not is_webchat_voice_path(route_path, config):
-        return JSONResponse(
-            status_code=404,
-            content={"detail": "WebChat voice is disabled"},
-        )
-    safe_session_id = "".join(
-        ch for ch in voice_session_id if ch.isalnum() or ch in {"_", "-"}
-    )[:80]
-    if not safe_session_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="WebChat voice session not found",
-        )
-    escaped_session_id = html.escape(safe_session_id, quote=True)
-    return HTMLResponse(
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>NexusDesk WebCall</title></head><body><main>"
-        "<h1>NexusDesk WebCall</h1>"
-        "<p>Opening the secure WebCall room...</p>"
-        f"<p><a href='/webcall/{escaped_session_id}'>Continue to WebCall</a></p>"
-        f"<script src='/static/webchat/voice-redirect.js' data-voice-session-id='{escaped_session_id}' defer></script>"
-        "</main></body></html>"
-    )
-
 
 webchat_static_dir = settings.backend_root / "app" / "static" / "webchat"
 if webchat_static_dir.exists():

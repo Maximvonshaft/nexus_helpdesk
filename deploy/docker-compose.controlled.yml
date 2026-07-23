@@ -28,22 +28,37 @@ x-controlled-app: &controlled_app
     WEBCHAT_RATE_LIMIT_BACKEND: database
     WEBCHAT_ALLOW_NO_ORIGIN: "false"
     WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT: "false"
-    WEBCHAT_WS_ENABLED: "false"
-    WEBCHAT_WS_PUBLIC_ENABLED: "false"
-    WEBCHAT_WS_ADMIN_ENABLED: "false"
-    WEBCHAT_WS_BROKER: database
-    WEBCHAT_AI_ENABLED: "false"
-    WEBCHAT_AI_AUTO_REPLY_MODE: off
-    WEBCHAT_AI_RECONCILER_ENABLED: "false"
-    WEBCHAT_VOICE_ENABLED: "false"
-    WEBCHAT_HUMAN_CALL_ENABLED: "false"
-    WEBCHAT_LIVE_AI_VOICE_ENABLED: "false"
-    PROVIDER_RUNTIME_ENABLED: "false"
-    PROVIDER_RUNTIME_TRAFFIC_MODE: control
-    PROVIDER_RUNTIME_KILL_SWITCH: "true"
-    PROVIDER_RUNTIME_CANARY_PERCENT: "0"
-    PRIVATE_AI_RUNTIME_ENABLED: "false"
-    KNOWLEDGE_EMBEDDINGS_ENABLED: "false"
+    WEBCHAT_WS_ENABLED: ${WEBCHAT_WS_ENABLED:-false}
+    WEBCHAT_WS_PUBLIC_ENABLED: ${WEBCHAT_WS_PUBLIC_ENABLED:-false}
+    WEBCHAT_WS_ADMIN_ENABLED: ${WEBCHAT_WS_ADMIN_ENABLED:-false}
+    WEBCHAT_WS_BROKER: ${WEBCHAT_WS_BROKER:-database}
+    WEBCHAT_AI_ENABLED: ${WEBCHAT_AI_ENABLED:-false}
+    WEBCHAT_AI_AUTO_REPLY_MODE: ${WEBCHAT_AI_AUTO_REPLY_MODE:-off}
+    WEBCHAT_AI_RECONCILER_ENABLED: ${WEBCHAT_AI_RECONCILER_ENABLED:-false}
+    WEBCHAT_HUMAN_CALL_ENABLED: ${WEBCHAT_HUMAN_CALL_ENABLED:-false}
+    WEBCHAT_LIVE_AI_VOICE_ENABLED: ${WEBCHAT_LIVE_AI_VOICE_ENABLED:-false}
+    WEBCHAT_VOICE_PROVIDER: ${WEBCHAT_VOICE_PROVIDER:-mock}
+    WEBCHAT_VOICE_ROUTING_MODE: ${WEBCHAT_VOICE_ROUTING_MODE:-human_first}
+    WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES: ${WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES:-/webcall}
+    WEBCHAT_VOICE_CONNECT_SRC: ${WEBCHAT_VOICE_CONNECT_SRC:-}
+    WEBCHAT_VOICE_RECORDING_ENABLED: "false"
+    WEBCHAT_VOICE_TRANSCRIPTION_ENABLED: "false"
+    LIVEKIT_URL: ${LIVEKIT_URL:-}
+    LIVEKIT_AGENT_NAME: ${LIVEKIT_AGENT_NAME:-}
+    LIVEKIT_WEBHOOK_ENABLED: ${LIVEKIT_WEBHOOK_ENABLED:-false}
+    NEXUS_VOICE_STT_MODEL: ${NEXUS_VOICE_STT_MODEL:-}
+    NEXUS_VOICE_TTS_MODEL: ${NEXUS_VOICE_TTS_MODEL:-}
+    NEXUS_VOICE_TURN_DETECTION: ${NEXUS_VOICE_TURN_DETECTION:-stt}
+    NEXUS_VOICE_AGENT_REQUEST_TIMEOUT_SECONDS: ${NEXUS_VOICE_AGENT_REQUEST_TIMEOUT_SECONDS:-30}
+    NEXUS_VOICE_AGENT_HEARTBEAT_SECONDS: ${NEXUS_VOICE_AGENT_HEARTBEAT_SECONDS:-30}
+    NEXUS_VOICE_GREETING: ${NEXUS_VOICE_GREETING:-Hello. How can I help you today?}
+    NEXUS_VOICE_HANDOFF_WAIT_MESSAGE: ${NEXUS_VOICE_HANDOFF_WAIT_MESSAGE:-Your request is waiting for a human support agent. Please stay on the line.}
+    PROVIDER_RUNTIME_ENABLED: ${PROVIDER_RUNTIME_ENABLED:-false}
+    PROVIDER_RUNTIME_TRAFFIC_MODE: ${PROVIDER_RUNTIME_TRAFFIC_MODE:-control}
+    PROVIDER_RUNTIME_KILL_SWITCH: ${PROVIDER_RUNTIME_KILL_SWITCH:-true}
+    PROVIDER_RUNTIME_CANARY_PERCENT: ${PROVIDER_RUNTIME_CANARY_PERCENT:-0}
+    PRIVATE_AI_RUNTIME_ENABLED: ${PRIVATE_AI_RUNTIME_ENABLED:-false}
+    KNOWLEDGE_EMBEDDINGS_ENABLED: ${KNOWLEDGE_EMBEDDINGS_ENABLED:-false}
     ENABLE_OUTBOUND_DISPATCH: "false"
     OUTBOUND_PROVIDER: disabled
     OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: "false"
@@ -99,13 +114,11 @@ services:
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
     command:
-      - /bin/sh
-      - -ec
-      - >-
-        find /var/run/nexus-prometheus -maxdepth 1 -type f -name '*.db' -delete &&
-        cd /app/backend &&
-        alembic upgrade head &&
-        alembic current
+      - python
+      - -m
+      - alembic
+      - upgrade
+      - head
 
   app-controlled:
     <<: *controlled_app
@@ -115,6 +128,14 @@ services:
       NEXUS_PROCESS_ROLE: web
       DATABASE_URL: ${DATABASE_URL_APP:?set Web PostgreSQL URL}
       SECRET_KEY: ${SECRET_KEY:?set Web JWT secret}
+      RUNTIME_CONTRACT_SIGNING_SECRET: ${RUNTIME_CONTRACT_SIGNING_SECRET:-}
+      TELEPHONY_CONTROL_SECRET: ${TELEPHONY_CONTROL_SECRET:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_API_KEY_FILE: ${LIVEKIT_API_KEY_FILE:-}
+      LIVEKIT_API_SECRET_FILE: ${LIVEKIT_API_SECRET_FILE:-}
+      LIVEKIT_AGENT_SHARED_SECRET: ${LIVEKIT_AGENT_SHARED_SECRET:-}
+      LIVEKIT_AGENT_SHARED_SECRET_FILE: ${LIVEKIT_AGENT_SHARED_SECRET_FILE:-}
       METRICS_ENABLED: "true"
       METRICS_TOKEN: ${METRICS_TOKEN:?set dedicated metrics token}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set controlled Web origin}
@@ -136,15 +157,20 @@ services:
     ports:
       - "127.0.0.1:${CONTROLLED_APP_PORT:-18095}:8080"
     command:
-      - /bin/sh
-      - -ec
-      - >-
-        exec gunicorn app.main:app
-        --config /app/backend/gunicorn.conf.py
-        -k uvicorn.workers.UvicornWorker
-        --workers "$${WEB_CONCURRENCY:-2}"
-        --timeout "$${WEB_TIMEOUT:-30}"
-        --bind 0.0.0.0:8080
+      - python
+      - -m
+      - gunicorn
+      - app.main:app
+      - --config
+      - /app/backend/gunicorn.conf.py
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - --workers
+      - "2"
+      - --timeout
+      - "30"
+      - --bind
+      - 0.0.0.0:8080
     healthcheck:
       test:
         - CMD
@@ -162,6 +188,45 @@ services:
       migrate-controlled:
         condition: service_completed_successfully
 
+  livekit-agent-controlled:
+    <<: *controlled_app
+    profiles:
+      - telephony
+    restart: unless-stopped
+    environment:
+      <<: *controlled_environment
+      NEXUS_PROCESS_ROLE: livekit-agent
+      PROMETHEUS_MULTIPROC_DIR: ""
+      METRICS_ENABLED: "false"
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_API_KEY_FILE: ${LIVEKIT_API_KEY_FILE:-}
+      LIVEKIT_API_SECRET_FILE: ${LIVEKIT_API_SECRET_FILE:-}
+      LIVEKIT_AGENT_SHARED_SECRET: ${LIVEKIT_AGENT_SHARED_SECRET:-}
+      LIVEKIT_AGENT_SHARED_SECRET_FILE: ${LIVEKIT_AGENT_SHARED_SECRET_FILE:-}
+      NEXUS_INTERNAL_API_URL: http://app-controlled:8080
+    command:
+      - python
+      - -m
+      - app.livekit_agent_worker
+      - start
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          response=urllib.request.urlopen('http://127.0.0.1:8081/', timeout=4);
+          assert response.status == 200
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+
   worker-outbound-controlled:
     <<: *controlled_app
     restart: unless-stopped
@@ -177,7 +242,13 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-outbound-controlled --queue outbound
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-outbound-controlled
+      - --queue
+      - outbound
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -192,6 +263,11 @@ services:
       NEXUS_WORKER_ID: worker-background-controlled
       NEXUS_WORKER_QUEUE: background
       DATABASE_URL: ${DATABASE_URL_BACKGROUND:?set Background Worker PostgreSQL URL}
+      TELEPHONY_CONTROL_SECRET: ${TELEPHONY_CONTROL_SECRET:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_API_KEY_FILE: ${LIVEKIT_API_KEY_FILE:-}
+      LIVEKIT_API_SECRET_FILE: ${LIVEKIT_API_SECRET_FILE:-}
       METRICS_ENABLED: "false"
       QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS: ${QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS:-15}
       DB_POOL_SIZE: ${DB_POOL_SIZE_BACKGROUND:-3}
@@ -199,7 +275,13 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:rw
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-background-controlled --queue background
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-background-controlled
+      - --queue
+      - background
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -214,12 +296,19 @@ services:
       NEXUS_WORKER_ID: worker-webchat-ai-controlled
       NEXUS_WORKER_QUEUE: webchat-ai
       DATABASE_URL: ${DATABASE_URL_WEBCHAT_AI:?set WebChat AI Worker PostgreSQL URL}
+      RUNTIME_CONTRACT_SIGNING_SECRET: ${RUNTIME_CONTRACT_SIGNING_SECRET:-}
       METRICS_ENABLED: "false"
       DB_POOL_SIZE: ${DB_POOL_SIZE_WEBCHAT_AI:-2}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_WEBCHAT_AI:-1}
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-webchat-ai-controlled --queue webchat-ai
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-webchat-ai-controlled
+      - --queue
+      - webchat-ai
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:
@@ -239,7 +328,13 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_HANDOFF:-1}
     volumes:
       - prometheus-multiproc:/var/run/nexus-prometheus
-    command: python scripts/run_worker_supervised.py --worker-id worker-handoff-snapshot-controlled --queue handoff-snapshot
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-handoff-snapshot-controlled
+      - --queue
+      - handoff-snapshot
     healthcheck: *worker_healthcheck
     depends_on:
       app-controlled:

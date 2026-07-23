@@ -45,10 +45,46 @@ The Nexus application code is not relicensed by this notice. Any modification
 to an LGPL-covered component requires a new review and corresponding source
 obligations before release.
 
+## LiveKit local inference model
+
+The exact candidate includes this unmodified runtime dependency required by
+`livekit-agents==1.6.6`:
+
+- `pkg:pypi/livekit-local-inference@0.2.6` —
+  `Apache-2.0 AND LicenseRef-LiveKit-Model`
+- The candidate SBOM normalizes `LicenseRef-LiveKit-Model` to the review label
+  `Other-Proprietary-License`; both identifiers refer to the same bundled model
+  license for this exact component and version.
+
+Upstream package, framework and model-license authorities:
+
+- <https://pypi.org/project/livekit-local-inference/0.2.6/>
+- <https://github.com/livekit/agents/tree/livekit-agents%401.6.6>
+- <https://huggingface.co/livekit/turn-detector/blob/main/LICENSE>
+
+The package source is Apache-2.0. Its bundled local VAD/end-of-turn model is
+subject to the LiveKit Model License. Nexus may use and distribute the exact
+component only as part of the LiveKit Agents runtime. The following controls are
+mandatory:
+
+1. the component is not exposed or executed as a standalone model service;
+2. it is not connected to, embedded in, or redistributed for use with another
+   agent or inference framework;
+3. neither the model nor its output is used to train, fine-tune, evaluate for
+   improvement, or otherwise develop a non-LiveKit model;
+4. model files, inference-enabling code and license notices are not stripped,
+   extracted for separate distribution or modified;
+5. the SBOM PURL and version must match the exact expiring compliance record;
+6. any version, package-license, model-license or runtime-use change invalidates
+   the approval and blocks release pending a new review.
+
+This record does not authorize broader use of LiveKit proprietary models and
+does not convert the LiveKit Model License into an open-source license.
+
 ## Other license materials
 
 Python distributions are installed without deleting their package metadata or
-license files. Alpine and Python base-image components remain governed by their
+license files. Debian and Python base-image components remain governed by their
 upstream licenses. The exact candidate SBOM and package metadata must be used to
 identify the applicable copyright notices and license texts for distribution.
 

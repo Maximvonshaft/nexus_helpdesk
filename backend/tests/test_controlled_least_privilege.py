@@ -3,10 +3,10 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
-import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.settings import Settings
 
@@ -20,14 +20,33 @@ BACKGROUND_BOUNDARY = (
 WORKER_RUNNER = ROOT / "backend" / "scripts" / "run_worker.py"
 
 
-def _service_blocks(text: str) -> dict[str, str]:
-    services_text = text.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
-    matches = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", services_text))
-    blocks: dict[str, str] = {}
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(services_text)
-        blocks[match.group(1)] = services_text[match.end() : end]
-    return blocks
+def _compose_document() -> dict:
+    document = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    assert isinstance(document, dict)
+    assert isinstance(document.get("services"), dict)
+    return document
+
+
+def _services() -> dict[str, dict]:
+    return _compose_document()["services"]
+
+
+def _service(name: str) -> dict:
+    service = _services()[name]
+    assert isinstance(service, dict)
+    return service
+
+
+def _environment(name: str) -> dict[str, str]:
+    environment = _service(name).get("environment") or {}
+    assert isinstance(environment, dict)
+    return environment
+
+
+def _volumes(name: str) -> list[str]:
+    volumes = _service(name).get("volumes") or []
+    assert isinstance(volumes, list)
+    return [str(value) for value in volumes]
 
 
 def _load_preflight_module():
@@ -79,26 +98,30 @@ def _production_worker_env(tmp_path: Path, *, role: str) -> dict[str, str]:
 
 
 def test_controlled_runtime_has_global_least_privilege_defaults():
+    document = _compose_document()
+    for service_name, service in document["services"].items():
+        assert service.get("read_only") is True, service_name
+        assert service.get("cap_drop") == ["ALL"], service_name
+        assert "no-new-privileges:true" in (service.get("security_opt") or []), service_name
+        assert service.get("pids_limit") == 256, service_name
+        assert any(
+            str(entry).startswith("/tmp:rw,noexec,nosuid")
+            for entry in (service.get("tmpfs") or [])
+        ), service_name
+        assert "env_file" not in service, service_name
+
     text = COMPOSE.read_text(encoding="utf-8")
-    prefix = text.split("services:", 1)[0]
-    assert "env_file:" not in text
-    assert "read_only: true" in prefix
-    assert "cap_drop:\n    - ALL" in prefix
-    assert "no-new-privileges:true" in prefix
-    assert "pids_limit: 256" in prefix
-    assert "/tmp:rw,noexec,nosuid" in prefix
     assert "NEXUS_RUNTIME_SECRETS_HOST_PATH" not in text
     assert "/run/secrets" not in text
 
 
-def test_disabled_capabilities_receive_no_credentials():
+def test_retired_disabled_capability_credentials_are_absent():
     text = COMPOSE.read_text(encoding="utf-8")
     for forbidden in (
         "AI_RUNTIME_TOKEN_HOST_PATH",
         "LIVE_VOICE_TOKEN_HOST_PATH",
         "PRIVATE_AI_RUNTIME_TOKEN_FILE",
         "LIVE_VOICE_UPSTREAM_TOKEN_FILE",
-        "RUNTIME_CONTRACT_SIGNING_SECRET",
         "/run/nexus/ai_runtime_token",
         "/run/nexus/live_voice_token",
     ):
@@ -106,95 +129,144 @@ def test_disabled_capabilities_receive_no_credentials():
 
 
 def test_migration_receives_only_database_and_metrics_volume():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))["migrate-controlled"]
-    assert "DATABASE_URL_MIGRATION" in block
-    assert "prometheus-multiproc" in block
+    environment = _environment("migrate-controlled")
+    assert "DATABASE_URL_MIGRATION" in str(environment["DATABASE_URL"])
+    assert "prometheus-multiproc:/var/run/nexus-prometheus" in _volumes(
+        "migrate-controlled"
+    )
     for forbidden in (
         "SECRET_KEY",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
         "METRICS_TOKEN",
         "ALLOWED_ORIGINS",
         "WEBCHAT_ALLOWED_ORIGINS",
-        "NEXUS_UPLOADS_HOST_PATH",
-        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "TELEPHONY_CONTROL_SECRET",
     ):
-        assert forbidden not in block
+        assert forbidden not in environment
+    assert all("uploads" not in volume for volume in _volumes("migrate-controlled"))
 
 
 def test_web_process_owns_only_http_secrets_and_storage_mounts():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))["app-controlled"]
+    environment = _environment("app-controlled")
     for required in (
-        "DATABASE_URL_APP",
         "SECRET_KEY",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
         "METRICS_TOKEN",
         "ALLOWED_ORIGINS",
         "WEBCHAT_ALLOWED_ORIGINS",
-        "NEXUS_UPLOADS_HOST_PATH",
-        ":/app/backend/uploads:rw",
-        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
-        ":/var/backups/nexusdesk/uploads:ro",
     ):
-        assert required in block
+        assert required in environment
+    assert "DATABASE_URL_APP" in str(environment["DATABASE_URL"])
+    volumes = _volumes("app-controlled")
+    assert any(volume.endswith(":/app/backend/uploads:rw") for volume in volumes)
+    assert any(
+        volume.endswith(":/var/backups/nexusdesk/uploads:ro")
+        for volume in volumes
+    )
 
 
 def test_outbound_worker_has_read_only_attachments_and_no_http_secret():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[
-        "worker-outbound-controlled"
-    ]
-    assert "DATABASE_URL_OUTBOUND" in block
-    assert "NEXUS_UPLOADS_HOST_PATH" in block
-    assert ":/app/backend/uploads:ro" in block
+    environment = _environment("worker-outbound-controlled")
+    assert "DATABASE_URL_OUTBOUND" in str(environment["DATABASE_URL"])
+    assert any(
+        volume.endswith(":/app/backend/uploads:ro")
+        for volume in _volumes("worker-outbound-controlled")
+    )
     for forbidden in (
         "SECRET_KEY",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
         "METRICS_TOKEN",
         "ALLOWED_ORIGINS",
         "WEBCHAT_ALLOWED_ORIGINS",
-        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
+        "TELEPHONY_CONTROL_SECRET",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
     ):
-        assert forbidden not in block
+        assert forbidden not in environment
+    assert all(
+        "/var/backups/nexusdesk/uploads" not in volume
+        for volume in _volumes("worker-outbound-controlled")
+    )
 
 
-def test_background_worker_has_writable_uploads_only():
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[
-        "worker-background-controlled"
-    ]
-    assert "DATABASE_URL_BACKGROUND" in block
-    assert "NEXUS_UPLOADS_HOST_PATH" in block
-    assert ":/app/backend/uploads:rw" in block
-    assert "QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS" in block
+def test_background_worker_has_writable_uploads_and_only_required_telephony_control():
+    environment = _environment("worker-background-controlled")
+    assert "DATABASE_URL_BACKGROUND" in str(environment["DATABASE_URL"])
+    assert "QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS" in environment
+    assert "TELEPHONY_CONTROL_SECRET" in environment
+    assert "LIVEKIT_API_KEY" in environment
+    assert "LIVEKIT_API_SECRET" in environment
+    assert any(
+        volume.endswith(":/app/backend/uploads:rw")
+        for volume in _volumes("worker-background-controlled")
+    )
     for forbidden in (
         "SECRET_KEY",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
         "METRICS_TOKEN",
         "ALLOWED_ORIGINS",
         "WEBCHAT_ALLOWED_ORIGINS",
-        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
     ):
-        assert forbidden not in block
+        assert forbidden not in environment
+    assert all(
+        "/var/backups/nexusdesk/uploads" not in volume
+        for volume in _volumes("worker-background-controlled")
+    )
 
 
 @pytest.mark.parametrize(
-    "service,database_key",
+    "service,database_key,runtime_signing_required",
     [
-        ("worker-webchat-ai-controlled", "DATABASE_URL_WEBCHAT_AI"),
-        ("worker-handoff-snapshot-controlled", "DATABASE_URL_HANDOFF"),
+        ("worker-webchat-ai-controlled", "DATABASE_URL_WEBCHAT_AI", True),
+        ("worker-handoff-snapshot-controlled", "DATABASE_URL_HANDOFF", False),
     ],
 )
-def test_isolated_workers_have_no_business_secret_or_file_mount(
+def test_isolated_workers_have_no_unrelated_secret_or_file_mount(
     service: str,
     database_key: str,
+    runtime_signing_required: bool,
 ):
-    block = _service_blocks(COMPOSE.read_text(encoding="utf-8"))[service]
-    assert database_key in block
-    assert "prometheus-multiproc" in block
+    environment = _environment(service)
+    assert database_key in str(environment["DATABASE_URL"])
+    assert "prometheus-multiproc:/var/run/nexus-prometheus" in _volumes(service)
+    assert ("RUNTIME_CONTRACT_SIGNING_SECRET" in environment) is runtime_signing_required
     for forbidden in (
         "SECRET_KEY",
         "METRICS_TOKEN",
         "ALLOWED_ORIGINS",
         "WEBCHAT_ALLOWED_ORIGINS",
-        "NEXUS_UPLOADS_HOST_PATH",
-        "NEXUS_UPLOAD_BACKUP_HOST_PATH",
-        "TOKEN",
+        "TELEPHONY_CONTROL_SECRET",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
     ):
-        assert forbidden not in block
+        assert forbidden not in environment
+    assert all("uploads" not in volume for volume in _volumes(service))
+
+
+def test_livekit_agent_has_media_credentials_without_database_or_http_authority():
+    service = _service("livekit-agent-controlled")
+    environment = _environment("livekit-agent-controlled")
+    assert "telephony" in (service.get("profiles") or [])
+    for required in (
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_AGENT_SHARED_SECRET",
+    ):
+        assert required in environment
+    for forbidden in (
+        "DATABASE_URL",
+        "SECRET_KEY",
+        "RUNTIME_CONTRACT_SIGNING_SECRET",
+        "TELEPHONY_CONTROL_SECRET",
+        "METRICS_TOKEN",
+        "ALLOWED_ORIGINS",
+        "WEBCHAT_ALLOWED_ORIGINS",
+    ):
+        assert forbidden not in environment
+    assert all("uploads" not in volume for volume in _volumes("livekit-agent-controlled"))
 
 
 def test_preflight_executes_the_same_role_isolation_contract():
@@ -327,7 +399,10 @@ def test_process_role_authority_is_explicit_in_settings():
 
 
 def test_external_database_network_remains_reachable():
-    text = COMPOSE.read_text(encoding="utf-8")
-    network = text.rsplit("\nnetworks:\n", 1)[1].split("\nvolumes:\n", 1)[0]
-    assert "driver: bridge" in network
-    assert "internal: true" not in network
+    networks = _compose_document()["networks"]
+    assert isinstance(networks, dict)
+    assert len(networks) == 1
+    network = next(iter(networks.values()))
+    assert isinstance(network, dict)
+    assert network.get("driver") == "bridge"
+    assert network.get("internal") is not True

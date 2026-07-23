@@ -222,8 +222,8 @@ def _voice_samples(db: Session, user: User) -> list[dict[str, Any]]:
     samples: list[dict[str, Any]] = []
     for session, ticket in rows:
         risks: list[str] = []
-        if not session.recording_consent:
-            risks.append("identity or recording consent incomplete")
+        if session.recording_status in {"notice_required", "consent_required"}:
+            risks.append(f"recording {session.recording_status}")
         if session.transcript_status not in HEALTHY_VOICE_TRANSCRIPT_STATUSES:
             risks.append(f"transcript {session.transcript_status}")
         if session.summary_status in {"pending", "failed"}:
@@ -1004,7 +1004,7 @@ def build_qa_training(db: Session, current_user: User) -> dict[str, Any]:
             .filter(
                 WebchatVoiceSession.mode != "internal_ai_demo",
                 or_(
-                    WebchatVoiceSession.recording_consent.is_(False),
+                    WebchatVoiceSession.recording_status.in_(("notice_required", "consent_required")),
                     WebchatVoiceSession.transcript_status.notin_(HEALTHY_VOICE_TRANSCRIPT_STATUSES),
                     WebchatVoiceSession.summary_status.in_(("pending", "failed")),
                     WebchatVoiceSession.ai_handoff_reason.is_not(None),

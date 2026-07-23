@@ -22,6 +22,7 @@ const allowedFullPageOwners = new Set([
   presentationPath,
   path.join(src, 'app', 'AppShell.tsx'),
   path.join(src, 'routes', 'login.tsx'),
+  path.join(src, 'features', 'webcall', 'WebCallPage.tsx'),
   path.join(src, 'theme', 'nexusTheme.ts'),
 ])
 const retiredLocalHelper = /\bfunction\s+(EmptyState|ErrorNotice|ErrorSummary|LoadingState|FactGrid|statusColor|muiStatusColor|errorCopy|scrollBehavior)\b/g

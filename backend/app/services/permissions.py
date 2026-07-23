@@ -52,6 +52,17 @@ CAP_WEBCHAT_HANDOFF_RESUME_AI = "webchat.handoff.resume_ai"
 CAP_WEBCHAT_CONVERSATION_MONITOR_AI = "webchat.conversation.monitor_ai"
 CAP_OPERATOR_QUEUE_READ = "operator_queue.read"
 
+WEBCALL_VOICE_OPERATOR_CAPABILITIES = frozenset(
+    {
+        CAP_WEBCALL_VOICE_READ,
+        CAP_WEBCALL_VOICE_QUEUE_VIEW,
+        CAP_WEBCALL_VOICE_ACCEPT,
+        CAP_WEBCALL_VOICE_REJECT,
+        CAP_WEBCALL_VOICE_END,
+        CAP_WEBCALL_VOICE_CONTROL,
+    }
+)
+
 ALL_CAPABILITIES = [
     CAP_TICKET_READ,
     CAP_TICKET_ASSIGN,
@@ -82,12 +93,7 @@ ALL_CAPABILITIES = [
     CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
     CAP_SPEEDAF_CANCEL_WRITE,
     CAP_SPEEDAF_VOICE_CALLBACK_WRITE,
-    CAP_WEBCALL_VOICE_READ,
-    CAP_WEBCALL_VOICE_QUEUE_VIEW,
-    CAP_WEBCALL_VOICE_ACCEPT,
-    CAP_WEBCALL_VOICE_REJECT,
-    CAP_WEBCALL_VOICE_END,
-    CAP_WEBCALL_VOICE_CONTROL,
+    *sorted(WEBCALL_VOICE_OPERATOR_CAPABILITIES),
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_DECLINE,
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
@@ -111,6 +117,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
         CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
         CAP_OPERATOR_QUEUE_READ,
+        *WEBCALL_VOICE_OPERATOR_CAPABILITIES,
     },
     UserRole.lead: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
@@ -122,6 +129,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
         CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
         CAP_OPERATOR_QUEUE_READ,
+        *WEBCALL_VOICE_OPERATOR_CAPABILITIES,
     },
     UserRole.agent: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL, CAP_ATTACHMENT_READ_INTERNAL,
@@ -131,6 +139,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_RELEASE,
         CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
         CAP_OPERATOR_QUEUE_READ,
+        *WEBCALL_VOICE_OPERATOR_CAPABILITIES,
     },
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
@@ -148,8 +157,6 @@ def _base_capabilities(role: UserRole) -> set[str]:
     return set(ROLE_CAPABILITIES.get(role, set()))
 
 
-
-
 def resolve_capabilities_from_preloaded(user, overrides) -> set[str]:
     """Resolve the canonical capability projection without issuing a query.
 
@@ -164,6 +171,7 @@ def resolve_capabilities_from_preloaded(user, overrides) -> set[str]:
         else:
             capabilities.discard(override.capability)
     return {capability for capability in capabilities if capability in ALL_CAPABILITIES}
+
 
 def resolve_capabilities(user, db: Session | None = None) -> set[str]:
     if db is None:

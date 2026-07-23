@@ -19,12 +19,16 @@ from ..services.conversation_operator_service import (
     read_conversation_thread,
     reply_to_conversation,
 )
-from ..services.operator_agent_capacity_service import (
-    set_operator_agent_capacity,
-)
+from ..services.operator_agent_capacity_service import set_operator_agent_capacity
 from ..services.operator_queue_scope import authorize_operator_scope
 from ..services.permissions import (
     CAP_USER_MANAGE,
+    CAP_WEBCALL_VOICE_ACCEPT,
+    CAP_WEBCALL_VOICE_CONTROL,
+    CAP_WEBCALL_VOICE_END,
+    CAP_WEBCALL_VOICE_QUEUE_VIEW,
+    CAP_WEBCALL_VOICE_READ,
+    CAP_WEBCALL_VOICE_REJECT,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_capability,
     resolve_capabilities,
@@ -33,19 +37,35 @@ from ..unit_of_work import managed_session
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .deps import get_current_user
 
-
 router = APIRouter(prefix="/api/operator", tags=["operator-agent-routing"])
+
+_VOICE_OPT_IN_CAPABILITIES = frozenset(
+    {
+        CAP_WEBCALL_VOICE_READ,
+        CAP_WEBCALL_VOICE_QUEUE_VIEW,
+        CAP_WEBCALL_VOICE_ACCEPT,
+        CAP_WEBCALL_VOICE_REJECT,
+        CAP_WEBCALL_VOICE_END,
+        CAP_WEBCALL_VOICE_CONTROL,
+    }
+)
 
 
 class AgentStateUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str = Field(min_length=2, max_length=24)
     max_concurrent_conversations: int | None = Field(default=None, ge=1, le=20)
+    voice_enabled: bool | None = None
+    max_concurrent_voice_calls: int | None = Field(default=None, ge=1, le=5)
+    voice_wrap_up_seconds: int | None = Field(default=None, ge=0, le=900)
 
 
 class AgentCapacityUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     max_concurrent_conversations: int = Field(ge=1, le=20)
+    voice_enabled: bool = False
+    max_concurrent_voice_calls: int = Field(default=1, ge=1, le=5)
+    voice_wrap_up_seconds: int = Field(default=30, ge=0, le=900)
 
 
 class ConversationReplyRequest(BaseModel):
@@ -63,6 +83,28 @@ def _ensure_agent_capability(user: User, db: Session) -> None:
     ensure_capability(user, CAP_WEBCHAT_HANDOFF_ACCEPT, db)
 
 
+def _ensure_agent_state_capability(user: User, db: Session) -> set[str]:
+    capabilities = resolve_capabilities(user, db)
+    if (
+        CAP_WEBCHAT_HANDOFF_ACCEPT not in capabilities
+        and CAP_WEBCALL_VOICE_QUEUE_VIEW not in capabilities
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_agent_state_requires_capability",
+        )
+    return capabilities
+
+
+def _ensure_voice_opt_in_capability(capabilities: set[str]) -> None:
+    missing = sorted(_VOICE_OPT_IN_CAPABILITIES - capabilities)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_voice_opt_in_requires_complete_capability_bundle",
+        )
+
+
 def _managed_operator(db: Session, *, user_id: int) -> User:
     target = db.get(User, user_id)
     if target is None:
@@ -70,7 +112,11 @@ def _managed_operator(db: Session, *, user_id: int) -> User:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="operator_not_found",
         )
-    if CAP_WEBCHAT_HANDOFF_ACCEPT not in resolve_capabilities(target, db):
+    capabilities = resolve_capabilities(target, db)
+    if (
+        CAP_WEBCHAT_HANDOFF_ACCEPT not in capabilities
+        and CAP_WEBCALL_VOICE_QUEUE_VIEW not in capabilities
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="target_user_is_not_operator",
@@ -101,7 +147,7 @@ def get_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_agent_capability(current_user, db)
+    _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
         return read_agent_state(db, user_id=current_user.id)
 
@@ -112,28 +158,37 @@ def update_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_agent_capability(current_user, db)
+    capabilities = _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
         current_state = read_agent_state(db, user_id=current_user.id)
-        requested_capacity = payload.max_concurrent_conversations
-        capacity_changed = bool(
-            requested_capacity is not None
-            and requested_capacity
-            != current_state["max_concurrent_conversations"]
+        governed_capacity_fields = {
+            "max_concurrent_conversations": payload.max_concurrent_conversations,
+            "max_concurrent_voice_calls": payload.max_concurrent_voice_calls,
+            "voice_wrap_up_seconds": payload.voice_wrap_up_seconds,
+        }
+        capacity_changed = any(
+            value is not None and value != current_state.get(name)
+            for name, value in governed_capacity_fields.items()
         )
-        if (
-            capacity_changed
-            and CAP_USER_MANAGE not in resolve_capabilities(current_user, db)
-        ):
+        if capacity_changed and CAP_USER_MANAGE not in capabilities:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="agent_capacity_update_requires_user_manage",
             )
+        voice_opt_in_requested = (
+            payload.voice_enabled is True
+            and payload.voice_enabled != current_state.get("voice_enabled")
+        )
+        if voice_opt_in_requested:
+            _ensure_voice_opt_in_capability(capabilities)
         return set_agent_state(
             db,
             user=current_user,
             presence_status=payload.status,
-            max_concurrent_conversations=requested_capacity,
+            max_concurrent_conversations=payload.max_concurrent_conversations,
+            voice_enabled=payload.voice_enabled,
+            max_concurrent_voice_calls=payload.max_concurrent_voice_calls,
+            voice_wrap_up_seconds=payload.voice_wrap_up_seconds,
         )
 
 
@@ -142,7 +197,7 @@ def heartbeat_agent_state(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_agent_capability(current_user, db)
+    _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
         return heartbeat_agent(db, user=current_user)
 
@@ -179,6 +234,9 @@ def update_managed_agent_capacity(
             actor=current_user,
             target_user=target,
             max_concurrent_conversations=payload.max_concurrent_conversations,
+            voice_enabled=payload.voice_enabled,
+            max_concurrent_voice_calls=payload.max_concurrent_voice_calls,
+            voice_wrap_up_seconds=payload.voice_wrap_up_seconds,
         )
 
 
@@ -207,10 +265,7 @@ def get_operator_availability(
     if request_row is not None:
         control = (
             db.query(ConversationControl)
-            .filter(
-                ConversationControl.conversation_id
-                == request_row.conversation_id
-            )
+            .filter(ConversationControl.conversation_id == request_row.conversation_id)
             .first()
         )
         if control is None or (
@@ -245,10 +300,7 @@ def accept_operator_handoff(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="handoff_not_found",
             )
-        conversation = db.get(
-            WebchatConversation,
-            request_row.conversation_id,
-        )
+        conversation = db.get(WebchatConversation, request_row.conversation_id)
         if conversation is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -272,10 +324,7 @@ def get_operator_conversation_thread(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
-    conversation = _conversation_by_public_id(
-        db,
-        conversation_id=conversation_id,
-    )
+    conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
     return read_conversation_thread(
         db,
         conversation=conversation,
@@ -294,10 +343,7 @@ def reply_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(
-            db,
-            conversation_id=conversation_id,
-        )
+        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
         return reply_to_conversation(
             db,
             conversation=conversation,
@@ -315,15 +361,10 @@ def close_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(
-            db,
-            conversation_id=conversation_id,
-        )
+        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
         control = (
             db.query(ConversationControl)
-            .filter(
-                ConversationControl.conversation_id == conversation.id
-            )
+            .filter(ConversationControl.conversation_id == conversation.id)
             .first()
         )
         if control is None:

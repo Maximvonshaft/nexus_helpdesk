@@ -1,7 +1,6 @@
 fastapi==0.139.0
 starlette==1.3.1
 uvicorn==0.34.0
-websockets==13.1
 gunicorn==23.0.0
 sqlalchemy==2.0.38
 alembic==1.14.1
@@ -15,13 +14,15 @@ email-validator==2.2.0
 boto3==1.37.38
 
 httpx==0.28.1
-livekit-api==1.1.0
+websockets==13.1
+livekit-api==1.2.0
 livekit==1.1.13
+livekit-agents==1.6.6
 
-prometheus-client==0.21.1
+prometheus-client==0.22.1
 cryptography==48.0.1
 jsonschema==4.21.1
-pypdf==6.13.3
+pypdf==6.14.2
 defusedxml==0.7.1
 
 pytest-asyncio==1.4.0

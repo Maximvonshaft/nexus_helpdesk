@@ -130,17 +130,9 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
         config = load_webchat_voice_runtime_config()
         webchat_voice_enabled = config.human_call_enabled
         provider = config.provider
-        recording_enabled = config.recording_enabled
-        transcription_enabled = config.transcription_enabled
-        if recording_enabled:
-            warnings.append("human_webcall recording is enabled")
-        if transcription_enabled:
-            warnings.append("human_webcall transcription is enabled")
     except RuntimeError as exc:
         webchat_voice_enabled = False
         provider = "unknown"
-        recording_enabled = False
-        transcription_enabled = False
         warnings.append(f"human_webcall_config_invalid:{type(exc).__name__}")
 
     try:
@@ -165,8 +157,7 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
     return {
         "webchat_voice_enabled": webchat_voice_enabled,
         "provider": provider,
-        "recording_enabled": recording_enabled,
-        "transcription_enabled": transcription_enabled,
+        "voice_policy_authority": "channel_account",
         "active_session_count": active_session_count,
         "ringing_session_count": ringing_session_count,
         "stale_active_session_count": stale_active_session_count,

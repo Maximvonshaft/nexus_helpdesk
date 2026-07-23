@@ -26,7 +26,6 @@
   var securityNote = script.getAttribute('data-security-note') || 'Do not share passwords or payment codes.';
   var autoOpen = script.getAttribute('data-auto-open') === 'true';
   var liveVoiceMode = (script.getAttribute('data-live-voice-mode') || 'off').toLowerCase();
-  var liveVoiceWsPath = script.getAttribute('data-live-voice-ws-path') || '/webchat/live/ws';
   var liveVoiceLabel = script.getAttribute('data-live-voice-label') || 'VOIP Call';
   var storageKey = 'nexusdesk:webchat:' + apiBase + ':' + tenantKey + ':' + channelKey + ':' + mode;
   var contextKey = storageKey + ':recent-context';
@@ -34,13 +33,6 @@
   var MAX_CONTEXT_TURNS = 5;
   var LEGACY_POLL_IDLE_MS = Number(script.getAttribute('data-poll-ms') || 4000);
   var LEGACY_POLL_PENDING_MS = Number(script.getAttribute('data-pending-poll-ms') || 350);
-
-var LIVE_VOICE_WORKLET_URL = new URL('/webchat/live-voice-capture-worklet.js?v=1', scriptUrl.origin).toString();
-var LIVE_VOICE_PROCESSOR_NAME = 'nexus-live-voice-capture-v1';
-var LIVE_VOICE_FRAME_SAMPLES = 320;
-var MAX_CAPTURE_PACKET_BYTES = 4096;
-var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
-// Legacy createScriptProcessor capture was removed; AudioWorklet is mandatory.
 
   var state = {
     open: false,
@@ -138,110 +130,91 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
   var voiceBtn = document.createElement('button');
   voiceBtn.className = 'nd-webchat-voice';
   voiceBtn.type = 'button';
+  voiceBtn.setAttribute('data-visible', liveVoiceMode === 'livekit-room' ? 'true' : 'false');
   voiceBtn.setAttribute('aria-label', liveVoiceLabel);
-  voiceBtn.setAttribute('data-visible', liveVoiceMode === 'edge-card' ? 'true' : 'false');
-  voiceBtn.innerHTML = '<span aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.07 21 3 13.93 3 5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.19 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span><span>' + escapeHtml(liveVoiceLabel) + '</span>';
+  voiceBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.08.36 2.24.56 3.44.56a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.53 21 3 13.47 3 4.16a1 1 0 0 1 1-1H7.5a1 1 0 0 1 1 1c0 1.2.2 2.36.56 3.44a1 1 0 0 1-.24 1Z"/></svg><span>VOIP<br/>Call</span>';
   var close = document.createElement('button');
   close.className = 'nd-webchat-close';
   close.type = 'button';
-  close.setAttribute('aria-label', closeLabel);
-  close.setAttribute('title', closeLabel);
+  close.setAttribute('aria-label', 'Close');
   header.appendChild(avatar);
   header.appendChild(headerText);
   header.appendChild(voiceBtn);
   header.appendChild(close);
+  panel.appendChild(header);
 
   var voicePanel = document.createElement('div');
   voicePanel.className = 'nd-webchat-voice-panel';
-  voicePanel.innerHTML = ''
-    + '<div class="nd-webchat-voice-row">'
-    + '<div class="nd-webchat-voice-auto">Language is detected automatically.</div>'
-    + '<button class="nd-webchat-voice-start" type="button">Start</button>'
-    + '</div>'
-    + '<div class="nd-webchat-voice-status">Tap Start and allow microphone access.</div>'
-    + '<div class="nd-webchat-voice-transcript"></div>'
-    + '<div class="nd-webchat-voice-foot">Voice support is live. Do not share passwords or payment codes.</div>';
+  voicePanel.innerHTML = '<div class="nd-webchat-voice-row"><div class="nd-webchat-voice-auto">Secure LiveKit voice room with server-owned recording and transcript policy.</div><button type="button" class="nd-webchat-voice-start">Start call</button></div><div class="nd-webchat-voice-status">Voice is idle.</div><div class="nd-webchat-voice-transcript"></div><div class="nd-webchat-voice-foot">Microphone access is requested only in the dedicated call window.</div>';
+  panel.appendChild(voicePanel);
+
   var messagesEl = document.createElement('div');
   messagesEl.className = 'nd-webchat-messages';
-  messagesEl.setAttribute('role', 'log');
-  messagesEl.setAttribute('aria-live', 'polite');
+  panel.appendChild(messagesEl);
+  var statusEl = document.createElement('div');
+  statusEl.className = 'nd-webchat-status';
+  panel.appendChild(statusEl);
   var composerWrap = document.createElement('div');
   composerWrap.className = 'nd-webchat-composer-wrap';
-  var formEl = document.createElement('form');
-  formEl.className = 'nd-webchat-form';
-  var attachIcon = document.createElement('span');
-  attachIcon.className = 'nd-webchat-attach';
-  attachIcon.setAttribute('aria-hidden', 'true');
-  attachIcon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.7 5.7L9.2 18.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/></svg>';
+  var form = document.createElement('form');
+  form.className = 'nd-webchat-form';
+  var attach = document.createElement('span');
+  attach.className = 'nd-webchat-attach';
+  attach.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/></svg>';
   var inputEl = document.createElement('input');
   inputEl.className = 'nd-webchat-input';
+  inputEl.type = 'text';
   inputEl.maxLength = 2000;
-  inputEl.placeholder = script.getAttribute('data-input-placeholder') || 'Message';
+  inputEl.placeholder = 'Type your message...';
   inputEl.autocomplete = 'off';
   var sendEl = document.createElement('button');
   sendEl.className = 'nd-webchat-send';
   sendEl.type = 'submit';
-  sendEl.setAttribute('aria-label', script.getAttribute('data-send-label') || 'Send');
-  sendEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 16-8-5 16-3.2-6.2L4 12Z" fill="currentColor"/></svg>';
-  formEl.appendChild(attachIcon);
-  formEl.appendChild(inputEl);
-  formEl.appendChild(sendEl);
-  var securityEl = document.createElement('div');
-  securityEl.className = 'nd-webchat-security';
-  securityEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>' + escapeHtml(securityNote) + '</span>';
-  composerWrap.appendChild(formEl);
-  composerWrap.appendChild(securityEl);
-  var statusEl = document.createElement('div');
-  statusEl.className = 'nd-webchat-status';
-  panel.appendChild(header);
-  panel.appendChild(voicePanel);
-  panel.appendChild(messagesEl);
+  sendEl.setAttribute('aria-label', 'Send');
+  sendEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>';
+  form.appendChild(attach);
+  form.appendChild(inputEl);
+  form.appendChild(sendEl);
+  composerWrap.appendChild(form);
+  var security = document.createElement('div');
+  security.className = 'nd-webchat-security';
+  security.textContent = '🔒 ' + securityNote;
+  composerWrap.appendChild(security);
   panel.appendChild(composerWrap);
-  panel.appendChild(statusEl);
-  document.body.appendChild(panel);
   document.body.appendChild(button);
+  document.body.appendChild(panel);
 
-  setStatus('');
-  if (welcome) appendMessage('agent', welcome);
+  var voiceStart = voicePanel.querySelector('.nd-webchat-voice-start');
 
-  button.addEventListener('click', function () { openPanel(); });
-  close.addEventListener('click', function () { stopLiveVoice('Voice stopped.'); openPanel(false); });
+  button.addEventListener('click', function () { openPanel(true); });
+  close.addEventListener('click', function () { openPanel(false); });
   voiceBtn.addEventListener('click', function () { toggleVoicePanel(); });
-  var voiceStartBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-  if (voiceStartBtn) voiceStartBtn.addEventListener('click', startLiveVoice);
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden' && state.liveVoice) {
-      stopLiveVoice('Voice stopped while the page is hidden.');
-    }
-  });
-  window.addEventListener('pagehide', function () {
-    if (state.liveVoice) stopLiveVoice('Voice stopped.');
-  });
+  voiceStart.addEventListener('click', startLiveVoice);
+  messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
+  document.addEventListener('visibilitychange', function () { if (state.open) scheduleLegacyPoll(); });
   inputEl.addEventListener('compositionstart', function () { state.composing = true; });
   inputEl.addEventListener('compositionend', function () { state.composing = false; });
-  messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
-  formEl.addEventListener('submit', function (event) {
+  inputEl.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && !event.shiftKey && !state.composing) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.addEventListener('submit', function (event) {
     event.preventDefault();
-    if (state.composing || event.isComposing || state.busy) return;
-    var body = inputEl.value.trim();
-    if (!body) return;
+    var body = String(inputEl.value || '').trim();
+    if (!body || state.busy) return;
     sendConversationMessage(body);
   });
 
+  if (welcome) appendMessage('agent', welcome);
   restoreLegacySession();
-  bindPageTriggers();
   exposePublicApi();
-  if (autoOpen) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { openPanel(true); }, { once: true });
-    } else {
-      setTimeout(function () { openPanel(true); }, 0);
-    }
-  }
+  bindPageTriggers();
+  if (autoOpen) setTimeout(function () { openPanel(true); }, 150);
 
   function setStatus(text) {
-    statusEl.textContent = text;
-    panel.setAttribute('data-status', String(text || '').toLowerCase().replace(/\s+/g, '-'));
+    statusEl.textContent = text || '';
   }
 
   function escapeHtml(value) {
@@ -300,17 +273,17 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
     });
 
     document.addEventListener('submit', function (event) {
-      var form = findClosest(event.target, '[data-webchat-form]');
-      if (!form) return;
+      var pageForm = findClosest(event.target, '[data-webchat-form]');
+      if (!pageForm) return;
       event.preventDefault();
-      var inputSelector = form.getAttribute('data-webchat-input') || 'input,textarea';
-      var source = form.querySelector(inputSelector) || document.querySelector(inputSelector);
+      var inputSelector = pageForm.getAttribute('data-webchat-input') || 'input,textarea';
+      var source = pageForm.querySelector(inputSelector) || document.querySelector(inputSelector);
       var value = source && source.value ? String(source.value).trim() : '';
       if (!value) {
         if (source && source.focus) source.focus();
         return;
       }
-      if (form.getAttribute('data-webchat-submit') === 'prefill') {
+      if (pageForm.getAttribute('data-webchat-submit') === 'prefill') {
         window.NexusDeskWebChat.prefill(value);
       } else {
         window.NexusDeskWebChat.send(value);
@@ -459,11 +432,10 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
   }
 
   function toggleVoicePanel(force) {
-    if (liveVoiceMode !== 'edge-card') return;
+    if (liveVoiceMode !== 'livekit-room') return;
     openPanel(true);
     state.voiceOpen = typeof force === 'boolean' ? force : !state.voiceOpen;
     voicePanel.setAttribute('data-open', state.voiceOpen ? 'true' : 'false');
-    if (!state.voiceOpen && state.liveVoice) stopLiveVoice('Voice stopped.');
   }
 
   function voiceStatus(text) {
@@ -471,351 +443,86 @@ var LIVE_VOICE_PLAYBACK_GUARD_SECONDS = 0.35;
     if (el) el.textContent = text || '';
   }
 
-  function addVoiceTranscript(kind, text) {
-    if (!text) return;
-    var wrap = voicePanel.querySelector('.nd-webchat-voice-transcript');
-    if (!wrap) return;
-    var div = document.createElement('div');
-    div.className = 'nd-webchat-voice-msg ' + kind;
-    div.textContent = text;
-    wrap.appendChild(div);
-    wrap.scrollTop = wrap.scrollHeight;
-  }
-
-  function stopLivePlayback(liveOverride) {
-    var live = liveOverride || state.liveVoice;
-    if (!live) return;
-    live.playbackGeneration = (live.playbackGeneration || 0) + 1;
-    if (live.playbackReadyTimer) {
-      clearTimeout(live.playbackReadyTimer);
-      live.playbackReadyTimer = null;
-    }
-    (live.playingSources || []).forEach(function (sourceNode) {
-      try { sourceNode.stop(); } catch (err) {}
-      try { sourceNode.disconnect(); } catch (err) {}
-    });
-    live.playingSources = [];
-    if (live.audioContext && live.audioContext.state !== 'closed') {
-      live.nextPlayTime = live.audioContext.currentTime + 0.03;
-      live.captureResumeAt = live.audioContext.currentTime;
-    }
-  }
-
-  function livePlaybackActive(live) {
-    if (!live || !live.audioContext || live.audioContext.state === 'closed') return false;
-    return (live.playingSources || []).length > 0 ||
-      (live.captureResumeAt || 0) > live.audioContext.currentTime;
-  }
-
-  function scheduleLiveVoiceReady(live) {
-    if (!live || !live.audioContext || live.released) return;
-    if (live.playbackReadyTimer) clearTimeout(live.playbackReadyTimer);
-    var generation = live.playbackGeneration || 0;
-    var remainingSeconds = Math.max(0, (live.captureResumeAt || live.nextPlayTime || 0) - live.audioContext.currentTime);
-    live.playbackReadyTimer = setTimeout(function () {
-      if (live.released || state.liveVoice !== live || generation !== (live.playbackGeneration || 0)) return;
-      live.playbackReadyTimer = null;
-      voiceStatus('Ready. You can speak again.');
-    }, Math.ceil(remainingSeconds * 1000));
-  }
-
-  function resetLiveVoice(statusText) {
+  function stopLiveVoice(statusText) {
+    state.liveVoice = null;
     voiceBtn.classList.remove('is-live');
-    var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-    if (startBtn) {
-      startBtn.classList.remove('stop');
-      startBtn.textContent = 'Start';
-    }
     if (statusText) voiceStatus(statusText);
   }
 
-  function releaseLiveVoice(live, statusText, closeSocket) {
-    if (!live || live.released) {
-      if (statusText && !state.liveVoice) resetLiveVoice(statusText);
-      return;
-    }
-    live.released = true;
-    stopLivePlayback(live);
-    if (state.liveVoice === live) state.liveVoice = null;
-
-    if (live.captureNode) {
-      try { live.captureNode.port.onmessage = null; } catch (err) {}
-      try { live.captureNode.port.postMessage({ type: 'stop' }); } catch (err) {}
-      try { live.captureNode.port.close(); } catch (err) {}
-      try { live.captureNode.disconnect(); } catch (err) {}
-    }
-    try { if (live.source) live.source.disconnect(); } catch (err) {}
-    try {
-      if (live.stream) live.stream.getTracks().forEach(function (track) { track.stop(); });
-    } catch (err) {}
-
-    if (live.ws) {
-      live.ws.onopen = null;
-      live.ws.onmessage = null;
-      live.ws.onerror = null;
-      live.ws.onclose = null;
-      if (closeSocket) {
-        try {
-if (live.ws.readyState < WebSocket.CLOSING) live.ws.close(1000, 'client_stop');
-        } catch (err) {}
-      }
-    }
-
-    if (live.audioContext && live.audioContext.state !== 'closed') {
-      try { Promise.resolve(live.audioContext.close()).catch(function () {}); } catch (err) {}
-    }
-    resetLiveVoice(statusText || 'Voice stopped.');
+  function encodeVoiceBootstrap(payload) {
+    var encoded = window.btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    return encoded;
   }
 
-  function stopLiveVoice(statusText) {
-    releaseLiveVoice(state.liveVoice, statusText || 'Voice stopped.', true);
-  }
-
-  function safeLiveVoicePath(path) {
-    var value = String(path || '').trim();
-    if (!value || value.indexOf('://') !== -1 || value.charAt(0) !== '/') return '/webchat/live/ws';
-    return value;
-  }
-
-  function buildLiveWsUrl(langCode, voice, speed, conversationId, voiceSessionId, connectionTicket) {
-    var url = new URL(safeLiveVoicePath(liveVoiceWsPath), window.location.href);
-    url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.host = window.location.host;
-    url.search = '';
-    url.searchParams.set('lang_code', langCode);
-    url.searchParams.set('voice', voice);
-    url.searchParams.set('speed', speed);
-    url.searchParams.set('conversation_id', conversationId);
-    url.searchParams.set('voice_session_id', voiceSessionId);
-    url.searchParams.set('connection_ticket', connectionTicket);
-    return url.toString();
-  }
-
-  function createLiveVoiceSession(langCode) {
-    return ensureLegacySession().then(function () {
-      if (!state.legacyConversationId || !state.legacyVisitorToken) {
-        throw new Error('WebChat session is unavailable.');
-      }
-      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/live-voice/session', {
-        method: 'POST',
-        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
-        body: JSON.stringify({ locale: langCode || null })
-      }, 12000);
-    });
-  }
-
-  function playPcm16(arrayBuffer, sampleRate) {
-    var live = state.liveVoice;
-    if (!live || !live.audioContext) return Promise.resolve();
-    var pcm = new Int16Array(arrayBuffer);
-    if (!pcm.length) return Promise.resolve();
-    var float32 = new Float32Array(pcm.length);
-    for (var index = 0; index < pcm.length; index += 1) {
-      float32[index] = pcm[index] / 32768;
-    }
-    var audioBuffer = live.audioContext.createBuffer(1, float32.length, sampleRate || 24000);
-    audioBuffer.copyToChannel(float32, 0);
-    var sourceNode = live.audioContext.createBufferSource();
-    sourceNode.buffer = audioBuffer;
-    sourceNode.connect(live.audioContext.destination);
-    live.playingSources.push(sourceNode);
-    sourceNode.onended = function () {
-      live.playingSources = live.playingSources.filter(function (item) { return item !== sourceNode; });
+  function voiceComplianceEvidence(requirement) {
+    if (!requirement || requirement.policy === 'disabled') return null;
+    var prompt = String(requirement.prompt || '').trim();
+    if (!prompt) throw new Error('Voice compliance prompt is unavailable.');
+    var accepted = window.confirm(
+      prompt + '\n\nSelect OK to enable this capability, or Cancel to continue the call without it.'
+    );
+    var decision = accepted
+      ? (requirement.policy === 'notice' ? 'notice_delivered' : 'accepted')
+      : 'declined';
+    return {
+      capability: requirement.capability,
+      policy: requirement.policy,
+      policy_version: requirement.policy_version,
+      prompt_sha256: requirement.prompt_sha256,
+      decision: decision,
+      idempotency_key: [
+        'browser-compliance',
+        state.sessionId,
+        state.legacyConversationId,
+        requirement.capability,
+        requirement.policy_version,
+        String(requirement.prompt_sha256 || '').slice(0, 32)
+      ].join(':').slice(0, 180)
     };
-    var startAt = Math.max(live.audioContext.currentTime + 0.03, live.nextPlayTime || 0);
-    sourceNode.start(startAt);
-    live.nextPlayTime = startAt + audioBuffer.duration;
-    live.captureResumeAt = live.nextPlayTime + LIVE_VOICE_PLAYBACK_GUARD_SECONDS;
-    return Promise.resolve();
   }
 
-  function handleLiveMessage(event) {
-    var live = state.liveVoice;
-    if (!live) return Promise.resolve();
-    if (typeof event.data !== 'string') {
-      return playPcm16(event.data, live.currentTtsSampleRate || 24000);
-    }
-    var payload = null;
-    try { payload = JSON.parse(event.data); } catch (err) {}
-    if (!payload) return Promise.resolve();
-    if (payload.type === 'barge_in') {
-      stopLivePlayback();
-      voiceStatus('Listening...');
-    }
-    if (payload.type === 'speech_start') voiceStatus('Listening...');
-    if (payload.type === 'stt_start') voiceStatus('Transcribing...');
-    if (payload.type === 'stt_result') {
-      addVoiceTranscript('user', payload.text);
-      voiceStatus('Thinking...');
-    }
-    if (payload.type === 'stt_rejected') voiceStatus("I didn't catch that clearly.");
-    if (payload.type === 'ai_answer') {
-      addVoiceTranscript('ai', payload.answer);
-      voiceStatus('Speaking...');
-    }
-    if (payload.type === 'tts_start' && payload.sample_rate) {
-      live.playbackGeneration = (live.playbackGeneration || 0) + 1;
-      live.currentTtsSampleRate = payload.sample_rate;
-      if (live.audioContext) live.nextPlayTime = live.audioContext.currentTime + 0.03;
-    }
-    if (payload.type === 'tts_end') scheduleLiveVoiceReady(live);
-    if (payload.type === 'turn_error') voiceStatus('Voice error: ' + (payload.message || payload.error || 'unknown'));
-    return Promise.resolve();
-  }
-
-  function openLiveVoiceSocket(live, langCode, voice, speed) {
-    return new Promise(function (resolve, reject) {
-      if (live.released || state.liveVoice !== live) {
-        reject(new Error('Voice start was cancelled.'));
-        return;
-      }
-      var socket;
-      try {
-        socket = new WebSocket(buildLiveWsUrl(
-          langCode,
-          voice,
-          speed,
-          state.legacyConversationId,
-          live.voiceSessionId,
-          live.connectionTicket
-        ));
-      } catch (err) {
-        reject(err);
-        return;
-      }
-      live.ws = socket;
-      socket.binaryType = 'arraybuffer';
-      socket.onmessage = function (event) { handleLiveMessage(event); };
-      socket.onopen = function () {
-        if (live.released || state.liveVoice !== live) {
-try { socket.close(1000, 'cancelled'); } catch (err) {}
-reject(new Error('Voice start was cancelled.'));
-return;
-        }
-        resolve(socket);
-      };
-      socket.onerror = function () {
-        reject(new Error('Voice connection failed.'));
-      };
-      socket.onclose = function () {
-        if (!live.released) releaseLiveVoice(live, 'Voice disconnected.', false);
-      };
+  function collectVoiceCompliance(policy) {
+    var evidence = [];
+    ['recording', 'transcript_persistence'].forEach(function (key) {
+      var item = voiceComplianceEvidence(policy && policy[key]);
+      if (item) evidence.push(item);
     });
+    return evidence;
   }
 
   function startLiveVoice() {
-    if (liveVoiceMode !== 'edge-card') return;
+    if (liveVoiceMode !== 'livekit-room') return;
     toggleVoicePanel(true);
-    if (state.liveVoice) {
-      stopLiveVoice('Voice stopped.');
-      return;
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      voiceStatus('Microphone is not available in this browser.');
-      return;
-    }
-    var AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextConstructor || !window.AudioWorkletNode) {
-      voiceStatus('AudioWorklet support is required for voice capture.');
-      return;
-    }
-
-    var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
-    var langCode = 'auto';
-    var voice = 'auto';
-    var speed = '1.0';
-    var live = {
-      ws: null,
-      audioContext: null,
-      source: null,
-      captureNode: null,
-      stream: null,
-      playingSources: [],
-      currentTtsSampleRate: 24000,
-      nextPlayTime: 0,
-      captureResumeAt: 0,
-      playbackGeneration: 0,
-      playbackReadyTimer: null,
-      voiceSessionId: null,
-      connectionTicket: null,
-      released: false
-    };
-    state.liveVoice = live;
-    voiceStatus('Preparing secure voice capture...');
-
-    Promise.resolve().then(function () {
-      return createLiveVoiceSession(langCode);
-    }).then(function (voiceSession) {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      live.voiceSessionId = String(voiceSession.voice_session_id || '');
-      live.connectionTicket = String(voiceSession.connection_ticket || '');
-      if (!live.voiceSessionId || !live.connectionTicket) throw new Error('Voice session could not be created.');
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      live.audioContext = new AudioContextConstructor();
-      if (!live.audioContext.audioWorklet || !live.audioContext.audioWorklet.addModule) {
-        throw new Error('AudioWorklet support is unavailable.');
-      }
-      return live.audioContext.resume();
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      return live.audioContext.audioWorklet.addModule(LIVE_VOICE_WORKLET_URL);
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      return openLiveVoiceSocket(live, langCode, voice, speed);
-    }).then(function () {
-      if (live.released || state.liveVoice !== live) throw new Error('Voice start was cancelled.');
-      voiceStatus('Connected. Requesting microphone access...');
-      return navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    voiceStatus('Preparing a secure LiveKit room...');
+    ensureLegacySession().then(function () {
+      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/voice/policy', {
+        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken }
+      }, 12000);
+    }).then(function (policy) {
+      var evidence = collectVoiceCompliance(policy);
+      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/voice/sessions', {
+        method: 'POST',
+        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
+        body: JSON.stringify({ locale: locale || null, compliance_evidence: evidence })
+      }, 12000);
+    }).then(function (session) {
+      if (!session.livekit_url || !session.participant_token) throw new Error('LiveKit voice is unavailable.');
+      var bootstrap = encodeVoiceBootstrap({
+        role: 'visitor',
+        voice_session_id: session.voice_session_id,
+        provider: session.provider,
+        livekit_url: session.livekit_url,
+        participant_token: session.participant_token,
+        participant_identity: session.participant_identity,
+        visitor_token: state.legacyVisitorToken,
+        conversation_id: state.legacyConversationId
       });
-    }).then(function (mediaStream) {
-      if (live.released || state.liveVoice !== live) {
-        mediaStream.getTracks().forEach(function (track) { track.stop(); });
-        throw new Error('Voice start was cancelled.');
-      }
-      live.stream = mediaStream;
-      live.source = live.audioContext.createMediaStreamSource(mediaStream);
-      live.captureNode = new AudioWorkletNode(live.audioContext, LIVE_VOICE_PROCESSOR_NAME, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        processorOptions: {
-outputSampleRate: 16000,
-frameSamples: LIVE_VOICE_FRAME_SAMPLES
-        }
-      });
-      live.captureNode.port.onmessage = function (event) {
-        if (live.released || state.liveVoice !== live) return;
-        var data = event && event.data;
-        var packet = data && data.type === 'pcm16' ? data.buffer : null;
-        if (!(packet instanceof ArrayBuffer) || packet.byteLength === 0) return;
-        if (livePlaybackActive(live)) return;
-        if (packet.byteLength > MAX_CAPTURE_PACKET_BYTES) {
-releaseLiveVoice(live, 'Voice capture stopped because an audio packet exceeded the safety limit.', true);
-return;
-        }
-        if (live.ws && live.ws.readyState === WebSocket.OPEN) live.ws.send(packet);
-      };
-      live.source.connect(live.captureNode);
-      live.captureNode.connect(live.audioContext.destination);
-      voiceBtn.classList.add('is-live');
-      if (startBtn) {
-        startBtn.classList.add('stop');
-        startBtn.textContent = 'Stop';
-      }
-      voiceStatus('Listening...');
+      var opened = window.open('/webcall/' + encodeURIComponent(session.voice_session_id) + '#' + bootstrap, '_blank', 'noopener,noreferrer');
+      if (!opened) window.location.assign('/webcall/' + encodeURIComponent(session.voice_session_id) + '#' + bootstrap);
+      voiceStatus('Voice room opened in a secure call window.');
     }).catch(function (err) {
-      if (live.released && state.liveVoice !== live) return;
-      var errorName = err && err.name ? String(err.name) : '';
-      var message = err && err.message ? String(err.message) : String(err || 'unknown');
-      var status = 'Voice start failed: ' + message;
-      if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
-        status = 'Microphone access was denied.';
-      } else if (message.indexOf('AudioWorklet') !== -1) {
-        status = 'AudioWorklet support is unavailable.';
-      }
-      releaseLiveVoice(live, status, true);
+      voiceStatus('Voice start failed: ' + (err && err.message ? err.message : 'unknown'));
     });
   }
 

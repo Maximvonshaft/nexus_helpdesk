@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..webchat_models import WebchatMessage
+from .agent_confirmation_service import active_confirmation_context
 from .agent_release_service import AgentDeploymentUnavailable, resolve_agent_release
 from .agent_runtime.session_checkpoints import (
     checkpoint_prompt_projection,
@@ -31,6 +32,7 @@ _SECRET_KEYS = {
     "api_key",
     "raw_payload",
     "provider_payload",
+    "encrypted_arguments",
 }
 
 
@@ -110,9 +112,14 @@ def build_agent_context(
         country_code=effective_country.country,
         channel=channel_key,
     )
+    confirmation = (
+        active_confirmation_context(db, conversation=conversation)
+        if conversation is not None and getattr(conversation, "id", None) is not None
+        else None
+    )
     return sanitize_runtime_context(
         {
-            "context_version": "nexus.agent_context.v3",
+            "context_version": "nexus.agent_context.v4",
             "tenant_key": tenant_key,
             "channel_context": {
                 "market_id": market_id,
@@ -131,11 +138,24 @@ def build_agent_context(
             "persona_context": _persona_context_from_release(release_snapshot),
             "active_bulletins": bulletins,
             "recent_conversation": recent,
+            "customer_confirmation": confirmation,
             "agent_execution_context": {
                 "conversation_id": getattr(conversation, "id", None),
                 "ticket_id": getattr(ticket, "id", None),
                 "customer_id": getattr(customer, "id", None),
                 "country_code": effective_country.country,
+                "customer_confirmation_granted": bool(
+                    confirmation and confirmation.get("customer_confirmation_granted")
+                ),
+                "customer_confirmation_id": (
+                    confirmation.get("confirmation_id") if confirmation else None
+                ),
+                "customer_confirmation_tool_name": (
+                    confirmation.get("tool_name") if confirmation else None
+                ),
+                "customer_confirmation_arguments_sha256": (
+                    confirmation.get("arguments_sha256") if confirmation else None
+                ),
             },
         }
     )

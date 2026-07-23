@@ -91,6 +91,7 @@ docker run --rm --entrypoint python "${CANDIDATE_IMAGE}" \
   /app/scripts/security/extract_installed_license_evidence.py \
   --package psycopg \
   --package psycopg-binary \
+  --package livekit-local-inference \
   > "${RELEASE_IMAGE_DIR}/installed-license-evidence.json"
 python scripts/security/release_image_assurance.py vulnerabilities \
   --report "${RELEASE_IMAGE_DIR}/trivy.raw.json" \

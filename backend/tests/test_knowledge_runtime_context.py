@@ -179,10 +179,11 @@ def test_runtime_context_is_release_gated_and_does_not_prefetch_knowledge(db_ses
         body="Can I change my delivery address?",
     )
 
-    assert context["context_version"] == "nexus.agent_context.v3"
+    assert context["context_version"] == "nexus.agent_context.v4"
     assert context["agent_release_snapshot"] is None
     assert context["agent_release_error"] == "agent_deployment_unavailable"
     assert context["persona_context"] is None
+    assert context["customer_confirmation"] is None
     assert "session_checkpoint" not in context
     assert context["channel_context"]["channel"] == "website"
     assert "knowledge_context" not in context
@@ -261,6 +262,7 @@ def test_runtime_context_has_no_retired_tracking_prefetch_parameters(db_session)
         body="Reference CH1200000011425",
     )
     serialized = str(context)
+    assert context["context_version"] == "nexus.agent_context.v4"
     assert "knowledge_context" not in context
     assert "conversation_state" not in context
     assert "tracking_fact_evidence_present" not in serialized

@@ -1,101 +1,67 @@
-# NexusDesk WebCall Canary Readiness Runbook
+# Nexus WebCall Canary Readiness
 
 ## Purpose
 
-This runbook defines the pre-release canary gate for the WebCall operator console and voice lifecycle path after PR-WC-1 through PR-WC-5.
+This runbook defines the non-production readiness gate for the canonical LiveKit WebCall path. It does not enable a carrier, DID, SIP trunk, recording, transcription, AI voice, or outbound calling.
 
-The canary is intentionally non-deploying. It validates readiness before any production rollout decision.
+## Canonical surfaces
+
+- Public and operator media page: `/webcall/{voice_session_id}`.
+- Incoming operator offer: existing authenticated AppShell control.
+- Conversation context: canonical Workspace and Conversation timeline.
+- Provider control: durable Voice Commands and Telephony Event Inbox.
+- Acceptance authority: the single Canonical Acceptance workflow on the exact PR Head.
+
+There is no fallback Voice page, second operator console, legacy media route, or compatibility redirect.
 
 ## Safety boundary
 
 The canary must not:
 
-- deploy production;
-- run docker compose up;
-- modify deploy/.env.prod;
-- modify LiveKit provider credentials;
-- modify database migrations;
-- request microphone permission during page load;
-- render provider credentials or voice participant credentials into operator UI;
-- enable SIP/PSTN, recording, transcription, AI voice, or outbound calling.
+- deploy or modify production;
+- change real LiveKit, carrier, DID, trunk, dispatch-rule, or model credentials;
+- request microphone permission before an explicit join or accept action;
+- expose room names, participant identities, Provider references, API credentials, or participant tokens in the incoming-offer UI;
+- infer production authorization from green tests.
 
-## Required local command
+## Required repository gate
 
-```bash
-cd /opt/nexus_helpdesk_worktrees/webcall_b3_canary
-OUT_DIR=/tmp/nexus_webcall_canary_manual REQUIRE_CLEAN_WORKTREE=1 bash scripts/webcall_canary_readiness.sh
-```
+The exact candidate Head must pass:
 
-## Optional HTTP readiness command
+1. Static service-authority and telephony-residue qualification.
+2. Complete backend regression.
+3. PostgreSQL migration and acceptance rehearsal.
+4. Frontend architecture, lint, typecheck, units, build, and route splitting.
+5. Playwright browser journeys.
+6. Image build, migration, startup, readiness, Trivy, and SBOM.
+7. Secret scanning, SAST, dependency audit, and CodeQL.
+8. The final required gate.
 
-Use this only against an explicitly selected non-production or already-running target.
+## Controlled two-browser proof
 
-```bash
-cd /opt/nexus_helpdesk_worktrees/webcall_b3_canary
-NEXUS_CANARY_BASE_URL=http://127.0.0.1:18081 \
-OUT_DIR=/tmp/nexus_webcall_canary_http \
-REQUIRE_CLEAN_WORKTREE=1 \
-bash scripts/webcall_canary_readiness.sh
-```
+Run only against an explicitly isolated non-production environment with test credentials.
 
-## Gates covered
+1. Browser A starts a Voice session and opens `/webcall/{voice_session_id}`.
+2. Browser A explicitly joins and grants microphone permission.
+3. Browser B receives one capability- and scope-filtered incoming offer in the authenticated AppShell.
+4. Browser B explicitly accepts; the same Conversation and Handoff become authoritative.
+5. Confirm two-way audio in the same LiveKit Room.
+6. Exercise hold/resume and DTMF through durable Provider-confirmed commands.
+7. Exercise cold transfer and warm consultation start/complete/cancel without creating another Room or Conversation.
+8. End the call and confirm one canonical terminal timeline outcome.
+9. Complete required wrap-up before capacity is released.
 
-The canary verifies:
+## Evidence requirements
 
-1. Git safety and forbidden production file changes.
-2. Backend WebCall tests:
-   - voice API lifecycle;
-   - LiveKit provider;
-   - room compensation;
-   - static headers;
-   - mock/operator UI static tests;
-   - canary static tests.
-3. Frontend gates:
-   - typecheck;
-   - build;
-   - unit tests.
-4. Token and credential safety classification.
-5. Click-to-accept static guarantee:
-   - page load does not create local audio track;
-   - session list does not create local audio track;
-   - runtime config does not create local audio track;
-   - local audio track is created only after operator accept path.
-6. /webchat integrated entry static guarantee:
-   - the main WebChat operator workspace renders `AgentWebCallPanel`;
-   - conversation list shows an Incoming WebCall badge for tickets with ringing WebCall sessions;
-   - `/webchat-voice` remains available as fallback.
-7. WebCall Operational Queue tabs:
-   - Incoming;
-   - My Active;
-   - All Active;
-   - Missed;
-   - Closed Recent.
-8. Voice call evidence card:
-   - WebChat thread displays status, voice_session_id, provider, accepted_by, ended_by, ringing_duration_seconds, talk_duration_seconds, total_duration_seconds, recording status, transcript status, and summary status;
-   - ticket timeline receives the same `voice_call` payload.
-9. Missed cleanup:
-   - admin list queries clean expired ringing sessions to missed;
-   - cleanup writes `voice.session.missed`;
-   - cleanup writes final `voice_call` evidence.
-10. Runtime config no-secret policy:
-   - `/api/webchat/voice/runtime-config` may expose enabled/provider/livekit_url and capability booleans only;
-   - it must not expose LiveKit API key, LiveKit API secret, participant token, visitor token, password, refresh token, or provider credentials.
-11. Two-browser proof output:
-   - Browser A visitor opens `/webcall/{voice_session_id}` and clicks Join;
-   - Browser B operator opens `/webchat`, sees Incoming WebCall badge, accepts, ends, and continues text follow-up in the same ticket;
-   - the same ticket shows the `voice_call` evidence card.
-12. Optional HTTP readiness:
-   - runtime config is reachable;
-   - runtime config exposes only safe public runtime values;
-   - /webchat integrated entry is reachable;
-   - /webchat-voice fallback is reachable.
+The canary evidence must prove:
 
-## Expected result
+- no microphone access before explicit user action;
+- no Provider credentials or topology in public or incoming-offer responses;
+- one Conversation, one Handoff, one Voice Session, one Room, and one owner;
+- offer decline or timeout does not terminate the customer call;
+- warm consultation start is not reported as transfer completion;
+- Provider failures remain visibly unconfirmed;
+- customer-visible terminal failures are localized and retryable;
+- no second transcript, AI action, queue, or compatibility route exists.
 
-The final marker must be:
-
-```text
-CANARY_RESULT=PASS
-```
-
-Any failure blocks release promotion.
+Any failed gate or missing Provider evidence blocks release promotion.

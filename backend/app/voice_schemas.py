@@ -5,11 +5,40 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+VoiceCompliancePolicy = Literal["disabled", "notice", "explicit_consent"]
+VoiceComplianceCapability = Literal["recording", "transcript_persistence"]
+VoiceComplianceDecision = Literal[
+    "notice_delivered",
+    "accepted",
+    "declined",
+    "timeout",
+]
+
+
+class VoiceComplianceEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capability: VoiceComplianceCapability
+    policy: VoiceCompliancePolicy
+    policy_version: str = Field(min_length=1, max_length=80)
+    prompt_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    decision: VoiceComplianceDecision
+    idempotency_key: str = Field(min_length=1, max_length=180)
+
+    @field_validator("policy_version", "idempotency_key", mode="before")
+    @classmethod
+    def strip_compliance_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
 class WebchatVoiceCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     locale: str | None = Field(default=None, max_length=20)
-    recording_consent: bool = False
+    compliance_evidence: list[VoiceComplianceEvidenceInput] = Field(
+        default_factory=list,
+        max_length=2,
+    )
 
 
 class WebchatVoiceRejectRequest(BaseModel):
@@ -46,12 +75,29 @@ class WebchatVoiceNoteResponse(BaseModel):
 class WebchatVoiceActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action_type: Literal["hold", "resume", "mute", "unmute", "keypad", "transfer", "add_participant"]
+    action_type: Literal[
+        "answer",
+        "hangup",
+        "hold",
+        "resume",
+        "mute",
+        "unmute",
+        "keypad",
+        "add_participant",
+        "remove_participant",
+        "cold_transfer",
+        "warm_transfer",
+        "warm_transfer_complete",
+        "warm_transfer_cancel",
+        "recording_start",
+        "recording_stop",
+    ]
     target: str | None = Field(default=None, max_length=240)
-    digits: str | None = Field(default=None, max_length=64, pattern=r"^[0-9*#]+$")
+    digits: str | None = Field(default=None, max_length=64, pattern=r"^[0-9*#wW]+$")
     note: str | None = Field(default=None, max_length=500)
+    idempotency_key: str | None = Field(default=None, max_length=160)
 
-    @field_validator("target", "digits", "note", mode="before")
+    @field_validator("target", "digits", "note", "idempotency_key", mode="before")
     @classmethod
     def strip_action_text(cls, value):
         if isinstance(value, str):
@@ -60,16 +106,18 @@ class WebchatVoiceActionRequest(BaseModel):
 
 
 class WebchatVoiceActionRead(BaseModel):
-    id: int
+    id: str
     action_type: str
     status: str
     provider_status: str
-    provider_reason: str
-    payload: dict = Field(default_factory=dict)
-    actor_user_id: int
-    ticket_event_id: int | None = None
-    webchat_event_id: int | None = None
-    audit_id: int | None = None
+    provider_reason: str | None = None
+    provider_reference: str | None = None
+    idempotency_key: str
+    attempt_count: int = 0
+    result: dict = Field(default_factory=dict)
+    actor_user_id: int | None = None
+    completed_at: str | None = None
+    next_attempt_at: str | None = None
     created_at: str | None = None
 
 
@@ -156,7 +204,14 @@ class SpeedafVoiceCallbackActionPayload(BaseModel):
     actionStatus: Literal["SUCCESS", "FAILED"] = "SUCCESS"
     errorCode: str = Field(default="", max_length=80)
 
-    @field_validator("waybillCode", "action", "actionTime", "aiActionSummary", "errorCode", mode="before")
+    @field_validator(
+        "waybillCode",
+        "action",
+        "actionTime",
+        "aiActionSummary",
+        "errorCode",
+        mode="before",
+    )
     @classmethod
     def strip_speedaf_voice_callback_text(cls, value):
         if isinstance(value, str):
@@ -190,38 +245,69 @@ class SpeedafVoiceCallbackResponse(BaseModel):
     ai_action_id: int | None = None
 
 
+class VoiceRoutingOfferRead(BaseModel):
+    id: str
+    expires_at: str
+
+
 class WebchatVoiceSessionRead(BaseModel):
     ok: bool = True
     voice_session_id: str
     status: str
     provider: str
-    voice_page_url: str | None = None
+    media_plane: str = "livekit"
+    livekit_url: str | None = None
     room_name: str
     provider_room_name: str | None = None
     participant_identity: str | None = None
     participant_token: str | None = None
     expires_in_seconds: int | None = None
+    handoff_request_id: int | None = None
     accepted_by_user_id: int | None = None
+    ended_by_user_id: int | None = None
+    channel_account_id: int | None = None
+    direction: str = "inbound"
+    mode: str
+    ai_agent_status: str | None = None
+    compliance: dict | None = None
+    voice_offer: VoiceRoutingOfferRead | None = None
     started_at: str | None = None
     ringing_at: str | None = None
     accepted_at: str | None = None
     active_at: str | None = None
     ended_at: str | None = None
+    wrap_up_expires_at: str | None = None
     expires_at: str | None = None
+    recording_status: str | None = None
+    transcript_status: str | None = None
+    summary_status: str | None = None
+    ringing_duration_seconds: int | None = None
+    talk_duration_seconds: int | None = None
+    total_duration_seconds: int | None = None
 
 
 class WebchatVoiceSessionList(BaseModel):
     items: list[WebchatVoiceSessionRead]
 
 
-class WebchatVoiceIncomingSessionRead(WebchatVoiceSessionRead):
+class WebchatVoiceIncomingSessionRead(BaseModel):
+    ok: bool = True
+    voice_session_id: str
+    status: str
+    provider: str
+    media_plane: str = "livekit"
+    voice_offer: VoiceRoutingOfferRead
     ticket_id: int | None = None
     ticket_no: str | None = None
     ticket_title: str | None = None
     conversation_id: str | None = None
     visitor_label: str | None = None
-    origin: str | None = None
-    page_url: str | None = None
+    direction: str = "inbound"
+    mode: str
+    started_at: str | None = None
+    ringing_at: str | None = None
+    recording_status: str | None = None
+    transcript_status: str | None = None
 
 
 class WebchatVoiceIncomingSessionList(BaseModel):

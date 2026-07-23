@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -18,30 +21,76 @@ from ..voice_schemas import (
     WebchatVoiceRejectRequest,
 )
 from ..webchat_voice_config import load_webchat_voice_runtime_config
-from ..services.webchat_voice_service import (
+from ..services.observability import record_voice_provider_error
+from ..services.voice_business_action_service import queue_speedaf_voice_callback
+from ..services.voice_evidence_service import (
+    list_admin_voice_actions,
+    list_admin_voice_evidence,
+    record_admin_voice_action,
+    save_admin_voice_note,
+)
+from ..services.voice_provider import VoiceProviderError
+from ..services.voice_session_service import (
     DETAIL_EXPIRED,
     accept_admin_voice_session,
     create_public_voice_session,
     end_admin_voice_session,
     end_public_voice_session,
     list_admin_incoming_voice_sessions,
-    list_admin_voice_actions,
-    list_admin_voice_evidence,
     list_admin_voice_sessions,
-    queue_speedaf_voice_callback,
-    record_admin_voice_action,
+    load_voice_session,
+    public_voice_policy,
     reject_admin_voice_session,
-    save_admin_voice_note,
+    serialize_voice_session,
 )
 from .deps import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webchat", tags=["webchat-voice"])
+
+_EMPTY_CREDENTIAL_FIELDS = {
+    "participant_token",
+    "participant_identity",
+    "expires_in_seconds",
+}
+
+
+def _omit_unissued_voice_credentials(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_omit_unissued_voice_credentials(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _omit_unissued_voice_credentials(item)
+        for key, item in value.items()
+        if not (key in _EMPTY_CREDENTIAL_FIELDS and item is None)
+    }
 
 
 def _require_visitor_token(header_token: str | None) -> str:
     if not header_token:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="invalid webchat visitor token",
+        )
     return header_token
+
+
+@router.get("/conversations/{conversation_id}/voice/policy")
+def read_voice_policy(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    x_webchat_visitor_token: str | None = Header(
+        default=None,
+        alias="X-Webchat-Visitor-Token",
+    ),
+) -> dict:
+    visitor_token = _require_visitor_token(x_webchat_visitor_token)
+    return public_voice_policy(
+        db,
+        conversation_public_id=conversation_id,
+        visitor_token=visitor_token,
+    )
 
 
 @router.post("/conversations/{conversation_id}/voice/sessions")
@@ -50,17 +99,25 @@ def create_voice_session(
     payload: WebchatVoiceCreateRequest,
     request: Request,
     db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+    x_webchat_visitor_token: str | None = Header(
+        default=None,
+        alias="X-Webchat-Visitor-Token",
+    ),
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
-        return create_public_voice_session(
-            db,
-            conversation_public_id=conversation_id,
-            visitor_token=visitor_token,
-            request=request,
-            locale=payload.locale,
-            recording_consent=payload.recording_consent,
+        return _omit_unissued_voice_credentials(
+            create_public_voice_session(
+                db,
+                conversation_public_id=conversation_id,
+                visitor_token=visitor_token,
+                request=request,
+                locale=payload.locale,
+                compliance_evidence=[
+                    item.model_dump()
+                    for item in payload.compliance_evidence
+                ],
+            )
         )
 
 
@@ -69,16 +126,37 @@ def end_visitor_voice_session(
     conversation_id: str,
     voice_session_id: str,
     db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+    x_webchat_visitor_token: str | None = Header(
+        default=None,
+        alias="X-Webchat-Visitor-Token",
+    ),
 ) -> dict:
     visitor_token = _require_visitor_token(x_webchat_visitor_token)
     with managed_session(db):
-        return end_public_voice_session(
-            db,
-            conversation_public_id=conversation_id,
-            voice_session_public_id=voice_session_id,
-            visitor_token=visitor_token,
-        )
+        try:
+            return _omit_unissued_voice_credentials(
+                end_public_voice_session(
+                    db,
+                    conversation_public_id=conversation_id,
+                    voice_session_public_id=voice_session_id,
+                    visitor_token=visitor_token,
+                )
+            )
+        except VoiceProviderError:
+            session = load_voice_session(db, voice_session_id)
+            if session.conversation_id is None or session.ended_at is None:
+                raise
+            record_voice_provider_error(session.provider, "close_room")
+            logger.warning(
+                "voice_room_cleanup_deferred",
+                extra={
+                    "voice_session_id": session.public_id,
+                    "provider": session.provider,
+                },
+            )
+            return _omit_unissued_voice_credentials(
+                serialize_voice_session(db, session=session)
+            )
 
 
 @router.get("/admin/tickets/{ticket_id}/voice/sessions")
@@ -87,7 +165,13 @@ def list_ticket_voice_sessions(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    return list_admin_voice_sessions(db, ticket_id=ticket_id, current_user=current_user)
+    return _omit_unissued_voice_credentials(
+        list_admin_voice_sessions(
+            db,
+            ticket_id=ticket_id,
+            current_user=current_user,
+        )
+    )
 
 
 @router.get("/admin/voice/sessions")
@@ -98,15 +182,20 @@ def list_incoming_voice_sessions(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return list_admin_incoming_voice_sessions(
-            db,
-            current_user=current_user,
-            status_filter=status,
-            limit=limit,
+        return _omit_unissued_voice_credentials(
+            list_admin_incoming_voice_sessions(
+                db,
+                current_user=current_user,
+                status_filter=status,
+                limit=limit,
+            )
         )
 
 
-@router.get("/admin/voice/{voice_session_id}/evidence", response_model=WebchatVoiceEvidenceResponse)
+@router.get(
+    "/admin/voice/{voice_session_id}/evidence",
+    response_model=WebchatVoiceEvidenceResponse,
+)
 def read_voice_evidence(
     voice_session_id: str,
     limit: int = 50,
@@ -121,7 +210,10 @@ def read_voice_evidence(
     )
 
 
-@router.get("/admin/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionList)
+@router.get(
+    "/admin/voice/{voice_session_id}/actions",
+    response_model=WebchatVoiceActionList,
+)
 def read_voice_actions(
     voice_session_id: str,
     limit: int = 20,
@@ -149,16 +241,26 @@ def accept_voice_session(
             current_user=current_user,
         )
         db.commit()
-        return result
+        return _omit_unissued_voice_credentials(result)
     except HTTPException as exc:
-        if exc.status_code == status.HTTP_409_CONFLICT and exc.detail == DETAIL_EXPIRED:
+        if (
+            exc.status_code == status.HTTP_409_CONFLICT
+            and exc.detail == DETAIL_EXPIRED
+        ):
             db.commit()
         else:
             db.rollback()
         raise
     except Exception:
         db.rollback()
-        raise
+        logger.exception(
+            "voice_accept_failed",
+            extra={"actor_user_id": getattr(current_user, "id", None)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="voice session acceptance is temporarily unavailable",
+        ) from None
 
 
 @router.post("/admin/voice/{voice_session_id}/reject")
@@ -169,15 +271,20 @@ def reject_voice_session(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return reject_admin_voice_session(
-            db,
-            voice_session_public_id=voice_session_id,
-            current_user=current_user,
-            reason=payload.reason if payload else None,
+        return _omit_unissued_voice_credentials(
+            reject_admin_voice_session(
+                db,
+                voice_session_public_id=voice_session_id,
+                current_user=current_user,
+                reason=payload.reason if payload else None,
+            )
         )
 
 
-@router.post("/admin/voice/{voice_session_id}/notes", response_model=WebchatVoiceNoteResponse)
+@router.post(
+    "/admin/voice/{voice_session_id}/notes",
+    response_model=WebchatVoiceNoteResponse,
+)
 def save_voice_note(
     voice_session_id: str,
     payload: WebchatVoiceNoteRequest,
@@ -194,26 +301,45 @@ def save_voice_note(
         )
 
 
-@router.post("/admin/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionResponse)
+@router.post(
+    "/admin/voice/{voice_session_id}/actions",
+    response_model=WebchatVoiceActionResponse,
+)
 def create_voice_action(
     voice_session_id: str,
     payload: WebchatVoiceActionRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    with managed_session(db):
-        return record_admin_voice_action(
-            db,
-            voice_session_public_id=voice_session_id,
-            current_user=current_user,
-            action_type=payload.action_type,
-            target=payload.target,
-            digits=payload.digits,
-            note=payload.note,
+    try:
+        with managed_session(db):
+            return record_admin_voice_action(
+                db,
+                voice_session_public_id=voice_session_id,
+                current_user=current_user,
+                action_type=payload.action_type,
+                target=payload.target,
+                digits=payload.digits,
+                note=payload.note,
+                idempotency_key=payload.idempotency_key,
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "voice_command_request_failed",
+            extra={"actor_user_id": getattr(current_user, "id", None)},
         )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="voice provider command is temporarily unavailable",
+        ) from None
 
 
-@router.post("/admin/voice/{voice_session_id}/speedaf/callback", response_model=SpeedafVoiceCallbackResponse)
+@router.post(
+    "/admin/voice/{voice_session_id}/speedaf/callback",
+    response_model=SpeedafVoiceCallbackResponse,
+)
 def queue_voice_speedaf_callback(
     voice_session_id: str,
     payload: SpeedafVoiceCallbackRequest,
@@ -240,10 +366,12 @@ def end_voice_session(
     current_user=Depends(get_current_user),
 ) -> dict:
     with managed_session(db):
-        return end_admin_voice_session(
-            db,
-            voice_session_public_id=voice_session_id,
-            current_user=current_user,
+        return _omit_unissued_voice_credentials(
+            end_admin_voice_session(
+                db,
+                voice_session_public_id=voice_session_id,
+                current_user=current_user,
+            )
         )
 
 
@@ -255,7 +383,12 @@ def voice_runtime_config() -> dict:
         "human_call_enabled": config.human_call_enabled,
         "live_ai_voice_enabled": config.live_ai_voice_enabled,
         "provider": config.provider,
-        "livekit_url": config.livekit_url if config.provider == "livekit" else None,
-        "recording_enabled": config.recording_enabled,
-        "transcription_enabled": config.transcription_enabled,
+        "routing_mode": config.routing_mode,
+        "media_plane": (
+            "livekit" if config.provider == "livekit" else "mock"
+        ),
+        "livekit_url": (
+            config.livekit_url if config.provider == "livekit" else None
+        ),
+        "voice_policy_authority": "channel_account",
     }

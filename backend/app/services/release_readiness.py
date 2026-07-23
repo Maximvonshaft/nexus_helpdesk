@@ -87,7 +87,7 @@ def _configuration_snapshot(profile: str) -> dict[str, Any]:
     outbound_enabled = _env_bool("ENABLE_OUTBOUND_DISPATCH", False)
     outbound_provider = _env_token("OUTBOUND_PROVIDER", "disabled") or "disabled"
     webchat_ai_enabled = _env_bool("WEBCHAT_AI_ENABLED", False)
-    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", _env_bool("WEBCHAT_VOICE_ENABLED", False))
+    human_call_enabled = _env_bool("WEBCHAT_HUMAN_CALL_ENABLED", False)
     live_ai_voice_enabled = _env_bool("WEBCHAT_LIVE_AI_VOICE_ENABLED", False)
     voice_enabled = human_call_enabled or live_ai_voice_enabled
     operations_mode = _env_token("OPERATIONS_DISPATCH_MODE", "disabled") or "disabled"

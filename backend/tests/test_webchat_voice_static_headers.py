@@ -9,39 +9,31 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_voice_static_headers_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/webchat_voice_static_headers_tests.db",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 LIVEKIT_URL_ENV = "LIVEKIT_URL"
-LIVEKIT_KEY_ENV = "LIVEKIT_API_" + "KEY"
-LIVEKIT_KEY_FILE_ENV = LIVEKIT_KEY_ENV + "_FILE"
-LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
-LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
-LIVE_VOICE_UPSTREAM_WS_URL_ENV = "LIVE_VOICE_UPSTREAM_WS_URL"
-LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV = "LIVE_VOICE_UPSTREAM_HEALTH_URL"
-LIVE_VOICE_UPSTREAM_TOKEN_ENV = "LIVE_VOICE_UPSTREAM_TOKEN"
-LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV = LIVE_VOICE_UPSTREAM_TOKEN_ENV + "_FILE"
+LIVEKIT_KEY_ENV = "LIVEKIT_API_KEY"
+LIVEKIT_KEY_FILE_ENV = "LIVEKIT_API_KEY_FILE"
+LIVEKIT_SECRET_ENV = "LIVEKIT_API_SECRET"
+LIVEKIT_SECRET_FILE_ENV = "LIVEKIT_API_SECRET_FILE"
 
 VOICE_ENV_KEYS = [
-    "WEBCHAT_VOICE_ENABLED",
     "WEBCHAT_HUMAN_CALL_ENABLED",
     "WEBCHAT_LIVE_AI_VOICE_ENABLED",
-    "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
     "WEBCHAT_VOICE_CONNECT_SRC",
     "WEBCHAT_VOICE_PROVIDER",
-    "WEBCHAT_VOICE_RECORDING_ENABLED",
     LIVEKIT_URL_ENV,
     LIVEKIT_KEY_ENV,
     LIVEKIT_KEY_FILE_ENV,
     LIVEKIT_SECRET_ENV,
     LIVEKIT_SECRET_FILE_ENV,
-    LIVE_VOICE_UPSTREAM_WS_URL_ENV,
-    LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV,
-    LIVE_VOICE_UPSTREAM_TOKEN_ENV,
-    LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV,
 ]
 
 
@@ -75,24 +67,20 @@ def _assert_connect_sources(policy: str, *sources: str) -> None:
         assert source in policy
 
 
-def test_voice_disabled_keeps_microphone_denied_on_voice_path(monkeypatch):
-    client = _client(monkeypatch)
-
-    response = client.get("/webchat/voice/session_demo")
+def test_retired_voice_route_is_absent_and_microphone_denied(monkeypatch):
+    response = _client(monkeypatch).get("/webchat/voice/session_demo")
 
     assert response.status_code == 404
     assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
     assert "connect-src 'self'" in _csp(response)
-    assert "wss://voice.example.test" not in _csp(response)
 
 
-def test_live_voice_disabled_returns_404_without_exposing_upstream(monkeypatch):
+def test_retired_pcm_health_route_is_always_absent(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
-        LIVE_VOICE_UPSTREAM_WS_URL="ws://runtime.example.test/live/ws",
-        LIVE_VOICE_UPSTREAM_HEALTH_URL="http://runtime.example.test/live/health",
-        LIVE_VOICE_UPSTREAM_TOKEN="unit-secret-token",
+        WEBCHAT_HUMAN_CALL_ENABLED="false",
+        WEBCHAT_LIVE_AI_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_PROVIDER="mock",
     )
 
     response = client.get("/webchat/live/health")
@@ -101,37 +89,18 @@ def test_live_voice_disabled_returns_404_without_exposing_upstream(monkeypatch):
     assert response.status_code == 404
     assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
     assert runtime_config.status_code == 200
-    payload = runtime_config.json()
-    assert "live_voice_upstream_ws_url" not in payload
-    assert "unit-secret-token" not in str(payload)
+    assert runtime_config.json()["media_plane"] == "mock"
+    assert runtime_config.json()["voice_policy_authority"] == "channel_account"
+    assert "recording_enabled" not in runtime_config.json()
+    assert "transcription_enabled" not in runtime_config.json()
+    assert "upstream" not in runtime_config.text.lower()
 
 
-def test_live_voice_enabled_health_route_is_same_origin_proxy_scope(monkeypatch):
+def test_non_voice_route_never_receives_microphone_permission(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
-        WEBCHAT_HUMAN_CALL_ENABLED="false",
-        WEBCHAT_LIVE_AI_VOICE_ENABLED="true",
-        WEBCHAT_VOICE_PROVIDER="mock",
-        WEBCHAT_VOICE_CONNECT_SRC="",
-        LIVE_VOICE_UPSTREAM_WS_URL="ws://127.0.0.1:1/live/ws",
-        LIVE_VOICE_UPSTREAM_HEALTH_URL="http://127.0.0.1:1/live/health",
-        LIVE_VOICE_UPSTREAM_TOKEN="unit-secret-token",
-    )
-
-    response = client.get("/webchat/live/health")
-
-    assert response.status_code == 503
-    assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
-    assert "unit-secret-token" not in response.text
-    assert "connect-src 'self'" in _csp(response)
-
-
-def test_voice_enabled_non_voice_path_keeps_microphone_denied(monkeypatch):
-    client = _client(
-        monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
         WEBCHAT_HUMAN_CALL_ENABLED="true",
+        WEBCHAT_VOICE_PROVIDER="mock",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
     )
 
@@ -142,41 +111,39 @@ def test_voice_enabled_non_voice_path_keeps_microphone_denied(monkeypatch):
     assert "wss://voice.example.test" not in _csp(response)
 
 
-def test_voice_disabled_ignores_configured_unreadable_livekit_secret_file(monkeypatch, tmp_path):
-    client = _client(
+def test_disabled_or_mock_voice_does_not_read_livekit_secret_files(
+    monkeypatch,
+    tmp_path,
+):
+    disabled = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
         WEBCHAT_VOICE_PROVIDER="mock",
-        **{LIVEKIT_KEY_FILE_ENV: str(tmp_path), LIVEKIT_SECRET_FILE_ENV: str(tmp_path)},
+        **{
+            LIVEKIT_KEY_FILE_ENV: str(tmp_path),
+            LIVEKIT_SECRET_FILE_ENV: str(tmp_path),
+        },
     )
+    assert disabled.get("/healthz").status_code == 200
 
-    response = client.get("/healthz")
-
-    assert response.status_code == 200
-    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
-    assert "connect-src 'self'" in _csp(response)
-
-
-def test_mock_provider_ignores_configured_unreadable_livekit_secret_file(monkeypatch, tmp_path):
-    client = _client(
+    mock = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
         WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_PROVIDER="mock",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
-        **{LIVEKIT_KEY_FILE_ENV: str(tmp_path), LIVEKIT_SECRET_FILE_ENV: str(tmp_path)},
+        **{
+            LIVEKIT_KEY_FILE_ENV: str(tmp_path),
+            LIVEKIT_SECRET_FILE_ENV: str(tmp_path),
+        },
     )
-
-    response = client.get("/healthz")
-
-    assert response.status_code == 200
-    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
+    assert mock.get("/healthz").status_code == 200
 
 
-def test_livekit_secret_read_failure_fails_closed_for_non_voice_route(monkeypatch, tmp_path):
+def test_enabled_livekit_fails_closed_when_secret_file_is_unreadable(
+    monkeypatch,
+    tmp_path,
+):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
         WEBCHAT_HUMAN_CALL_ENABLED="true",
         WEBCHAT_VOICE_PROVIDER="livekit",
         WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
@@ -187,109 +154,76 @@ def test_livekit_secret_read_failure_fails_closed_for_non_voice_route(monkeypatc
         },
     )
 
-    response = client.get("/healthz")
-
-    assert response.status_code == 200
-    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
-    assert "wss://voice.example.test" not in _csp(response)
-
+    assert client.get("/healthz").status_code == 200
     from app.webchat_voice_config import load_webchat_voice_runtime_config
 
     with pytest.raises(RuntimeError, match="cannot be read"):
         load_webchat_voice_runtime_config()
 
 
-def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypatch):
+def test_only_webcall_path_receives_microphone_and_livekit_sources(monkeypatch):
     client = _client(
         monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
         WEBCHAT_HUMAN_CALL_ENABLED="true",
-        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
+        WEBCHAT_VOICE_CONNECT_SRC=(
+            "wss://voice.example.test https://voice.example.test"
+        ),
     )
 
-    response = client.get("/webchat/voice/session_demo")
+    retired = client.get("/webchat/voice/session_demo")
+    assert retired.status_code == 404
+    assert _permissions(retired) == "camera=(), microphone=(), geolocation=()"
+    assert "wss://voice.example.test" not in _csp(retired)
 
-    assert response.status_code == 200
-    assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
-    policy = _csp(response)
+    webcall = client.get("/webcall/session_demo")
+    assert webcall.status_code in {200, 404}
+    assert _permissions(webcall) == "camera=(), microphone=(self), geolocation=()"
+    policy = _csp(webcall)
     _assert_connect_sources(
         policy,
         "'self'",
-        "https://cloudflareinsights.com",
-        "https://static.cloudflareinsights.com",
         "wss://voice.example.test",
         "https://voice.example.test",
     )
-    assert "camera" not in policy
     assert "unsafe-eval" not in policy
 
 
-def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
-    client = _client(
-        monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
-        WEBCHAT_HUMAN_CALL_ENABLED="true",
-        WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES="/voice/webchat",
-        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
-    )
-
-    dynamic_webchat_response = client.get("/webchat/voice/session_demo")
-    custom_prefix_response = client.get("/voice/webchat/session_demo")
-
-    assert dynamic_webchat_response.status_code in {404, 405}
-    assert _permissions(dynamic_webchat_response) == "camera=(), microphone=(), geolocation=()"
-    assert _permissions(custom_prefix_response) == "camera=(), microphone=(self), geolocation=()"
-    assert "wss://voice.example.test" in _csp(custom_prefix_response)
-
-
-def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(monkeypatch):
-    client = _client(
-        monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
-        WEBCHAT_HUMAN_CALL_ENABLED="true",
-        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
-    )
-
-    demo_response = client.get("/webchat/demo.html")
-    api_response = client.get("/api/not-a-real-route")
-
-    assert demo_response.status_code in {200, 404}
-    assert _permissions(demo_response) == "camera=(), microphone=(self), geolocation=()"
-    assert api_response.status_code == 404
-    assert _permissions(api_response) == "camera=(), microphone=(), geolocation=()"
-    assert "wss://voice.example.test" not in _csp(api_response)
-
-
-def test_voice_connect_src_rejects_wildcard(monkeypatch):
+def test_retired_environment_controls_cannot_override_webcall(monkeypatch):
     for key in VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
-    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test *")
+    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/voice/webchat")
+    monkeypatch.setenv("WEBCHAT_VOICE_RECORDING_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", "true")
+
+    import app.webchat_voice_config as voice_config_module
+
+    voice_config_module = importlib.reload(voice_config_module)
+    config = voice_config_module.load_webchat_voice_runtime_config()
+
+    assert not hasattr(config, "allowed_path_prefixes")
+    assert not hasattr(config, "recording_enabled")
+    assert not hasattr(config, "transcription_enabled")
+    assert voice_config_module.is_webchat_voice_path(
+        "/webcall/session_demo",
+        config=config,
+    )
+    assert not voice_config_module.is_webchat_voice_path(
+        "/voice/webchat/session_demo",
+        config=config,
+    )
+
+
+def test_voice_connect_src_rejects_wildcards(monkeypatch):
+    for key in VOICE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
+    monkeypatch.setenv(
+        "WEBCHAT_VOICE_CONNECT_SRC",
+        "wss://voice.example.test *",
+    )
 
     from app.webchat_voice_config import load_webchat_voice_runtime_config
 
     with pytest.raises(RuntimeError, match="must not contain wildcard"):
         load_webchat_voice_runtime_config()
-
-
-def test_voice_enabled_webchat_path_allows_microphone(monkeypatch):
-    client = _client(
-        monkeypatch,
-        WEBCHAT_VOICE_ENABLED="false",
-        WEBCHAT_HUMAN_CALL_ENABLED="true",
-        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
-    )
-
-    webchat_response = client.get("/webchat")
-
-    assert webchat_response.status_code in {200, 404}
-    assert _permissions(webchat_response) == "camera=(), microphone=(self), geolocation=()"
-    _assert_connect_sources(
-        _csp(webchat_response),
-        "'self'",
-        "https://cloudflareinsights.com",
-        "https://static.cloudflareinsights.com",
-        "wss://voice.example.test",
-        "https://voice.example.test",
-    )

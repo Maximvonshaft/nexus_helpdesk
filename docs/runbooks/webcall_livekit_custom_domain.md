@@ -1,163 +1,72 @@
-# WebCall LiveKit Custom Domain Runbook
+# LiveKit Custom Domain for Canonical WebCall
 
 ## Purpose
 
-This runbook documents the production pattern for using `voice.leakle.com` as the public WebCall media domain.
-
-Validated production pattern:
+This runbook describes the supported pattern for exposing a LiveKit deployment through an approved custom media domain while keeping Nexus as the business-state authority.
 
 ```text
-NexusDesk LIVEKIT_URL=wss://voice.leakle.com
-voice.leakle.com -> Nginx reverse proxy -> speedaf-th0pg5cj.livekit.cloud
-WebCall create -> agent accept -> end -> exactly-one voice_call evidence message
+Browser or SIP participant
+→ approved LiveKit custom domain
+→ LiveKit deployment
+→ one canonical Room
+→ Nexus Conversation / Handoff / Voice Session
 ```
 
-## Scope
+The custom domain is a network boundary only. It must not create a second WebCall application, proxy business APIs, or introduce another call-control authority.
 
-In scope:
+## Required configuration
 
-- LiveKit custom domain reverse proxy.
-- NexusDesk WebCall runtime checks.
-- Post-deploy synthetic E2E verification.
-- Evidence closure verification.
-
-Out of scope:
-
-- Recording.
-- Transcription.
-- AI voice bot.
-- SIP/PSTN.
-- Paid telephony provider integration.
-
-## Architecture
-
-```text
-Visitor browser
-  -> https://www.leakle.com/webchat/demo/
-  -> NexusDesk WebCall API
-  -> NexusDesk backend
-  -> https://voice.leakle.com
-  -> Nginx proxy
-  -> https://speedaf-th0pg5cj.livekit.cloud
-
-Visitor / agent WebRTC media
-  -> wss://voice.leakle.com/rtc
-  -> Nginx websocket proxy
-  -> wss://speedaf-th0pg5cj.livekit.cloud/rtc
-```
-
-The custom domain must proxy both browser media traffic and backend room-management API calls. A domain that only makes `/rtc` reachable is not sufficient.
-
-## Runtime configuration
-
-Server-only runtime values should be set in deployment environment files, not committed to Git.
-
-Required non-secret values:
+Use deployment secrets for credentials and keep the media page restricted to `/webcall/{voice_session_id}`.
 
 ```env
 WEBCHAT_HUMAN_CALL_ENABLED=true
 WEBCHAT_LIVE_AI_VOICE_ENABLED=false
-WEBCHAT_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=livekit
-LIVEKIT_URL=wss://voice.leakle.com
-WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webchat,/webchat/voice,/webcall,/webchat-voice
-WEBCHAT_VOICE_CONNECT_SRC=wss://voice.leakle.com https://voice.leakle.com
-WEBCHAT_VOICE_RECORDING_ENABLED=false
-WEBCHAT_VOICE_TRANSCRIPTION_ENABLED=false
-WEBCHAT_VOICE_SESSION_TTL_SECONDS=900
-WEBCHAT_VOICE_MAX_ACTIVE_PER_CONVERSATION=1
-WEBCHAT_VOICE_RATE_LIMIT_WINDOW_SECONDS=60
-WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS=5
+WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webcall
+LIVEKIT_URL=wss://voice.example.com
+WEBCHAT_VOICE_CONNECT_SRC=wss://voice.example.com https://voice.example.com
+LIVEKIT_API_KEY_FILE=/run/secrets/livekit_api_key
+LIVEKIT_API_SECRET_FILE=/run/secrets/livekit_api_secret
+LIVEKIT_AGENT_SHARED_SECRET_FILE=/run/secrets/livekit_agent_shared_secret
+LIVEKIT_WEBHOOK_ENABLED=true
 ```
 
-LiveKit credentials must remain on the server or in a mounted deployment secret file. Do not commit them.
+The public runtime-config endpoint may expose only bounded capability facts and the public LiveKit URL. API keys, API secrets, participant tokens, visitor tokens, controller credentials, room names, participant identities, and Provider topology remain server-side.
 
-## Nginx template
+## Reverse-proxy requirements
 
-Use:
+The custom domain must support the complete LiveKit browser and server API surface required by the selected deployment, including WebSocket upgrade, TLS/SNI, request timeouts, and any media connectivity requirements documented by LiveKit.
 
-```text
-deploy/nginx/livekit_voice_custom_domain.conf.template
-```
+Required controls:
 
-Required substitutions:
+- valid public TLS certificate;
+- upstream Host and SNI set to the actual LiveKit deployment;
+- WebSocket upgrade headers preserved;
+- buffering and caching disabled for realtime paths;
+- no credential logging;
+- no open proxy behavior;
+- health and certificate monitoring.
 
-```text
-__VOICE_HOST__=voice.leakle.com
-__LIVEKIT_UPSTREAM_HOST__=speedaf-th0pg5cj.livekit.cloud
-__SSL_CERTIFICATE__=/etc/letsencrypt/live/voice.leakle.com/fullchain.pem
-__SSL_CERTIFICATE_KEY__=/etc/letsencrypt/live/voice.leakle.com/privkey.pem
-```
+A proxy that makes only one browser path reachable but breaks Room, SIP, Egress, Agent Dispatch, or server API calls is not production-ready.
 
-Critical behavior:
+## Verification
 
-- Preserve websocket upgrade headers.
-- Use the upstream LiveKit Cloud hostname for upstream Host and SNI.
-- Disable buffering and cache for the LiveKit proxy location.
+Before activation:
 
-## Deploy
-
-```bash
-nginx -t
-systemctl reload nginx
-
-docker compose --env-file deploy/.env.prod -f deploy/docker-compose.server.yml up -d --no-deps --force-recreate app
-```
-
-Verify:
-
-```bash
-curl -sS http://127.0.0.1:18081/readyz
-curl -sS https://www.leakle.com/api/webchat/voice/runtime-config
-```
-
-Expected public runtime config:
-
-```json
-{
-  "enabled": true,
-  "provider": "livekit",
-  "livekit_url": "wss://voice.leakle.com",
-  "recording_enabled": false,
-  "transcription_enabled": false
-}
-```
-
-## Post-deploy probe
-
-Run:
-
-```bash
-SUPPORT_BASE=https://www.leakle.com \
-VOICE_HOST=voice.leakle.com \
-EXPECTED_LIVEKIT_URL=wss://voice.leakle.com \
-RUN_SYNTHETIC_E2E=1 \
-bash scripts/probe_webcall_livekit_custom_domain.sh
-```
-
-Expected final verdict:
-
-```text
-WEBCALL_LIVEKIT_CUSTOM_DOMAIN_OK
-```
-
-## Manual browser E2E
-
-1. Open `https://www.leakle.com/webchat/demo/`.
-2. Start WebCall.
-3. Visitor clicks `Join WebCall` and allows microphone.
-4. Agent opens `/webchat` or `/webchat-voice`.
-5. Agent selects latest ticket and clicks `Accept WebCall`.
-6. Confirm two-way audio.
-7. End the call.
-8. Confirm the ticket timeline contains one `Voice call ended · Ns` item.
+1. The exact candidate Head passes Canonical Acceptance.
+2. The custom domain resolves to the intended proxy and certificate.
+3. Browser WebSocket connection uses the custom domain.
+4. Backend Room, participant, command, webhook, and Agent Dispatch operations succeed through the supported API endpoint.
+5. `/webcall/{voice_session_id}` receives microphone permission only after explicit join or accept.
+6. The incoming-offer response contains no LiveKit credentials or topology.
+7. Hold, resume, DTMF, cold transfer, and warm consultation start/complete/cancel obtain Provider acknowledgement.
+8. A Provider or proxy failure remains visibly unconfirmed and does not fabricate success.
 
 ## Rollback
 
-Disable WebCall:
+Disable the explicit capabilities and leave the Provider fail-closed:
 
 ```env
-WEBCHAT_VOICE_ENABLED=false
 WEBCHAT_HUMAN_CALL_ENABLED=false
 WEBCHAT_LIVE_AI_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=mock
@@ -165,20 +74,6 @@ WEBCHAT_VOICE_RECORDING_ENABLED=false
 WEBCHAT_VOICE_TRANSCRIPTION_ENABLED=false
 ```
 
-Fallback to direct LiveKit Cloud URL while keeping WebCall enabled:
+In production, `mock` must not simulate a successful call. Recreate the controlled services after changing deployment inputs and verify `/readyz` before restoring traffic.
 
-```env
-LIVEKIT_URL=wss://speedaf-th0pg5cj.livekit.cloud
-WEBCHAT_VOICE_CONNECT_SRC=wss://speedaf-th0pg5cj.livekit.cloud https://speedaf-th0pg5cj.livekit.cloud
-```
-
-Recreate the app container after runtime env changes.
-
-## Known limitations
-
-Still separate hardening work:
-
-- LiveKit webhook ingestion.
-- Missed-call cleanup scheduling proof.
-- Agent queue push via WebSocket/SSE.
-- Recording/transcription/AI voice.
+Changing `LIVEKIT_URL` back to the approved direct deployment URL is permitted only when CSP/connect-src, certificates, and Provider validation are updated together and the controlled call matrix is repeated.

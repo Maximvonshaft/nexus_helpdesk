@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -10,11 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
-from app.services.webcall_ai_production.config import (  # noqa: E402
-    get_webcall_ai_production_settings,
-)
+from app.livekit_agent_config import load_livekit_agent_worker_config  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
+from app.webchat_voice_config import load_webchat_voice_runtime_config  # noqa: E402
 
 
 def _outbound_email_successful_test_send_count(
@@ -43,6 +41,48 @@ def _outbound_email_successful_test_send_count(
                 ).scalar()
                 or 0
             )
+    finally:
+        engine.dispose()
+
+
+def _canonical_voice_channel_readiness(database_url: str) -> dict[str, int]:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT
+                      COUNT(*) AS enabled_channels,
+                      SUM(CASE
+                        WHEN NULLIF(TRIM(v.inbound_trunk_id), '') IS NOT NULL
+                         AND NULLIF(TRIM(v.dispatch_rule_id), '') IS NOT NULL
+                        THEN 1 ELSE 0 END
+                      ) AS inbound_ready_channels,
+                      SUM(CASE
+                        WHEN NULLIF(TRIM(v.outbound_trunk_id), '') IS NOT NULL
+                        THEN 1 ELSE 0 END
+                      ) AS outbound_ready_channels,
+                      SUM(CASE
+                        WHEN v.routing_mode = 'ai_first'
+                         AND NULLIF(TRIM(v.ai_agent_name), '') IS NULL
+                        THEN 1 ELSE 0 END
+                      ) AS invalid_ai_first_channels
+                    FROM channel_accounts AS c
+                    JOIN voice_channel_configurations AS v
+                      ON v.channel_account_id = c.id
+                    WHERE c.provider = 'voice'
+                      AND c.is_active = true
+                      AND v.enabled = true
+                    """
+                )
+            ).mappings().one()
+            return {
+                "enabled_channels": int(row["enabled_channels"] or 0),
+                "inbound_ready_channels": int(row["inbound_ready_channels"] or 0),
+                "outbound_ready_channels": int(row["outbound_ready_channels"] or 0),
+                "invalid_ai_first_channels": int(row["invalid_ai_first_channels"] or 0),
+            }
     finally:
         engine.dispose()
 
@@ -94,43 +134,49 @@ def main() -> int:
                 f"{settings.outbound_email_test_send_max_age_hours} hours"
             )
 
+    voice = None
+    voice_worker_ready = False
+    voice_channels = {
+        "enabled_channels": 0,
+        "inbound_ready_channels": 0,
+        "outbound_ready_channels": 0,
+        "invalid_ai_first_channels": 0,
+    }
+    telephony_reason_codes: list[str] = []
     try:
-        webcall_ai = get_webcall_ai_production_settings()
-    except Exception as exc:
-        warnings.append(f"WebCall AI production config invalid: {exc}")
-        webcall_ai = None
-    if webcall_ai is not None and webcall_ai.production_enabled:
-        if webcall_ai.record_raw_audio:
-            warnings.append("WEBCALL_AI_RECORD_RAW_AUDIO must remain false")
-        if webcall_ai.webchat_voice_provider != "livekit":
-            warnings.append(
-                "WEBCALL_AI_PRODUCTION_ENABLED requires WEBCHAT_VOICE_PROVIDER=livekit"
-            )
-        if "/webcall-ai" not in os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", ""):
-            warnings.append(
-                "WEBCALL_AI_PRODUCTION_ENABLED requires "
-                "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES to include /webcall-ai"
-            )
-        if webcall_ai.livekit_url and webcall_ai.livekit_url not in os.getenv(
-            "WEBCHAT_VOICE_CONNECT_SRC",
-            "",
-        ):
-            warnings.append(
-                "WEBCALL_AI_PRODUCTION_ENABLED requires WEBCHAT_VOICE_CONNECT_SRC "
-                "to include the LiveKit URL"
-            )
-        if not webcall_ai.livekit_configured:
-            warnings.append(
-                "WEBCALL_AI_PRODUCTION_ENABLED requires LiveKit URL/key/secret in runtime env"
-            )
-        if (
-            webcall_ai.allow_speedaf_work_order
-            or webcall_ai.allow_cancel
-            or webcall_ai.allow_address_update
-        ):
-            warnings.append(
-                "high-risk WebCall AI actions must remain disabled for production rollout"
-            )
+        voice = load_webchat_voice_runtime_config()
+    except Exception:
+        telephony_reason_codes.append("voice_runtime_configuration_invalid")
+
+    if voice is not None and voice.enabled:
+        if voice.provider != "livekit":
+            telephony_reason_codes.append("voice_provider_not_livekit")
+        if not voice.livekit_webhook_enabled:
+            telephony_reason_codes.append("voice_webhook_disabled")
+        if voice.live_ai_voice_enabled:
+            try:
+                load_livekit_agent_worker_config()
+                voice_worker_ready = True
+            except Exception:
+                telephony_reason_codes.append("voice_media_worker_configuration_invalid")
+        try:
+            voice_channels = _canonical_voice_channel_readiness(settings.database_url)
+        except Exception:
+            telephony_reason_codes.append("voice_channel_readiness_unavailable")
+        if voice_channels["enabled_channels"] < 1:
+            telephony_reason_codes.append("voice_channel_not_enabled")
+        if voice_channels["inbound_ready_channels"] < 1:
+            telephony_reason_codes.append("voice_inbound_route_not_ready")
+        if voice_channels["invalid_ai_first_channels"]:
+            telephony_reason_codes.append("voice_ai_first_agent_missing")
+
+    warnings.extend(f"Telephony readiness: {code}" for code in telephony_reason_codes)
+    telephony_enabled = bool(voice and voice.enabled)
+    telephony_ready = bool(
+        voice is not None
+        and not telephony_reason_codes
+        and (not voice.live_ai_voice_enabled or voice_worker_ready)
+    )
 
     payload = {
         "app_env": settings.app_env,
@@ -138,7 +184,6 @@ def main() -> int:
         "is_postgres": settings.is_postgres,
         "storage_backend": settings.storage_backend,
         "metrics_enabled": settings.metrics_enabled,
-        "metrics_token_configured": bool(settings.metrics_token),
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),
         "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,
@@ -152,17 +197,19 @@ def main() -> int:
         "outbound_email_test_send_max_age_hours": (
             settings.outbound_email_test_send_max_age_hours
         ),
-        "warnings": warnings,
-        "webcall_ai": None
-        if webcall_ai is None
-        else {
-            "production_enabled": webcall_ai.production_enabled,
-            "agent_enabled": webcall_ai.agent_enabled,
-            "provider_profile": webcall_ai.provider_profile,
-            "voice_provider": webcall_ai.webchat_voice_provider,
-            "livekit_url_configured": bool(webcall_ai.livekit_url),
-            "record_raw_audio": webcall_ai.record_raw_audio,
+        "telephony": {
+            "enabled": telephony_enabled,
+            "ready": telephony_ready,
+            "human_call_enabled": bool(voice and voice.human_call_enabled),
+            "live_ai_voice_enabled": bool(voice and voice.live_ai_voice_enabled),
+            "provider": voice.provider if voice is not None else None,
+            "routing_mode": voice.routing_mode if voice is not None else None,
+            "webhook_enabled": bool(voice and voice.livekit_webhook_enabled),
+            "media_worker_ready": voice_worker_ready,
+            "reason_codes": sorted(set(telephony_reason_codes)),
+            **voice_channels,
         },
+        "warnings": warnings,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not warnings else 2

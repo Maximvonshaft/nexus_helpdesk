@@ -201,3 +201,7 @@ def db_context():
         raise
     finally:
         db.close()
+
+
+# Register the canonical voice compliance projection with Base.metadata.
+from . import voice_compliance_models as _voice_compliance_models  # noqa: E402,F401

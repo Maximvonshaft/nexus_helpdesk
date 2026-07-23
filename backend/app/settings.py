@@ -447,10 +447,9 @@ class Settings:
         self.webchat_ai_session_summary_messages = int(
             os.getenv("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES", "8")
         )
-        self.webchat_voice_enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
         self.webchat_human_call_enabled = _env_bool(
             "WEBCHAT_HUMAN_CALL_ENABLED",
-            self.webchat_voice_enabled,
+            False,
         )
         self.webchat_live_ai_voice_enabled = _env_bool(
             "WEBCHAT_LIVE_AI_VOICE_ENABLED",
@@ -500,7 +499,6 @@ class Settings:
             == "true"
         )
         self.metrics_token = os.getenv("METRICS_TOKEN")
-
 
         self._normalize()
 
