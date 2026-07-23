@@ -68,12 +68,6 @@ export function WebCallOperatorContext({ voiceSessionId }: { voiceSessionId: str
         ) : (
           <Typography variant="body2" color="text.secondary">实时 Conversation；仅在需要后续处理时创建工单。</Typography>
         )}
-        {context.origin ? (
-          <Box>
-            <Typography variant="caption" color="text.secondary">来源</Typography>
-            <Typography variant="body2">{context.origin}</Typography>
-          </Box>
-        ) : null}
       </Stack>
     </Paper>
   )
