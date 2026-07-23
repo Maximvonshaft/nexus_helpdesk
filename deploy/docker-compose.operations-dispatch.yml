@@ -16,12 +16,19 @@ services:
       - /run/secrets:/run/secrets:ro
       - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro
       - ${NEXUSDESK_UPLOADS_DIR:-/opt/nexus_helpdesk/data/uploads}:/app/backend/uploads
-    command: python scripts/run_operations_dispatch_worker.py --worker-id worker-operations-dispatch
+    command:
+      - python
+      - scripts/run_operations_dispatch_worker.py
+      - --worker-id
+      - worker-operations-dispatch
     healthcheck:
       test:
-        - CMD-SHELL
-        - >-
-          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'run_operations_dispatch_worker.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('operations-dispatch-worker-alive')"
+        - CMD
+        - python
+        - scripts/run_operations_dispatch_worker.py
+        - --worker-id
+        - worker-operations-dispatch-healthcheck
+        - --once
       interval: 30s
       timeout: 10s
       retries: 3
