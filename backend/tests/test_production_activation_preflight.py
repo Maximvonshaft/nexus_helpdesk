@@ -58,6 +58,8 @@ def test_full_activation_passes_with_exact_controls_and_evidence() -> None:
     assert result["candidate"] == {
         "source_sha": SOURCE_SHA,
         "image_digest": IMAGE_DIGEST,
+        "runtime_source_sha": SOURCE_SHA,
+        "runtime_image_digest": IMAGE_DIGEST,
     }
     assert result["capabilities"]["webchat_ai"] is True
     assert result["evidence"] == {
