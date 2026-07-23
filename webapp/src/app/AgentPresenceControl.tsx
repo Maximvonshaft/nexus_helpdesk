@@ -7,6 +7,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  Switch,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -16,9 +17,18 @@ import { useEffect } from 'react'
 import {
   agentRoutingApi,
   type AgentPresenceStatus,
+  type AgentStateUpdate,
 } from '@/lib/agentRoutingApi'
 
 const STATE_QUERY_KEY = ['operatorAgentState'] as const
+const VOICE_CAPABILITIES = [
+  'webcall.voice.read',
+  'webcall.voice.queue.view',
+  'webcall.voice.accept',
+  'webcall.voice.reject',
+  'webcall.voice.end',
+  'webcall.voice.control',
+] as const
 
 const LABELS: Record<AgentPresenceStatus, string> = {
   online: '在线',
@@ -28,7 +38,9 @@ const LABELS: Record<AgentPresenceStatus, string> = {
 
 export function AgentPresenceControl({ capabilities }: { capabilities: Set<string> }) {
   const queryClient = useQueryClient()
-  const enabled = capabilities.has('webchat.handoff.accept')
+  const canHandleText = capabilities.has('webchat.handoff.accept')
+  const canHandleVoice = VOICE_CAPABILITIES.every((capability) => capabilities.has(capability))
+  const enabled = canHandleText || capabilities.has('webcall.voice.queue.view')
   const state = useQuery({
     queryKey: STATE_QUERY_KEY,
     queryFn: agentRoutingApi.state,
@@ -37,12 +49,7 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
     retry: false,
   })
   const update = useMutation({
-    mutationFn: (status: AgentPresenceStatus) => agentRoutingApi.updateState(
-      status,
-      state.data?.max_concurrent_conversations,
-      state.data?.max_concurrent_voice_calls,
-      state.data?.voice_wrap_up_seconds,
-    ),
+    mutationFn: (request: AgentStateUpdate) => agentRoutingApi.updateState(request),
     onSuccess: (next) => queryClient.setQueryData(STATE_QUERY_KEY, next),
   })
 
@@ -61,11 +68,23 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
   if (!state.data) return <Chip size="small" label="坐席状态不可用" />
 
   const handleChange = (event: SelectChangeEvent<AgentPresenceStatus>) => {
-    update.mutate(event.target.value as AgentPresenceStatus)
+    update.mutate({ status: event.target.value as AgentPresenceStatus })
+  }
+  const handleVoiceChange = (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
+    update.mutate({ status: state.data.status, voiceEnabled: checked })
   }
   const capacity = `${state.data.active_conversations}/${state.data.max_concurrent_conversations}`
   const voiceCapacity = `${state.data.active_voice_calls}/${state.data.max_concurrent_voice_calls}`
   const available = state.data.status === 'online' && state.data.heartbeat_fresh
+  const voiceDisableBlocked = state.data.voice_enabled && state.data.active_voice_calls > 0
+  const voiceSwitchTitle = !canHandleVoice
+    ? '当前账号未获得完整电话接线权限'
+    : voiceDisableBlocked
+      ? '活动通话结束并完成整理后才能关闭电话接线'
+      : state.data.voice_enabled
+        ? '关闭电话接线'
+        : '开启电话接线'
+  const voiceStateLabel = state.data.voice_enabled ? `语音 ${voiceCapacity}` : '电话关闭'
 
   return (
     <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
@@ -84,16 +103,34 @@ export function AgentPresenceControl({ capabilities }: { capabilities: Set<strin
           <MenuItem value="offline">离线</MenuItem>
         </Select>
       </FormControl>
-      <Tooltip title={`文字会话 ${capacity}，语音 ${voiceCapacity}，语音整理 ${state.data.voice_wrap_up_seconds} 秒`}>
+      {capabilities.has('webcall.voice.queue.view') ? (
+        <Tooltip title={voiceSwitchTitle}>
+          <span>
+            <Switch
+              size="small"
+              checked={state.data.voice_enabled}
+              onChange={handleVoiceChange}
+              disabled={!canHandleVoice || update.isPending || voiceDisableBlocked}
+              slotProps={{ input: { 'aria-label': state.data.voice_enabled ? '关闭电话接线' : '开启电话接线' } }}
+              sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
+            />
+          </span>
+        </Tooltip>
+      ) : null}
+      <Tooltip title={`文字会话 ${capacity}，${voiceStateLabel}，待接来电 ${state.data.reserved_voice_offers}，语音整理 ${state.data.voice_wrap_up_seconds} 秒`}>
         <Chip
           size="small"
           icon={<CircleRoundedIcon fontSize="small" />}
           color={available ? 'success' : state.data.status === 'paused' ? 'warning' : 'default'}
-          label={state.data.status === 'online' ? `接线 ${capacity} · 语音 ${voiceCapacity}` : LABELS[state.data.status]}
+          label={state.data.status === 'online' ? `接线 ${capacity} · ${voiceStateLabel}` : LABELS[state.data.status]}
           variant={available ? 'filled' : 'outlined'}
         />
       </Tooltip>
-      {!state.data.heartbeat_fresh && state.data.status !== 'offline' ? (
+      {update.isError ? (
+        <Typography variant="caption" color="error.main" sx={{ display: { xs: 'none', xl: 'block' } }}>
+          状态更新失败
+        </Typography>
+      ) : !state.data.heartbeat_fresh && state.data.status !== 'offline' ? (
         <Typography variant="caption" color="warning.main" sx={{ display: { xs: 'none', xl: 'block' } }}>
           正在恢复在线心跳
         </Typography>
