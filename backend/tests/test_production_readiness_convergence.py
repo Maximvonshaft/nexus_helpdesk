@@ -44,7 +44,7 @@ def test_storage_and_activation_use_one_readiness_authority() -> None:
     assert "_retire_legacy_admin_readiness_routes()" in registry
 
 
-def test_production_activation_overlay_is_profile_specific_and_candidate_bound() -> None:
+def test_production_activation_overlay_is_profile_specific_candidate_bound_and_enforced() -> None:
     env = (ROOT / "deploy/.env.production-activation.example").read_text(
         encoding="utf-8"
     )
@@ -55,6 +55,10 @@ def test_production_activation_overlay_is_profile_specific_and_candidate_bound()
     assert "ACTIVATION_EVIDENCE_SOURCE_SHA=" in env
     assert "ACTIVATION_EVIDENCE_IMAGE_DIGEST=sha256:" in env
     assert "PRODUCTION_E2E_EVIDENCE_URL=https://" in env
+    assert "production-activation-preflight:" in compose
+    assert "network_mode: none" in compose
+    assert "/app/scripts/deploy/validate_production_activation.py" in compose
+    assert "- --environment" in compose
     assert (
         "ACTIVATION_EVIDENCE_SOURCE_SHA: "
         "${ACTIVATION_EVIDENCE_SOURCE_SHA:?set evidence source SHA equal to GIT_SHA}"
@@ -65,4 +69,4 @@ def test_production_activation_overlay_is_profile_specific_and_candidate_bound()
     ) in compose
     assert "PRODUCTION_E2E_EVIDENCE_URL: ${PRODUCTION_E2E_EVIDENCE_URL:-}" in compose
     assert "PROVIDER_CANARY_E2E_EVIDENCE_URL: ${PROVIDER_CANARY_E2E_EVIDENCE_URL:-}" in compose
-    assert "WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL" in compose
+    assert "production-activation-preflight:\n        condition: service_completed_successfully" in compose
