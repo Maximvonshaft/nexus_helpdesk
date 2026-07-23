@@ -26,11 +26,12 @@ from .mock_voice_provider import MockVoiceProvider
 from .voice_command_dispatcher import (
     resolve_voice_command_from_provider_event,
 )
-from .voice_provider import VoiceProvider, VoiceProviderError
-from .voice_room_control_service import (
-    dispatch_room_controller,
-    ensure_recording_command,
+from .voice_compliance_service import (
+    apply_session_compliance_state,
+    policy_bundle,
 )
+from .voice_provider import VoiceProvider, VoiceProviderError
+from .voice_room_control_service import dispatch_room_controller
 from .voice_session_service import _mark_terminal
 
 logger = logging.getLogger(__name__)
@@ -341,19 +342,8 @@ def _create_inbound_session(
         direction="inbound",
         caller_number_hash=_hash(caller_number),
         called_number=called_number,
-        recording_consent=(
-            configuration.recording_policy == "always"
-        ),
-        recording_status=(
-            "requested"
-            if configuration.recording_policy == "always"
-            else "disabled"
-        ),
-        transcript_status=(
-            "active"
-            if configuration.transcription_policy == "always"
-            else "disabled"
-        ),
+        recording_status="disabled",
+        transcript_status="disabled",
         summary_status="pending",
         ai_agent_status=(
             "dispatching"
@@ -372,6 +362,16 @@ def _create_inbound_session(
     )
     db.add(session)
     db.flush()
+    apply_session_compliance_state(
+        db,
+        session=session,
+        recording_policy=configuration.recording_policy,
+        transcription_policy=configuration.transcription_policy,
+    )
+    compliance = policy_bundle(
+        recording_policy=configuration.recording_policy,
+        transcription_policy=configuration.transcription_policy,
+    )
     _event(
         db,
         session=session,
@@ -393,12 +393,8 @@ def _create_inbound_session(
         metadata={
             "tenant_id": account.tenant_id,
             "direction": "inbound",
+            "compliance": compliance,
         },
-    )
-    ensure_recording_command(
-        db,
-        session=session,
-        actor=None,
     )
     if not ai_first:
         handoff = request_handoff(
