@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 BACKGROUND_BOUNDARY = (
     ROOT / "backend/app/services/background_job_transaction_boundary.py"
@@ -76,13 +78,35 @@ def test_real_queue_depth_is_sampled_once_by_background_worker():
     assert "_QUEUE_DEPTH_LABELS - current_labels" in function
 
 
+def _command_tokens(service: dict) -> list[str]:
+    command = service.get("command")
+    assert isinstance(command, list), "controlled workers must use shell-less exec-vector commands"
+    assert all(isinstance(token, str) and token for token in command)
+    return command
+
+
 def test_controlled_services_use_one_queue_per_supervised_worker():
-    compose = CONTROLLED_COMPOSE.read_text(encoding="utf-8")
-    assert "run_worker_supervised.py" in compose
-    assert "--queue outbound" in compose
-    assert "--queue background" in compose
-    assert "--queue webchat-ai" in compose
-    assert "--queue handoff-snapshot" in compose
-    controlled_services = compose.split("services:", 1)[1]
-    assert "scripts/run_worker.py" not in controlled_services
-    assert "--queue all" not in controlled_services
+    document = yaml.safe_load(CONTROLLED_COMPOSE.read_text(encoding="utf-8"))
+    services = document["services"]
+    expected = {
+        "worker-outbound-controlled": "outbound",
+        "worker-background-controlled": "background",
+        "worker-webchat-ai-controlled": "webchat-ai",
+        "worker-handoff-snapshot-controlled": "handoff-snapshot",
+    }
+
+    observed: dict[str, str] = {}
+    for service_name, service in services.items():
+        command = service.get("command")
+        if not isinstance(command, list) or "scripts/run_worker_supervised.py" not in command:
+            continue
+        assert command[0] in {"python", "/usr/local/bin/python"}
+        assert "scripts/run_worker.py" not in command
+        assert "--queue" in command
+        queue_index = command.index("--queue")
+        assert queue_index + 1 < len(command)
+        queue = command[queue_index + 1]
+        assert queue != "all"
+        observed[service_name] = queue
+
+    assert observed == expected
