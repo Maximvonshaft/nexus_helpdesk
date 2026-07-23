@@ -16,12 +16,15 @@ A phone call does not require a Ticket. A Ticket is created only when a real fol
 | Operator availability | `OperatorAgentState` plus queue scope grants |
 | Agent ringing | short-lived `VoiceRoutingOffer` |
 | Media/call projection | `WebchatVoiceSession` and `WebchatVoiceParticipant` Call Legs |
+| Live media adapter | `backend/app/livekit_agent_worker.py` |
 | Channel configuration | `ChannelAccount(provider="voice")` plus `VoiceChannelConfiguration` |
 | Provider events | `TelephonyEventInbox` |
 | Provider commands | durable `WebchatVoiceSessionAction` outbox |
 | Business follow-up | optional `Ticket` |
 
-There is no second VoiceQueue, AgentPresence, VoiceConversation, call owner or telephony administration product.
+The LiveKit Agent worker is not a second AI Runtime. It performs room participation, STT, TTS, DTMF and bounded room control. Every customer turn is sent to `/api/telephony/internal/agent-turn`, where the existing governed Nexus Agent Runtime performs reasoning and Tool execution.
+
+There is no second VoiceQueue, AgentPresence, VoiceConversation, call owner, business LLM or telephony administration product.
 
 ## Production prerequisites
 
@@ -31,10 +34,11 @@ Real PSTN activation requires all of the following external facts:
 2. A carrier/SIP provider and at least one DID.
 3. Inbound and, when outbound calls are required, outbound SIP trunks.
 4. A LiveKit SIP dispatch rule for every enabled inbound number.
-5. A deployed LiveKit Room controller/AI Agent.
-6. Valid webhook and Agent/controller credentials.
-7. Network, firewall, DNS and certificate configuration required by the chosen deployment.
-8. Approved recording, transcription, retention and customer-consent policy for every operating market.
+5. A running `livekit-agent-controlled` media worker registered under the configured Agent name.
+6. Valid STT and TTS model identifiers available through LiveKit Inference or the selected provider integration.
+7. Valid webhook and Agent/controller credentials.
+8. Network, firewall, DNS and certificate configuration required by the chosen deployment.
+9. Approved recording, transcription, retention and customer-consent policy for every operating market.
 
 Without these credentials Nexus can deploy the code and configuration control plane, but it must return an auditable unavailable/error state. Mock provider success is prohibited in production.
 
@@ -46,17 +50,51 @@ Use secret files in production rather than inline secret values.
 WEBCHAT_HUMAN_CALL_ENABLED=true
 WEBCHAT_LIVE_AI_VOICE_ENABLED=true
 WEBCHAT_VOICE_PROVIDER=livekit
-WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webchat,/api/webchat,/api/telephony
+WEBCHAT_VOICE_ROUTING_MODE=ai_first
+WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES=/webchat,/webcall,/api/webchat,/api/telephony
 WEBCHAT_VOICE_CONNECT_SRC=wss://<livekit-host>
 LIVEKIT_URL=wss://<livekit-host>
 LIVEKIT_API_KEY_FILE=/run/secrets/livekit_api_key
 LIVEKIT_API_SECRET_FILE=/run/secrets/livekit_api_secret
-LIVEKIT_AGENT_NAME=<deployed-controller-agent-name>
+LIVEKIT_AGENT_NAME=nexus-voice-agent
 LIVEKIT_AGENT_SHARED_SECRET_FILE=/run/secrets/livekit_agent_shared_secret
 LIVEKIT_WEBHOOK_ENABLED=true
+NEXUS_VOICE_STT_MODEL=<livekit-inference-stt-model>
+NEXUS_VOICE_TTS_MODEL=<livekit-inference-tts-model-and-voice>
+NEXUS_VOICE_TRANSFER_LLM_MODEL=<optional-consultation-model>
+NEXUS_VOICE_TURN_DETECTION=stt
+NEXUS_VOICE_AGENT_REQUEST_TIMEOUT_SECONDS=30
+NEXUS_VOICE_AGENT_HEARTBEAT_SECONDS=30
 ```
 
 `LIVEKIT_URL` must use `wss://` in production. The LiveKit WebSocket origin must be present in the controlled CSP/connect-src configuration.
+
+`NEXUS_VOICE_TRANSFER_LLM_MODEL` is optional and is used only for LiveKit's bounded warm-transfer consultation task. It is not used for normal customer support turns. If it is absent, warm transfer fails closed while cold transfer and normal handoff remain available.
+
+## Controlled deployment
+
+Deploy the normal controlled topology first. Do not enable telephony merely by setting Web flags.
+
+```bash
+docker compose \
+  --env-file deploy/.env.controlled \
+  -f deploy/docker-compose.controlled.yml \
+  up -d migrate-controlled app-controlled worker-background-controlled
+```
+
+After the LiveKit project, Carrier, DID, trunks, dispatch rule, webhook, STT/TTS and Agent credentials are complete, start the canonical media worker through the existing controlled Compose product:
+
+```bash
+docker compose \
+  --env-file deploy/.env.controlled \
+  -f deploy/docker-compose.controlled.yml \
+  --profile telephony \
+  up -d livekit-agent-controlled
+```
+
+The AgentServer exposes its readiness endpoint at `http://127.0.0.1:8081/` inside the container. It returns success only when the Agent server is connected and operating. The Compose health check uses this endpoint; process-name or `/proc` probes are forbidden.
+
+The Web process and Agent worker must use the same `LIVEKIT_AGENT_SHARED_SECRET`. The worker calls the internal Agent-turn endpoint with Bearer authentication and signs controller events with timestamped HMAC.
 
 ## Configure a phone number
 
@@ -76,7 +114,7 @@ LIVEKIT_WEBHOOK_ENABLED=true
    - Outbound trunk ID when callback/outbound calling is required.
    - SIP dispatch rule ID.
    - Deployed Room controller/AI Agent name.
-5. Enable the number only after required Provider references are present.
+5. Enable the number only after required Provider references are present and the media worker health check is green.
 
 Tenant is never accepted from the browser or Provider payload. Nexus resolves Tenant and ChannelAccount from the server-managed DID, trunk or dispatch-rule mapping.
 
@@ -103,18 +141,21 @@ Carrier/DID
 → TelephonyEventInbox
 → server DID/trunk/dispatch Tenant mapping
 → Conversation and Voice Session projection
-→ Room controller/AI Agent dispatch
-→ Agent Runtime
+→ named LiveKit Agent worker dispatch
+→ STT transcript
+→ authenticated internal Agent-turn API
+→ governed Agent Runtime and Tools
+→ TTS in the same Room
 ```
 
-For AI-first answering, the Agent Runtime receives transcribed customer turns and uses the same governed knowledge, Tools and policies as other channels.
+For AI-first answering, the Agent Runtime receives transcribed customer turns and uses the same governed knowledge, Tools and policies as other channels. The media worker does not independently decide whether to transfer, create a Ticket or call a business integration.
 
 ## Adaptive human handoff
 
 The approved `agent.playbook.human-handoff` requires this sequence:
 
 1. Call `support.availability` before promising a transfer.
-2. Use only its committed observation for eligible capacity, queue position and wait estimate.
+2. Use only its committed observation for eligible voice capacity, queue position and wait estimate.
 3. If capacity is available and transfer is appropriate, call `handoff.request.create`.
 4. If all eligible operators are busy, explain the evidence-based range and confidence, then ask whether the customer wants to wait, continue with AI, or request follow-up.
 5. Create a Ticket only for a real follow-up and only after the customer confirms the exact proposal.
@@ -185,7 +226,8 @@ LiveKit egress events update recording status. Storage retention and access cont
 | --- | --- |
 | Unknown DID/trunk/dispatch rule | Record safe Inbox evidence; do not create Tenant data |
 | Invalid webhook signature | Reject before parsing/projection |
-| Missing LiveKit credentials | Return explicit unavailable; do not simulate success |
+| Missing LiveKit/STT/TTS credentials | Media worker fails readiness; do not simulate success |
+| Media worker not registered | Agent dispatch cannot become active; surface unavailable diagnostics |
 | No eligible operator | Keep Room and AI/wait strategy active; do not assign owner |
 | Operator decline/offer expiry | Route the next offer; do not hang up caller |
 | Controller not joined | Keep command retryable; do not report execution |
@@ -197,7 +239,7 @@ LiveKit egress events update recording status. Storage retention and access cont
 
 Before release, use the canonical acceptance workflow on the exact PR Head and require:
 
-- Backend production compile and complete pytest suite.
+- Backend production compile and complete pytest suite, including media-worker tests.
 - Static service-authority and telephony residue checks.
 - Frontend architecture, lint, TypeScript, tests and production build.
 - Playwright browser journeys.
@@ -207,15 +249,16 @@ Before release, use the canonical acceptance workflow on the exact PR Head and r
 
 After deploying with real Provider credentials, run a controlled call matrix:
 
-1. Inbound AI-first call.
-2. Availability query with free capacity.
-3. AI-to-human offer and accept in the same Room.
-4. Decline and timeout rotation without customer disconnect.
-5. Busy operators with evidence-based wait response.
-6. Explicit confirmed follow-up Ticket creation.
-7. Hold, resume, DTMF, cold transfer and warm transfer.
-8. Customer and authorized operator hangup.
-9. Recording/transcription policy and evidence events.
-10. Outbound call success, busy, no-answer and Provider failure.
+1. Media worker readiness and named Agent registration.
+2. Inbound AI-first call with real STT and TTS.
+3. Availability query with free capacity.
+4. AI-to-human offer and accept in the same Room.
+5. Decline and timeout rotation without customer disconnect.
+6. Busy operators with evidence-based wait response.
+7. Explicit confirmed follow-up Ticket creation.
+8. Hold, resume, DTMF, cold transfer and warm transfer.
+9. Customer and authorized operator hangup.
+10. Recording/transcription policy and evidence events.
+11. Outbound call success, busy, no-answer and Provider failure.
 
-Do not claim production PSTN activation until this matrix has passed using the actual carrier, DID, trunks and webhook configuration.
+Do not claim production PSTN activation until this matrix has passed using the actual carrier, DID, trunks, models, Agent worker and webhook configuration.
