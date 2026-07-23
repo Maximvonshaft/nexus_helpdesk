@@ -20,7 +20,8 @@ settings = get_settings()
 
 _PROFILE_VALUES = {"controlled", "provider_canary", "full"}
 _HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
-_DIGEST_IMAGE_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_IMAGE_RE = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -237,10 +238,7 @@ def _telephony_snapshot(db: Session) -> dict[str, Any]:
                 """
             )
         ).mappings().one()
-        channel_counts = {
-            key: int(row[key] or 0)
-            for key in channel_counts
-        }
+        channel_counts = {key: int(row[key] or 0) for key in channel_counts}
     except Exception:
         reason_codes.append("voice_channel_readiness_unavailable")
 
@@ -275,7 +273,44 @@ def _evidence_url(name: str) -> str | None:
     parsed = urlsplit(value)
     if parsed.scheme != "https" or not parsed.netloc:
         raise RuntimeError(f"{name}_invalid")
+    if "<" in value or ">" in value or "placeholder" in value.lower():
+        raise RuntimeError(f"{name}_invalid")
     return value
+
+
+def _activation_candidate_binding() -> tuple[dict[str, str | None], list[str]]:
+    source_sha = os.getenv("GIT_SHA", "").strip().lower()
+    image = os.getenv("IMAGE_TAG", "").strip().lower()
+    evidence_source_sha = os.getenv(
+        "ACTIVATION_EVIDENCE_SOURCE_SHA",
+        "",
+    ).strip().lower()
+    evidence_image_digest = os.getenv(
+        "ACTIVATION_EVIDENCE_IMAGE_DIGEST",
+        "",
+    ).strip().lower()
+    reason_codes: list[str] = []
+
+    image_match = _DIGEST_IMAGE_RE.fullmatch(image)
+    runtime_image_digest = image_match.group(1) if image_match else None
+    if not _HEX40_RE.fullmatch(evidence_source_sha):
+        reason_codes.append("activation_evidence_source_sha_invalid")
+    elif evidence_source_sha != source_sha:
+        reason_codes.append("activation_evidence_source_sha_mismatch")
+    if not _SHA256_RE.fullmatch(evidence_image_digest):
+        reason_codes.append("activation_evidence_image_digest_invalid")
+    elif evidence_image_digest != runtime_image_digest:
+        reason_codes.append("activation_evidence_image_digest_mismatch")
+
+    return (
+        {
+            "source_sha": evidence_source_sha or None,
+            "image_digest": evidence_image_digest or None,
+            "runtime_source_sha": source_sha or None,
+            "runtime_image_digest": runtime_image_digest,
+        },
+        reason_codes,
+    )
 
 
 def _activation_evidence_snapshot(
@@ -299,6 +334,10 @@ def _activation_evidence_snapshot(
 
     references: dict[str, str] = {}
     reason_codes: list[str] = []
+    candidate: dict[str, str | None] | None = None
+    if required:
+        candidate, binding_reasons = _activation_candidate_binding()
+        reason_codes.extend(binding_reasons)
     for key in required:
         try:
             value = _evidence_url(key)
@@ -314,6 +353,7 @@ def _activation_evidence_snapshot(
         "status": "ready" if not reason_codes else "not_ready",
         "required": [key.lower() for key in required],
         "references": references,
+        "candidate": candidate,
         "reason_codes": reason_codes,
         "contains_secrets": False,
     }
