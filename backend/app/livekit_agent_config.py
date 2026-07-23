@@ -54,7 +54,6 @@ class LiveKitAgentWorkerConfig:
     nexus_internal_api_url: str
     stt_model: str
     tts_model: str
-    transfer_llm_model: str | None
     turn_detection: str
     request_timeout_seconds: int
     heartbeat_seconds: int
@@ -77,10 +76,6 @@ def load_livekit_agent_worker_config() -> LiveKitAgentWorkerConfig:
         ).strip().rstrip("/"),
         stt_model=str(os.getenv("NEXUS_VOICE_STT_MODEL") or "").strip(),
         tts_model=str(os.getenv("NEXUS_VOICE_TTS_MODEL") or "").strip(),
-        transfer_llm_model=(
-            str(os.getenv("NEXUS_VOICE_TRANSFER_LLM_MODEL") or "").strip()
-            or None
-        ),
         turn_detection=str(
             os.getenv("NEXUS_VOICE_TURN_DETECTION") or "stt"
         ).strip().lower(),
