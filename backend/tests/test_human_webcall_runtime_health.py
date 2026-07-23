@@ -33,15 +33,12 @@ def voice_env(monkeypatch):
         "WEBCHAT_HUMAN_CALL_ENABLED",
         "WEBCHAT_LIVE_AI_VOICE_ENABLED",
         "WEBCHAT_VOICE_PROVIDER",
-        "WEBCHAT_VOICE_RECORDING_ENABLED",
-        "WEBCHAT_VOICE_TRANSCRIPTION_ENABLED",
         "LIVEKIT_URL",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
         "WEBCHAT_VOICE_CONNECT_SRC",
     ]:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webcall")
 
 
 def _session(public_id: str, status: str, expires_delta: timedelta) -> WebchatVoiceSession:
@@ -75,8 +72,9 @@ def test_human_webcall_runtime_health_reports_stale_counts_and_disabled_verdict(
 
     assert status["webchat_voice_enabled"] is False
     assert status["provider"] == "mock"
-    assert status["recording_enabled"] is False
-    assert status["transcription_enabled"] is False
+    assert status["voice_policy_authority"] == "channel_account"
+    assert "recording_enabled" not in status
+    assert "transcription_enabled" not in status
     assert status["active_session_count"] == 1
     assert status["ringing_session_count"] == 2
     assert status["stale_active_session_count"] == 2
@@ -93,4 +91,5 @@ def test_human_webcall_runtime_health_ready_when_human_calls_enabled(monkeypatch
 
     assert status["webchat_voice_enabled"] is True
     assert status["provider"] == "mock"
+    assert status["voice_policy_authority"] == "channel_account"
     assert status["readiness_verdict"] == "ready"
