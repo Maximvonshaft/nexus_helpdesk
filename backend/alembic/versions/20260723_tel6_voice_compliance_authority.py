@@ -126,137 +126,48 @@ def upgrade() -> None:
             name="ck_voice_compliance_evidence_decision",
         ),
     )
-    op.create_index(
-        "ix_voice_compliance_evidence_public_id",
-        "voice_compliance_evidence",
-        ["public_id"],
-        unique=True,
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_voice_session_id",
-        "voice_compliance_evidence",
-        ["voice_session_id"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_capability",
-        "voice_compliance_evidence",
-        ["capability"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_policy",
-        "voice_compliance_evidence",
-        ["policy"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_policy_version",
-        "voice_compliance_evidence",
-        ["policy_version"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_prompt_sha256",
-        "voice_compliance_evidence",
-        ["prompt_sha256"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_source",
-        "voice_compliance_evidence",
-        ["source"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_participant_identity_hash",
-        "voice_compliance_evidence",
-        ["participant_identity_hash"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_decision",
-        "voice_compliance_evidence",
-        ["decision"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_confirmation_public_id",
-        "voice_compliance_evidence",
-        ["confirmation_public_id"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_idempotency_key",
-        "voice_compliance_evidence",
-        ["idempotency_key"],
-        unique=True,
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_evidence_at",
-        "voice_compliance_evidence",
-        ["evidence_at"],
-    )
-    op.create_index(
-        "ix_voice_compliance_evidence_created_at",
-        "voice_compliance_evidence",
-        ["created_at"],
-    )
-    op.create_index(
-        "ix_voice_compliance_session_capability_time",
-        "voice_compliance_evidence",
-        ["voice_session_id", "capability", "evidence_at"],
-    )
+    for name, columns in (
+        ("ix_voice_compliance_evidence_voice_session_id", ["voice_session_id"]),
+        ("ix_voice_compliance_evidence_capability", ["capability"]),
+        ("ix_voice_compliance_evidence_policy", ["policy"]),
+        ("ix_voice_compliance_evidence_policy_version", ["policy_version"]),
+        ("ix_voice_compliance_evidence_prompt_sha256", ["prompt_sha256"]),
+        ("ix_voice_compliance_evidence_source", ["source"]),
+        (
+            "ix_voice_compliance_evidence_participant_identity_hash",
+            ["participant_identity_hash"],
+        ),
+        ("ix_voice_compliance_evidence_decision", ["decision"]),
+        (
+            "ix_voice_compliance_evidence_confirmation_public_id",
+            ["confirmation_public_id"],
+        ),
+        ("ix_voice_compliance_evidence_evidence_at", ["evidence_at"]),
+        ("ix_voice_compliance_evidence_created_at", ["created_at"]),
+        (
+            "ix_voice_compliance_session_capability_time",
+            ["voice_session_id", "capability", "evidence_at"],
+        ),
+    ):
+        op.create_index(name, "voice_compliance_evidence", columns)
 
 
 def downgrade() -> None:
-    op.drop_index(
+    for name in (
         "ix_voice_compliance_session_capability_time",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_created_at",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_evidence_at",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
-        "ix_voice_compliance_evidence_idempotency_key",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_confirmation_public_id",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_decision",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_participant_identity_hash",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_source",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_prompt_sha256",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_policy_version",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_policy",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_capability",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
         "ix_voice_compliance_evidence_voice_session_id",
-        table_name="voice_compliance_evidence",
-    )
-    op.drop_index(
-        "ix_voice_compliance_evidence_public_id",
-        table_name="voice_compliance_evidence",
-    )
+    ):
+        op.drop_index(name, table_name="voice_compliance_evidence")
     op.drop_table("voice_compliance_evidence")
 
     with op.batch_alter_table("webchat_voice_sessions") as batch:
