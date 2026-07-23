@@ -241,7 +241,7 @@ def serialize_voice_session(
             if session.provider == "livekit"
             else None
         ),
-        "voice_page_url": f"/webchat/voice/{session.public_id}",
+        "voice_page_url": f"/webcall/{session.public_id}",
         "room_name": session.provider_room_name,
         "provider_room_name": session.provider_room_name,
         "participant_identity": participant_identity,
@@ -1187,8 +1187,30 @@ def _incoming_payload(
         session=session,
         current_agent_id=current_user.id,
     )
-    payload.pop("participant_token", None)
-    payload.pop("participant_identity", None)
+    for forbidden in (
+        "livekit_url",
+        "voice_page_url",
+        "room_name",
+        "provider_room_name",
+        "participant_identity",
+        "participant_token",
+        "expires_in_seconds",
+        "handoff_request_id",
+        "accepted_by_user_id",
+        "ended_by_user_id",
+        "channel_account_id",
+        "ai_agent_status",
+        "accepted_at",
+        "active_at",
+        "ended_at",
+        "wrap_up_expires_at",
+        "expires_at",
+        "ringing_duration_seconds",
+        "talk_duration_seconds",
+        "total_duration_seconds",
+        "summary_status",
+    ):
+        payload.pop(forbidden, None)
     payload.update(
         {
             "ticket_id": (
@@ -1207,8 +1229,6 @@ def _incoming_payload(
                 or conversation.visitor_phone
                 or "Anonymous visitor"
             ),
-            "origin": conversation.origin,
-            "page_url": conversation.page_url,
         }
     )
     return payload
