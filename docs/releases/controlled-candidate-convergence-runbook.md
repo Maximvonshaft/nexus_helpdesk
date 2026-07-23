@@ -1,81 +1,89 @@
 # Nexus controlled candidate publication
 
-## Decision boundary
+## Single workflow authority
 
-Nexus uses three distinct authorities. They are sequential and do not duplicate one another:
-
-1. `.github/workflows/canonical-acceptance.yml` proves an exact software candidate.
-2. `.github/workflows/controlled-candidate-convergence.yml` publishes the already bounded candidate to GHCR, pulls it back, proves binary identity, produces recovery evidence and creates the controlled-candidate manifest.
-3. `deploy/docker-compose.controlled.yml` and the production-activation overlay govern a separately authorized target-server deployment and capability activation.
-
-The publication workflow does **not** deploy a server and does **not** authorize Provider traffic, WebChat AI, Voice, outbound dispatch, WhatsApp, Speedaf writes or Operations Dispatch.
-
-## Publication trigger
-
-The controlled publication workflow is main-only and supports two bounded entry points:
-
-- an explicit GitHub `workflow_dispatch` on `main`;
-- the deterministic request bridge, triggered only when `.github/controlled-candidate-request.json` is the sole changed file in a new `main` commit.
-
-The bridge performs no build, push, deployment or external business action. It validates the exact `main` commit and dispatches the one controlled-candidate workflow. Its request must keep:
+Nexus has exactly one GitHub Actions workflow:
 
 ```text
-deployment_authorized=false
-production_authority=false
-external_actions_authorized=false
-issue_533=NO_GO
+.github/workflows/canonical-acceptance.yml
 ```
 
-The bridge writes the exact source SHA and workflow Run ID to governance Issue #724.
+The workflow contains two sequential phases:
 
-## Controlled publication workflow
+1. **Canonical Acceptance** for pull requests, `main` pushes and manual verification.
+2. **Controlled candidate publication**, executed only for a `push` to `main` after `required-gate` succeeds.
 
-The workflow is restricted to the current `main` SHA and uses least-privilege job permissions.
+No second workflow, dispatch bridge, issue-comment trigger or request-file transport is permitted.
 
-It performs:
+## Acceptance phase
 
-1. exact-main identity verification;
-2. the existing one-build RC chain;
-3. runtime import and Gunicorn configuration checks;
-4. Trivy vulnerability inventory;
-5. image and frontend CycloneDX SBOM generation;
-6. release-image assurance and compliance binding;
-7. GHCR publication under `controlled-<source-sha>`;
-8. digest pullback and local/pulled image-ID equality proof;
-9. PostgreSQL backup/restore recovery qualification;
-10. GitHub build-provenance attestation bound to the exact registry digest;
-11. final controlled-candidate manifest and bounded artifact scan.
+Every candidate is frozen by exact source SHA and tree SHA. The required gate depends on:
 
-No second application image is built for publication. The exact assured image is tagged, pushed, pulled by digest and compared to the original local image ID.
+- candidate identity;
+- static authority and residue checks;
+- Backend Full;
+- PostgreSQL migration rehearsal and acceptance;
+- frontend architecture, lint, types, units, build and Playwright;
+- exact-Head image build, Trivy, SBOM, migration, startup and health;
+- secret history, SAST, dependency assurance and CodeQL.
 
-## Required output
+Pull requests and manual runs stop after acceptance. They never publish an image.
 
-A successful run produces:
+## Main-only publication phase
+
+For a `push` to `refs/heads/main`, and only after `required-gate=success`, the same workflow starts three bounded jobs:
+
+1. `controlled-build-publish`
+2. `controlled-recovery`
+3. `controlled-bind-attest`
+
+The publication jobs verify that the accepted source is still the exact current `origin/main`. A newer `main` commit cancels the stale workflow through the canonical concurrency group.
+
+### Controlled build and publication
+
+The job reuses the repository's one-build RC authority:
 
 ```text
-controlled-candidate-<source-sha>/
-  candidate-manifest.json
-  release-image-manifest.json
-  release-image-compliance-binding.json
-  registry-publish-receipt.json
-  recovery-evidence.json
-  controlled-candidate-manifest.json
-  artifact-scan.json
+scripts/release/run_controlled_rc_gate.sh
 ```
 
-The final manifest must bind:
+It then:
 
-- source SHA;
-- frontend SHA;
-- Alembic migration revision;
-- immutable GHCR digest;
-- local and registry-pulled image IDs;
-- build time and application version;
-- SBOM and image-assurance evidence;
-- recovery evidence;
-- GitHub provenance attestation.
+- checks runtime imports and Gunicorn configuration;
+- generates Trivy and CycloneDX evidence for the same RC image;
+- executes release-image assurance and compliance binding;
+- tags and pushes that exact image to GHCR as `controlled-<source-sha>`;
+- pulls it back by digest;
+- requires local and registry-pulled image IDs to match;
+- emits a bounded registry publication receipt.
 
-A controlled candidate remains:
+Failure evidence is separately bounded and scanned. A failed RC or image-assurance step cannot reach publication.
+
+### Recovery qualification
+
+The recovery job uses an isolated PostgreSQL service and the existing recovery authority:
+
+```text
+scripts/release/run_controlled_recovery_gate.sh
+```
+
+It proves backup/restore behavior, migration identity, foreign-key validity, the synthetic restore marker, and bounded RPO/RTO evidence without production data.
+
+### Provenance and final manifest
+
+After both jobs succeed, the final job:
+
+- resolves the immutable GHCR digest;
+- creates GitHub build-provenance attestation for that digest;
+- binds the RC manifest, image assurance, compliance binding, registry receipt and recovery evidence;
+- generates `controlled-candidate-manifest.json`;
+- scans all final artifacts;
+- uploads `controlled-candidate-<source-sha>`;
+- records the exact source, image digest, migration and workflow Run ID in governance Issue #724.
+
+## Safety boundary
+
+A published controlled candidate always remains:
 
 ```text
 production_ready=false
@@ -83,11 +91,11 @@ deployment_performed=false
 external_effects_authorized=false
 ```
 
-Publication is a prerequisite for deployment, not deployment authorization.
+The publication phase does not deploy a server and does not enable Provider traffic, WebChat AI, Voice, outbound dispatch, WhatsApp, Speedaf writes or Operations Dispatch.
 
-## Target-server preparation
+## Target-server deployment
 
-After publication, populate `deploy/.env.controlled` from the example using the exact manifest values:
+After publication, obtain the final manifest artifact and populate `deploy/.env.controlled` with its exact values:
 
 ```text
 CONTROLLED_IMAGE=<registry image@sha256 digest>
@@ -99,9 +107,9 @@ BUILD_TIME=<manifest build time>
 APP_VERSION=<manifest app version>
 ```
 
-Supply real process-specific PostgreSQL accounts, runtime secrets, origins, metrics token, storage paths and backup marker. Do not commit credentials.
+Supply real process-specific PostgreSQL accounts, runtime secrets, origins, metrics token, storage paths and backup marker. Credentials must never be committed.
 
-Run the controlled-server preflight against the exact manifest before starting containers:
+Run the controlled server preflight:
 
 ```bash
 python scripts/deploy/validate_controlled_server_preflight.py \
@@ -115,31 +123,17 @@ python scripts/deploy/validate_controlled_server_preflight.py \
   --output /secure/evidence/controlled-preflight.json
 ```
 
-The controlled profile must keep Provider, WebChat AI, Voice, outbound and Operations effects disabled.
+Only a separately authorized operator may start the controlled Compose topology.
 
-## Production activation
+## Customer-facing activation
 
-Customer-facing activation is governed separately by `docs/runbooks/production-activation.md`.
+Customer-facing activation is governed by `docs/runbooks/production-activation.md` and requires:
 
-Full production requires:
-
-- the controlled deployment to be healthy;
-- runtime identity and migration to match the published manifest;
+- a healthy controlled deployment;
+- runtime identity and Alembic head matching the published manifest;
 - queue, database pool, storage and backup readiness;
-- candidate-bound HTTPS E2E evidence;
-- capability-specific credentials and evidence for WebChat AI, LiveKit/SIP, outbound or Operations;
+- exact-candidate HTTPS E2E evidence;
+- capability-specific credentials and evidence;
 - `production_authorized=true` from the canonical readiness authority.
 
 No UI action, environment flag or model output can override a failed readiness collector.
-
-## Rollback
-
-Retain the previous immutable image digest, environment snapshot, database backup, uploads backup marker and reverse-proxy configuration.
-
-If the controlled deployment or a later activation degrades:
-
-1. restore `PROVIDER_RUNTIME_KILL_SWITCH=true`;
-2. disable affected external capability flags;
-3. reapply the controlled profile;
-4. execute the canonical rollback script with the previous immutable digest and matching environment snapshot;
-5. preserve failure evidence before any retry.

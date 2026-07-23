@@ -34,7 +34,11 @@ def _run_contract_suite(directory: str) -> None:
 
 
 def test_release_and_deployment_contract_suites_are_part_of_backend_full() -> None:
-    assert (ROOT / ".github/workflows/controlled-candidate-convergence.yml").is_file()
-    assert (ROOT / ".github/workflows/controlled-candidate-dispatch-bridge.yml").is_file()
+    workflows = sorted(
+        path.name
+        for path in (ROOT / ".github/workflows").glob("*")
+        if path.is_file()
+    )
+    assert workflows == ["canonical-acceptance.yml"]
     _run_contract_suite("scripts/release/tests")
     _run_contract_suite("scripts/deploy/tests")

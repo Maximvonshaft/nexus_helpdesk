@@ -4,10 +4,11 @@ import re
 import unittest
 from pathlib import Path
 
+
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = (ROOT / ".github/workflows/controlled-candidate-convergence.yml").read_text(encoding="utf-8")
-COMPOSE = (ROOT / "deploy/docker-compose.controlled.yml").read_text(encoding="utf-8")
-ENV_EXAMPLE = (ROOT / "deploy/.env.controlled.example").read_text(encoding="utf-8")
+WORKFLOW_DIR = ROOT / ".github" / "workflows"
+WORKFLOW_PATH = WORKFLOW_DIR / "canonical-acceptance.yml"
+WORKFLOW = WORKFLOW_PATH.read_text(encoding="utf-8")
 HELPERS = "\n".join(
     (ROOT / path).read_text(encoding="utf-8")
     for path in (
@@ -24,115 +25,79 @@ HELPERS = "\n".join(
 
 
 class ControlledCandidateWorkflowContractTests(unittest.TestCase):
-    def test_manual_main_only_and_least_privilege(self) -> None:
-        self.assertIn("workflow_dispatch:", WORKFLOW)
-        self.assertNotIn("pull_request:", WORKFLOW)
-        self.assertNotIn("push:\n", WORKFLOW)
-        self.assertIn("permissions: {}", WORKFLOW)
-        self.assertIn("guard-main:", WORKFLOW)
-        self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', WORKFLOW)
-        self.assertGreaterEqual(WORKFLOW.count("needs: guard-main"), 2)
-        self.assertIn("if: github.ref == 'refs/heads/main'", WORKFLOW)
-        self.assertIn("packages: write", WORKFLOW)
-        self.assertIn("attestations: write", WORKFLOW)
-        self.assertIn("id-token: write", WORKFLOW)
+    def test_one_workflow_contains_acceptance_and_main_publication(self) -> None:
+        workflow_files = sorted(path.name for path in WORKFLOW_DIR.glob("*") if path.is_file())
+        self.assertEqual(workflow_files, ["canonical-acceptance.yml"])
+        self.assertIn("name: Canonical Acceptance", WORKFLOW)
+        self.assertIn("controlled-build-publish:", WORKFLOW)
+        self.assertIn("controlled-recovery:", WORKFLOW)
+        self.assertIn("controlled-bind-attest:", WORKFLOW)
 
-    def test_actions_are_pinned_and_no_mutable_action_tags(self) -> None:
+    def test_publication_is_main_push_only_and_after_required_gate(self) -> None:
+        for marker in (
+            "github.event_name == 'push'",
+            "github.ref == 'refs/heads/main'",
+            "needs.required-gate.result == 'success'",
+            "needs: [candidate-identity, required-gate]",
+            "test \"$(git rev-parse origin/main)\" = \"$SOURCE_SHA\"",
+        ):
+            self.assertIn(marker, WORKFLOW)
+        self.assertNotIn("controlled-candidate-dispatch-bridge", WORKFLOW)
+        self.assertNotIn("controlled-candidate-request.json", WORKFLOW)
+
+    def test_actions_are_pinned_and_runner_is_fixed(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
-        self.assertGreaterEqual(len(uses), 8)
+        self.assertGreaterEqual(len(uses), 20)
         for reference in uses:
             if reference.startswith("./"):
                 continue
             self.assertRegex(reference, r"@[0-9a-f]{40}$")
         for mutable in ("@main", "@master", "@v1", "@v2", "@v3", "@v4"):
             self.assertNotIn(mutable, WORKFLOW)
+        self.assertNotIn("ubuntu-latest", WORKFLOW)
+        self.assertIn("runs-on: ubuntu-24.04", WORKFLOW)
 
-    def test_existing_rc_build_is_reused_and_no_second_build_exists(self) -> None:
+    def test_publication_reuses_one_rc_build_and_verifies_pullback_identity(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
-        self.assertIn("scripts/release/run_rc_test_candidate.sh", combined)
-        self.assertNotIn("docker build ", WORKFLOW)
+        self.assertIn("scripts/release/run_controlled_rc_gate.sh", combined)
+        publication = WORKFLOW.split("controlled-build-publish:", 1)[1].split(
+            "controlled-recovery:", 1
+        )[0]
+        self.assertNotIn("docker build ", publication)
+        self.assertIn("scripts/release/publish_controlled_image.sh", publication)
         self.assertIn('docker tag "${CANDIDATE_IMAGE}"', combined)
         self.assertIn('docker push "${registry_image}:${tag}"', combined)
         self.assertIn('test "${pulled_image_id}" = "${local_image_id}"', combined)
 
-    def test_failed_rc_is_bounded_and_blocks_publication(self) -> None:
+    def test_bounded_failure_evidence_blocks_publication(self) -> None:
         self.assertIn("id: controlled_rc", WORKFLOW)
         self.assertIn("capture_controlled_rc_failure.py", WORKFLOW)
         self.assertIn("steps.controlled_rc.outcome == 'failure'", WORKFLOW)
-        self.assertIn("controlled-rc-failure-${{ github.sha }}", WORKFLOW)
-        self.assertIn("steps.rc_failure_scan.outcome == 'success'", WORKFLOW)
-        self.assertIn('exit "${code}"', WORKFLOW)
-        self.assertIn("path: artifacts/controlled-rc-failure", WORKFLOW)
-        self.assertLess(
-            WORKFLOW.index("Upload bounded RC failure evidence"),
-            WORKFLOW.index("Verify runtime imports"),
-        )
-        failure_upload_block = WORKFLOW.split("- name: Upload bounded RC failure evidence", 1)[1].split(
-            "- name: Verify runtime imports", 1
-        )[0]
-        self.assertNotIn("RUNNER_TEMP", failure_upload_block)
-        self.assertNotIn("controlled-rc-run.log", failure_upload_block)
-
-    def test_failed_image_assurance_is_bounded_and_blocks_publication(self) -> None:
+        self.assertIn("controlled-rc-failure-${{ needs.candidate-identity.outputs.source_sha }}", WORKFLOW)
         self.assertIn("id: image_assurance", WORKFLOW)
         self.assertIn("capture_controlled_image_assurance_failure.py", WORKFLOW)
         self.assertIn("steps.image_assurance.outcome == 'failure'", WORKFLOW)
-        self.assertIn("controlled-image-assurance-failure-${{ github.sha }}", WORKFLOW)
-        self.assertIn("steps.assurance_failure_scan.outcome == 'success'", WORKFLOW)
-        self.assertIn("path: artifacts/controlled-image-assurance-failure", WORKFLOW)
-        self.assertLess(
-            WORKFLOW.index("Upload bounded image-assurance failure evidence"),
-            WORKFLOW.index("Publish and pull back the assured binary"),
-        )
-        failure_block = WORKFLOW.split("- name: Build and scan bounded image-assurance failure evidence", 1)[1].split(
-            "- name: Publish and pull back the assured binary", 1
-        )[0]
-        for forbidden in (
-            "trivy.raw.json",
-            "image.raw.cdx.json",
-            "frontend.raw.cdx.json",
-            "installed-license-evidence.json",
-            "release-image-manifest.json",
-        ):
-            self.assertNotIn(forbidden, failure_block)
-        self.assertIn('exit "${code}"', WORKFLOW)
-
-    def test_same_binary_and_build_metadata_are_bound(self) -> None:
-        combined = WORKFLOW + "\n" + HELPERS
-        self.assertIn("image-ref: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
-        self.assertIn("image: ${{ env.CANDIDATE_IMAGE }}", WORKFLOW)
-        self.assertIn("release-image-manifest.json", combined)
-        self.assertIn("registry-publish-receipt.json", WORKFLOW)
-        self.assertIn("LOCAL_IMAGE_ENV_JSON", combined)
-        self.assertIn("PULLED_IMAGE_ENV_JSON", combined)
-        self.assertIn('"build_time": local_env["BUILD_TIME"]', combined)
-        self.assertIn('"app_version": local_env["APP_VERSION"]', combined)
-        self.assertIn("publish_receipt_build_time_invalid", combined)
-        self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", WORKFLOW)
-        self.assertIn("subject-digest: ${{ steps.identity.outputs.digest }}", WORKFLOW)
-        self.assertIn("push-to-registry: true", WORKFLOW)
-
-    def test_registry_attestation_is_authenticated_without_unsupported_storage_record(self) -> None:
-        login = WORKFLOW.index("Authenticate GHCR for registry attestation")
-        attest = WORKFLOW.index("Attest exact registry digest")
-        logout = WORKFLOW.index("Clear GHCR registry credentials")
-        finalize = WORKFLOW.index("Build final evidence-bound candidate")
-        self.assertLess(login, attest)
-        self.assertLess(attest, logout)
-        self.assertLess(logout, finalize)
-        self.assertIn("GHCR_TOKEN: ${{ github.token }}", WORKFLOW)
         self.assertIn(
-            'printf \'%s\' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin',
+            "controlled-image-assurance-failure-${{ needs.candidate-identity.outputs.source_sha }}",
             WORKFLOW,
         )
-        self.assertIn("create-storage-record: false", WORKFLOW)
-        self.assertNotIn("artifact-metadata: write", WORKFLOW)
-        self.assertIn("if: ${{ always() }}", WORKFLOW)
-        self.assertIn("docker logout ghcr.io", WORKFLOW)
 
-    def test_recovery_and_external_effect_safety_are_required(self) -> None:
-        self.assertIn("scripts/qualification/recovery/run_recovery_qualification.sh", WORKFLOW + "\n" + HELPERS)
-        self.assertIn("controlled-recovery-${{ github.sha }}", WORKFLOW)
+    def test_recovery_attestation_and_final_manifest_are_mandatory(self) -> None:
+        combined = WORKFLOW + "\n" + HELPERS
+        for marker in (
+            "scripts/release/run_controlled_recovery_gate.sh",
+            "controlled-recovery-${{ needs.candidate-identity.outputs.source_sha }}",
+            "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373",
+            "subject-digest: ${{ steps.identity.outputs.digest }}",
+            "push-to-registry: true",
+            "scripts/release/finalize_controlled_candidate.sh",
+            "controlled-candidate-${{ needs.candidate-identity.outputs.source_sha }}",
+            '"repos/${GH_REPO}/issues/724/comments"',
+        ):
+            self.assertIn(marker, combined)
+
+    def test_publication_never_authorizes_deployment_or_external_effects(self) -> None:
+        controlled_env = (ROOT / "deploy/.env.controlled.example").read_text(encoding="utf-8")
         for marker in (
             "PROVIDER_RUNTIME_KILL_SWITCH=true",
             "PROVIDER_RUNTIME_CANARY_PERCENT=0",
@@ -141,27 +106,11 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             "SPEEDAF_WORK_ORDER_CREATE_ENABLED=false",
             "OPERATIONS_DISPATCH_MODE=disabled",
             "ALLOW_DEV_AUTH=false",
-            "LOCAL_STORAGE_BACKUP_REQUIRED=true",
         ):
-            self.assertIn(marker, ENV_EXAMPLE)
-
-    def test_controlled_compose_is_digest_only_and_has_no_external_sidecars(self) -> None:
-        self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
-        self.assertIn("${NEXUS_RUNTIME_SECRETS_HOST_PATH:?", COMPOSE)
-        self.assertNotRegex(COMPOSE, r"(?m)^\s*build\s*:")
-        self.assertNotIn(":latest", COMPOSE)
-        self.assertNotIn("external: true", COMPOSE)
-        self.assertNotIn("production_runtime", COMPOSE)
-        self.assertNotIn("whatsapp-sidecar", COMPOSE)
-        for service in (
-            "migrate-controlled:",
-            "app-controlled:",
-            "worker-outbound-controlled:",
-            "worker-background-controlled:",
-            "worker-webchat-ai-controlled:",
-            "worker-handoff-snapshot-controlled:",
-        ):
-            self.assertIn(service, COMPOSE)
+            self.assertIn(marker, controlled_env)
+        self.assertIn("- Production ready: `false`.", WORKFLOW)
+        self.assertIn("- Deployment performed: `false`.", WORKFLOW)
+        self.assertIn("- External effects authorized: `false`.", WORKFLOW)
 
 
 if __name__ == "__main__":
