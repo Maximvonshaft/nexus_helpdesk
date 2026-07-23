@@ -2,6 +2,14 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 
 const TOKEN_KEY = 'helpdesk-webapp-token'
 const SCOPE_KEY = 'nexus-operator-workspace-scope'
+const VOICE_CAPABILITIES = [
+  'webcall.voice.read',
+  'webcall.voice.queue.view',
+  'webcall.voice.accept',
+  'webcall.voice.reject',
+  'webcall.voice.end',
+  'webcall.voice.control',
+]
 
 function agentState() {
   return {
@@ -49,7 +57,7 @@ async function mockIncomingVoice(page: Page) {
         username: 'voice-agent',
         display_name: 'Voice Agent',
         role: 'agent',
-        capabilities: ['operator_queue.read', 'webchat.handoff.accept'],
+        capabilities: ['operator_queue.read', 'webchat.handoff.accept', ...VOICE_CAPABILITIES],
       })
     }
     if (url.pathname === '/api/admin/operator-queue/my-scopes') {
