@@ -40,25 +40,34 @@ RUN python -m pip install \
         setuptools \
         wheel \
         pip \
-    && rm -rf /wheels /tmp/requirements.txt /root/.cache
+    && rm -rf /wheels /tmp/requirements.txt /root/.cache \
+    # Nexus does not ship a desktop UI. Removing the optional Tk modules prevents
+    # the server image from acquiring unused Tcl/Tk libraries and attack surface.
+    && rm -rf \
+        /usr/local/lib/python3.11/tkinter \
+        /usr/local/lib/python3.11/idlelib \
+        /usr/local/lib/python3.11/turtledemo \
+    && rm -f /usr/local/lib/python3.11/lib-dynload/_tkinter*.so
 
-# Distroless cc contains the base C runtime but not every library used by CPython
-# and accepted native wheels. Compute the exact transitive dynamic-library closure
-# in the compatible builder, fail closed on unresolved dependencies, and preserve
-# each absolute loader path for the final shell-less image. Some installed native
-# artifacts are intentionally static/non-dynamic; those are copied with /usr/local
-# but must not make ldd discovery fail.
+# Distroless cc contains the base C runtime but not every system library used by
+# CPython and accepted native wheels. Treat Python and importable extension modules
+# as dependency roots. Wheel-private *.libs files are already copied with
+# /usr/local; scanning them independently would discard their $ORIGIN context and
+# report false missing siblings. Instead expose every wheel-private library
+# directory while resolving the complete transitive system-library closure.
 RUN set -eux; \
     mkdir -p /runtime-libs; \
+    wheel_library_path="$(find /usr/local/lib/python3.11/site-packages -type d -name '*.libs' -print | sort -u | paste -sd: -)"; \
     { \
       printf '%s\n' /usr/local/bin/python3.11; \
-      find /usr/local/lib/python3.11 -type f \( -name '*.so' -o -name '*.so.*' \) -print; \
+      find /usr/local/lib/python3.11/lib-dynload -type f -name '*.so' ! -name '_tkinter*.so' -print; \
+      find /usr/local/lib/python3.11/site-packages -type f -name '*.so' ! -path '*/*.libs/*' -print; \
     } | sort -u > /tmp/native-targets; \
     : > /tmp/ldd-report; \
     while IFS= read -r target; do \
-      output="$(ldd "$target" 2>&1)" && status=0 || status=$?; \
+      output="$(LD_LIBRARY_PATH="$wheel_library_path" ldd "$target" 2>&1)" && status=0 || status=$?; \
       if [ "$status" -eq 0 ]; then \
-        printf '%s\n' "$output" >> /tmp/ldd-report; \
+        printf 'target %s\n%s\n' "$target" "$output" >> /tmp/ldd-report; \
       elif printf '%s\n' "$output" | grep -Eq 'not a dynamic executable|statically linked'; then \
         printf 'static-or-nondynamic %s\n' "$target" >> /tmp/ldd-report; \
       else \
@@ -74,13 +83,16 @@ RUN set -eux; \
       '/=> \/[^ ]+/ {print $3} \
        /^[[:space:]]*\/[^ ]+[[:space:]]+\(0x/ {print $1}' \
       /tmp/ldd-report \
-      | sort -u > /tmp/runtime-library-paths; \
+      | sort -u \
+      | grep -v '^/usr/local/' \
+      > /tmp/runtime-library-paths; \
     while IFS= read -r library; do \
       test -f "$library"; \
       cp -L --parents "$library" /runtime-libs; \
     done < /tmp/runtime-library-paths; \
+    test -s /tmp/native-targets; \
     test -s /tmp/runtime-library-paths; \
-    /usr/local/bin/python -c "import alembic, gunicorn, livekit, sqlalchemy, uvicorn"
+    LD_LIBRARY_PATH="$wheel_library_path" /usr/local/bin/python -c "import alembic, av, cryptography, gunicorn, livekit, livekit.agents, psycopg, sqlalchemy, uvicorn"
 
 # Assemble the immutable application tree before entering the shell-less runtime.
 FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime-layout
@@ -128,5 +140,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["/usr/local/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()"]
 
 USER 65532:65532
+
+# Execute the real final image, as its fixed non-root identity, during build. This
+# proves the copied CPython/native closure rather than only the discarded builder.
+RUN ["/usr/local/bin/python", "-c", "import alembic, av, cryptography, gunicorn, livekit, livekit.agents, psycopg, sqlalchemy, uvicorn"]
 
 CMD ["/usr/local/bin/python", "-m", "gunicorn", "app.main:app", "--config", "/app/backend/gunicorn.conf.py", "-k", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "60"]
