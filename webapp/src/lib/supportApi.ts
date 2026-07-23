@@ -16,6 +16,7 @@ import type {
   KnowledgeItemList,
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
+  KnowledgeStudio,
   LoginResult,
   Market,
   MfaRecoveryCodes,
