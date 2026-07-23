@@ -49,6 +49,12 @@ from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
 
 
+_RETIRED_ADMIN_READINESS_PATHS = {
+    "/api/admin/production-readiness",
+    "/api/admin/signoff-checklist",
+}
+
+
 def _compose_admin_dependencies(*, dependencies: list) -> list:
     """Return the one ordered policy chain for the canonical admin router."""
 
@@ -56,6 +62,16 @@ def _compose_admin_dependencies(*, dependencies: list) -> list:
         Depends(enforce_admin_tenant_query_scope),
         Depends(enforce_admin_identity_request_policy),
         *dependencies,
+    ]
+
+
+def _retire_legacy_admin_readiness_routes() -> None:
+    """Remove superseded readiness APIs before the admin router is registered."""
+
+    admin_router.routes[:] = [
+        route
+        for route in admin_router.routes
+        if getattr(route, "path", None) not in _RETIRED_ADMIN_READINESS_PATHS
     ]
 
 
@@ -74,6 +90,7 @@ def register_api_routers(app: FastAPI) -> None:
     admin_dependencies = _compose_admin_dependencies(
         dependencies=[Depends(enforce_admin_password_request_policy)]
     )
+    _retire_legacy_admin_readiness_routes()
     app.include_router(admin_router, dependencies=admin_dependencies)
     app.include_router(release_readiness_router, dependencies=admin_dependencies)
     app.include_router(governance_router, dependencies=admin_dependencies)
