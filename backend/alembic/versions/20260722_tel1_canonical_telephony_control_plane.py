@@ -1,7 +1,7 @@
 """Canonical LiveKit telephony and voice-routing control plane.
 
 Revision ID: 20260722_tel1
-Revises: 20260721_0073
+Revises: 20260722_0074
 Create Date: 2026-07-22
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260722_tel1"
-down_revision = "20260721_0073"
+down_revision = "20260722_0074"
 branch_labels = None
 depends_on = None
 
@@ -43,10 +43,13 @@ def _backfill_voice_handoff_authority() -> None:
     ).mappings()
     for row in rows:
         existing = bind.execute(
-            sa.select(handoffs.c.id, handoffs.c.status).where(
+            sa.select(handoffs.c.id, handoffs.c.status)
+            .where(
                 handoffs.c.conversation_id == row["conversation_id"],
                 handoffs.c.status.in_(("requested", "accepted")),
-            ).order_by(handoffs.c.id.desc()).limit(1)
+            )
+            .order_by(handoffs.c.id.desc())
+            .limit(1)
         ).mappings().first()
         now = _utc_now()
         accepted_at = row["accepted_at"] or row["created_at"] or now
@@ -106,10 +109,20 @@ def _backfill_voice_handoff_authority() -> None:
 def upgrade() -> None:
     with op.batch_alter_table("operator_agent_states") as batch:
         batch.add_column(
-            sa.Column("max_concurrent_voice_calls", sa.Integer(), nullable=False, server_default="1")
+            sa.Column(
+                "max_concurrent_voice_calls",
+                sa.Integer(),
+                nullable=False,
+                server_default="1",
+            )
         )
         batch.add_column(
-            sa.Column("voice_wrap_up_seconds", sa.Integer(), nullable=False, server_default="30")
+            sa.Column(
+                "voice_wrap_up_seconds",
+                sa.Integer(),
+                nullable=False,
+                server_default="30",
+            )
         )
         batch.create_check_constraint(
             "ck_operator_agent_states_voice_capacity",
@@ -124,7 +137,12 @@ def upgrade() -> None:
         batch.add_column(sa.Column("channel_account_id", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("handoff_request_id", sa.Integer(), nullable=True))
         batch.add_column(
-            sa.Column("direction", sa.String(length=16), nullable=False, server_default="inbound")
+            sa.Column(
+                "direction",
+                sa.String(length=16),
+                nullable=False,
+                server_default="inbound",
+            )
         )
         batch.add_column(sa.Column("provider_call_id", sa.String(length=160), nullable=True))
         batch.add_column(sa.Column("caller_number_hash", sa.String(length=64), nullable=True))
@@ -149,13 +167,28 @@ def upgrade() -> None:
             "ck_webchat_voice_session_direction",
             "direction IN ('inbound', 'outbound')",
         )
-        batch.create_index("ix_webchat_voice_sessions_channel_account_id", ["channel_account_id"])
-        batch.create_index("ix_webchat_voice_sessions_handoff_request_id", ["handoff_request_id"])
-        batch.create_index("ix_webchat_voice_sessions_provider_call_id", ["provider_call_id"])
-        batch.create_index("ix_webchat_voice_sessions_caller_number_hash", ["caller_number_hash"])
-        batch.create_index("ix_webchat_voice_sessions_called_number", ["called_number"])
-        batch.create_index("ix_webchat_voice_sessions_recording_provider_ref", ["recording_provider_ref"])
-        batch.create_index("ix_webchat_voice_sessions_wrap_up_expires_at", ["wrap_up_expires_at"])
+        batch.create_index(
+            "ix_webchat_voice_sessions_channel_account_id", ["channel_account_id"]
+        )
+        batch.create_index(
+            "ix_webchat_voice_sessions_handoff_request_id", ["handoff_request_id"]
+        )
+        batch.create_index(
+            "ix_webchat_voice_sessions_provider_call_id", ["provider_call_id"]
+        )
+        batch.create_index(
+            "ix_webchat_voice_sessions_caller_number_hash", ["caller_number_hash"]
+        )
+        batch.create_index(
+            "ix_webchat_voice_sessions_called_number", ["called_number"]
+        )
+        batch.create_index(
+            "ix_webchat_voice_sessions_recording_provider_ref",
+            ["recording_provider_ref"],
+        )
+        batch.create_index(
+            "ix_webchat_voice_sessions_wrap_up_expires_at", ["wrap_up_expires_at"]
+        )
 
     _backfill_voice_handoff_authority()
 
@@ -167,7 +200,12 @@ def upgrade() -> None:
         batch.add_column(sa.Column("parent_leg_id", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("provider_call_id", sa.String(length=160), nullable=True))
         batch.add_column(
-            sa.Column("direction", sa.String(length=16), nullable=False, server_default="internal")
+            sa.Column(
+                "direction",
+                sa.String(length=16),
+                nullable=False,
+                server_default="internal",
+            )
         )
         batch.add_column(sa.Column("termination_reason", sa.String(length=160), nullable=True))
         batch.add_column(sa.Column("metadata_json", sa.Text(), nullable=True))
@@ -199,7 +237,9 @@ def upgrade() -> None:
         batch.create_index("ix_voice_call_leg_started_at", ["started_at"])
         batch.create_index("ix_voice_call_leg_answered_at", ["answered_at"])
         batch.create_index("ix_voice_call_leg_ended_at", ["ended_at"])
-        batch.create_index("ix_voice_call_leg_session_type", ["voice_session_id", "participant_type"])
+        batch.create_index(
+            "ix_voice_call_leg_session_type", ["voice_session_id", "participant_type"]
+        )
 
     op.create_table(
         "voice_routing_offers",
@@ -284,7 +324,9 @@ def upgrade() -> None:
         batch.add_column(sa.Column("public_id", sa.String(length=64), nullable=True))
         batch.add_column(sa.Column("idempotency_key", sa.String(length=160), nullable=True))
         batch.add_column(sa.Column("provider_reference", sa.String(length=180), nullable=True))
-        batch.add_column(sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"))
+        batch.add_column(
+            sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0")
+        )
         batch.add_column(sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True))
         batch.add_column(sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=True))
         batch.add_column(sa.Column("lease_owner", sa.String(length=120), nullable=True))
@@ -325,8 +367,12 @@ def upgrade() -> None:
         )
 
     with op.batch_alter_table("webchat_voice_session_actions") as batch:
-        batch.alter_column("public_id", existing_type=sa.String(length=64), nullable=False)
-        batch.alter_column("idempotency_key", existing_type=sa.String(length=160), nullable=False)
+        batch.alter_column(
+            "public_id", existing_type=sa.String(length=64), nullable=False
+        )
+        batch.alter_column(
+            "idempotency_key", existing_type=sa.String(length=160), nullable=False
+        )
         batch.alter_column("actor_user_id", existing_type=sa.Integer(), nullable=True)
         batch.alter_column(
             "status",
@@ -345,20 +391,28 @@ def upgrade() -> None:
             server_default=None,
         )
         batch.create_unique_constraint("uq_voice_command_public_id", ["public_id"])
-        batch.create_unique_constraint("uq_voice_session_action_idempotency_key", ["idempotency_key"])
+        batch.create_unique_constraint(
+            "uq_voice_session_action_idempotency_key", ["idempotency_key"]
+        )
         batch.create_check_constraint(
             "ck_voice_command_status",
             "status IN ('requested', 'dispatching', 'succeeded', 'failed', 'retryable', 'cancelled')",
         )
-        batch.create_index("ix_voice_session_actions_status_created", ["status", "created_at"])
+        batch.create_index(
+            "ix_voice_session_actions_status_created", ["status", "created_at"]
+        )
         batch.create_index(
             "ix_voice_command_dispatch",
             ["status", "next_attempt_at", "lease_expires_at"],
         )
-        batch.create_index("ix_voice_command_provider_reference", ["provider_reference"])
+        batch.create_index(
+            "ix_voice_command_provider_reference", ["provider_reference"]
+        )
         batch.create_index("ix_voice_command_next_attempt_at", ["next_attempt_at"])
         batch.create_index("ix_voice_command_lease_owner", ["lease_owner"])
-        batch.create_index("ix_voice_command_lease_expires_at", ["lease_expires_at"])
+        batch.create_index(
+            "ix_voice_command_lease_expires_at", ["lease_expires_at"]
+        )
 
     op.create_table(
         "voice_channel_configurations",
@@ -373,18 +427,51 @@ def upgrade() -> None:
         sa.Column("inbound_trunk_id", sa.String(length=160), nullable=True),
         sa.Column("outbound_trunk_id", sa.String(length=160), nullable=True),
         sa.Column("dispatch_rule_id", sa.String(length=160), nullable=True),
-        sa.Column("routing_mode", sa.String(length=24), nullable=False, server_default="ai_first"),
+        sa.Column(
+            "routing_mode",
+            sa.String(length=24),
+            nullable=False,
+            server_default="ai_first",
+        ),
         sa.Column("ai_agent_name", sa.String(length=160), nullable=True),
         sa.Column("timezone", sa.String(length=64), nullable=False, server_default="UTC"),
         sa.Column("business_hours_json", sa.Text(), nullable=True),
-        sa.Column("queue_timeout_seconds", sa.Integer(), nullable=False, server_default="90"),
-        sa.Column("offer_timeout_seconds", sa.Integer(), nullable=False, server_default="20"),
-        sa.Column("wrap_up_seconds", sa.Integer(), nullable=False, server_default="30"),
-        sa.Column("overflow_action", sa.String(length=24), nullable=False, server_default="ai"),
-        sa.Column("voicemail_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("recording_policy", sa.String(length=32), nullable=False, server_default="disabled"),
-        sa.Column("transcription_policy", sa.String(length=32), nullable=False, server_default="disabled"),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column(
+            "queue_timeout_seconds", sa.Integer(), nullable=False, server_default="90"
+        ),
+        sa.Column(
+            "offer_timeout_seconds", sa.Integer(), nullable=False, server_default="20"
+        ),
+        sa.Column(
+            "wrap_up_seconds", sa.Integer(), nullable=False, server_default="30"
+        ),
+        sa.Column(
+            "overflow_action",
+            sa.String(length=24),
+            nullable=False,
+            server_default="ai",
+        ),
+        sa.Column(
+            "voicemail_enabled",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
+        sa.Column(
+            "recording_policy",
+            sa.String(length=32),
+            nullable=False,
+            server_default="disabled",
+        ),
+        sa.Column(
+            "transcription_policy",
+            sa.String(length=32),
+            nullable=False,
+            server_default="disabled",
+        ),
+        sa.Column(
+            "enabled", sa.Boolean(), nullable=False, server_default=sa.false()
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -397,7 +484,9 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
-        sa.UniqueConstraint("channel_account_id", name="uq_voice_channel_configuration_account"),
+        sa.UniqueConstraint(
+            "channel_account_id", name="uq_voice_channel_configuration_account"
+        ),
         sa.CheckConstraint(
             "routing_mode IN ('ai_first', 'human_first')",
             name="ck_voice_channel_configuration_routing_mode",
@@ -457,7 +546,9 @@ def upgrade() -> None:
         sa.Column("payload_sha256", sa.String(length=64), nullable=False),
         sa.Column("safe_payload_json", sa.Text(), nullable=False),
         sa.Column("raw_payload_object_key", sa.String(length=500), nullable=True),
-        sa.Column("status", sa.String(length=32), nullable=False, server_default="received"),
+        sa.Column(
+            "status", sa.String(length=32), nullable=False, server_default="received"
+        ),
         sa.Column(
             "tenant_id",
             sa.Integer(),
@@ -476,7 +567,9 @@ def upgrade() -> None:
             sa.ForeignKey("webchat_voice_sessions.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column(
+            "attempt_count", sa.Integer(), nullable=False, server_default="0"
+        ),
         sa.Column("last_error_code", sa.String(length=120), nullable=True),
         sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("processing_started_at", sa.DateTime(timezone=True), nullable=True),
@@ -508,7 +601,11 @@ def upgrade() -> None:
         "telephony_event_inbox",
         ["status", "next_attempt_at"],
     )
-    op.create_index("ix_telephony_event_inbox_tenant_id", "telephony_event_inbox", ["tenant_id"])
+    op.create_index(
+        "ix_telephony_event_inbox_tenant_id",
+        "telephony_event_inbox",
+        ["tenant_id"],
+    )
     op.create_index(
         "ix_telephony_event_inbox_channel_account_id",
         "telephony_event_inbox",
@@ -522,17 +619,40 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_telephony_event_inbox_voice_session_id", table_name="telephony_event_inbox")
-    op.drop_index("ix_telephony_event_inbox_channel_account_id", table_name="telephony_event_inbox")
-    op.drop_index("ix_telephony_event_inbox_tenant_id", table_name="telephony_event_inbox")
+    op.drop_index(
+        "ix_telephony_event_inbox_voice_session_id",
+        table_name="telephony_event_inbox",
+    )
+    op.drop_index(
+        "ix_telephony_event_inbox_channel_account_id",
+        table_name="telephony_event_inbox",
+    )
+    op.drop_index(
+        "ix_telephony_event_inbox_tenant_id", table_name="telephony_event_inbox"
+    )
     op.drop_index("ix_telephony_event_retry", table_name="telephony_event_inbox")
-    op.drop_index("ix_telephony_event_inbox_status_received", table_name="telephony_event_inbox")
+    op.drop_index(
+        "ix_telephony_event_inbox_status_received",
+        table_name="telephony_event_inbox",
+    )
     op.drop_table("telephony_event_inbox")
 
-    op.drop_index("ix_voice_channel_configurations_dispatch_rule_id", table_name="voice_channel_configurations")
-    op.drop_index("ix_voice_channel_configurations_inbound_trunk_id", table_name="voice_channel_configurations")
-    op.drop_index("ix_voice_channel_configurations_enabled", table_name="voice_channel_configurations")
-    op.drop_index("ix_voice_channel_configurations_channel_account_id", table_name="voice_channel_configurations")
+    op.drop_index(
+        "ix_voice_channel_configurations_dispatch_rule_id",
+        table_name="voice_channel_configurations",
+    )
+    op.drop_index(
+        "ix_voice_channel_configurations_inbound_trunk_id",
+        table_name="voice_channel_configurations",
+    )
+    op.drop_index(
+        "ix_voice_channel_configurations_enabled",
+        table_name="voice_channel_configurations",
+    )
+    op.drop_index(
+        "ix_voice_channel_configurations_channel_account_id",
+        table_name="voice_channel_configurations",
+    )
     op.drop_table("voice_channel_configurations")
 
     with op.batch_alter_table("webchat_voice_session_actions") as batch:
@@ -543,11 +663,23 @@ def downgrade() -> None:
         batch.drop_index("ix_voice_command_dispatch")
         batch.drop_index("ix_voice_session_actions_status_created")
         batch.drop_constraint("ck_voice_command_status", type_="check")
-        batch.drop_constraint("uq_voice_session_action_idempotency_key", type_="unique")
+        batch.drop_constraint(
+            "uq_voice_session_action_idempotency_key", type_="unique"
+        )
         batch.drop_constraint("uq_voice_command_public_id", type_="unique")
-        batch.alter_column("actor_user_id", existing_type=sa.Integer(), nullable=False)
-        batch.alter_column("status", existing_type=sa.String(length=40), server_default="recorded")
-        batch.alter_column("provider_status", existing_type=sa.String(length=40), server_default="pending")
+        batch.alter_column(
+            "actor_user_id", existing_type=sa.Integer(), nullable=False
+        )
+        batch.alter_column(
+            "status",
+            existing_type=sa.String(length=40),
+            server_default="recorded",
+        )
+        batch.alter_column(
+            "provider_status",
+            existing_type=sa.String(length=40),
+            server_default="pending",
+        )
         batch.alter_column(
             "provider_reason",
             existing_type=sa.String(length=160),
@@ -568,7 +700,9 @@ def downgrade() -> None:
 
     op.drop_index("uq_voice_offer_active_session", table_name="voice_routing_offers")
     op.drop_index("ix_voice_offer_session_status", table_name="voice_routing_offers")
-    op.drop_index("ix_voice_offer_agent_status_expiry", table_name="voice_routing_offers")
+    op.drop_index(
+        "ix_voice_offer_agent_status_expiry", table_name="voice_routing_offers"
+    )
     op.drop_table("voice_routing_offers")
 
     with op.batch_alter_table("webchat_voice_participants") as batch:
@@ -592,14 +726,18 @@ def downgrade() -> None:
         batch.drop_column("parent_leg_id")
 
     with op.batch_alter_table("webchat_voice_sessions") as batch:
-        batch.add_column(sa.Column("accepted_by_user_id", sa.Integer(), nullable=True))
+        batch.add_column(
+            sa.Column("accepted_by_user_id", sa.Integer(), nullable=True)
+        )
         batch.create_foreign_key(
             "fk_webchat_voice_sessions_accepted_by_user_id",
             "users",
             ["accepted_by_user_id"],
             ["id"],
         )
-        batch.create_index("ix_voice_accepted_by_user_id", ["accepted_by_user_id"])
+        batch.create_index(
+            "ix_voice_accepted_by_user_id", ["accepted_by_user_id"]
+        )
 
     bind = op.get_bind()
     bind.execute(
@@ -623,7 +761,9 @@ def downgrade() -> None:
         batch.drop_index("ix_webchat_voice_sessions_handoff_request_id")
         batch.drop_index("ix_webchat_voice_sessions_channel_account_id")
         batch.drop_constraint("ck_webchat_voice_session_direction", type_="check")
-        batch.drop_constraint("fk_voice_session_handoff_request", type_="foreignkey")
+        batch.drop_constraint(
+            "fk_voice_session_handoff_request", type_="foreignkey"
+        )
         batch.drop_constraint("fk_voice_session_channel_account", type_="foreignkey")
         batch.drop_column("wrap_up_expires_at")
         batch.drop_column("recording_provider_ref")
@@ -635,7 +775,11 @@ def downgrade() -> None:
         batch.drop_column("channel_account_id")
 
     with op.batch_alter_table("operator_agent_states") as batch:
-        batch.drop_constraint("ck_operator_agent_states_voice_wrap_up", type_="check")
-        batch.drop_constraint("ck_operator_agent_states_voice_capacity", type_="check")
+        batch.drop_constraint(
+            "ck_operator_agent_states_voice_wrap_up", type_="check"
+        )
+        batch.drop_constraint(
+            "ck_operator_agent_states_voice_capacity", type_="check"
+        )
         batch.drop_column("voice_wrap_up_seconds")
         batch.drop_column("max_concurrent_voice_calls")
