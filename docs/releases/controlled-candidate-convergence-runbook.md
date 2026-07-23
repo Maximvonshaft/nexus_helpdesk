@@ -1,206 +1,145 @@
-# Controlled Candidate Convergence
+# Nexus controlled candidate publication
 
-## Status and authority
+## Decision boundary
 
-This runbook describes a controlled candidate only. It does not authorize
-Provider traffic, WebChat AI, voice, real outbound, WhatsApp, SpeedAF writes,
-Operations Dispatch, a production deployment or cleanup of the previous system.
+Nexus uses three distinct authorities. They are sequential and do not duplicate one another:
 
-The sole implementation and verification authorities are:
+1. `.github/workflows/canonical-acceptance.yml` proves an exact software candidate.
+2. `.github/workflows/controlled-candidate-convergence.yml` publishes the already bounded candidate to GHCR, pulls it back, proves binary identity, produces recovery evidence and creates the controlled-candidate manifest.
+3. `deploy/docker-compose.controlled.yml` and the production-activation overlay govern a separately authorized target-server deployment and capability activation.
 
-- PR `#763` / `fix/722-authority-convergence`;
-- `docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md`;
-- `scripts/verify_repository.py`;
-- `scripts/deploy/validate_controlled_server_preflight.py`;
-- `deploy/docker-compose.controlled.yml`;
-- optional local PostgreSQL overlay:
-  `deploy/docker-compose.controlled-postgres.yml`.
+The publication workflow does **not** deploy a server and does **not** authorize Provider traffic, WebChat AI, Voice, outbound dispatch, WhatsApp, Speedaf writes or Operations Dispatch.
 
-There is no GitHub Actions publication path and no candidate-specific App,
-Worker, WhatsApp sidecar or runtime-warmer topology.
+## Publication trigger
 
-## 1. Freeze one exact candidate
+The controlled publication workflow is main-only and supports two bounded entry points:
 
-Record and keep unchanged:
+- an explicit GitHub `workflow_dispatch` on `main`;
+- the deterministic request bridge, triggered only when `.github/controlled-candidate-request.json` is the sole changed file in a new `main` commit.
+
+The bridge performs no build, push, deployment or external business action. It validates the exact `main` commit and dispatches the one controlled-candidate workflow. Its request must keep:
 
 ```text
-source_sha
-source_tree_sha
-frontend_build_sha
-migration_revision
-immutable_image_digest
-build_time
-app_version
+deployment_authorized=false
+production_authority=false
+external_actions_authorized=false
+issue_533=NO_GO
 ```
 
-Any Head, tree, lockfile, migration, image Digest or deployment-input change
-invalidates previous evidence.
+The bridge writes the exact source SHA and workflow Run ID to governance Issue #724.
 
-## 2. Generate external supply-chain evidence
+## Controlled publication workflow
 
-Build one immutable image and generate its SBOM and signature outside the
-repository. Assemble provenance with:
+The workflow is restricted to the current `main` SHA and uses least-privilege job permissions.
 
-```bash
-python scripts/release/assemble_supply_chain_evidence.py \
-  --image 'ghcr.io/maximvonshaft/nexus_helpdesk@sha256:<digest>' \
-  --sbom-source /secure/evidence/source-sbom.spdx.json \
-  --signature-bundle-source /secure/evidence/source-cosign.bundle.json \
-  --output-dir /secure/evidence/nexus-<source-sha>
-```
+It performs:
 
-Then run the canonical verifier against the same clean Head:
+1. exact-main identity verification;
+2. the existing one-build RC chain;
+3. runtime import and Gunicorn configuration checks;
+4. Trivy vulnerability inventory;
+5. image and frontend CycloneDX SBOM generation;
+6. release-image assurance and compliance binding;
+7. GHCR publication under `controlled-<source-sha>`;
+8. digest pullback and local/pulled image-ID equality proof;
+9. PostgreSQL backup/restore recovery qualification;
+10. GitHub build-provenance attestation bound to the exact registry digest;
+11. final controlled-candidate manifest and bounded artifact scan.
 
-```bash
-python scripts/verify_repository.py \
-  --release-evidence-dir /secure/evidence/nexus-<source-sha> \
-  --evidence-out /secure/evidence/nexus-<source-sha>/repository-verification.json
-```
+No second application image is built for publication. The exact assured image is tagged, pushed, pulled by digest and compared to the original local image ID.
 
-Generated evidence must not be written into the candidate repository.
+## Required output
 
-## 3. Choose one database topology explicitly
-
-### External PostgreSQL
-
-Prepare `deploy/.env.controlled` from `deploy/.env.controlled.example`.
-It must contain six distinct service URLs:
+A successful run produces:
 
 ```text
-DATABASE_URL_MIGRATION
-DATABASE_URL_APP
-DATABASE_URL_OUTBOUND
-DATABASE_URL_BACKGROUND
-DATABASE_URL_WEBCHAT_AI
-DATABASE_URL_HANDOFF
+controlled-candidate-<source-sha>/
+  candidate-manifest.json
+  release-image-manifest.json
+  release-image-compliance-binding.json
+  registry-publish-receipt.json
+  recovery-evidence.json
+  controlled-candidate-manifest.json
+  artifact-scan.json
 ```
 
-### Local PostgreSQL
+The final manifest must bind:
 
-Prepare `deploy/.env.controlled.local-postgres` from
-`deploy/.env.controlled.local-postgres.example`.
-The local overlay initializes one migration role and five long-running service
-roles through `deploy/postgres/init-controlled-roles.sh`. It does not duplicate
-App or Worker services.
+- source SHA;
+- frontend SHA;
+- Alembic migration revision;
+- immutable GHCR digest;
+- local and registry-pulled image IDs;
+- build time and application version;
+- SBOM and image-assurance evidence;
+- recovery evidence;
+- GitHub provenance attestation.
 
-Do not copy `.env.prod*` or `.env.candidate.example`; those paths are bounded
-retirement tombstones.
+A controlled candidate remains:
 
-## 4. Preserve the current host before cutover
-
-Run the configuration-only backup helper:
-
-```bash
-bash scripts/deploy/safe_update_server.sh
+```text
+production_ready=false
+deployment_performed=false
+external_effects_authorized=false
 ```
 
-It must preserve existing production-local environment and Compose files as
-well as any prepared controlled files. Separately create and verify:
+Publication is a prerequisite for deployment, not deployment authorization.
 
-- PostgreSQL custom-format backup;
-- uploads backup and manifest-equality marker;
-- current image/source/migration identity;
-- current reverse-proxy configuration.
+## Target-server preparation
 
-This step does not authorize stopping or replacing the current system.
+After publication, populate `deploy/.env.controlled` from the example using the exact manifest values:
 
-## 5. Run controlled preflight
+```text
+CONTROLLED_IMAGE=<registry image@sha256 digest>
+IMAGE_TAG=<same immutable digest>
+GIT_SHA=<manifest source sha>
+FRONTEND_BUILD_SHA=<same source sha>
+EXPECTED_MIGRATION_HEAD=<manifest migration revision>
+BUILD_TIME=<manifest build time>
+APP_VERSION=<manifest app version>
+```
 
-External database example:
+Supply real process-specific PostgreSQL accounts, runtime secrets, origins, metrics token, storage paths and backup marker. Do not commit credentials.
+
+Run the controlled-server preflight against the exact manifest before starting containers:
 
 ```bash
 python scripts/deploy/validate_controlled_server_preflight.py \
   --env-file deploy/.env.controlled \
   --compose-file deploy/docker-compose.controlled.yml \
-  --manifest /secure/evidence/nexus-<source-sha>/controlled-candidate-manifest.json \
+  --manifest /secure/evidence/controlled-candidate-manifest.json \
   --expected-database-host <approved-host> \
   --expected-database-port 5432 \
   --expected-domain mcs.speedaf.com \
   --check-host-paths \
-  --output /secure/evidence/nexus-<source-sha>/controlled-preflight.json
+  --output /secure/evidence/controlled-preflight.json
 ```
 
-Local database example uses the same preflight with:
+The controlled profile must keep Provider, WebChat AI, Voice, outbound and Operations effects disabled.
 
-```text
---env-file deploy/.env.controlled.local-postgres
---expected-database-host postgres-controlled
-```
+## Production activation
 
-The v2 preflight rejects:
+Customer-facing activation is governed separately by `docs/runbooks/production-activation.md`.
 
-- mutable images or mismatched candidate identity;
-- one generic database account or duplicate service users;
-- a shared Compose `env_file`;
-- enabled external effects;
-- credentials for disabled Provider/AI/voice/WhatsApp capabilities;
-- shared uploads/backup paths;
-- placeholder Web or Metrics secrets;
-- missing host paths or invalid topology metadata.
+Full production requires:
 
-## 6. Render, do not deploy
+- the controlled deployment to be healthy;
+- runtime identity and migration to match the published manifest;
+- queue, database pool, storage and backup readiness;
+- candidate-bound HTTPS E2E evidence;
+- capability-specific credentials and evidence for WebChat AI, LiveKit/SIP, outbound or Operations;
+- `production_authorized=true` from the canonical readiness authority.
 
-External topology:
+No UI action, environment flag or model output can override a failed readiness collector.
 
-```bash
-NEXUS_DATABASE_TOPOLOGY=external \
-NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
-deploy/nexus-prod-compose.sh config --quiet
-```
+## Rollback
 
-Local topology:
+Retain the previous immutable image digest, environment snapshot, database backup, uploads backup marker and reverse-proxy configuration.
 
-```bash
-NEXUS_DATABASE_TOPOLOGY=local \
-NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled.local-postgres \
-deploy/nexus-prod-compose.sh config --quiet
-```
+If the controlled deployment or a later activation degrades:
 
-Rendering success is not deployment authorization.
-
-## 7. Controlled acceptance requirements
-
-After a separately authorized controlled deployment, evidence must prove:
-
-- image/source/frontend/migration identity matches the frozen candidate;
-- App and four dedicated Workers are healthy;
-- Queue depth represents database counts, not processed-per-cycle counts;
-- stale processing and dead-letter state are visible;
-- Support authorization and privacy tests pass on PostgreSQL;
-- migration upgrade, rollback and re-upgrade pass;
-- backup restore rehearsal records RPO/RTO;
-- Provider, AI, voice, outbound, WhatsApp and Operations writes remain zero;
-- no secret or customer payload appears in evidence.
-
-## 8. Rollback contract
-
-Database restore is qualified through
-`scripts/qualification/recovery/run_recovery_qualification.sh`.
-
-Image rollback requires:
-
-```text
-OLD_IMAGE_TAG=<immutable prior digest>
-ROLLBACK_CONTROLLED_ENV_FILE=<prior frozen controlled env file>
-ROLLBACK_DATABASE_TOPOLOGY=external|local
-ROLLBACK_HEALTH_URL=<approved loopback URL>
-ROLLBACK_CONFIRM=I_UNDERSTAND
-```
-
-The prior environment file must identify the same image Digest, source SHA,
-frontend SHA and migration revision. The rollback script will not construct a
-release identity by overriding one mutable environment variable.
-
-## 9. Cleanup
-
-Cleanup is a later, separately authorized action. Retain the accepted Digest,
-previous rollback Digest, database and uploads backups, candidate manifest,
-verification, preflight, recovery and acceptance evidence. Never use an
-unbounded Docker prune.
-
-## Metrics access contract
-
-- The application is the sole metrics authority in the controlled topology.
-- An authenticated request using the dedicated `METRICS_TOKEN` may read `/metrics`; an unauthenticated `/metrics` returns 401.
-- Worker metrics are aggregated through the shared multiprocess registry; no second metrics service or Pushgateway is introduced.
-- The dedicated handoff snapshot process retains the stable identity `worker-handoff-snapshot-controlled` in acceptance evidence.
+1. restore `PROVIDER_RUNTIME_KILL_SWITCH=true`;
+2. disable affected external capability flags;
+3. reapply the controlled profile;
+4. execute the canonical rollback script with the previous immutable digest and matching environment snapshot;
+5. preserve failure evidence before any retry.
