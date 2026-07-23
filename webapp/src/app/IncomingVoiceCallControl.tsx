@@ -81,7 +81,24 @@ export function IncomingVoiceCallControl({ capabilities }: { capabilities: Set<s
 
   if (!enabled) return null
   if (offers.isError) {
-    return <Chip size="small" color="warning" label="来电检查失败" aria-label="来电检查失败" />
+    return (
+      <Box
+        component="span"
+        role="status"
+        aria-label="来电检查失败"
+        title="来电检查失败"
+        sx={{
+          width: 24,
+          height: 24,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <PhoneDisabledRoundedIcon color="warning" fontSize="small" aria-hidden="true" />
+      </Box>
+    )
   }
   if (!current) return null
 
