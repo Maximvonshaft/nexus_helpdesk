@@ -67,7 +67,7 @@ export function OperatorPageBoundary({
     <Box
       component="main"
       aria-busy={busy || undefined}
-      sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: 3 }}
+      sx={{ alignItems: 'center', display: 'flex', justifyContent: 'center', minHeight: '100dvh', p: { xs: 2, sm: 3 } }}
     >
       {children}
     </Box>
@@ -80,7 +80,7 @@ export function OperatorLoadingState({ label, minHeight = 150 }: { label: string
       role="status"
       aria-live="polite"
       spacing={1.5}
-      sx={{ alignItems: 'center', justifyContent: 'center', minHeight, p: 3 }}
+      sx={{ alignItems: 'center', justifyContent: 'center', minHeight, p: { xs: 2, sm: 3 }, textAlign: 'center' }}
     >
       <CircularProgress size={28} />
       <Typography variant="subtitle2">{label}</Typography>
@@ -111,11 +111,11 @@ export function OperatorEmptyState({
     <Stack
       role="status"
       spacing={0.75}
-      sx={{ alignItems: 'center', justifyContent: 'center', minHeight, p: 3, textAlign: 'center' }}
+      sx={{ alignItems: 'center', justifyContent: 'center', minHeight, p: { xs: 2, sm: 3 }, textAlign: 'center' }}
     >
       <Typography variant="subtitle2">{title}</Typography>
-      {description ? <Typography variant="body2" color="text.secondary">{description}</Typography> : null}
-      {action ? <Box sx={{ pt: 0.75 }}>{action}</Box> : null}
+      {description ? <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 560 }}>{description}</Typography> : null}
+      {action ? <Box sx={{ pt: 0.75, width: { xs: '100%', sm: 'auto' } }}>{action}</Box> : null}
     </Stack>
   )
 }
@@ -132,7 +132,7 @@ export function OperatorErrorNotice({
   action?: ReactNode
 }) {
   return (
-    <Alert severity="error" variant="outlined" action={action}>
+    <Alert severity="error" variant="outlined" action={action} sx={{ overflowWrap: 'anywhere' }}>
       <AlertTitle>{title}</AlertTitle>
       {operatorErrorMessage(error, fallback)}
     </Alert>
@@ -146,6 +146,8 @@ export function OperatorFactGrid({
   facts: Array<[string, ReactNode]>
   columns?: number
 }) {
+  const tabletColumns = Math.min(3, Math.max(1, columns))
+  const desktopColumns = Math.max(1, columns)
   return (
     <Box
       component="dl"
@@ -155,7 +157,8 @@ export function OperatorFactGrid({
         gridTemplateColumns: {
           xs: '1fr',
           sm: 'repeat(2, minmax(0, 1fr))',
-          md: `repeat(${Math.max(1, columns)}, minmax(0, 1fr))`,
+          md: `repeat(${tabletColumns}, minmax(0, 1fr))`,
+          lg: `repeat(${desktopColumns}, minmax(0, 1fr))`,
         },
         m: 0,
       }}
@@ -186,9 +189,13 @@ export function OperatorSectionHeading({
   id?: string
 }) {
   return (
-    <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
-      <Typography id={id} component="h2" variant="h3">{title}</Typography>
-      {action}
+    <Stack
+      direction={{ xs: 'column', sm: 'row' }}
+      spacing={{ xs: 1, sm: 2 }}
+      sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between', minWidth: 0 }}
+    >
+      <Typography id={id} component="h2" variant="h3" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{title}</Typography>
+      {action ? <Box sx={{ flexShrink: 0 }}>{action}</Box> : null}
     </Stack>
   )
 }
@@ -214,11 +221,11 @@ export function OperatorStatusLine({
         }}
       />
       <Box sx={{ minWidth: 0 }}>
-        <Typography variant={compact ? 'caption' : 'body2'} color="text.primary" sx={{ fontWeight: 650 }}>
+        <Typography variant={compact ? 'caption' : 'body2'} color="text.primary" sx={{ fontWeight: 650, overflowWrap: 'anywhere' }}>
           {presentation.label}
         </Typography>
         {!compact && presentation.detail ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{presentation.detail}</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{presentation.detail}</Typography>
         ) : null}
       </Box>
     </Stack>
@@ -250,11 +257,11 @@ export function OperatorTechnicalDisclosure({
         expandIcon={<ExpandMoreRoundedIcon />}
         sx={compact ? { minHeight: 36, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } } : undefined}
       >
-        <Box>
-          <Typography variant={compact ? 'caption' : 'subtitle2'} color={compact ? 'text.secondary' : 'text.primary'}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant={compact ? 'caption' : 'subtitle2'} color={compact ? 'text.secondary' : 'text.primary'} sx={{ overflowWrap: 'anywhere' }}>
             {title}
           </Typography>
-          {summary ? <Typography variant="caption" color="text.secondary">{summary}</Typography> : null}
+          {summary ? <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{summary}</Typography> : null}
         </Box>
       </AccordionSummary>
       <AccordionDetails sx={compact ? { px: 0, pt: 0 } : { borderTop: 1, borderColor: 'divider' }}>

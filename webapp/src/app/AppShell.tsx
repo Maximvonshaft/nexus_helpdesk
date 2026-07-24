@@ -1,21 +1,28 @@
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
 import ManageAccountsRoundedIcon from '@mui/icons-material/ManageAccountsRounded'
+import MenuRoundedIcon from '@mui/icons-material/MenuRounded'
 import {
   AppBar,
   Avatar,
   Box,
   Button,
   Chip,
+  Divider,
+  Drawer,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
   Stack,
   Toolbar,
   Typography,
+  useMediaQuery,
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
+import { useTheme } from '@mui/material/styles'
 import { Link } from '@tanstack/react-router'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 import { channelPresentation } from '@/lib/supportStatus'
@@ -41,6 +48,122 @@ function initials(value: string) {
   return [...compact].slice(0, 2).join('').toUpperCase()
 }
 
+function WorkScopeControl({
+  scopes,
+  selectedScope,
+  onScopeChange,
+  compact = false,
+}: {
+  scopes: AuthorizedWorkspaceScope[]
+  selectedScope?: AuthorizedWorkspaceScope | null
+  onScopeChange?: (scope: AuthorizedWorkspaceScope) => void
+  compact?: boolean
+}) {
+  if (!selectedScope) return null
+  if (scopes.length === 1) {
+    return <Chip label={scopeLabel(selectedScope)} aria-label="当前工作范围" sx={{ maxWidth: '100%' }} />
+  }
+  if (!onScopeChange) return null
+
+  const selectedIndex = scopes.findIndex((scope) => sameScope(scope, selectedScope))
+  const labelCounts = new Map<string, number>()
+  for (const scope of scopes) {
+    const label = `${scope.country_code}\u0000${scope.channel_key}`
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1)
+  }
+  const handleScopeChange = (event: SelectChangeEvent<string>) => {
+    const next = scopes[Number.parseInt(event.target.value, 10)]
+    if (next) onScopeChange(next)
+  }
+
+  return (
+    <FormControl sx={{ minWidth: compact ? 0 : 170, width: compact ? '100%' : 'auto' }}>
+      <InputLabel id={compact ? 'nd-mobile-work-scope-label' : 'nd-work-scope-label'}>工作范围</InputLabel>
+      <Select
+        labelId={compact ? 'nd-mobile-work-scope-label' : 'nd-work-scope-label'}
+        label="工作范围"
+        value={selectedIndex >= 0 ? String(selectedIndex) : '0'}
+        onChange={handleScopeChange}
+        inputProps={{ 'aria-label': '工作范围' }}
+      >
+        {scopes.map((scope, index) => {
+          const duplicateKey = `${scope.country_code}\u0000${scope.channel_key}`
+          const duplicate = (labelCounts.get(duplicateKey) ?? 0) > 1
+          return (
+            <MenuItem key={`${scope.tenant_hash}-${scope.country_code}-${scope.channel_key}`} value={String(index)}>
+              {scopeLabel(scope, duplicate ? index + 1 : undefined)}
+            </MenuItem>
+          )
+        })}
+      </Select>
+    </FormControl>
+  )
+}
+
+function AccountNavigationLink({
+  active,
+  expanded = false,
+  onNavigate,
+}: {
+  active: boolean
+  expanded?: boolean
+  onNavigate?: () => void
+}) {
+  return (
+    <Link
+      to="/account"
+      aria-current={active ? 'page' : undefined}
+      aria-label="账户设置"
+      onClick={onNavigate}
+      style={{ color: 'inherit', textDecoration: 'none', width: expanded ? '100%' : undefined }}
+    >
+      <Box
+        component="span"
+        sx={{
+          alignItems: 'center',
+          borderRadius: 1,
+          color: active ? 'primary.main' : 'text.secondary',
+          display: 'inline-flex',
+          gap: 0.75,
+          justifyContent: 'flex-start',
+          minHeight: expanded ? 44 : 40,
+          px: expanded ? 1.5 : 1,
+          width: expanded ? '100%' : 'auto',
+          '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+          '&:active': { bgcolor: 'action.selected' },
+          '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+        }}
+      >
+        <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
+        <Typography component="span" variant="button" sx={{ display: expanded ? 'inline' : { lg: 'none', xl: 'inline' } }}>
+          {expanded ? '账户设置' : '账户'}
+        </Typography>
+      </Box>
+    </Link>
+  )
+}
+
+function CanonicalAppNavigation({
+  capabilities,
+  activeRoute,
+  vertical = false,
+  onNavigate,
+}: {
+  capabilities: Set<string>
+  activeRoute: AppRouteKey
+  vertical?: boolean
+  onNavigate?: () => void
+}) {
+  return (
+    <AppNavigation
+      capabilities={capabilities}
+      activeRoute={activeRoute}
+      orientation={vertical ? 'vertical' : 'horizontal'}
+      onNavigate={onNavigate}
+    />
+  )
+}
+
 export function AppShell({
   activeRoute,
   capabilities,
@@ -60,16 +183,13 @@ export function AppShell({
   onLogout: () => void
   children: ReactNode
 }) {
-  const selectedIndex = selectedScope ? scopes.findIndex((scope) => sameScope(scope, selectedScope)) : -1
-  const labelCounts = new Map<string, number>()
-  for (const scope of scopes) {
-    const label = `${scope.country_code}\u0000${scope.channel_key}`
-    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1)
-  }
+  const theme = useTheme()
+  const desktopShell = useMediaQuery(theme.breakpoints.up('lg'), { noSsr: true })
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
 
-  const handleScopeChange = (event: SelectChangeEvent<string>) => {
-    const next = scopes[Number.parseInt(event.target.value, 10)]
-    if (next) onScopeChange?.(next)
+  const logoutFromMobileNavigation = () => {
+    setMobileNavigationOpen(false)
+    onLogout()
   }
 
   return (
@@ -81,7 +201,7 @@ export function AppShell({
           position: 'fixed',
           left: 16,
           top: 8,
-          zIndex: (theme) => theme.zIndex.tooltip + 1,
+          zIndex: (currentTheme) => currentTheme.zIndex.tooltip + 1,
           transform: 'translateY(-160%)',
           bgcolor: 'background.paper',
           color: 'primary.main',
@@ -98,103 +218,94 @@ export function AppShell({
         跳到主要内容
       </Box>
 
-      <AppBar
-        position="sticky"
-        color="inherit"
-        elevation={0}
-        sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}
-      >
-        <Toolbar
-          sx={{
-            minHeight: { xs: 64, lg: 68 },
-            gap: { xs: 1.5, lg: 2.5 },
-            px: { xs: 1.5, md: 2.5 },
-          }}
-        >
+      <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+        <Toolbar sx={{ minHeight: { xs: 64, lg: 68 }, gap: { xs: 1, lg: 2.5 }, px: { xs: 1.25, sm: 2, lg: 2.5 } }}>
+          {!desktopShell ? (
+            <IconButton
+              aria-label="打开主导航"
+              aria-controls="nd-mobile-navigation"
+              aria-expanded={mobileNavigationOpen}
+              onClick={() => setMobileNavigationOpen(true)}
+              edge="start"
+            >
+              <MenuRoundedIcon />
+            </IconButton>
+          ) : null}
+
           <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', flexShrink: 0 }} aria-label="Nexus OSR">
-            <Avatar
-              variant="rounded"
-              sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }}
-              aria-hidden="true"
-            >
-              N
-            </Avatar>
-            <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', display: { xs: 'none', sm: 'block' }, lineHeight: 1.2 }}>
-              Nexus OSR
-            </Typography>
+            <Avatar variant="rounded" sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }} aria-hidden="true">N</Avatar>
+            <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', display: { xs: 'none', sm: 'block' }, lineHeight: 1.2 }}>Nexus OSR</Typography>
           </Stack>
 
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <AppNavigation capabilities={capabilities} activeRoute={activeRoute} />
-          </Box>
+          {desktopShell ? (
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <CanonicalAppNavigation capabilities={capabilities} activeRoute={activeRoute} />
+            </Box>
+          ) : <Box sx={{ flex: 1 }} />}
 
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
-            <AgentPresenceControl capabilities={capabilities} />
-            <IncomingVoiceCallControl capabilities={capabilities} />
-
-            {selectedScope && scopes.length === 1 ? (
-              <Chip label={scopeLabel(selectedScope)} aria-label="当前工作范围" sx={{ display: { xs: 'none', md: 'inline-flex' } }} />
-            ) : null}
-
-            {selectedScope && scopes.length > 1 && onScopeChange ? (
-              <FormControl sx={{ minWidth: 150, display: { xs: 'none', md: 'flex' } }}>
-                <InputLabel id="nd-work-scope-label">工作范围</InputLabel>
-                <Select
-                  labelId="nd-work-scope-label"
-                  label="工作范围"
-                  value={selectedIndex >= 0 ? String(selectedIndex) : '0'}
-                  onChange={handleScopeChange}
-                  inputProps={{ 'aria-label': '工作范围' }}
-                >
-                  {scopes.map((scope, index) => {
-                    const duplicateKey = `${scope.country_code}\u0000${scope.channel_key}`
-                    const duplicate = (labelCounts.get(duplicateKey) ?? 0) > 1
-                    return (
-                      <MenuItem key={`${scope.tenant_hash}-${scope.country_code}-${scope.channel_key}`} value={String(index)}>
-                        {scopeLabel(scope, duplicate ? index + 1 : undefined)}
-                      </MenuItem>
-                    )
-                  })}
-                </Select>
-              </FormControl>
-            ) : null}
-
-            <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-hidden="true">
-              {initials(userLabel)}
-            </Avatar>
-            <Typography variant="body2" sx={{ color: 'text.secondary', display: { xs: 'none', lg: 'block' }, maxWidth: 140 }} noWrap>
-              {userLabel}
-            </Typography>
-            <Link
-              to="/account"
-              aria-current={activeRoute === 'account' ? 'page' : undefined}
-              aria-label="账户设置"
-              style={{ color: 'inherit', textDecoration: 'none' }}
-            >
-              <Box
-                component="span"
-                sx={{
-                  alignItems: 'center',
-                  borderRadius: 1,
-                  color: activeRoute === 'account' ? 'primary.main' : 'text.secondary',
-                  display: 'inline-flex',
-                  gap: 0.75,
-                  minHeight: 40,
-                  px: 1,
-                  '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
-                  '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
-                }}
-              >
-                <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
-                <Typography component="span" variant="button" sx={{ display: { xs: 'none', xl: 'inline' } }}>账户</Typography>
-              </Box>
-            </Link>
-            <Button aria-label="退出" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
-              <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>退出</Box>
-            </Button>
-          </Stack>
+          {desktopShell ? (
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
+              <AgentPresenceControl capabilities={capabilities} />
+              <IncomingVoiceCallControl capabilities={capabilities} />
+              <WorkScopeControl scopes={scopes} selectedScope={selectedScope} onScopeChange={onScopeChange} />
+              <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-hidden="true">{initials(userLabel)}</Avatar>
+              <Typography variant="body2" sx={{ color: 'text.secondary', display: { lg: 'none', xl: 'block' }, maxWidth: 140 }} noWrap>{userLabel}</Typography>
+              <AccountNavigationLink active={activeRoute === 'account'} />
+              <Button aria-label="退出" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
+                <Box component="span" sx={{ display: { lg: 'none', xl: 'inline' } }}>退出</Box>
+              </Button>
+            </Stack>
+          ) : (
+            <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+              <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-label={`当前账号：${userLabel}`}>
+                {initials(userLabel)}
+              </Avatar>
+              <IconButton aria-label="退出" color="inherit" onClick={onLogout} sx={{ color: 'text.secondary' }}>
+                <LogoutRoundedIcon />
+              </IconButton>
+            </Stack>
+          )}
         </Toolbar>
       </AppBar>
+
+      <Drawer
+        anchor="left"
+        open={!desktopShell && mobileNavigationOpen}
+        onClose={() => setMobileNavigationOpen(false)}
+        slotProps={{ paper: { sx: { width: 'min(88vw, 360px)' } } }}
+      >
+        <Stack id="nd-mobile-navigation" spacing={2} sx={{ minHeight: '100%', p: 2 }}>
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
+            <Avatar variant="rounded" sx={{ width: 40, height: 40, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }} aria-hidden="true">N</Avatar>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography translate="no" variant="subtitle1">Nexus OSR</Typography>
+              <Typography variant="caption" color="text.secondary" noWrap>{userLabel}</Typography>
+            </Box>
+          </Stack>
+          <Divider />
+          <CanonicalAppNavigation
+            capabilities={capabilities}
+            activeRoute={activeRoute}
+            vertical
+            onNavigate={() => setMobileNavigationOpen(false)}
+          />
+          <Divider />
+          <Stack spacing={1.5}>
+            <Typography variant="overline" color="text.secondary">坐席与范围</Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 1 }}>
+              <AgentPresenceControl capabilities={capabilities} />
+              <IncomingVoiceCallControl capabilities={capabilities} />
+            </Stack>
+            <WorkScopeControl scopes={scopes} selectedScope={selectedScope} onScopeChange={onScopeChange} compact />
+          </Stack>
+          <Box sx={{ flex: 1 }} />
+          <Divider />
+          <AccountNavigationLink active={activeRoute === 'account'} expanded onNavigate={() => setMobileNavigationOpen(false)} />
+          <Button color="inherit" startIcon={<LogoutRoundedIcon />} onClick={logoutFromMobileNavigation} sx={{ justifyContent: 'flex-start', color: 'text.secondary' }}>
+            退出登录
+          </Button>
+        </Stack>
+      </Drawer>
 
       <Box id="nd-main-content" component="div" tabIndex={-1} sx={{ minHeight: 'calc(100dvh - 68px)', outline: 'none' }}>
         {children}
