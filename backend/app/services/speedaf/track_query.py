@@ -423,11 +423,11 @@ class SpeedafTrackQueryClient:
 
 
 def build_speedaf_track_sign(timestamp_ms: str, secret_key: str, data_string: str) -> str:
+    # The provider offers no SHA-2 alternative for this authenticated wire signature.
     # Speedaf wire protocol mandates MD5; this is compatibility signing, not password/security hashing.
     payload = f"{timestamp_ms}{secret_key}{data_string}".encode("utf-8")
     # codeql[py/weak-sensitive-data-hashing]
-    digest = hashlib.md5(payload, usedforsecurity=False)
-    return digest.hexdigest()
+    return hashlib.md5(payload, usedforsecurity=False).hexdigest()
 
 
 def decrypt_speedaf_track_data(data_b64: str, secret_key: str) -> Any:
