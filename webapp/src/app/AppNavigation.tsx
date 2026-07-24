@@ -39,7 +39,7 @@ export function AppNavigation({
       component="nav"
       aria-label="主导航"
       direction={vertical ? 'column' : 'row'}
-      spacing={vertical ? 0.5 : 0.5}
+      spacing={0.5}
       sx={vertical
         ? { width: '100%' }
         : {
