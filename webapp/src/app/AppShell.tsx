@@ -143,6 +143,27 @@ function AccountNavigationLink({
   )
 }
 
+function CanonicalAppNavigation({
+  capabilities,
+  activeRoute,
+  vertical = false,
+  onNavigate,
+}: {
+  capabilities: Set<string>
+  activeRoute: AppRouteKey
+  vertical?: boolean
+  onNavigate?: () => void
+}) {
+  return (
+    <AppNavigation
+      capabilities={capabilities}
+      activeRoute={activeRoute}
+      orientation={vertical ? 'vertical' : 'horizontal'}
+      onNavigate={onNavigate}
+    />
+  )
+}
+
 export function AppShell({
   activeRoute,
   capabilities,
@@ -208,14 +229,12 @@ export function AppShell({
 
           <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', flexShrink: 0 }} aria-label="Nexus OSR">
             <Avatar variant="rounded" sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }} aria-hidden="true">N</Avatar>
-            <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', display: { xs: 'none', sm: 'block' }, lineHeight: 1.2 }}>
-              Nexus OSR
-            </Typography>
+            <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', display: { xs: 'none', sm: 'block' }, lineHeight: 1.2 }}>Nexus OSR</Typography>
           </Stack>
 
           {desktopShell ? (
             <Box sx={{ minWidth: 0, flex: 1 }}>
-              <AppNavigation capabilities={capabilities} activeRoute={activeRoute} />
+              <CanonicalAppNavigation capabilities={capabilities} activeRoute={activeRoute} />
             </Box>
           ) : <Box sx={{ flex: 1 }} />}
 
@@ -255,10 +274,10 @@ export function AppShell({
             </Box>
           </Stack>
           <Divider />
-          <AppNavigation
+          <CanonicalAppNavigation
             capabilities={capabilities}
             activeRoute={activeRoute}
-            orientation="vertical"
+            vertical
             onNavigate={() => setMobileNavigationOpen(false)}
           />
           <Divider />
