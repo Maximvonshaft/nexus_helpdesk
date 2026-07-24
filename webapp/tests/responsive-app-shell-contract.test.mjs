@@ -19,6 +19,12 @@ test('the canonical shell provides one responsive navigation surface', () => {
   assert.doesNotMatch(shell, /workspace-v2|new-workspace|ui-v2/)
 })
 
+test('closed mobile navigation cannot retain duplicate live controls', () => {
+  assert.doesNotMatch(shell, /keepMounted/)
+  assert.match(shell, /open=\{!desktopShell && mobileNavigationOpen\}/)
+  assert.match(shell, /function logoutFromMobileNavigation|const logoutFromMobileNavigation/)
+})
+
 test('work scope and operator controls remain reachable below desktop width', () => {
   assert.match(shell, /function WorkScopeControl/)
   assert.match(shell, /compact \/>/)
@@ -27,6 +33,7 @@ test('work scope and operator controls remain reachable below desktop width', ()
   assert.match(shell, /function AccountNavigationLink/)
   assert.equal((shell.match(/to="\/account"/g) ?? []).length, 1)
   assert.match(shell, /账户设置/)
+  assert.match(shell, /<IconButton aria-label="退出"/)
   assert.match(shell, /退出登录/)
 })
 
