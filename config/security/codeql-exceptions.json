@@ -1,17 +1,4 @@
 {
-  "exceptions": [
-    {
-      "rule_id": "py/weak-sensitive-data-hashing",
-      "path": "backend/app/services/speedaf/track_query.py",
-      "start_line": 429,
-      "expires_on": "2026-08-23",
-      "owner": "speedaf-runtime",
-      "reason": "Speedaf tracking requires an MD5 request signature for its external wire protocol; changing the algorithm would break authenticated tracking requests. Review before expiry.",
-      "required_markers": [
-        "Speedaf wire protocol mandates MD5",
-        "usedforsecurity=False"
-      ]
-    }
-  ],
+  "exceptions": [],
   "schema_version": "nexus_codeql_exception_policy_v1"
 }
