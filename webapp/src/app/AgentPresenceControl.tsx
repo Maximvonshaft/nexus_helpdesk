@@ -47,6 +47,7 @@ type AgentPresencePresentation = 'toolbar' | 'drawer'
 
 interface AgentPresenceRuntimeValue {
   enabled: boolean
+  canViewVoice: boolean
   canHandleVoice: boolean
   state?: AgentState
   isLoading: boolean
@@ -67,8 +68,9 @@ export function AgentPresenceProvider({
 }) {
   const queryClient = useQueryClient()
   const canHandleText = capabilities.has('webchat.handoff.accept')
+  const canViewVoice = capabilities.has('webcall.voice.queue.view')
   const canHandleVoice = VOICE_CAPABILITIES.every((capability) => capabilities.has(capability))
-  const enabled = canHandleText || capabilities.has('webcall.voice.queue.view')
+  const enabled = canHandleText || canViewVoice
   const state = useQuery({
     queryKey: STATE_QUERY_KEY,
     queryFn: agentRoutingApi.state,
@@ -94,6 +96,7 @@ export function AgentPresenceProvider({
 
   const value: AgentPresenceRuntimeValue = {
     enabled,
+    canViewVoice,
     canHandleVoice,
     state: state.data,
     isLoading: state.isLoading,
@@ -168,7 +171,7 @@ export function AgentPresenceControl({
         </Select>
       </FormControl>
       <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 0.75 }}>
-        {runtime.state && runtime.state.max_concurrent_voice_calls >= 0 ? (
+        {runtime.canViewVoice ? (
           <Tooltip title={voiceSwitchTitle}>
             <span>
               <Switch
