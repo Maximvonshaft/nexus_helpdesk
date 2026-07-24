@@ -187,6 +187,11 @@ export function AppShell({
   const desktopShell = useMediaQuery(theme.breakpoints.up('lg'), { noSsr: true })
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
 
+  const logoutFromMobileNavigation = () => {
+    setMobileNavigationOpen(false)
+    onLogout()
+  }
+
   return (
     <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default' }}>
       <Box
@@ -251,9 +256,14 @@ export function AppShell({
               </Button>
             </Stack>
           ) : (
-            <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-label={`当前账号：${userLabel}`}>
-              {initials(userLabel)}
-            </Avatar>
+            <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+              <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-label={`当前账号：${userLabel}`}>
+                {initials(userLabel)}
+              </Avatar>
+              <IconButton aria-label="退出" color="inherit" onClick={onLogout} sx={{ color: 'text.secondary' }}>
+                <LogoutRoundedIcon />
+              </IconButton>
+            </Stack>
           )}
         </Toolbar>
       </AppBar>
@@ -262,7 +272,6 @@ export function AppShell({
         anchor="left"
         open={!desktopShell && mobileNavigationOpen}
         onClose={() => setMobileNavigationOpen(false)}
-        ModalProps={{ keepMounted: true }}
         slotProps={{ paper: { sx: { width: 'min(88vw, 360px)' } } }}
       >
         <Stack id="nd-mobile-navigation" spacing={2} sx={{ minHeight: '100%', p: 2 }}>
@@ -292,7 +301,7 @@ export function AppShell({
           <Box sx={{ flex: 1 }} />
           <Divider />
           <AccountNavigationLink active={activeRoute === 'account'} expanded onNavigate={() => setMobileNavigationOpen(false)} />
-          <Button color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ justifyContent: 'flex-start', color: 'text.secondary' }}>
+          <Button color="inherit" startIcon={<LogoutRoundedIcon />} onClick={logoutFromMobileNavigation} sx={{ justifyContent: 'flex-start', color: 'text.secondary' }}>
             退出登录
           </Button>
         </Stack>
