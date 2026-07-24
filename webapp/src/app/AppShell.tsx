@@ -246,7 +246,7 @@ export function AppShell({
         open={!desktopShell && mobileNavigationOpen}
         onClose={() => setMobileNavigationOpen(false)}
         ModalProps={{ keepMounted: true }}
-        PaperProps={{ sx: { width: 'min(88vw, 360px)' } }}
+        slotProps={{ paper: { sx: { width: 'min(88vw, 360px)' } } }}
       >
         <Stack id="nd-mobile-navigation" spacing={2} sx={{ minHeight: '100%', p: 2 }}>
           <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
