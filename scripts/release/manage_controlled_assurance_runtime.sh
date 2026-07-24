@@ -66,7 +66,7 @@ start() {
     -e PROVIDER_RUNTIME_KILL_SWITCH=true \
     -e ENABLE_OUTBOUND_DISPATCH=false \
     -e WHATSAPP_NATIVE_ENABLED=false \
-    "${CANDIDATE_IMAGE}" python -m alembic upgrade head
+    "${CANDIDATE_IMAGE}" python -m alembic upgrade head >&2
 
   docker run -d --name "${candidate_name}" --network "${network_name}" \
     -e PYTHONPATH=/app/backend \
