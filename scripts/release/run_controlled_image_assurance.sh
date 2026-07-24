@@ -17,12 +17,26 @@ print(discover_alembic_head(Path("backend/alembic/versions")))
 PY
 )"
 test -n "${expected_migration_head}"
+
+assurance_container="${ASSURANCE_CONTAINER_NAME:-nexus-ci-candidate}"
+assurance_runtime_owned=false
+cleanup_assurance_runtime() {
+  if [[ "${assurance_runtime_owned}" == "true" ]]; then
+    bash scripts/release/manage_controlled_assurance_runtime.sh cleanup
+  fi
+}
+if [[ "$(docker inspect --format '{{.State.Status}}' "${assurance_container}" 2>/dev/null || true)" != "running" ]]; then
+  assurance_container="$(bash scripts/release/manage_controlled_assurance_runtime.sh start)"
+  assurance_runtime_owned=true
+fi
+trap cleanup_assurance_runtime EXIT
+
 migration_contract_raw="${RELEASE_IMAGE_DIR}/migration-readiness-contract.raw"
 docker exec -i \
   -e EXPECTED_MIGRATION_HEAD="${expected_migration_head}" \
   -e NEXUS_ASSURANCE_SOURCE_SHA="${SOURCE_SHA}" \
   -e PYTHONPATH=/app/backend \
-  nexus-ci-candidate \
+  "${assurance_container}" \
   python - <<'PY' > "${migration_contract_raw}"
 import json
 import os
@@ -135,8 +149,10 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 
+
 def digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
 
 payload = {
     "schema_version": "nexus_raw_release_evidence_digests_v2",
