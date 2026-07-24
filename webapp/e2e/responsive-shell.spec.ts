@@ -17,6 +17,13 @@ const responsiveUser = {
     'ticket.read',
     'ticket.assign',
     'operator_queue.read',
+    'webchat.handoff.accept',
+    'webcall.voice.read',
+    'webcall.voice.queue.view',
+    'webcall.voice.accept',
+    'webcall.voice.reject',
+    'webcall.voice.end',
+    'webcall.voice.control',
     'ai_config.read',
     'ai_config.manage',
     'channel_account.manage',
@@ -26,6 +33,25 @@ const responsiveUser = {
     'user.manage',
     'market.manage',
   ],
+}
+
+const responsiveAgentState = {
+  user_id: 1,
+  status: 'online',
+  heartbeat_fresh: true,
+  assignable: true,
+  max_concurrent_conversations: 4,
+  active_conversations: 1,
+  available_capacity: 3,
+  voice_enabled: true,
+  voice_assignable: true,
+  max_concurrent_voice_calls: 1,
+  active_voice_calls: 0,
+  reserved_voice_offers: 0,
+  available_voice_capacity: 1,
+  voice_wrap_up_seconds: 30,
+  last_heartbeat_at: '2026-07-24T05:00:00Z',
+  heartbeat_ttl_seconds: 90,
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -41,6 +67,9 @@ async function fulfillResponsiveApi(route: Route) {
   const path = url.pathname
 
   if (path === '/api/auth/me') return json(route, responsiveUser)
+  if (path === '/api/operator/agent-state') return json(route, responsiveAgentState)
+  if (path === '/api/operator/agent-state/heartbeat') return json(route, responsiveAgentState)
+  if (path === '/api/webchat/admin/voice/sessions') return json(route, { items: [] })
   if (path === '/api/admin/operator-queue/my-scopes') {
     return json(route, {
       items: [{ tenant_key: 'default', tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' }],
@@ -158,8 +187,15 @@ for (const viewport of [
   })
 }
 
-test('mobile Drawer is the only mounted navigation and restores focus on close', async ({ page }) => {
+test('mobile Drawer exposes live controls while their runtimes remain mounted when closed', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 })
+  let voicePolls = 0
+  let agentStateReads = 0
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (request.method() === 'GET' && url.pathname === '/api/webchat/admin/voice/sessions') voicePolls += 1
+    if (request.method() === 'GET' && url.pathname === '/api/operator/agent-state') agentStateReads += 1
+  })
   await mockResponsiveConsole(page)
   await page.goto('/workspace')
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
@@ -171,6 +207,9 @@ test('mobile Drawer is the only mounted navigation and restores focus on close',
   expect((await logout.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
   await expect(page.locator('#nd-mobile-navigation')).toHaveCount(0)
   await expect(page.getByLabel('当前工作范围')).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: '客服状态' })).toHaveCount(0)
+  await expect.poll(() => agentStateReads).toBeGreaterThanOrEqual(1)
+  await expect.poll(() => voicePolls, { timeout: 5_000 }).toBeGreaterThanOrEqual(2)
 
   await menu.click()
   const drawer = page.locator('#nd-mobile-navigation')
@@ -178,6 +217,8 @@ test('mobile Drawer is the only mounted navigation and restores focus on close',
   await expect(drawer.getByRole('navigation', { name: '主导航' })).toBeVisible()
   await expect(drawer.getByLabel('当前工作范围')).toBeVisible()
   await expect(page.getByLabel('当前工作范围')).toHaveCount(1)
+  await expect(drawer.getByRole('combobox', { name: '客服状态' })).toBeVisible()
+  await expect(drawer.getByRole('switch', { name: '关闭电话接线' })).toBeVisible()
 
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)
@@ -190,6 +231,38 @@ test('mobile Drawer is the only mounted navigation and restores focus on close',
   await expect(page.locator('#nd-mobile-navigation')).toHaveCount(0)
 })
 
+test('incoming voice dialog remains active with the mobile Drawer closed', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await mockResponsiveConsole(page)
+  await page.route('**/api/webchat/admin/voice/sessions?*', (route) => json(route, {
+    items: [{
+      ok: true,
+      voice_session_id: 'voice-mobile-1',
+      status: 'ringing',
+      provider: 'livekit',
+      media_plane: 'livekit',
+      voice_offer: {
+        id: 'offer-mobile-1',
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+      ticket_id: null,
+      ticket_no: null,
+      ticket_title: null,
+      conversation_id: 'conversation-mobile-1',
+      visitor_label: 'Mobile caller',
+      direction: 'inbound',
+      mode: 'human_first',
+    }],
+  }))
+  await page.goto('/workspace')
+
+  await expect(page.locator('#nd-mobile-navigation')).toHaveCount(0)
+  const dialog = page.getByRole('dialog', { name: '新的语音来电' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Mobile caller')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '接听通话' })).toBeVisible()
+})
+
 test('desktop shell exposes one visible navigation and one work scope', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
@@ -199,5 +272,6 @@ test('desktop shell exposes one visible navigation and one work scope', async ({
   await expect(page.getByRole('button', { name: '打开主导航' })).toHaveCount(0)
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
   await expect(page.getByLabel('当前工作范围')).toHaveCount(1)
+  await expect(page.getByRole('combobox', { name: '客服状态' })).toHaveCount(1)
   await expect(page.locator('#nd-mobile-navigation')).toHaveCount(0)
 })

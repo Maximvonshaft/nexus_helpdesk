@@ -7,6 +7,8 @@ const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 const shell = read('src/app/AppShell.tsx')
 const navigation = read('src/app/AppNavigation.tsx')
+const presence = read('src/app/AgentPresenceControl.tsx')
+const incomingVoice = read('src/app/IncomingVoiceCallControl.tsx')
 
 test('the canonical shell provides one responsive navigation surface', () => {
   assert.match(shell, /useMediaQuery\(theme\.breakpoints\.up\('lg'\)/)
@@ -19,17 +21,28 @@ test('the canonical shell provides one responsive navigation surface', () => {
   assert.doesNotMatch(shell, /workspace-v2|new-workspace|ui-v2/)
 })
 
-test('closed mobile navigation cannot retain duplicate live controls', () => {
+test('live operator runtimes remain mounted above the temporary Drawer', () => {
   assert.doesNotMatch(shell, /keepMounted/)
-  assert.match(shell, /open=\{!desktopShell && mobileNavigationOpen\}/)
-  assert.match(shell, /function logoutFromMobileNavigation|const logoutFromMobileNavigation/)
+  assert.match(shell, /<AgentPresenceProvider capabilities=\{capabilities\}>/)
+  assert.match(shell, /<IncomingVoiceCallProvider capabilities=\{capabilities\}>/)
+  assert.equal((shell.match(/<AgentPresenceProvider/g) ?? []).length, 1)
+  assert.equal((shell.match(/<IncomingVoiceCallProvider/g) ?? []).length, 1)
+  assert.match(presence, /export function AgentPresenceProvider/)
+  assert.match(presence, /refetchInterval: 30_000/)
+  assert.match(presence, /agentRoutingApi\.heartbeat\(\)/)
+  assert.match(incomingVoice, /export function IncomingVoiceCallProvider/)
+  assert.match(incomingVoice, /refetchInterval: 2_000/)
+  assert.match(incomingVoice, /<Dialog/)
 })
 
-test('work scope and operator controls remain reachable below desktop width', () => {
+test('work scope and operator controls remain interactive below desktop width', () => {
   assert.match(shell, /function WorkScopeControl/)
   assert.match(shell, /compact \/>/)
-  assert.match(shell, /<AgentPresenceControl capabilities=\{capabilities\} \/>/)
-  assert.match(shell, /<IncomingVoiceCallControl capabilities=\{capabilities\} \/>/)
+  assert.match(shell, /<AgentPresenceControl presentation="drawer" \/>/)
+  assert.match(shell, /<IncomingVoiceCallControl \/>/)
+  assert.match(presence, /presentation === 'drawer'/)
+  assert.match(presence, /width: drawer \? '100%' : 'auto'/)
+  assert.doesNotMatch(presence, /display: \{ xs: 'none', lg: 'flex' \}/)
   assert.match(shell, /function AccountNavigationLink/)
   assert.equal((shell.match(/to="\/account"/g) ?? []).length, 1)
   assert.match(shell, /账户设置/)
