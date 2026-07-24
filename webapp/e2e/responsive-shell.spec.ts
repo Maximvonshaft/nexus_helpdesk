@@ -231,6 +231,38 @@ test('mobile Drawer exposes live controls while their runtimes remain mounted wh
   await expect(page.locator('#nd-mobile-navigation')).toHaveCount(0)
 })
 
+test('incoming voice dialog remains active with the mobile Drawer closed', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await mockResponsiveConsole(page)
+  await page.route('**/api/webchat/admin/voice/sessions?*', (route) => json(route, {
+    items: [{
+      ok: true,
+      voice_session_id: 'voice-mobile-1',
+      status: 'ringing',
+      provider: 'livekit',
+      media_plane: 'livekit',
+      voice_offer: {
+        id: 'offer-mobile-1',
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+      ticket_id: null,
+      ticket_no: null,
+      ticket_title: null,
+      conversation_id: 'conversation-mobile-1',
+      visitor_label: 'Mobile caller',
+      direction: 'inbound',
+      mode: 'human_first',
+    }],
+  }))
+  await page.goto('/workspace')
+
+  await expect(page.locator('#nd-mobile-navigation')).toHaveCount(0)
+  const dialog = page.getByRole('dialog', { name: '新的语音来电' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Mobile caller')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '接听通话' })).toBeVisible()
+})
+
 test('desktop shell exposes one visible navigation and one work scope', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
