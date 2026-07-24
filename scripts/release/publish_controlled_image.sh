@@ -10,6 +10,8 @@ set -Eeuo pipefail
 : "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}"
 : "${GITHUB_ACTOR:?GITHUB_ACTOR required}"
 
+bash scripts/release/require_exact_current_main.sh
+
 mkdir -p "${CONTROLLED_DIR}"
 registry_image="ghcr.io/$(printf '%s/%s' "${GITHUB_REPOSITORY_OWNER}" "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
 tag="controlled-${SOURCE_SHA}"

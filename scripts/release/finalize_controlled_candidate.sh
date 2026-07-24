@@ -10,6 +10,8 @@ set -Eeuo pipefail
 : "${ATTESTATION_ID:?ATTESTATION_ID required}"
 : "${ATTESTATION_URL:?ATTESTATION_URL required}"
 
+bash scripts/release/require_exact_current_main.sh
+
 mkdir -p "${FINAL_DIR}"
 cp artifacts/build/rc-test/candidate-manifest.json "${FINAL_DIR}/"
 cp artifacts/build/release-image/release-image-manifest.json "${FINAL_DIR}/"
