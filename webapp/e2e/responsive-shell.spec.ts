@@ -218,7 +218,7 @@ test('mobile Drawer exposes live controls while their runtimes remain mounted wh
   await expect(drawer.getByLabel('当前工作范围')).toBeVisible()
   await expect(page.getByLabel('当前工作范围')).toHaveCount(1)
   await expect(drawer.getByRole('combobox', { name: '客服状态' })).toBeVisible()
-  await expect(drawer.getByRole('checkbox', { name: '关闭电话接线' })).toBeVisible()
+  await expect(drawer.getByRole('switch', { name: '关闭电话接线' })).toBeVisible()
 
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)
