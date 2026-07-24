@@ -9,6 +9,7 @@ set -Eeuo pipefail
 : "${RC_NGINX_IMAGE_PIN:?RC_NGINX_IMAGE_PIN required}"
 : "${CANDIDATE_IMAGE:?CANDIDATE_IMAGE required}"
 
+python -m pip install --disable-pip-version-check -r backend/requirements.txt
 python -m py_compile \
   scripts/release/build_controlled_candidate_manifest.py \
   scripts/deploy/validate_controlled_server_preflight.py
@@ -21,6 +22,7 @@ bash -n \
   scripts/release/run_rc_test_candidate.sh \
   scripts/release/run_controlled_rc_gate.sh \
   scripts/release/run_controlled_image_assurance.sh \
+  scripts/release/manage_controlled_assurance_runtime.sh \
   scripts/release/publish_controlled_image.sh \
   scripts/release/finalize_controlled_candidate.sh
 python scripts/release/generate_rc_test_env.py \
