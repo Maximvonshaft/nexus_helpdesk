@@ -100,6 +100,49 @@ function WorkScopeControl({
   )
 }
 
+function AccountNavigationLink({
+  active,
+  expanded = false,
+  onNavigate,
+}: {
+  active: boolean
+  expanded?: boolean
+  onNavigate?: () => void
+}) {
+  return (
+    <Link
+      to="/account"
+      aria-current={active ? 'page' : undefined}
+      aria-label="账户设置"
+      onClick={onNavigate}
+      style={{ color: 'inherit', textDecoration: 'none', width: expanded ? '100%' : undefined }}
+    >
+      <Box
+        component="span"
+        sx={{
+          alignItems: 'center',
+          borderRadius: 1,
+          color: active ? 'primary.main' : 'text.secondary',
+          display: 'inline-flex',
+          gap: 0.75,
+          justifyContent: 'flex-start',
+          minHeight: expanded ? 44 : 40,
+          px: expanded ? 1.5 : 1,
+          width: expanded ? '100%' : 'auto',
+          '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+          '&:active': { bgcolor: 'action.selected' },
+          '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+        }}
+      >
+        <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
+        <Typography component="span" variant="button" sx={{ display: expanded ? 'inline' : { lg: 'none', xl: 'inline' } }}>
+          {expanded ? '账户设置' : '账户'}
+        </Typography>
+      </Box>
+    </Link>
+  )
+}
+
 export function AppShell({
   activeRoute,
   capabilities,
@@ -149,19 +192,8 @@ export function AppShell({
         跳到主要内容
       </Box>
 
-      <AppBar
-        position="sticky"
-        color="inherit"
-        elevation={0}
-        sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}
-      >
-        <Toolbar
-          sx={{
-            minHeight: { xs: 64, lg: 68 },
-            gap: { xs: 1, lg: 2.5 },
-            px: { xs: 1.25, sm: 2, lg: 2.5 },
-          }}
-        >
+      <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+        <Toolbar sx={{ minHeight: { xs: 64, lg: 68 }, gap: { xs: 1, lg: 2.5 }, px: { xs: 1.25, sm: 2, lg: 2.5 } }}>
           {!desktopShell ? (
             <IconButton
               aria-label="打开主导航"
@@ -175,13 +207,7 @@ export function AppShell({
           ) : null}
 
           <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', flexShrink: 0 }} aria-label="Nexus OSR">
-            <Avatar
-              variant="rounded"
-              sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }}
-              aria-hidden="true"
-            >
-              N
-            </Avatar>
+            <Avatar variant="rounded" sx={{ width: 38, height: 38, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }} aria-hidden="true">N</Avatar>
             <Typography translate="no" variant="subtitle1" sx={{ color: 'text.primary', display: { xs: 'none', sm: 'block' }, lineHeight: 1.2 }}>
               Nexus OSR
             </Typography>
@@ -198,37 +224,9 @@ export function AppShell({
               <AgentPresenceControl capabilities={capabilities} />
               <IncomingVoiceCallControl capabilities={capabilities} />
               <WorkScopeControl scopes={scopes} selectedScope={selectedScope} onScopeChange={onScopeChange} />
-              <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-hidden="true">
-                {initials(userLabel)}
-              </Avatar>
-              <Typography variant="body2" sx={{ color: 'text.secondary', display: { lg: 'none', xl: 'block' }, maxWidth: 140 }} noWrap>
-                {userLabel}
-              </Typography>
-              <Link
-                to="/account"
-                aria-current={activeRoute === 'account' ? 'page' : undefined}
-                aria-label="账户设置"
-                style={{ color: 'inherit', textDecoration: 'none' }}
-              >
-                <Box
-                  component="span"
-                  sx={{
-                    alignItems: 'center',
-                    borderRadius: 1,
-                    color: activeRoute === 'account' ? 'primary.main' : 'text.secondary',
-                    display: 'inline-flex',
-                    gap: 0.75,
-                    minHeight: 40,
-                    px: 1,
-                    '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
-                    '&:active': { bgcolor: 'action.selected' },
-                    '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
-                  }}
-                >
-                  <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
-                  <Typography component="span" variant="button" sx={{ display: { lg: 'none', xl: 'inline' } }}>账户</Typography>
-                </Box>
-              </Link>
+              <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-hidden="true">{initials(userLabel)}</Avatar>
+              <Typography variant="body2" sx={{ color: 'text.secondary', display: { lg: 'none', xl: 'block' }, maxWidth: 140 }} noWrap>{userLabel}</Typography>
+              <AccountNavigationLink active={activeRoute === 'account'} />
               <Button aria-label="退出" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ color: 'text.secondary', minWidth: 44 }}>
                 <Box component="span" sx={{ display: { lg: 'none', xl: 'inline' } }}>退出</Box>
               </Button>
@@ -274,16 +272,7 @@ export function AppShell({
           </Stack>
           <Box sx={{ flex: 1 }} />
           <Divider />
-          <Button
-            component={Link}
-            to="/account"
-            color="inherit"
-            startIcon={<ManageAccountsRoundedIcon />}
-            onClick={() => setMobileNavigationOpen(false)}
-            sx={{ justifyContent: 'flex-start' }}
-          >
-            账户设置
-          </Button>
+          <AccountNavigationLink active={activeRoute === 'account'} expanded onNavigate={() => setMobileNavigationOpen(false)} />
           <Button color="inherit" startIcon={<LogoutRoundedIcon />} onClick={onLogout} sx={{ justifyContent: 'flex-start', color: 'text.secondary' }}>
             退出登录
           </Button>
