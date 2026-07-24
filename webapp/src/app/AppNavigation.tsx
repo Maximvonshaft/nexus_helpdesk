@@ -23,19 +23,31 @@ const routeIcons = {
 export function AppNavigation({
   capabilities,
   activeRoute,
+  orientation = 'horizontal',
+  onNavigate,
 }: {
   capabilities: Set<string>
   activeRoute: AppRouteKey
+  orientation?: 'horizontal' | 'vertical'
+  onNavigate?: () => void
 }) {
   const items = APP_NAVIGATION.filter((item) => canSeeNavigationItem(capabilities, item))
+  const vertical = orientation === 'vertical'
 
   return (
     <Stack
       component="nav"
       aria-label="主导航"
-      direction="row"
-      spacing={0.5}
-      sx={{ minWidth: 0, overflowX: 'auto', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}
+      direction={vertical ? 'column' : 'row'}
+      spacing={vertical ? 0.5 : 0.5}
+      sx={vertical
+        ? { width: '100%' }
+        : {
+            minWidth: 0,
+            overflowX: 'auto',
+            overscrollBehaviorX: 'contain',
+            scrollbarWidth: 'thin',
+          }}
     >
       {items.map((item) => {
         const Icon = routeIcons[item.key]
@@ -47,22 +59,29 @@ export function AppNavigation({
             aria-current={active ? 'page' : undefined}
             data-canonical-route={item.canonicalRoute}
             data-route-status={item.status}
-            style={{ color: 'inherit', textDecoration: 'none' }}
+            onClick={onNavigate}
+            style={{ color: 'inherit', textDecoration: 'none', width: vertical ? '100%' : undefined }}
           >
             <Box
               component="span"
               sx={{
                 alignItems: 'center',
                 bgcolor: active ? 'action.selected' : 'transparent',
+                borderInlineStart: vertical ? 3 : 0,
+                borderColor: active ? 'primary.main' : 'transparent',
                 borderRadius: 1,
                 color: active ? 'primary.main' : 'text.secondary',
                 display: 'inline-flex',
                 gap: 0.75,
-                minHeight: 40,
-                px: 1.25,
+                justifyContent: 'flex-start',
+                minHeight: vertical ? 44 : 40,
+                px: vertical ? 1.5 : 1.25,
+                py: vertical ? 0.5 : 0,
                 whiteSpace: 'nowrap',
-                transition: (theme) => theme.transitions.create(['background-color', 'color'], { duration: theme.transitions.duration.shorter }),
+                width: vertical ? '100%' : 'auto',
+                transition: (theme) => theme.transitions.create(['background-color', 'color', 'border-color'], { duration: theme.transitions.duration.shorter }),
                 '&:hover': { bgcolor: active ? 'action.selected' : 'action.hover', color: active ? 'primary.main' : 'text.primary' },
+                '&:active': { bgcolor: 'action.selected' },
                 '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
               }}
             >
