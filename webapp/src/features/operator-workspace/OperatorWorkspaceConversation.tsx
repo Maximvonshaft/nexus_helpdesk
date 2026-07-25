@@ -19,7 +19,7 @@ import {
   messageDeliveryPresentation,
   workspaceDirectionLabel,
 } from '@/lib/operatorWorkspacePresentation'
-import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
+import { displayVerbatimText, formatDateTime } from '@/lib/format'
 import { hasWorkspaceCapability } from './operatorWorkspaceState'
 
 export function OperatorWorkspaceConversation({
@@ -136,13 +136,19 @@ export function OperatorWorkspaceConversation({
       <OperatorSectionHeading id="operator-conversation-title" title="客户沟通" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
       <Divider sx={{ my: 2 }} />
       {isLoading ? <OperatorLoadingState label="正在读取消息…" /> : null}
-      {error ? <OperatorErrorNotice title="无法读取客户沟通" error={error} fallback="仍可查看任务摘要" /> : null}
+      {error ? <OperatorErrorNotice title="无法读取客户沟通" error={error} fallback={thread ? '正在显示上次确认的消息，可稍后刷新' : '仍可查看任务摘要'} /> : null}
       {historyError ? <OperatorErrorNotice title="更早消息加载失败" error={historyError} fallback="可稍后重试" /> : null}
+      <Box className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {newMessageCount ? `收到 ${newMessageCount} 条新消息。` : ''}
+      </Box>
       {thread ? (
         <Stack spacing={1.5}>
           <Stack
             ref={messagesRef}
-            aria-live="polite"
+            data-testid="operator-message-timeline"
+            role="log"
+            aria-label="客户沟通记录"
+            aria-live="off"
             spacing={1.25}
             sx={{ maxHeight: 520, overflowY: 'auto', pr: 0.5 }}
             onScroll={(event) => {
@@ -175,16 +181,22 @@ export function OperatorWorkspaceConversation({
                     alignSelf: outbound ? 'flex-end' : 'flex-start',
                     bgcolor: outbound ? 'action.selected' : 'background.default',
                     borderRadius: 1.5,
+                    contentVisibility: 'auto',
+                    containIntrinsicSize: '96px',
                     maxWidth: '88%',
                     px: 1.5,
                     py: 1.25,
                   }}
                 >
                   <Stack direction="row" spacing={2} sx={{ justifyContent: 'space-between' }}>
-                    <Typography variant="subtitle2">{sanitizeDisplayText(message.author_label || workspaceDirectionLabel(message.direction))}</Typography>
+                    <Typography variant="subtitle2">
+                      {displayVerbatimText(message.author_label || workspaceDirectionLabel(message.direction))}
+                    </Typography>
                     {message.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(message.created_at)}</Typography> : null}
                   </Stack>
-                  <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{sanitizeDisplayText(message.body_text || message.body)}</Typography>
+                  <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                    {displayVerbatimText(message.body_text || message.body, '')}
+                  </Typography>
                   {outbound ? <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 1 }} aria-label="送达状态"><OperatorStatusLine presentation={delivery} compact /></Stack> : null}
                 </Box>
               )
@@ -195,8 +207,26 @@ export function OperatorWorkspaceConversation({
           {replyMutation.isError ? <OperatorErrorNotice title="发送失败" error={replyMutation.error} fallback="请稍后重试" /> : null}
           <Box component="form" onSubmit={(event) => { event.preventDefault(); if (canReply && reply.trim()) replyMutation.mutate() }}>
             <Stack spacing={1.25}>
-              <TextField label="回复客户" helperText={canReply ? '当前会话由您接管，回复会直接进入会话记录。' : '接受人工会话后才能回复。'} value={reply} onChange={(event) => setReply(event.target.value)} multiline minRows={4} placeholder="输入回复" autoComplete="off" disabled={!canReply} />
-              <Button type="submit" variant="contained" disabled={!canReply || !reply.trim() || replyMutation.isPending} startIcon={replyMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} sx={{ alignSelf: 'flex-end' }}>{replyMutation.isPending ? '发送中…' : '发送回复'}</Button>
+              <TextField
+                label="回复客户"
+                helperText={canReply ? '当前会话由您接管，回复会直接进入会话记录。' : '接受人工会话后才能回复。'}
+                value={reply}
+                onChange={(event) => setReply(event.target.value)}
+                multiline
+                minRows={4}
+                placeholder="输入回复"
+                autoComplete="off"
+                disabled={!canReply}
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={!canReply || !reply.trim() || replyMutation.isPending}
+                startIcon={replyMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
+                sx={{ alignSelf: 'flex-end' }}
+              >
+                {replyMutation.isPending ? '发送中…' : '发送回复'}
+              </Button>
             </Stack>
           </Box>
         </Stack>
