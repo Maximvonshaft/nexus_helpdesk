@@ -39,9 +39,16 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
         spacing={2}
         sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between' }}
       >
-        <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-          {item.case_key || '当前任务'}
-        </Typography>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography component="h1" variant="h1" sx={{ overflowWrap: 'anywhere' }}>
+            {displayVerbatimText(item.display_label, '当前任务')}
+          </Typography>
+          {item.display_summary ? (
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>
+              {displayVerbatimText(item.display_summary)}
+            </Typography>
+          ) : null}
+        </Box>
         <Stack spacing={0.75} sx={{ minWidth: { sm: 220 } }}>
           <OperatorStatusLine presentation={status} />
           <OperatorStatusLine presentation={owner} />
@@ -53,7 +60,7 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
       <Box sx={{ mt: 1.5 }}>
         <OperatorTechnicalDisclosure title="系统信息" compact>
           <Typography component="code" variant="caption" sx={{ overflowWrap: 'anywhere' }}>
-            任务 {item.source_type}:{item.source_id}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ' · 独立会话'}
+            任务 {item.source_type}:{item.source_id}{item.case_key ? ` · 案例键 ${item.case_key}` : ''}{item.ticket_id ? ` · 工单 #${item.ticket_id}` : ' · 独立会话'}
           </Typography>
         </OperatorTechnicalDisclosure>
       </Box>
