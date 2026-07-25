@@ -24,6 +24,7 @@ from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
 from ..api.email import router as email_router
 from ..api.files import router as files_router
+from ..api.frontend_observability import router as frontend_observability_router
 from ..api.governance import router as governance_router
 from ..api.knowledge_items import router as knowledge_items_router
 from ..api.lite import router as lite_router
@@ -101,6 +102,7 @@ def register_api_routers(app: FastAPI) -> None:
         operator_queue_router,
         outbound_channels_router,
         auth_router,
+        frontend_observability_router,
         agent_control_router,
         agent_runtime_operations_router,
         channel_control_router,
