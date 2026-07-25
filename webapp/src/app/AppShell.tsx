@@ -22,13 +22,15 @@ import {
 import type { SelectChangeEvent } from '@mui/material/Select'
 import { useTheme } from '@mui/material/styles'
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import { operatorTimeZone } from '@/lib/format'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 import { channelPresentation } from '@/lib/supportStatus'
 import { AgentPresenceControl, AgentPresenceProvider } from './AgentPresenceControl'
 import { AppNavigation } from './AppNavigation'
 import { IncomingVoiceCallControl, IncomingVoiceCallProvider } from './IncomingVoiceCallControl'
+import { APP_ROUTE_TITLES } from './navigation'
 import type { AppRouteKey } from './navigation'
 
 function scopeLabel(scope: AuthorizedWorkspaceScope, duplicatePosition?: number) {
@@ -110,36 +112,34 @@ function AccountNavigationLink({
   onNavigate?: () => void
 }) {
   return (
-    <Link
+    <Box
+      component={Link}
       to="/account"
       aria-current={active ? 'page' : undefined}
       aria-label="账户设置"
       onClick={onNavigate}
-      style={{ color: 'inherit', textDecoration: 'none', width: expanded ? '100%' : undefined }}
+      sx={{
+        alignItems: 'center',
+        borderRadius: 1,
+        color: active ? 'primary.main' : 'text.secondary',
+        display: 'inline-flex',
+        gap: 0.75,
+        justifyContent: 'flex-start',
+        minHeight: 44,
+        outline: 'none',
+        px: expanded ? 1.5 : 1,
+        textDecoration: 'none',
+        width: expanded ? '100%' : 'auto',
+        '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+        '&:active': { bgcolor: 'action.selected' },
+        '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.dark', outlineOffset: 2 },
+      }}
     >
-      <Box
-        component="span"
-        sx={{
-          alignItems: 'center',
-          borderRadius: 1,
-          color: active ? 'primary.main' : 'text.secondary',
-          display: 'inline-flex',
-          gap: 0.75,
-          justifyContent: 'flex-start',
-          minHeight: expanded ? 44 : 40,
-          px: expanded ? 1.5 : 1,
-          width: expanded ? '100%' : 'auto',
-          '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
-          '&:active': { bgcolor: 'action.selected' },
-          '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
-        }}
-      >
-        <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
-        <Typography component="span" variant="button" sx={{ display: expanded ? 'inline' : { lg: 'none', xl: 'inline' } }}>
-          {expanded ? '账户设置' : '账户'}
-        </Typography>
-      </Box>
-    </Link>
+      <ManageAccountsRoundedIcon sx={{ fontSize: 20 }} aria-hidden="true" />
+      <Typography component="span" variant="button" sx={{ display: expanded ? 'inline' : { lg: 'none', xl: 'inline' } }}>
+        {expanded ? '账户设置' : '账户'}
+      </Typography>
+    </Box>
   )
 }
 
@@ -186,6 +186,11 @@ export function AppShell({
   const theme = useTheme()
   const desktopShell = useMediaQuery(theme.breakpoints.up('lg'), { noSsr: true })
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
+  const timeZone = operatorTimeZone()
+
+  useEffect(() => {
+    document.title = APP_ROUTE_TITLES[activeRoute]
+  }, [activeRoute])
 
   const logoutFromMobileNavigation = () => {
     setMobileNavigationOpen(false)
@@ -250,6 +255,9 @@ export function AppShell({
                   <AgentPresenceControl />
                   <IncomingVoiceCallControl />
                   <WorkScopeControl scopes={scopes} selectedScope={selectedScope} onScopeChange={onScopeChange} />
+                  <Typography variant="caption" color="text.secondary" title="页面中的时间按此时区显示" sx={{ display: { lg: 'none', xl: 'block' }, whiteSpace: 'nowrap' }}>
+                    {timeZone}
+                  </Typography>
                   <Avatar sx={{ width: 34, height: 34, bgcolor: 'secondary.main', fontSize: 12, fontWeight: 700 }} aria-hidden="true">{initials(userLabel)}</Avatar>
                   <Typography variant="body2" sx={{ color: 'text.secondary', display: { lg: 'none', xl: 'block' }, maxWidth: 140 }} noWrap>{userLabel}</Typography>
                   <AccountNavigationLink active={activeRoute === 'account'} />
@@ -282,6 +290,7 @@ export function AppShell({
                 <Box sx={{ minWidth: 0 }}>
                   <Typography translate="no" variant="subtitle1">Nexus OSR</Typography>
                   <Typography variant="caption" color="text.secondary" noWrap>{userLabel}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>显示时区：{timeZone}</Typography>
                 </Box>
               </Stack>
               <Divider />
