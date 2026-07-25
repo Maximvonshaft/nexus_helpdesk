@@ -337,7 +337,7 @@ test('workspace preserves historical scroll position and exposes a bounded new-m
   await page.goto('/workspace')
 
   const conversation = page.getByLabel('客户沟通')
-  const timeline = conversation.locator('[aria-live="polite"]')
+  const timeline = conversation.getByRole('log', { name: '客户沟通记录' })
   await expect(timeline).toBeVisible()
   await expect.poll(() => timeline.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true)
 
