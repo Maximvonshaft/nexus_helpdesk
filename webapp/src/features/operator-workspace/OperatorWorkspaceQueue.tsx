@@ -69,7 +69,7 @@ function QueueRow({ item, active, currentUserId, onSelect }: { item: UnifiedOper
     >
       <Stack spacing={0.75}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>{displayVerbatimText(item.display_label, '当前任务')}</Typography>
+          <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>{displayVerbatimText(item.display_label || item.case_key, '当前任务')}</Typography>
           {priority.tone === 'danger' || priority.tone === 'warning' ? <Chip color={operatorToneColor(priority.tone)} label={priority.label} size="small" /> : null}
         </Stack>
         {item.display_summary ? (
