@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -10,6 +11,13 @@ from ..services.observability import record_frontend_api_latency, record_web_vit
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/observability", tags=["frontend-observability"])
+
+_UUID_SEGMENT = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+_DYNAMIC_SEGMENT = re.compile(r"^(?:\d+|wc_[A-Za-z0-9_-]+|voice-[A-Za-z0-9_-]+)$")
+_HEX_SEGMENT = re.compile(r"^[0-9a-f]{16,64}$", re.IGNORECASE)
 
 
 class FrontendMetric(BaseModel):
@@ -29,6 +37,19 @@ class FrontendMetricBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metrics: list[FrontendMetric] = Field(min_length=1, max_length=50)
+
+
+def _normalized_metric_path(path: str) -> str:
+    segments = []
+    for segment in path.split("/"):
+        if not segment:
+            continue
+        decoded = segment.strip()
+        if _UUID_SEGMENT.fullmatch(decoded) or _DYNAMIC_SEGMENT.fullmatch(decoded) or _HEX_SEGMENT.fullmatch(decoded):
+            segments.append(":id")
+        else:
+            segments.append(decoded[:64])
+    return "/" + "/".join(segments)
 
 
 def _record_metric(metric: FrontendMetric) -> None:
@@ -56,7 +77,12 @@ def _record_metric(metric: FrontendMetric) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="frontend_metric_path_invalid",
         )
-    record_frontend_api_latency(metric.path, metric.method, metric.status, metric.duration_ms)
+    record_frontend_api_latency(
+        _normalized_metric_path(metric.path),
+        metric.method,
+        metric.status,
+        metric.duration_ms,
+    )
 
 
 @router.post("/frontend-metrics", status_code=status.HTTP_204_NO_CONTENT)
