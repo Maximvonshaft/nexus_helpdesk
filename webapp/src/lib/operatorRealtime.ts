@@ -28,7 +28,9 @@ export function useOperatorRealtime({
 }) {
   const [status, setStatus] = useState<OperatorRealtimeStatus>(enabled ? 'connecting' : 'disabled')
   const callbackRef = useRef(onEvent)
+  const lastEventIdRef = useRef(lastEventId)
   callbackRef.current = onEvent
+  lastEventIdRef.current = lastEventId
 
   useEffect(() => {
     if (!enabled || (!ticketId && !conversationId)) {
@@ -81,7 +83,7 @@ export function useOperatorRealtime({
           access_token: token,
           ticket_id: ticketId || undefined,
           conversation_id: conversationId || undefined,
-          last_event_id: Math.max(0, Number(lastEventId || 0)),
+          last_event_id: Math.max(0, Number(lastEventIdRef.current || 0)),
         }))
         heartbeatTimer = window.setInterval(() => {
           if (socket?.readyState === WebSocket.OPEN) {
@@ -123,7 +125,7 @@ export function useOperatorRealtime({
       stopTimers()
       socket?.close()
     }
-  }, [conversationId, enabled, lastEventId, ticketId])
+  }, [conversationId, enabled, ticketId])
 
   return status
 }
