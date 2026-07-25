@@ -55,7 +55,6 @@ export function AgentControlPage({ canManage }: { canManage: boolean }) {
     retry: false,
   })
 
-  useEffect(() => { document.title = '自动处理配置 · Nexus OSR' }, [])
   useEffect(() => {
     if (!tenantKey && snapshot.data?.tenant_key) setTenantKey(snapshot.data.tenant_key)
   }, [snapshot.data?.tenant_key, tenantKey])
