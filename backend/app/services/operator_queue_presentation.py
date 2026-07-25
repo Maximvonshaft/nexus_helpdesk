@@ -55,11 +55,7 @@ def project_unified_queue_display(db: Session, result: dict[str, Any]) -> dict[s
     conversations = {
         row.id: row
         for row in (
-            db.query(
-                WebchatConversation.id,
-                WebchatConversation.visitor_name,
-                WebchatConversation.last_intent,
-            )
+            db.query(WebchatConversation.id, WebchatConversation.visitor_name)
             .filter(WebchatConversation.id.in_(conversation_ids))
             .all()
             if conversation_ids
@@ -82,8 +78,7 @@ def project_unified_queue_display(db: Session, result: dict[str, Any]) -> dict[s
                 getattr(conversation, "visitor_name", None),
                 160,
             ) or "实时会话"
-            intent = _bounded_text(getattr(conversation, "last_intent", None), 160)
-            item["display_summary"] = intent or "客户实时会话"
+            item["display_summary"] = "客户实时会话"
         elif source_type == "dispatch":
             item["display_label"] = "内部任务"
             item["display_summary"] = "内部派发任务"
