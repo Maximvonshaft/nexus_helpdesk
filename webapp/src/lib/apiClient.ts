@@ -51,6 +51,15 @@ function buildApiUrl(path: string) {
   return `${API_BASE_URL}${normalizedPath}`
 }
 
+export function buildApiWebSocketUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  const httpUrl = new URL(buildApiUrl(normalizedPath), window.location.origin)
+  httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  httpUrl.search = ''
+  httpUrl.hash = ''
+  return httpUrl.toString()
+}
+
 function requestPathname(path: string) {
   if (!/^https?:\/\//i.test(path)) return path.startsWith('/') ? path : `/${path}`
   try {
