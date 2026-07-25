@@ -19,8 +19,14 @@ export function useOperatorRealtime({
   const [status, setStatus] = useState<OperatorRealtimeStatus>(enabled ? 'connecting' : 'disabled')
   const callbackRef = useRef(onEvent)
   const lastEventIdRef = useRef(lastEventId)
-  callbackRef.current = onEvent
-  lastEventIdRef.current = lastEventId
+
+  useEffect(() => {
+    callbackRef.current = onEvent
+  }, [onEvent])
+
+  useEffect(() => {
+    lastEventIdRef.current = lastEventId
+  }, [lastEventId])
 
   useEffect(() => {
     if (!enabled || (!ticketId && !conversationId)) {
