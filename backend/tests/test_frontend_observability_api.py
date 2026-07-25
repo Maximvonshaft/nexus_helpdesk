@@ -53,13 +53,21 @@ def test_frontend_metrics_are_authenticated_bounded_and_low_cardinality(client):
                     "status": "200",
                     "duration_ms": 84,
                 },
+                {
+                    "kind": "api_latency",
+                    "path": "/api/webchat/conversations/wc_AbCd123/messages",
+                    "method": "POST",
+                    "status": "202",
+                    "duration_ms": 120,
+                },
             ]
         },
     )
     assert response.status_code == 204, response.text
     assert observed == [
         ("web_vital", "LCP", "good", 2.1),
-        ("api_latency", "/api/tickets/42", "GET", "200", 84.0),
+        ("api_latency", "/api/tickets/:id", "GET", "200", 84.0),
+        ("api_latency", "/api/webchat/conversations/:id/messages", "POST", "202", 120.0),
     ]
 
 
