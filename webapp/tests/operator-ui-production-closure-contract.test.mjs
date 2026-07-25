@@ -23,7 +23,7 @@ test('free text remains verbatim and exact enum translation cannot mutate substr
 test('case spine and close command consume the one server closure receipt', () => {
   assert.match(casePane, /useTicketClosureReadiness/)
   assert.match(casePane, /receipt\.readiness\.notification_satisfied/)
-  assert.match(casePane, /receipt\.readiness\.closure_ready/)
+  assert.match(casePane, /const readiness = receipt\.readiness/)
   assert.match(casePane, /sourceClosed && readiness\.closure_ready/)
   assert.doesNotMatch(casePane, /item\.source_status === 'closed' \? '已安全关闭'/)
   assert.match(closure, /const latest = await supportApi\.ticketClosureReadiness/)
