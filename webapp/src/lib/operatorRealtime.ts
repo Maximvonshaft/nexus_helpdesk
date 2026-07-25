@@ -1,17 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { getSupportToken, normalizeApiBaseUrl } from '@/lib/apiClient'
+import { buildApiWebSocketUrl, getSupportToken } from '@/lib/apiClient'
 
 export type OperatorRealtimeStatus = 'disabled' | 'connecting' | 'live' | 'fallback'
-
-function operatorWebSocketUrl() {
-  const configured = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
-  const base = new URL(configured || window.location.origin, window.location.origin)
-  base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
-  base.pathname = '/api/webchat/ws'
-  base.search = ''
-  base.hash = ''
-  return base.toString()
-}
 
 export function useOperatorRealtime({
   enabled,
@@ -69,7 +59,7 @@ export function useOperatorRealtime({
       stopTimers()
       setStatus(failureCount ? 'fallback' : 'connecting')
       try {
-        socket = new WebSocket(operatorWebSocketUrl())
+        socket = new WebSocket(buildApiWebSocketUrl('/api/webchat/ws'))
       } catch {
         scheduleReconnect()
         return
