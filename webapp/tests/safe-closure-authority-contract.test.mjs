@@ -4,13 +4,16 @@ import test from 'node:test'
 
 const closure = fs.readFileSync(new URL('../src/features/operator-workspace/OperatorWorkspaceClosure.tsx', import.meta.url), 'utf8')
 const casePane = fs.readFileSync(new URL('../src/features/operator-workspace/OperatorWorkspaceCase.tsx', import.meta.url), 'utf8')
+const hook = fs.readFileSync(new URL('../src/features/operator-workspace/useTicketClosureReadiness.ts', import.meta.url), 'utf8')
 const api = fs.readFileSync(new URL('../src/lib/supportApi.ts', import.meta.url), 'utf8')
 
-test('workspace consumes the canonical server closure receipt', () => {
+test('workspace consumes the one canonical server closure receipt', () => {
+  assert.match(casePane, /useTicketClosureReadiness/)
   assert.match(casePane, /<OperatorWorkspaceClosure/)
-  assert.match(closure, /supportApi\.ticketClosureReadiness/)
-  assert.match(closure, /readiness\.closure_ready/)
+  assert.match(hook, /supportApi\.ticketClosureReadiness/)
+  assert.match(casePane, /readiness\.closure_ready/)
   assert.match(closure, /latest\.receipt_sha256/)
+  assert.doesNotMatch(casePane, /item\.source_status === 'closed' \? '已安全关闭'/)
   assert.doesNotMatch(closure, /resolution_category|ticket\.status\s*===\s*['"]resolved['"]/)
 })
 
@@ -26,4 +29,5 @@ test('operator cannot close by bypassing a stale receipt', () => {
   assert.match(closure, /const latest = await supportApi\.ticketClosureReadiness/)
   assert.match(closure, /if \(!latest\.readiness\.closure_ready\)/)
   assert.match(closure, /supportApi\.closeTicket/)
+  assert.match(closure, /确认安全关闭工单/)
 })
