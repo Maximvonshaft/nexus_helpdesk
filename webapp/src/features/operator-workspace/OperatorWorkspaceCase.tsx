@@ -19,9 +19,11 @@ import {
   sourceStatusPresentation,
 } from '@/lib/operatorWorkspacePresentation'
 import type { SupportMemoryLedger } from '@/lib/types'
-import { formatDateTime, sanitizeDisplayText, stringValue } from '@/lib/format'
+import type { TicketClosureReceipt } from '@/lib/ticketClosureTypes'
+import { displayVerbatimText, formatDateTime, sanitizeDisplayText, stringValue } from '@/lib/format'
 import { OperatorWorkspaceClosure } from './OperatorWorkspaceClosure'
 import { OperatorWorkspaceConversation } from './OperatorWorkspaceConversation'
+import { useTicketClosureReadiness } from './useTicketClosureReadiness'
 
 function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; currentUserId?: number }) {
   const source = queueSourcePresentation(item.source_type)
@@ -37,7 +39,9 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
         spacing={2}
         sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between' }}
       >
-        <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{item.case_key || item.queue_id}</Typography>
+        <Typography component="h1" variant="h1" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+          {item.case_key || '当前任务'}
+        </Typography>
         <Stack spacing={0.75} sx={{ minWidth: { sm: 220 } }}>
           <OperatorStatusLine presentation={status} />
           <OperatorStatusLine presentation={owner} />
@@ -57,63 +61,119 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
   )
 }
 
+type SpineTone = 'default' | 'success' | 'warning' | 'danger'
+
+type SpineStage = {
+  label: string
+  value: string
+  tone: SpineTone
+}
+
+function ticketClosureStage(receipt?: TicketClosureReceipt, pending = false, error?: unknown): SpineStage {
+  if (pending) return { label: '结案状态', value: '正在核对服务器凭证', tone: 'default' }
+  if (error || !receipt) return { label: '结案状态', value: '服务器关闭状态不可用', tone: 'danger' }
+  const readiness = receipt.readiness
+  const sourceClosed = receipt.ticket_status.toLowerCase() === 'closed'
+  const repairRequired = readiness.blocked_reasons.includes('repair_required')
+  if (sourceClosed && readiness.closure_ready) return { label: '结案状态', value: '已安全关闭', tone: 'success' }
+  if (sourceClosed) return { label: '结案状态', value: '来源已关闭，安全关闭未确认', tone: 'danger' }
+  if (repairRequired) return { label: '结案状态', value: '需要修复失败结果', tone: 'danger' }
+  if (readiness.closure_ready) return { label: '结案状态', value: '可以安全关闭', tone: 'success' }
+  if (!receipt.evidence.observation_elapsed) return { label: '结案状态', value: '观察期或其他条件未满足', tone: 'warning' }
+  return { label: '结案状态', value: '关闭条件尚未满足', tone: 'warning' }
+}
+
+function serverOutcomeStage(receipt?: TicketClosureReceipt, pending = false, error?: unknown): SpineStage {
+  if (pending) return { label: '操作结果', value: '正在核对服务器结果', tone: 'default' }
+  if (error || !receipt) return { label: '操作结果', value: '服务器结果不可用', tone: 'danger' }
+  if (receipt.readiness.blocked_reasons.includes('repair_required')) {
+    return { label: '操作结果', value: '存在失败结果，需要修复', tone: 'danger' }
+  }
+  if (receipt.readiness.missing_outcome_levels.length) {
+    return {
+      label: '操作结果',
+      value: `仍缺 ${receipt.readiness.missing_outcome_levels.length} 项业务结果`,
+      tone: 'warning',
+    }
+  }
+  return { label: '操作结果', value: '关闭所需结果已满足', tone: 'success' }
+}
+
+function serverNotificationStage(receipt?: TicketClosureReceipt, pending = false, error?: unknown): SpineStage {
+  if (pending) return { label: '客户通知', value: '正在核对通知凭证', tone: 'default' }
+  if (error || !receipt) return { label: '客户通知', value: '通知状态不可用', tone: 'danger' }
+  return receipt.readiness.notification_satisfied
+    ? { label: '客户通知', value: '通知要求已满足', tone: 'success' }
+    : { label: '客户通知', value: '通知要求尚未满足', tone: 'warning' }
+}
+
 function CaseSpine({
   item,
   memory,
   thread,
+  closureReceipt,
+  closurePending,
+  closureError,
 }: {
   item: UnifiedOperatorQueueItem
   memory: SupportMemoryLedger | null
   thread: OperatorWorkspaceThread | null
+  closureReceipt?: TicketClosureReceipt
+  closurePending: boolean
+  closureError: unknown
 }) {
   if (!item.ticket_id) {
     const handoffStatus = thread?.handoff?.status || item.source_status
-    const stages = [
-      ['范围', `${item.country_code} · ${item.channel_key}`, true],
-      ['会话', thread?.status === 'closed' ? '已结束' : '进行中', Boolean(thread)],
-      ['AI', thread?.ai_suspended ? '已暂停' : thread?.ai_status || '未处理', Boolean(thread)],
-      ['人工转接', handoffStatus === 'accepted' ? '人工处理中' : handoffStatus === 'requested' ? '等待人工' : sanitizeDisplayText(handoffStatus), Boolean(handoffStatus)],
-      ['工单', '未创建', false],
-      ['会话结果', thread?.outcome ? sanitizeDisplayText(thread.outcome) : '尚未结束', Boolean(thread?.outcome)],
-    ] as const
-    return (
-      <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label="会话进度">
-        <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}><Typography variant="subtitle2">会话进度</Typography></Box>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(6, minmax(0, 1fr))' } }}>
-          {stages.map(([label, value, available], index) => (
-            <Box key={label} sx={{ borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 }, borderColor: 'divider', borderRight: { xl: index === stages.length - 1 ? 0 : 1 }, minWidth: 0, p: 1.5 }}>
-              <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography variant="caption" color="text.secondary" sx={{ fontWeight: 650 }}>{label}</Typography></Stack>
-              <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{value}</Typography>
-            </Box>
-          ))}
-        </Box>
-      </Paper>
-    )
+    const stages: SpineStage[] = [
+      { label: '范围', value: `${item.country_code} · ${item.channel_key}`, tone: 'default' },
+      { label: '会话', value: thread?.status === 'closed' ? '已结束' : '进行中', tone: thread ? 'default' : 'warning' },
+      { label: '自动处理', value: thread?.ai_suspended ? '已暂停' : sanitizeDisplayText(thread?.ai_status || '未处理'), tone: thread?.ai_suspended ? 'warning' : 'default' },
+      { label: '人工转接', value: handoffStatus === 'accepted' ? '人工处理中' : handoffStatus === 'requested' ? '等待人工' : sanitizeDisplayText(handoffStatus), tone: handoffStatus === 'requested' ? 'warning' : 'default' },
+      { label: '工单', value: '未创建', tone: 'default' },
+      { label: '会话结果', value: thread?.outcome ? sanitizeDisplayText(thread.outcome) : '尚未结束', tone: thread?.outcome ? 'default' : 'warning' },
+    ]
+    return <SpineSurface label="会话进度" stages={stages} />
   }
 
   const timeline = memory?.evidence_timeline ?? []
-  const latestByClass = (value: ReturnType<typeof evidencePresentation>['evidenceClass']) => [...timeline].reverse().find((entry) => evidencePresentation(entry).evidenceClass === value)
-  const decision = latestByClass('human')
-  const result = latestByClass('outcome')
-  const notification = latestByClass('notification')
+  const latestHumanDecision = [...timeline].reverse().find((entry) => evidencePresentation(entry).evidenceClass === 'human')
   const nextAction = memory?.required_action || memory?.next_actions?.[0]?.label || ''
-  const stages = [
-    ['范围', `${item.country_code} · ${item.channel_key}`, true],
-    ['已知信息', timeline.length ? `${timeline.length} 条` : '未提供', timeline.length > 0],
-    ['处理决定', decision ? sanitizeDisplayText(decision.label || decision.kind) : '未提供', Boolean(decision)],
-    ['下一步', nextAction ? sanitizeDisplayText(nextAction) : '未提供', Boolean(nextAction)],
-    ['操作结果', result ? sanitizeDisplayText(result.label || result.kind) : '未提供', Boolean(result)],
-    ['客户通知', notification ? sanitizeDisplayText(notification.label || notification.kind) : '未提供', Boolean(notification)],
-    ['结案状态', item.source_status === 'closed' ? '已安全关闭' : '待服务器核验', item.source_status === 'closed'],
-  ] as const
+  const stages: SpineStage[] = [
+    { label: '范围', value: `${item.country_code} · ${item.channel_key}`, tone: 'default' },
+    { label: '已知信息', value: timeline.length ? `${timeline.length} 条可查看记录` : '尚无结构化信息', tone: timeline.length ? 'default' : 'warning' },
+    {
+      label: '处理决定',
+      value: latestHumanDecision ? sanitizeDisplayText(latestHumanDecision.label || latestHumanDecision.kind) : '尚未记录人工决定',
+      tone: latestHumanDecision ? 'default' : 'warning',
+    },
+    { label: '下一步', value: nextAction ? sanitizeDisplayText(nextAction) : '等待服务器给出下一步', tone: nextAction ? 'default' : 'warning' },
+    serverOutcomeStage(closureReceipt, closurePending, closureError),
+    serverNotificationStage(closureReceipt, closurePending, closureError),
+    ticketClosureStage(closureReceipt, closurePending, closureError),
+  ]
+  return <SpineSurface label="处理进度" stages={stages} />
+}
+
+function SpineSurface({ label, stages }: { label: string; stages: SpineStage[] }) {
   return (
-    <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label="处理进度">
-      <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}><Typography variant="subtitle2">处理进度</Typography></Box>
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(7, minmax(0, 1fr))' } }}>
-        {stages.map(([label, value, available], index) => (
-          <Box key={label} sx={{ borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 }, borderColor: 'divider', borderRight: { xl: index === stages.length - 1 ? 0 : 1 }, minWidth: 0, p: 1.5 }}>
-            <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><Box aria-hidden="true" sx={{ bgcolor: available ? 'primary.main' : 'divider', borderRadius: '50%', height: 8, width: 8 }} /><Typography variant="caption" color="text.secondary" sx={{ fontWeight: 650 }}>{label}</Typography></Stack>
-            <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{value}</Typography>
+    <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label={label}>
+      <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}>
+        <Typography variant="subtitle2">{label}</Typography>
+      </Box>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: `repeat(${stages.length}, minmax(0, 1fr))` } }}>
+        {stages.map((stage, index) => (
+          <Box
+            key={stage.label}
+            sx={{
+              borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 },
+              borderColor: 'divider',
+              borderRight: { xl: index === stages.length - 1 ? 0 : 1 },
+              minWidth: 0,
+              p: 1.5,
+            }}
+          >
+            <OperatorStatusLine presentation={{ label: stage.label, tone: stage.tone }} compact />
+            <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{stage.value}</Typography>
           </Box>
         ))}
       </Box>
@@ -132,7 +192,11 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
         {timeline.map((entry, index) => {
           const presentation = evidencePresentation(entry)
           return (
-            <Box component="article" key={`${entry.kind}-${entry.source_id || index}`} sx={{ py: 1.75 }}>
+            <Box
+              component="article"
+              key={`${entry.kind}-${entry.source_id || index}`}
+              sx={{ py: 1.75, contentVisibility: 'auto', containIntrinsicSize: '120px' }}
+            >
               <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <OperatorStatusLine presentation={presentation} />
                 {entry.created_at ? <Typography component="time" variant="caption" color="text.disabled">{formatDateTime(entry.created_at)}</Typography> : null}
@@ -141,7 +205,9 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
               {entry.summary && Object.keys(entry.summary).length ? (
                 <Box sx={{ mt: 1.25 }}>
                   <OperatorTechnicalDisclosure title="信息摘要">
-                    <Box component="pre" sx={{ m: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>{JSON.stringify(entry.summary, null, 2)}</Box>
+                    <Box component="pre" sx={{ m: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                      {JSON.stringify(entry.summary, null, 2)}
+                    </Box>
                   </OperatorTechnicalDisclosure>
                 </Box>
               ) : null}
@@ -159,7 +225,7 @@ function SourceSummary({ data, item }: { data: Record<string, unknown>; item: Un
       <OperatorSectionHeading title="任务摘要" />
       <Box sx={{ mt: 2 }}>
         <OperatorFactGrid columns={3} facts={[
-          ['标题', sanitizeDisplayText(stringValue(data.title) || '未提供')],
+          ['标题', displayVerbatimText(stringValue(data.title), '未提供')],
           ['状态', sanitizeDisplayText(stringValue(data.status) || item.source_status)],
           ['优先级', sanitizeDisplayText(stringValue(data.priority) || item.priority)],
         ]} />
@@ -205,19 +271,36 @@ export function WorkspaceCasePane({
 }) {
   const caseVisible = mobileView === 'case'
   const conversationVisible = mobileView === 'conversation'
+  const closure = useTicketClosureReadiness(item?.ticket_id)
+
   return (
     <Paper id="workspace-case" component="section" aria-label="当前任务" tabIndex={-1} variant="outlined" sx={{ display: { xs: caseVisible || conversationVisible ? 'block' : 'none', lg: 'block' }, minWidth: 0, p: { xs: 2, md: 2.5 } }}>
       {item ? (
         <>
           <Box sx={{ display: { xs: caseVisible ? 'block' : 'none', lg: 'block' } }}>
             <CaseHeader item={item} currentUserId={currentUserId} />
-            <CaseSpine item={item} memory={memory} thread={thread} />
+            <CaseSpine
+              item={item}
+              memory={memory}
+              thread={thread}
+              closureReceipt={closure.data}
+              closurePending={closure.isPending}
+              closureError={closure.error}
+            />
             {preserveMissingSelection ? <Alert severity="warning" variant="outlined" sx={{ mb: 2.5 }}><AlertTitle>任务已离开待处理列表</AlertTitle>回复草稿已保留，操作已暂停。</Alert> : null}
             {sourceRecord && !thread ? <SourceSummary data={sourceRecord} item={item} /> : null}
             <EvidencePanel memory={memory} />
             {item.ticket_id ? (
               <Box component="section" aria-label="安全关闭" sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: 'divider' }}>
-                <OperatorWorkspaceClosure ticketId={item.ticket_id} sourceStatus={item.source_status} onRefresh={onRefresh} />
+                <OperatorWorkspaceClosure
+                  ticketId={item.ticket_id}
+                  receipt={closure.data}
+                  isPending={closure.isPending}
+                  isFetching={closure.isFetching}
+                  queryError={closure.error}
+                  onRefetch={async () => closure.refetch()}
+                  onRefresh={onRefresh}
+                />
               </Box>
             ) : null}
           </Box>
