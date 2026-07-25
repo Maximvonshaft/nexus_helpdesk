@@ -41,7 +41,7 @@ function CaseHeader({ item, currentUserId }: { item: UnifiedOperatorQueueItem; c
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography component="h1" variant="h1" sx={{ overflowWrap: 'anywhere' }}>
-            {displayVerbatimText(item.display_label, '当前任务')}
+            {displayVerbatimText(item.display_label || item.case_key, '当前任务')}
           </Typography>
           {item.display_summary ? (
             <Typography variant="body1" color="text.secondary" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>
