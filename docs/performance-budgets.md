@@ -8,12 +8,14 @@ This document defines the production runtime, infrastructure, observability, wor
 - Admin list endpoints must use bounded pagination or explicit limits.
 - Long-poll / polling endpoints must have bounded wait time and must not create unbounded write amplification.
 - Database query timing instrumentation records low-cardinality SQL categories only. SQL parameters and customer content must never be logged or used as labels.
+- Frontend API latency telemetry records normalized paths only. Query strings, fragments, customer identifiers and payload data are rejected.
 
 ## WebChat budgets
 
 - Public message polling must use throttled `last_seen_at` writes.
 - WebChat events polling must use bounded `wait_ms`, stable `after_id`, `limit + 1`, and `has_more` semantics.
 - Event write paths that are not the source of truth should be best-effort and must not break primary ticket/conversation state transitions.
+- The operator console uses WebSocket event delivery as the primary supported realtime path and bounded HTTP polling only as a fail-safe fallback.
 
 ## Provider adapter budgets
 
@@ -36,7 +38,31 @@ Default CI budgets:
 - Largest single JavaScript chunk gzip: 180 KB.
 - First-screen JavaScript gzip: 300 KB.
 
-`npm run size-report` enforces these budgets after `npm run build`.
+`npm run verify` builds the exact frontend and then executes `npm run size-report`; bundle limits are part of the required frontend gate.
+
+## Operator Web Vitals budgets
+
+Production RUM uses the authenticated, bounded `/api/observability/frontend-metrics` endpoint and the existing Prometheus metrics authority. It contains no customer content, user identity, URL query string or high-cardinality resource identifier.
+
+Required p75 targets:
+
+- LCP: at most 2.5 seconds;
+- INP: at most 0.2 seconds;
+- CLS: at most 0.1.
+
+LCP and INP are stored in seconds. CLS is stored as its unitless score. `good`, `needs-improvement` and `poor` ratings follow the same thresholds used by the frontend observer.
+
+## Representative-volume browser budgets
+
+Canonical browser evidence must include:
+
+- at least 500 queue records delivered through bounded cursor pages;
+- at least 300 conversation messages with bounded historical loading;
+- keyboard selection and reply composition while background refresh is active;
+- slow initial responses and failed background refresh with last server-confirmed information preserved;
+- no root horizontal overflow at 375, 768, 1024, 1280, 1366 and 1440 pixel widths;
+- 200% text enlargement without hiding the current primary action;
+- deterministic screenshot evidence for normal, loading, empty, degraded, conflict and repair-required states.
 
 ## Staging verification plan
 
@@ -44,8 +70,8 @@ Default CI budgets:
 2. Run `docker compose -f deploy/docker-compose.controlled.yml config`.
 3. Run `bash -n scripts/smoke/runtime_performance_baseline.sh`.
 4. Run `python scripts/smoke/worker_daemon_readiness_probe.py --help`.
-5. Deploy to staging only after all CI workflows are green.
-6. Verify `/healthz`, `/readyz`, `/metrics`, worker progress freshness, and provider adapter health in staging.
+5. Deploy to staging only after all canonical gates are green.
+6. Verify `/healthz`, `/readyz`, `/metrics`, worker progress freshness, frontend RUM, and provider adapter health in staging.
 
 ## Rollback plan
 
@@ -53,7 +79,7 @@ Default CI budgets:
 - Runtime rollback: revert this PR or roll back the image tag. Restore the previous Uvicorn command only as emergency runtime rollback.
 - Nginx rollback: revert `deploy/nginx/default.conf` if routing, cache, or header regressions appear.
 - Database rollback: prefer code rollback first. Destructive persistence retirement is reversible only through its archive-backed Alembic downgrade and a verified backup.
-- Frontend rollback: revert Vite chunking and API timeout/request-id changes independently if route loading or API behavior regresses.
+- Frontend rollback: revert route splitting, telemetry initialization and API timeout/request-id changes independently if route loading or API behavior regresses.
 
 ## Safety boundaries
 
@@ -61,4 +87,4 @@ Default CI budgets:
 - No production `.env` mutation.
 - No production restart.
 - No production load or pressure testing.
-- No token, secret, cookie, or customer PII exposure in logs, metrics, or artifacts.
+- No token, secret, cookie, URL query, customer PII or free-text content in logs, metrics, or artifacts.
