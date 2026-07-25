@@ -131,21 +131,22 @@ test('assigned offer is visible globally and rejection rotates without accepting
   const state = await mockIncomingVoice(page)
   await page.goto('/workspace')
 
-  await expect(page.getByRole('heading', { name: '新的语音来电' })).toBeVisible()
-  await expect(page.getByText('Montenegro Caller')).toBeVisible()
-  await expect(page.getByText('当前为实时会话，无需先创建工单。')).toBeVisible()
+  const dialog = page.getByRole('dialog', { name: '新的语音来电' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Montenegro Caller')).toBeVisible()
+  await expect(dialog.getByText('当前为实时会话，无需先创建工单。')).toBeVisible()
 
-  await page.getByRole('button', { name: '暂不接听' }).click()
+  await dialog.getByRole('button', { name: '暂不接听' }).click()
   await expect.poll(state.rejectCount).toBe(1)
   await expect.poll(state.acceptCount).toBe(0)
-  await expect(page.getByRole('heading', { name: '新的语音来电' })).toHaveCount(0)
+  await expect(dialog).toHaveCount(0)
 })
 
 test('accepting an offer enters the sole WebCall route and calls accept once', async ({ page }) => {
   const state = await mockIncomingVoice(page)
   await page.goto('/workspace')
 
-  await page.getByRole('button', { name: '接听通话' }).click()
+  await page.getByRole('dialog', { name: '新的语音来电' }).getByRole('button', { name: '接听通话' }).click()
   await expect(page).toHaveURL(/\/webcall\/wv_offer_1$/)
   await expect.poll(state.acceptCount).toBe(1)
   await expect.poll(state.rejectCount).toBe(0)
