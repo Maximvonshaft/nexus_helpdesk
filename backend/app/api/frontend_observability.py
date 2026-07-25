@@ -64,7 +64,11 @@ def _record_metric(metric: FrontendMetric) -> None:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="frontend_cls_value_invalid",
             )
-        record_web_vital(metric.name, metric.rating, metric.value)
+        # Browser Performance APIs report LCP and INP in milliseconds. The
+        # canonical histogram uses seconds so its shared buckets remain useful
+        # for LCP/INP while preserving CLS as its unitless score.
+        normalized_value = metric.value / 1000 if metric.name in {"LCP", "INP"} else metric.value
+        record_web_vital(metric.name, metric.rating, normalized_value)
         return
 
     if metric.path is None or metric.method is None or metric.status is None or metric.duration_ms is None:
