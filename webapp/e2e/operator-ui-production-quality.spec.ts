@@ -9,6 +9,8 @@ function queueItem(index = 42) {
   return {
     queue_id: `ticket:${index}`,
     case_key: `case-${index}`,
+    display_label: `T-${index}`,
+    display_summary: `Customer delivery inquiry ${index}`,
     source_type: 'ticket',
     source_id: index,
     ticket_id: index,
@@ -153,7 +155,7 @@ test('failed background refresh preserves the last confirmed queue', async ({ pa
   await page.route('**/api/tickets/42/closure-readiness', (route) => json(route, closureReceipt()))
   await page.route('**/api/tickets/42', (route) => json(route, { id: 42, title: 'Existing safe information', status: 'in_progress', priority: 'medium' }))
   await page.goto('/workspace')
-  const queueRow = page.getByRole('button', { name: /case-42/ })
+  const queueRow = page.getByRole('button', { name: /T-42/ })
   await expect(queueRow).toBeVisible()
   await page.clock.fastForward(16_000)
   await expect(page.getByText(/待处理列表刷新失败，当前显示上次服务器确认的信息/)).toBeVisible()
@@ -208,5 +210,5 @@ test('five hundred queue rows remain operable through bounded cursor pages', asy
   await expect(rows).toHaveCount(500)
   await rows.nth(499).click()
   await expect(rows.nth(499)).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('heading', { level: 1, name: 'case-500' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: 'T-500' })).toBeVisible()
 })
