@@ -83,23 +83,25 @@ export function IncomingVoiceCallProvider({
     retry: false,
   })
   const current = offers.data?.items[0] ?? null
+  const currentVoiceSessionId = current?.voice_session_id ?? null
+  const currentVisitorLabel = current?.visitor_label || '电话客户'
+  const refetchOffers = offers.refetch
   const seconds = useMemo(() => (current ? remainingSeconds(current, now) : 0), [current, now])
 
   useEffect(() => {
     announcedThresholds.current = new Set()
-    if (current) setAnnouncement(`新的语音来电，客户 ${current.visitor_label || '电话客户'}。`)
-    else setAnnouncement('')
-  }, [current?.voice_session_id])
+    setAnnouncement(currentVoiceSessionId ? `新的语音来电，客户 ${currentVisitorLabel}。` : '')
+  }, [currentVisitorLabel, currentVoiceSessionId])
 
   useEffect(() => {
-    if (!current) return undefined
+    if (!currentVoiceSessionId) return undefined
     setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
-  }, [current])
+  }, [currentVoiceSessionId])
 
   useEffect(() => {
-    if (!current) return
+    if (!currentVoiceSessionId) return
     for (const threshold of [10, 5, 0]) {
       if (seconds !== threshold || announcedThresholds.current.has(threshold)) continue
       announcedThresholds.current.add(threshold)
@@ -107,8 +109,8 @@ export function IncomingVoiceCallProvider({
         ? `语音来电将在 ${threshold} 秒后轮转。`
         : '当前语音来电已失效，正在检查下一通来电。')
     }
-    if (seconds <= 0) void offers.refetch()
-  }, [current, offers, seconds])
+    if (seconds <= 0) void refetchOffers()
+  }, [currentVoiceSessionId, refetchOffers, seconds])
 
   const reject = useMutation({
     mutationFn: () => {
@@ -169,7 +171,7 @@ export function IncomingVoiceCallProvider({
               <Stack spacing={1.25}>
                 <Box>
                   <Typography variant="caption" color="text.secondary">客户</Typography>
-                  <Typography variant="subtitle1">{current.visitor_label || '电话客户'}</Typography>
+                  <Typography variant="subtitle1">{currentVisitorLabel}</Typography>
                 </Box>
                 {current.ticket_no || current.ticket_title ? (
                   <Box>
