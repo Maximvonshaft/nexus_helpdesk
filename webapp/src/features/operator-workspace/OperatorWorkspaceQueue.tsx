@@ -16,7 +16,7 @@ import {
   ownerPresentation, priorityPresentation, queueSourcePresentation, retryPresentation,
   slaPresentation, sourceStatusPresentation,
 } from '@/lib/operatorWorkspacePresentation'
-import { formatDateTime } from '@/lib/format'
+import { displayVerbatimText, formatDateTime } from '@/lib/format'
 
 export const workspaceMobileViews: Array<{ value: WorkspaceMobileView; label: string }> = [
   { value: 'queue', label: '待处理' },
@@ -62,16 +62,21 @@ function QueueRow({ item, active, currentUserId, onSelect }: { item: UnifiedOper
       onClick={onSelect}
       sx={{
         alignItems: 'stretch', borderBottom: 1, borderColor: 'divider', display: 'block', px: 1.5, py: 1.5,
-        textAlign: 'left', width: '100%', contentVisibility: 'auto', containIntrinsicSize: '126px',
+        textAlign: 'left', width: '100%', contentVisibility: 'auto', containIntrinsicSize: '144px',
         '&.Mui-selected': { bgcolor: 'action.selected', boxShadow: (theme) => `inset 3px 0 0 ${theme.palette.primary.main}` },
         '&.Mui-selected:hover': { bgcolor: 'action.selected' },
       }}
     >
       <Stack spacing={0.75}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>{item.case_key || '当前任务'}</Typography>
+          <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>{displayVerbatimText(item.display_label, '当前任务')}</Typography>
           {priority.tone === 'danger' || priority.tone === 'warning' ? <Chip color={operatorToneColor(priority.tone)} label={priority.label} size="small" /> : null}
         </Stack>
+        {item.display_summary ? (
+          <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+            {displayVerbatimText(item.display_summary)}
+          </Typography>
+        ) : null}
         <Typography variant="caption" color="text.secondary">{source.label} · {item.country_code} · {item.channel_key}{item.reopened ? ' · 已重新打开' : ''}</Typography>
         <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap' }}><OperatorStatusLine presentation={owner} compact /><OperatorStatusLine presentation={sla} compact /></Stack>
         {item.source_type === 'dispatch' ? <Typography variant="caption" color="text.secondary">{retry.label}</Typography> : null}
