@@ -4,6 +4,11 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   MenuItem,
   Paper,
@@ -21,6 +26,7 @@ import {
 } from '@/app/OperatorPresentation'
 import { agentRoutingApi } from '@/lib/agentRoutingApi'
 import {
+  displayVerbatimText,
   finiteNumber,
   recordValue,
   sanitizeDisplayText,
@@ -48,6 +54,10 @@ const CONVERSATION_OUTCOMES: Array<{ value: ConversationOutcome; label: string }
   { value: 'customer_abandoned', label: '客户离开' },
   { value: 'unresolved', label: '未解决结束' },
 ]
+
+function conversationOutcomeLabel(value: ConversationOutcome | '') {
+  return CONVERSATION_OUTCOMES.find((option) => option.value === value)?.label || '尚未选择'
+}
 
 function actionDisabledReason({
   action,
@@ -98,8 +108,9 @@ export function OperatorWorkspaceActions({
   const [whatsappPhone, setWhatsappPhone] = useState('')
   const [reasonCode, setReasonCode] = useState('CC01')
   const [cancelPreview, setCancelPreview] = useState<CancelPreviewBinding | null>(null)
-  const [conversationOutcome, setConversationOutcome] = useState<ConversationOutcome>('human_resolved')
+  const [conversationOutcome, setConversationOutcome] = useState<ConversationOutcome | ''>('')
   const [conversationCloseNote, setConversationCloseNote] = useState('')
+  const [conversationCloseConfirmOpen, setConversationCloseConfirmOpen] = useState(false)
 
   useEffect(() => {
     setAction('none')
@@ -110,8 +121,9 @@ export function OperatorWorkspaceActions({
     setDescription('')
     setReasonCode('CC01')
     setCancelPreview(null)
-    setConversationOutcome('human_resolved')
+    setConversationOutcome('')
     setConversationCloseNote('')
+    setConversationCloseConfirmOpen(false)
   }, [item.queue_id, item.country_code, thread?.visitor?.phone])
 
   const invalidateCancelPreview = () => setCancelPreview(null)
@@ -137,6 +149,10 @@ export function OperatorWorkspaceActions({
   const conversationCloseMutation = useMutation({
     mutationFn: async () => {
       if (item.ticket_id || !thread?.conversation_id) throw new Error('当前不是可结束的独立会话')
+      if (!conversationOutcome) throw new Error('请选择会话结果')
+      if (conversationOutcome === 'human_resolved' && conversationCloseNote.trim().length < 10) {
+        throw new Error('人工在线解决需要填写至少 10 个字的处理说明')
+      }
       return agentRoutingApi.closeConversation(
         thread.conversation_id,
         conversationOutcome,
@@ -144,6 +160,8 @@ export function OperatorWorkspaceActions({
       )
     },
     onSuccess: async () => {
+      setConversationCloseConfirmOpen(false)
+      setConversationOutcome('')
       setConversationCloseNote('')
       await onRefresh()
     },
@@ -215,6 +233,11 @@ export function OperatorWorkspaceActions({
   })
 
   const disabledReason = actionDisabledReason({ action, item, capabilities, waybill, caller, description, whatsappPhone })
+  const conversationCloseDisabledReason = !conversationOutcome
+    ? '请选择会话结果'
+    : conversationOutcome === 'human_resolved' && conversationCloseNote.trim().length < 10
+      ? '人工在线解决需要填写至少 10 个字的处理说明'
+      : ''
   const busy = handoffMutation.isPending || conversationCloseMutation.isPending || actionMutation.isPending || cancelPreviewMutation.isPending || cancelConfirmMutation.isPending
   const actionError = handoffMutation.error || conversationCloseMutation.error || actionMutation.error || cancelPreviewMutation.error || cancelConfirmMutation.error
   const envelope = actionMutation.data || cancelConfirmMutation.data
@@ -258,7 +281,7 @@ export function OperatorWorkspaceActions({
               {handoff?.can_release ? <Button color="inherit" disabled={!canReleaseHandoff || handoffMutation.isPending} onClick={() => handoffMutation.mutate('release')}>转回待处理</Button> : null}
               {handoff?.can_resume_ai ? <Button color="inherit" disabled={!canResumeAi || handoffMutation.isPending} onClick={() => handoffMutation.mutate('resume')}>恢复自动回复</Button> : null}
             </Stack>
-            {handoff?.reason_text ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>转接原因：{sanitizeDisplayText(handoff.reason_text)}</Typography> : null}
+            {handoff?.reason_text ? <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>转接原因：{displayVerbatimText(handoff.reason_text)}</Typography> : null}
           </Box>
         ) : null}
 
@@ -266,33 +289,37 @@ export function OperatorWorkspaceActions({
           <Box>
             <Typography component="h3" variant="subtitle1">结束当前会话</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              结束会话会释放一个接线名额。会话结果与工单结案相互独立。
+              结束会话会释放一个接线名额。会话结果与工单结案相互独立，系统不会把结束会话自动解释为业务完成。
             </Typography>
             <Stack spacing={1.25} sx={{ mt: 1.25 }}>
               <TextField
                 select
+                required
                 label="会话结果"
                 value={conversationOutcome}
                 onChange={(event) => setConversationOutcome(event.target.value as ConversationOutcome)}
               >
+                <MenuItem value="" disabled>请选择结果</MenuItem>
                 {CONVERSATION_OUTCOMES.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
               </TextField>
               <TextField
                 label="处理说明"
+                required={conversationOutcome === 'human_resolved'}
+                helperText={conversationOutcome === 'human_resolved' ? '人工在线解决必须记录解决依据，至少 10 个字。' : '说明会写入会话结果记录。'}
                 value={conversationCloseNote}
                 onChange={(event) => setConversationCloseNote(event.target.value)}
                 multiline
                 minRows={2}
                 slotProps={{ htmlInput: { maxLength: 2000 } }}
               />
+              {conversationCloseDisabledReason ? <Alert severity="info" variant="outlined">{conversationCloseDisabledReason}</Alert> : null}
               <Button
-                color={conversationOutcome === 'unresolved' ? 'warning' : 'success'}
+                color={conversationOutcome === 'unresolved' ? 'warning' : 'primary'}
                 variant="contained"
-                disabled={busy}
-                startIcon={conversationCloseMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
-                onClick={() => conversationCloseMutation.mutate()}
+                disabled={Boolean(conversationCloseDisabledReason) || busy}
+                onClick={() => setConversationCloseConfirmOpen(true)}
               >
-                结束会话并释放名额
+                核对结束信息
               </Button>
             </Stack>
           </Box>
@@ -400,6 +427,36 @@ export function OperatorWorkspaceActions({
 
         {actionError ? <OperatorErrorNotice title="操作失败" error={actionError} fallback="请稍后重试" /> : null}
       </Stack>
+
+      <Dialog
+        open={conversationCloseConfirmOpen}
+        onClose={() => { if (!conversationCloseMutation.isPending) setConversationCloseConfirmOpen(false) }}
+        aria-labelledby="conversation-close-confirm-title"
+        aria-describedby="conversation-close-confirm-description"
+      >
+        <DialogTitle id="conversation-close-confirm-title">确认结束当前会话？</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="conversation-close-confirm-description" component="div">
+            <Stack spacing={1}>
+              <Typography variant="body2">结束后会释放当前坐席名额，但不会关闭关联工单，也不会自动标记业务完成。</Typography>
+              <Typography variant="body2"><strong>会话结果：</strong>{conversationOutcomeLabel(conversationOutcome)}</Typography>
+              <Typography variant="body2"><strong>处理说明：</strong>{displayVerbatimText(conversationCloseNote.trim(), '未填写')}</Typography>
+            </Stack>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" disabled={conversationCloseMutation.isPending} onClick={() => setConversationCloseConfirmOpen(false)}>返回修改</Button>
+          <Button
+            color={conversationOutcome === 'unresolved' ? 'warning' : 'primary'}
+            variant="contained"
+            disabled={Boolean(conversationCloseDisabledReason) || conversationCloseMutation.isPending}
+            startIcon={conversationCloseMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
+            onClick={() => conversationCloseMutation.mutate()}
+          >
+            {conversationCloseMutation.isPending ? '正在结束…' : '确认结束并释放名额'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
