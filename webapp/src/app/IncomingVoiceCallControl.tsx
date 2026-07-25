@@ -20,6 +20,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -71,15 +72,24 @@ export function IncomingVoiceCallProvider({
   const canReject = capabilities.has('webcall.voice.reject')
   const canAct = canAccept || canReject
   const [now, setNow] = useState(() => Date.now())
+  const [announcement, setAnnouncement] = useState('')
+  const announcedThresholds = useRef<Set<number>>(new Set())
   const offers = useQuery({
     queryKey: INCOMING_QUERY_KEY,
     queryFn: () => telephonyApi.incomingOffers(10),
     enabled: canViewQueue,
-    refetchInterval: 2_000,
+    refetchInterval: () => (typeof document === 'undefined' || document.visibilityState === 'visible' ? 2_000 : 15_000),
+    refetchIntervalInBackground: false,
     retry: false,
   })
   const current = offers.data?.items[0] ?? null
   const seconds = useMemo(() => (current ? remainingSeconds(current, now) : 0), [current, now])
+
+  useEffect(() => {
+    announcedThresholds.current = new Set()
+    if (current) setAnnouncement(`新的语音来电，客户 ${current.visitor_label || '电话客户'}。`)
+    else setAnnouncement('')
+  }, [current?.voice_session_id])
 
   useEffect(() => {
     if (!current) return undefined
@@ -89,7 +99,15 @@ export function IncomingVoiceCallProvider({
   }, [current])
 
   useEffect(() => {
-    if (current && seconds <= 0) void offers.refetch()
+    if (!current) return
+    for (const threshold of [10, 5, 0]) {
+      if (seconds !== threshold || announcedThresholds.current.has(threshold)) continue
+      announcedThresholds.current.add(threshold)
+      setAnnouncement(threshold > 0
+        ? `语音来电将在 ${threshold} 秒后轮转。`
+        : '当前语音来电已失效，正在检查下一通来电。')
+    }
+    if (seconds <= 0) void offers.refetch()
   }, [current, offers, seconds])
 
   const reject = useMutation({
@@ -122,6 +140,7 @@ export function IncomingVoiceCallProvider({
   return (
     <IncomingVoiceRuntimeContext.Provider value={value}>
       {children}
+      <Box className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</Box>
       {current ? (
         <Dialog
           open={canAct}
@@ -162,12 +181,12 @@ export function IncomingVoiceCallProvider({
                 ) : (
                   <Alert severity="info" variant="outlined">当前为实时会话，无需先创建工单。</Alert>
                 )}
-                <Typography variant="body2" color={seconds <= 5 ? 'error.main' : 'text.secondary'} aria-live="polite">
+                <Typography variant="body2" color={seconds <= 5 ? 'error.main' : 'text.secondary'} aria-hidden="true">
                   接听机会将在 {seconds} 秒后轮转给下一位坐席。
                 </Typography>
                 {(offers.data?.items.length ?? 0) > 1 ? (
                   <Typography variant="caption" color="text.secondary">
-                    当前还有 {(offers.data?.items.length ?? 1) - 1} 个来电 Offer 等待处理。
+                    当前还有 {(offers.data?.items.length ?? 1) - 1} 个来电等待处理。
                   </Typography>
                 ) : null}
                 {reject.isError ? <Alert severity="error">拒绝来电失败，请重试。</Alert> : null}
