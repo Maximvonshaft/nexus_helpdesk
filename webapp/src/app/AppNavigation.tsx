@@ -53,42 +53,45 @@ export function AppNavigation({
         const Icon = routeIcons[item.key]
         const active = item.key === activeRoute
         return (
-          <Link
+          <Box
+            component={Link}
             key={item.key}
             to={item.currentHref}
             aria-current={active ? 'page' : undefined}
             data-canonical-route={item.canonicalRoute}
             data-route-status={item.status}
             onClick={onNavigate}
-            style={{ color: 'inherit', textDecoration: 'none', width: vertical ? '100%' : undefined }}
+            sx={{
+              alignItems: 'center',
+              bgcolor: active ? 'action.selected' : 'transparent',
+              borderInlineStart: vertical ? 3 : 0,
+              borderColor: active ? 'primary.main' : 'transparent',
+              borderRadius: 1,
+              color: active ? 'primary.main' : 'text.secondary',
+              display: 'inline-flex',
+              flexShrink: 0,
+              gap: 0.75,
+              justifyContent: 'flex-start',
+              minHeight: 44,
+              outline: 'none',
+              px: vertical ? 1.5 : 1.25,
+              py: vertical ? 0.5 : 0,
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+              width: vertical ? '100%' : 'auto',
+              transition: (theme) => theme.transitions.create(['background-color', 'color', 'border-color'], { duration: theme.transitions.duration.shorter }),
+              '&:hover': { bgcolor: active ? 'action.selected' : 'action.hover', color: active ? 'primary.main' : 'text.primary' },
+              '&:active': { bgcolor: 'action.selected' },
+              '&:focus-visible': {
+                outline: '3px solid',
+                outlineColor: 'primary.dark',
+                outlineOffset: 2,
+              },
+            }}
           >
-            <Box
-              component="span"
-              sx={{
-                alignItems: 'center',
-                bgcolor: active ? 'action.selected' : 'transparent',
-                borderInlineStart: vertical ? 3 : 0,
-                borderColor: active ? 'primary.main' : 'transparent',
-                borderRadius: 1,
-                color: active ? 'primary.main' : 'text.secondary',
-                display: 'inline-flex',
-                gap: 0.75,
-                justifyContent: 'flex-start',
-                minHeight: vertical ? 44 : 40,
-                px: vertical ? 1.5 : 1.25,
-                py: vertical ? 0.5 : 0,
-                whiteSpace: 'nowrap',
-                width: vertical ? '100%' : 'auto',
-                transition: (theme) => theme.transitions.create(['background-color', 'color', 'border-color'], { duration: theme.transitions.duration.shorter }),
-                '&:hover': { bgcolor: active ? 'action.selected' : 'action.hover', color: active ? 'primary.main' : 'text.primary' },
-                '&:active': { bgcolor: 'action.selected' },
-                '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: 2 },
-              }}
-            >
-              <Icon sx={{ fontSize: 18 }} aria-hidden="true" />
-              <Typography component="span" variant="button">{item.label}</Typography>
-            </Box>
-          </Link>
+            <Icon sx={{ fontSize: 18 }} aria-hidden="true" />
+            <Typography component="span" variant="button">{item.label}</Typography>
+          </Box>
         )
       })}
     </Stack>
