@@ -44,7 +44,7 @@ def test_frontend_metrics_are_authenticated_bounded_and_low_cardinality(client):
                     "kind": "web_vital",
                     "name": "LCP",
                     "rating": "good",
-                    "value": 2.1,
+                    "value": 2100,
                 },
                 {
                     "kind": "api_latency",
@@ -68,6 +68,24 @@ def test_frontend_metrics_are_authenticated_bounded_and_low_cardinality(client):
         ("web_vital", "LCP", "good", 2.1),
         ("api_latency", "/api/tickets/:id", "GET", "200", 84.0),
         ("api_latency", "/api/webchat/conversations/:id/messages", "POST", "202", 120.0),
+    ]
+
+
+def test_frontend_metric_normalizes_inp_but_preserves_cls_score(client):
+    http, observed = client
+    response = http.post(
+        "/api/observability/frontend-metrics",
+        json={
+            "metrics": [
+                {"kind": "web_vital", "name": "INP", "rating": "good", "value": 180},
+                {"kind": "web_vital", "name": "CLS", "rating": "good", "value": 0.08},
+            ]
+        },
+    )
+    assert response.status_code == 204, response.text
+    assert observed == [
+        ("web_vital", "INP", "good", 0.18),
+        ("web_vital", "CLS", "good", 0.08),
     ]
 
 
