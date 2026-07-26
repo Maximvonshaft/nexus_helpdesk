@@ -51,6 +51,43 @@ from .webchat_ai_turn_service import (
 settings = get_settings()
 LOGGER = logging.getLogger("nexusdesk")
 
+_NO_PUBLIC_OUTCOME_STATUSES = {
+    "null_reply",
+    "review_required",
+    "failed_no_public_reply",
+}
+
+
+class WebchatAITerminalOutcomeRequired(RuntimeError):
+    """Retryable signal that an accepted customer message still needs an outcome."""
+
+
+def _require_customer_terminal_outcome(result: dict[str, Any]) -> None:
+    """Reject successful job completion when no public customer outcome exists.
+
+    The background job transaction boundary is the sole retry/dead-job authority.
+    Raising here keeps the durable Turn open, retries the canonical Agent path, and
+    eventually invokes the existing idempotent terminal fallback. It deliberately
+    does not create a second reply or frontend-only error path.
+    """
+
+    status = str(result.get("status") or "").strip().lower()
+    if status not in _NO_PUBLIC_OUTCOME_STATUSES or result.get("turn_finalized"):
+        return
+    reason = str(
+        result.get("reason")
+        or result.get("fallback_reason")
+        or status
+    ).strip()
+    safe_reason = "".join(
+        character
+        for character in reason[:120]
+        if character.isalnum() or character in {"_", "-", ".", ":"}
+    ) or status
+    raise WebchatAITerminalOutcomeRequired(
+        f"webchat_ai_customer_outcome_required:{status}:{safe_reason}"
+    )
+
 
 def _load_context(
     db: Session,
@@ -284,14 +321,20 @@ def _execute_confirmed_action(
     control = _conversation_control(db, conversation_id=conversation.id)
     observation: ToolObservation
     if tool_name not in access.allowed_tools:
-        observation = _blocked_observation(tool_name, "confirmed_tool_not_available")
+        observation = _blocked_observation(
+            tool_name,
+            "confirmed_tool_not_available",
+        )
     else:
         context = AgentExecutionContext(
             tenant_key=conversation.tenant_key,
             channel_key=conversation.channel_key,
             session_id=(
                 conversation.runtime_session_id
-                or f"webchat:{conversation.tenant_key}:{conversation.channel_key}:{conversation.public_id}"
+                or (
+                    f"webchat:{conversation.tenant_key}:"
+                    f"{conversation.channel_key}:{conversation.public_id}"
+                )
             ),
             request_id=f"confirmed-action:{confirmation.public_id}",
             customer_message=visitor_message.body_text or visitor_message.body or "",
@@ -332,7 +375,10 @@ def _execute_confirmed_action(
         observation = (
             observations[0]
             if observations
-            else _blocked_observation(tool_name, "tool_execution_result_missing")
+            else _blocked_observation(
+                tool_name,
+                "tool_execution_result_missing",
+            )
         )
 
     db.expire_all()
@@ -403,13 +449,15 @@ def process_webchat_ai_reply_job(
         conversation=conversation,
         visitor_message=visitor_message,
     )
-    conversation, ticket, visitor_message, turn, _observation = _execute_confirmed_action(
-        db,
-        resolution=resolution,
-        conversation=conversation,
-        ticket=ticket,
-        visitor_message=visitor_message,
-        turn=turn,
+    conversation, ticket, visitor_message, turn, _observation = (
+        _execute_confirmed_action(
+            db,
+            resolution=resolution,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            turn=turn,
+        )
     )
 
     if is_ai_suspended_for_handoff(conversation):
@@ -426,7 +474,11 @@ def process_webchat_ai_reply_job(
         }
 
     if turn is not None and turn.status == "queued":
-        mark_ai_turn_processing(db, conversation=conversation, turn=turn)
+        mark_ai_turn_processing(
+            db,
+            conversation=conversation,
+            turn=turn,
+        )
         cutoff_id = latest_visitor_message_id(
             db,
             conversation_id=conversation.id,
@@ -491,10 +543,12 @@ def process_webchat_ai_reply_job(
             ai_turn_id=turn.id if turn else None,
         )
 
+    normalized_result = result or {}
+    _require_customer_terminal_outcome(normalized_result)
     _complete_turn(
         db,
         conversation=conversation,
         turn=turn,
-        result=result or {},
+        result=normalized_result,
     )
-    return result
+    return normalized_result
