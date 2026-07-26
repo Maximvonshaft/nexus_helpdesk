@@ -32,21 +32,25 @@ export const nexusTheme = createTheme({
       main: '#067647',
       dark: '#05603A',
       light: '#D1FADF',
+      contrastText: '#FFFFFF',
     },
     warning: {
       main: '#B54708',
       dark: '#93370D',
       light: '#FEF0C7',
+      contrastText: '#FFFFFF',
     },
     error: {
       main: '#B42318',
       dark: '#912018',
       light: '#FEE4E2',
+      contrastText: '#FFFFFF',
     },
     info: {
       main: '#026AA2',
       dark: '#065986',
       light: '#D1E9FF',
+      contrastText: '#FFFFFF',
     },
     background: {
       default: '#F7F8FA',
@@ -124,7 +128,9 @@ export const nexusTheme = createTheme({
         },
         '@media (forced-colors: active)': {
           '*:focus-visible': {
-            outline: '3px solid Highlight !important',
+            outlineWidth: '3px !important',
+            outlineStyle: 'solid !important',
+            outlineColor: 'CanvasText !important',
             outlineOffset: '2px !important',
           },
         },
@@ -141,8 +147,10 @@ export const nexusTheme = createTheme({
             outlineOffset: 2,
           },
           '@media (forced-colors: active)': {
-            '&:focus-visible': {
-              outline: '3px solid Highlight !important',
+            '&:focus-visible, &.Mui-focusVisible': {
+              outlineWidth: '3px !important',
+              outlineStyle: 'solid !important',
+              outlineColor: 'CanvasText !important',
               outlineOffset: '2px !important',
             },
           },
@@ -285,6 +293,13 @@ export const nexusTheme = createTheme({
           height: 'auto',
           borderRadius: 6,
           fontWeight: 600,
+        },
+        filled: {
+          '&.MuiChip-colorPrimary': { backgroundColor: '#175CD3', color: '#FFFFFF' },
+          '&.MuiChip-colorSuccess': { backgroundColor: '#067647', color: '#FFFFFF' },
+          '&.MuiChip-colorWarning': { backgroundColor: '#B54708', color: '#FFFFFF' },
+          '&.MuiChip-colorError': { backgroundColor: '#B42318', color: '#FFFFFF' },
+          '& .MuiChip-icon': { color: 'inherit' },
         },
         outlined: {
           backgroundColor: '#FFFFFF',
