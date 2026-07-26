@@ -30,9 +30,27 @@ def _active_tenant(db: Session, tenant_id: int, *, principal: bool) -> Tenant:
         _raise(
             "tenant_principal_inactive" if principal else "tenant_resource_conflict",
             "Tenant authority is missing or inactive",
-            status_code=status.HTTP_403_FORBIDDEN if principal else status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_403_FORBIDDEN
+                if principal
+                else status.HTTP_409_CONFLICT
+            ),
         )
     return tenant
+
+
+def tenant_key_for_id(db: Session, tenant_id: int) -> str:
+    """Resolve the stable boundary key from the active relational Tenant authority."""
+
+    tenant = _active_tenant(db, int(tenant_id), principal=False)
+    tenant_key = str(tenant.tenant_key or "").strip()
+    if not tenant_key or tenant_key == "default":
+        _raise(
+            "tenant_resource_conflict",
+            "Tenant boundary key is missing or invalid",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    return tenant_key
 
 
 def _relation_tenant_id(value: Any) -> int | None:
@@ -81,7 +99,9 @@ def resolve_actor_tenant_id(db: Session, user: User) -> int | None:
         ("team", _relation_tenant_id(team) if team is not None else None),
         ("market", _relation_tenant_id(market) if market is not None else None),
     ]
-    related_present = [tenant_id for _kind, tenant_id in related if tenant_id is not None]
+    related_present = [
+        tenant_id for _kind, tenant_id in related if tenant_id is not None
+    ]
 
     if direct is None:
         if tenant_runtime_authority_mode() == "enforce" or related_present:
@@ -190,12 +210,72 @@ def ensure_ticket_tenant_authority(
     assert actor_tenant_id is None or isinstance(actor_tenant_id, int)
     ticket_tenant_id = _relation_tenant_id(ticket)
     relations = (
-        ("customer", _ticket_relation(db, ticket, "customer", Customer, "customer_id", relation_kind="customer")),
-        ("market", _ticket_relation(db, ticket, "market", Market, "market_id", relation_kind="market")),
-        ("team", _ticket_relation(db, ticket, "team", Team, "team_id", relation_kind="team")),
-        ("channel_account", _ticket_relation(db, ticket, "channel_account", ChannelAccount, "channel_account_id", relation_kind="channel_account")),
-        ("assignee", _ticket_relation(db, ticket, "assignee", User, "assignee_id", relation_kind="assignee")),
-        ("creator", _ticket_relation(db, ticket, "creator", User, "created_by", relation_kind="creator")),
+        (
+            "customer",
+            _ticket_relation(
+                db,
+                ticket,
+                "customer",
+                Customer,
+                "customer_id",
+                relation_kind="customer",
+            ),
+        ),
+        (
+            "market",
+            _ticket_relation(
+                db,
+                ticket,
+                "market",
+                Market,
+                "market_id",
+                relation_kind="market",
+            ),
+        ),
+        (
+            "team",
+            _ticket_relation(
+                db,
+                ticket,
+                "team",
+                Team,
+                "team_id",
+                relation_kind="team",
+            ),
+        ),
+        (
+            "channel_account",
+            _ticket_relation(
+                db,
+                ticket,
+                "channel_account",
+                ChannelAccount,
+                "channel_account_id",
+                relation_kind="channel_account",
+            ),
+        ),
+        (
+            "assignee",
+            _ticket_relation(
+                db,
+                ticket,
+                "assignee",
+                User,
+                "assignee_id",
+                relation_kind="assignee",
+            ),
+        ),
+        (
+            "creator",
+            _ticket_relation(
+                db,
+                ticket,
+                "creator",
+                User,
+                "created_by",
+                relation_kind="creator",
+            ),
+        ),
     )
     observed = {
         tenant_id
@@ -206,7 +286,11 @@ def ensure_ticket_tenant_authority(
     }
 
     if ticket_tenant_id is None:
-        if actor_tenant_id is None and not observed and tenant_runtime_authority_mode() == "shadow":
+        if (
+            actor_tenant_id is None
+            and not observed
+            and tenant_runtime_authority_mode() == "shadow"
+        ):
             return None
         _raise(
             "tenant_resource_missing",
@@ -235,8 +319,17 @@ def ensure_ticket_tenant_authority(
     return ticket_tenant_id
 
 
-def ensure_team_tenant(db: Session, actor_tenant_id: int | None, team: Team) -> int | None:
-    tenant_id = ensure_resource_tenant(db, actor_tenant_id, team, resource_kind="Team")
+def ensure_team_tenant(
+    db: Session,
+    actor_tenant_id: int | None,
+    team: Team,
+) -> int | None:
+    tenant_id = ensure_resource_tenant(
+        db,
+        actor_tenant_id,
+        team,
+        resource_kind="Team",
+    )
     if team.market_id is not None:
         market = db.query(Market).filter(Market.id == team.market_id).first()
         if market is None:
@@ -245,7 +338,12 @@ def ensure_team_tenant(db: Session, actor_tenant_id: int | None, team: Team) -> 
                 "Team Market relationship is missing",
                 status_code=status.HTTP_409_CONFLICT,
             )
-        ensure_resource_tenant(db, actor_tenant_id, market, resource_kind="Market")
+        ensure_resource_tenant(
+            db,
+            actor_tenant_id,
+            market,
+            resource_kind="Market",
+        )
         if tenant_id is not None and market.tenant_id != tenant_id:
             _raise(
                 "tenant_resource_conflict",
@@ -255,8 +353,17 @@ def ensure_team_tenant(db: Session, actor_tenant_id: int | None, team: Team) -> 
     return tenant_id
 
 
-def ensure_user_tenant(db: Session, actor_tenant_id: int | None, user: User) -> int | None:
-    tenant_id = ensure_resource_tenant(db, actor_tenant_id, user, resource_kind="User")
+def ensure_user_tenant(
+    db: Session,
+    actor_tenant_id: int | None,
+    user: User,
+) -> int | None:
+    tenant_id = ensure_resource_tenant(
+        db,
+        actor_tenant_id,
+        user,
+        resource_kind="User",
+    )
     if user.team_id is not None:
         team = db.query(Team).filter(Team.id == user.team_id).first()
         if team is None:
@@ -292,5 +399,6 @@ __all__ = [
     "ensure_user_tenant",
     "resolve_actor_tenant_id",
     "stamp_runtime_tenant",
+    "tenant_key_for_id",
     "tenant_runtime_authority_mode",
 ]
