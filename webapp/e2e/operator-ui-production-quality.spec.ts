@@ -99,7 +99,7 @@ test('normal and empty canonical surfaces match visual baselines', async ({ page
 
   await page.goto('/administration')
   await expect(page.getByRole('heading', { level: 1, name: '系统管理' })).toBeVisible()
-  await expect(page.getByText('Responsive Operations Administrator')).toBeVisible()
+  await expect(page.getByRole('heading', { name: responsiveUser.display_name })).toBeVisible()
   await expectVisual(page, 'administration-normal-1440')
 })
 
