@@ -67,7 +67,9 @@ Canonical browser evidence must include:
 - no root horizontal overflow at 320, 375, 768, 1024, 1280, 1366 and 1440 CSS-pixel widths;
 - 200% text enlargement without label/value overlap, clipping or hidden required actions;
 - semantic, target-size, contrast, Forced Colors and reduced-motion checks across all canonical authenticated routes;
-- pixel-regression baselines for normal, loading, empty, degraded, conflict, repair-required and enlarged-text states.
+- executable loading, empty, degraded, conflict, repair-required and enlarged-text assertions over DOM, geometry, contrast, focus and task behavior.
+
+Screenshots may support diagnosis or controlled human review, but screenshot files, image hashes and pixel baselines are not release authority and must not become a second browser acceptance path.
 
 ## Staging verification plan
 

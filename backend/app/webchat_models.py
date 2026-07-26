@@ -202,7 +202,13 @@ class WebchatMessage(Base):
         String(120), nullable=True, index=True
     )
     ai_turn_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("webchat_ai_turns.id"), nullable=True, index=True
+        ForeignKey(
+            "webchat_ai_turns.id",
+            name="fk_webchat_messages_ai_turn_id",
+            use_alter=True,
+        ),
+        nullable=True,
+        index=True,
     )
     author_user_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True

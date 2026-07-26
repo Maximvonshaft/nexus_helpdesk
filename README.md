@@ -36,23 +36,34 @@ The customer-side widget under `backend/app/static/webchat/` is a separate publi
 - `frontend_dist/` — generated SPA output; intentionally not tracked.
 - `deploy/` — controlled compose and proxy configuration.
 - `config/architecture/service-authority.v1.json` — machine-readable backend responsibility ownership.
+- `config/architecture/business-aggregate-authority.v1.json` — machine-readable Conversation, Ticket-as-Case, WebchatHandoffRequest and OperatorTask authority.
 - `scripts/qualification/route_authority.py` — FastAPI method/path collision gate.
 - `scripts/verify_repository.py` — repository verification authority.
 
-## Conversation and Ticket model
+## Conversation and Ticket-as-Case model
 
-Conversation is the live communication identity. Ticket is optional durable work.
+Conversation is the live communication identity. Ticket-as-Case is the only durable customer-operations responsibility.
 
 ```text
 Customer message
 → Conversation
 → governed Agent or operator handling
-→ optional Handoff
-→ optional Ticket only when durable follow-up is required
+→ optional WebchatHandoffRequest
+→ optional Ticket-as-Case only when durable responsibility is required
 → persisted business outcome
 ```
 
 New WebChat initialization must not create a Ticket. Historical ticket-backed Conversations execute through the same message, Agent, policy and operator authorities as ticketless Conversations.
+
+The business-object authority is explicit:
+
+- `WebchatConversation` owns live text, voice and participation continuity;
+- `Ticket` is the sole durable Case aggregate and stable `case_id` authority;
+- `WebchatHandoffRequest` is the sole mutable live human-handoff lifecycle;
+- `OperatorTask` is a rebuildable queue projection and may not mutate source-domain state;
+- no `Case` ORM model, `cases` table, parallel Case identifier or second ownership state machine is permitted.
+
+A live contact without a Ticket is presented as a conversation. It becomes a case only after the canonical governed Ticket command establishes durable responsibility.
 
 Canonical WebChat authorities are:
 
@@ -63,8 +74,9 @@ Canonical WebChat authorities are:
 - Agent orchestration: `backend/app/services/webchat_ai_orchestration_service.py`
 - Agent reply execution/persistence: `backend/app/services/webchat_ai_service.py`
 - operator read/reply: `backend/app/services/conversation_operator_service.py`
+- live Handoff commands: `backend/app/services/webchat_handoff_service_core.py`
 
-A direct model CLI, standalone Auto Reply Job, channel-specific Agent loop or separate ticketless reply service is forbidden.
+A direct model CLI, standalone Auto Reply Job, channel-specific Agent loop, separate ticketless reply service or OperatorTask-owned source transition is forbidden.
 
 ## Runtime model
 
@@ -90,7 +102,8 @@ A deployment unit may not invoke `run_worker.py` directly or run `--queue all`.
 Login
 → server-authorized scope
 → unified queue
-→ Conversation, Ticket and evidence
+→ live Conversation or durable Ticket-as-Case
+→ evidence and ownership
 → human decision
 → governed action
 → persisted operational result

@@ -70,7 +70,12 @@ def db_session(tmp_path):
         engine.dispose()
 
 
-def _conversation(db_session, *, suffix: str, ticket_id: int | None = None) -> WebchatConversation:
+def _conversation(
+    db_session,
+    *,
+    suffix: str,
+    ticket_id: int | None = None,
+) -> WebchatConversation:
     row = WebchatConversation(
         public_id=f"auto_ticket_{suffix}",
         visitor_token_hash=f"token-{suffix}",
@@ -94,7 +99,10 @@ def _seed_ticket(
     priority: TicketPriority = TicketPriority.medium,
     assignee_id: int | None = None,
 ) -> Ticket:
-    customer = Customer(name=f"Customer {suffix}", external_ref=f"customer-{suffix}")
+    customer = Customer(
+        name=f"Customer {suffix}",
+        external_ref=f"customer-{suffix}",
+    )
     db_session.add(customer)
     db_session.flush()
     ticket = Ticket(
@@ -124,8 +132,13 @@ def _event_payload(event: TicketEvent) -> dict:
     return json.loads(event.payload_json or "{}")
 
 
-def test_create_is_atomic_and_transitions_case_context_identity_without_stale_active_row(db_session):
-    customer = Customer(name="Auto Ticket Visitor", external_ref="auto-ticket-visitor")
+def test_create_is_atomic_and_transitions_case_context_identity_without_stale_active_row(
+    db_session,
+):
+    customer = Customer(
+        name="Auto Ticket Visitor",
+        external_ref="auto-ticket-visitor",
+    )
     db_session.add(customer)
     conversation = _conversation(db_session, suffix="create")
     ctx = CaseContext(
@@ -193,7 +206,11 @@ def test_create_is_atomic_and_transitions_case_context_identity_without_stale_ac
     assert loaded.ticket_id == result.ticket.id
     assert loaded.ticket_created is True
 
-    events = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == result.ticket.id).all()
+    events = (
+        db_session.query(TicketEvent)
+        .filter(TicketEvent.ticket_id == result.ticket.id)
+        .all()
+    )
     assert len(events) == 1
     payload = _event_payload(events[0])
     encoded = events[0].payload_json or ""
@@ -207,7 +224,9 @@ def test_create_is_atomic_and_transitions_case_context_identity_without_stale_ac
     assert payload["case_context_state"]["has_contact_method"] is True
 
 
-def test_reused_closed_unassigned_ticket_reopens_without_overwriting_business_fields(db_session):
+def test_reused_closed_unassigned_ticket_reopens_without_overwriting_business_fields(
+    db_session,
+):
     ticket = _seed_ticket(
         db_session,
         suffix="closed-unassigned",
@@ -219,7 +238,11 @@ def test_reused_closed_unassigned_ticket_reopens_without_overwriting_business_fi
     ticket.closed_at = auto_ticket_service.utc_now()
     ticket.resolved_at = auto_ticket_service.utc_now()
     original_reopen_count = ticket.reopen_count or 0
-    conversation = _conversation(db_session, suffix="reuse-closed", ticket_id=ticket.id)
+    conversation = _conversation(
+        db_session,
+        suffix="reuse-closed",
+        ticket_id=ticket.id,
+    )
 
     reused = create_or_reuse_ticket_from_case_context(
         db_session,
@@ -268,7 +291,9 @@ def test_reused_closed_unassigned_ticket_reopens_without_overwriting_business_fi
     assert "preferred_reply_contact" not in payload.get("changed_fields", [])
 
 
-def test_reused_terminal_assigned_ticket_preserves_owner_and_enters_human_owned_queue(db_session):
+def test_reused_terminal_assigned_ticket_preserves_owner_and_enters_human_owned_queue(
+    db_session,
+):
     ticket = _seed_ticket(
         db_session,
         suffix="closed-assigned",
@@ -304,7 +329,9 @@ def test_reused_terminal_assigned_ticket_preserves_owner_and_enters_human_owned_
     assert ticket.resolved_at is None
 
 
-def test_reuse_event_and_operator_projection_are_idempotent(db_session):
+def test_reuse_event_is_idempotent_and_does_not_forge_live_handoff_projection(
+    db_session,
+):
     ticket = _seed_ticket(
         db_session,
         suffix="projection",
@@ -313,7 +340,11 @@ def test_reuse_event_and_operator_projection_are_idempotent(db_session):
         priority=TicketPriority.medium,
     )
     ticket.required_action = None
-    conversation = _conversation(db_session, suffix="projection", ticket_id=ticket.id)
+    conversation = _conversation(
+        db_session,
+        suffix="projection",
+        ticket_id=ticket.id,
+    )
     context = CaseContext(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -342,16 +373,29 @@ def test_reuse_event_and_operator_projection_are_idempotent(db_session):
     )
     first_projection = operator_queue.project_webchat_handoff_tasks(db_session)
     second_projection = operator_queue.project_webchat_handoff_tasks(db_session)
-    assert first_projection.created == 1
+    assert first_projection.created == 0
+    assert first_projection.skipped_existing == 0
     assert second_projection.created == 0
-    assert second_projection.skipped_existing == 1
-    assert db_session.query(OperatorTask).filter(OperatorTask.ticket_id == ticket.id).count() == 1
+    assert second_projection.skipped_existing == 0
+    assert (
+        db_session.query(OperatorTask)
+        .filter(OperatorTask.ticket_id == ticket.id)
+        .count()
+        == 0
+    )
+    assert ticket.conversation_state == ConversationState.human_review_required
 
 
-def test_ticket_number_collision_retries_and_keeps_session_usable(db_session, monkeypatch):
+def test_ticket_number_collision_retries_and_keeps_session_usable(
+    db_session,
+    monkeypatch,
+):
     existing = _seed_ticket(db_session, suffix="collision")
     db_session.commit()
-    generated = [existing.ticket_no, "OSR-ME-20260710120000-ABCDEF1234"]
+    generated = [
+        existing.ticket_no,
+        "OSR-ME-20260710120000-ABCDEF1234",
+    ]
 
     monkeypatch.setattr(
         auto_ticket_service,
@@ -360,19 +404,31 @@ def test_ticket_number_collision_retries_and_keeps_session_usable(db_session, mo
     )
     result = create_or_reuse_ticket_from_case_context(
         db_session,
-        case_context=CaseContext(channel="webchat", country_code="ME", issue_type="refund"),
+        case_context=CaseContext(
+            channel="webchat",
+            country_code="ME",
+            issue_type="refund",
+        ),
         source_channel=SourceChannel.web_chat,
     )
     db_session.commit()
 
     assert result.created is True
     assert result.ticket.ticket_no == "OSR-ME-20260710120000-ABCDEF1234"
-    assert db_session.query(Ticket).filter(Ticket.ticket_no == existing.ticket_no).count() == 1
+    assert (
+        db_session.query(Ticket)
+        .filter(Ticket.ticket_no == existing.ticket_no)
+        .count()
+        == 1
+    )
     assert not db_session.new
     assert db_session.query(Ticket).count() == 2
 
 
-def test_exhausted_collisions_roll_back_service_customer_and_allow_same_session_retry(db_session, monkeypatch):
+def test_exhausted_collisions_roll_back_service_customer_and_allow_same_session_retry(
+    db_session,
+    monkeypatch,
+):
     existing = _seed_ticket(db_session, suffix="exhausted")
     db_session.commit()
     before_customers = db_session.query(Customer).count()
@@ -386,7 +442,11 @@ def test_exhausted_collisions_roll_back_service_customer_and_allow_same_session_
     with pytest.raises(IntegrityError):
         create_or_reuse_ticket_from_case_context(
             db_session,
-            case_context=CaseContext(channel="webchat", country_code="ME", issue_type="refund"),
+            case_context=CaseContext(
+                channel="webchat",
+                country_code="ME",
+                issue_type="refund",
+            ),
             source_channel=SourceChannel.web_chat,
         )
 
@@ -396,18 +456,27 @@ def test_exhausted_collisions_roll_back_service_customer_and_allow_same_session_
     monkeypatch.setattr(
         auto_ticket_service,
         "_generate_ticket_no",
-        lambda case_context, *, attempt=0: "OSR-ME-20260710120001-ABCDEF1234",
+        lambda case_context, *, attempt=0: (
+            "OSR-ME-20260710120001-ABCDEF1234"
+        ),
     )
     recovered = create_or_reuse_ticket_from_case_context(
         db_session,
-        case_context=CaseContext(channel="webchat", country_code="ME", issue_type="refund"),
+        case_context=CaseContext(
+            channel="webchat",
+            country_code="ME",
+            issue_type="refund",
+        ),
         source_channel=SourceChannel.web_chat,
     )
     assert recovered.created is True
     assert db_session.query(Ticket).count() == before_tickets + 1
 
 
-def test_event_failure_rolls_back_customer_ticket_context_transition_and_conversation(db_session, monkeypatch):
+def test_event_failure_rolls_back_customer_ticket_context_transition_and_conversation(
+    db_session,
+    monkeypatch,
+):
     conversation = _conversation(db_session, suffix="atomic-failure")
     context = CaseContext(
         conversation_id=conversation.id,
@@ -423,7 +492,9 @@ def test_event_failure_rolls_back_customer_ticket_context_transition_and_convers
     monkeypatch.setattr(
         auto_ticket_service,
         "_write_ticket_event",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("event write failed")),
+        lambda *_args, **_kwargs: (
+            _ for _ in ()
+        ).throw(RuntimeError("event write failed")),
     )
     with pytest.raises(RuntimeError, match="event write failed"):
         create_or_reuse_ticket_from_case_context(
@@ -462,13 +533,22 @@ def test_event_failure_rolls_back_customer_ticket_context_transition_and_convers
     assert db_session.query(Ticket).count() == before_tickets + 1
 
 
-def test_conflicting_conversation_and_case_context_ticket_ids_fail_closed(db_session):
+def test_conflicting_conversation_and_case_context_ticket_ids_fail_closed(
+    db_session,
+):
     ticket_a = _seed_ticket(db_session, suffix="identity-a")
     ticket_b = _seed_ticket(db_session, suffix="identity-b")
-    conversation = _conversation(db_session, suffix="identity-conflict", ticket_id=ticket_a.id)
+    conversation = _conversation(
+        db_session,
+        suffix="identity-conflict",
+        ticket_id=ticket_a.id,
+    )
     before_status = ticket_a.status
 
-    with pytest.raises(AutoTicketIdentityConflictError, match="ticket_identity_conflict"):
+    with pytest.raises(
+        AutoTicketIdentityConflictError,
+        match="ticket_identity_conflict",
+    ):
         create_or_reuse_ticket_from_case_context(
             db_session,
             case_context=CaseContext(
@@ -485,10 +565,15 @@ def test_conflicting_conversation_and_case_context_ticket_ids_fail_closed(db_ses
     assert db_session.query(TicketEvent).count() == 0
 
 
-def test_conflicting_conversation_identity_and_missing_ticket_reference_fail_closed(db_session):
+def test_conflicting_conversation_identity_and_missing_ticket_reference_fail_closed(
+    db_session,
+):
     conversation = _conversation(db_session, suffix="conversation-conflict")
 
-    with pytest.raises(AutoTicketIdentityConflictError, match="conversation_identity_conflict"):
+    with pytest.raises(
+        AutoTicketIdentityConflictError,
+        match="conversation_identity_conflict",
+    ):
         create_or_reuse_ticket_from_case_context(
             db_session,
             case_context=CaseContext(

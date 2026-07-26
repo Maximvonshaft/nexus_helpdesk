@@ -46,6 +46,10 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_agent_control",
     "app.models_agent_runtime",
     "app.models_governance",
+    "app.models_case_governance",
+    "app.models_case_evidence",
+    "app.models_sla_runtime",
+    "app.models_privacy_runtime",
 )
 
 # There are currently no optional production model plugins. Future plugins must
@@ -70,6 +74,10 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_agent_control": "agent_definitions",
     "app.models_agent_runtime": "agent_session_checkpoints",
     "app.models_governance": "role_templates",
+    "app.models_case_governance": "case_outcome_records",
+    "app.models_case_evidence": "case_evidence_records",
+    "app.models_sla_runtime": "ticket_sla_targets",
+    "app.models_privacy_runtime": "data_processing_restrictions",
 }
 
 

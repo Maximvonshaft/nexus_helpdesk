@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Literal
 
@@ -69,7 +68,7 @@ def add_ticket_closure_evidence(
     ticket = _ticket(db, ticket_id, current_user)
     try:
         with managed_session(db):
-            event = record_closure_evidence(
+            record = record_closure_evidence(
                 db,
                 ticket=ticket,
                 current_user=current_user,
@@ -86,10 +85,11 @@ def add_ticket_closure_evidence(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     snapshot = build_closure_snapshot(db, ticket)
-    event_payload = json.loads(event.payload_json)
     return {
-        "schema": "nexus.ticket-closure-evidence-result.v1",
-        "event_id": event.id,
-        "evidence_sha256": event_payload["evidence_sha256"],
+        "schema": "nexus.case-closure-evidence-result.v2",
+        "record_id": record.record_id,
+        "record_type": record.record_type,
+        "created": record.created,
+        "evidence_sha256": record.evidence_sha256,
         "closure": snapshot.receipt,
     }

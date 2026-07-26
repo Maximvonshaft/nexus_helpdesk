@@ -32,10 +32,20 @@ from app.services.operator_queue import (  # noqa: E402
 @pytest.fixture()
 def db_session(tmp_path):
     db_file = tmp_path / "operator_queue.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
-    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
-    Base.metadata.create_all(engine)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        expire_on_commit=False,
+    )
     session = Session()
+    Base.metadata.create_all(engine)
     try:
         yield session
     finally:
@@ -45,20 +55,29 @@ def db_session(tmp_path):
 
 
 def make_user(db, username="admin", role=UserRole.admin):
-    row = User(username=username, display_name=username, email=f"{username}@example.test", password_hash="x", role=role, is_active=True)
+    row = User(
+        username=username,
+        display_name=username,
+        email=f"{username}@example.test",
+        password_hash="x",
+        role=role,
+        is_active=True,
+    )
     db.add(row)
     db.flush()
     return row
 
 
 def test_sanitize_operator_payload_redacts_sensitive_fields():
-    payload = sanitize_operator_payload({
-        "session_key": "secret-session",
-        "visitor_email": "customer@example.test",
-        "visitor_phone": "+411234567",
-        "last_error": "Provider error with raw payload and token abc123",
-        "safe": "ok",
-    })
+    payload = sanitize_operator_payload(
+        {
+            "session_key": "secret-session",
+            "visitor_email": "customer@example.test",
+            "visitor_phone": "+411234567",
+            "last_error": "Provider error with raw payload and token abc123",
+            "safe": "ok",
+        }
+    )
 
     assert payload["session_key"]["redacted"] is True
     assert payload["visitor_email"]["redacted"] is True
@@ -68,42 +87,102 @@ def test_sanitize_operator_payload_redacts_sensitive_fields():
     assert "customer@example.test" not in json.dumps(payload)
 
 
-def test_create_operator_task_stores_redacted_payload(db_session):
+def test_create_operator_task_stores_redacted_payload_and_projection_identity(
+    db_session,
+):
     row, created = create_operator_task(
         db_session,
-        source_type="webchat",
+        source_type="webchat_handoff",
         task_type="handoff",
-        source_id="wc-redaction-1",
-        payload={"session_key": "sess-secret", "recipient": "+411234567", "last_error": "raw secret error"},
+        source_id="101",
+        source_version=3,
+        projection_schema="nexus.operator-task.webchat-handoff.v1",
+        payload={
+            "session_key": "sess-secret",
+            "recipient": "+411234567",
+            "last_error": "raw secret error",
+        },
     )
 
     assert created is True
     serialized = serialize_operator_task(row)
     rendered = json.dumps(serialized["payload_json"], ensure_ascii=False)
+    assert serialized["source_version"] == 3
+    assert serialized["projection_schema"] == "nexus.operator-task.webchat-handoff.v1"
     assert "sess-secret" not in rendered
     assert "+411234567" not in rendered
     assert "raw secret error" not in rendered
 
 
-def test_transition_operator_task_assigns_and_audits(db_session):
+def test_projection_owned_operator_task_assigns_and_audits(db_session):
     admin = make_user(db_session)
-    row, _ = create_operator_task(db_session, source_type="webchat", task_type="handoff", source_id="wc-1")
+    row, _ = create_operator_task(
+        db_session,
+        source_type="control_tower",
+        task_type="control_tower_action",
+        source_id="assign-unassigned",
+    )
     db_session.commit()
 
-    transitioned = transition_operator_task(db_session, task_id=row.id, action="assign", actor_id=admin.id, note="take ownership")
+    transitioned = transition_operator_task(
+        db_session,
+        task_id=row.id,
+        action="assign",
+        actor_id=admin.id,
+        note="take ownership",
+    )
 
     assert transitioned.status == "assigned"
     assert transitioned.assignee_id == admin.id
-    audit = db_session.query(AdminAuditLog).filter_by(action="operator_queue.assign").one()
+    audit = (
+        db_session.query(AdminAuditLog)
+        .filter_by(action="operator_queue.assign")
+        .one()
+    )
     assert audit.actor_id == admin.id
     assert "take ownership" in (audit.new_value_json or "")
 
 
-def test_transition_operator_task_rejects_unsupported_action(db_session):
-    row, _ = create_operator_task(db_session, source_type="webchat", task_type="handoff", source_id="wc-1")
+def test_source_owned_handoff_projection_rejects_generic_command(db_session):
+    admin = make_user(db_session)
+    row, _ = create_operator_task(
+        db_session,
+        source_type="webchat_handoff",
+        task_type="handoff",
+        source_id="101",
+        webchat_conversation_id=202,
+    )
 
     with pytest.raises(OperatorQueueError) as exc:
-        transition_operator_task(db_session, task_id=row.id, action="unsupported", actor_id=None)
+        transition_operator_task(
+            db_session,
+            task_id=row.id,
+            action="assign",
+            actor_id=admin.id,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.code == "operator_task_projection_command_forbidden"
+    db_session.refresh(row)
+    assert row.status == "pending"
+    assert row.assignee_id is None
+
+
+def test_transition_operator_task_rejects_unsupported_action(db_session):
+    row, _ = create_operator_task(
+        db_session,
+        source_type="control_tower",
+        task_type="control_tower_action",
+        source_id="runtime-recovery",
+    )
+
+    with pytest.raises(OperatorQueueError) as exc:
+        transition_operator_task(
+            db_session,
+            task_id=row.id,
+            action="unsupported",
+            actor_id=None,
+        )
 
     assert exc.value.status_code == 400
     assert exc.value.code == "unsupported_operator_task_action"

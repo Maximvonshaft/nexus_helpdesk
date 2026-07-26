@@ -1,0 +1,37 @@
+{
+  "schema": "nexus.business-aggregate-authority.v1",
+  "version": "1.0.0",
+  "effective_at": "2026-07-27T00:00:00Z",
+  "durable_case": {
+    "model": "app.models.Ticket",
+    "table": "tickets",
+    "stable_id": "Ticket.id",
+    "api_alias": "case_id",
+    "writer": "app.services.ticket_service",
+    "synthetic_creation_for_live_conversation": false
+  },
+  "live_conversation": {
+    "model": "app.webchat_models.WebchatConversation",
+    "table": "webchat_conversations",
+    "writer": "app.services.conversation_first_service",
+    "ticket_optional": true
+  },
+  "live_handoff": {
+    "model": "app.webchat_models.WebchatHandoffRequest",
+    "table": "webchat_handoff_requests",
+    "writer": "app.services.webchat_handoff_service_core"
+  },
+  "operator_queue_projection": {
+    "model": "app.operator_models.OperatorTask",
+    "table": "operator_tasks",
+    "source_of_truth": false,
+    "rebuildable": true,
+    "may_mutate_source": false
+  },
+  "forbidden": {
+    "orm_models": ["Case"],
+    "tables": ["cases"],
+    "forbid_parallel_case_ids": true,
+    "forbid_operator_task_source_commands": true
+  }
+}

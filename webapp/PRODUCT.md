@@ -2,75 +2,109 @@
 
 ## Product identity
 
-Nexus OSR is a **case-resolution cockpit for multi-country logistics operations**.
+Nexus OSR is a **conversation-first logistics customer-operations cockpit**.
 
 It is not primarily a chatbot, a WebChat inbox, a Knowledge CMS, a Runtime console, an automatic-handling builder, or a generic administration dashboard. Those capabilities support the operator journey; they do not define it.
 
-The product helps an authorized operator establish the case, inspect authoritative evidence, take ownership, perform governed actions, understand the operational and customer outcome, and determine whether the case is blocked, under observation, eligible to close, safely closed, or must reopen.
+The product helps an authorized operator understand a live customer conversation, establish durable responsibility only when necessary, inspect authoritative evidence, take ownership, perform governed actions, verify operational and customer outcomes, and decide whether the work can finish live, must become a durable case, is blocked, requires observation, is safely closed, or must reopen.
+
+## Canonical business objects
+
+Nexus uses one explicit business-object model. `docs/architecture/adr-001-ticket-as-case-authority.md` and `config/architecture/business-aggregate-authority.v1.json` are the governing contracts.
+
+### Conversation
+
+`WebchatConversation` is the live communication identity.
+
+- A Conversation may include text, Voice, Agent turns and human participation.
+- It may be completed without creating durable work.
+- A live contact without a Ticket is shown as a **会话**.
+- Conversation snapshots do not create a second ownership, Handoff or closure authority.
+
+### Ticket-as-Case
+
+`Ticket` is the sole durable **Ticket-as-Case** aggregate.
+
+- A Ticket is created or reused only for asynchronous follow-up, governed business action, regulatory record or explicitly accepted durable responsibility.
+- `Ticket.id` is the stable Case identity; APIs may expose it as `case_id` without creating a parallel identifier.
+- Durable ownership, SLA snapshot, business action/outcome ledger and Safe Effective Closure belong to Ticket-as-Case.
+- No `Case` ORM model, `cases` table or second Case lifecycle is permitted.
+
+### Handoff and queue
+
+`WebchatHandoffRequest` is the sole mutable live human-Handoff lifecycle.
+
+`OperatorTask` is a rebuildable read projection. It supports queue ordering and presentation but is never allowed to mutate source-domain state. Assignment, release, close and resume commands must call the corresponding source aggregate service.
 
 ## Primary product job
 
-For every customer contact or governed operational signal, the frontend must make five answers clear:
+For a live Conversation, the frontend must make five answers clear:
 
-1. **What is this case?**
-2. **Which evidence is authoritative?**
-3. **What must happen next, and who owns it?**
-4. **What actually happened after an action was requested?**
-5. **Can this case be safely completed, observed, repaired, or reopened?**
+1. What is the customer asking and which facts are authoritative?
+2. Can the interaction be completed live?
+3. Is human participation or durable follow-up required?
+4. What customer-visible terminal outcome was committed?
+5. Has capacity been released safely?
+
+For a Ticket-as-Case, the frontend must make five answers clear:
+
+1. What durable responsibility exists?
+2. Which evidence and policy are authoritative?
+3. What must happen next, and who owns it?
+4. What actually happened after each governed action?
+5. Can the Case be observed, repaired, safely closed, or reopened?
 
 The canonical journey is:
 
-`Password login → MFA when enabled → Credential recovery when required → Scoped queue → Case → Facts and policy → Ownership → Governed action → Operational result → Customer communication → Closure target → Observation or reopen`
+`Password login → MFA when enabled → Credential recovery when required → Scoped queue → Conversation → live resolution OR Ticket-as-Case → evidence and policy → ownership → governed action → operational result → customer communication → closure assessment → observation or reopen`
 
 ## Users
 
 ### Support Agent
 
 - Works from the scoped operator queue.
+- Handles live Conversations and durable Ticket-as-Case records without conflating them.
 - Reviews customer messages, authoritative facts, approved Knowledge, risk and missing information.
-- Accepts ownership or handoff.
+- Accepts Handoff or durable Case ownership through governed commands.
 - Performs permitted actions and communicates through governed channels.
 - Does not infer business closure from a technical status.
 
 ### Team Lead
 
-- Monitors unowned work, SLA risk, escalations and repair-required cases.
-- Takes over, assigns, releases or reroutes work through governed commands.
+- Monitors unowned work, Handoff wait, capacity, SLA risk, escalations and repair-required Cases.
+- Takes over, assigns, releases or reroutes work through source-domain commands.
 - Reviews blocked closure and repeated-contact patterns.
 
 ### Operations Manager
 
-- Reviews workload, action effectiveness, closure quality and country/channel performance.
-- Uses management evidence without replacing operational source truth.
+- Reviews workload, action effectiveness, Safe Effective Closure, reopen, repeat contact, provider quality and country/channel performance.
+- Uses management projections without replacing operational source truth.
 
 ### Knowledge and SOP Steward
 
 - Maintains approved customer-visible Knowledge and internal operating guidance.
-- Cannot override live facts, action authority or case closure.
+- Cannot override live facts, action authority or Case closure.
 
 ### Automatic-handling Administrator
 
-- Configures handling plans, reply style, business rules, tool permissions, integrations, model settings and runtime limits through `/agent-control`.
-- Works with published versions and explicit effective scope without exposing implementation architecture as the primary task model.
-- Uses bounded diagnostics and run evidence without gaining case, customer-data or business-action authority automatically.
+- Configures handling plans, reply style, business rules, Tool permissions, integrations, model settings and runtime limits through `/agent-control`.
+- Works with published versions and explicit effective scope.
+- Uses bounded diagnostics without gaining Case, customer-data or business-action authority automatically.
 
 ### Channel Administrator
 
 - Manages channel/account configuration and health.
-- Governs email sending and optional receiving through `/channels`.
-- Does not gain case access solely from channel configuration permission.
+- Does not gain Case access solely from channel configuration permission.
 
 ### Identity Administrator
 
-- Manages users, role and permission assignments, teams, credential policy, two-step-verification recovery, and account sign-out.
-- Cannot create a second user directory, permission table, session store, MFA store, or authentication path.
-- Uses audited commands for password reset, required rotation, account status, team scope, two-step-verification reset, and sign-out.
-- Manages their own password, two-step verification and devices only through `/account`.
+- Manages users, capabilities, teams, credential policy, two-step-verification recovery and account sign-out.
+- Cannot create a second user directory, permission table, session store, MFA store or authentication path.
 
 ### Runtime and Audit Operator
 
 - Inspects bounded runtime, diagnostic, evaluation and audit evidence.
-- A user with the required runtime permission may explicitly restore failed background tasks or failed outbound records through `/runtime`.
+- May explicitly restore failed background tasks or outbound records only with the corresponding permission.
 - Technical access does not imply customer-data or operational-action authority.
 
 ## Canonical route domains
@@ -78,27 +112,28 @@ The canonical journey is:
 | Domain | Route | Job |
 |---|---|---|
 | Authentication | `/login` | Establish password identity and complete two-step verification when enabled |
-| Account and credential recovery | `/account` | Inspect identity, rotate password, manage two-step verification, recovery codes and signed-in devices |
-| Operator work | `/workspace` | Queue, case, evidence, ownership, action, communication and closure target |
+| Account | `/account` | Password, two-step verification, recovery codes and signed-in devices |
+| Operator work | `/workspace` | Conversation, Ticket-as-Case, evidence, ownership, governed action, communication and closure |
 | Knowledge and SOP | `/knowledge` | Govern Knowledge and internal operating guidance |
-| Automatic handling | `/agent-control` | Configure handling plans, reply style, business rules, tools, integrations, model limits, effective scope and bounded diagnostics |
-| Channels | `/channels` | Channel onboarding, health, email account configuration and test sending |
-| Runtime and audit | `/runtime` | Technical readiness, bounded evidence, queue health and audited failed-task recovery |
-| Management | `/control-tower` | Tenant-scoped workload, risk, outcome and drill-down |
-| Identity administration | `/administration` | Users, role/permission assignments, password/login governance, teams and security audit |
+| Automatic handling | `/agent-control` | Configure handling plans, reply style, rules, Tools, integrations, limits and effective scope |
+| Channels | `/channels` | Channel onboarding, health and account governance |
+| Runtime and audit | `/runtime` | Technical readiness, bounded evidence, queue health and audited recovery |
+| Management | `/control-tower` | Tenant-scoped workload, business outcome, risk, trend and drill-down |
+| Identity administration | `/administration` | Users, capabilities, teams, credentials and security audit |
 
-`/webchat` is a compatibility redirect only. It does not mount a second product surface.
+`/webchat` is a compatibility redirect only. It does not mount a second operator product.
 
 Navigation is derived from backend permissions and canonical scope. A hidden route or disabled button never substitutes for backend authorization.
 
 ## Operator language model
 
-Primary operator surfaces are organized by the user's task rather than by service, database or runtime implementation objects.
+Primary surfaces are organized by the operator's task rather than by service, database or runtime implementation objects.
 
 Primary content may show only:
 
-- task or section name;
-- current state;
+- task or object identity;
+- whether it is a Conversation or Ticket-as-Case;
+- current business state;
 - relevant facts and scope;
 - blocking reason;
 - recovery step;
@@ -107,7 +142,7 @@ Primary content may show only:
 
 Implementation architecture, raw identifiers, authorization codes, payloads, traces, protocol details and model internals belong in named progressive disclosures such as `系统信息`, `技术详情`, `权限代码`, `运行证据` or `连接详情`.
 
-Use task labels such as:
+Use business labels such as:
 
 - `自动处理` rather than `Agent 控制`;
 - `处理方案` rather than `Agent Definition`;
@@ -118,60 +153,43 @@ Use task labels such as:
 
 The UI must not narrate internal authority, frontend/backend responsibility, singleton implementation, control-plane topology or policy-code names on a primary surface.
 
-## Identity, credential and session model
+## Identity, credential and tenant authority
 
 - `User` is the only operator identity record.
-- `User.updated_at` is the only mutable token-revocation version.
-- The server capability fingerprint is the only permission-freshness version.
-- `user_credential_policies` stores forced-password-change policy, bounded login/password timestamps, encrypted TOTP state and hashed one-use recovery codes. It stores no access token, refresh token, device session, role, permission, or tenant ownership.
-- Alembic `20260720_0064` introduces the credential-policy row; `20260720_0065` adds MFA state.
-- New administrator-issued credentials and administrator password resets require password rotation.
-- A forced-rotation identity may access only authentication recovery endpoints and `/account`; business APIs and agent WebSockets fail closed.
-- Correct password authentication for an MFA-enabled user produces only a short-lived MFA challenge. No application access token is issued before TOTP or recovery-code verification.
-- MFA secrets use the purpose-specific identity encryption key. Recovery codes are Argon2-hashed, single use and displayed in plaintext only immediately after generation.
-- Reusing a TOTP time step is rejected. Administrator MFA reset is same-tenant, audited, cannot target the current administrator, and revokes target sessions.
-- Password, MFA, identity, capability-policy, account-status, forced-rotation and explicit revocation changes invalidate stale HTTP and agent WebSocket access through the canonical identity version.
-- Passwords, TOTP secrets, MFA challenges, access tokens and recovery codes never enter audit payloads, frontend logs or operator-visible technical evidence.
-
-The frontend translates this model into plain account tasks: change password, enable or reset two-step verification, review recent login, and sign out devices. Internal token, fingerprint and connection terminology is not primary operator copy.
-
-## Tenant authority
-
-- Tenant ownership is derived only from the authenticated server principal and canonical relations.
-- User, team, market, capability override, security audit, channel account and outbound-email administration queries are tenant scoped on the server.
-- Tenant-bound email accounts must bind to an active market owned by the same tenant; cross-tenant resources are concealed.
-- Tenant-bound external email routing never falls back to an unowned global account.
-- The browser never supplies or overrides a tenant identity.
+- `User.updated_at` and the server capability fingerprint are the token-freshness authorities.
+- MFA secrets and recovery codes use purpose-specific encryption/hashing and never enter audit payloads.
+- Tenant ownership is derived from the authenticated server principal and canonical relations.
+- The browser never supplies or overrides tenant identity.
+- Tenant-owned resources must resolve through the relational Tenant authority; external `tenant_key` is a stable boundary key, not an alternate owner.
 
 ## Automatic-handling configuration model
 
-- `/agent-control` is the only configuration, version, effective-scope and bounded diagnostic surface for automatic handling.
-- A handling plan binds published reply style, business rules, tools, integrations, model profile, runtime limits and Knowledge versions.
+- `/agent-control` is the only automatic-handling configuration, version, effective-scope and bounded diagnostic surface.
 - Saving a draft does not change live handling.
-- Publishing creates a version; applying a version to an effective scope is a separate explicit action.
-- Reapplying a prior published version is the canonical rollback path and does not copy configuration.
-- The primary interface shows task labels and business state. Release IDs, manifests, digests, trace IDs, raw events, schemas and protocol details remain in technical disclosures.
-- Preview, validation, queued processing and model execution are distinct states. A preview is never presented as a completed production result.
+- Publishing creates an immutable version; applying it to scope is a separate explicit action.
+- Reapplying a prior release is the rollback path and does not copy configuration.
+- Preview, validation, queued processing, execution and customer outcome are distinct states.
 
 ## Runtime recovery model
 
 - `/runtime` is the only runtime-health and failed-task-recovery surface.
-- Read access may inspect queue counts; mutation requires the corresponding runtime permission.
-- Recovery commands reuse existing rate-limited, audited backend authorities.
-- Each command requeues at most 50 oldest failed records and preserves idempotency and provider safety boundaries.
-- Recovery success means only that technical processing was rescheduled; it never means operational or business completion.
+- Recovery reuses existing rate-limited, audited backend authorities.
+- Recovery success means only that processing was rescheduled; it never means operational or business completion.
+- Every accepted public message must converge to exactly one customer-visible terminal outcome or an intentional suppression caused by a newer message or committed human ownership.
 
 ## Channel account model
 
 - `/channels` is the only channel onboarding, health and account-governance surface.
-- The existing channel onboarding workflow remains canonical.
-- Email passwords are write-only encrypted fields. Lists and edit forms expose only configured/masked status.
-- Test send invokes the existing real email test authority and updates health evidence; enabling an account does not substitute for a successful test.
-- Historical messages and audit evidence remain after account disablement.
+- Credentials are write-only encrypted fields.
+- Enabling an account does not substitute for a successful test and capability-specific production evidence.
+- Historical messages and audit evidence remain governed after account disablement.
 
 ## Operator work model
 
-The primary object is a **case**, opened from a canonical queue identity. A case may link Ticket, Handoff, conversation, Dispatch and other channel/source records, but no individual source record becomes a second case truth.
+The Workspace supports two related but distinct modes:
+
+1. **Conversation mode** — live interaction, AI/human participation, Handoff and immediate completion.
+2. **Ticket-as-Case mode** — durable responsibility, SLA, governed actions, structured outcomes, customer notification, closure assessment and reopen.
 
 The Workspace must visibly separate:
 
@@ -181,7 +199,8 @@ The Workspace must visibly separate:
 - AI recommendation or prior AI output;
 - human decision;
 - system event;
-- action outcome;
+- action intent and execution attempt;
+- Provider receipt and operational outcome;
 - customer-notification receipt;
 - closure and observation state.
 
@@ -205,10 +224,11 @@ Do not label short-lived Case Context as customer memory. **No C-end long-term c
 
 Use:
 
-- Unassigned
-- Assigned
+- Conversation unassigned
 - Handoff requested
 - Handoff accepted
+- Case unassigned
+- Case assigned
 - Waiting for customer
 - Waiting for operations
 
@@ -230,27 +250,37 @@ An API success, queued Job, Job `done`, message `sent`, Dispatch `dispatched`, t
 
 Use:
 
+- Live conversation completed
+- Durable Case required
 - Closure blocked
 - Observation period
 - Eligible to close
 - Safely closed
 - Reopened
 
-Ticket `resolved` or `closed` is a source status. It must not be presented as safely closed without the active scenario, required action outcomes, customer-notification policy and lifecycle evidence.
+Ticket `resolved` or `closed` is a source status. It must not be presented as safely closed without the active scenario, required action outcomes, notification policy and lifecycle evidence.
 
 ## Information hierarchy
 
-For operator work, show information in this order:
+For a live Conversation:
+
+1. Conversation identity, scope, customer request and Handoff state.
+2. Authoritative evidence and missing information.
+3. Next permitted live action.
+4. Customer-visible terminal outcome.
+5. Ticket creation only when durable responsibility is required.
+
+For Ticket-as-Case:
 
 1. Case identity, scope, risk and ownership.
-2. Closure target and the missing requirement that currently blocks progress.
+2. Closure target and the missing requirement that blocks progress.
 3. Authoritative evidence and conflicting/customer-supplied information.
-4. Next permitted action and its confirmation requirement.
-5. Current action/outcome state.
-6. Customer conversation and communication composer.
+4. Next permitted action and confirmation requirement.
+5. Action, Provider, operational and notification outcomes.
+6. Customer conversation and composer.
 7. Technical evidence behind progressive disclosure.
 
-For configuration and administration, show information in this order:
+For configuration and administration:
 
 1. Object or task identity and current state.
 2. Scope and affected users/channels/markets.
@@ -259,28 +289,23 @@ For configuration and administration, show information in this order:
 5. Operational result and next step.
 6. Advanced protocol, model, permission or audit evidence behind progressive disclosure.
 
-Runtime model identity, raw Job identifiers and implementation traces are not primary operator content. They belong in bounded technical detail or the Runtime domain.
-
 ## Product behavior principles
 
 - One primary action per current task state.
 - Server-calculated permissions, tenant scope and action availability.
 - UI success only after durable backend confirmation.
-- No false success language.
+- No false success language and no silent accepted-message terminal state.
 - Empty states teach the next valid action.
-- Errors state what failed and what the operator can do without exposing authentication distinctions, raw policy codes or secrets.
 - Degraded, unavailable, stale, conflict and repair-required are first-class states.
 - Refresh preserves durable state and never duplicates commands.
 - Keyboard operation and screen-reader structure are part of product behavior.
-- Credential recovery blocks protected content before business requests are sent.
-- MFA challenge completion precedes access-token creation.
-- Session revocation applies to HTTP and active agent WebSocket access through the same identity authority.
-- Sensitive account, publication, effective-scope, recovery and disablement operations require explicit confirmation and are durably audited.
+- Sensitive account, publication, scope, recovery and disablement operations require explicit confirmation and durable audit.
+- Read projections may be rebuilt and may never own source-domain commands.
 
 ## Non-goals
 
 - No direct Provider execution from UI code.
-- No second queue, case truth or action truth.
+- No second queue, Case truth, Conversation truth, Handoff truth or action truth.
 - No second automatic-handling builder, user directory, RBAC table, session store, MFA store, channel product, Runtime product or authentication transport.
 - No client-owned tenant scope.
 - No probabilistic silent cross-channel merge.
@@ -294,18 +319,16 @@ Runtime model identity, raw Job identifiers and implementation traces are not pr
 ## Current implementation authority
 
 - `webapp/src/routes/` contains the only route registry.
-- `/workspace` is the only queue, case, conversation and governed-action surface.
-- `/knowledge` and `KnowledgePage.tsx` are the only Knowledge implementation; permission controls editing.
-- `/agent-control` is the only automatic-handling plan, reply-style, business-rule, tool, integration, model, effective-scope and diagnostic surface.
-- `/account` is the only current-user password, MFA, recovery-code and device sign-out surface.
-- `/administration` is the only user, credential, MFA recovery, role/capability, team and security-audit surface.
-- `/channels` is the only channel onboarding, channel health and email account-governance surface.
-- `/runtime` is the only runtime evidence, queue health and failed-record recovery surface.
-- `apiClient.ts` is the only generic HTTP transport; `supportApi.ts`, `agentControlApi.ts` and `agentRuntimeApi.ts` are typed domain adapters over it.
-- `User.updated_at` and the server capability fingerprint are the only token-freshness authorities for HTTP and agent WebSocket access.
-- `SecretCryptoService` is the only application-managed secret-encryption authority, with separate purpose-specific keys for outbound email and identity MFA.
+- `/workspace` is the only Conversation, Ticket-as-Case, queue, evidence and governed-action surface.
+- `/knowledge` and `KnowledgePage.tsx` are the only Knowledge implementation.
+- `/agent-control` is the only automatic-handling configuration and diagnostic surface.
+- `/account` is the only current-user credential surface.
+- `/administration` is the only user, role/capability, team and security-audit surface.
+- `/channels` is the only channel onboarding, health and account-governance surface.
+- `/runtime` is the only runtime evidence, queue health and recovery surface.
+- `apiClient.ts` is the only generic HTTP transport; domain APIs are typed adapters over it.
 - Material UI, one Nexus theme and one bounded operator-presentation module are the only generic visual authorities.
-- `webapp/design/operator-language.v1.json` is the operator-language authority for all canonical routes.
+- `webapp/design/operator-language.v1.json` is the operator-language authority.
 - `/webchat` redirects to canonical routes and does not own a product UI.
 
 New work must extend these authorities and remove any superseded path in the same delivery.

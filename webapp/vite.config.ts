@@ -36,6 +36,7 @@ export default defineConfig({
           if (
             pkg === 'react' ||
             pkg === 'react-dom' ||
+            pkg === 'react-is' ||
             pkg === 'scheduler' ||
             pkg === 'loose-envify' ||
             pkg === 'use-sync-external-store'
@@ -43,10 +44,18 @@ export default defineConfig({
             return 'vendor-react'
           }
 
-          if (pkg === 'livekit-client' || pkg.startsWith('@livekit') || pkg === '@bufbuild/protobuf' || pkg === 'sdp') {
+          if (
+            pkg === 'livekit-client' ||
+            pkg.startsWith('@livekit') ||
+            pkg === '@bufbuild/protobuf' ||
+            pkg === 'sdp'
+          ) {
             return 'vendor-livekit'
           }
 
+          if (pkg === '@mui/icons-material') return 'vendor-mui-icons'
+          if (pkg === '@mui/material' || pkg.startsWith('@mui/')) return 'vendor-mui'
+          if (pkg.startsWith('@emotion/')) return 'vendor-emotion'
           if (pkg.startsWith('@tanstack')) return 'vendor-tanstack'
           if (pkg.startsWith('@radix-ui')) return 'vendor-radix'
 

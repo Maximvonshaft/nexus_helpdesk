@@ -26,7 +26,11 @@ import {
 import { canonicalAppHref } from '@/app/canonicalRoutes'
 import { sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
-import type { ControlTowerAction, ControlTowerGovernanceLane } from '@/lib/types'
+import type {
+  BusinessOutcomeMetric,
+  ControlTowerAction,
+  ControlTowerGovernanceLane,
+} from '@/lib/types'
 
 function ActionRow({ item }: { item: ControlTowerAction }) {
   const href = canonicalAppHref(item.href)
@@ -87,12 +91,68 @@ function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
   )
 }
 
+function metricValue(item: BusinessOutcomeMetric) {
+  if (item.value == null) return '暂无样本'
+  if (item.unit === 'ratio') return `${(item.value * 100).toFixed(1)}%`
+  if (item.unit === 'seconds') return `${Math.round(item.value)} 秒`
+  return item.value.toFixed(item.value % 1 === 0 ? 0 : 1)
+}
+
+function metricTarget(item: BusinessOutcomeMetric) {
+  const operator = item.direction === 'min' ? '≥' : '≤'
+  if (item.unit === 'ratio') return `${operator} ${(item.target * 100).toFixed(1)}%`
+  if (item.unit === 'seconds') return `${operator} ${Math.round(item.target)} 秒`
+  return `${operator} ${item.target}`
+}
+
+function metricTrend(item: BusinessOutcomeMetric) {
+  if (item.previous_value == null || item.delta == null) return '无上一窗口样本'
+  const label = item.trend === 'improving' ? '改善' : item.trend === 'declining' ? '下降' : '稳定'
+  const delta = item.unit === 'ratio'
+    ? `${item.delta >= 0 ? '+' : ''}${(item.delta * 100).toFixed(1)} 个百分点`
+    : `${item.delta >= 0 ? '+' : ''}${item.delta.toFixed(1)}${item.unit === 'seconds' ? ' 秒' : ''}`
+  return `${label} · ${delta}`
+}
+
+function OutcomeMetricRow({ item }: { item: BusinessOutcomeMetric }) {
+  const href = canonicalAppHref(item.drilldown)
+  const denominatorLabel = item.denominator > 0
+    ? `${item.numerator} / ${item.denominator}`
+    : '暂无可评估样本'
+  return (
+    <TableRow hover>
+      <TableCell>
+        <Typography variant="subtitle2">{sanitizeDisplayText(item.label)}</Typography>
+        <Typography variant="caption" color="text.secondary">{denominatorLabel}</Typography>
+      </TableCell>
+      <TableCell>
+        <OperatorStatusLine
+          compact
+          presentation={{ label: metricValue(item), tone: normalizeOperatorTone(item.status) }}
+        />
+      </TableCell>
+      <TableCell>{metricTarget(item)}</TableCell>
+      <TableCell>{metricTrend(item)}</TableCell>
+      <TableCell>
+        {href ? <Button component="a" href={href} size="small" color="inherit">下钻</Button> : null}
+      </TableCell>
+    </TableRow>
+  )
+}
+
 export function ControlTowerPage() {
   const tower = useQuery({
     queryKey: ['canonicalControlTower'],
     queryFn: supportApi.controlTower,
     refetchInterval: 30_000,
     retry: false,
+  })
+  const outcomes = useQuery({
+    queryKey: ['canonicalControlTowerOutcomes'],
+    queryFn: supportApi.controlTowerOutcomes,
+    refetchInterval: 60_000,
+    retry: false,
+    placeholderData: (previous) => previous,
   })
 
   return (
@@ -107,7 +167,7 @@ export function ControlTowerPage() {
         }}
       >
         <Typography component="h1" variant="h1">运营监控</Typography>
-        {tower.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
+        {tower.isFetching || outcomes.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
       {tower.isError ? (
         <OperatorErrorNotice title="无法读取运营监控" error={tower.error} fallback="请稍后重试" />
@@ -124,6 +184,43 @@ export function ControlTowerPage() {
                 </Box>
               ))}
             </Box>
+          </Paper>
+
+          <Paper component="section" variant="outlined" aria-labelledby="outcome-metrics-title" sx={{ minWidth: 0, p: 2 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
+              <Box>
+                <Typography id="outcome-metrics-title" component="h2" variant="h3">业务结果</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  明确分母、目标和上一窗口趋势；技术成功不等于业务完成。
+                </Typography>
+              </Box>
+              {outcomes.data ? (
+                <Typography variant="caption" color="text.secondary">
+                  最近 {outcomes.data.window.days} 天 · {outcomes.data.source_ticket_count} 个案例
+                </Typography>
+              ) : null}
+            </Stack>
+            <Divider sx={{ my: 2 }} />
+            {outcomes.isError ? (
+              <OperatorErrorNotice title="无法读取业务结果" error={outcomes.error} fallback="保留上次确认结果并稍后重试" />
+            ) : outcomes.isLoading ? (
+              <OperatorLoadingState label="正在计算业务结果…" minHeight={180} />
+            ) : outcomes.data?.items.length ? (
+              <TableContainer>
+                <Table size="small" aria-label="业务结果指标">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>指标与分母</TableCell>
+                      <TableCell>当前</TableCell>
+                      <TableCell>目标</TableCell>
+                      <TableCell>上一窗口</TableCell>
+                      <TableCell>操作</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>{outcomes.data.items.map((item) => <OutcomeMetricRow key={item.key} item={item} />)}</TableBody>
+                </Table>
+              </TableContainer>
+            ) : <OperatorEmptyState title="暂无业务结果样本" description="当案例产生结构化关闭、通知和动作结果后，这里会显示可评估指标。" />}
           </Paper>
 
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.4fr) minmax(300px, 0.8fr)' } }}>

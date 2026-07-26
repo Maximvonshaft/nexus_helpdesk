@@ -1,0 +1,103 @@
+{
+  "schema": "nexus.outcome-metric-targets.v1",
+  "version": "1.0.0",
+  "window_days": 30,
+  "metrics": {
+    "safe_effective_closure_rate": {
+      "label": "安全有效关闭率",
+      "unit": "ratio",
+      "direction": "min",
+      "target": 0.95,
+      "warning": 0.9,
+      "drilldown": "/workspace?metric=safe_effective_closure_rate"
+    },
+    "first_contact_resolution_rate": {
+      "label": "首次接触解决率",
+      "unit": "ratio",
+      "direction": "min",
+      "target": 0.75,
+      "warning": 0.65,
+      "drilldown": "/workspace?metric=first_contact_resolution_rate"
+    },
+    "reopen_72h_rate": {
+      "label": "72 小时重开率",
+      "unit": "ratio",
+      "direction": "max",
+      "target": 0.03,
+      "warning": 0.06,
+      "drilldown": "/workspace?metric=reopen_72h_rate"
+    },
+    "repeat_contact_7d_rate": {
+      "label": "7 天重复联系率",
+      "unit": "ratio",
+      "direction": "max",
+      "target": 0.08,
+      "warning": 0.15,
+      "drilldown": "/workspace?metric=repeat_contact_7d_rate"
+    },
+    "customer_notification_compliance": {
+      "label": "客户通知合规率",
+      "unit": "ratio",
+      "direction": "min",
+      "target": 0.98,
+      "warning": 0.94,
+      "drilldown": "/workspace?metric=customer_notification_compliance"
+    },
+    "action_operational_completion_rate": {
+      "label": "动作运营完成率",
+      "unit": "ratio",
+      "direction": "min",
+      "target": 0.95,
+      "warning": 0.9,
+      "drilldown": "/workspace?metric=action_operational_completion_rate"
+    },
+    "repair_required_rate": {
+      "label": "需要修复比例",
+      "unit": "ratio",
+      "direction": "max",
+      "target": 0.02,
+      "warning": 0.05,
+      "drilldown": "/workspace?metric=repair_required_rate"
+    },
+    "handoff_acceptance_rate": {
+      "label": "人工接管接受率",
+      "unit": "ratio",
+      "direction": "min",
+      "target": 0.95,
+      "warning": 0.9,
+      "drilldown": "/workspace?metric=handoff_acceptance_rate"
+    },
+    "handoff_wait_p90_seconds": {
+      "label": "人工接管等待 P90",
+      "unit": "seconds",
+      "direction": "max",
+      "target": 60,
+      "warning": 120,
+      "drilldown": "/workspace?metric=handoff_wait_p90_seconds"
+    },
+    "average_human_touches": {
+      "label": "每案例平均人工触点",
+      "unit": "count",
+      "direction": "max",
+      "target": 3,
+      "warning": 5,
+      "drilldown": "/workspace?metric=average_human_touches"
+    },
+    "provider_failure_rate": {
+      "label": "Provider 失败率",
+      "unit": "ratio",
+      "direction": "max",
+      "target": 0.02,
+      "warning": 0.05,
+      "drilldown": "/runtime?metric=provider_failure_rate"
+    },
+    "ai_live_resolution_quality_rate": {
+      "label": "AI 实时解决质量率",
+      "unit": "ratio",
+      "direction": "min",
+      "target": 0.7,
+      "warning": 0.55,
+      "drilldown": "/workspace?metric=ai_live_resolution_quality_rate"
+    }
+  }
+}

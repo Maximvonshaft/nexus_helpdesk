@@ -24,14 +24,25 @@ from app.models import Ticket, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services import operator_queue  # noqa: E402
 from app.services.operator_queue import create_operator_task, project_operator_queue  # noqa: E402
-from app.webchat_models import WebchatConversation  # noqa: E402
+from app.utils.time import utc_now  # noqa: E402
+from app.webchat_models import WebchatConversation, WebchatHandoffRequest  # noqa: E402
 
 
 @pytest.fixture()
 def db_session(tmp_path):
     db_file = tmp_path / "operator_queue_concurrency.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
-    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     session = Session()
     try:
@@ -43,7 +54,14 @@ def db_session(tmp_path):
 
 
 def make_admin(db):
-    row = User(username="admin", display_name="admin", email="admin@example.test", password_hash="x", role=UserRole.admin, is_active=True)
+    row = User(
+        username="admin",
+        display_name="admin",
+        email="admin@example.test",
+        password_hash="x",
+        role=UserRole.admin,
+        is_active=True,
+    )
     db.add(row)
     db.flush()
     return row
@@ -72,18 +90,47 @@ def make_conversation(db, ticket: Ticket) -> WebchatConversation:
         tenant_key="default",
         channel_key="default",
         ticket_id=ticket.id,
+        handoff_status="requested",
+        ai_suspended=True,
     )
     db.add(row)
     db.flush()
     return row
 
 
-def test_integrity_error_for_same_webchat_handoff_returns_existing_not_500(db_session, monkeypatch):
+def make_handoff(db, ticket: Ticket, conversation: WebchatConversation):
+    now = utc_now()
+    row = WebchatHandoffRequest(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        source="ai_auto",
+        trigger_type="handoff_required",
+        status="requested",
+        reason_code="manual_review_required",
+        requested_by_actor_type="system",
+        requested_at=now,
+        lock_version=1,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    conversation.current_handoff_request_id = row.id
+    return row
+
+
+def test_integrity_error_for_same_handoff_projection_returns_existing_not_500(
+    db_session,
+    monkeypatch,
+):
     ticket = make_ticket(db_session)
     conversation = make_conversation(db_session, ticket)
+    handoff = make_handoff(db_session, ticket, conversation)
     existing = OperatorTask(
-        source_type="webchat",
-        source_id=conversation.public_id,
+        source_type="webchat_handoff",
+        source_id=str(handoff.id),
+        source_version=handoff.lock_version,
+        projection_schema="nexus.operator-task.webchat-handoff.v1",
         ticket_id=ticket.id,
         webchat_conversation_id=conversation.id,
         task_type="handoff",
@@ -99,17 +146,27 @@ def test_integrity_error_for_same_webchat_handoff_returns_existing_not_500(db_se
         calls["count"] += 1
         return None if calls["count"] == 1 else existing
 
-    monkeypatch.setattr(operator_queue, "_find_existing_active_task", fake_find_existing)
+    monkeypatch.setattr(
+        operator_queue,
+        "_find_existing_active_task",
+        fake_find_existing,
+    )
 
     def raise_unique_violation():
-        raise IntegrityError("insert into operator_tasks", {}, Exception("unique active task violation"))
+        raise IntegrityError(
+            "insert into operator_tasks",
+            {},
+            Exception("unique active task violation"),
+        )
 
     monkeypatch.setattr(db_session, "flush", raise_unique_violation)
 
     row, created = create_operator_task(
         db_session,
-        source_type="webchat",
-        source_id=conversation.public_id,
+        source_type="webchat_handoff",
+        source_id=str(handoff.id),
+        source_version=handoff.lock_version,
+        projection_schema="nexus.operator-task.webchat-handoff.v1",
         ticket_id=ticket.id,
         webchat_conversation_id=conversation.id,
         task_type="handoff",
@@ -119,12 +176,17 @@ def test_integrity_error_for_same_webchat_handoff_returns_existing_not_500(db_se
     assert row.id == existing.id
 
 
-def test_webchat_handoff_task_reuses_conversation_identity_when_source_id_changes(db_session):
+def test_handoff_task_reuses_conversation_identity_when_source_id_is_corrected(
+    db_session,
+):
     ticket = make_ticket(db_session)
     conversation = make_conversation(db_session, ticket)
+    handoff = make_handoff(db_session, ticket, conversation)
     existing = OperatorTask(
-        source_type="webchat",
-        source_id="stale-public-id",
+        source_type="webchat_handoff",
+        source_id="stale-source-id",
+        source_version=0,
+        projection_schema="nexus.operator-task.webchat-handoff.v1",
         ticket_id=ticket.id,
         webchat_conversation_id=conversation.id,
         task_type="handoff",
@@ -136,8 +198,10 @@ def test_webchat_handoff_task_reuses_conversation_identity_when_source_id_change
 
     row, created = create_operator_task(
         db_session,
-        source_type="webchat",
-        source_id=conversation.public_id,
+        source_type="webchat_handoff",
+        source_id=str(handoff.id),
+        source_version=handoff.lock_version,
+        projection_schema="nexus.operator-task.webchat-handoff.v1",
         ticket_id=ticket.id,
         webchat_conversation_id=conversation.id,
         task_type="handoff",
@@ -148,7 +212,8 @@ def test_webchat_handoff_task_reuses_conversation_identity_when_source_id_change
 
     assert created is False
     assert row.id == existing.id
-    assert row.source_id == conversation.public_id
+    assert row.source_id == str(handoff.id)
+    assert row.source_version == handoff.lock_version
     assert row.reason_code == "manual_review_required"
     assert row.priority == 40
     assert json.loads(row.payload_json or "{}")["ticket_no"] == ticket.ticket_no
@@ -157,7 +222,8 @@ def test_webchat_handoff_task_reuses_conversation_identity_when_source_id_change
 def test_get_operator_queue_projection_does_not_duplicate_active_tasks(db_session):
     admin = make_admin(db_session)
     ticket = make_ticket(db_session)
-    make_conversation(db_session, ticket)
+    conversation = make_conversation(db_session, ticket)
+    make_handoff(db_session, ticket, conversation)
 
     first = project_operator_queue(db_session, actor_id=admin.id)
     second = project_operator_queue(db_session, actor_id=admin.id)

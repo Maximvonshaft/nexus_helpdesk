@@ -17,8 +17,10 @@ Certification covers the canonical authenticated routes and requires exact-Head 
 - reduced-motion operation;
 - structural reflow at the 320 CSS-pixel release floor;
 - 200% text enlargement without label/value overlap, clipping, hidden actions or root horizontal overflow;
-- deterministic pixel-regression baselines for normal, loading, empty, degraded, conflict, repair-required and enlarged-text states;
+- executable loading, empty, degraded, conflict, repair-required and enlarged-text state assertions over DOM, geometry, contrast, focus and task behavior;
 - representative-volume queue and conversation journeys.
+
+The canonical Playwright suite is the release authority for browser behavior. Screenshots may be captured during diagnosis or controlled human review, but screenshot files, image hashes and pixel baselines are not a parallel acceptance path and cannot replace executable assertions.
 
 Viewport width alone is not the responsive authority. The shell and Workspace consume the same layout mode derived from both viewport capacity and effective root text scale, so enlarged text cannot leave the application in a compressed desktop layout.
 

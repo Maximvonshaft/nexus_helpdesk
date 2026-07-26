@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import os
 from pathlib import Path
 
@@ -9,7 +10,11 @@ from cryptography.fernet import Fernet
 
 
 class SecretCryptoService:
-    """Encrypt application-managed secrets with a purpose-specific Fernet key."""
+    """Encrypt and fingerprint application-managed sensitive values.
+
+    Each domain uses a purpose-specific key. Production accepts keys only from
+    approved mounted files; plain-text environment keys remain development-only.
+    """
 
     def __init__(
         self,
@@ -21,10 +26,15 @@ class SecretCryptoService:
         key_file: str | None = None,
         env_key: str | None = None,
     ) -> None:
-        app_env = os.environ.get("APP_ENV", os.environ.get("ENV", "development")).strip().lower()
+        app_env = os.environ.get(
+            "APP_ENV",
+            os.environ.get("ENV", "development"),
+        ).strip().lower()
         is_prod = app_env == "production"
         configured_key_file = key_file or os.environ.get(key_file_env)
-        configured_env_key = env_key if env_key is not None else os.environ.get(key_env)
+        configured_env_key = (
+            env_key if env_key is not None else os.environ.get(key_env)
+        )
 
         key_data: bytes | None = None
         if configured_key_file:
@@ -32,7 +42,9 @@ class SecretCryptoService:
             if key_path.exists():
                 key_data = key_path.read_bytes().strip()
             elif is_prod:
-                raise RuntimeError(f"{key_file_env} is configured but the file does not exist")
+                raise RuntimeError(
+                    f"{key_file_env} is configured but the file does not exist"
+                )
         elif is_prod and default_prod_key_path:
             default_path = Path(default_prod_key_path)
             if default_path.exists():
@@ -40,22 +52,38 @@ class SecretCryptoService:
 
         if key_data is None and configured_env_key:
             if is_prod:
-                raise RuntimeError(f"production environment prohibits plain text {key_env}; use {key_file_env}")
+                raise RuntimeError(
+                    f"production environment prohibits plain text {key_env}; "
+                    f"use {key_file_env}"
+                )
             key_data = configured_env_key.encode("utf-8")
 
         if key_data is None:
             if is_prod:
-                raise RuntimeError(f"{key_file_env} is required in production")
+                raise RuntimeError(
+                    f"{key_file_env} is required in production"
+                )
             key_data = self._deterministic_dev_key(purpose)
 
         try:
             self._fernet = Fernet(key_data)
         except Exception as exc:
-            raise RuntimeError(f"Invalid Fernet key format for {purpose}") from exc
+            raise RuntimeError(
+                f"Invalid Fernet key format for {purpose}"
+            ) from exc
+        # Derive a separate HMAC key rather than reusing the Fernet signing key.
+        self._fingerprint_key = hashlib.sha256(
+            b"nexus-purpose-fingerprint-v1\x00"
+            + purpose.encode("utf-8")
+            + b"\x00"
+            + key_data
+        ).digest()
 
     @staticmethod
     def _deterministic_dev_key(purpose: str) -> bytes:
-        digest = hashlib.sha256(f"nexus-dev-default-{purpose}-key-v1".encode("utf-8")).digest()
+        digest = hashlib.sha256(
+            f"nexus-dev-default-{purpose}-key-v1".encode("utf-8")
+        ).digest()
         return base64.urlsafe_b64encode(digest)
 
     @classmethod
@@ -64,7 +92,9 @@ class SecretCryptoService:
             purpose="outbound-email",
             key_file_env="OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE",
             key_env="OUTBOUND_EMAIL_ENCRYPTION_KEY",
-            default_prod_key_path="/run/nexus/outbound_email_encryption_key",
+            default_prod_key_path=(
+                "/run/nexus/outbound_email_encryption_key"
+            ),
         )
 
     @classmethod
@@ -73,7 +103,18 @@ class SecretCryptoService:
             purpose="identity-mfa",
             key_file_env="IDENTITY_MFA_ENCRYPTION_KEY_FILE",
             key_env="IDENTITY_MFA_ENCRYPTION_KEY",
-            default_prod_key_path="/run/nexus/identity_mfa_encryption_key",
+            default_prod_key_path=(
+                "/run/nexus/identity_mfa_encryption_key"
+            ),
+        )
+
+    @classmethod
+    def privacy_identity(cls) -> "SecretCryptoService":
+        return cls(
+            purpose="privacy-identity",
+            key_file_env="PRIVACY_IDENTITY_KEY_FILE",
+            key_env="PRIVACY_IDENTITY_KEY",
+            default_prod_key_path="/run/nexus/privacy_identity_key",
         )
 
     def encrypt(self, value: str | None) -> str | None:
@@ -84,7 +125,19 @@ class SecretCryptoService:
     def decrypt(self, encrypted_value: str | None) -> str | None:
         if not encrypted_value:
             return None
-        return self._fernet.decrypt(encrypted_value.encode("utf-8")).decode("utf-8")
+        return self._fernet.decrypt(
+            encrypted_value.encode("utf-8")
+        ).decode("utf-8")
+
+    def fingerprint(self, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("fingerprint_value_required")
+        return hmac.new(
+            self._fingerprint_key,
+            normalized.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
 
 
 def mask_secret(value: str | None) -> str | None:
