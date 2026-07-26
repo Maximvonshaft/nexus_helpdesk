@@ -38,11 +38,20 @@ class StoredFile:
     detected_mime_type: str
 
 
+@dataclass(frozen=True)
+class StorageDeletionReceipt:
+    storage_key: str
+    deleted: bool
+    already_absent: bool
+    backend: str
+
+
 class StorageBackend(Protocol):
     def save_upload(self, file: UploadFile, *, allowed_mime_types: set[str], allowed_extensions: set[str], max_bytes: int) -> StoredFile: ...
     def persist_bytes(self, *, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None = None, allowed_extensions: set[str] | None = None, max_bytes: int | None = None) -> StoredFile: ...
     def resolve(self, storage_key: str) -> Path: ...
     def download_url(self, storage_key: str, *, filename: str | None = None, media_type: str | None = None) -> str | None: ...
+    def delete(self, storage_key: str) -> StorageDeletionReceipt: ...
 
 
 def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None, allowed_extensions: set[str] | None, max_bytes: int | None) -> tuple[str, str]:
@@ -75,6 +84,14 @@ class LocalStorageBackend:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
+    def _candidate(self, storage_key: str) -> Path:
+        candidate = (self.root / storage_key).resolve()
+        try:
+            candidate.relative_to(self.root.resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail='Attachment path is outside storage root') from exc
+        return candidate
+
     def _sniff_mime(self, sample: bytes, suffix: str, declared: str) -> str:
         declared = (declared or 'application/octet-stream').lower()
         if sample.startswith(b'%PDF-'):
@@ -100,12 +117,7 @@ class LocalStorageBackend:
         if suffix not in allowed_extensions:
             raise HTTPException(status_code=400, detail=f"File extension '{suffix or '[none]'}' is not allowed")
         storage_key = f"{uuid.uuid4().hex}{suffix}"
-        absolute_path = (self.root / storage_key).resolve()
-        try:
-            absolute_path.relative_to(self.root.resolve())
-        except ValueError as exc:
-            raise HTTPException(status_code=500, detail='Resolved storage path escaped storage root') from exc
-
+        absolute_path = self._candidate(storage_key)
         total = 0
         sample = b''
         try:
@@ -124,7 +136,6 @@ class LocalStorageBackend:
         except Exception:
             absolute_path.unlink(missing_ok=True)
             raise
-
         detected_mime = self._sniff_mime(sample, suffix, file.content_type or 'application/octet-stream')
         if detected_mime not in allowed_mime_types:
             absolute_path.unlink(missing_ok=True)
@@ -141,26 +152,33 @@ class LocalStorageBackend:
             max_bytes=max_bytes,
         )
         storage_key = f"{uuid.uuid4().hex}{suffix}"
-        absolute_path = (self.root / storage_key).resolve()
-        try:
-            absolute_path.relative_to(self.root.resolve())
-        except ValueError as exc:
-            raise HTTPException(status_code=500, detail='Resolved storage path escaped storage root') from exc
+        absolute_path = self._candidate(storage_key)
         absolute_path.write_bytes(content)
         return StoredFile(storage_key=storage_key, absolute_path=absolute_path, size_bytes=len(content), detected_mime_type=detected_mime)
 
     def resolve(self, storage_key: str) -> Path:
-        candidate = (self.root / storage_key).resolve()
-        try:
-            candidate.relative_to(self.root.resolve())
-        except ValueError as exc:
-            raise HTTPException(status_code=403, detail='Attachment path is outside storage root') from exc
+        candidate = self._candidate(storage_key)
         if not candidate.exists() or not candidate.is_file():
             raise HTTPException(status_code=404, detail='Attachment file is missing')
         return candidate
 
     def download_url(self, storage_key: str, *, filename: str | None = None, media_type: str | None = None) -> str | None:
         return None
+
+    def delete(self, storage_key: str) -> StorageDeletionReceipt:
+        candidate = self._candidate(storage_key)
+        existed = candidate.exists()
+        if existed and not candidate.is_file():
+            raise RuntimeError('storage_delete_target_not_file')
+        candidate.unlink(missing_ok=True)
+        if candidate.exists():
+            raise RuntimeError('storage_delete_not_verified')
+        return StorageDeletionReceipt(
+            storage_key=storage_key,
+            deleted=existed,
+            already_absent=not existed,
+            backend='local',
+        )
 
 
 class S3CompatibleStorageBackend:
@@ -184,6 +202,13 @@ class S3CompatibleStorageBackend:
             kwargs["aws_access_key_id"] = self.access_key
             kwargs["aws_secret_access_key"] = self.secret_key
         return boto3.client(**kwargs)
+
+    @staticmethod
+    def _is_missing(exc: Exception) -> bool:
+        response = getattr(exc, 'response', {}) or {}
+        code = str((response.get('Error') or {}).get('Code') or '')
+        status = int((response.get('ResponseMetadata') or {}).get('HTTPStatusCode') or 0)
+        return code in {'404', 'NoSuchKey', 'NotFound'} or status == 404
 
     def _sniff_mime(self, sample: bytes, suffix: str, declared: str) -> str:
         return LocalStorageBackend(self.temp_root)._sniff_mime(sample, suffix, declared)
@@ -244,6 +269,35 @@ class S3CompatibleStorageBackend:
         if media_type:
             params["ResponseContentType"] = media_type
         return client.generate_presigned_url("get_object", Params=params, ExpiresIn=self.presign_expiry_seconds)
+
+    def delete(self, storage_key: str) -> StorageDeletionReceipt:
+        client = self._client()
+        existed = True
+        try:
+            client.head_object(Bucket=self.bucket, Key=storage_key)
+        except Exception as exc:
+            if self._is_missing(exc):
+                existed = False
+            else:
+                raise RuntimeError('storage_delete_preflight_failed') from exc
+        if existed:
+            try:
+                client.delete_object(Bucket=self.bucket, Key=storage_key)
+            except Exception as exc:
+                raise RuntimeError('storage_delete_request_failed') from exc
+        try:
+            client.head_object(Bucket=self.bucket, Key=storage_key)
+        except Exception as exc:
+            if not self._is_missing(exc):
+                raise RuntimeError('storage_delete_verification_failed') from exc
+        else:
+            raise RuntimeError('storage_delete_not_verified')
+        return StorageDeletionReceipt(
+            storage_key=storage_key,
+            deleted=existed,
+            already_absent=not existed,
+            backend='s3',
+        )
 
 
 def get_storage_backend() -> StorageBackend:
