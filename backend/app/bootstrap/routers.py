@@ -33,6 +33,7 @@ from ..api.lookups import router as lookups_router
 from ..api.operator_agent_state import router as operator_agent_state_router
 from ..api.operator_queue import router as operator_queue_router
 from ..api.outbound_channels import router as outbound_channels_router
+from ..api.outcome_metrics import router as outcome_metrics_router
 from ..api.persona_profiles import router as persona_profiles_router
 from ..api.release_readiness import router as release_readiness_router
 from ..api.speedaf_actions import router as speedaf_actions_router
@@ -113,6 +114,7 @@ def register_api_routers(app: FastAPI) -> None:
         knowledge_items_router,
         lookups_router,
         lite_router,
+        outcome_metrics_router,
         customers_router,
         email_router,
         persona_profiles_router,
