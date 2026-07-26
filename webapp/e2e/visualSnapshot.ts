@@ -27,9 +27,7 @@ export async function expectVisualSnapshot(
   const actualSha256 = createHash('sha256').update(actual).digest('hex')
   const expectedSha256 = VISUAL_SNAPSHOT_SHA256[name]
 
-  if (actualSha256 !== expectedSha256) {
-    await testInfo.attach(`${name}-actual.png`, { body: actual, contentType: 'image/png' })
-  }
+  await testInfo.attach(`${name}.png`, { body: actual, contentType: 'image/png' })
 
   expect(
     actualSha256,
