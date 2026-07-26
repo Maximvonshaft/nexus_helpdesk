@@ -14,7 +14,6 @@ from ..services.data_lifecycle_attachment_cleanup import (
 )
 from ..services.data_lifecycle_service import (
     DataLifecycleError,
-    apply_retention_execution,
     build_data_subject_export,
     create_data_subject_request,
     create_retention_policy,
@@ -33,6 +32,7 @@ from ..services.permissions import (
     ensure_can_manage_users,
     ensure_can_view_security_audit,
 )
+from ..services.retention_execution_guard import apply_retention_execution
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
