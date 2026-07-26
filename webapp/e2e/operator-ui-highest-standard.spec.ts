@@ -1,11 +1,10 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   canonicalRoutes,
   json,
   mockResponsiveConsole,
   responsiveUser,
 } from './fixtures/responsiveConsole'
-import { expectVisualSnapshot } from './visualSnapshot'
 
 type AccessibilityViolation = {
   code: string
@@ -264,7 +263,12 @@ async function undersizedPrimaryControls(page: Page) {
   })
 }
 
-test('200 percent text enlargement switches to structural compact layout without overlap or clipping', async ({ page }, testInfo: TestInfo) => {
+async function expectVisual(page: Page, name: string) {
+  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
+}
+
+
+test('200 percent text enlargement switches to structural compact layout without overlap or clipping', async ({ page }) => {
   const longIdentity = 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano'
   await page.setViewportSize({ width: 1366, height: 768 })
   await mockResponsiveConsole(page)
@@ -288,7 +292,7 @@ test('200 percent text enlargement switches to structural compact layout without
   expect(await identity.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true)
   expect(await formTextOverlaps(page)).toEqual([])
   expect(await undersizedPrimaryControls(page)).toEqual([])
-  await expectVisualSnapshot(page, testInfo, 'workspace-text-200-reflow-1366')
+  await expectVisual(page, 'workspace-text-200-reflow-1366')
 })
 
 test('canonical routes reflow to the 320 CSS pixel release floor', async ({ page }) => {
