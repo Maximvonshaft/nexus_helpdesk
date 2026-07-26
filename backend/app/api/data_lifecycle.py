@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models_case_governance import DataSubjectRequest
 from ..services.data_lifecycle_attachment_cleanup import (
     bind_attachment_cleanup_receipt,
     delete_subject_attachment_blobs,
@@ -27,6 +26,9 @@ from ..services.data_subject_action_service import (
     activate_data_processing_restriction,
     execute_data_subject_correction,
     release_data_processing_restriction,
+)
+from ..services.data_subject_deletion_preflight import (
+    validate_subject_deletion_preflight,
 )
 from ..services.permissions import (
     ensure_can_manage_users,
@@ -245,13 +247,15 @@ def delete_dsar_subject(
     ensure_can_manage_users(current_user, db)
     try:
         with managed_session(db):
-            request = db.get(DataSubjectRequest, request_id)
-            if request is None:
-                raise DataLifecycleError("dsar_not_found", status_code=404)
+            preflight = validate_subject_deletion_preflight(
+                db,
+                actor=current_user,
+                request_id=request_id,
+            )
             attachment_receipt = delete_subject_attachment_blobs(
                 db,
                 actor=current_user,
-                customer_id=request.customer_id,
+                customer_id=preflight.customer_id,
             )
             database_receipt = execute_data_subject_deletion(
                 db,
