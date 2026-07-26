@@ -7,12 +7,21 @@ const rcBrowser = (process.env.RC_RUN_BROWSER_SMOKE || '').toLowerCase() === 'tr
 
 export default defineConfig({
   testDir: './e2e',
+  snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   // The RC journey is stateful and exact-head bound. A retry can create a
   // second synthetic conversation and mask the first failing browser stage.
   retries: rcBrowser ? 0 : (process.env.CI ? 1 : 0),
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  expect: {
+    toHaveScreenshot: {
+      animations: 'disabled',
+      caret: 'hide',
+      scale: 'css',
+      maxDiffPixelRatio: 0.001,
+    },
+  },
   use: {
     baseURL,
     headless: true,
