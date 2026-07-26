@@ -14,7 +14,13 @@ ACTIVE_TASK_SQL = "status NOT IN ('resolved', 'dropped', 'replayed', 'replay_fai
 
 
 class OperatorTask(Base):
-    """Durable operator task projected from canonical support workflows."""
+    """Rebuildable operator-queue projection of canonical source workflows.
+
+    OperatorTask is never a source-domain state machine. ``source_type`` and
+    ``source_id`` identify the aggregate that owns the mutable fact;
+    ``source_version`` makes stale projections detectable. All source commands
+    must execute through that aggregate's canonical service.
+    """
 
     __tablename__ = "operator_tasks"
     __table_args__ = (
@@ -25,6 +31,7 @@ class OperatorTask(Base):
         Index("ix_operator_tasks_webchat_conversation_id", "webchat_conversation_id"),
         Index("ix_operator_tasks_assignee_id", "assignee_id"),
         Index("ix_operator_tasks_reason_code", "reason_code"),
+        Index("ix_operator_tasks_projection_source_version", "projection_schema", "source_version"),
         Index(
             "uq_operator_tasks_active_webchat_handoff",
             "webchat_conversation_id",
@@ -47,6 +54,10 @@ class OperatorTask(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     source_type: Mapped[str] = mapped_column(String(40))
     source_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    source_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    projection_schema: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="nexus.operator-task-projection.v1"
+    )
     ticket_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     webchat_conversation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     task_type: Mapped[str] = mapped_column(String(80))
