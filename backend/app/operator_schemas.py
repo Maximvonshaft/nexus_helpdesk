@@ -9,6 +9,8 @@ class OperatorTaskRead(BaseModel):
     id: int
     source_type: str
     source_id: str | None = None
+    source_version: int | None = None
+    projection_schema: str = "nexus.operator-task-projection.v1"
     ticket_id: int | None = None
     webchat_conversation_id: int | None = None
     task_type: str
@@ -87,13 +89,28 @@ class UnifiedQueueOwner(BaseModel):
 
 
 class UnifiedQueueSLA(BaseModel):
-    state: Literal["healthy", "at_risk", "breached", "paused", "stale", "not_applicable", "unavailable"]
+    state: Literal[
+        "healthy",
+        "at_risk",
+        "breached",
+        "paused",
+        "stale",
+        "not_applicable",
+        "unavailable",
+    ]
     due_at: str | None = None
     seconds_remaining: int | None = None
 
 
 class UnifiedQueueRetry(BaseModel):
-    state: Literal["not_applicable", "pending", "processing", "retry_scheduled", "exhausted", "settled"]
+    state: Literal[
+        "not_applicable",
+        "pending",
+        "processing",
+        "retry_scheduled",
+        "exhausted",
+        "settled",
+    ]
     attempt_count: int = Field(ge=0, le=1000)
     max_attempts: int = Field(ge=0, le=1000)
     next_retry_at: str | None = None
