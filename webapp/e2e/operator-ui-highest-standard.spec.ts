@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   canonicalRoutes,
   json,
@@ -96,6 +96,102 @@ async function semanticAccessibilityViolations(page: Page): Promise<Accessibilit
   })
 }
 
+async function textContrastViolations(page: Page): Promise<AccessibilityViolation[]> {
+  return page.evaluate(() => {
+    type Rgba = { r: number; g: number; b: number; a: number }
+    const failures: AccessibilityViolation[] = []
+    const parseColor = (value: string): Rgba | null => {
+      const match = value.match(/rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)/i)
+      if (!match) return null
+      return {
+        r: Number(match[1]),
+        g: Number(match[2]),
+        b: Number(match[3]),
+        a: match[4] === undefined ? 1 : Number(match[4]),
+      }
+    }
+    const composite = (top: Rgba, bottom: Rgba): Rgba => {
+      const alpha = top.a + bottom.a * (1 - top.a)
+      if (alpha <= 0) return { r: 255, g: 255, b: 255, a: 1 }
+      return {
+        r: (top.r * top.a + bottom.r * bottom.a * (1 - top.a)) / alpha,
+        g: (top.g * top.a + bottom.g * bottom.a * (1 - top.a)) / alpha,
+        b: (top.b * top.a + bottom.b * bottom.a * (1 - top.a)) / alpha,
+        a: alpha,
+      }
+    }
+    const channel = (value: number) => {
+      const normalized = value / 255
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+    }
+    const luminance = (color: Rgba) => 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+    const contrast = (left: Rgba, right: Rgba) => {
+      const bright = Math.max(luminance(left), luminance(right))
+      const dark = Math.min(luminance(left), luminance(right))
+      return (bright + 0.05) / (dark + 0.05)
+    }
+    const visible = (element: Element) => {
+      const style = window.getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && Number.parseFloat(style.opacity || '1') > 0
+        && rect.width > 0
+        && rect.height > 0
+    }
+    const selector = (element: Element) => {
+      const id = element.getAttribute('id')
+      if (id) return `#${id}`
+      const classes = [...element.classList].slice(0, 2).join('.')
+      return `${element.tagName.toLowerCase()}${classes ? `.${classes}` : ''}`
+    }
+    const backgroundFor = (element: Element) => {
+      const layers: Rgba[] = []
+      let current: Element | null = element
+      while (current) {
+        const color = parseColor(window.getComputedStyle(current).backgroundColor)
+        if (color && color.a > 0) layers.push(color)
+        current = current.parentElement
+      }
+      let background: Rgba = { r: 255, g: 255, b: 255, a: 1 }
+      for (const layer of layers.reverse()) background = composite(layer, background)
+      return background
+    }
+
+    for (const element of document.querySelectorAll('body *')) {
+      if (!visible(element)) continue
+      if (element.closest(':disabled, [aria-disabled="true"], [aria-hidden="true"]')) continue
+      const directText = [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!directText) continue
+
+      const style = window.getComputedStyle(element)
+      const foreground = parseColor(style.color)
+      if (!foreground) continue
+      const background = backgroundFor(element)
+      const renderedForeground = composite(foreground, background)
+      const ratio = contrast(renderedForeground, background)
+      const fontSize = Number.parseFloat(style.fontSize)
+      const numericWeight = Number.parseInt(style.fontWeight, 10)
+      const fontWeight = Number.isFinite(numericWeight) ? numericWeight : style.fontWeight === 'bold' ? 700 : 400
+      const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700)
+      const required = largeText ? 3 : 4.5
+      if (ratio + 0.01 < required) {
+        failures.push({
+          code: 'text-contrast',
+          selector: selector(element),
+          detail: `“${directText.slice(0, 48)}” 对比度 ${ratio.toFixed(2)}，要求 ${required.toFixed(1)}`,
+        })
+      }
+    }
+    return failures
+  })
+}
+
 async function formTextOverlaps(page: Page) {
   return page.evaluate(() => {
     const failures: string[] = []
@@ -158,16 +254,17 @@ async function undersizedPrimaryControls(page: Page) {
   })
 }
 
-async function capture(page: Page, testInfo: TestInfo, name: string) {
-  await page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true, animations: 'disabled' })
+async function expectVisual(page: Page, name: string) {
+  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
 }
 
-test('200 percent text enlargement switches to structural compact layout without overlap', async ({ page }, testInfo) => {
+test('200 percent text enlargement switches to structural compact layout without overlap or clipping', async ({ page }) => {
+  const longIdentity = 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano'
   await page.setViewportSize({ width: 1366, height: 768 })
   await mockResponsiveConsole(page)
   await page.route('**/api/auth/me', (route) => json(route, {
     ...responsiveUser,
-    display_name: 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano',
+    display_name: longIdentity,
   }))
   await page.goto('/workspace')
   await page.addStyleTag({ content: 'html { font-size: 200% !important; }' })
@@ -180,9 +277,12 @@ test('200 percent text enlargement switches to structural compact layout without
 
   await page.getByRole('button', { name: '打开主导航' }).click()
   await expect(page.locator('#nd-mobile-navigation')).toBeVisible()
+  const identity = page.getByTestId('operator-drawer-user-label')
+  await expect(identity).toHaveText(longIdentity)
+  expect(await identity.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true)
   expect(await formTextOverlaps(page)).toEqual([])
   expect(await undersizedPrimaryControls(page)).toEqual([])
-  await capture(page, testInfo, 'workspace-text-200-reflow-1366')
+  await expectVisual(page, 'workspace-text-200-reflow-1366')
 })
 
 test('canonical routes reflow to the 320 CSS pixel release floor', async ({ page }) => {
@@ -201,7 +301,7 @@ test('canonical routes reflow to the 320 CSS pixel release floor', async ({ page
   }
 })
 
-test('canonical routes satisfy the automated semantic accessibility contract', async ({ page }) => {
+test('canonical routes satisfy semantic, target-size and text-contrast contracts', async ({ page }) => {
   test.setTimeout(120_000)
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
@@ -211,6 +311,7 @@ test('canonical routes satisfy the automated semantic accessibility contract', a
     await expect(route.ready(page)).toBeVisible()
     expect(await semanticAccessibilityViolations(page), route.path).toEqual([])
     expect(await undersizedPrimaryControls(page), route.path).toEqual([])
+    expect(await textContrastViolations(page), route.path).toEqual([])
   }
 })
 
