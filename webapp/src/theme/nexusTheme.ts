@@ -128,6 +128,7 @@ export const nexusTheme = createTheme({
         },
         '@media (forced-colors: active)': {
           '*:focus-visible': {
+            forcedColorAdjust: 'none',
             outlineWidth: '3px !important',
             outlineStyle: 'solid !important',
             outlineColor: 'CanvasText !important',
@@ -148,6 +149,7 @@ export const nexusTheme = createTheme({
           },
           '@media (forced-colors: active)': {
             '&:focus-visible, &.Mui-focusVisible': {
+              forcedColorAdjust: 'none',
               outlineWidth: '3px !important',
               outlineStyle: 'solid !important',
               outlineColor: 'CanvasText !important',
