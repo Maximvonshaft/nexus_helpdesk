@@ -6,12 +6,17 @@ import { resolve } from 'node:path'
 const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 const shell = read('src/app/AppShell.tsx')
+const layoutMode = read('src/app/useOperatorLayoutMode.tsx')
 const navigation = read('src/app/AppNavigation.tsx')
 const presence = read('src/app/AgentPresenceControl.tsx')
 const incomingVoice = read('src/app/IncomingVoiceCallControl.tsx')
 
-test('the canonical shell provides one responsive navigation surface', () => {
-  assert.match(shell, /useMediaQuery\(theme\.breakpoints\.up\('lg'\)/)
+test('the canonical shell provides one text-aware responsive navigation surface', () => {
+  assert.match(layoutMode, /useMediaQuery\(theme\.breakpoints\.up\('lg'\)/)
+  assert.match(layoutMode, /ResizeObserver/)
+  assert.match(layoutMode, /textScale < 1\.5/)
+  assert.match(shell, /<OperatorLayoutProvider>/)
+  assert.match(shell, /useOperatorLayoutMode\(\)/)
   assert.match(shell, /<Drawer/)
   assert.match(shell, /id="nd-mobile-navigation"/)
   assert.match(shell, /aria-label="打开主导航"/)
@@ -36,7 +41,7 @@ test('live operator runtimes remain mounted above the temporary Drawer', () => {
   assert.match(incomingVoice, /<Dialog/)
 })
 
-test('work scope and operator controls remain interactive below desktop width', () => {
+test('work scope and operator controls remain interactive below desktop layout', () => {
   assert.match(shell, /function WorkScopeControl/)
   assert.match(shell, /compact \/>/)
   assert.match(shell, /<AgentPresenceControl presentation="drawer" \/>/)
