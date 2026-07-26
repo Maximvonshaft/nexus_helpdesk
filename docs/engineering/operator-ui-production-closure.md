@@ -45,7 +45,7 @@ No second frontend, shell, design system, responsive state source, route registr
 
 `webapp/e2e/visualSnapshot.ts` is the sole visual-signature authority. Each required state is rendered by the Playwright-pinned browser with deterministic screenshot options and compared byte-for-byte through a reviewed SHA-256 signature. Any pixel change blocks the frontend job.
 
-On mismatch, the exact actual PNG is attached to the failing test evidence. A signature may be updated only after that PNG is inspected against the corresponding product and code change. The repository does not carry a second binary-baseline transport, generated Base64 payload, screenshot acceptance workflow or auto-update path.
+Every canonical run attaches the exact actual PNG for the accepted state. A signature may be updated only after that PNG is inspected against the corresponding product and code change. The repository does not carry a second binary-baseline transport, generated Base64 payload, screenshot acceptance workflow or auto-update path.
 
 The release-blocking signature set covers:
 
