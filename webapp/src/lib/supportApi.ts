@@ -5,6 +5,7 @@ import type {
   AdminUserUpdate,
   AuthSessionResponse,
   AuthUser,
+  BusinessOutcomeMetrics,
   ChannelAccount,
   ControlTower,
   CredentialPolicy,
@@ -159,6 +160,7 @@ export const supportApi = {
   }),
 
   controlTower: () => apiRequest<ControlTower>('/api/lite/control-tower'),
+  controlTowerOutcomes: () => apiRequest<BusinessOutcomeMetrics>('/api/lite/control-tower/outcomes'),
   supportConversations: (params?: { view?: string; channel?: string; q?: string; limit?: number }, init?: RequestInit) => {
     const search = new URLSearchParams()
     search.set('view', params?.view || 'open')
@@ -179,7 +181,7 @@ export const supportApi = {
   }),
 
   knowledgeStudio: () => apiRequest<KnowledgeStudio>('/api/lite/knowledge-studio'),
-  knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; knowledge_kind?: string; channel?: string; audience_scope?: string }) => {
+  knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; knowledge_kind?: string; channel?: string; audience_scope?: string; language?: string }) => {
     const search = new URLSearchParams({ limit: '200' })
     if (params?.q?.trim()) search.set('q', params.q.trim())
     if (params?.status?.trim()) search.set('status', params.status.trim())
@@ -187,6 +189,7 @@ export const supportApi = {
     if (params?.knowledge_kind?.trim()) search.set('knowledge_kind', params.knowledge_kind.trim())
     if (params?.channel?.trim()) search.set('channel', params.channel.trim())
     if (params?.audience_scope?.trim()) search.set('audience_scope', params.audience_scope.trim())
+    if (params?.language?.trim()) search.set('language', params.language.trim())
     return apiRequest<KnowledgeItemList>(`/api/knowledge-items?${search.toString()}`)
   },
   knowledgeItem: (itemId: number) => apiRequest<KnowledgeItemDetail>(`/api/knowledge-items/${itemId}`),
