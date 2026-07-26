@@ -78,6 +78,17 @@ export function OperatorWorkspaceConversation({
     previousLatestMessageIdRef.current = undefined
   }, [item.queue_id])
 
+  const scrollTimelineToBottom = (behavior: ScrollBehavior = 'auto') => {
+    const list = messagesRef.current
+    if (!list) return
+    list.scrollTo({ top: list.scrollHeight, behavior })
+    window.requestAnimationFrame(() => {
+      if (list.scrollHeight - list.scrollTop - list.clientHeight > 4) {
+        list.scrollTo({ top: list.scrollHeight, behavior: 'auto' })
+      }
+    })
+  }
+
   useLayoutEffect(() => {
     const messages = thread?.messages ?? []
     const currentLatestMessageId = messages.at(-1)?.id
@@ -90,9 +101,8 @@ export function OperatorWorkspaceConversation({
       : 0
     previousLatestMessageIdRef.current = currentLatestMessageId
     if (!added) return
-    const list = messagesRef.current
-    if (list && nearBottom) {
-      list.scrollTo({ top: list.scrollHeight, behavior: operatorScrollBehavior() })
+    if (messagesRef.current && nearBottom) {
+      scrollTimelineToBottom(operatorScrollBehavior())
       setNewMessageCount(0)
     } else {
       setNewMessageCount((count) => count + added)
@@ -127,7 +137,7 @@ export function OperatorWorkspaceConversation({
   }
 
   const scrollToLatest = () => {
-    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: operatorScrollBehavior() })
+    scrollTimelineToBottom('auto')
     setNewMessageCount(0)
   }
 
