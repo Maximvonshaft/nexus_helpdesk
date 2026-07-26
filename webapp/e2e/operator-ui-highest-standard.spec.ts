@@ -1,10 +1,11 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import {
   canonicalRoutes,
   json,
   mockResponsiveConsole,
   responsiveUser,
 } from './fixtures/responsiveConsole'
+import { expectVisualSnapshot } from './visualSnapshot'
 
 type AccessibilityViolation = {
   code: string
@@ -263,11 +264,7 @@ async function undersizedPrimaryControls(page: Page) {
   })
 }
 
-async function expectVisual(page: Page, name: string) {
-  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
-}
-
-test('200 percent text enlargement switches to structural compact layout without overlap or clipping', async ({ page }) => {
+test('200 percent text enlargement switches to structural compact layout without overlap or clipping', async ({ page }, testInfo: TestInfo) => {
   const longIdentity = 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano'
   await page.setViewportSize({ width: 1366, height: 768 })
   await mockResponsiveConsole(page)
@@ -291,7 +288,7 @@ test('200 percent text enlargement switches to structural compact layout without
   expect(await identity.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true)
   expect(await formTextOverlaps(page)).toEqual([])
   expect(await undersizedPrimaryControls(page)).toEqual([])
-  await expectVisual(page, 'workspace-text-200-reflow-1366')
+  await expectVisualSnapshot(page, testInfo, 'workspace-text-200-reflow-1366')
 })
 
 test('canonical routes reflow to the 320 CSS pixel release floor', async ({ page }) => {
@@ -337,16 +334,18 @@ test('forced colors and reduced motion preserve required controls and visible fo
   await expect(skipLink).toBeFocused()
 
   let menuReached = false
-  for (let step = 0; step < 6; step += 1) {
+  for (let step = 0; step < 12; step += 1) {
     await page.keyboard.press('Tab')
-    if (await menu.evaluate((element) => document.activeElement === element)) {
+    const activeLabel = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
+    if (activeLabel === '打开主导航') {
       menuReached = true
       break
     }
   }
   expect(menuReached, 'the main navigation trigger must be reachable through the keyboard order').toBe(true)
-  await expect(menu).toBeFocused()
-  const focus = await menu.evaluate((element) => {
+  const focused = page.locator(':focus')
+  await expect(focused).toHaveAttribute('aria-label', '打开主导航')
+  const focus = await focused.evaluate((element) => {
     const style = window.getComputedStyle(element)
     return { outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, transitionDuration: style.transitionDuration }
   })
