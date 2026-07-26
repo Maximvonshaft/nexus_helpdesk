@@ -25,12 +25,11 @@ import {
 } from '@/app/OperatorPresentation'
 import { canonicalAppHref } from '@/app/canonicalRoutes'
 import { sanitizeDisplayText } from '@/lib/format'
-import { outcomeMetricsApi } from '@/lib/outcomeMetricsApi'
 import { supportApi } from '@/lib/supportApi'
 import type {
+  BusinessOutcomeMetric,
   ControlTowerAction,
   ControlTowerGovernanceLane,
-  ControlTowerOutcomeMetric,
 } from '@/lib/types'
 
 function ActionRow({ item }: { item: ControlTowerAction }) {
@@ -92,21 +91,21 @@ function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
   )
 }
 
-function metricValue(item: ControlTowerOutcomeMetric) {
+function metricValue(item: BusinessOutcomeMetric) {
   if (item.value == null) return '暂无样本'
   if (item.unit === 'ratio') return `${(item.value * 100).toFixed(1)}%`
   if (item.unit === 'seconds') return `${Math.round(item.value)} 秒`
   return item.value.toFixed(item.value % 1 === 0 ? 0 : 1)
 }
 
-function metricTarget(item: ControlTowerOutcomeMetric) {
+function metricTarget(item: BusinessOutcomeMetric) {
   const operator = item.direction === 'min' ? '≥' : '≤'
   if (item.unit === 'ratio') return `${operator} ${(item.target * 100).toFixed(1)}%`
   if (item.unit === 'seconds') return `${operator} ${Math.round(item.target)} 秒`
   return `${operator} ${item.target}`
 }
 
-function metricTrend(item: ControlTowerOutcomeMetric) {
+function metricTrend(item: BusinessOutcomeMetric) {
   if (item.previous_value == null || item.delta == null) return '无上一窗口样本'
   const label = item.trend === 'improving' ? '改善' : item.trend === 'declining' ? '下降' : '稳定'
   const delta = item.unit === 'ratio'
@@ -115,7 +114,7 @@ function metricTrend(item: ControlTowerOutcomeMetric) {
   return `${label} · ${delta}`
 }
 
-function OutcomeMetricRow({ item }: { item: ControlTowerOutcomeMetric }) {
+function OutcomeMetricRow({ item }: { item: BusinessOutcomeMetric }) {
   const href = canonicalAppHref(item.drilldown)
   const denominatorLabel = item.denominator > 0
     ? `${item.numerator} / ${item.denominator}`
@@ -150,7 +149,7 @@ export function ControlTowerPage() {
   })
   const outcomes = useQuery({
     queryKey: ['canonicalControlTowerOutcomes'],
-    queryFn: outcomeMetricsApi.controlTower,
+    queryFn: supportApi.controlTowerOutcomes,
     refetchInterval: 60_000,
     retry: false,
     placeholderData: (previous) => previous,
