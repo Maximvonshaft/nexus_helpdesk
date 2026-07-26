@@ -122,6 +122,11 @@ export const nexusTheme = createTheme({
             transitionDuration: '0.01ms !important',
           },
         },
+        '@media (forced-colors: active)': {
+          '*:focus-visible': {
+            outlineColor: 'Highlight !important',
+          },
+        },
       },
     },
     MuiButtonBase: {
@@ -147,6 +152,7 @@ export const nexusTheme = createTheme({
           minHeight: 44,
           borderRadius: 8,
           paddingInline: 16,
+          whiteSpace: 'normal',
           transition: 'background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease',
         },
         sizeSmall: { minHeight: 44, paddingInline: 12 },
@@ -208,12 +214,21 @@ export const nexusTheme = createTheme({
       styleOverrides: {
         root: {
           minHeight: 44,
+          height: 'auto',
           borderRadius: 8,
           backgroundColor: '#FFFFFF',
           '& .MuiOutlinedInput-notchedOutline': { borderColor: '#D0D5DD' },
           '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#98A2B3' },
           '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderWidth: 2 },
           '&.Mui-focused': { outline: focusOutline, outlineOffset: 2 },
+        },
+        input: {
+          minHeight: 24,
+          paddingBlock: 10,
+          boxSizing: 'border-box',
+        },
+        multiline: {
+          paddingBlock: 8,
         },
       },
     },
@@ -223,9 +238,9 @@ export const nexusTheme = createTheme({
           alignItems: 'center',
           boxSizing: 'border-box',
           display: 'flex',
-          minHeight: '44px !important',
-          paddingBottom: '0 !important',
-          paddingTop: '0 !important',
+          minHeight: '24px !important',
+          paddingBlock: '10px !important',
+          whiteSpace: 'normal',
         },
       },
     },
@@ -236,10 +251,16 @@ export const nexusTheme = createTheme({
       },
       styleOverrides: {
         root: {
-          height: 26,
+          minHeight: 26,
+          height: 'auto',
           borderRadius: 6,
           fontWeight: 600,
           backgroundColor: '#FFFFFF',
+        },
+        label: {
+          paddingBlock: 4,
+          whiteSpace: 'normal',
+          overflowWrap: 'anywhere',
         },
       },
     },
@@ -294,7 +315,7 @@ export const nexusTheme = createTheme({
     },
     MuiDialogActions: {
       styleOverrides: {
-        root: { padding: '12px 24px 24px', gap: 8 },
+        root: { padding: '12px 24px 24px', gap: 8, flexWrap: 'wrap' },
       },
     },
     MuiTooltip: {
