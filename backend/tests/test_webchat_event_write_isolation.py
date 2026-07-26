@@ -24,15 +24,29 @@ from app.db import Base, get_db  # noqa: E402
 from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Customer, Ticket, User  # noqa: E402
-from app.services.operator_queue import create_operator_task, transition_operator_task  # noqa: E402
+from app.services.operator_queue import (  # noqa: E402
+    OperatorQueueError,
+    create_operator_task,
+    transition_operator_task,
+)
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
 
 
 @pytest.fixture()
 def db_session(tmp_path):
     db_file = tmp_path / "event_isolation.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
-    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     session = Session()
     try:
@@ -57,14 +71,29 @@ def api_context(db_session):
 
 
 def make_admin(db):
-    row = User(username="admin", display_name="Admin", email="admin@example.test", password_hash="x", role=UserRole.admin, is_active=True)
+    row = User(
+        username="admin",
+        display_name="Admin",
+        email="admin@example.test",
+        password_hash="x",
+        role=UserRole.admin,
+        is_active=True,
+    )
     db.add(row)
     db.flush()
     return row
 
 
-def make_webchat_conversation(db, *, public_id: str, visitor_token: str) -> WebchatConversation:
-    customer = Customer(name="Isolation Visitor", email="visitor@example.invalid")
+def make_webchat_conversation(
+    db,
+    *,
+    public_id: str,
+    visitor_token: str,
+) -> WebchatConversation:
+    customer = Customer(
+        name="Isolation Visitor",
+        email="visitor@example.invalid",
+    )
     db.add(customer)
     db.flush()
     ticket = Ticket(
@@ -95,12 +124,14 @@ def make_webchat_conversation(db, *, public_id: str, visitor_token: str) -> Webc
     return conversation
 
 
-def test_operator_assign_survives_safe_event_writer_failure(db_session, monkeypatch, caplog):
+def test_operator_handoff_projection_cannot_issue_source_command(db_session):
     admin = make_admin(db_session)
     task, _ = create_operator_task(
         db_session,
-        source_type="webchat",
-        source_id="wc_public",
+        source_type="webchat_handoff",
+        source_id="91",
+        source_version=2,
+        projection_schema="nexus.operator-task.webchat-handoff.v1",
         ticket_id=123,
         webchat_conversation_id=456,
         task_type="handoff",
@@ -108,78 +139,63 @@ def test_operator_assign_survives_safe_event_writer_failure(db_session, monkeypa
     )
     db_session.commit()
 
-    def boom(*args, **kwargs):
-        raise RuntimeError("raw secret token should not leak")
+    with pytest.raises(OperatorQueueError) as exc:
+        transition_operator_task(
+            db_session,
+            task_id=task.id,
+            action="assign",
+            actor_id=admin.id,
+        )
 
-    monkeypatch.setattr("app.services.operator_queue.safe_write_webchat_event", boom)
-    caplog.set_level("WARNING", logger="nexusdesk")
-
-    transitioned = transition_operator_task(db_session, task_id=task.id, action="assign", actor_id=admin.id)
-
-    assert transitioned.status == "assigned"
-    assert transitioned.assignee_id == admin.id
-    rendered_logs = "\n".join(record.getMessage() for record in caplog.records)
-    assert "operator_queue_webchat_event_write_failed" in rendered_logs
-    assert "raw secret token should not leak" not in rendered_logs
+    assert exc.value.code == "operator_task_projection_command_forbidden"
+    db_session.refresh(task)
+    assert task.status == "pending"
+    assert task.assignee_id is None
 
 
-def test_operator_resolve_and_drop_main_state_survive_event_writer_failure(db_session, monkeypatch):
+def test_projection_owned_admin_task_transitions_without_webchat_event_dependency(
+    db_session,
+):
     admin = make_admin(db_session)
-    resolve_conversation = make_webchat_conversation(
+    task, _ = create_operator_task(
         db_session,
-        public_id="wc-resolve-isolation",
-        visitor_token="visitor-token-resolve-isolation",
-    )
-    drop_conversation = make_webchat_conversation(
-        db_session,
-        public_id="wc-drop-isolation",
-        visitor_token="visitor-token-drop-isolation",
-    )
-    resolve_task, _ = create_operator_task(
-        db_session,
-        source_type="webchat",
-        source_id=resolve_conversation.public_id,
-        ticket_id=resolve_conversation.ticket_id,
-        webchat_conversation_id=resolve_conversation.id,
-        task_type="handoff",
-    )
-    drop_task, _ = create_operator_task(
-        db_session,
-        source_type="webchat",
-        source_id=drop_conversation.public_id,
-        ticket_id=drop_conversation.ticket_id,
-        webchat_conversation_id=drop_conversation.id,
-        task_type="handoff",
+        source_type="control_tower",
+        source_id="runtime-recovery",
+        task_type="control_tower_action",
     )
     db_session.commit()
 
-    def boom(*args, **kwargs):
-        raise RuntimeError("event writer unavailable")
-
-    monkeypatch.setattr("app.services.operator_queue.safe_write_webchat_event", boom)
     resolved = transition_operator_task(
-        db_session, task_id=resolve_task.id, action="resolve", actor_id=admin.id
-    )
-    dropped = transition_operator_task(
-        db_session, task_id=drop_task.id, action="drop", actor_id=admin.id
+        db_session,
+        task_id=task.id,
+        action="resolve",
+        actor_id=admin.id,
     )
 
     assert resolved.status == "resolved"
-    assert dropped.status == "dropped"
     assert resolved.resolved_at is not None
-    assert dropped.resolved_at is not None
 
 
-def test_ai_turn_visitor_message_survives_webchat_event_flush_failure(api_context, monkeypatch, caplog):
+def test_ai_turn_visitor_message_survives_webchat_event_flush_failure(
+    api_context,
+    monkeypatch,
+    caplog,
+):
     db_session, client = api_context
     public_id = "wc_ai_isolation"
     visitor_token = "visitor-token-for-event-isolation-0001"
-    conversation = make_webchat_conversation(db_session, public_id=public_id, visitor_token=visitor_token)
+    conversation = make_webchat_conversation(
+        db_session,
+        public_id=public_id,
+        visitor_token=visitor_token,
+    )
     real_flush = db_session.flush
 
     def flaky_flush(*args, **kwargs):
         if any(isinstance(obj, WebchatEvent) for obj in db_session.new):
-            raise RuntimeError("raw secret token visitor@example.invalid should not leak")
+            raise RuntimeError(
+                "raw secret token visitor@example.invalid should not leak"
+            )
         return real_flush(*args, **kwargs)
 
     monkeypatch.setattr(db_session, "flush", flaky_flush)
@@ -202,9 +218,20 @@ def test_ai_turn_visitor_message_survives_webchat_event_flush_failure(api_contex
     assert payload["ai_pending"] is True
     assert "raw secret" not in response.text
 
-    visitor_message = db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "visitor").one()
+    visitor_message = (
+        db_session.query(WebchatMessage)
+        .filter(
+            WebchatMessage.conversation_id == conversation.id,
+            WebchatMessage.direction == "visitor",
+        )
+        .one()
+    )
     db_session.refresh(conversation)
-    turn = db_session.query(WebchatAITurn).filter(WebchatAITurn.conversation_id == conversation.id).one()
+    turn = (
+        db_session.query(WebchatAITurn)
+        .filter(WebchatAITurn.conversation_id == conversation.id)
+        .one()
+    )
     assert visitor_message.body.startswith("Please help with tracking number")
     assert turn.status == "queued"
     assert conversation.active_ai_turn_id == turn.id
