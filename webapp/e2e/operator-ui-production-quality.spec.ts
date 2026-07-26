@@ -98,7 +98,7 @@ test('normal and empty canonical surfaces expose one coherent task state', async
   await page.goto('/administration')
   await expect(page.getByRole('heading', { level: 1, name: '系统管理' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 2, name: '用户与权限' })).toBeVisible()
-  await expect(page.getByText('Responsive Operations Administrator', { exact: true })).toBeVisible()
+  await expect(page.getByRole('table', { name: '用户与权限列表' }).getByRole('heading', { name: 'Responsive Operations Administrator' })).toBeVisible()
   await expect(page.getByRole('button', { name: '创建账号' })).toBeEnabled()
   await expect(page.getByText('无法读取用户')).toHaveCount(0)
   await expect(page.getByText('没有匹配的用户')).toHaveCount(0)
