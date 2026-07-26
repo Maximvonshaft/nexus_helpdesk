@@ -22,6 +22,7 @@ from ..api.canonical_integration import router as integration_router
 from ..api.canonical_osr_admin import router as osr_admin_router
 from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
+from ..api.data_lifecycle import router as data_lifecycle_router
 from ..api.email import router as email_router
 from ..api.files import router as files_router
 from ..api.frontend_observability import router as frontend_observability_router
@@ -39,12 +40,12 @@ from ..api.speedaf_cancel import router as speedaf_cancel_router
 from ..api.stats import router as stats_router
 from ..api.support_conversations import router as support_conversations_router
 from ..api.support_intelligence import router as support_intelligence_router
+from ..api.telephony import router as telephony_router
 from ..api.ticket_closure import router as ticket_closure_router
 from ..api.ticket_perf import router as ticket_perf_router
 from ..api.tickets import router as tickets_router
 from ..api.webchat import router as webchat_router
 from ..api.webchat_events import router as webchat_events_router
-from ..api.telephony import router as telephony_router
 from ..api.webchat_voice import router as webchat_voice_router
 from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
@@ -95,6 +96,7 @@ def register_api_routers(app: FastAPI) -> None:
     app.include_router(admin_router, dependencies=admin_dependencies)
     app.include_router(release_readiness_router, dependencies=admin_dependencies)
     app.include_router(governance_router, dependencies=admin_dependencies)
+    app.include_router(data_lifecycle_router, dependencies=admin_dependencies)
     for router in (
         admin_queue_router,
         osr_admin_router,
