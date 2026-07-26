@@ -1,15 +1,37 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from .db import Base
 from .utils.time import utc_now
 
-UTCDateTime = DateTime(timezone=True)
+
+class UTCDateTime(TypeDecorator):
+    """Persist timezone-aware instants and restore UTC on dialects that strip it."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):  # noqa: ANN001
+        del dialect
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value, dialect):  # noqa: ANN001
+        del dialect
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class TicketSLATarget(Base):
@@ -48,34 +70,34 @@ class TicketSLATarget(Base):
         index=True,
     )
     first_response_due_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
+        UTCDateTime(),
         nullable=False,
         index=True,
     )
     resolution_due_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
+        UTCDateTime(),
         nullable=False,
         index=True,
     )
     first_response_risk_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
+        UTCDateTime(),
         nullable=False,
         index=True,
     )
     resolution_risk_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
+        UTCDateTime(),
         nullable=False,
         index=True,
     )
     paused_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     calculated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         index=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         onupdate=utc_now,
