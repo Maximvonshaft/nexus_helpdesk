@@ -30,7 +30,8 @@ import { AppNavigation } from './AppNavigation'
 import { IncomingVoiceCallControl, IncomingVoiceCallProvider } from './IncomingVoiceCallControl'
 import { APP_ROUTE_TITLES } from './navigation'
 import type { AppRouteKey } from './navigation'
-import { OperatorLayoutProvider, useOperatorLayoutMode } from './useOperatorLayoutMode'
+import { OperatorLayoutProvider } from './OperatorLayoutProvider'
+import { useOperatorLayoutMode } from './useOperatorLayoutMode'
 
 function scopeLabel(scope: AuthorizedWorkspaceScope, duplicatePosition?: number) {
   const base = `${scope.country_code} · ${channelPresentation(scope.channel_key).label}`
