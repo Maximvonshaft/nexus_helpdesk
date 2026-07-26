@@ -140,7 +140,13 @@ async function undersizedPrimaryControls(page: Page) {
       const rect = element.getBoundingClientRect()
       return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0
     }
-    const controls = document.querySelectorAll('button, .MuiButtonBase-root, [role="tab"], [role="switch"], [role="combobox"]')
+    const controls = document.querySelectorAll([
+      'button',
+      'a[href]',
+      'input[role="switch"]',
+      '[role="tab"]',
+      '[role="combobox"]',
+    ].join(','))
     for (const control of controls) {
       if (!visible(control)) continue
       const rect = control.getBoundingClientRect()
