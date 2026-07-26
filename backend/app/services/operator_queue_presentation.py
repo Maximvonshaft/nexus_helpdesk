@@ -13,10 +13,13 @@ from sqlalchemy.orm import Session
 
 from ..models import Ticket
 from ..webchat_models import WebchatConversation
+from .support_memory_ledger import _redact_free_text as redact_customer_free_text
 
 
-def _bounded_text(value: object, limit: int) -> str | None:
+def _bounded_text(value: object, limit: int, *, redact: bool = False) -> str | None:
     text = str(value or "").strip()
+    if redact:
+        text = redact_customer_free_text(text).strip()
     return text[:limit] if text else None
 
 
@@ -72,7 +75,7 @@ def project_unified_queue_display(db: Session, result: dict[str, Any]) -> dict[s
 
         if ticket is not None:
             item["display_label"] = _bounded_text(ticket.ticket_no, 160) or "客服工单"
-            item["display_summary"] = _bounded_text(ticket.title, 255)
+            item["display_summary"] = _bounded_text(ticket.title, 255, redact=True)
         elif source_type == "handoff":
             item["display_label"] = _bounded_text(
                 getattr(conversation, "visitor_name", None),
