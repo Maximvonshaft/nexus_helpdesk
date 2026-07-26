@@ -25,9 +25,24 @@ export const workspaceMobileViews: Array<{ value: WorkspaceMobileView; label: st
   { value: 'actions', label: '操作' },
 ]
 
-function QueueFilters({ filters, onChange }: { filters: WorkspaceFilters; onChange: (filters: WorkspaceFilters) => void }) {
+function QueueFilters({
+  filters,
+  onChange,
+  desktopLayout,
+}: {
+  filters: WorkspaceFilters
+  onChange: (filters: WorkspaceFilters) => void
+  desktopLayout: boolean
+}) {
   return (
-    <Box aria-label="任务筛选" sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(5, minmax(0, 1fr))', lg: '1fr' } }}>
+    <Box
+      aria-label="任务筛选"
+      sx={{
+        display: 'grid',
+        gap: 1.25,
+        gridTemplateColumns: desktopLayout ? '1fr' : 'minmax(0, 1fr)',
+      }}
+    >
       <TextField select label="状态" value={filters.state} onChange={(event) => onChange({ ...filters, state: event.target.value as WorkspaceFilters['state'] })}>
         <MenuItem value="active">需要处理</MenuItem><MenuItem value="terminal">来源已结束</MenuItem><MenuItem value="all">全部</MenuItem>
       </TextField>
@@ -87,9 +102,24 @@ function QueueRow({ item, active, currentUserId, onSelect }: { item: UnifiedOper
   )
 }
 
-export function WorkspaceMobileTabs({ value, onChange }: { value: WorkspaceMobileView; onChange: (value: WorkspaceMobileView) => void }) {
+export function WorkspaceMobileTabs({
+  value,
+  onChange,
+  desktopLayout,
+}: {
+  value: WorkspaceMobileView
+  onChange: (value: WorkspaceMobileView) => void
+  desktopLayout: boolean
+}) {
   return (
-    <Tabs value={value} onChange={(_, next: WorkspaceMobileView) => onChange(next)} aria-label="移动端工作区" variant="scrollable" allowScrollButtonsMobile sx={{ display: { xs: 'flex', lg: 'none' }, mb: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+    <Tabs
+      value={value}
+      onChange={(_, next: WorkspaceMobileView) => onChange(next)}
+      aria-label="移动端工作区"
+      variant="scrollable"
+      allowScrollButtonsMobile
+      sx={{ display: desktopLayout ? 'none' : 'flex', mb: 1.5, borderBottom: 1, borderColor: 'divider' }}
+    >
       {workspaceMobileViews.map((view) => <Tab key={view.value} value={view.value} label={view.label} />)}
     </Tabs>
   )
@@ -97,7 +127,7 @@ export function WorkspaceMobileTabs({ value, onChange }: { value: WorkspaceMobil
 
 export function WorkspaceQueuePane({
   filters, onFiltersChange, error, onRetry, items, selectedQueueId, currentUserId,
-  isLoading, isRefreshing, hasNextPage, isFetchingNextPage, onSelect, onLoadMore, visible,
+  isLoading, isRefreshing, hasNextPage, isFetchingNextPage, onSelect, onLoadMore, visible, desktopLayout,
 }: {
   filters: WorkspaceFilters
   onFiltersChange: (filters: WorkspaceFilters) => void
@@ -113,18 +143,25 @@ export function WorkspaceQueuePane({
   onSelect: (item: UnifiedOperatorQueueItem) => void
   onLoadMore: () => void
   visible: boolean
+  desktopLayout: boolean
 }) {
   return (
-    <Paper id="workspace-queue" component="aside" tabIndex={-1} variant="outlined" sx={{ display: { xs: visible ? 'block' : 'none', lg: 'block' }, minHeight: 0, p: 1.5 }}>
+    <Paper
+      id="workspace-queue"
+      component="aside"
+      tabIndex={-1}
+      variant="outlined"
+      sx={{ display: desktopLayout || visible ? 'block' : 'none', minHeight: 0, p: 1.5 }}
+    >
       <Stack spacing={2}>
-        <QueueFilters filters={filters} onChange={onFiltersChange} />
+        <QueueFilters filters={filters} onChange={onFiltersChange} desktopLayout={desktopLayout} />
         {error ? <OperatorErrorNotice title="无法读取任务" error={error} fallback="请重新加载" action={<Button color="inherit" size="small" startIcon={<RefreshRoundedIcon />} onClick={onRetry}>重新加载</Button>} /> : null}
         <Box component="section" aria-label="待处理任务" aria-busy={isLoading} sx={{ minHeight: 0 }}>
           <OperatorSectionHeading title="待处理任务" action={isRefreshing ? <CircularProgress size={18} aria-label="刷新中" /> : null} />
           <Divider sx={{ mt: 2 }} />
           {isLoading ? <OperatorLoadingState label="正在读取任务…" /> : null}
           {!isLoading && !items.length ? <OperatorEmptyState title="暂无待处理任务" description="请调整筛选或刷新" /> : null}
-          <List disablePadding sx={{ maxHeight: { lg: 'calc(100dvh - 360px)' }, overflowY: 'auto', contain: 'layout paint' }}>
+          <List disablePadding sx={{ maxHeight: desktopLayout ? 'calc(100dvh - 360px)' : 'none', overflowY: desktopLayout ? 'auto' : 'visible', contain: 'layout paint' }}>
             {items.map((item) => <QueueRow key={item.queue_id} item={item} active={item.queue_id === selectedQueueId} currentUserId={currentUserId} onSelect={() => onSelect(item)} />)}
           </List>
           {hasNextPage ? <Button fullWidth color="inherit" disabled={isFetchingNextPage} startIcon={isFetchingNextPage ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={onLoadMore} sx={{ mt: 1.5 }}>{isFetchingNextPage ? '加载中…' : '加载更多任务'}</Button> : null}
