@@ -1,0 +1,126 @@
+{
+  "schema": "nexus.outcome-metrics.v1",
+  "version": "1.0.0",
+  "owner": "customer_operations",
+  "default_window_days": 30,
+  "metrics": [
+    {
+      "key": "safe_effective_closure_rate",
+      "label": "安全有效关闭率",
+      "owner": "customer_operations",
+      "numerator": "Cases with a structured closure_assessment in state closed",
+      "denominator": "Cases closed in the reporting window",
+      "lineage": ["tickets.closed_at", "case_outcome_records:closure_assessment"],
+      "drilldown": "closed cases missing or holding a structured safe closure assessment"
+    },
+    {
+      "key": "first_contact_resolution_rate",
+      "label": "首次联系解决率",
+      "owner": "customer_operations",
+      "numerator": "Safely closed Cases with no reopen and no second linked Conversation",
+      "denominator": "Safely closed Cases in the reporting window",
+      "lineage": ["case_outcome_records:closure_assessment", "tickets.reopen_count", "webchat_conversations.ticket_id"],
+      "drilldown": "safely closed cases with reopen or repeated conversation"
+    },
+    {
+      "key": "reopen_72h_rate",
+      "label": "72 小时重开率",
+      "owner": "customer_operations",
+      "numerator": "Cases with a structured reopened assessment within 72 hours of structured closure",
+      "denominator": "Cases with a structured closure assessment",
+      "lineage": ["case_outcome_records:closure_assessment"],
+      "drilldown": "cases reopened within 72 hours"
+    },
+    {
+      "key": "reopen_7d_rate",
+      "label": "7 天重开率",
+      "owner": "customer_operations",
+      "numerator": "Cases with a structured reopened assessment within 7 days of structured closure",
+      "denominator": "Cases with a structured closure assessment",
+      "lineage": ["case_outcome_records:closure_assessment"],
+      "drilldown": "cases reopened within 7 days"
+    },
+    {
+      "key": "repeat_contact_rate",
+      "label": "重复联系率",
+      "owner": "customer_operations",
+      "numerator": "Closed Cases with reopen_count greater than zero or more than one linked Conversation",
+      "denominator": "Closed Cases in the reporting window",
+      "lineage": ["tickets.reopen_count", "webchat_conversations.ticket_id", "tickets.closed_at"],
+      "drilldown": "closed cases with repeated contact"
+    },
+    {
+      "key": "handoff_acceptance_rate",
+      "label": "人工接管接受率",
+      "owner": "support_operations",
+      "numerator": "Handoff requests accepted in the reporting window",
+      "denominator": "Handoff requests created in the reporting window",
+      "lineage": ["webchat_handoff_requests.requested_at", "webchat_handoff_requests.accepted_at"],
+      "drilldown": "unaccepted or expired handoff requests"
+    },
+    {
+      "key": "handoff_wait_seconds_p50",
+      "label": "人工接管等待 P50",
+      "owner": "support_operations",
+      "numerator": "Median seconds from handoff requested_at to accepted_at",
+      "denominator": "Accepted handoff requests",
+      "lineage": ["webchat_handoff_requests.requested_at", "webchat_handoff_requests.accepted_at"],
+      "drilldown": "handoff requests above the current median"
+    },
+    {
+      "key": "human_touches_per_resolved_case",
+      "label": "每个关闭案例人工触达",
+      "owner": "support_operations",
+      "numerator": "External comments plus internal notes authored by users for closed Cases",
+      "denominator": "Closed Cases in the reporting window",
+      "lineage": ["ticket_comments.author_id", "ticket_internal_notes.author_id", "tickets.closed_at"],
+      "drilldown": "closed cases with high human-touch count"
+    },
+    {
+      "key": "action_operational_completion_rate",
+      "label": "业务动作完成率",
+      "owner": "delivery_operations",
+      "numerator": "Structured execution attempts or operational outcomes in a successful/confirmed state",
+      "denominator": "Terminal structured execution attempts and operational outcomes",
+      "lineage": ["case_outcome_records:execution_attempt", "case_outcome_records:operational_outcome"],
+      "drilldown": "failed or repair-required actions"
+    },
+    {
+      "key": "customer_notification_compliance",
+      "label": "客户通知合规率",
+      "owner": "customer_operations",
+      "numerator": "Structured customer notifications delivered, confirmed or explicitly waived",
+      "denominator": "Terminal structured customer notification records",
+      "lineage": ["case_outcome_records:customer_notification"],
+      "drilldown": "failed or missing customer notifications"
+    },
+    {
+      "key": "provider_failure_rate",
+      "label": "Provider 失败率",
+      "owner": "platform_operations",
+      "numerator": "Structured provider receipts in failed or repair-required state",
+      "denominator": "Terminal structured provider receipts",
+      "lineage": ["case_outcome_records:provider_receipt"],
+      "drilldown": "failed provider receipts"
+    },
+    {
+      "key": "ai_containment_with_quality",
+      "label": "AI 有质量自助解决率",
+      "owner": "automatic_handling",
+      "numerator": "Completed public AI turns whose Conversation has no accepted handoff and whose linked Case has no reopen",
+      "denominator": "Completed or failed public AI turns in the reporting window",
+      "lineage": ["webchat_ai_turns", "webchat_handoff_requests", "tickets.reopen_count"],
+      "drilldown": "AI turns followed by handoff, failure or reopen"
+    },
+    {
+      "key": "cost_per_resolved_case",
+      "label": "每个解决案例成本",
+      "owner": "finance_operations",
+      "numerator": "Approved labor, Provider, telephony and infrastructure cost facts",
+      "denominator": "Safely closed Cases",
+      "lineage": ["external approved cost ledger", "case_outcome_records:closure_assessment"],
+      "drilldown": "unavailable until an approved cost ledger is configured",
+      "availability": "requires_cost_ledger"
+    }
+  ]
+}
