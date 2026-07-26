@@ -4,13 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_controlled_templates_use_current_telephony_migration_head() -> None:
+def test_controlled_templates_use_current_audit_migration_head() -> None:
     for relative in (
         "deploy/.env.controlled.example",
         "deploy/.env.controlled.local-postgres.example",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
-        assert "EXPECTED_MIGRATION_HEAD=20260723_tel6" in text
+        assert "EXPECTED_MIGRATION_HEAD=20260727_aud1" in text
 
 
 def test_release_authorization_is_derived_by_one_evidence_policy() -> None:
