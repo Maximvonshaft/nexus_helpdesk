@@ -22,8 +22,12 @@ import {
   OperatorErrorNotice,
   OperatorTechnicalDisclosure,
 } from '@/app/OperatorPresentation'
-import { sanitizeDisplayText } from '@/lib/format'
 import { ApiError } from '@/lib/apiClient'
+import { sanitizeDisplayText } from '@/lib/format'
+import {
+  closureRequirementPresentation,
+  scenarioPresentation,
+} from '@/lib/operatorWorkspacePresentation'
 import { supportApi } from '@/lib/supportApi'
 import type {
   TicketClosureEvidenceKind,
@@ -51,15 +55,15 @@ function evidenceOptions(receipt: TicketClosureReceipt | undefined) {
   if (!receipt) return []
   const readiness = receipt.readiness
   return [
-    ...readiness.missing_fact_classes.map((key) => ({ kind: 'fact' as const, key, label: `权威事实 · ${key}` })),
-    ...readiness.missing_customer_inputs.map((key) => ({ kind: 'customer_input' as const, key, label: `客户输入 · ${key}` })),
-    ...readiness.missing_action_classes.map((key) => ({ kind: 'action' as const, key, label: `受控动作 · ${key}` })),
-    ...readiness.missing_outcome_levels.map((key) => ({ kind: 'outcome' as const, key, label: `业务结果 · ${key}` })),
+    ...readiness.missing_fact_classes.map((key) => ({ kind: 'fact' as const, key, label: `权威事实 · ${closureRequirementPresentation(key).label}` })),
+    ...readiness.missing_customer_inputs.map((key) => ({ kind: 'customer_input' as const, key, label: `客户输入 · ${closureRequirementPresentation(key).label}` })),
+    ...readiness.missing_action_classes.map((key) => ({ kind: 'action' as const, key, label: `受控动作 · ${closureRequirementPresentation(key).label}` })),
+    ...readiness.missing_outcome_levels.map((key) => ({ kind: 'outcome' as const, key, label: `业务结果 · ${closureRequirementPresentation(key).label}` })),
   ] satisfies MissingEvidenceOption[]
 }
 
 function labels(values: string[]) {
-  return values.length ? values.map((value) => sanitizeDisplayText(value)).join('、') : '无'
+  return values.length ? values.map((value) => closureRequirementPresentation(value).label).join('、') : '无'
 }
 
 export function OperatorWorkspaceClosure({
@@ -174,6 +178,7 @@ export function OperatorWorkspaceClosure({
   const alreadyClosed = receipt.ticket_status.toLowerCase() === 'closed'
   const repairRequired = readiness.blocked_reasons.includes('repair_required')
   const staleConflict = error instanceof ApiError && error.status === 409
+  const scenario = scenarioPresentation(receipt.scenario_key || readiness.scenario_key)
 
   return (
     <Box>
@@ -203,7 +208,7 @@ export function OperatorWorkspaceClosure({
         <AlertTitle>
           {repairRequired ? '存在失败结果，需要修复' : readiness.closure_ready ? '关闭条件已满足' : '关闭条件尚未满足'}
         </AlertTitle>
-        场景：{sanitizeDisplayText(receipt.scenario_key || readiness.scenario_key || '无法识别')}
+        场景：{scenario.label}
         {!readiness.notification_satisfied ? '；客户通知尚未满足' : ''}
       </Alert>
 
@@ -229,7 +234,7 @@ export function OperatorWorkspaceClosure({
           >
             {options.map((option) => (
               <MenuItem key={`${option.kind}:${option.key}`} value={`${option.kind}:${option.key}`}>
-                {sanitizeDisplayText(option.label)}
+                {option.label}
               </MenuItem>
             ))}
           </TextField>
@@ -290,8 +295,10 @@ export function OperatorWorkspaceClosure({
         <OperatorTechnicalDisclosure title="关闭凭证" compact>
           <Stack spacing={0.5}>
             <Typography component="code" variant="caption">{receipt.receipt_sha256}</Typography>
+            <Typography variant="caption">场景代码：{sanitizeDisplayText(receipt.scenario_key || readiness.scenario_key || '不可用')}</Typography>
             <Typography variant="caption">场景版本：{sanitizeDisplayText(receipt.scenario_catalog_version || '不可用')}</Typography>
             <Typography variant="caption">工单修订：{sanitizeDisplayText(receipt.ticket_revision)}</Typography>
+            <Typography variant="caption">阻断代码：{readiness.blocked_reasons.length ? readiness.blocked_reasons.map(sanitizeDisplayText).join('、') : '无'}</Typography>
             <Typography variant="caption">显示时区不影响凭证中的 UTC 修订时间。</Typography>
             <Typography variant="caption">观察期：{receipt.evidence.observation_elapsed ? '已满足' : '未满足'}</Typography>
           </Stack>
@@ -309,7 +316,7 @@ export function OperatorWorkspaceClosure({
           <DialogContentText id="safe-close-confirm-description" component="div">
             <Stack spacing={1}>
               <Typography variant="body2">服务器已确认当前关闭条件满足。提交时系统会再次读取最新凭证，任何状态变化都会阻止关闭。</Typography>
-              <Typography variant="body2"><strong>场景：</strong>{sanitizeDisplayText(receipt.scenario_key || readiness.scenario_key)}</Typography>
+              <Typography variant="body2"><strong>场景：</strong>{scenario.label}</Typography>
               <Typography variant="body2"><strong>凭证：</strong>{receipt.receipt_sha256.slice(0, 16)}…</Typography>
             </Stack>
           </DialogContentText>
