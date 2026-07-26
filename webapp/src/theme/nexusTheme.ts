@@ -217,6 +217,18 @@ export const nexusTheme = createTheme({
         },
       },
     },
+    MuiSelect: {
+      styleOverrides: {
+        select: {
+          alignItems: 'center',
+          boxSizing: 'border-box',
+          display: 'flex',
+          minHeight: '44px !important',
+          paddingBottom: '0 !important',
+          paddingTop: '0 !important',
+        },
+      },
+    },
     MuiChip: {
       defaultProps: {
         size: 'small',
