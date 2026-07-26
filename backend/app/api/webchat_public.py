@@ -8,13 +8,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..enums import JobStatus
-from ..models import BackgroundJob
+from ..enums import JobStatus, MessageStatus, SourceChannel
+from ..models import BackgroundJob, Ticket
+from ..models_agent_routing import ConversationControl
 from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
-from ..services.observability import log_event, record_webchat_websocket_fallback_polling
 from ..services.conversation_first_service import create_or_resume_conversation
+from ..services.customer_language import resolve_conversation_language
+from ..services.customer_visible_message_service import create_customer_visible_message
+from ..services.data_subject_action_service import (
+    DataProcessingRestricted,
+    ensure_data_processing_allowed,
+)
+from ..services.observability import log_event, record_webchat_websocket_fallback_polling
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
+from ..services.webchat_handoff_service_core import request_webchat_handoff
 from ..services.webchat_performance import list_public_messages_throttled, webchat_poll_interval_ms
 from ..services.webchat_public_payload import parse_public_webchat_json, public_webchat_message_payload
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
@@ -123,22 +131,117 @@ def _apply_webchat_config_defaults(
     return result
 
 
+def _conversation_customer_id(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+) -> tuple[int | None, Ticket | None]:
+    ticket = db.get(Ticket, conversation.ticket_id) if conversation.ticket_id else None
+    if ticket is not None:
+        return ticket.customer_id, ticket
+    control = (
+        db.query(ConversationControl)
+        .filter(ConversationControl.conversation_id == conversation.id)
+        .first()
+    )
+    return (control.customer_id if control else None), None
+
+
+def _restricted_handoff_copy(body: str) -> str:
+    language = resolve_conversation_language(body).language
+    messages = {
+        "zh": "我已收到你的消息，正在为你转接人工客服。请稍候。",
+        "de": "Ihre Nachricht ist eingegangen. Ich verbinde Sie mit unserem Support-Team.",
+        "fr": "Votre message a bien été reçu. Je vous mets en relation avec notre équipe d’assistance.",
+        "it": "Abbiamo ricevuto il tuo messaggio. Ti metto in contatto con il team di assistenza.",
+        "pt": "Recebemos a sua mensagem. Vou encaminhar para a nossa equipa de suporte.",
+    }
+    return messages.get(
+        language,
+        "Your message has been received. I’m connecting you with our support team.",
+    )
+
+
+def _apply_processing_restriction(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    visitor_message: WebchatMessage,
+    result: dict[str, Any],
+) -> dict[str, Any] | None:
+    customer_id, ticket = _conversation_customer_id(db, conversation=conversation)
+    try:
+        ensure_data_processing_allowed(
+            db,
+            customer_id=customer_id,
+            purpose="automated_ai",
+        )
+    except DataProcessingRestricted:
+        request_webchat_handoff(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            source="privacy_policy",
+            trigger_type="processing_restricted",
+            reason_code="automated_processing_restricted",
+            reason_text="Automated processing is restricted for this customer.",
+            recommended_agent_action="Continue with human support only.",
+            trigger_message_id=visitor_message.id,
+            requested_by_actor_type="system",
+        )
+        idempotency_key = f"privacy-handoff:{visitor_message.id}"
+        existing = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.client_message_id == idempotency_key,
+            )
+            .first()
+        )
+        if existing is None:
+            visible = create_customer_visible_message(
+                db,
+                ticket=ticket,
+                conversation=conversation,
+                channel=SourceChannel.web_chat,
+                body=_restricted_handoff_copy(visitor_message.body or ""),
+                origin="provider_runtime",
+                created_by=None,
+                provider_status="privacy_handoff_sent",
+                outbound_status=MessageStatus.sent,
+                delivery_status="sent",
+                author_label="Support",
+                create_external_comment=ticket is not None,
+                event_payload={
+                    "conversation_id": conversation.id,
+                    "visitor_message_id": visitor_message.id,
+                    "reason_code": "automated_processing_restricted",
+                    "contains_privacy_detail": False,
+                },
+            )
+            if visible.webchat_message is None:
+                raise RuntimeError("privacy_handoff_customer_message_missing")
+            visible.webchat_message.client_message_id = idempotency_key
+        result.update(
+            {
+                "ai_pending": False,
+                "ai_status": "cancelled",
+                "handoff_triggered": True,
+                "processing_restricted": True,
+            }
+        )
+        return _attach_ai_snapshot(result, conversation)
+    return None
+
+
 def _schedule_ai_turn_for_result(
     db: Session,
     *,
     conversation: WebchatConversation,
     result: dict[str, Any],
 ) -> dict[str, Any]:
-    message_payload = (
-        result.get("message")
-        if isinstance(result, dict)
-        else None
-    )
-    message_id = (
-        message_payload.get("id")
-        if isinstance(message_payload, dict)
-        else None
-    )
+    message_payload = result.get("message") if isinstance(result, dict) else None
+    message_id = message_payload.get("id") if isinstance(message_payload, dict) else None
     if not message_id or result.get("idempotent"):
         return _attach_ai_snapshot(result, conversation)
 
@@ -154,14 +257,20 @@ def _schedule_ai_turn_for_result(
     if visitor_message is None:
         return _attach_ai_snapshot(result, conversation)
 
+    restricted = _apply_processing_restriction(
+        db,
+        conversation=conversation,
+        visitor_message=visitor_message,
+        result=result,
+    )
+    if restricted is not None:
+        return restricted
+
     legacy_job = (
         db.query(BackgroundJob)
         .filter(
-            BackgroundJob.dedupe_key
-            == f"webchat-ai-reply:{visitor_message.id}",
-            BackgroundJob.status.in_(
-                [JobStatus.pending, JobStatus.processing]
-            ),
+            BackgroundJob.dedupe_key == f"webchat-ai-reply:{visitor_message.id}",
+            BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]),
         )
         .order_by(BackgroundJob.id.desc())
         .first()
@@ -196,12 +305,7 @@ def _schedule_ai_turn_for_result(
             visitor_message=visitor_message,
             create_job=create_job,
             debounce_seconds=float(
-                getattr(
-                    settings,
-                    "webchat_ai_turn_debounce_seconds",
-                    0.15,
-                )
-                or 0
+                getattr(settings, "webchat_ai_turn_debounce_seconds", 0.15) or 0
             ),
         )
     )
@@ -217,16 +321,12 @@ def _find_existing_action_response(
 ) -> dict[str, Any] | None:
     conversation = (
         db.query(WebchatConversation)
-        .filter(
-            WebchatConversation.public_id
-            == public_conversation_id
-        )
+        .filter(WebchatConversation.public_id == public_conversation_id)
         .first()
     )
     if (
         not conversation
-        or hash_webchat_visitor_token(visitor_token)
-        != conversation.visitor_token_hash
+        or hash_webchat_visitor_token(visitor_token) != conversation.visitor_token_hash
     ):
         return None
 
@@ -241,12 +341,7 @@ def _find_existing_action_response(
         .all()
     )
     for action in candidates:
-        stored_payload = (
-            parse_public_webchat_json(
-                action.action_payload_json
-            )
-            or {}
-        )
+        stored_payload = parse_public_webchat_json(action.action_payload_json) or {}
         if stored_payload.get("action_id") != payload.action_id:
             continue
         message = (
@@ -279,15 +374,9 @@ def _find_existing_action_response(
 
 
 @router.options("/{full_path:path}")
-def webchat_options(
-    full_path: str,
-    request: Request,
-):
+def webchat_options(full_path: str, request: Request):
     del full_path
-    return Response(
-        status_code=204,
-        headers=_public_cors_headers(request),
-    )
+    return Response(status_code=204, headers=_public_cors_headers(request))
 
 
 @router.post("/init")
@@ -316,9 +405,7 @@ def init_webchat(
         )
         result = create_or_resume_conversation(
             db,
-            payload.model_copy(
-                update={"visitor_token": visitor_token}
-            ),
+            payload.model_copy(update={"visitor_token": visitor_token}),
             request,
         )
     return _apply_webchat_config_defaults(result)
@@ -348,15 +435,10 @@ def send_webchat_message(
             detail="invalid webchat visitor token",
         )
     with managed_session(db):
-        conversation_query = db.query(
-            WebchatConversation
-        ).filter(
+        conversation_query = db.query(WebchatConversation).filter(
             WebchatConversation.public_id == conversation_id
         )
-        if (
-            db.bind
-            and db.bind.dialect.name.startswith("postgresql")
-        ):
+        if db.bind and db.bind.dialect.name.startswith("postgresql"):
             conversation_query = conversation_query.with_for_update()
         conversation = conversation_query.first()
         if not conversation:
@@ -405,68 +487,46 @@ def poll_webchat_messages(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _set_public_cors(response, request)
-    if str(x_webchat_ws_fallback or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        record_webchat_websocket_fallback_polling(
-            "visitor",
-            "client_poll",
-        )
-        log_event(
-            20,
-            "websocket_fallback_polling",
-            client_type="visitor",
-            reason="client_poll",
-        )
-    resolved_token = _resolve_visitor_token(
+    token = _resolve_visitor_token(
         x_webchat_visitor_token,
         visitor_token,
     )
-    if not resolved_token:
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="invalid webchat visitor token",
         )
+    enforce_webchat_rate_limit(
+        db,
+        request,
+        tenant_key="public",
+        conversation_id=conversation_id,
+    )
+    if str(x_webchat_ws_fallback or "").lower() == "true":
+        record_webchat_websocket_fallback_polling()
     with managed_session(db):
         conversation = (
             db.query(WebchatConversation)
-            .filter(
-                WebchatConversation.public_id == conversation_id
-            )
+            .filter(WebchatConversation.public_id == conversation_id)
             .first()
         )
-        if not conversation:
+        if not conversation or not validate_webchat_visitor_token(conversation, token):
             raise HTTPException(
-                status_code=404,
-                detail="webchat conversation not found",
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="invalid webchat visitor token",
             )
-        validate_webchat_visitor_token(
-            conversation,
-            resolved_token,
-        )
-        enforce_webchat_rate_limit(
+        reconcile_webchat_ai_state(db, conversation_id=conversation.id)
+        messages = list_public_messages_throttled(
             db,
-            request,
-            tenant_key=conversation.tenant_key,
-            conversation_id=conversation_id,
+            conversation=conversation,
+            after_id=after_id,
+            limit=limit,
         )
-        reconcile_webchat_ai_state(
-            db,
-            conversation_id=conversation.id,
-        )
-        result = _attach_ai_snapshot(
-            list_public_messages_throttled(
-                db,
-                conversation,
-                after_id=after_id,
-                limit=limit,
-            ),
-            conversation,
-        )
-    return result
+        payload = {
+            "messages": [public_webchat_message_payload(item) for item in messages],
+            **ai_snapshot(conversation),
+        }
+    return payload
 
 
 @router.post("/conversations/{conversation_id}/actions")
@@ -475,50 +535,34 @@ def submit_webchat_action(
     payload: WebChatActionSubmitRequest,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
     x_webchat_visitor_token: str | None = Header(
         default=None,
         alias="X-Webchat-Visitor-Token",
     ),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _set_public_cors(response, request)
-    visitor_token = _resolve_visitor_token(
-        x_webchat_visitor_token,
-        None,
-        payload.visitor_token,
-    )
+    visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None)
     if not visitor_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="invalid webchat visitor token",
         )
+    existing = _find_existing_action_response(
+        db,
+        public_conversation_id=conversation_id,
+        visitor_token=visitor_token,
+        payload=payload,
+    )
+    if existing is not None:
+        return existing
     with managed_session(db):
-        conversation = (
-            db.query(WebchatConversation)
-            .filter(
-                WebchatConversation.public_id == conversation_id
-            )
-            .first()
-        )
-        if not conversation:
-            raise HTTPException(
-                status_code=404,
-                detail="webchat conversation not found",
-            )
         enforce_webchat_rate_limit(
             db,
             request,
-            tenant_key=conversation.tenant_key,
+            tenant_key="public",
             conversation_id=conversation_id,
         )
-        existing = _find_existing_action_response(
-            db,
-            public_conversation_id=conversation_id,
-            visitor_token=visitor_token,
-            payload=payload,
-        )
-        if existing:
-            return existing
         result = submit_card_action(
             db,
             conversation_id,
@@ -526,4 +570,9 @@ def submit_webchat_action(
             payload,
             request,
         )
+    log_event(
+        "webchat_action_submitted",
+        conversation_id=conversation_id,
+        action_type=payload.action_type,
+    )
     return result
