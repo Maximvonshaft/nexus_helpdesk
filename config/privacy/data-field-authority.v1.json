@@ -1,0 +1,152 @@
+{
+  "schema": "nexus.data-field-authority.v1",
+  "version": "1.0.0",
+  "effective_at": "2026-07-27T00:00:00Z",
+  "ticket_as_case": {
+    "source_of_truth": [
+      "id",
+      "ticket_no",
+      "tenant_id",
+      "customer_id",
+      "source",
+      "source_channel",
+      "priority",
+      "status",
+      "assignee_id",
+      "team_id",
+      "market_id",
+      "country_code",
+      "case_type",
+      "created_at",
+      "updated_at"
+    ],
+    "bounded_cache": [
+      "first_response_due_at",
+      "resolution_due_at",
+      "sla_paused",
+      "sla_paused_at",
+      "sla_pause_reason",
+      "total_paused_seconds",
+      "first_response_breached",
+      "resolution_breached",
+      "ai_summary",
+      "ai_classification",
+      "ai_confidence",
+      "last_customer_message",
+      "last_human_update",
+      "last_ai_update",
+      "last_runtime_reply_at"
+    ],
+    "pii": [
+      "title",
+      "description",
+      "tracking_number",
+      "issue_summary",
+      "customer_request",
+      "source_chat_id",
+      "source_dedupe_key",
+      "required_action",
+      "missing_fields",
+      "last_customer_message",
+      "customer_update",
+      "resolution_summary",
+      "last_human_update",
+      "last_ai_update",
+      "requested_time",
+      "destination",
+      "preferred_reply_channel",
+      "preferred_reply_contact"
+    ],
+    "structured_authorities": {
+      "sla": "ticket_sla_assignments + ticket_sla_targets + ticket_sla_pause_intervals",
+      "evidence": "case_evidence_records",
+      "action_and_outcome": "case_outcome_records",
+      "live_handoff": "webchat_handoff_requests",
+      "queue": "operator_tasks (rebuildable projection)"
+    }
+  },
+  "resources": {
+    "customers": {
+      "model": "app.models.Customer",
+      "subject_key": "customer_id",
+      "pii": ["name", "email", "email_normalized", "phone", "phone_normalized", "external_ref"],
+      "delete_action": "anonymize"
+    },
+    "tickets": {
+      "model": "app.models.Ticket",
+      "subject_key": "customer_id",
+      "pii": ["title", "description", "tracking_number", "ai_summary", "issue_summary", "customer_request", "source_chat_id", "source_dedupe_key", "required_action", "missing_fields", "last_customer_message", "customer_update", "resolution_summary", "last_human_update", "last_ai_update", "requested_time", "destination", "preferred_reply_channel", "preferred_reply_contact"],
+      "delete_action": "anonymize"
+    },
+    "ticket_comments": {
+      "model": "app.models.TicketComment",
+      "subject_path": "ticket.customer_id",
+      "pii": ["body"],
+      "delete_action": "redact"
+    },
+    "ticket_internal_notes": {
+      "model": "app.models.TicketInternalNote",
+      "subject_path": "ticket.customer_id",
+      "pii": ["body"],
+      "delete_action": "redact"
+    },
+    "ticket_outbound_messages": {
+      "model": "app.models.TicketOutboundMessage",
+      "subject_path": "ticket.customer_id",
+      "pii": ["subject", "body", "runtime_contract_payload_json", "error_message", "mailbox_thread_id", "mailbox_message_id", "mailbox_references", "failure_reason", "delivery_detail", "delivery_payload_json"],
+      "delete_action": "redact"
+    },
+    "ticket_inbound_email_messages": {
+      "model": "app.models.TicketInboundEmailMessage",
+      "subject_path": "ticket.customer_id",
+      "pii": ["from_address", "from_name", "to_address", "cc", "subject", "body", "body_preview", "mailbox_thread_id", "mailbox_message_id", "mailbox_references", "in_reply_to"],
+      "delete_action": "redact"
+    },
+    "ticket_ai_intakes": {
+      "model": "app.models.TicketAIIntake",
+      "subject_path": "ticket.customer_id",
+      "pii": ["summary", "missing_fields_json", "recommended_action", "suggested_reply", "raw_payload_json", "human_override_reason"],
+      "delete_action": "redact"
+    },
+    "webchat_conversations": {
+      "model": "app.webchat_models.WebchatConversation",
+      "subject_paths": ["ticket.customer_id", "conversation_control.customer_id"],
+      "pii": ["visitor_name", "visitor_email", "visitor_phone", "visitor_ref", "page_url", "user_agent", "last_tracking_number", "ai_suspended_reason", "last_handoff_reason"],
+      "delete_action": "anonymize"
+    },
+    "webchat_messages": {
+      "model": "app.webchat_models.WebchatMessage",
+      "subject_path": "conversation.ticket.customer_id",
+      "pii": ["body", "body_text", "payload_json", "metadata_json", "author_label", "safety_reasons_json"],
+      "delete_action": "redact"
+    },
+    "whatsapp_inbound_messages": {
+      "model": "app.models.WhatsAppInboundMessage",
+      "subject_path": "ticket.customer_id",
+      "pii": ["chat_jid", "sender_jid", "sender_phone", "body_text", "raw_payload_json"],
+      "delete_action": "redact"
+    },
+    "ticket_attachments": {
+      "model": "app.models.TicketAttachment",
+      "subject_path": "ticket.customer_id",
+      "pii": ["file_name", "storage_key", "file_path", "file_url"],
+      "delete_action": "external_blob_receipt_required"
+    }
+  },
+  "retention_resources": [
+    "customer_profile",
+    "ticket_case",
+    "conversation_message",
+    "attachment_blob",
+    "runtime_diagnostic"
+  ],
+  "forbidden": [
+    "automatic_destructive_scheduler",
+    "cross_tenant_subject_search",
+    "plaintext_identity_evidence",
+    "raw_export_payload_in_audit_log",
+    "delete_while_legal_hold_active",
+    "delete_while_case_active",
+    "delete_attachment_without_storage_receipt"
+  ]
+}
