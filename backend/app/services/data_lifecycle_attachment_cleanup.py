@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..models import Customer, Ticket, TicketAttachment
 from ..models_case_governance import DataSubjectRequest
 from .data_lifecycle_service import AnonymizationReceipt, DataLifecycleError
+from .data_subject_deletion_preflight import validate_subject_deletion_preflight
 from .storage import get_storage_backend
 from .tenant_authority import resolve_actor_tenant_id
 
@@ -53,6 +54,49 @@ def _key_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
 
 
+def _active_delete_request_id(
+    db: Session,
+    *,
+    tenant_id: int,
+    customer_id: int,
+    attachment_count: int,
+) -> int | None:
+    active = (
+        db.query(DataSubjectRequest)
+        .filter(
+            DataSubjectRequest.tenant_id == tenant_id,
+            DataSubjectRequest.customer_id == customer_id,
+            DataSubjectRequest.request_type == "delete",
+            DataSubjectRequest.status.in_(
+                ("qualified", "processing", "blocked_legal_hold")
+            ),
+        )
+        .order_by(DataSubjectRequest.id.asc())
+        .all()
+    )
+    if len(active) > 1:
+        raise DataLifecycleError("dsar_delete_request_ambiguous")
+    if active:
+        return active[0].id
+    if attachment_count:
+        # A completed or identity-pending historical request may not authorize
+        # deletion of attachment evidence added later.
+        raise DataLifecycleError("dsar_not_qualified")
+    completed = (
+        db.query(DataSubjectRequest.id)
+        .filter(
+            DataSubjectRequest.tenant_id == tenant_id,
+            DataSubjectRequest.customer_id == customer_id,
+            DataSubjectRequest.request_type == "delete",
+            DataSubjectRequest.status == "completed",
+            DataSubjectRequest.result_manifest_json.is_not(None),
+        )
+        .order_by(DataSubjectRequest.id.desc())
+        .first()
+    )
+    return int(completed[0]) if completed else None
+
+
 def delete_subject_attachment_blobs(
     db: Session,
     *,
@@ -61,10 +105,10 @@ def delete_subject_attachment_blobs(
 ) -> AttachmentCleanupReceipt:
     """Delete every subject attachment through the canonical storage backend.
 
-    External deletion is verified before attachment metadata is cleared. The
-    returned receipt contains hashes only; raw storage keys never enter audit or
-    DSAR result payloads. Repeated execution is idempotent because absent objects
-    are accepted only after the backend verifies absence.
+    Reversible business blockers are validated before the first external storage
+    call. External deletion is then verified before attachment metadata is
+    cleared. The returned receipt contains hashes only; raw storage keys never
+    enter audit or DSAR result payloads.
     """
 
     tenant_id = resolve_actor_tenant_id(db, actor)
@@ -88,6 +132,20 @@ def delete_subject_attachment_blobs(
         if ticket_ids
         else []
     )
+    request_id = _active_delete_request_id(
+        db,
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        attachment_count=len(attachments),
+    )
+    if request_id is None:
+        raise DataLifecycleError("dsar_not_qualified")
+    validate_subject_deletion_preflight(
+        db,
+        actor=actor,
+        request_id=request_id,
+    )
+
     storage = get_storage_backend()
     deleted = 0
     absent = 0
