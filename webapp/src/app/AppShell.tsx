@@ -17,10 +17,8 @@ import {
   Stack,
   Toolbar,
   Typography,
-  useMediaQuery,
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
-import { useTheme } from '@mui/material/styles'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -32,6 +30,7 @@ import { AppNavigation } from './AppNavigation'
 import { IncomingVoiceCallControl, IncomingVoiceCallProvider } from './IncomingVoiceCallControl'
 import { APP_ROUTE_TITLES } from './navigation'
 import type { AppRouteKey } from './navigation'
+import { OperatorLayoutProvider, useOperatorLayoutMode } from './useOperatorLayoutMode'
 
 function scopeLabel(scope: AuthorizedWorkspaceScope, duplicatePosition?: number) {
   const base = `${scope.country_code} · ${channelPresentation(scope.channel_key).label}`
@@ -164,16 +163,7 @@ function CanonicalAppNavigation({
   )
 }
 
-export function AppShell({
-  activeRoute,
-  capabilities,
-  userLabel,
-  scopes = [],
-  selectedScope,
-  onScopeChange,
-  onLogout,
-  children,
-}: {
+interface AppShellProps {
   activeRoute: AppRouteKey
   capabilities: Set<string>
   userLabel: string
@@ -182,15 +172,29 @@ export function AppShell({
   onScopeChange?: (scope: AuthorizedWorkspaceScope) => void
   onLogout: () => void
   children: ReactNode
-}) {
-  const theme = useTheme()
-  const desktopShell = useMediaQuery(theme.breakpoints.up('lg'), { noSsr: true })
+}
+
+function AppShellContent({
+  activeRoute,
+  capabilities,
+  userLabel,
+  scopes = [],
+  selectedScope,
+  onScopeChange,
+  onLogout,
+  children,
+}: AppShellProps) {
+  const { desktopLayout: desktopShell } = useOperatorLayoutMode()
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
   const timeZone = operatorTimeZone()
 
   useEffect(() => {
     document.title = APP_ROUTE_TITLES[activeRoute]
   }, [activeRoute])
+
+  useEffect(() => {
+    if (desktopShell) setMobileNavigationOpen(false)
+  }, [desktopShell])
 
   const logoutFromMobileNavigation = () => {
     setMobileNavigationOpen(false)
@@ -319,11 +323,19 @@ export function AppShell({
             </Stack>
           </Drawer>
 
-          <Box id="nd-main-content" component="div" tabIndex={-1} sx={{ minHeight: 'calc(100dvh - 68px)', outline: 'none' }}>
+          <Box id="nd-main-content" component="div" tabIndex={-1} sx={{ minHeight: desktopShell ? 'calc(100dvh - 68px)' : 'calc(100dvh - 64px)', outline: 'none' }}>
             {children}
           </Box>
         </Box>
       </IncomingVoiceCallProvider>
     </AgentPresenceProvider>
+  )
+}
+
+export function AppShell(props: AppShellProps) {
+  return (
+    <OperatorLayoutProvider>
+      <AppShellContent {...props} />
+    </OperatorLayoutProvider>
   )
 }
