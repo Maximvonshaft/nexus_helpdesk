@@ -7,6 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..models_case_governance import DataSubjectRequest
+from ..services.data_lifecycle_attachment_cleanup import (
+    bind_attachment_cleanup_receipt,
+    delete_subject_attachment_blobs,
+)
 from ..services.data_lifecycle_service import (
     DataLifecycleError,
     apply_retention_execution,
@@ -201,18 +206,37 @@ def delete_dsar_subject(
     ensure_can_manage_users(current_user, db)
     try:
         with managed_session(db):
-            receipt = execute_data_subject_deletion(
+            request = db.get(DataSubjectRequest, request_id)
+            if request is None:
+                raise DataLifecycleError("dsar_not_found", status_code=404)
+            attachment_receipt = delete_subject_attachment_blobs(
+                db,
+                actor=current_user,
+                customer_id=request.customer_id,
+            )
+            database_receipt = execute_data_subject_deletion(
                 db,
                 actor=current_user,
                 request_id=request_id,
             )
+            receipt = bind_attachment_cleanup_receipt(
+                db,
+                request_id=request_id,
+                database_receipt=database_receipt,
+                attachment_receipt=attachment_receipt,
+            )
         return {
-            "schema": "nexus.subject-anonymization-result.v1",
+            "schema": "nexus.subject-deletion-result.v1",
             "customer_id": receipt.customer_id,
             "ticket_count": receipt.ticket_count,
             "conversation_count": receipt.conversation_count,
             "message_count": receipt.message_count,
             "related_row_count": receipt.related_row_count,
+            "attachment_count": receipt.attachment_count,
+            "attachment_deleted_count": receipt.attachment_deleted_count,
+            "attachment_already_absent_count": (
+                receipt.attachment_already_absent_count
+            ),
             "receipt_sha256": receipt.receipt_sha256,
         }
     except DataLifecycleError as exc:
