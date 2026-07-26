@@ -220,9 +220,12 @@ test('forced colors and reduced motion preserve required controls and visible fo
   await mockResponsiveConsole(page)
   await page.goto('/workspace')
 
+  const skipLink = page.getByRole('link', { name: '跳到主要内容' })
   const menu = page.getByRole('button', { name: '打开主导航' })
   await expect(menu).toBeVisible()
-  await menu.focus()
+  await page.keyboard.press('Tab')
+  await expect(skipLink).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(menu).toBeFocused()
   const focus = await menu.evaluate((element) => {
     const style = window.getComputedStyle(element)
