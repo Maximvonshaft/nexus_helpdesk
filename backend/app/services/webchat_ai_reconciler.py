@@ -166,6 +166,18 @@ def _finalize_terminal_outcome(
 ) -> None:
     job = _terminal_job_for_turn(db, turn=turn, reason=reason)
     _finalize_dead_webchat_ai_job(db, job)
+
+    # A public fallback is the customer outcome, not a rewrite of the failed
+    # execution cause. Watchdog-expired turns remain ``timeout`` so runtime SLOs,
+    # incident triage and historical contracts do not count them as successful
+    # model completions. The reply_message_id proves that the customer was not
+    # left without a terminal outcome.
+    if action == "timeout_terminal_outcome":
+        turn.status = "timeout"
+        turn.status_reason = reason[:500]
+        turn.updated_at = utc_now()
+        db.flush()
+
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
@@ -177,6 +189,7 @@ def _finalize_terminal_outcome(
             "reason": reason,
             "job_id": job.id,
             "terminal_status": turn.status,
+            "customer_outcome_committed": _public_outcome_exists(db, turn=turn),
         },
     )
 
@@ -270,7 +283,8 @@ def reconcile_webchat_ai_state(
                     db,
                     conversation=conversation,
                     turn=turn,
-                    reason=turn.status_reason or f"terminal_turn_without_outcome:{turn.status}",
+                    reason=turn.status_reason
+                    or f"terminal_turn_without_outcome:{turn.status}",
                     action="repair_terminal_without_outcome",
                 )
                 recovered += 1
