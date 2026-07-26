@@ -169,7 +169,9 @@ def test_watchdog_timeout_uses_same_idempotent_terminal_outcome(monkeypatch):
         db.refresh(turn)
         assert result["timed_out"] == 1
         assert result["recovered"] == 1
-        assert turn.status == "completed"
+        assert turn.status == "timeout"
+        assert turn.reply_source == "agent_runtime:fallback"
+        assert turn.reply_message_id is not None
         assert (
             db.query(WebchatMessage)
             .filter(
