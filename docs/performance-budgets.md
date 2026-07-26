@@ -40,6 +40,10 @@ Default CI budgets:
 
 `npm run verify` builds the exact frontend and then executes `npm run size-report`; bundle limits are part of the required frontend gate.
 
+The first-screen figure is the gzip sum of the production entry and its complete static import closure from Vite's generated manifest. The verifier must not infer initial loading from filenames or exclude `vendor`, `route` or `lazy` chunks by name. Any JavaScript statically reachable from the entry is first-screen cost regardless of its chunk label.
+
+Heavy task-specific runtimes must remain behind the existing dynamic route graph. In particular, the LiveKit-backed WebCall surface is loaded only when `/webcall/$voiceSessionId` is entered and is statically forbidden from the initial application closure.
+
 ## Operator Web Vitals budgets
 
 Production RUM uses the authenticated, bounded `/api/observability/frontend-metrics` endpoint and the existing Prometheus metrics authority. It contains no customer content, user identity, URL query string or high-cardinality resource identifier.
@@ -60,9 +64,10 @@ Canonical browser evidence must include:
 - at least 300 conversation messages with bounded historical loading;
 - keyboard selection and reply composition while background refresh is active;
 - slow initial responses and failed background refresh with last server-confirmed information preserved;
-- no root horizontal overflow at 375, 768, 1024, 1280, 1366 and 1440 pixel widths;
-- 200% text enlargement without hiding the current primary action;
-- deterministic screenshot evidence for normal, loading, empty, degraded, conflict and repair-required states.
+- no root horizontal overflow at 320, 375, 768, 1024, 1280, 1366 and 1440 CSS-pixel widths;
+- 200% text enlargement without label/value overlap, clipping or hidden required actions;
+- semantic, target-size, contrast, Forced Colors and reduced-motion checks across all canonical authenticated routes;
+- pixel-regression baselines for normal, loading, empty, degraded, conflict, repair-required and enlarged-text states.
 
 ## Staging verification plan
 

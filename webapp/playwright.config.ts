@@ -17,8 +17,6 @@ export default defineConfig({
     baseURL,
     headless: true,
     trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
     launchOptions: rcBrowser
       ? {
           // RC browser traffic is loopback-only. The Playwright-pinned Chromium

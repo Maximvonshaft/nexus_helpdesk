@@ -17,10 +17,8 @@ import {
   Stack,
   Toolbar,
   Typography,
-  useMediaQuery,
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
-import { useTheme } from '@mui/material/styles'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -32,6 +30,8 @@ import { AppNavigation } from './AppNavigation'
 import { IncomingVoiceCallControl, IncomingVoiceCallProvider } from './IncomingVoiceCallControl'
 import { APP_ROUTE_TITLES } from './navigation'
 import type { AppRouteKey } from './navigation'
+import { OperatorLayoutProvider } from './OperatorLayoutProvider'
+import { useOperatorLayoutMode } from './useOperatorLayoutMode'
 
 function scopeLabel(scope: AuthorizedWorkspaceScope, duplicatePosition?: number) {
   const base = `${scope.country_code} · ${channelPresentation(scope.channel_key).label}`
@@ -164,16 +164,7 @@ function CanonicalAppNavigation({
   )
 }
 
-export function AppShell({
-  activeRoute,
-  capabilities,
-  userLabel,
-  scopes = [],
-  selectedScope,
-  onScopeChange,
-  onLogout,
-  children,
-}: {
+interface AppShellProps {
   activeRoute: AppRouteKey
   capabilities: Set<string>
   userLabel: string
@@ -182,15 +173,29 @@ export function AppShell({
   onScopeChange?: (scope: AuthorizedWorkspaceScope) => void
   onLogout: () => void
   children: ReactNode
-}) {
-  const theme = useTheme()
-  const desktopShell = useMediaQuery(theme.breakpoints.up('lg'), { noSsr: true })
+}
+
+function AppShellContent({
+  activeRoute,
+  capabilities,
+  userLabel,
+  scopes = [],
+  selectedScope,
+  onScopeChange,
+  onLogout,
+  children,
+}: AppShellProps) {
+  const { desktopLayout: desktopShell } = useOperatorLayoutMode()
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
   const timeZone = operatorTimeZone()
 
   useEffect(() => {
     document.title = APP_ROUTE_TITLES[activeRoute]
   }, [activeRoute])
+
+  useEffect(() => {
+    if (desktopShell) setMobileNavigationOpen(false)
+  }, [desktopShell])
 
   const logoutFromMobileNavigation = () => {
     setMobileNavigationOpen(false)
@@ -204,6 +209,13 @@ export function AppShell({
           <Box
             component="a"
             href="#nd-main-content"
+            onKeyDown={(event) => {
+              if (event.key !== 'Tab' || event.shiftKey) return
+              const next = document.querySelector<HTMLElement>('header button:not([disabled]), header a[href]')
+              if (!next) return
+              event.preventDefault()
+              next.focus()
+            }}
             sx={{
               position: 'fixed',
               left: 16,
@@ -288,11 +300,18 @@ export function AppShell({
             slotProps={{ paper: { sx: { width: 'min(88vw, 360px)' } } }}
           >
             <Stack id="nd-mobile-navigation" spacing={2} sx={{ minHeight: '100%', p: 2 }}>
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
-                <Avatar variant="rounded" sx={{ width: 40, height: 40, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }} aria-hidden="true">N</Avatar>
-                <Box sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'flex-start' }}>
+                <Avatar variant="rounded" sx={{ width: 40, height: 40, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800, flexShrink: 0 }} aria-hidden="true">N</Avatar>
+                <Box sx={{ minWidth: 0, flex: 1 }}>
                   <Typography translate="no" variant="subtitle1">Nexus OSR</Typography>
-                  <Typography variant="caption" color="text.secondary" noWrap>{userLabel}</Typography>
+                  <Typography
+                    data-testid="operator-drawer-user-label"
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', overflowWrap: 'anywhere' }}
+                  >
+                    {userLabel}
+                  </Typography>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>显示时区：{timeZone}</Typography>
                 </Box>
               </Stack>
@@ -319,11 +338,19 @@ export function AppShell({
             </Stack>
           </Drawer>
 
-          <Box id="nd-main-content" component="div" tabIndex={-1} sx={{ minHeight: 'calc(100dvh - 68px)', outline: 'none' }}>
+          <Box id="nd-main-content" component="div" tabIndex={-1} sx={{ minHeight: desktopShell ? 'calc(100dvh - 68px)' : 'calc(100dvh - 64px)', outline: 'none' }}>
             {children}
           </Box>
         </Box>
       </IncomingVoiceCallProvider>
     </AgentPresenceProvider>
+  )
+}
+
+export function AppShell(props: AppShellProps) {
+  return (
+    <OperatorLayoutProvider>
+      <AppShellContent {...props} />
+    </OperatorLayoutProvider>
   )
 }

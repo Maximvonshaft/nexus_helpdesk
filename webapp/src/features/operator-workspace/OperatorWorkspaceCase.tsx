@@ -13,6 +13,7 @@ import type { UnifiedOperatorQueueItem, WorkspaceMobileView } from '@/lib/operat
 import {
   evidencePresentation,
   ownerPresentation,
+  priorityPresentation,
   queueSourcePresentation,
   retryPresentation,
   slaPresentation,
@@ -121,6 +122,7 @@ function CaseSpine({
   closureReceipt,
   closurePending,
   closureError,
+  desktopLayout,
 }: {
   item: UnifiedOperatorQueueItem
   memory: SupportMemoryLedger | null
@@ -128,6 +130,7 @@ function CaseSpine({
   closureReceipt?: TicketClosureReceipt
   closurePending: boolean
   closureError: unknown
+  desktopLayout: boolean
 }) {
   if (!item.ticket_id) {
     const handoffStatus = thread?.handoff?.status || item.source_status
@@ -139,7 +142,7 @@ function CaseSpine({
       { label: '工单', value: '未创建', tone: 'default' },
       { label: '会话结果', value: thread?.outcome ? sanitizeDisplayText(thread.outcome) : '尚未结束', tone: thread?.outcome ? 'default' : 'warning' },
     ]
-    return <SpineSurface label="会话进度" stages={stages} />
+    return <SpineSurface label="会话进度" stages={stages} desktopLayout={desktopLayout} />
   }
 
   const timeline = memory?.evidence_timeline ?? []
@@ -158,23 +161,23 @@ function CaseSpine({
     serverNotificationStage(closureReceipt, closurePending, closureError),
     ticketClosureStage(closureReceipt, closurePending, closureError),
   ]
-  return <SpineSurface label="处理进度" stages={stages} />
+  return <SpineSurface label="处理进度" stages={stages} desktopLayout={desktopLayout} />
 }
 
-function SpineSurface({ label, stages }: { label: string; stages: SpineStage[] }) {
+function SpineSurface({ label, stages, desktopLayout }: { label: string; stages: SpineStage[]; desktopLayout: boolean }) {
   return (
     <Paper variant="outlined" sx={{ mb: 3, overflow: 'hidden' }} aria-label={label}>
       <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}>
         <Typography variant="subtitle2">{label}</Typography>
       </Box>
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: `repeat(${stages.length}, minmax(0, 1fr))` } }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: desktopLayout ? `repeat(${stages.length}, minmax(0, 1fr))` : 'minmax(0, 1fr)' }}>
         {stages.map((stage, index) => (
           <Box
             key={stage.label}
             sx={{
-              borderBottom: { xs: index === stages.length - 1 ? 0 : 1, xl: 0 },
+              borderBottom: desktopLayout || index === stages.length - 1 ? 0 : 1,
               borderColor: 'divider',
-              borderRight: { xl: index === stages.length - 1 ? 0 : 1 },
+              borderRight: desktopLayout && index !== stages.length - 1 ? 1 : 0,
               minWidth: 0,
               p: 1.5,
             }}
@@ -226,15 +229,25 @@ function EvidencePanel({ memory }: { memory: SupportMemoryLedger | null }) {
   )
 }
 
-function SourceSummary({ data, item }: { data: Record<string, unknown>; item: UnifiedOperatorQueueItem }) {
+function SourceSummary({
+  data,
+  item,
+  desktopLayout,
+}: {
+  data: Record<string, unknown>
+  item: UnifiedOperatorQueueItem
+  desktopLayout: boolean
+}) {
+  const status = sourceStatusPresentation(stringValue(data.status) || item.source_status)
+  const priority = priorityPresentation(stringValue(data.priority) || item.priority)
   return (
     <Box component="section" sx={{ py: 2.5 }}>
       <OperatorSectionHeading title="任务摘要" />
       <Box sx={{ mt: 2 }}>
-        <OperatorFactGrid columns={3} facts={[
+        <OperatorFactGrid columns={desktopLayout ? 3 : 1} facts={[
           ['标题', displayVerbatimText(stringValue(data.title), '未提供')],
-          ['状态', sanitizeDisplayText(stringValue(data.status) || item.source_status)],
-          ['优先级', sanitizeDisplayText(stringValue(data.priority) || item.priority)],
+          ['状态', status.label],
+          ['优先级', priority.label],
         ]} />
       </Box>
     </Box>
@@ -258,6 +271,7 @@ export function WorkspaceCasePane({
   onLoadOlderMessages,
   onReplyDirtyChange,
   mobileView,
+  desktopLayout,
 }: {
   item: UnifiedOperatorQueueItem | null
   currentUserId?: number
@@ -275,16 +289,24 @@ export function WorkspaceCasePane({
   onLoadOlderMessages: () => Promise<void>
   onReplyDirtyChange: (dirty: boolean) => void
   mobileView: WorkspaceMobileView
+  desktopLayout: boolean
 }) {
   const caseVisible = mobileView === 'case'
   const conversationVisible = mobileView === 'conversation'
   const closure = useTicketClosureReadiness(item?.ticket_id)
 
   return (
-    <Paper id="workspace-case" component="section" aria-label="当前任务" tabIndex={-1} variant="outlined" sx={{ display: { xs: caseVisible || conversationVisible ? 'block' : 'none', lg: 'block' }, minWidth: 0, p: { xs: 2, md: 2.5 } }}>
+    <Paper
+      id="workspace-case"
+      component="section"
+      aria-label="当前任务"
+      tabIndex={-1}
+      variant="outlined"
+      sx={{ display: desktopLayout || caseVisible || conversationVisible ? 'block' : 'none', minWidth: 0, p: { xs: 2, md: 2.5 } }}
+    >
       {item ? (
         <>
-          <Box sx={{ display: { xs: caseVisible ? 'block' : 'none', lg: 'block' } }}>
+          <Box sx={{ display: desktopLayout || caseVisible ? 'block' : 'none' }}>
             <CaseHeader item={item} currentUserId={currentUserId} />
             <CaseSpine
               item={item}
@@ -293,9 +315,10 @@ export function WorkspaceCasePane({
               closureReceipt={closure.data}
               closurePending={closure.isPending}
               closureError={closure.error}
+              desktopLayout={desktopLayout}
             />
             {preserveMissingSelection ? <Alert severity="warning" variant="outlined" sx={{ mb: 2.5 }}><AlertTitle>任务已离开待处理列表</AlertTitle>回复草稿已保留，操作已暂停。</Alert> : null}
-            {sourceRecord && !thread ? <SourceSummary data={sourceRecord} item={item} /> : null}
+            {sourceRecord && !thread ? <SourceSummary data={sourceRecord} item={item} desktopLayout={desktopLayout} /> : null}
             <EvidencePanel memory={memory} />
             {item.ticket_id ? (
               <Box component="section" aria-label="安全关闭" sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: 'divider' }}>
@@ -324,7 +347,13 @@ export function WorkspaceCasePane({
             onLoadOlderMessages={onLoadOlderMessages}
             onReplyDirtyChange={onReplyDirtyChange}
             selectionUnavailable={preserveMissingSelection}
-            sx={{ display: { xs: conversationVisible ? 'block' : 'none', lg: 'block' }, mt: { lg: 3 }, pt: { lg: 3 }, borderTop: { lg: 1 }, borderColor: { lg: 'divider' } }}
+            sx={{
+              display: desktopLayout || conversationVisible ? 'block' : 'none',
+              mt: desktopLayout ? 3 : 0,
+              pt: desktopLayout ? 3 : 0,
+              borderTop: desktopLayout ? 1 : 0,
+              borderColor: 'divider',
+            }}
           />
         </>
       ) : <OperatorEmptyState title="选择一个任务" description="从待处理任务中选择" />}

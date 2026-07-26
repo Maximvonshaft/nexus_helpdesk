@@ -32,21 +32,25 @@ export const nexusTheme = createTheme({
       main: '#067647',
       dark: '#05603A',
       light: '#D1FADF',
+      contrastText: '#FFFFFF',
     },
     warning: {
       main: '#B54708',
       dark: '#93370D',
       light: '#FEF0C7',
+      contrastText: '#FFFFFF',
     },
     error: {
       main: '#B42318',
       dark: '#912018',
       light: '#FEE4E2',
+      contrastText: '#FFFFFF',
     },
     info: {
       main: '#026AA2',
       dark: '#065986',
       light: '#D1E9FF',
+      contrastText: '#FFFFFF',
     },
     background: {
       default: '#F7F8FA',
@@ -122,6 +126,15 @@ export const nexusTheme = createTheme({
             transitionDuration: '0.01ms !important',
           },
         },
+        '@media (forced-colors: active)': {
+          '*:focus-visible': {
+            forcedColorAdjust: 'none',
+            outlineWidth: '3px !important',
+            outlineStyle: 'solid !important',
+            outlineColor: 'CanvasText !important',
+            outlineOffset: '2px !important',
+          },
+        },
       },
     },
     MuiButtonBase: {
@@ -133,6 +146,15 @@ export const nexusTheme = createTheme({
           '&:focus-visible': {
             outline: focusOutline,
             outlineOffset: 2,
+          },
+          '@media (forced-colors: active)': {
+            '&:focus-visible, &.Mui-focusVisible': {
+              forcedColorAdjust: 'none',
+              outlineWidth: '3px !important',
+              outlineStyle: 'solid !important',
+              outlineColor: 'CanvasText !important',
+              outlineOffset: '2px !important',
+            },
           },
         },
       },
@@ -147,7 +169,10 @@ export const nexusTheme = createTheme({
           minHeight: 44,
           borderRadius: 8,
           paddingInline: 16,
-          transition: 'background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease',
+          whiteSpace: 'normal',
+          // Color and background changes are instantaneous so asynchronous
+          // disabled/enabled transitions never pass through low-contrast frames.
+          transition: 'box-shadow 150ms ease',
         },
         sizeSmall: { minHeight: 44, paddingInline: 12 },
       },
@@ -187,8 +212,29 @@ export const nexusTheme = createTheme({
     MuiSwitch: {
       styleOverrides: {
         root: {
+          width: 64,
+          minWidth: 64,
+          height: 44,
+          minHeight: 44,
+          padding: 0,
+        },
+        switchBase: {
+          width: 44,
+          height: 44,
           minWidth: 44,
           minHeight: 44,
+          padding: 12,
+          '&.Mui-checked': {
+            transform: 'translateX(20px)',
+          },
+        },
+        input: {
+          width: '100%',
+          height: '100%',
+        },
+        track: {
+          marginBlock: 8,
+          marginInline: 6,
         },
       },
     },
@@ -208,12 +254,22 @@ export const nexusTheme = createTheme({
       styleOverrides: {
         root: {
           minHeight: 44,
+          height: 'auto',
           borderRadius: 8,
           backgroundColor: '#FFFFFF',
           '& .MuiOutlinedInput-notchedOutline': { borderColor: '#D0D5DD' },
           '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#98A2B3' },
           '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderWidth: 2 },
           '&.Mui-focused': { outline: focusOutline, outlineOffset: 2 },
+        },
+        input: {
+          minHeight: 24,
+          paddingTop: '1em',
+          paddingBottom: '0.65em',
+          boxSizing: 'border-box',
+        },
+        multiline: {
+          paddingBlock: 8,
         },
       },
     },
@@ -224,8 +280,9 @@ export const nexusTheme = createTheme({
           boxSizing: 'border-box',
           display: 'flex',
           minHeight: '44px !important',
-          paddingBottom: '0 !important',
-          paddingTop: '0 !important',
+          paddingTop: '1em !important',
+          paddingBottom: '0.65em !important',
+          whiteSpace: 'normal',
         },
       },
     },
@@ -236,10 +293,25 @@ export const nexusTheme = createTheme({
       },
       styleOverrides: {
         root: {
-          height: 26,
+          minHeight: 26,
+          height: 'auto',
           borderRadius: 6,
           fontWeight: 600,
+        },
+        filled: {
+          '&.MuiChip-colorPrimary': { backgroundColor: '#175CD3', color: '#FFFFFF' },
+          '&.MuiChip-colorSuccess': { backgroundColor: '#067647', color: '#FFFFFF' },
+          '&.MuiChip-colorWarning': { backgroundColor: '#B54708', color: '#FFFFFF' },
+          '&.MuiChip-colorError': { backgroundColor: '#B42318', color: '#FFFFFF' },
+          '& .MuiChip-icon': { color: 'inherit' },
+        },
+        outlined: {
           backgroundColor: '#FFFFFF',
+        },
+        label: {
+          paddingBlock: 4,
+          whiteSpace: 'normal',
+          overflowWrap: 'anywhere',
         },
       },
     },
@@ -294,7 +366,7 @@ export const nexusTheme = createTheme({
     },
     MuiDialogActions: {
       styleOverrides: {
-        root: { padding: '12px 24px 24px', gap: 8 },
+        root: { padding: '12px 24px 24px', gap: 8, flexWrap: 'wrap' },
       },
     },
     MuiTooltip: {

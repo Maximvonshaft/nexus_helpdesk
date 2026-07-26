@@ -7,6 +7,7 @@ const root = path.resolve(import.meta.dirname, '..')
 const shell = fs.readFileSync(path.join(root, 'src/app/AppShell.tsx'), 'utf8')
 const control = fs.readFileSync(path.join(root, 'src/app/IncomingVoiceCallControl.tsx'), 'utf8')
 const route = fs.readFileSync(path.join(root, 'src/routes/webcall.tsx'), 'utf8')
+const lazyRoute = fs.readFileSync(path.join(root, 'src/features/webcall/lazy.tsx'), 'utf8')
 const context = fs.readFileSync(path.join(root, 'src/features/webcall/WebCallOperatorContext.tsx'), 'utf8')
 const api = fs.readFileSync(path.join(root, 'src/lib/telephonyApi.ts'), 'utf8')
 
@@ -21,9 +22,15 @@ test('canonical AppShell owns the single incoming voice offer surface', () => {
 })
 
 
-test('voice acceptance is deferred to the canonical WebCall route exactly once', () => {
-  assert.match(route, /WebCallPage/)
-  assert.match(route, /WebCallOperatorContext/)
+test('voice acceptance is deferred to the one lazy canonical WebCall route', () => {
+  assert.match(route, /lazy\(\(\) => import\('@\/features\/webcall\/lazy'\)\)/)
+  assert.equal((route.match(/LazyWebCallRouteContent/g) ?? []).length, 2)
+  assert.doesNotMatch(route, /WebCallPage/)
+  assert.doesNotMatch(route, /WebCallOperatorContext/)
+  assert.match(lazyRoute, /WebCallPage/)
+  assert.match(lazyRoute, /WebCallOperatorContext/)
+  assert.equal((lazyRoute.match(/<WebCallPage/g) ?? []).length, 1)
+  assert.equal((lazyRoute.match(/<WebCallOperatorContext/g) ?? []).length, 1)
   assert.match(context, /INCOMING_VOICE_CONTEXT_PREFIX/)
   assert.match(api, /\/api\/webchat\/admin\/voice\/sessions\?status=ringing/)
   assert.match(api, /\/reject/)

@@ -11,6 +11,7 @@ const canonicalDynamicSources = [
   'src/features/channels/lazy.tsx',
   'src/features/runtime/lazy.tsx',
   'src/features/control-tower/lazy.tsx',
+  'src/features/webcall/lazy.tsx',
 ]
 
 function fail(message) {
@@ -41,6 +42,15 @@ const visitStatic = (key) => {
   for (const importedKey of record?.imports || []) visitStatic(importedKey)
 }
 visitStatic(entryKey)
+
+for (const key of staticClosure) {
+  const record = manifest[key]
+  const source = String(record?.src || key).replaceAll('\\', '/')
+  const file = String(record?.file || '')
+  if (/livekit/i.test(source) || /livekit/i.test(file)) {
+    fail(`LiveKit remains in the initial static dependency closure: ${source} -> ${file}`)
+  }
+}
 
 const reachableDynamicTargets = new Set()
 const visitDynamicTargets = (key) => {

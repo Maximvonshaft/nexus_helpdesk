@@ -8,6 +8,7 @@ import SecurityRoundedIcon from '@mui/icons-material/SecurityRounded'
 import {
   Alert,
   Box,
+  Button,
   Paper,
   Stack,
   Tab,
@@ -65,7 +66,10 @@ export function AdministrationPage() {
     if (!allowed) setTab(canManageUsers ? 'users' : canManageMarkets ? 'markets' : 'security')
   }, [canManageMarkets, canManageUsers, canReadSecurity, tab])
 
-  const referenceError = roles.error || teams.error || markets.error
+  const userReferenceError = roles.error || teams.error
+  const reloadUserReferences = async () => {
+    await Promise.all([roles.refetch(), teams.refetch()])
+  }
 
   return (
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
@@ -85,11 +89,6 @@ export function AdministrationPage() {
         <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
           当前账号只能查看安全记录，不能修改账号、角色、团队或市场。
         </Alert>
-      ) : null}
-      {referenceError ? (
-        <Box sx={{ mt: 2 }}>
-          <OperatorErrorNotice title="无法读取系统管理数据" error={referenceError} fallback="请稍后重试" />
-        </Box>
       ) : null}
 
       <Paper variant="outlined" sx={{ mt: 2.5, overflow: 'hidden' }}>
@@ -111,12 +110,21 @@ export function AdministrationPage() {
 
       <Box sx={{ mt: 2 }}>
         {tab === 'users' && canManageUsers ? (
-          <UserGovernance
-            currentUserId={session.data?.id ?? 0}
-            roles={roles.data ?? []}
-            teams={teams.data ?? []}
-            referencesLoading={roles.isLoading || teams.isLoading}
-          />
+          userReferenceError ? (
+            <OperatorErrorNotice
+              title="无法读取用户管理基础数据"
+              error={userReferenceError}
+              fallback="请重新加载角色和团队数据"
+              action={<Button color="inherit" onClick={() => { void reloadUserReferences() }}>重新加载</Button>}
+            />
+          ) : (
+            <UserGovernance
+              currentUserId={session.data?.id ?? 0}
+              roles={roles.data ?? []}
+              teams={teams.data ?? []}
+              referencesLoading={roles.isLoading || teams.isLoading}
+            />
+          )
         ) : null}
         {tab === 'roles' && canManageUsers ? <RoleTemplatesPanel /> : null}
         {tab === 'credentials' && canManageUsers ? <CredentialGovernance currentUserId={session.data?.id ?? 0} /> : null}

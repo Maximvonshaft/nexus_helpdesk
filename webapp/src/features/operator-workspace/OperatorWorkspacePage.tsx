@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { OperatorEmptyState, OperatorErrorNotice } from '@/app/OperatorPresentation'
+import { useOperatorLayoutMode } from '@/app/useOperatorLayoutMode'
 import { useSession } from '@/hooks/useAuth'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { useOperatorRealtime } from '@/lib/operatorRealtime'
@@ -55,6 +56,7 @@ const EVENT_RETRY_MAX_MS = 30_000
 export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const queryClient = useQueryClient()
   const session = useSession()
+  const { desktopLayout } = useOperatorLayoutMode()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
   const [filters, setFilters] = useState<WorkspaceFilters>(defaultFilters)
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(() => initialWorkspaceQueueId())
@@ -74,6 +76,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     return () => window.removeEventListener('beforeunload', protectDraft)
   }, [replyDraftDirty])
   useLayoutEffect(() => {
+    if (desktopLayout) return
     const targetId: Record<WorkspaceMobileView, string> = {
       queue: 'workspace-queue',
       case: 'workspace-case',
@@ -81,7 +84,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
       actions: 'workspace-actions',
     }
     document.getElementById(targetId[mobileView])?.focus({ preventScroll: true })
-  }, [mobileView])
+  }, [desktopLayout, mobileView])
   useEffect(() => {
     const url = new URL(window.location.href)
     if (selectedQueueId) {
@@ -275,7 +278,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
 
   return (
     <Box component="main" data-testid="operator-workspace" sx={{ p: { xs: 1.5, md: 2 } }}>
-      <WorkspaceMobileTabs value={mobileView} onChange={setMobileView} />
+      <WorkspaceMobileTabs value={mobileView} onChange={setMobileView} desktopLayout={desktopLayout} />
       {session.isError ? <OperatorErrorNotice title="无法读取账号" error={session.error} fallback="请重新登录" /> : null}
       {session.data && !canReadQueue ? <Alert severity="warning" variant="outlined">无权访问任务队列，请联系管理员。</Alert> : null}
       {queueDegraded ? (
@@ -298,11 +301,10 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
           sx={{
             display: 'grid',
             gap: 2,
-            gridTemplateColumns: {
-              xs: 'minmax(0, 1fr)',
-              lg: 'minmax(280px, 330px) minmax(0, 1fr) minmax(300px, 360px)',
-            },
-            minHeight: { lg: 'calc(100dvh - 104px)' },
+            gridTemplateColumns: desktopLayout
+              ? 'minmax(280px, 330px) minmax(0, 1fr) minmax(300px, 360px)'
+              : 'minmax(0, 1fr)',
+            minHeight: desktopLayout ? 'calc(100dvh - 104px)' : 0,
           }}
         >
           <WorkspaceQueuePane
@@ -320,6 +322,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
             onSelect={(item) => runWithReplyDraftGuard(() => { setSelectedQueueId(item.queue_id); setMobileView('case') })}
             onLoadMore={() => { void queue.fetchNextPage() }}
             visible={mobileView === 'queue'}
+            desktopLayout={desktopLayout}
           />
           <WorkspaceCasePane
             item={selectedItem}
@@ -338,18 +341,21 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
             onLoadOlderMessages={loadOlderMessages}
             onReplyDirtyChange={setReplyDraftDirty}
             mobileView={mobileView}
+            desktopLayout={desktopLayout}
           />
           <Paper
+            id="workspace-actions"
             component="aside"
+            tabIndex={-1}
             aria-label="任务操作与结果"
             variant="outlined"
             sx={{
-              display: { xs: mobileView === 'actions' ? 'block' : 'none', lg: 'block' },
+              display: desktopLayout || mobileView === 'actions' ? 'block' : 'none',
               minWidth: 0,
               p: 2,
               alignSelf: 'start',
-              position: { lg: 'sticky' },
-              top: { lg: 84 },
+              position: desktopLayout ? 'sticky' : 'static',
+              top: desktopLayout ? 84 : 'auto',
             }}
           >
             {selectedItem ? (
