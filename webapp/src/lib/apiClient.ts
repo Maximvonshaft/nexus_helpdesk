@@ -3,6 +3,7 @@ import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const REQUEST_ID_HEADER = 'X-Request-Id'
 const DEFAULT_API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000)
+const FRONTEND_METRICS_PATH = '/api/observability/frontend-metrics'
 const PUBLIC_API_PATHS = [
   '/api/auth/login',
   '/auth/login',
@@ -39,7 +40,7 @@ export class ApiError extends Error {
 
 export function normalizeApiBaseUrl(raw: string | undefined | null) {
   const trimmed = (raw ?? '').trim().replace(/\/+$/, '')
-  return trimmed.replace(/\/api$/i, '');
+  return trimmed.replace(/\/api$/i, '')
 }
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
@@ -48,6 +49,15 @@ function buildApiUrl(path: string) {
   if (/^https?:\/\//i.test(path)) return path
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${API_BASE_URL}${normalizedPath}`
+}
+
+export function buildApiWebSocketUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  const httpUrl = new URL(buildApiUrl(normalizedPath), window.location.origin)
+  httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  httpUrl.search = ''
+  httpUrl.hash = ''
+  return httpUrl.toString()
 }
 
 function requestPathname(path: string) {
@@ -73,6 +83,10 @@ function now() {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
+function shouldEmitFrontendLatency(path: string) {
+  return requestPathname(path) !== FRONTEND_METRICS_PATH
+}
+
 function emitFrontendLatency(detail: {
   path: string
   method: string
@@ -82,6 +96,7 @@ function emitFrontendLatency(detail: {
   timeout?: boolean
 }) {
   if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return
+  if (!shouldEmitFrontendLatency(detail.path)) return
   window.dispatchEvent(new CustomEvent('nexusdesk:api-latency', { detail }))
 }
 

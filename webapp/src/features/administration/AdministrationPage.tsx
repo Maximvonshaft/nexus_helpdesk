@@ -56,7 +56,6 @@ export function AdministrationPage() {
     retry: false,
   })
 
-  useEffect(() => { document.title = '系统管理 · Nexus OSR' }, [])
   useEffect(() => {
     const allowed = (
       (canManageUsers && ['users', 'roles', 'credentials', 'teams'].includes(tab))

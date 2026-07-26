@@ -12,6 +12,8 @@ const systemFont = [
   'sans-serif',
 ].join(',')
 
+const focusOutline = '3px solid #124AA8'
+
 export const nexusTheme = createTheme({
   cssVariables: true,
   palette: {
@@ -53,14 +55,14 @@ export const nexusTheme = createTheme({
     text: {
       primary: '#101828',
       secondary: '#475467',
-      disabled: '#98A2B3',
+      disabled: '#667085',
     },
     divider: '#E4E7EC',
     action: {
       hover: alpha('#175CD3', 0.06),
       selected: alpha('#175CD3', 0.1),
       disabledBackground: '#F2F4F7',
-      disabled: '#98A2B3',
+      disabled: '#667085',
     },
   },
   shape: {
@@ -126,6 +128,14 @@ export const nexusTheme = createTheme({
       defaultProps: {
         disableRipple: true,
       },
+      styleOverrides: {
+        root: {
+          '&:focus-visible': {
+            outline: focusOutline,
+            outlineOffset: 2,
+          },
+        },
+      },
     },
     MuiButton: {
       defaultProps: {
@@ -138,12 +148,8 @@ export const nexusTheme = createTheme({
           borderRadius: 8,
           paddingInline: 16,
           transition: 'background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease',
-          '&:focus-visible': {
-            outline: '3px solid rgba(23, 92, 211, 0.24)',
-            outlineOffset: 2,
-          },
         },
-        sizeSmall: { minHeight: 36, paddingInline: 12 },
+        sizeSmall: { minHeight: 44, paddingInline: 12 },
       },
     },
     MuiIconButton: {
@@ -152,10 +158,37 @@ export const nexusTheme = createTheme({
           minWidth: 44,
           minHeight: 44,
           borderRadius: 8,
-          '&:focus-visible': {
-            outline: '3px solid rgba(23, 92, 211, 0.24)',
-            outlineOffset: 2,
-          },
+        },
+      },
+    },
+    MuiListItemButton: {
+      styleOverrides: {
+        root: {
+          minHeight: 44,
+        },
+      },
+    },
+    MuiCheckbox: {
+      styleOverrides: {
+        root: {
+          minWidth: 44,
+          minHeight: 44,
+        },
+      },
+    },
+    MuiRadio: {
+      styleOverrides: {
+        root: {
+          minWidth: 44,
+          minHeight: 44,
+        },
+      },
+    },
+    MuiSwitch: {
+      styleOverrides: {
+        root: {
+          minWidth: 44,
+          minHeight: 44,
         },
       },
     },
@@ -180,6 +213,19 @@ export const nexusTheme = createTheme({
           '& .MuiOutlinedInput-notchedOutline': { borderColor: '#D0D5DD' },
           '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#98A2B3' },
           '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderWidth: 2 },
+          '&.Mui-focused': { outline: focusOutline, outlineOffset: 2 },
+        },
+      },
+    },
+    MuiSelect: {
+      styleOverrides: {
+        select: {
+          alignItems: 'center',
+          boxSizing: 'border-box',
+          display: 'flex',
+          minHeight: '44px !important',
+          paddingBottom: '0 !important',
+          paddingTop: '0 !important',
         },
       },
     },
@@ -280,6 +326,13 @@ export const nexusTheme = createTheme({
           minHeight: 44,
           textTransform: 'none',
           fontWeight: 650,
+        },
+      },
+    },
+    MuiAccordionSummary: {
+      styleOverrides: {
+        root: {
+          minHeight: 44,
         },
       },
     },

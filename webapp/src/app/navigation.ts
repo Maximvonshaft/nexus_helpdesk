@@ -11,6 +11,17 @@ export interface AppNavigationItem {
   status: 'canonical' | 'transitional' | 'planned'
 }
 
+export const APP_ROUTE_TITLES: Record<AppRouteKey, string> = {
+  workspace: '案例处理 · Nexus OSR',
+  knowledge: '知识与流程 · Nexus OSR',
+  'agent-control': '自动处理配置 · Nexus OSR',
+  channels: '渠道管理 · Nexus OSR',
+  runtime: '系统运行 · Nexus OSR',
+  'control-tower': '运营监控 · Nexus OSR',
+  administration: '系统管理 · Nexus OSR',
+  account: '账户设置 · Nexus OSR',
+}
+
 export const APP_NAVIGATION: AppNavigationItem[] = [
   {
     key: 'workspace',

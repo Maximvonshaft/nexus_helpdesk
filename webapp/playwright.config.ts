@@ -21,14 +21,11 @@ export default defineConfig({
     video: 'retain-on-failure',
     launchOptions: rcBrowser
       ? {
-          // RC browser traffic is loopback-only. The RC workflow installs the
-          // Playwright-pinned Chromium and bypasses ambient runner proxies.
+          // RC browser traffic is loopback-only. The Playwright-pinned Chromium
+          // revision bypasses ambient runner proxies.
           args: ['--no-proxy-server'],
         }
-      : {
-          // Preserve the repository's existing branded-Chrome smoke contract.
-          channel: 'chrome',
-        },
+      : undefined,
   },
   webServer: externalBaseURL ? undefined : {
     command: `npm run preview -- --host 127.0.0.1 --port ${port}`,

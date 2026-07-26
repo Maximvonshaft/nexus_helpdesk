@@ -1,17 +1,5 @@
 import type { BadgeTone } from '@/lib/types'
 
-const textReplacements: Array<[RegExp, string]> = [
-  [/MCP/gi, '消息桥接'],
-  [/CLI/gi, '备用通道'],
-  [/NexusDesk/gi, '客服工作台'],
-  [/helpdesk/gi, '客服系统'],
-  [/daemon/gi, '守护进程'],
-  [/runtime/gi, '运行状态'],
-  [/sign-?off/gi, '上线检查'],
-  [/cursor/gi, '游标'],
-  [/sync/gi, '同步'],
-]
-
 const displayTextLabels: Record<string, string> = {
   private_ai_runtime: '统一 AI Runtime',
   none: '无',
@@ -124,38 +112,72 @@ export function finiteNumber(value: unknown, fallback: number | null = null) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-export function formatDateTime(value?: string | null) {
-  if (!value) return '—'
+function validTimeZone(value: string | undefined | null) {
+  const candidate = String(value || '').trim()
+  if (!candidate) return null
   try {
-    return new Date(value).toLocaleString('zh-CN', {
+    new Intl.DateTimeFormat('zh-CN', { timeZone: candidate }).format(0)
+    return candidate
+  } catch {
+    return null
+  }
+}
+
+export function operatorTimeZone() {
+  const configured = validTimeZone(import.meta.env.VITE_OPERATOR_TIME_ZONE)
+  if (configured) return configured
+  const browser = typeof Intl !== 'undefined'
+    ? validTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone)
+    : null
+  return browser || 'UTC'
+}
+
+export function formatDateTime(value?: string | null, timeZone = operatorTimeZone()) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return String(value)
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-    })
+      second: '2-digit',
+      hourCycle: 'h23',
+      timeZone,
+      timeZoneName: 'short',
+    }).format(date)
   } catch {
-    return String(value)
+    return date.toISOString()
   }
 }
 
+/**
+ * Preserve source-authored content byte-for-byte after the browser converts it
+ * to a string. This is the only formatter permitted for customer messages,
+ * operator notes, ticket descriptions, Knowledge bodies and evidence payloads.
+ */
+export function displayVerbatimText(value?: string | number | boolean | null, fallback = '—') {
+  if (value === undefined || value === null || value === '') return fallback
+  return String(value)
+}
+
+/**
+ * Translate only exact, repository-owned enum values. Never rewrite substrings
+ * inside free text: doing so would mutate customer evidence and audit content.
+ */
 export function sanitizeDisplayText(value?: string | number | boolean | null) {
   if (value === undefined || value === null || value === '') return '—'
   const source = String(value)
-  const exact = displayTextLabels[source.trim().toLowerCase()]
-  if (exact) return exact
-  let text = source
-  for (const [pattern, replacement] of textReplacements) {
-    text = text.replace(pattern, replacement)
-  }
-  return text
+  return displayTextLabels[source.trim().toLowerCase()] || source
 }
 
 export function labelize(value?: string | null) {
   if (!value) return '—'
   const normalized = normalizeValue(value)
   if (valueLabels[normalized]) return valueLabels[normalized]
-  return sanitizeDisplayText(String(value).replaceAll('_', ' ').replace(/\w+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1)))
+  return String(value).replaceAll('_', ' ').replace(/\w+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1))
 }
 
 export function marketLabel(marketCode?: string | null, countryCode?: string | null) {
@@ -200,5 +222,5 @@ export function boolLabel(value?: boolean | null, truthy = '是', falsy = '否')
 
 export function signoffLabel(value: string) {
   if (signoffLabels[value]) return signoffLabels[value]
-  return sanitizeDisplayText(value.replaceAll('_', ' '))
+  return String(value).replaceAll('_', ' ')
 }

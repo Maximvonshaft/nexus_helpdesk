@@ -15,6 +15,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
+import { formatDateTime } from '@/lib/format'
 import { governanceApi, type KnowledgeImportBatch } from '@/lib/governanceApi'
 import { supportApi } from '@/lib/supportApi'
 import { channelPresentation } from '@/lib/supportStatus'
@@ -137,7 +138,7 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between' }}>
                 <Box>
                   <Typography variant="subtitle2">批次 #{batch.id} · {batch.total_files} 个文件</Typography>
-                  <Typography variant="caption" color="text.secondary">{new Date(batch.created_at).toLocaleString()} · {batch.channel === 'all' ? '全部渠道' : channelPresentation(batch.channel).label} · {audienceLabel(batch.audience_scope)}</Typography>
+                  <Typography variant="caption" color="text.secondary">{formatDateTime(batch.created_at)} · {batch.channel === 'all' ? '全部渠道' : channelPresentation(batch.channel).label} · {audienceLabel(batch.audience_scope)}</Typography>
                 </Box>
                 <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                   <Chip size="small" color={importStatusColor(batch.status)} label={importStatusLabel(batch.status)} />

@@ -110,6 +110,8 @@ class UnifiedQueueSourceLinks(BaseModel):
 class UnifiedOperatorQueueItem(BaseModel):
     queue_id: str = Field(max_length=80)
     case_key: str | None = Field(default=None, max_length=80)
+    display_label: str = Field(min_length=1, max_length=160)
+    display_summary: str | None = Field(default=None, max_length=255)
     source_type: Literal["handoff", "ticket", "dispatch"]
     source_id: int = Field(gt=0)
     ticket_id: int | None = Field(default=None, gt=0)

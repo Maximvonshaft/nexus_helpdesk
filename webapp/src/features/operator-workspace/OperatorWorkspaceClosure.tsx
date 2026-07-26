@@ -4,6 +4,11 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   MenuItem,
   Paper,
@@ -12,17 +17,19 @@ import {
   Typography,
 } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import {
   OperatorErrorNotice,
   OperatorTechnicalDisclosure,
 } from '@/app/OperatorPresentation'
 import { sanitizeDisplayText } from '@/lib/format'
+import { ApiError } from '@/lib/apiClient'
 import { supportApi } from '@/lib/supportApi'
 import type {
   TicketClosureEvidenceKind,
   TicketClosureEvidenceSource,
   TicketClosureEvidenceState,
+  TicketClosureReceipt,
 } from '@/lib/ticketClosureTypes'
 
 interface MissingEvidenceOption {
@@ -40,7 +47,7 @@ const SOURCE_OPTIONS: Array<{ value: TicketClosureEvidenceSource; label: string 
   { value: 'operator_observation', label: '运营观察（不能证明权威事实）' },
 ]
 
-function evidenceOptions(receipt: Awaited<ReturnType<typeof supportApi.ticketClosureReadiness>> | undefined) {
+function evidenceOptions(receipt: TicketClosureReceipt | undefined) {
   if (!receipt) return []
   const readiness = receipt.readiness
   return [
@@ -57,11 +64,19 @@ function labels(values: string[]) {
 
 export function OperatorWorkspaceClosure({
   ticketId,
-  sourceStatus,
+  receipt,
+  isPending,
+  isFetching,
+  queryError,
+  onRefetch,
   onRefresh,
 }: {
   ticketId: number | null
-  sourceStatus: string
+  receipt?: TicketClosureReceipt
+  isPending: boolean
+  isFetching: boolean
+  queryError: unknown
+  onRefetch: () => Promise<unknown>
   onRefresh: () => Promise<void>
 }) {
   const [selectedEvidence, setSelectedEvidence] = useState('')
@@ -69,18 +84,9 @@ export function OperatorWorkspaceClosure({
   const [sourceRef, setSourceRef] = useState('')
   const [sourceRevision, setSourceRevision] = useState('')
   const [note, setNote] = useState('')
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false)
 
-  const readinessQuery = useQuery({
-    queryKey: ['ticket-closure-readiness', ticketId],
-    queryFn: () => {
-      if (!ticketId) throw new Error('当前任务没有工单')
-      return supportApi.ticketClosureReadiness(ticketId)
-    },
-    enabled: Boolean(ticketId),
-    staleTime: 0,
-  })
-
-  const options = useMemo(() => evidenceOptions(readinessQuery.data), [readinessQuery.data])
+  const options = useMemo(() => evidenceOptions(receipt), [receipt])
   const selected = options.find((option) => `${option.kind}:${option.key}` === selectedEvidence) ?? null
 
   useEffect(() => {
@@ -88,6 +94,7 @@ export function OperatorWorkspaceClosure({
     setSourceRef('')
     setSourceRevision('')
     setNote('')
+    setCloseConfirmOpen(false)
   }, [ticketId])
 
   useEffect(() => {
@@ -117,7 +124,7 @@ export function OperatorWorkspaceClosure({
       setSourceRef('')
       setSourceRevision('')
       setNote('')
-      await readinessQuery.refetch()
+      await onRefetch()
       await onRefresh()
     },
   })
@@ -130,7 +137,8 @@ export function OperatorWorkspaceClosure({
       return supportApi.closeTicket(ticketId, `Safe Effective Closure ${latest.receipt_sha256}`)
     },
     onSuccess: async () => {
-      await readinessQuery.refetch()
+      setCloseConfirmOpen(false)
+      await onRefetch()
       await onRefresh()
     },
   })
@@ -139,25 +147,33 @@ export function OperatorWorkspaceClosure({
     return <Alert severity="info" variant="outlined">当前任务没有可关闭的工单。</Alert>
   }
 
-  if (readinessQuery.isPending) {
+  if (isPending) {
     return (
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }} role="status">
         <CircularProgress size={18} />
         <Typography variant="body2">正在核对关闭条件…</Typography>
       </Stack>
     )
   }
 
-  if (readinessQuery.error) {
-    return <OperatorErrorNotice title="无法核对关闭条件" error={readinessQuery.error} fallback="请刷新后重试" />
+  if (queryError || !receipt) {
+    return (
+      <OperatorErrorNotice
+        title="无法核对关闭条件"
+        error={queryError}
+        fallback="请刷新后重试"
+        action={<Button color="inherit" onClick={() => { void onRefetch() }}>重新核对</Button>}
+      />
+    )
   }
 
-  const receipt = readinessQuery.data
   const readiness = receipt.readiness
-  const busy = evidenceMutation.isPending || closeMutation.isPending || readinessQuery.isFetching
+  const busy = evidenceMutation.isPending || closeMutation.isPending || isFetching
   const error = evidenceMutation.error || closeMutation.error
   const canRecord = Boolean(selected && sourceRef.trim() && sourceRevision.trim())
-  const alreadyClosed = sourceStatus.toLowerCase() === 'closed'
+  const alreadyClosed = receipt.ticket_status.toLowerCase() === 'closed'
+  const repairRequired = readiness.blocked_reasons.includes('repair_required')
+  const staleConflict = error instanceof ApiError && error.status === 409
 
   return (
     <Box>
@@ -165,22 +181,28 @@ export function OperatorWorkspaceClosure({
         <Box>
           <Typography component="h3" variant="subtitle1">安全关闭</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            关闭资格由服务器基于场景、事实、动作、业务结果、客户通知和观察期计算。
+            关闭资格仅由服务器基于场景、事实、动作、业务结果、客户通知和观察期计算。
           </Typography>
         </Box>
         <Button
           variant="contained"
           color="success"
           disabled={!readiness.closure_ready || alreadyClosed || busy}
-          startIcon={closeMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
-          onClick={() => closeMutation.mutate()}
+          onClick={() => setCloseConfirmOpen(true)}
         >
-          {alreadyClosed ? '已关闭' : '确认安全关闭'}
+          {alreadyClosed ? '已安全关闭' : '核对并关闭'}
         </Button>
       </Stack>
 
-      <Alert severity={readiness.closure_ready ? 'success' : 'warning'} variant="outlined" sx={{ mt: 1.5 }} role="status">
-        <AlertTitle>{readiness.closure_ready ? '关闭条件已满足' : '关闭条件尚未满足'}</AlertTitle>
+      <Alert
+        severity={repairRequired ? 'error' : readiness.closure_ready ? 'success' : 'warning'}
+        variant="outlined"
+        sx={{ mt: 1.5 }}
+        role="status"
+      >
+        <AlertTitle>
+          {repairRequired ? '存在失败结果，需要修复' : readiness.closure_ready ? '关闭条件已满足' : '关闭条件尚未满足'}
+        </AlertTitle>
         场景：{sanitizeDisplayText(receipt.scenario_key || readiness.scenario_key || '无法识别')}
         {!readiness.notification_satisfied ? '；客户通知尚未满足' : ''}
       </Alert>
@@ -226,7 +248,7 @@ export function OperatorWorkspaceClosure({
             required
             value={sourceRef}
             onChange={(event) => setSourceRef(event.target.value)}
-            helperText="例如物流查询回执、Dispatch 任务或客户确认记录的稳定标识"
+            helperText="例如物流查询回执、内部任务或客户确认记录的稳定标识"
           />
           <TextField
             label="来源版本"
@@ -253,7 +275,16 @@ export function OperatorWorkspaceClosure({
         </Stack>
       ) : null}
 
-      {error ? <Box sx={{ mt: 1.5 }}><OperatorErrorNotice title="关闭操作失败" error={error} fallback="请核对证据后重试" /></Box> : null}
+      {error ? (
+        <Box sx={{ mt: 1.5 }}>
+          <OperatorErrorNotice
+            title={staleConflict ? '关闭条件已发生变化' : '关闭操作失败'}
+            error={error}
+            fallback="请核对证据后重试"
+            action={staleConflict ? <Button color="inherit" onClick={() => { void onRefetch() }}>重新核对</Button> : undefined}
+          />
+        </Box>
+      ) : null}
 
       <Box sx={{ mt: 1.5 }}>
         <OperatorTechnicalDisclosure title="关闭凭证" compact>
@@ -261,10 +292,41 @@ export function OperatorWorkspaceClosure({
             <Typography component="code" variant="caption">{receipt.receipt_sha256}</Typography>
             <Typography variant="caption">场景版本：{sanitizeDisplayText(receipt.scenario_catalog_version || '不可用')}</Typography>
             <Typography variant="caption">工单修订：{sanitizeDisplayText(receipt.ticket_revision)}</Typography>
+            <Typography variant="caption">显示时区不影响凭证中的 UTC 修订时间。</Typography>
             <Typography variant="caption">观察期：{receipt.evidence.observation_elapsed ? '已满足' : '未满足'}</Typography>
           </Stack>
         </OperatorTechnicalDisclosure>
       </Box>
+
+      <Dialog
+        open={closeConfirmOpen}
+        onClose={() => { if (!closeMutation.isPending) setCloseConfirmOpen(false) }}
+        aria-labelledby="safe-close-confirm-title"
+        aria-describedby="safe-close-confirm-description"
+      >
+        <DialogTitle id="safe-close-confirm-title">确认安全关闭工单？</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="safe-close-confirm-description" component="div">
+            <Stack spacing={1}>
+              <Typography variant="body2">服务器已确认当前关闭条件满足。提交时系统会再次读取最新凭证，任何状态变化都会阻止关闭。</Typography>
+              <Typography variant="body2"><strong>场景：</strong>{sanitizeDisplayText(receipt.scenario_key || readiness.scenario_key)}</Typography>
+              <Typography variant="body2"><strong>凭证：</strong>{receipt.receipt_sha256.slice(0, 16)}…</Typography>
+            </Stack>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" disabled={closeMutation.isPending} onClick={() => setCloseConfirmOpen(false)}>取消</Button>
+          <Button
+            color="success"
+            variant="contained"
+            disabled={closeMutation.isPending}
+            startIcon={closeMutation.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}
+            onClick={() => closeMutation.mutate()}
+          >
+            {closeMutation.isPending ? '正在重新核对…' : '确认安全关闭'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

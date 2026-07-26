@@ -18,7 +18,7 @@ import {
 } from '@mui/material'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useState } from 'react'
 import {
   OperatorErrorNotice,
   OperatorFactGrid,
@@ -47,8 +47,6 @@ export function AccountPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [validationError, setValidationError] = useState('')
   const [logoutAllOpen, setLogoutAllOpen] = useState(false)
-
-  useEffect(() => { document.title = '账户设置 · Nexus OSR' }, [])
 
   const finishWithLogin = () => {
     logout()

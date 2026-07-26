@@ -13,6 +13,12 @@ body {
   overflow-wrap: anywhere;
 }
 
+a[href="#nd-main-content"] {
+  align-items: center;
+  display: inline-flex;
+  min-height: 44px;
+}
+
 img,
 svg {
   max-width: 100%;

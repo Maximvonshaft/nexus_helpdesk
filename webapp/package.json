@@ -12,7 +12,7 @@
     "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "architecture": "node scripts/assert-frontend-architecture.mjs && node scripts/assert-http-transport-authority.mjs",
-    "verify": "npm run architecture && npm run lint && npm run typecheck && npm test && npm run build && node scripts/assert-route-splitting.mjs",
+    "verify": "npm run architecture && npm run lint && npm run typecheck && npm test && npm run build && node scripts/assert-route-splitting.mjs && npm run size-report",
     "size-report": "node scripts/size-report.mjs"
   },
   "dependencies": {
@@ -28,12 +28,12 @@
     "livekit-client": "2.20.2"
   },
   "devDependencies": {
-    "@eslint/js": "9.39.5",
+    "@eslint/js": "10.0.1",
     "@playwright/test": "1.61.1",
     "@types/react": "18.3.28",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "6.0.3",
-    "eslint": "9.39.5",
+    "eslint": "10.8.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.4.26",
     "globals": "16.5.0",

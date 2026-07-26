@@ -15,7 +15,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { OperatorEmptyState, OperatorErrorNotice } from '@/app/OperatorPresentation'
 import { useSession } from '@/hooks/useAuth'
-import { sanitizeDisplayText } from '@/lib/format'
+import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
+import { useOperatorRealtime } from '@/lib/operatorRealtime'
 import { operatorWorkspaceApi } from '@/lib/operatorWorkspaceApi'
 import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type {
@@ -66,7 +67,6 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const pendingReplyActionRef = useRef<(() => void) | null>(null)
   const [retainedSelectedItem, setRetainedSelectedItem] = useState<UnifiedOperatorQueueItem | null>(null)
 
-  useEffect(() => { document.title = '案例处理 · Nexus OSR' }, [])
   useEffect(() => {
     if (!replyDraftDirty) return undefined
     const protectDraft = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
@@ -114,7 +114,8 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     enabled: Boolean(session.data && canReadQueue),
     retry: false,
-    refetchInterval: 15_000,
+    refetchInterval: () => (typeof document === 'undefined' || document.visibilityState === 'visible' ? 15_000 : 60_000),
+    refetchIntervalInBackground: false,
   })
   const queueItems = useMemo(() => queue.data?.pages.flatMap((page) => page.items) ?? [], [queue.data?.pages])
   const selectedQueueItem = useMemo(
@@ -210,9 +211,21 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     }
   }, [isLoadingOlderMessages, queryClient, thread.data?.message_page?.before_id, threadPath, threadQueryKey])
 
+  const handleRealtimeEvent = useCallback(async () => {
+    await refreshThreadSnapshot()
+    await queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] })
+  }, [queryClient, refreshThreadSnapshot])
+  const realtimeStatus = useOperatorRealtime({
+    enabled: Boolean(selectedItem?.ticket_id && threadPath && thread.isSuccess),
+    ticketId: selectedItem?.ticket_id,
+    conversationId: thread.data?.conversation_id,
+    lastEventId: Math.max(0, Number(thread.data?.last_event_id ?? 0)),
+    onEvent: handleRealtimeEvent,
+  })
+
   useEffect(() => {
     const ticketId = selectedItem?.ticket_id
-    if (!ticketId || !threadPath || !thread.isSuccess) return undefined
+    if (!ticketId || !threadPath || !thread.isSuccess || realtimeStatus === 'live') return undefined
     const controller = new AbortController()
     let stopped = false
     let afterId = Math.max(0, Number(thread.data?.last_event_id ?? 0))
@@ -224,10 +237,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
           const page = await operatorWorkspaceApi.conversationEvents(ticketId, afterId, { signal: controller.signal })
           failureCount = 0
           afterId = Math.max(afterId, Number(page.last_event_id || 0))
-          if (page.events.length) {
-            await refreshThreadSnapshot()
-            await queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] })
-          }
+          if (page.events.length) await handleRealtimeEvent()
           if (page.has_more) continue
           await wait(EVENT_IDLE_POLL_MS)
         } catch {
@@ -242,27 +252,47 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
       stopped = true
       controller.abort()
     }
-  }, [queryClient, refreshThreadSnapshot, selectedItem?.ticket_id, thread.data?.last_event_id, thread.isSuccess, threadPath])
+  }, [handleRealtimeEvent, realtimeStatus, selectedItem?.ticket_id, thread.data?.last_event_id, thread.isSuccess, threadPath])
 
   const refreshSelected = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceQueue'] }),
       threadPath ? refreshThreadSnapshot() : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: ['operatorWorkspaceSourceRecord', selectedItem?.queue_id] }),
+      selectedItem?.ticket_id
+        ? queryClient.invalidateQueries({ queryKey: ['ticket-closure-readiness', selectedItem.ticket_id] })
+        : Promise.resolve(),
     ])
-  }, [queryClient, refreshThreadSnapshot, selectedItem?.queue_id, threadPath])
+  }, [queryClient, refreshThreadSnapshot, selectedItem?.queue_id, selectedItem?.ticket_id, threadPath])
   const runWithReplyDraftGuard = (next: () => void) => {
     if (!replyDraftDirty) return next()
     pendingReplyActionRef.current = next
     setReplyDiscardOpen(true)
   }
   const memory: SupportMemoryLedger | null = thread.data?.support_memory ?? null
+  const queueDegraded = Boolean(queue.data && queue.isRefetchError)
+  const threadDegraded = Boolean(thread.data && thread.isRefetchError)
 
   return (
     <Box component="main" data-testid="operator-workspace" sx={{ p: { xs: 1.5, md: 2 } }}>
       <WorkspaceMobileTabs value={mobileView} onChange={setMobileView} />
       {session.isError ? <OperatorErrorNotice title="无法读取账号" error={session.error} fallback="请重新登录" /> : null}
       {session.data && !canReadQueue ? <Alert severity="warning" variant="outlined">无权访问任务队列，请联系管理员。</Alert> : null}
+      {queueDegraded ? (
+        <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }} role="status">
+          待处理列表刷新失败，当前显示上次服务器确认的信息（{formatDateTime(new Date(queue.dataUpdatedAt).toISOString())}）。可继续查看，写操作会由服务器重新校验。
+        </Alert>
+      ) : null}
+      {threadDegraded ? (
+        <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }} role="status">
+          当前任务刷新失败，正在保留上次服务器确认的信息。请在执行操作前重新加载。
+        </Alert>
+      ) : null}
+      {threadPath && realtimeStatus === 'fallback' ? (
+        <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
+          实时事件连接暂不可用，已切换到安全轮询；恢复后会自动回到实时连接。
+        </Alert>
+      ) : null}
       {session.data && canReadQueue ? (
         <Box
           sx={{
@@ -278,7 +308,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
           <WorkspaceQueuePane
             filters={filters}
             onFiltersChange={(next) => runWithReplyDraftGuard(() => { setFilters(next); setSelectedQueueId(null) })}
-            error={queue.error}
+            error={queue.data ? null : queue.error}
             onRetry={() => { void queue.refetch() }}
             items={queueItems}
             selectedQueueId={selectedItem?.queue_id ?? null}
@@ -300,7 +330,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
             thread={thread.data ?? null}
             isLoading={thread.isLoading}
             isRefreshing={thread.isFetching && !thread.isLoading}
-            error={thread.error}
+            error={thread.data ? null : thread.error}
             historyError={historyError}
             isLoadingOlderMessages={isLoadingOlderMessages}
             capabilities={capabilities}

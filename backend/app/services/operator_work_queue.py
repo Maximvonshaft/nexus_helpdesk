@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from ..models_agent_routing import ConversationControl
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from . import operator_work_queue_core as _core
+from .operator_queue_presentation import project_unified_queue_display
 from .operator_queue_scope import (
     authorize_operator_scope,
     scope_grant_version,
@@ -290,7 +291,7 @@ def list_unified_operator_queue(
         )
     for item in page:
         item.pop("_created", None)
-    return {
+    result = {
         "items": page,
         "next_cursor": next_cursor,
         "scope": {
@@ -300,6 +301,7 @@ def list_unified_operator_queue(
         },
         "filters": filters,
     }
+    return project_unified_queue_display(db, result)
 
 
 def decode_unified_operator_queue_cursor(value: str) -> dict[str, Any]:

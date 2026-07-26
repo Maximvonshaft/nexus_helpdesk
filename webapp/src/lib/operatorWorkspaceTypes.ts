@@ -77,6 +77,8 @@ export interface UnifiedQueueSourceLinks {
 export interface UnifiedOperatorQueueItem {
   queue_id: string
   case_key: string | null
+  display_label: string
+  display_summary: string | null
   source_type: 'handoff' | 'ticket' | 'dispatch'
   source_id: number
   ticket_id: number | null

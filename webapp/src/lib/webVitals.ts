@@ -8,7 +8,7 @@ type VitalMetric = {
 }
 
 const DEBUG = String(import.meta.env.VITE_WEB_VITALS_DEBUG || '').toLowerCase() === 'true'
-const ENABLED = String(import.meta.env.VITE_WEB_VITALS_ENABLED || 'false').toLowerCase() === 'true'
+const ENABLED = String(import.meta.env.VITE_WEB_VITALS_ENABLED || 'true').toLowerCase() !== 'false'
 
 function ratingFor(name: VitalMetric['name'], value: number): VitalRating {
   if (name === 'LCP') {

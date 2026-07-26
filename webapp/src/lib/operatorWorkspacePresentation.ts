@@ -122,16 +122,55 @@ export interface EvidencePresentation extends OperationalPresentation {
   evidenceClass: EvidenceClass
 }
 
+function notificationEvidence(status: string): EvidencePresentation {
+  if (status === 'read' || status === 'opened') {
+    return { evidenceClass: 'notification', label: '客户已查看通知', tone: 'success' }
+  }
+  if (status === 'delivered') {
+    return { evidenceClass: 'notification', label: '客户通知已送达', tone: 'success' }
+  }
+  if (status === 'sent' || status === 'accepted') {
+    return { evidenceClass: 'notification', label: '客户通知已发送', tone: 'default' }
+  }
+  if (status === 'queued' || status === 'pending' || status === 'processing') {
+    return { evidenceClass: 'notification', label: '客户通知等待发送', tone: 'warning' }
+  }
+  if (['failed', 'dead', 'rejected', 'bounced', 'complained'].includes(status)) {
+    return { evidenceClass: 'notification', label: '客户通知失败', tone: 'danger' }
+  }
+  return { evidenceClass: 'notification', label: '客户通知状态未知', tone: 'warning' }
+}
+
+function outcomeEvidence(status: string): EvidencePresentation {
+  if (status === 'business_result_confirmed') {
+    return { evidenceClass: 'outcome', label: '业务结果已确认', tone: 'success' }
+  }
+  if (status === 'operational_completed') {
+    return { evidenceClass: 'outcome', label: '运营处理已完成', tone: 'success' }
+  }
+  if (status === 'completed' || status === 'success' || status === 'succeeded') {
+    return { evidenceClass: 'outcome', label: '技术处理已完成', tone: 'default' }
+  }
+  if (status === 'accepted' || status === 'submitted' || status === 'queued' || status === 'pending' || status === 'processing') {
+    return { evidenceClass: 'outcome', label: '操作正在处理', tone: 'warning' }
+  }
+  if (['failed', 'dead', 'dead_letter', 'rejected', 'cancelled', 'canceled'].includes(status)) {
+    return { evidenceClass: 'outcome', label: '操作失败，需要修复', tone: 'danger' }
+  }
+  return { evidenceClass: 'outcome', label: '操作结果待核实', tone: 'warning' }
+}
+
 export function evidencePresentation(item: SupportMemoryTimelineItem): EvidencePresentation {
   const kind = normalizeOperationalStatus(item.kind)
   const label = normalizeOperationalStatus(item.label)
+  const status = normalizeOperationalStatus(item.status)
   const joined = `${kind} ${label}`
 
   if (kind === 'outbound' || joined.includes('outbound') || joined.includes('message_sent')) {
-    return { evidenceClass: 'notification', label: '客户通知', tone: 'default' }
+    return notificationEvidence(status)
   }
   if (kind === 'ai_turn' || joined.includes('ai_turn') || joined.includes('runtime')) {
-    return { evidenceClass: 'ai', label: '自动回复建议', tone: 'default' }
+    return { evidenceClass: 'ai', label: '自动回复建议', tone: status === 'failed' ? 'danger' : 'default' }
   }
   if (joined.includes('knowledge') || joined.includes('policy') || joined.includes('sop')) {
     return { evidenceClass: 'knowledge', label: '知识与政策', tone: 'default' }
@@ -143,7 +182,7 @@ export function evidencePresentation(item: SupportMemoryTimelineItem): EvidenceP
     return { evidenceClass: 'human', label: '处理决定', tone: 'default' }
   }
   if (joined.includes('work_order') || joined.includes('address_update') || joined.includes('cancel') || joined.includes('dispatch')) {
-    return { evidenceClass: 'outcome', label: '操作结果', tone: 'default' }
+    return outcomeEvidence(status)
   }
   if (
     kind === 'tool_call'
@@ -151,12 +190,11 @@ export function evidencePresentation(item: SupportMemoryTimelineItem): EvidenceP
     || joined.includes('waybill')
     || joined.includes('speedaf.order.query')
   ) {
-    const status = normalizeOperationalStatus(item.status)
-    const verified = ['success', 'completed', 'ok'].includes(status)
+    const verified = ['success', 'completed', 'ok', 'succeeded'].includes(status)
     return {
       evidenceClass: 'authoritative',
-      label: verified ? '已核实信息' : '待核实信息',
-      tone: verified ? 'success' : 'warning',
+      label: verified ? '已核实信息' : ['failed', 'dead', 'rejected'].includes(status) ? '权威信息查询失败' : '待核实信息',
+      tone: verified ? 'success' : ['failed', 'dead', 'rejected'].includes(status) ? 'danger' : 'warning',
     }
   }
   return { evidenceClass: 'system', label: '系统记录', tone: 'default' }
