@@ -28,6 +28,11 @@ class _Database:
             self.queries.append("tickets")
             return _Query([
                 SimpleNamespace(id=11, ticket_no="T-11", title="Customer supplied title: helpdesk sync MCP CLI"),
+                SimpleNamespace(
+                    id=12,
+                    ticket_no="T-12",
+                    title="Email visitor@example.test or call +41 79 123 45 67 about CH020000129135",
+                ),
             ])
         if model is WebchatConversation:
             self.queries.append("conversations")
@@ -65,6 +70,23 @@ def test_queue_display_projection_uses_business_identity_without_rewriting_text(
     assert result["items"][2]["display_label"] == "内部任务"
     assert result["items"][2]["display_summary"] == "内部派发任务"
     assert db.queries == ["tickets", "conversations"]
+
+
+def test_queue_display_projection_redacts_customer_identifiers_before_response():
+    db = _Database()
+    result = {
+        "items": [
+            _item(source_type="ticket", ticket_id=12, conversation_id=None),
+        ]
+    }
+
+    project_unified_queue_display(db, result)
+
+    summary = result["items"][0]["display_summary"]
+    assert summary == "Email [redacted_email] or call [redacted_phone] about parcel ending 129135"
+    assert "visitor@example.test" not in summary
+    assert "+41 79 123 45 67" not in summary
+    assert "CH020000129135" not in summary
 
 
 def test_empty_queue_display_projection_performs_no_queries():
