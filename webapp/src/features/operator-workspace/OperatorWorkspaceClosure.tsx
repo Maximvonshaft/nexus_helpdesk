@@ -145,6 +145,9 @@ export function OperatorWorkspaceClosure({
       await onRefetch()
       await onRefresh()
     },
+    onError: () => {
+      setCloseConfirmOpen(false)
+    },
   })
 
   if (!ticketId) {
