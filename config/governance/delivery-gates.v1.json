@@ -1,0 +1,59 @@
+{
+  "schema": "nexus.delivery-gates.v1",
+  "version": "1.0.0",
+  "owner": "delivery_governance",
+  "execution_mode": "event_driven",
+  "principles": [
+    "one finding has one accountable owner and one canonical remediation path",
+    "evidence is bound to an immutable source SHA and candidate identity",
+    "a passing technical check cannot substitute for a missing business outcome",
+    "unchanged facts are not re-reported",
+    "production authority remains separate from repository acceptance"
+  ],
+  "trigger_events": [
+    "product_contract_changed",
+    "pull_request_changed",
+    "main_changed",
+    "release_candidate_created",
+    "deployment_state_changed",
+    "incident_opened_or_changed",
+    "production_outcome_threshold_breached"
+  ],
+  "gates": [
+    {
+      "gate_key": "business_product",
+      "name": "Business / Product",
+      "question": "Does the change solve an approved customer or operator problem through a canonical Golden Journey?",
+      "required_evidence": ["journey_key", "definition_of_done", "customer_terminal_outcome", "metric_contract"],
+      "blocking_conditions": ["journey_missing", "parallel_product_created", "customer_terminal_outcome_missing", "business_metric_undefined"]
+    },
+    {
+      "gate_key": "architecture_data",
+      "name": "Architecture / Data",
+      "question": "Does the change preserve one aggregate authority, one mutable writer and one migration chain?",
+      "required_evidence": ["aggregate_authority", "writer_authority", "projection_rebuildability", "migration_rehearsal", "tenant_scope"],
+      "blocking_conditions": ["duplicate_writer", "parallel_state_machine", "unversioned_contract", "cross_tenant_path", "legacy_residue"]
+    },
+    {
+      "gate_key": "security_privacy",
+      "name": "Security / Privacy",
+      "question": "Are capabilities, data purpose, PII lifecycle and supply-chain boundaries fail closed?",
+      "required_evidence": ["capability_projection", "privacy_purpose", "retention_or_dsar_effect", "secret_assurance", "sast_dependency_codeql"],
+      "blocking_conditions": ["authorization_bypass", "unbounded_sensitive_payload", "unverified_external_deletion", "active_legal_hold_conflict", "security_finding"]
+    },
+    {
+      "gate_key": "release_runtime",
+      "name": "Release / Runtime",
+      "question": "Is the exact candidate reproducible, observable, recoverable and safe to activate only for the approved capability?",
+      "required_evidence": ["source_sha", "tree_sha", "image_digest", "alembic_head", "acceptance_run", "recovery_receipt"],
+      "blocking_conditions": ["candidate_identity_mismatch", "required_gate_failed", "recovery_unqualified", "provider_canary_missing", "kill_switch_unproven"]
+    },
+    {
+      "gate_key": "production_outcome",
+      "name": "Production Outcome",
+      "question": "After activation, do real customer outcomes meet governed targets without hidden harm or silent failure?",
+      "required_evidence": ["safe_effective_closure", "repeat_contact", "reopen", "notification_compliance", "provider_failure", "incident_state"],
+      "blocking_conditions": ["silent_customer_terminal", "outcome_target_breached", "unowned_incident", "rollback_criteria_met", "evidence_not_candidate_bound"]
+    }
+  ]
+}
