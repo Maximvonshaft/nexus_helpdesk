@@ -17,6 +17,12 @@ from typing import Any, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 CANONICAL_WORKFLOW = ".github/workflows/canonical-acceptance.yml"
+CONTROLLED_CANDIDATE_WORKFLOW = (
+    ".github/workflows/controlled-candidate-convergence.yml"
+)
+APPROVED_WORKFLOWS = sorted(
+    [CANONICAL_WORKFLOW, CONTROLLED_CANDIDATE_WORKFLOW]
+)
 CURRENT_COMPATIBILITY_REGISTRY = "config/governance/legacy-surface-domains.v2.json"
 RATIONALIZATION_INVENTORY = "docs/ai/codebase-rationalization-inventory.v2.yaml"
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -99,7 +105,10 @@ RETIRED_HISTORY_GLOBS = (
 )
 
 REQUIRED_PATHS = (
-    CANONICAL_WORKFLOW,
+    *APPROVED_WORKFLOWS,
+    "config/product/golden-journeys.v1.json",
+    "config/governance/delivery-gates.v1.json",
+    "docs/product/90-day-value-closure.md",
     "webapp/package-lock.json",
     "webapp/scripts/assert-frontend-architecture.mjs",
     "webapp/scripts/assert-http-transport-authority.mjs",
@@ -178,6 +187,7 @@ FOCUSED_BACKEND_TESTS = (
     "backend/tests/test_agent_runtime_residue.py",
     "backend/tests/test_controlled_least_privilege.py",
     "backend/tests/test_supply_chain_qualification.py",
+    "backend/tests/test_pragmatic_delivery_contract.py",
 )
 
 TEXT_SUFFIXES = {
@@ -235,13 +245,13 @@ def _sha256(path: Path) -> str:
 
 
 def repository_identity() -> dict[str, Any]:
-    status = _git("status", "--porcelain")
+    status_output = _git("status", "--porcelain")
     return {
         "schema": "nexus.candidate-identity.v3",
         "source_sha": _git("rev-parse", "HEAD"),
         "tree_sha": _git("rev-parse", "HEAD^{tree}"),
-        "clean": not bool(status),
-        "dirty_paths": status.splitlines()[:50],
+        "clean": not bool(status_output),
+        "dirty_paths": status_output.splitlines()[:50],
     }
 
 
@@ -279,6 +289,17 @@ def _qualification_failures(relative: str) -> list[str]:
     return [f"qualification failed {relative}: {details[:2000]}"]
 
 
+def _job_has_timeout(content: str, job_name: str) -> bool:
+    marker = f"  {job_name}:"
+    start = content.find(marker)
+    if start < 0:
+        return False
+    remainder = content[start + len(marker) :]
+    next_job = re.search(r"(?m)^  [A-Za-z0-9_-]+:\s*$", remainder)
+    block = remainder[: next_job.start()] if next_job else remainder
+    return "timeout-minutes:" in block
+
+
 def _workflow_failures() -> list[str]:
     files = (
         sorted(
@@ -289,16 +310,19 @@ def _workflow_failures() -> list[str]:
         if WORKFLOW_DIR.is_dir()
         else []
     )
-    if files != [CANONICAL_WORKFLOW]:
-        return [
-            "exactly one canonical GitHub Actions workflow is required: "
-            f"expected={[CANONICAL_WORKFLOW]} actual={files}"
-        ]
     failures: list[str] = []
-    content = (ROOT / CANONICAL_WORKFLOW).read_text(encoding="utf-8")
+    if files != APPROVED_WORKFLOWS:
+        failures.append(
+            "GitHub Actions authority set is invalid: "
+            f"expected={APPROVED_WORKFLOWS} actual={files}"
+        )
+        return failures
+
+    canonical = (ROOT / CANONICAL_WORKFLOW).read_text(encoding="utf-8")
     for marker in (
         "name: Canonical Acceptance",
         "pull_request:",
+        "push:",
         "workflow_dispatch:",
         "contents: read",
         "required-gate:",
@@ -308,7 +332,7 @@ def _workflow_failures() -> list[str]:
         "npm run e2e",
         "docker build",
     ):
-        if marker not in content:
+        if marker not in canonical:
             failures.append(f"canonical workflow marker missing: {marker}")
     for forbidden in (
         "pull_request_target:",
@@ -316,22 +340,83 @@ def _workflow_failures() -> list[str]:
         "secrets.",
         "continue-on-error: true",
     ):
-        if forbidden in content:
+        if forbidden in canonical:
             failures.append(
                 f"canonical workflow contains forbidden marker: {forbidden}"
             )
-    for line in (
-        line for line in content.splitlines() if re.match(r"^\s*-?\s*uses:", line)
-    ):
-        if not PINNED_ACTION.fullmatch(line):
-            failures.append(
-                f"workflow action is not pinned to a full SHA: {line.strip()}"
-            )
-    job_count = len(
-        re.findall(r"^  [a-zA-Z0-9_-]+:\s*$", content, re.MULTILINE)
+
+    candidate = (ROOT / CONTROLLED_CANDIDATE_WORKFLOW).read_text(
+        encoding="utf-8"
     )
-    if job_count == 0 or content.count("timeout-minutes:") < job_count:
-        failures.append("every workflow job must set timeout-minutes")
+    for marker in (
+        "name: controlled-candidate-convergence",
+        "workflow_run:",
+        "- Canonical Acceptance",
+        "github.event.workflow_run.conclusion == 'success'",
+        "github.event.workflow_run.event == 'push'",
+        "github.event.workflow_run.head_branch == 'main'",
+        "test \"$(git rev-parse origin/main)\" = \"$SOURCE_SHA\"",
+        "scripts/release/run_controlled_rc_gate.sh",
+        "scripts/release/run_controlled_recovery_gate.sh",
+        "actions/attest-build-provenance@",
+        "controlled-candidate.env",
+        "nexus.canonical-acceptance-receipt.v1",
+    ):
+        if marker not in candidate:
+            failures.append(
+                f"controlled candidate workflow marker missing: {marker}"
+            )
+    for forbidden in (
+        "pull_request:",
+        "pull_request_target:",
+        "workflow_dispatch:",
+        "issue_comment:",
+        "repository_dispatch:",
+        "continue-on-error: true",
+    ):
+        if forbidden in candidate:
+            failures.append(
+                "controlled candidate workflow contains forbidden marker: "
+                f"{forbidden}"
+            )
+
+    for label, content in (
+        ("canonical", canonical),
+        ("controlled_candidate", candidate),
+    ):
+        for line in (
+            line
+            for line in content.splitlines()
+            if re.match(r"^\s*-?\s*uses:", line)
+        ):
+            if not PINNED_ACTION.fullmatch(line):
+                failures.append(
+                    f"{label} workflow action is not pinned to a full SHA: "
+                    f"{line.strip()}"
+                )
+
+    canonical_job_count = len(
+        re.findall(
+            r"(?m)^  [A-Za-z0-9_-]+:\s*$",
+            canonical.split("jobs:", 1)[-1],
+        )
+    )
+    if (
+        canonical_job_count == 0
+        or canonical.count("timeout-minutes:") < canonical_job_count
+    ):
+        failures.append("every canonical acceptance job must set timeout-minutes")
+
+    for job_name in (
+        "guard-main",
+        "build-assure-publish",
+        "recovery",
+        "bind-and-attest",
+    ):
+        if not _job_has_timeout(candidate, job_name):
+            failures.append(
+                f"controlled candidate workflow job timeout missing: {job_name}"
+            )
     return failures
 
 
