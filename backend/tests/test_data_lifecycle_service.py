@@ -45,6 +45,9 @@ from app.services.data_lifecycle_service import (  # noqa: E402
     qualify_data_subject_request,
     release_legal_hold,
 )
+from app.services.data_subject_deletion_preflight import (  # noqa: E402
+    validate_subject_deletion_preflight,
+)
 from app.utils.time import utc_now  # noqa: E402
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: E402
 
@@ -146,7 +149,11 @@ def make_ticket(
         preferred_reply_contact=customer.email,
         created_at=utc_now() - timedelta(days=700),
         updated_at=utc_now() - timedelta(days=700),
-        closed_at=(utc_now() - timedelta(days=600) if status == TicketStatus.closed else None),
+        closed_at=(
+            utc_now() - timedelta(days=600)
+            if status == TicketStatus.closed
+            else None
+        ),
     )
     db.add(row)
     db.flush()
@@ -188,7 +195,10 @@ def test_identity_qualification_and_cross_tenant_concealment(db_session):
         request_key="access-1",
         request_type="access",
     )
-    with pytest.raises(DataLifecycleError, match="dsar_identity_verification_failed"):
+    with pytest.raises(
+        DataLifecycleError,
+        match="dsar_identity_verification_failed",
+    ):
         qualify_data_subject_request(
             db_session,
             actor=admin,
@@ -265,7 +275,9 @@ def test_export_returns_subject_data_but_persists_only_manifest(db_session):
 
     assert payload["customer"]["email"] == customer.email
     assert payload["tickets"][0]["tracking_number"] == "TRACK-1"
-    assert payload["webchat_messages"][0]["body"] == "Customer private webchat text"
+    assert payload["webchat_messages"][0]["body"] == (
+        "Customer private webchat text"
+    )
     db_session.refresh(request)
     persisted = str(request.result_manifest_json)
     assert request.status == "completed"
@@ -293,7 +305,10 @@ def test_delete_is_blocked_by_active_case_legal_hold_and_attachment(db_session):
         key="delete-active",
     )
 
-    with pytest.raises(DataLifecycleError, match="privacy_active_case_blocks_deletion"):
+    with pytest.raises(
+        DataLifecycleError,
+        match="privacy_active_case_blocks_deletion",
+    ):
         execute_data_subject_deletion(
             db_session,
             actor=admin,
@@ -309,7 +324,10 @@ def test_delete_is_blocked_by_active_case_legal_hold_and_attachment(db_session):
         ticket_id=None,
         reason_code="litigation",
     )
-    with pytest.raises(DataLifecycleError, match="privacy_legal_hold_blocks_deletion"):
+    with pytest.raises(
+        DataLifecycleError,
+        match="privacy_legal_hold_blocks_deletion",
+    ):
         execute_data_subject_deletion(
             db_session,
             actor=admin,
@@ -317,6 +335,14 @@ def test_delete_is_blocked_by_active_case_legal_hold_and_attachment(db_session):
         )
 
     release_legal_hold(db_session, actor=admin, hold_id=hold.id)
+    preflight = validate_subject_deletion_preflight(
+        db_session,
+        actor=admin,
+        request_id=request.id,
+    )
+    assert preflight.customer_id == customer.id
+    assert request.status == "qualified"
+
     db_session.add(
         TicketAttachment(
             ticket_id=active_ticket.id,
@@ -332,7 +358,10 @@ def test_delete_is_blocked_by_active_case_legal_hold_and_attachment(db_session):
         )
     )
     db_session.flush()
-    with pytest.raises(DataLifecycleError, match="privacy_attachment_blob_receipt_required"):
+    with pytest.raises(
+        DataLifecycleError,
+        match="privacy_attachment_blob_receipt_required",
+    ):
         execute_data_subject_deletion(
             db_session,
             actor=admin,
