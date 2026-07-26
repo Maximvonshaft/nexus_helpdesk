@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
 import { resolve } from 'node:path'
 
@@ -19,9 +19,18 @@ const webcallRoute = read('src/routes/webcall.tsx')
 const webcallLazy = read('src/features/webcall/lazy.tsx')
 const presentation = read('src/lib/operatorWorkspacePresentation.ts')
 const closure = read('src/features/operator-workspace/OperatorWorkspaceClosure.tsx')
+const playwright = read('playwright.config.ts')
 const productionBrowser = read('e2e/operator-ui-production-quality.spec.ts')
 const highestStandardBrowser = read('e2e/operator-ui-highest-standard.spec.ts')
-const visualSnapshot = read('e2e/visualSnapshot.ts')
+const reviewedVisuals = [
+  'workspace-text-200-reflow-1366',
+  'workspace-loading-375',
+  'administration-normal-1440',
+  'workspace-empty-1440',
+  'workspace-degraded-last-safe-1440',
+  'workspace-stale-conflict-1440',
+  'workspace-repair-required-1440',
+]
 
 
 test('text enlargement and viewport width resolve through one responsive-layout authority', () => {
@@ -85,17 +94,19 @@ test('primary workspace facts consume business presentation instead of raw backe
 
 
 test('visual and accessibility evidence is release-blocking rather than artifact-only', () => {
-  assert.match(visualSnapshot, /VISUAL_SNAPSHOT_SHA256/)
-  assert.match(visualSnapshot, /createHash\('sha256'\)/)
-  assert.match(visualSnapshot, /page\.screenshot/)
-  assert.match(visualSnapshot, /testInfo\.attach/)
-  const reviewedSignatures = [...visualSnapshot.matchAll(/'[a-z0-9-]+': '([a-f0-9]{64})'/g)]
-  assert.equal(reviewedSignatures.length, 7)
-  assert.match(productionBrowser, /expectVisualSnapshot/)
-  assert.match(highestStandardBrowser, /expectVisualSnapshot/)
-  assert.doesNotMatch(productionBrowser, /toHaveScreenshot/)
-  assert.doesNotMatch(highestStandardBrowser, /toHaveScreenshot/)
+  assert.match(playwright, /snapshotPathTemplate/)
+  assert.match(playwright, /toHaveScreenshot/)
+  assert.match(playwright, /maxDiffPixelRatio:\s*0\.001/)
+  assert.match(productionBrowser, /toHaveScreenshot/)
+  assert.match(highestStandardBrowser, /toHaveScreenshot/)
+  assert.doesNotMatch(productionBrowser, /page\.screenshot\(/)
+  assert.doesNotMatch(highestStandardBrowser, /page\.screenshot\(/)
   assert.match(highestStandardBrowser, /textContrastViolations/)
   assert.match(highestStandardBrowser, /semanticAccessibilityViolations/)
   assert.match(highestStandardBrowser, /formTextOverlaps/)
+  for (const name of reviewedVisuals) {
+    const path = resolve(root, 'e2e', '__screenshots__', `${name}.png`)
+    assert.ok(existsSync(path), `missing reviewed visual baseline: ${name}`)
+    assert.ok(statSync(path).size > 1_000, `visual baseline is unexpectedly small: ${name}`)
+  }
 })
