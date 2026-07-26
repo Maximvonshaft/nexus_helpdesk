@@ -8,11 +8,25 @@ The authenticated Nexus OSR operator console is certified against:
 - current enterprise Google Chrome releases based on the same Chromium engine;
 - current enterprise Microsoft Edge releases based on the same Chromium engine.
 
-Certification covers the canonical authenticated routes, keyboard operation, responsive layouts, target sizes, reduced motion, 200% text enlargement, deterministic visual evidence and representative-volume browser journeys.
+Certification covers the canonical authenticated routes and requires exact-Head evidence for:
+
+- semantic landmarks, accessible names and natural keyboard order;
+- visible keyboard focus, including Windows Forced Colors presentation;
+- independently operable controls with a 44 CSS-pixel target floor;
+- normal-text and large-text WCAG AA contrast thresholds;
+- reduced-motion operation;
+- structural reflow at the 320 CSS-pixel release floor;
+- 200% text enlargement without label/value overlap, clipping, hidden actions or root horizontal overflow;
+- deterministic pixel-regression baselines for normal, loading, empty, degraded, conflict, repair-required and enlarged-text states;
+- representative-volume queue and conversation journeys.
+
+Viewport width alone is not the responsive authority. The shell and Workspace consume the same layout mode derived from both viewport capacity and effective root text scale, so enlarged text cannot leave the application in a compressed desktop layout.
 
 ## Not represented as certified
 
 Firefox and WebKit/Safari are not represented as certified operator environments until their full browser matrix is added to the canonical acceptance workflow. Unsupported engines must not be silently described as production-qualified.
+
+Automated browser evidence does not replace assistive-technology acceptance in a controlled deployment environment. Release sign-off should include the organization's supported Windows screen-reader and browser combination when that environment is available.
 
 ## Public channel boundary
 
