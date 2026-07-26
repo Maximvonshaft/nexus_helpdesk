@@ -87,7 +87,7 @@ function handleApiLatency(event: Event) {
   if (!detail || detail.path === ENDPOINT) return
   const duration = boundedNumber(detail.duration_ms)
   if (duration === null) return
-  let pathname = detail.path
+  let pathname: string
   try {
     pathname = new URL(detail.path, window.location.origin).pathname
   } catch {
