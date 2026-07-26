@@ -22,7 +22,6 @@ from ..services.operator_queue import (
     serialize_operator_task,
     transition_operator_task,
 )
-from ..services.operator_queue_presentation import project_unified_queue_display
 from ..services.operator_queue_scope import (
     delete_scope_grant,
     list_current_scope_grants,
@@ -66,7 +65,7 @@ def get_unified_operator_queue(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    result = list_unified_operator_queue(
+    return list_unified_operator_queue(
         db,
         current_user=current_user,
         tenant_key=x_nexus_tenant,
@@ -82,7 +81,6 @@ def get_unified_operator_queue(
         cursor=_optional_query_string(cursor),
         limit=_query_limit(limit),
     )
-    return project_unified_queue_display(db, result)
 
 
 @router.get("/my-scopes", response_model=OperatorQueueCurrentScopesResponse)
