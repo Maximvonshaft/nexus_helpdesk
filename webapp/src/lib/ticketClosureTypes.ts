@@ -20,18 +20,18 @@ export interface TicketClosureReadiness {
 }
 
 export interface TicketClosureReceipt {
-  schema: 'nexus.ticket-closure-receipt.v1'
+  schema: 'nexus.ticket-closure-receipt.v2'
   ticket_id: number
   ticket_status: string
-  ticket_revision: string
+  ticket_revision: string | null
   scenario_key: string | null
   scenario_catalog_version: string | null
   scenario_catalog_sha256: string | null
   generated_at: string
   readiness: TicketClosureReadiness
   evidence: {
-    ticket_event_ids: number[]
-    background_job_ids: number[]
+    case_evidence_record_ids: number[]
+    case_outcome_record_ids: number[]
     outbound_message_ids: number[]
     latest_material_at: string | null
     observation_elapsed: boolean
@@ -52,8 +52,10 @@ export interface TicketClosureEvidenceRequest {
 }
 
 export interface TicketClosureEvidenceResult {
-  schema: 'nexus.ticket-closure-evidence-result.v1'
-  event_id: number
+  schema: 'nexus.case-closure-evidence-result.v2'
+  record_id: number
+  record_type: 'case_evidence' | 'execution_attempt' | 'operational_outcome' | 'customer_notification'
+  created: boolean
   evidence_sha256: string
   closure: TicketClosureReceipt
 }
