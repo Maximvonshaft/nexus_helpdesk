@@ -170,7 +170,9 @@ export const nexusTheme = createTheme({
           borderRadius: 8,
           paddingInline: 16,
           whiteSpace: 'normal',
-          transition: 'background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease',
+          // Color and background changes are instantaneous so asynchronous
+          // disabled/enabled transitions never pass through low-contrast frames.
+          transition: 'box-shadow 150ms ease',
         },
         sizeSmall: { minHeight: 44, paddingInline: 12 },
       },
