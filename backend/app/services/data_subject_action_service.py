@@ -8,11 +8,13 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models import Customer
+from ..models import Customer, Ticket
+from ..models_agent_routing import ConversationControl
 from ..models_case_governance import DataSubjectRequest
 from ..models_privacy_runtime import DataProcessingRestriction
 from ..utils.normalize import normalize_email, normalize_phone
 from ..utils.time import utc_now
+from ..webchat_models import WebchatConversation
 from .audit_service import log_admin_audit
 from .data_lifecycle_service import DataLifecycleError
 from .tenant_authority import resolve_actor_tenant_id
@@ -117,7 +119,10 @@ def _correction_payload(
     if external_ref is not None:
         normalized_ref = " ".join(str(external_ref).strip().split())
         if not normalized_ref:
-            raise DataLifecycleError("dsar_correction_external_ref_invalid", status_code=400)
+            raise DataLifecycleError(
+                "dsar_correction_external_ref_invalid",
+                status_code=400,
+            )
         values["external_ref"] = normalized_ref[:120]
     if not values:
         raise DataLifecycleError("dsar_correction_fields_required", status_code=400)
@@ -236,6 +241,90 @@ def execute_data_subject_correction(
     )
 
 
+def _subject_open_conversations(
+    db: Session,
+    *,
+    tenant_id: int,
+    customer_id: int,
+) -> list[WebchatConversation]:
+    ticket_ids = [
+        int(ticket_id)
+        for (ticket_id,) in db.query(Ticket.id)
+        .filter(
+            Ticket.tenant_id == tenant_id,
+            Ticket.customer_id == customer_id,
+        )
+        .order_by(Ticket.id.asc())
+        .all()
+    ]
+    control_conversation_ids = [
+        int(conversation_id)
+        for (conversation_id,) in db.query(ConversationControl.conversation_id)
+        .filter(ConversationControl.customer_id == customer_id)
+        .order_by(ConversationControl.conversation_id.asc())
+        .all()
+    ]
+    identities = []
+    if ticket_ids:
+        identities.append(WebchatConversation.ticket_id.in_(ticket_ids))
+    if control_conversation_ids:
+        identities.append(WebchatConversation.id.in_(control_conversation_ids))
+    if not identities:
+        return []
+    return (
+        db.query(WebchatConversation)
+        .filter(
+            WebchatConversation.status == "open",
+            or_(*identities),
+        )
+        .order_by(WebchatConversation.id.asc())
+        .all()
+    )
+
+
+def _enforce_human_only_processing(
+    db: Session,
+    *,
+    actor,
+    tenant_id: int,
+    customer_id: int,
+    restriction_id: int,
+) -> int:
+    """Route every open subject conversation through the canonical Handoff writer."""
+
+    from .webchat_handoff_service_core import request_webchat_handoff
+
+    count = 0
+    for conversation in _subject_open_conversations(
+        db,
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+    ):
+        ticket = db.get(Ticket, conversation.ticket_id) if conversation.ticket_id else None
+        if ticket is not None and (
+            ticket.tenant_id != tenant_id or ticket.customer_id != customer_id
+        ):
+            raise DataLifecycleError("processing_restriction_conversation_scope_conflict")
+        request_webchat_handoff(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            source="privacy",
+            trigger_type="processing_restricted",
+            reason_code="data_processing_restricted",
+            reason_text="Automated processing is restricted for this customer.",
+            recommended_agent_action=(
+                "Continue with human support only. Do not resume AI while the "
+                "processing restriction remains active."
+            ),
+            requested_by_actor_type="system",
+            requested_by_user_id=getattr(actor, "id", None),
+            note=f"Processing restriction {restriction_id} activated.",
+        )
+        count += 1
+    return count
+
+
 def activate_data_processing_restriction(
     db: Session,
     *,
@@ -255,10 +344,22 @@ def activate_data_processing_restriction(
         .first()
     )
     if existing is not None:
+        if existing.status != "active":
+            raise DataLifecycleError("processing_restriction_request_already_released")
+        _enforce_human_only_processing(
+            db,
+            actor=actor,
+            tenant_id=tenant_id,
+            customer_id=customer.id,
+            restriction_id=existing.id,
+        )
         return existing
     reason = " ".join(str(reason_code or "").strip().split())[:120]
     if not reason:
-        raise DataLifecycleError("processing_restriction_reason_required", status_code=400)
+        raise DataLifecycleError(
+            "processing_restriction_reason_required",
+            status_code=400,
+        )
     row = DataProcessingRestriction(
         tenant_id=tenant_id,
         customer_id=customer.id,
@@ -274,11 +375,19 @@ def activate_data_processing_restriction(
     )
     db.add(row)
     db.flush()
+    human_only_conversation_count = _enforce_human_only_processing(
+        db,
+        actor=actor,
+        tenant_id=tenant_id,
+        customer_id=customer.id,
+        restriction_id=row.id,
+    )
     manifest = {
         "schema": "nexus.processing-restriction-manifest.v1",
         "restriction_id": row.id,
         "blocked_purposes": row.blocked_purposes_json,
         "allowed_purposes": row.allowed_purposes_json,
+        "human_only_conversation_count": human_only_conversation_count,
         "raw_values_persisted": False,
     }
     request.status = "completed"
@@ -298,6 +407,7 @@ def activate_data_processing_restriction(
             "request_id": request.id,
             "reason_code": reason,
             "blocked_purposes": row.blocked_purposes_json,
+            "human_only_conversation_count": human_only_conversation_count,
         },
     )
     db.flush()
@@ -327,7 +437,10 @@ def release_data_processing_restriction(
         action="privacy.processing_restriction.released",
         target_type="data_processing_restriction",
         target_id=row.id,
-        new_value={"status": "released"},
+        new_value={
+            "status": "released",
+            "ai_resume_requires_explicit_handoff_command": True,
+        },
     )
     db.flush()
     return row
