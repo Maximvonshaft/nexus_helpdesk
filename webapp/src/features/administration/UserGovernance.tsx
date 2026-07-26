@@ -345,9 +345,12 @@ export function UserGovernance({
       </Stack>
       <Divider sx={{ my: 2 }} />
 
-      {usersQuery.isError ? <OperatorErrorNotice title="无法读取用户" error={usersQuery.error} fallback="请稍后重试" /> : null}
       {toggleStatus.isError ? <Box sx={{ mb: 2 }}><OperatorErrorNotice title="账号状态更新失败" error={toggleStatus.error} fallback="请检查账号保护规则" /></Box> : null}
-      {usersQuery.isLoading ? <OperatorLoadingState label="正在加载用户…" minHeight={220} /> : !visibleUsers.length ? (
+      {usersQuery.isError ? (
+        <OperatorErrorNotice title="无法读取用户" error={usersQuery.error} fallback="请稍后重试" />
+      ) : usersQuery.isLoading ? (
+        <OperatorLoadingState label="正在加载用户…" minHeight={220} />
+      ) : !visibleUsers.length ? (
         <OperatorEmptyState title="没有匹配的用户" description={search ? '请调整搜索条件。' : '创建第一个运营账号。'} />
       ) : (
         <>
