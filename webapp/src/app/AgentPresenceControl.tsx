@@ -175,7 +175,6 @@ export function AgentPresenceControl({
           <Tooltip title={voiceSwitchTitle}>
             <span>
               <Switch
-                size="small"
                 checked={runtime.state.voice_enabled}
                 onChange={handleVoiceChange}
                 disabled={!runtime.canHandleVoice || runtime.isUpdating || voiceDisableBlocked}
