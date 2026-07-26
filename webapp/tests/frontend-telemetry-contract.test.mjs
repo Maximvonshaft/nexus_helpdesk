@@ -16,6 +16,18 @@ test('frontend telemetry reuses the canonical transport and cannot recursively o
   assert.match(apiClient, /shouldEmitFrontendLatency/)
 })
 
+test('web-vital units are converted exactly once by the backend authority', () => {
+  assert.match(telemetry, /value: raw/)
+  assert.doesNotMatch(telemetry, /raw\s*\/\s*1_000/)
+  assert.match(telemetry, /backend owns the single[\s\S]*conversion to histogram seconds/)
+})
+
+test('HTTP responses and transport failures produce one latency outcome per attempt', () => {
+  assert.match(apiClient, /const handledResponseError = error instanceof ApiError \|\| error instanceof AuthExpiredError/)
+  assert.match(apiClient, /if \(!handledResponseError\) \{[\s\S]*emitFrontendLatency\(/)
+  assert.match(apiClient, /if \(!retryable \|\| attempt > 0 \|\| handledResponseError\) break/)
+})
+
 test('web vitals and API latency initialize once at the application root', () => {
   assert.match(main, /initFrontendTelemetry\(\)/)
   assert.match(main, /initWebVitals\(\)/)

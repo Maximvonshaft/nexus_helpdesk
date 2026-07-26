@@ -40,6 +40,7 @@ export function useOperatorRealtime({
     }
 
     let stopped = false
+    let reconnectSuppressed = false
     let socket: WebSocket | null = null
     let reconnectTimer: number | undefined
     let heartbeatTimer: number | undefined
@@ -53,7 +54,7 @@ export function useOperatorRealtime({
     }
 
     const scheduleReconnect = () => {
-      if (stopped) return
+      if (stopped || reconnectSuppressed) return
       setStatus('fallback')
       failureCount += 1
       const delay = Math.min(30_000, 1_000 * (2 ** Math.min(failureCount - 1, 5)))
@@ -61,7 +62,7 @@ export function useOperatorRealtime({
     }
 
     const connect = () => {
-      if (stopped) return
+      if (stopped || reconnectSuppressed) return
       stopTimers()
       setStatus(failureCount ? 'fallback' : 'connecting')
       try {
@@ -72,7 +73,7 @@ export function useOperatorRealtime({
       }
 
       socket.addEventListener('open', () => {
-        if (!socket || stopped) return
+        if (!socket || stopped || reconnectSuppressed) return
         socket.send(JSON.stringify({
           type: 'connection.hello',
           client_type: 'agent',
@@ -103,7 +104,12 @@ export function useOperatorRealtime({
         }
         if (type === 'pong') return
         if (type === 'error') {
-          if (payload.retryable === false) socket?.close()
+          if (payload.retryable === false) {
+            reconnectSuppressed = true
+            stopTimers()
+            setStatus('fallback')
+            socket?.close()
+          }
           return
         }
         if (type) void callbackRef.current()

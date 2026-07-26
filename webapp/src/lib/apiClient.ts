@@ -213,16 +213,19 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       return await response.json() as T
     } catch (error) {
       lastError = error
-      const timeout = error instanceof DOMException && error.name === 'AbortError'
-      emitFrontendLatency({
-        path: apiPath,
-        method,
-        status: timeout ? 'timeout' : 'network_error',
-        duration_ms: Math.round(now() - started),
-        ok: false,
-        timeout,
-      })
-      if (!retryable || attempt > 0 || error instanceof AuthExpiredError || error instanceof ApiError) break
+      const handledResponseError = error instanceof ApiError || error instanceof AuthExpiredError
+      if (!handledResponseError) {
+        const timeout = error instanceof DOMException && error.name === 'AbortError'
+        emitFrontendLatency({
+          path: apiPath,
+          method,
+          status: timeout ? 'timeout' : 'network_error',
+          duration_ms: Math.round(now() - started),
+          ok: false,
+          timeout,
+        })
+      }
+      if (!retryable || attempt > 0 || handledResponseError) break
     }
   }
 

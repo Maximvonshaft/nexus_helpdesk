@@ -11,6 +11,7 @@ const actions = read('src/features/operator-workspace/OperatorWorkspaceActions.t
 const navigation = read('src/app/navigation.ts')
 const shell = read('src/app/AppShell.tsx')
 const theme = read('src/theme/nexusTheme.ts')
+const operatorRealtime = read('src/lib/operatorRealtime.ts')
 
 test('free text remains verbatim and exact enum translation cannot mutate substrings', () => {
   assert.match(format, /export function displayVerbatimText/)
@@ -52,4 +53,11 @@ test('dynamic announcements are bounded and the message timeline is not a live r
   assert.match(conversation, /role="log"/)
   assert.match(conversation, /aria-live="off"/)
   assert.match(conversation, /收到 \$\{newMessageCount\} 条新消息/)
+})
+
+test('non-retryable realtime errors terminate reconnect and preserve polling fallback', () => {
+  assert.match(operatorRealtime, /let reconnectSuppressed = false/)
+  assert.match(operatorRealtime, /if \(stopped \|\| reconnectSuppressed\) return/)
+  assert.match(operatorRealtime, /if \(payload\.retryable === false\) \{[\s\S]*reconnectSuppressed = true[\s\S]*stopTimers\(\)[\s\S]*setStatus\('fallback'\)[\s\S]*socket\?\.close\(\)/)
+  assert.match(operatorRealtime, /socket\.addEventListener\('close', scheduleReconnect\)/)
 })
