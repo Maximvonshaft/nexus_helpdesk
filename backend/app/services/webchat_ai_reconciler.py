@@ -177,6 +177,19 @@ def _finalize_terminal_outcome(
         turn.status_reason = reason[:500]
         turn.updated_at = utc_now()
         db.flush()
+        safe_write_webchat_event(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=turn.ticket_id,
+            event_type="ai_turn.timeout",
+            payload={
+                "ai_turn_id": turn.id,
+                "job_id": job.id,
+                "reason_code": "watchdog_timeout",
+                "terminal_status": "timeout",
+                "customer_outcome_committed": _public_outcome_exists(db, turn=turn),
+            },
+        )
 
     safe_write_webchat_event(
         db,
