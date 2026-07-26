@@ -293,11 +293,18 @@ function AppShellContent({
             slotProps={{ paper: { sx: { width: 'min(88vw, 360px)' } } }}
           >
             <Stack id="nd-mobile-navigation" spacing={2} sx={{ minHeight: '100%', p: 2 }}>
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
-                <Avatar variant="rounded" sx={{ width: 40, height: 40, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800 }} aria-hidden="true">N</Avatar>
-                <Box sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'flex-start' }}>
+                <Avatar variant="rounded" sx={{ width: 40, height: 40, bgcolor: 'primary.main', fontSize: 15, fontWeight: 800, flexShrink: 0 }} aria-hidden="true">N</Avatar>
+                <Box sx={{ minWidth: 0, flex: 1 }}>
                   <Typography translate="no" variant="subtitle1">Nexus OSR</Typography>
-                  <Typography variant="caption" color="text.secondary" noWrap>{userLabel}</Typography>
+                  <Typography
+                    data-testid="operator-drawer-user-label"
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', overflowWrap: 'anywhere' }}
+                  >
+                    {userLabel}
+                  </Typography>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>显示时区：{timeZone}</Typography>
                 </Box>
               </Stack>
