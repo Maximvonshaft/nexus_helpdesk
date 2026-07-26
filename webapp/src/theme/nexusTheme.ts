@@ -193,8 +193,29 @@ export const nexusTheme = createTheme({
     MuiSwitch: {
       styleOverrides: {
         root: {
+          width: 64,
+          minWidth: 64,
+          height: 44,
+          minHeight: 44,
+          padding: 0,
+        },
+        switchBase: {
+          width: 44,
+          height: 44,
           minWidth: 44,
           minHeight: 44,
+          padding: 12,
+          '&.Mui-checked': {
+            transform: 'translateX(20px)',
+          },
+        },
+        input: {
+          width: '100%',
+          height: '100%',
+        },
+        track: {
+          marginBlock: 8,
+          marginInline: 6,
         },
       },
     },
@@ -224,7 +245,8 @@ export const nexusTheme = createTheme({
         },
         input: {
           minHeight: 24,
-          paddingBlock: 10,
+          paddingTop: '1em',
+          paddingBottom: '0.65em',
           boxSizing: 'border-box',
         },
         multiline: {
@@ -238,8 +260,9 @@ export const nexusTheme = createTheme({
           alignItems: 'center',
           boxSizing: 'border-box',
           display: 'flex',
-          minHeight: '24px !important',
-          paddingBlock: '10px !important',
+          minHeight: '44px !important',
+          paddingTop: '1em !important',
+          paddingBottom: '0.65em !important',
           whiteSpace: 'normal',
         },
       },
