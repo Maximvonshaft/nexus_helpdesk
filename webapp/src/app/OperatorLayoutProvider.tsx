@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { OperatorLayoutContext, type OperatorLayoutMode } from './operatorLayoutMode'
+import { OperatorLayoutContext, type OperatorLayoutMode } from './useOperatorLayoutMode'
 
 function initialTextScale() {
   if (typeof window === 'undefined') return 1
