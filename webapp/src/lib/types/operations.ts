@@ -137,6 +137,36 @@ export interface ControlTower {
   template_blocks: ControlTowerTemplateBlock[]
   facts: Record<string, number | string | string[]>
 }
+export interface BusinessOutcomeMetric {
+  key: string
+  label: string
+  unit: 'ratio' | 'seconds' | 'count' | string
+  value: number | null
+  numerator: number
+  denominator: number
+  target: number
+  warning: number
+  direction: 'min' | 'max'
+  status: 'success' | 'warning' | 'danger' | 'unavailable'
+  previous_value: number | null
+  delta: number | null
+  trend: 'improving' | 'declining' | 'stable' | 'unavailable'
+  drilldown: string
+}
+export interface BusinessOutcomeMetrics {
+  schema: 'nexus.business-outcome-metrics.v1'
+  generated_at: string
+  window: {
+    days: number
+    start: string
+    end: string
+    previous_start: string
+    previous_end: string
+  }
+  items: BusinessOutcomeMetric[]
+  source_ticket_count: number
+  contains_customer_data: false
+}
 export interface ControlTowerActionResult {
   ok: boolean
   task_id: number
