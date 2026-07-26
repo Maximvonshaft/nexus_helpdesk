@@ -19,9 +19,9 @@ const webcallRoute = read('src/routes/webcall.tsx')
 const webcallLazy = read('src/features/webcall/lazy.tsx')
 const presentation = read('src/lib/operatorWorkspacePresentation.ts')
 const closure = read('src/features/operator-workspace/OperatorWorkspaceClosure.tsx')
-const playwright = read('playwright.config.ts')
 const productionBrowser = read('e2e/operator-ui-production-quality.spec.ts')
 const highestStandardBrowser = read('e2e/operator-ui-highest-standard.spec.ts')
+const visualSnapshot = read('e2e/visualSnapshot.ts')
 
 
 test('text enlargement and viewport width resolve through one responsive-layout authority', () => {
@@ -52,6 +52,7 @@ test('form and compact status controls grow with enlarged text instead of clippi
   assert.match(theme, /MuiChip:[\s\S]*filled:[\s\S]*MuiChip-colorSuccess[\s\S]*#067647/)
   assert.match(theme, /MuiChip:[\s\S]*whiteSpace:\s*'normal'/)
   assert.match(theme, /forced-colors: active[\s\S]*Mui-focusVisible[\s\S]*CanvasText/)
+  assert.match(theme, /MuiButton:[\s\S]*transition:\s*'box-shadow 150ms ease'/)
 })
 
 
@@ -84,12 +85,16 @@ test('primary workspace facts consume business presentation instead of raw backe
 
 
 test('visual and accessibility evidence is release-blocking rather than artifact-only', () => {
-  assert.match(playwright, /snapshotPathTemplate/)
-  assert.match(playwright, /toHaveScreenshot/)
-  assert.match(playwright, /maxDiffPixelRatio:\s*0\.001/)
-  assert.match(productionBrowser, /toHaveScreenshot/)
-  assert.doesNotMatch(productionBrowser, /page\.screenshot\(/)
-  assert.match(highestStandardBrowser, /toHaveScreenshot/)
+  assert.match(visualSnapshot, /VISUAL_SNAPSHOT_SHA256/)
+  assert.match(visualSnapshot, /createHash\('sha256'\)/)
+  assert.match(visualSnapshot, /page\.screenshot/)
+  assert.match(visualSnapshot, /testInfo\.attach/)
+  const reviewedSignatures = [...visualSnapshot.matchAll(/'[a-z0-9-]+': '([a-f0-9]{64})'/g)]
+  assert.equal(reviewedSignatures.length, 7)
+  assert.match(productionBrowser, /expectVisualSnapshot/)
+  assert.match(highestStandardBrowser, /expectVisualSnapshot/)
+  assert.doesNotMatch(productionBrowser, /toHaveScreenshot/)
+  assert.doesNotMatch(highestStandardBrowser, /toHaveScreenshot/)
   assert.match(highestStandardBrowser, /textContrastViolations/)
   assert.match(highestStandardBrowser, /semanticAccessibilityViolations/)
   assert.match(highestStandardBrowser, /formTextOverlaps/)
