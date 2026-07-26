@@ -140,6 +140,12 @@ export const nexusTheme = createTheme({
             outline: focusOutline,
             outlineOffset: 2,
           },
+          '@media (forced-colors: active)': {
+            '&:focus-visible': {
+              outline: '3px solid Highlight !important',
+              outlineOffset: '2px !important',
+            },
+          },
         },
       },
     },
@@ -279,6 +285,8 @@ export const nexusTheme = createTheme({
           height: 'auto',
           borderRadius: 6,
           fontWeight: 600,
+        },
+        outlined: {
           backgroundColor: '#FFFFFF',
         },
         label: {
