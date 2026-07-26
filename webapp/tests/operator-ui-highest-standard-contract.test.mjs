@@ -39,9 +39,10 @@ test('text enlargement and viewport width resolve through one responsive-layout 
 
 
 test('form and compact status controls grow with enlarged text instead of clipping it', () => {
-  assert.match(theme, /MuiSelect:[\s\S]*paddingBlock:\s*'10px !important'/)
-  assert.doesNotMatch(theme, /paddingBottom:\s*'0 !important'/)
-  assert.doesNotMatch(theme, /paddingTop:\s*'0 !important'/)
+  assert.match(theme, /MuiSelect:[\s\S]*minHeight:\s*'44px !important'/)
+  assert.match(theme, /MuiSelect:[\s\S]*paddingTop:\s*'1em !important'/)
+  assert.match(theme, /MuiSelect:[\s\S]*paddingBottom:\s*'0\.65em !important'/)
+  assert.match(theme, /MuiSwitch:[\s\S]*switchBase:[\s\S]*minHeight:\s*44/)
   assert.match(theme, /MuiChip:[\s\S]*height:\s*'auto'/)
   assert.match(theme, /MuiChip:[\s\S]*whiteSpace:\s*'normal'/)
 })
