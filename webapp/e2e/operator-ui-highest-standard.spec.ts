@@ -333,24 +333,24 @@ test('forced colors and reduced motion preserve required controls and visible fo
   await page.keyboard.press('Tab')
   await expect(skipLink).toBeFocused()
 
-  let menuReached = false
+  let focusEvidence: { outlineStyle: string; outlineWidth: string; transitionDuration: string } | null = null
   for (let step = 0; step < 12; step += 1) {
     await page.keyboard.press('Tab')
-    const activeLabel = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
-    if (activeLabel === '打开主导航') {
-      menuReached = true
-      break
-    }
+    focusEvidence = await page.evaluate(() => {
+      const active = document.activeElement
+      if (!(active instanceof HTMLElement) || active.getAttribute('aria-label') !== '打开主导航') return null
+      const style = window.getComputedStyle(active)
+      return {
+        outlineStyle: style.outlineStyle,
+        outlineWidth: style.outlineWidth,
+        transitionDuration: style.transitionDuration,
+      }
+    })
+    if (focusEvidence) break
   }
-  expect(menuReached, 'the main navigation trigger must be reachable through the keyboard order').toBe(true)
-  const focused = page.locator(':focus')
-  await expect(focused).toHaveAttribute('aria-label', '打开主导航')
-  const focus = await focused.evaluate((element) => {
-    const style = window.getComputedStyle(element)
-    return { outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, transitionDuration: style.transitionDuration }
-  })
-  expect(focus.outlineStyle).not.toBe('none')
-  expect(Number.parseFloat(focus.outlineWidth)).toBeGreaterThan(0)
-  expect(focus.transitionDuration.split(',').every((duration) => Number.parseFloat(duration) <= 0.01)).toBe(true)
+  expect(focusEvidence, 'the main navigation trigger must be reachable through the keyboard order').not.toBeNull()
+  expect(focusEvidence?.outlineStyle).not.toBe('none')
+  expect(Number.parseFloat(focusEvidence?.outlineWidth || '0')).toBeGreaterThan(0)
+  expect((focusEvidence?.transitionDuration || '').split(',').every((duration) => Number.parseFloat(duration) <= 0.01)).toBe(true)
   await expect(page.getByRole('tab', { name: '待处理' })).toBeVisible()
 })
