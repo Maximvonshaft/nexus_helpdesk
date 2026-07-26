@@ -8,6 +8,7 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const shell = read('src/app/AppShell.tsx')
 const layoutMode = read('src/app/useOperatorLayoutMode.tsx')
+const layoutProvider = read('src/app/OperatorLayoutProvider.tsx')
 const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
 const queue = read('src/features/operator-workspace/OperatorWorkspaceQueue.tsx')
 const casePane = read('src/features/operator-workspace/OperatorWorkspaceCase.tsx')
@@ -21,11 +22,13 @@ const closure = read('src/features/operator-workspace/OperatorWorkspaceClosure.t
 
 
 test('text enlargement and viewport width resolve through one responsive-layout authority', () => {
-  assert.match(layoutMode, /ResizeObserver/)
-  assert.match(layoutMode, /width:\s*'1rem'/)
-  assert.match(layoutMode, /textScale/)
-  assert.match(layoutMode, /desktopLayout/)
-  assert.match(layoutMode, /OperatorLayoutProvider/)
+  assert.match(layoutMode, /OperatorLayoutContext/)
+  assert.match(layoutMode, /useOperatorLayoutMode/)
+  assert.match(layoutProvider, /ResizeObserver/)
+  assert.match(layoutProvider, /width:\s*'1rem'/)
+  assert.match(layoutProvider, /textScale/)
+  assert.match(layoutProvider, /desktopLayout/)
+  assert.match(layoutProvider, /OperatorLayoutProvider/)
   assert.match(shell, /<OperatorLayoutProvider>/)
   assert.match(shell, /useOperatorLayoutMode\(\)/)
   assert.match(workspace, /useOperatorLayoutMode\(\)/)
