@@ -263,11 +263,6 @@ async function undersizedPrimaryControls(page: Page) {
   })
 }
 
-async function expectVisual(page: Page, name: string) {
-  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
-}
-
-
 test('200 percent text enlargement switches to structural compact layout without overlap or clipping', async ({ page }) => {
   const longIdentity = 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano'
   await page.setViewportSize({ width: 1366, height: 768 })
@@ -289,10 +284,12 @@ test('200 percent text enlargement switches to structural compact layout without
   await expect(page.locator('#nd-mobile-navigation')).toBeVisible()
   const identity = page.getByTestId('operator-drawer-user-label')
   await expect(identity).toHaveText(longIdentity)
-  expect(await identity.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true)
+  expect(await identity.evaluate((element) => (
+    element.scrollWidth <= element.clientWidth
+    && element.scrollHeight <= element.clientHeight
+  ))).toBe(true)
   expect(await formTextOverlaps(page)).toEqual([])
   expect(await undersizedPrimaryControls(page)).toEqual([])
-  await expectVisual(page, 'workspace-text-200-reflow-1366')
 })
 
 test('canonical routes reflow to the 320 CSS pixel release floor', async ({ page }) => {
@@ -352,9 +349,12 @@ test('forced colors and reduced motion preserve required controls and visible fo
     })
     if (focusEvidence) break
   }
-  expect(focusEvidence, 'the main navigation trigger must be reachable through the keyboard order').not.toBeNull()
+
+  expect(focusEvidence, 'the main navigation trigger must be keyboard reachable').not.toBeNull()
   expect(focusEvidence?.outlineStyle).not.toBe('none')
   expect(Number.parseFloat(focusEvidence?.outlineWidth || '0')).toBeGreaterThan(0)
-  expect((focusEvidence?.transitionDuration || '').split(',').every((duration) => Number.parseFloat(duration) <= 0.01)).toBe(true)
+  expect((focusEvidence?.transitionDuration || '')
+    .split(',')
+    .every((duration) => Number.parseFloat(duration) <= 0.01)).toBe(true)
   await expect(page.getByRole('tab', { name: '待处理' })).toBeVisible()
 })

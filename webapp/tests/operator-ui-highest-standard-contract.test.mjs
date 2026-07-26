@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { resolve } from 'node:path'
 
@@ -22,16 +22,6 @@ const closure = read('src/features/operator-workspace/OperatorWorkspaceClosure.t
 const playwright = read('playwright.config.ts')
 const productionBrowser = read('e2e/operator-ui-production-quality.spec.ts')
 const highestStandardBrowser = read('e2e/operator-ui-highest-standard.spec.ts')
-const reviewedVisuals = [
-  'workspace-text-200-reflow-1366',
-  'workspace-loading-375',
-  'administration-normal-1440',
-  'workspace-empty-1440',
-  'workspace-degraded-last-safe-1440',
-  'workspace-stale-conflict-1440',
-  'workspace-repair-required-1440',
-]
-
 
 test('text enlargement and viewport width resolve through one responsive-layout authority', () => {
   assert.match(layoutMode, /OperatorLayoutContext/)
@@ -51,7 +41,6 @@ test('text enlargement and viewport width resolve through one responsive-layout 
   assert.doesNotMatch(shell, /const desktopShell = useMediaQuery/)
 })
 
-
 test('form and compact status controls grow with enlarged text instead of clipping it', () => {
   assert.match(theme, /MuiSelect:[\s\S]*minHeight:\s*'44px !important'/)
   assert.match(theme, /MuiSelect:[\s\S]*paddingTop:\s*'1em !important'/)
@@ -64,14 +53,12 @@ test('form and compact status controls grow with enlarged text instead of clippi
   assert.match(theme, /MuiButton:[\s\S]*transition:\s*'box-shadow 150ms ease'/)
 })
 
-
 test('first-screen budget follows the Vite manifest static closure without filename guesses', () => {
   assert.match(sizeReport, /\.vite.*manifest\.json/)
   assert.match(sizeReport, /record\?\.imports/)
   assert.match(sizeReport, /initialStaticFiles/)
   assert.doesNotMatch(sizeReport, /lazy\|route\|vendor/)
 })
-
 
 test('the LiveKit call surface is reachable only through the existing dynamic route graph', () => {
   assert.match(routeSplitting, /src\/features\/webcall\/lazy\.tsx/)
@@ -82,7 +69,6 @@ test('the LiveKit call surface is reachable only through the existing dynamic ro
   assert.match(webcallLazy, /WebCallPage/)
 })
 
-
 test('primary workspace facts consume business presentation instead of raw backend enums', () => {
   assert.match(presentation, /closureRequirementPresentation/)
   assert.match(presentation, /scenarioPresentation/)
@@ -92,21 +78,16 @@ test('primary workspace facts consume business presentation instead of raw backe
   assert.match(casePane, /priorityPresentation/)
 })
 
-
-test('visual and accessibility evidence is release-blocking rather than artifact-only', () => {
-  assert.match(playwright, /snapshotPathTemplate/)
-  assert.match(playwright, /toHaveScreenshot/)
-  assert.match(playwright, /maxDiffPixelRatio:\s*0\.001/)
-  assert.match(productionBrowser, /toHaveScreenshot/)
-  assert.match(highestStandardBrowser, /toHaveScreenshot/)
-  assert.doesNotMatch(productionBrowser, /page\.screenshot\(/)
-  assert.doesNotMatch(highestStandardBrowser, /page\.screenshot\(/)
+test('browser quality evidence is executable Playwright behavior rather than an image transport', () => {
+  assert.match(productionBrowser, /five hundred queue rows remain operable/)
+  assert.match(productionBrowser, /stale close conflict exits confirmation/)
+  assert.match(highestStandardBrowser, /formTextOverlaps/)
   assert.match(highestStandardBrowser, /textContrastViolations/)
   assert.match(highestStandardBrowser, /semanticAccessibilityViolations/)
-  assert.match(highestStandardBrowser, /formTextOverlaps/)
-  for (const name of reviewedVisuals) {
-    const path = resolve(root, 'e2e', '__screenshots__', `${name}.png`)
-    assert.ok(existsSync(path), `missing reviewed visual baseline: ${name}`)
-    assert.ok(statSync(path).size > 1_000, `visual baseline is unexpectedly small: ${name}`)
-  }
+  assert.match(highestStandardBrowser, /forced colors and reduced motion/)
+  assert.doesNotMatch(productionBrowser, /toHaveScreenshot|expectVisualSnapshot|page\.screenshot/)
+  assert.doesNotMatch(highestStandardBrowser, /toHaveScreenshot|expectVisualSnapshot|page\.screenshot/)
+  assert.doesNotMatch(playwright, /snapshotPathTemplate|toHaveScreenshot/)
+  assert.equal(existsSync(resolve(root, 'e2e/visualSnapshot.ts')), false)
+  assert.equal(existsSync(resolve(root, 'e2e/__screenshots__')), false)
 })

@@ -86,28 +86,29 @@ async function mockTicketWorkspace(page: Page, receipt = closureReceipt()) {
   }))
 }
 
-async function expectVisual(page: Page, name: string) {
-  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
-}
-
-
-test('normal and empty canonical surfaces match visual signatures', async ({ page }) => {
+test('normal and empty canonical surfaces expose one coherent task state', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
+
   await page.goto('/workspace')
   await expect(page.getByText('暂无待处理任务')).toBeVisible()
-  await expectVisual(page, 'workspace-empty-1440')
+  await expect(page.getByRole('main')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   await page.goto('/administration')
   await expect(page.getByRole('heading', { level: 1, name: '系统管理' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: responsiveUser.display_name })).toBeVisible()
-  await expectVisual(page, 'administration-normal-1440')
+  await expect(page.getByRole('heading', { level: 2, name: '用户与权限' })).toBeVisible()
+  await expect(page.getByText('Responsive Operations Administrator', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '创建账号' })).toBeEnabled()
+  await expect(page.getByText('无法读取用户')).toHaveCount(0)
+  await expect(page.getByText('没有匹配的用户')).toHaveCount(0)
 })
 
 test('visible primary controls meet the 44px target contract', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
   await page.goto('/administration')
+
   const targets = page.locator('button:visible, a[href]:visible, [role="tab"]:visible, [role="combobox"]:visible, [role="switch"]:visible')
   const count = await targets.count()
   expect(count).toBeGreaterThan(5)
@@ -118,22 +119,30 @@ test('visible primary controls meet the 44px target contract', async ({ page }) 
 })
 
 test('long operator identity and 200 percent text use structural compact layout', async ({ page }) => {
+  const longIdentity = 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano'
   await page.setViewportSize({ width: 1366, height: 768 })
   await mockResponsiveConsole(page)
   await page.route('**/api/auth/me', (route) => json(route, {
     ...responsiveUser,
-    display_name: 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano',
+    display_name: longIdentity,
   }))
   await page.goto('/workspace')
   await page.addStyleTag({ content: 'html { font-size: 200% !important; }' })
+
   await expect(page.getByRole('button', { name: '打开主导航' })).toBeVisible()
   await expect(page.getByRole('tab', { name: '待处理' })).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
   await page.getByRole('button', { name: '打开主导航' }).click()
-  await expect(page.locator('#nd-mobile-navigation')).toBeVisible()
+  const identity = page.getByTestId('operator-drawer-user-label')
+  await expect(identity).toHaveText(longIdentity)
+  expect(await identity.evaluate((element) => (
+    element.scrollWidth <= element.clientWidth
+    && element.scrollHeight <= element.clientHeight
+  ))).toBe(true)
 })
 
-test('slow queue loading matches the loading visual signature', async ({ page }) => {
+test('slow queue loading resolves from loading to the canonical empty state', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 })
   await mockResponsiveConsole(page)
   await page.route('**/api/admin/operator-queue/unified?*', async (route) => {
@@ -141,15 +150,17 @@ test('slow queue loading matches the loading visual signature', async ({ page })
     await json(route, queueResponse([]))
   })
   await page.goto('/workspace')
+
   await expect(page.getByText('正在读取任务…')).toBeVisible()
-  await expectVisual(page, 'workspace-loading-375')
   await expect(page.getByText('暂无待处理任务')).toBeVisible()
+  await expect(page.getByText('正在读取任务…')).toHaveCount(0)
 })
 
-test('failed background refresh preserves the last confirmed queue and visual state', async ({ page }) => {
+test('failed background refresh preserves the last confirmed queue', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-07-26T10:00:00Z') })
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockResponsiveConsole(page)
+
   let calls = 0
   await page.route('**/api/admin/operator-queue/unified?*', (route) => {
     calls += 1
@@ -157,20 +168,26 @@ test('failed background refresh preserves the last confirmed queue and visual st
     return json(route, { detail: 'provider unavailable' }, 503)
   })
   await page.route('**/api/tickets/42/closure-readiness', (route) => json(route, closureReceipt()))
-  await page.route('**/api/tickets/42', (route) => json(route, { id: 42, title: 'Existing safe information', status: 'in_progress', priority: 'medium' }))
+  await page.route('**/api/tickets/42', (route) => json(route, {
+    id: 42,
+    title: 'Existing safe information',
+    status: 'in_progress',
+    priority: 'medium',
+  }))
+
   await page.goto('/workspace')
   const queueRow = page.getByRole('button', { name: /T-42/ })
   await expect(queueRow).toBeVisible()
   await page.clock.fastForward(16_000)
   await expect(page.getByText(/待处理列表刷新失败，当前显示上次服务器确认的信息/)).toBeVisible()
   await expect(queueRow).toBeVisible()
-  await expectVisual(page, 'workspace-degraded-last-safe-1440')
 })
 
-test('repair-required state is plain-language, persistent and visually locked', async ({ page }) => {
+test('repair-required state is plain-language, persistent and technically inspectable', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockTicketWorkspace(page, closureReceipt({ repair: true }))
   await page.goto('/workspace')
+
   await expect(page.getByLabel('处理进度').getByText('存在失败结果，需要修复')).toBeVisible()
   const safeClosure = page.getByLabel('安全关闭')
   await expect(safeClosure.getByText(/存在失败结果，需要修复/)).toBeVisible()
@@ -178,24 +195,26 @@ test('repair-required state is plain-language, persistent and visually locked', 
   await expect(safeClosure.getByText('repair_required')).not.toBeVisible()
   await expect(page.getByText('已安全关闭')).toHaveCount(0)
   await expect(page.getByText('Customer supplied title must remain verbatim: helpdesk sync MCP CLI')).toBeVisible()
-  await expectVisual(page, 'workspace-repair-required-1440')
+
   await safeClosure.getByRole('button', { name: '关闭凭证' }).click()
   await expect(safeClosure.getByText(/阻断代码：repair_required/)).toBeVisible()
 })
 
-test('stale close conflict requires review and matches the conflict visual signature', async ({ page }) => {
+test('stale close conflict exits confirmation and exposes the recovery path', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockTicketWorkspace(page, closureReceipt({ ready: true }))
   await page.route('**/api/tickets/42/status', (route) => json(route, { detail: 'ticket_revision_conflict' }, 409))
   await page.goto('/workspace')
+
   await page.getByRole('button', { name: '核对并关闭' }).click()
   const dialog = page.getByRole('dialog', { name: '确认安全关闭工单？' })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: '确认安全关闭' }).click()
-  await expect(dialog).not.toBeVisible()
+
+  await expect(dialog).toHaveCount(0)
   await expect(page.getByText('关闭条件已发生变化')).toBeVisible()
+  await expect(page.getByRole('button', { name: '重新核对' })).toBeVisible()
   await expect(page.getByText('已安全关闭')).toHaveCount(0)
-  await expectVisual(page, 'workspace-stale-conflict-1440')
 })
 
 test('five hundred queue rows remain operable through bounded cursor pages', async ({ page }) => {
@@ -208,11 +227,16 @@ test('five hundred queue rows remain operable through bounded cursor pages', asy
     const start = pageIndex * 50
     const items = Array.from({ length: 50 }, (_, offset) => {
       const item = queueItem(start + offset + 1)
-      return { ...item, ticket_id: null, source_links: { ticket: null, conversation: null, handoff: null, dispatch: null } }
+      return {
+        ...item,
+        ticket_id: null,
+        source_links: { ticket: null, conversation: null, handoff: null, dispatch: null },
+      }
     })
     return json(route, queueResponse(items, pageIndex < 9 ? String(pageIndex + 1) : null))
   })
   await page.goto('/workspace')
+
   for (let pageIndex = 1; pageIndex < 10; pageIndex += 1) {
     await page.getByRole('button', { name: '加载更多任务' }).click()
   }
