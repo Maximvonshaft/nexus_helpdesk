@@ -1,10 +1,9 @@
-import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
+import { expect, test, type Page, type Route } from '@playwright/test'
 import {
   json,
   mockResponsiveConsole,
   responsiveUser,
 } from './fixtures/responsiveConsole'
-import { expectVisualSnapshot } from './visualSnapshot'
 
 function queueItem(index = 42) {
   return {
@@ -87,17 +86,22 @@ async function mockTicketWorkspace(page: Page, receipt = closureReceipt()) {
   }))
 }
 
-test('normal and empty canonical surfaces match visual signatures', async ({ page }, testInfo: TestInfo) => {
+async function expectVisual(page: Page, name: string) {
+  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
+}
+
+
+test('normal and empty canonical surfaces match visual signatures', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
   await page.goto('/workspace')
   await expect(page.getByText('暂无待处理任务')).toBeVisible()
-  await expectVisualSnapshot(page, testInfo, 'workspace-empty-1440')
+  await expectVisual(page, 'workspace-empty-1440')
 
   await page.goto('/administration')
   await expect(page.getByRole('heading', { level: 1, name: '系统管理' })).toBeVisible()
   await expect(page.getByRole('heading', { name: responsiveUser.display_name })).toBeVisible()
-  await expectVisualSnapshot(page, testInfo, 'administration-normal-1440')
+  await expectVisual(page, 'administration-normal-1440')
 })
 
 test('visible primary controls meet the 44px target contract', async ({ page }) => {
@@ -129,7 +133,7 @@ test('long operator identity and 200 percent text use structural compact layout'
   await expect(page.locator('#nd-mobile-navigation')).toBeVisible()
 })
 
-test('slow queue loading matches the loading visual signature', async ({ page }, testInfo: TestInfo) => {
+test('slow queue loading matches the loading visual signature', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 })
   await mockResponsiveConsole(page)
   await page.route('**/api/admin/operator-queue/unified?*', async (route) => {
@@ -138,11 +142,11 @@ test('slow queue loading matches the loading visual signature', async ({ page },
   })
   await page.goto('/workspace')
   await expect(page.getByText('正在读取任务…')).toBeVisible()
-  await expectVisualSnapshot(page, testInfo, 'workspace-loading-375')
+  await expectVisual(page, 'workspace-loading-375')
   await expect(page.getByText('暂无待处理任务')).toBeVisible()
 })
 
-test('failed background refresh preserves the last confirmed queue and visual state', async ({ page }, testInfo: TestInfo) => {
+test('failed background refresh preserves the last confirmed queue and visual state', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-07-26T10:00:00Z') })
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockResponsiveConsole(page)
@@ -160,10 +164,10 @@ test('failed background refresh preserves the last confirmed queue and visual st
   await page.clock.fastForward(16_000)
   await expect(page.getByText(/待处理列表刷新失败，当前显示上次服务器确认的信息/)).toBeVisible()
   await expect(queueRow).toBeVisible()
-  await expectVisualSnapshot(page, testInfo, 'workspace-degraded-last-safe-1440')
+  await expectVisual(page, 'workspace-degraded-last-safe-1440')
 })
 
-test('repair-required state is plain-language, persistent and visually locked', async ({ page }, testInfo: TestInfo) => {
+test('repair-required state is plain-language, persistent and visually locked', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockTicketWorkspace(page, closureReceipt({ repair: true }))
   await page.goto('/workspace')
@@ -174,12 +178,12 @@ test('repair-required state is plain-language, persistent and visually locked', 
   await expect(safeClosure.getByText('repair_required')).not.toBeVisible()
   await expect(page.getByText('已安全关闭')).toHaveCount(0)
   await expect(page.getByText('Customer supplied title must remain verbatim: helpdesk sync MCP CLI')).toBeVisible()
-  await expectVisualSnapshot(page, testInfo, 'workspace-repair-required-1440')
+  await expectVisual(page, 'workspace-repair-required-1440')
   await safeClosure.getByRole('button', { name: '关闭凭证' }).click()
   await expect(safeClosure.getByText(/阻断代码：repair_required/)).toBeVisible()
 })
 
-test('stale close conflict requires review and matches the conflict visual signature', async ({ page }, testInfo: TestInfo) => {
+test('stale close conflict requires review and matches the conflict visual signature', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockTicketWorkspace(page, closureReceipt({ ready: true }))
   await page.route('**/api/tickets/42/status', (route) => json(route, { detail: 'ticket_revision_conflict' }, 409))
@@ -191,7 +195,7 @@ test('stale close conflict requires review and matches the conflict visual signa
   await expect(dialog).not.toBeVisible()
   await expect(page.getByText('关闭条件已发生变化')).toBeVisible()
   await expect(page.getByText('已安全关闭')).toHaveCount(0)
-  await expectVisualSnapshot(page, testInfo, 'workspace-stale-conflict-1440')
+  await expectVisual(page, 'workspace-stale-conflict-1440')
 })
 
 test('five hundred queue rows remain operable through bounded cursor pages', async ({ page }) => {
