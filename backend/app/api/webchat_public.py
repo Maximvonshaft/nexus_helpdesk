@@ -22,7 +22,7 @@ from ..services.data_subject_action_service import (
 from ..services.observability import log_event, record_webchat_websocket_fallback_polling
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
-from ..services.webchat_handoff_service_core import request_webchat_handoff
+from ..services.webchat_handoff_service import request_webchat_handoff
 from ..services.webchat_performance import list_public_messages_throttled, webchat_poll_interval_ms
 from ..services.webchat_public_payload import parse_public_webchat_json, public_webchat_message_payload
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
