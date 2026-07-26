@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+import { resolve } from 'node:path'
+
+const root = resolve(process.cwd())
+const read = (path) => readFileSync(resolve(root, path), 'utf8')
+
+const shell = read('src/app/AppShell.tsx')
+const layoutMode = read('src/app/useOperatorLayoutMode.ts')
+const workspace = read('src/features/operator-workspace/OperatorWorkspacePage.tsx')
+const queue = read('src/features/operator-workspace/OperatorWorkspaceQueue.tsx')
+const casePane = read('src/features/operator-workspace/OperatorWorkspaceCase.tsx')
+const theme = read('src/theme/nexusTheme.ts')
+const sizeReport = read('scripts/size-report.mjs')
+const routeSplitting = read('scripts/assert-route-splitting.mjs')
+const webcallRoute = read('src/routes/webcall.tsx')
+const webcallLazy = read('src/features/webcall/lazy.tsx')
+const presentation = read('src/lib/operatorWorkspacePresentation.ts')
+const closure = read('src/features/operator-workspace/OperatorWorkspaceClosure.tsx')
+
+
+test('text enlargement and viewport width resolve through one responsive-layout authority', () => {
+  assert.match(layoutMode, /ResizeObserver/)
+  assert.match(layoutMode, /width:\s*'1rem'/)
+  assert.match(layoutMode, /textScale/)
+  assert.match(layoutMode, /desktopLayout/)
+  assert.match(shell, /useOperatorLayoutMode\(\)/)
+  assert.match(workspace, /useOperatorLayoutMode\(\)/)
+  assert.match(queue, /desktopLayout/)
+  assert.match(casePane, /desktopLayout/)
+  assert.doesNotMatch(shell, /const desktopShell = useMediaQuery/)
+})
+
+
+test('form and compact status controls grow with enlarged text instead of clipping it', () => {
+  assert.match(theme, /MuiSelect:[\s\S]*paddingBlock:\s*'10px !important'/)
+  assert.doesNotMatch(theme, /paddingBottom:\s*'0 !important'/)
+  assert.doesNotMatch(theme, /paddingTop:\s*'0 !important'/)
+  assert.match(theme, /MuiChip:[\s\S]*height:\s*'auto'/)
+  assert.match(theme, /MuiChip:[\s\S]*whiteSpace:\s*'normal'/)
+})
+
+
+test('first-screen budget follows the Vite manifest static closure without filename guesses', () => {
+  assert.match(sizeReport, /\.vite.*manifest\.json/)
+  assert.match(sizeReport, /record\?\.imports/)
+  assert.match(sizeReport, /initialStaticFiles/)
+  assert.doesNotMatch(sizeReport, /lazy\|route\|vendor/)
+})
+
+
+test('the LiveKit call surface is reachable only through the existing dynamic route graph', () => {
+  assert.match(routeSplitting, /src\/features\/webcall\/lazy\.tsx/)
+  assert.match(routeSplitting, /livekit/i)
+  assert.match(webcallRoute, /lazy\(\(\) => import\('@\/features\/webcall\/lazy'\)\)/)
+  assert.doesNotMatch(webcallRoute, /WebCallPage/)
+  assert.match(webcallLazy, /WebCallOperatorContext/)
+  assert.match(webcallLazy, /WebCallPage/)
+})
+
+
+test('primary workspace facts consume business presentation instead of raw backend enums', () => {
+  assert.match(presentation, /closureRequirementPresentation/)
+  assert.match(presentation, /scenarioPresentation/)
+  assert.match(closure, /closureRequirementPresentation/)
+  assert.match(closure, /scenarioPresentation/)
+  assert.match(casePane, /sourceStatusPresentation/)
+  assert.match(casePane, /priorityPresentation/)
+})
