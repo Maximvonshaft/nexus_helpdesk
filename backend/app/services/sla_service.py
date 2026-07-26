@@ -465,6 +465,20 @@ def _target(
     )
 
 
+def _assigned_policy_id(snapshot: dict[str, Any]) -> int:
+    try:
+        policy_id = int(snapshot["policy_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SLAConfigurationError(
+            "sla_assignment_policy_identity_invalid"
+        ) from exc
+    if policy_id <= 0:
+        raise SLAConfigurationError(
+            "sla_assignment_policy_identity_invalid"
+        )
+    return policy_id
+
+
 def apply_policy_to_ticket(
     ticket: Ticket,
     policy: SLAPolicy,
@@ -496,6 +510,7 @@ def apply_policy_to_ticket(
     if assignment is None:
         return
     snapshot = assignment.snapshot_json or _default_snapshot(policy)
+    assigned_policy_id = _assigned_policy_id(snapshot)
     first_due = add_business_minutes(
         base,
         int(snapshot["first_response_minutes"]),
@@ -554,8 +569,10 @@ def apply_policy_to_ticket(
         target.source_revision = int(
             snapshot.get("policy_version") or 1
         )
-    # Bounded API caches. Query authority is TicketSLATarget.
-    ticket.sla_policy_id = policy.id
+    # Bounded API caches. Query authority is TicketSLATarget. The cache policy
+    # identity is always copied from the immutable assignment snapshot, never
+    # from a later mutable priority-based policy lookup.
+    ticket.sla_policy_id = assigned_policy_id
     ticket.first_response_due_at = first_due
     ticket.resolution_due_at = resolution_due
     ticket.total_paused_seconds = paused_seconds
