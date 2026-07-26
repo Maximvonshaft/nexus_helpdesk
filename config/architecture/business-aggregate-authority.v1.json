@@ -31,7 +31,7 @@
   "forbidden": {
     "orm_models": ["Case"],
     "tables": ["cases"],
-    "parallel_case_ids": true,
-    "operator_task_source_commands": true
+    "forbid_parallel_case_ids": true,
+    "forbid_operator_task_source_commands": true
   }
 }
