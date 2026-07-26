@@ -292,7 +292,7 @@ def _enforce_human_only_processing(
 ) -> int:
     """Route every open subject conversation through the canonical Handoff writer."""
 
-    from .webchat_handoff_service_core import request_webchat_handoff
+    from .webchat_handoff_service import request_webchat_handoff
 
     count = 0
     for conversation in _subject_open_conversations(
