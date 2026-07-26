@@ -24,6 +24,11 @@ from ..services.data_lifecycle_service import (
     qualify_data_subject_request,
     release_legal_hold,
 )
+from ..services.data_subject_action_service import (
+    activate_data_processing_restriction,
+    execute_data_subject_correction,
+    release_data_processing_restriction,
+)
 from ..services.permissions import (
     ensure_can_manage_users,
     ensure_can_view_security_audit,
@@ -49,6 +54,25 @@ class DSARQualifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     identity_evidence: str = Field(min_length=1, max_length=320)
+
+
+class DSARCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    email: str | None = Field(default=None, min_length=3, max_length=200)
+    phone: str | None = Field(default=None, min_length=3, max_length=80)
+    external_ref: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class DSARRestrictionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason_code: str = Field(
+        default="data_subject_requested_restriction",
+        min_length=1,
+        max_length=120,
+    )
 
 
 class LegalHoldCreateRequest(BaseModel):
@@ -114,6 +138,21 @@ def _hold_payload(row) -> dict[str, Any]:
         "ticket_id": row.ticket_id,
         "reason_code": row.reason_code,
         "status": row.status,
+        "placed_at": row.placed_at,
+        "released_at": row.released_at,
+    }
+
+
+def _restriction_payload(row) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "customer_id": row.customer_id,
+        "request_id": row.request_id,
+        "status": row.status,
+        "reason_code": row.reason_code,
+        "blocked_purposes": row.blocked_purposes_json or [],
+        "allowed_purposes": row.allowed_purposes_json or [],
         "placed_at": row.placed_at,
         "released_at": row.released_at,
     }
@@ -239,6 +278,76 @@ def delete_dsar_subject(
             ),
             "receipt_sha256": receipt.receipt_sha256,
         }
+    except DataLifecycleError as exc:
+        _raise(exc)
+
+
+@router.post("/dsar/{request_id}/correct")
+def correct_dsar_subject(
+    request_id: int,
+    payload: DSARCorrectionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    try:
+        with managed_session(db):
+            result = execute_data_subject_correction(
+                db,
+                actor=current_user,
+                request_id=request_id,
+                name=payload.name,
+                email=payload.email,
+                phone=payload.phone,
+                external_ref=payload.external_ref,
+            )
+        return {
+            "schema": "nexus.subject-correction-result.v1",
+            "request": _dsar_payload(result.request),
+            "customer_id": result.customer.id,
+            "corrected_fields": list(result.fields),
+            "raw_values_persisted_in_receipt": False,
+        }
+    except DataLifecycleError as exc:
+        _raise(exc)
+
+
+@router.post("/dsar/{request_id}/restrict")
+def restrict_dsar_subject(
+    request_id: int,
+    payload: DSARRestrictionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    try:
+        with managed_session(db):
+            row = activate_data_processing_restriction(
+                db,
+                actor=current_user,
+                request_id=request_id,
+                reason_code=payload.reason_code,
+            )
+        return _restriction_payload(row)
+    except DataLifecycleError as exc:
+        _raise(exc)
+
+
+@router.post("/processing-restrictions/{restriction_id}/release")
+def release_processing_restriction(
+    restriction_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_users(current_user, db)
+    try:
+        with managed_session(db):
+            row = release_data_processing_restriction(
+                db,
+                actor=current_user,
+                restriction_id=restriction_id,
+            )
+        return _restriction_payload(row)
     except DataLifecycleError as exc:
         _raise(exc)
 
