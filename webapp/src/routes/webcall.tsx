@@ -1,15 +1,16 @@
+import { lazy, Suspense } from 'react'
 import { createRoute } from '@tanstack/react-router'
 import { Route as RootRoute } from './root'
-import { WebCallOperatorContext } from '@/features/webcall/WebCallOperatorContext'
-import { WebCallPage } from '@/features/webcall/WebCallPage'
+import { RouteLoadingState } from '@/app/OperatorPresentation'
+
+const LazyWebCallRouteContent = lazy(() => import('@/features/webcall/lazy'))
 
 function WebCallRoutePage() {
   const { voiceSessionId } = Route.useParams()
   return (
-    <>
-      <WebCallOperatorContext voiceSessionId={voiceSessionId} />
-      <WebCallPage voiceSessionId={voiceSessionId} />
-    </>
+    <Suspense fallback={<RouteLoadingState label="正在加载语音通话…" />}>
+      <LazyWebCallRouteContent voiceSessionId={voiceSessionId} />
+    </Suspense>
   )
 }
 
