@@ -115,7 +115,7 @@ test('visible primary controls meet the 44px target contract', async ({ page }) 
   }
 })
 
-test('long operator identity and 200 percent text remain inside the viewport', async ({ page }, testInfo) => {
+test('long operator identity and 200 percent text use structural compact layout', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1366, height: 768 })
   await mockResponsiveConsole(page)
   await page.route('**/api/auth/me', (route) => json(route, {
@@ -124,8 +124,11 @@ test('long operator identity and 200 percent text remain inside the viewport', a
   }))
   await page.goto('/workspace')
   await page.addStyleTag({ content: 'html { font-size: 200% !important; }' })
-  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '打开主导航' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '待处理' })).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.getByRole('button', { name: '打开主导航' }).click()
+  await expect(page.locator('#nd-mobile-navigation')).toBeVisible()
   await capture(page, testInfo, 'workspace-zoom-200-long-content-1366')
 })
 
@@ -163,14 +166,17 @@ test('failed background refresh preserves the last confirmed queue', async ({ pa
   await capture(page, testInfo, 'workspace-degraded-last-safe-1440')
 })
 
-test('repair-required state is server-derived and visually persistent', async ({ page }, testInfo) => {
+test('repair-required state is server-derived, plain-language and technically inspectable', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockTicketWorkspace(page, closureReceipt({ repair: true }))
   await page.goto('/workspace')
   await expect(page.getByLabel('处理进度').getByText('存在失败结果，需要修复')).toBeVisible()
   const safeClosure = page.getByLabel('安全关闭')
   await expect(safeClosure.getByText(/存在失败结果，需要修复/)).toBeVisible()
-  await expect(safeClosure.getByText('repair_required')).toBeVisible()
+  await expect(safeClosure.getByText('修复失败结果')).toBeVisible()
+  await expect(safeClosure.getByText('repair_required')).not.toBeVisible()
+  await safeClosure.getByRole('button', { name: '关闭凭证' }).click()
+  await expect(safeClosure.getByText(/阻断代码：repair_required/)).toBeVisible()
   await expect(page.getByText('已安全关闭')).toHaveCount(0)
   await expect(page.getByText('Customer supplied title must remain verbatim: helpdesk sync MCP CLI')).toBeVisible()
   await capture(page, testInfo, 'workspace-repair-required-1440')
