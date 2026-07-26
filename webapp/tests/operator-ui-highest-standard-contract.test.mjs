@@ -49,8 +49,9 @@ test('form and compact status controls grow with enlarged text instead of clippi
   assert.match(theme, /MuiSelect:[\s\S]*paddingBottom:\s*'0\.65em !important'/)
   assert.match(theme, /MuiSwitch:[\s\S]*switchBase:[\s\S]*minHeight:\s*44/)
   assert.match(theme, /MuiChip:[\s\S]*height:\s*'auto'/)
+  assert.match(theme, /MuiChip:[\s\S]*filled:[\s\S]*MuiChip-colorSuccess[\s\S]*#067647/)
   assert.match(theme, /MuiChip:[\s\S]*whiteSpace:\s*'normal'/)
-  assert.match(theme, /forced-colors: active[\s\S]*3px solid Highlight/)
+  assert.match(theme, /forced-colors: active[\s\S]*Mui-focusVisible[\s\S]*CanvasText/)
 })
 
 
