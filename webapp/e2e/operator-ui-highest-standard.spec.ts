@@ -101,13 +101,19 @@ async function textContrastViolations(page: Page): Promise<AccessibilityViolatio
     type Rgba = { r: number; g: number; b: number; a: number }
     const failures: AccessibilityViolation[] = []
     const parseColor = (value: string): Rgba | null => {
-      const match = value.match(/rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)/i)
+      const match = value.match(/rgba?\(\s*([\d.]+%?)[, ]+\s*([\d.]+%?)[, ]+\s*([\d.]+%?)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/i)
       if (!match) return null
+      const channelValue = (source: string) => Math.min(255, Math.max(0, source.endsWith('%') ? Number(source.slice(0, -1)) * 2.55 : Number(source)))
+      const alphaValue = (source: string | undefined) => {
+        if (source === undefined) return 1
+        const raw = source.endsWith('%') ? Number(source.slice(0, -1)) / 100 : Number(source)
+        return Math.min(1, Math.max(0, raw))
+      }
       return {
-        r: Number(match[1]),
-        g: Number(match[2]),
-        b: Number(match[3]),
-        a: match[4] === undefined ? 1 : Number(match[4]),
+        r: channelValue(match[1]),
+        g: channelValue(match[2]),
+        b: channelValue(match[3]),
+        a: alphaValue(match[4]),
       }
     }
     const composite = (top: Rgba, bottom: Rgba): Rgba => {
@@ -150,7 +156,10 @@ async function textContrastViolations(page: Page): Promise<AccessibilityViolatio
       let current: Element | null = element
       while (current) {
         const color = parseColor(window.getComputedStyle(current).backgroundColor)
-        if (color && color.a > 0) layers.push(color)
+        if (color && color.a > 0) {
+          layers.push(color)
+          if (color.a >= 0.999) break
+        }
         current = current.parentElement
       }
       let background: Rgba = { r: 255, g: 255, b: 255, a: 1 }
