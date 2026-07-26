@@ -29,10 +29,11 @@ export function queueSourcePresentation(source: UnifiedOperatorQueueItem['source
   return { label: '客服工单', tone: 'default' }
 }
 
-export function priorityPresentation(priority: UnifiedOperatorQueueItem['priority']): OperationalPresentation {
-  if (priority === 'urgent') return { label: '紧急', tone: 'danger' }
-  if (priority === 'high') return { label: '高优先级', tone: 'warning' }
-  if (priority === 'low') return { label: '低优先级', tone: 'default' }
+export function priorityPresentation(priority: string | null | undefined): OperationalPresentation {
+  const value = normalizeOperationalStatus(priority)
+  if (value === 'urgent') return { label: '紧急', tone: 'danger' }
+  if (value === 'high') return { label: '高优先级', tone: 'warning' }
+  if (value === 'low') return { label: '低优先级', tone: 'default' }
   return { label: '普通', tone: 'default' }
 }
 
@@ -106,6 +107,54 @@ export function sourceStatusPresentation(value: string): OperationalPresentation
 function sanitizeSourceStatus(value: string) {
   const compact = String(value || '').trim()
   return compact || '状态未知'
+}
+
+const CLOSURE_REQUIREMENT_LABELS: Record<string, string> = {
+  'tracking.current_status': '最新物流状态',
+  'tracking.delivery_attempt': '有效派送尝试',
+  'tracking.return_status': '退件状态',
+  customer_confirmation: '客户确认',
+  customer_notified: '客户通知',
+  operational_completed: '运营处理完成',
+  business_result_confirmed: '业务结果确认',
+  repair_required: '修复失败结果',
+  observation_period: '观察期',
+}
+
+export function closureRequirementPresentation(value: string): OperationalPresentation {
+  const normalized = normalizeOperationalStatus(value)
+  const direct = CLOSURE_REQUIREMENT_LABELS[normalized]
+  if (direct) {
+    return {
+      label: direct,
+      tone: normalized === 'repair_required' ? 'danger' : 'warning',
+    }
+  }
+  if (normalized.startsWith('fact:')) return { label: '补充权威事实', tone: 'warning' }
+  if (normalized.startsWith('customer_input:')) return { label: '补充客户输入', tone: 'warning' }
+  if (normalized.startsWith('action:')) return { label: '完成受控动作', tone: 'warning' }
+  if (normalized.startsWith('outcome:')) return { label: '确认业务结果', tone: 'warning' }
+  if (normalized.startsWith('notification:')) return { label: '完成客户通知', tone: 'warning' }
+  return { label: '核对关闭条件', tone: 'warning' }
+}
+
+const SCENARIO_LABELS: Record<string, string> = {
+  'parcel.delay': '包裹延误',
+  'parcel.lost': '包裹丢失',
+  'parcel.damaged': '包裹破损',
+  'delivery.failed': '派送失败',
+  'delivery.address_change': '修改派送地址',
+  'delivery.return': '退件处理',
+}
+
+export function scenarioPresentation(value: unknown): OperationalPresentation {
+  const normalized = normalizeOperationalStatus(value)
+  if (!normalized) return { label: '未识别处理场景', tone: 'warning' }
+  return {
+    label: SCENARIO_LABELS[normalized] || '受控处理场景',
+    detail: normalized,
+    tone: 'default',
+  }
 }
 
 export type EvidenceClass =
