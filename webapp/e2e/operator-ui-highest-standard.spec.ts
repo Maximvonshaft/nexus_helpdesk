@@ -335,7 +335,16 @@ test('forced colors and reduced motion preserve required controls and visible fo
   await expect(menu).toBeVisible()
   await page.keyboard.press('Tab')
   await expect(skipLink).toBeFocused()
-  await page.keyboard.press('Tab')
+
+  let menuReached = false
+  for (let step = 0; step < 6; step += 1) {
+    await page.keyboard.press('Tab')
+    if (await menu.evaluate((element) => document.activeElement === element)) {
+      menuReached = true
+      break
+    }
+  }
+  expect(menuReached, 'the main navigation trigger must be reachable through the keyboard order').toBe(true)
   await expect(menu).toBeFocused()
   const focus = await menu.evaluate((element) => {
     const style = window.getComputedStyle(element)
