@@ -55,6 +55,7 @@ export function OperatorWorkspaceConversation({
   const [nearBottom, setNearBottom] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement | null>(null)
+  const bottomScrollFrameRef = useRef<number | null>(null)
   const previousLatestMessageIdRef = useRef<string | number | undefined>(thread?.messages.at(-1)?.id)
   const ticketReplyAllowed = Boolean(
     item.ticket_id
@@ -72,21 +73,59 @@ export function OperatorWorkspaceConversation({
   const canReply = ticketReplyAllowed || conversationReplyAllowed
 
   useEffect(() => {
+    if (bottomScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomScrollFrameRef.current)
+      bottomScrollFrameRef.current = null
+    }
     setReply('')
     setNearBottom(true)
     setNewMessageCount(0)
     previousLatestMessageIdRef.current = undefined
   }, [item.queue_id])
 
+  useEffect(() => () => {
+    if (bottomScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomScrollFrameRef.current)
+    }
+  }, [])
+
   const scrollTimelineToBottom = (behavior: ScrollBehavior = 'auto') => {
     const list = messagesRef.current
     if (!list) return
-    list.scrollTo({ top: list.scrollHeight, behavior })
-    window.requestAnimationFrame(() => {
-      if (list.scrollHeight - list.scrollTop - list.clientHeight > 4) {
-        list.scrollTo({ top: list.scrollHeight, behavior: 'auto' })
-      }
-    })
+    if (bottomScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomScrollFrameRef.current)
+      bottomScrollFrameRef.current = null
+    }
+
+    const maximumAttempts = 12
+    const minimumAttempts = 4
+    let attempts = 0
+    let stableFrames = 0
+    let previousHeight = list.scrollHeight
+
+    const settle = (requestedBehavior: ScrollBehavior) => {
+      if (messagesRef.current !== list) return
+      list.scrollTo({ top: list.scrollHeight, behavior: requestedBehavior })
+      bottomScrollFrameRef.current = window.requestAnimationFrame(() => {
+        if (messagesRef.current !== list) {
+          bottomScrollFrameRef.current = null
+          return
+        }
+        attempts += 1
+        const currentHeight = list.scrollHeight
+        const distanceFromBottom = currentHeight - list.scrollTop - list.clientHeight
+        stableFrames = distanceFromBottom <= 4 && currentHeight === previousHeight ? stableFrames + 1 : 0
+        previousHeight = currentHeight
+        if ((attempts >= minimumAttempts && stableFrames >= 2) || attempts >= maximumAttempts) {
+          if (distanceFromBottom > 4) list.scrollTop = list.scrollHeight
+          bottomScrollFrameRef.current = null
+          return
+        }
+        settle('auto')
+      })
+    }
+
+    settle(behavior)
   }
 
   useLayoutEffect(() => {
