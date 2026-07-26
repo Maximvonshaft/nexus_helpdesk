@@ -99,6 +99,7 @@ test('normal and empty canonical surfaces match visual baselines', async ({ page
 
   await page.goto('/administration')
   await expect(page.getByRole('heading', { level: 1, name: '系统管理' })).toBeVisible()
+  await expect(page.getByText('Responsive Operations Administrator')).toBeVisible()
   await expectVisual(page, 'administration-normal-1440')
 })
 
@@ -190,6 +191,7 @@ test('stale close conflict requires review and matches the conflict visual basel
   const dialog = page.getByRole('dialog', { name: '确认安全关闭工单？' })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: '确认安全关闭' }).click()
+  await expect(dialog).not.toBeVisible()
   await expect(page.getByText('关闭条件已发生变化')).toBeVisible()
   await expect(page.getByText('已安全关闭')).toHaveCount(0)
   await expectVisual(page, 'workspace-stale-conflict-1440')
