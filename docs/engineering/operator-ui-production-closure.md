@@ -43,11 +43,13 @@ No second frontend, shell, design system, responsive state source, route registr
 
 ## Visual regression authority
 
-`webapp/e2e/visualSnapshot.ts` is the sole visual-signature authority. Each required state is rendered by the Playwright-pinned browser with deterministic screenshot options and compared byte-for-byte through a reviewed SHA-256 signature. Any pixel change blocks the frontend job.
+Reviewed PNG baselines under `webapp/e2e/__screenshots__/` are the sole visual-regression authority. The Playwright-pinned Chromium engine compares every required state through `toHaveScreenshot` with animations disabled, caret hidden, CSS-pixel scaling and a maximum changed-pixel ratio of `0.001`.
 
-Every canonical run attaches the exact actual PNG for the accepted state. A signature may be updated only after that PNG is inspected against the corresponding product and code change. The repository does not carry a second binary-baseline transport, generated Base64 payload, screenshot acceptance workflow or auto-update path.
+The tolerance absorbs bounded browser antialiasing noise while still blocking material layout, content, contrast and interaction-state changes. On failure, Playwright retains expected, actual and diff images in the canonical frontend evidence.
 
-The release-blocking signature set covers:
+A baseline may change only with the corresponding product or implementation change and human review of the rendered PNG. The repository has no generated Base64 payload, exact-byte hash authority, screenshot auto-accept workflow or parallel visual test path.
+
+The release-blocking baseline set covers:
 
 - normal and empty canonical surfaces;
 - slow loading;
@@ -56,7 +58,7 @@ The release-blocking signature set covers:
 - repair-required state;
 - 200% enlarged-text reflow.
 
-Deleting a signature, bypassing the hash comparison or updating a digest without reviewing the rendered PNG is not an accepted fix.
+Deleting a baseline, raising the tolerance to conceal a product regression or regenerating images without reviewing the rendered state is not an accepted fix.
 
 ## Browser support
 
@@ -69,7 +71,7 @@ Production UI acceptance requires one unchanged exact Head with:
 - architecture, lint, TypeScript, unit contracts and production build;
 - manifest-derived bundle budget and dynamic-route isolation;
 - browser journeys at representative desktop, tablet, mobile and 320-pixel reflow sizes;
-- reviewed visual signatures for normal, loading, empty, degraded, conflict, repair-required and enlarged-text states;
+- reviewed visual baselines for normal, loading, empty, degraded, conflict, repair-required and enlarged-text states;
 - semantic landmarks, accessible names, natural focus order and keyboard journeys;
 - text contrast, target size, Forced Colors, reduced motion and 200% text evidence;
 - representative-volume queue and timeline evidence;
