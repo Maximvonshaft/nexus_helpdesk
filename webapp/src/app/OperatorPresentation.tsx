@@ -255,7 +255,7 @@ export function OperatorTechnicalDisclosure({
     >
       <AccordionSummary
         expandIcon={<ExpandMoreRoundedIcon />}
-        sx={compact ? { minHeight: 36, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } } : undefined}
+        sx={compact ? { minHeight: 44, px: 0, '& .MuiAccordionSummary-content': { my: 0.5 } } : undefined}
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography variant={compact ? 'caption' : 'subtitle2'} color={compact ? 'text.secondary' : 'text.primary'} sx={{ overflowWrap: 'anywhere' }}>
