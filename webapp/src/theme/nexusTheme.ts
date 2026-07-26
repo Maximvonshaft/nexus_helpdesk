@@ -124,7 +124,8 @@ export const nexusTheme = createTheme({
         },
         '@media (forced-colors: active)': {
           '*:focus-visible': {
-            outlineColor: 'Highlight !important',
+            outline: '3px solid Highlight !important',
+            outlineOffset: '2px !important',
           },
         },
       },
