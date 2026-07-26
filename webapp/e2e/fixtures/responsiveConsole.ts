@@ -8,7 +8,7 @@ export const responsiveUser = {
   display_name: 'Responsive Operations Administrator',
   email: 'responsive@example.test',
   role: 'admin',
-  team_id: null,
+  team_id: 1,
   must_change_password: false,
   mfa_enabled: false,
   last_login_at: '2026-07-24T05:00:00Z',
@@ -54,6 +54,43 @@ export const responsiveAgentState = {
   heartbeat_ttl_seconds: 90,
 }
 
+const responsiveRolePolicies = [
+  { role: 'admin', default_capabilities: responsiveUser.capabilities },
+  { role: 'agent', default_capabilities: ['operator_queue.read', 'ticket.read', 'webchat.handoff.accept'] },
+]
+
+const responsiveTeams = [{
+  id: 1,
+  name: 'Switzerland Operations',
+  team_type: 'operations',
+  market_id: 1,
+  is_active: true,
+  active_users: 1,
+  created_at: '2026-07-20T05:00:00Z',
+  updated_at: '2026-07-24T05:00:00Z',
+}]
+
+const responsiveMarkets = [{
+  id: 1,
+  code: 'CH',
+  name: 'Switzerland',
+  country_code: 'CH',
+  language_code: 'de',
+  timezone: 'Europe/Zurich',
+}]
+
+const responsiveAdminUsers = {
+  items: [{
+    ...responsiveUser,
+    is_active: true,
+    created_at: '2026-07-20T05:00:00Z',
+    updated_at: '2026-07-24T05:00:00Z',
+  }],
+  next_cursor: null,
+  has_more: false,
+  filters: { limit: 100, include_inactive: true },
+}
+
 export function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({
     status,
@@ -71,6 +108,10 @@ export async function fulfillResponsiveApi(route: Route) {
   if (path === '/api/operator/agent-state/heartbeat') return json(route, responsiveAgentState)
   if (path === '/api/webchat/admin/voice/sessions') return json(route, { items: [] })
   if (path === '/api/observability/frontend-metrics') return route.fulfill({ status: 204 })
+  if (path === '/api/admin/identity/roles') return json(route, responsiveRolePolicies)
+  if (path === '/api/admin/identity/teams') return json(route, responsiveTeams)
+  if (path === '/api/lookups/markets') return json(route, responsiveMarkets)
+  if (path === '/api/admin/users') return json(route, responsiveAdminUsers)
   if (path === '/api/admin/operator-queue/my-scopes') {
     return json(route, {
       items: [{ tenant_key: 'default', tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' }],
