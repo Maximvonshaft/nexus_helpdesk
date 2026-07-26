@@ -77,8 +77,9 @@ function handleWebVital(event: Event) {
     kind: 'web_vital',
     name: detail.name,
     rating: detail.rating,
-    // Prometheus stores LCP/INP in seconds and CLS as its unitless score.
-    value: detail.name === 'CLS' ? raw : raw / 1_000,
+    // The browser emits LCP/INP in milliseconds. The backend owns the single
+    // conversion to histogram seconds; CLS remains its unitless raw score.
+    value: raw,
   })
 }
 
