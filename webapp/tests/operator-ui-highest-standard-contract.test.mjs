@@ -19,6 +19,9 @@ const webcallRoute = read('src/routes/webcall.tsx')
 const webcallLazy = read('src/features/webcall/lazy.tsx')
 const presentation = read('src/lib/operatorWorkspacePresentation.ts')
 const closure = read('src/features/operator-workspace/OperatorWorkspaceClosure.tsx')
+const playwright = read('playwright.config.ts')
+const productionBrowser = read('e2e/operator-ui-production-quality.spec.ts')
+const highestStandardBrowser = read('e2e/operator-ui-highest-standard.spec.ts')
 
 
 test('text enlargement and viewport width resolve through one responsive-layout authority', () => {
@@ -31,6 +34,8 @@ test('text enlargement and viewport width resolve through one responsive-layout 
   assert.match(layoutProvider, /OperatorLayoutProvider/)
   assert.match(shell, /<OperatorLayoutProvider>/)
   assert.match(shell, /useOperatorLayoutMode\(\)/)
+  assert.match(shell, /operator-drawer-user-label/)
+  assert.doesNotMatch(shell, /operator-drawer-user-label[\s\S]{0,180}noWrap/)
   assert.match(workspace, /useOperatorLayoutMode\(\)/)
   assert.match(queue, /desktopLayout/)
   assert.match(casePane, /desktopLayout/)
@@ -45,6 +50,7 @@ test('form and compact status controls grow with enlarged text instead of clippi
   assert.match(theme, /MuiSwitch:[\s\S]*switchBase:[\s\S]*minHeight:\s*44/)
   assert.match(theme, /MuiChip:[\s\S]*height:\s*'auto'/)
   assert.match(theme, /MuiChip:[\s\S]*whiteSpace:\s*'normal'/)
+  assert.match(theme, /forced-colors: active[\s\S]*3px solid Highlight/)
 })
 
 
@@ -73,4 +79,17 @@ test('primary workspace facts consume business presentation instead of raw backe
   assert.match(closure, /scenarioPresentation/)
   assert.match(casePane, /sourceStatusPresentation/)
   assert.match(casePane, /priorityPresentation/)
+})
+
+
+test('visual and accessibility evidence is release-blocking rather than artifact-only', () => {
+  assert.match(playwright, /snapshotPathTemplate/)
+  assert.match(playwright, /toHaveScreenshot/)
+  assert.match(playwright, /maxDiffPixelRatio:\s*0\.001/)
+  assert.match(productionBrowser, /toHaveScreenshot/)
+  assert.doesNotMatch(productionBrowser, /page\.screenshot\(/)
+  assert.match(highestStandardBrowser, /toHaveScreenshot/)
+  assert.match(highestStandardBrowser, /textContrastViolations/)
+  assert.match(highestStandardBrowser, /semanticAccessibilityViolations/)
+  assert.match(highestStandardBrowser, /formTextOverlaps/)
 })
