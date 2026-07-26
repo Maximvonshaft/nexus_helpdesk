@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, UniqueConstraint, event
+from sqlalchemy.orm import Mapped, mapped_column, object_session
 
 from .db import Base
+from .models import Ticket
+from .models_case_governance import TicketSLAAssignment
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
@@ -81,3 +83,37 @@ class TicketSLATarget(Base):
         onupdate=utc_now,
     )
     source_revision: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+@event.listens_for(Ticket.sla_policy_id, "set", retval=True, active_history=True)
+def preserve_assigned_sla_policy_id(
+    ticket: Ticket,
+    value: int | None,
+    old_value,
+    initiator,
+):
+    """Keep the bounded Ticket cache aligned to the immutable assignment.
+
+    ``apply_policy_to_ticket`` is called again when mutable priority or status
+    changes. Once a Case has an immutable SLA assignment, no later caller may
+    replace the cached policy family with a newly selected mutable policy. The
+    assignment snapshot remains the sole historical contract.
+    """
+
+    del old_value, initiator
+    session = object_session(ticket)
+    if session is None or ticket.id is None:
+        return value
+    with session.no_autoflush:
+        snapshot = (
+            session.query(TicketSLAAssignment.snapshot_json)
+            .filter(TicketSLAAssignment.ticket_id == ticket.id)
+            .scalar()
+        )
+    if not isinstance(snapshot, dict):
+        return value
+    assigned_policy_id = snapshot.get("policy_id")
+    try:
+        return int(assigned_policy_id)
+    except (TypeError, ValueError):
+        return value
