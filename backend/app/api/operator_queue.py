@@ -57,11 +57,11 @@ def _query_limit(value) -> int:
 
 def _actor_scope(db: Session, current_user):
     try:
-        return actor_tenant_query_scope(
-            db,
-            current_user,
-            require_bound_tenant=True,
-        )
+        # Production enforce mode rejects an unbound actor in
+        # resolve_actor_tenant_id. In non-production shadow mode the same helper
+        # returns the isolated NULL/default migration scope rather than widening
+        # the query to platform-global data.
+        return actor_tenant_query_scope(db, current_user)
     except TenantQueryScopeError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -182,7 +182,7 @@ def remove_operator_queue_scope_grant(
 
 @router.get("", response_model=OperatorTaskListResponse)
 def get_operator_queue(
-    status_value: str | None = Query(default=None, alias="status"),
+    status: str | None = Query(default=None),
     source_type: str | None = Query(default=None),
     task_type: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
@@ -196,7 +196,7 @@ def get_operator_queue(
         return list_operator_tasks(
             db,
             tenant_id=scope.tenant_id,
-            status=_optional_query_string(status_value),
+            status=_optional_query_string(status),
             source_type=_optional_query_string(source_type),
             task_type=_optional_query_string(task_type),
             cursor=_optional_query_string(cursor),
