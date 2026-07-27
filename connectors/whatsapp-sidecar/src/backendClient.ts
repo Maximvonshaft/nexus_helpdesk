@@ -13,6 +13,7 @@ import {
 import { connectorBinaryHeaders, connectorHeaders } from "./security.js";
 import { assertSafeAccountId } from "./sessionStore.js";
 import type {
+  DesiredAccount,
   DesiredAccountResponse,
   NormalizedInboundMessage,
   SidecarConfig,
@@ -114,13 +115,7 @@ export class BackendClient {
       "reconciler",
       payload
     );
-    if (
-      response.ok !== true ||
-      !Array.isArray((response as DesiredAccountResponse).accounts)
-    ) {
-      throw new Error("invalid_desired_account_response");
-    }
-    return response as DesiredAccountResponse;
+    return parseDesiredAccountResponse(response);
   }
 
   async flushCallbacks(): Promise<{ delivered: number; pending: number }> {
@@ -166,7 +161,7 @@ export class BackendClient {
           filename: envelope.file_name,
           sha256: envelope.sha256
         }),
-        body: envelope.content,
+        body: Uint8Array.from(envelope.content),
         signal: controller.signal
       });
       if (!response.ok) {
@@ -208,6 +203,30 @@ export class BackendClient {
       clearTimeout(timeout);
     }
   }
+}
+
+function parseDesiredAccountResponse(
+  response: Record<string, unknown>
+): DesiredAccountResponse {
+  if (response.ok !== true || !Array.isArray(response.accounts)) {
+    throw new Error("invalid_desired_account_response");
+  }
+  const accounts: DesiredAccount[] = response.accounts.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error("invalid_desired_account_response");
+    }
+    const value = candidate as Record<string, unknown>;
+    const accountId = assertSafeAccountId(String(value.account_id || ""));
+    const generation = Number(value.generation);
+    if (!Number.isSafeInteger(generation) || generation < 0) {
+      throw new Error("invalid_desired_account_response");
+    }
+    return {
+      account_id: accountId,
+      generation
+    };
+  });
+  return { ok: true, accounts };
 }
 
 function payloadIdentity(payload: unknown): string {
