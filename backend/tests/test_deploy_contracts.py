@@ -130,9 +130,9 @@ def _volume_targets(service: dict) -> set[str]:
     targets: set[str] = set()
     for value in service.get("volumes") or []:
         if isinstance(value, str):
-            parts = value.split(":")
+            parts = value.rsplit(":", 2)
             if len(parts) >= 2:
-                targets.add(parts[1])
+                targets.add(parts[-2])
         elif isinstance(value, dict) and value.get("target"):
             targets.add(str(value["target"]))
     return targets
