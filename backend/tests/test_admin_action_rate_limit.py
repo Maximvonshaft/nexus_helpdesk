@@ -23,7 +23,13 @@ from app.auth_service import create_access_token, hash_password  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.enums import JobStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AdminActionRateLimitBucket, AdminAuditLog, BackgroundJob, User  # noqa: E402
+from app.models import (  # noqa: E402
+    AdminActionRateLimitBucket,
+    AdminAuditLog,
+    BackgroundJob,
+    User,
+)
+from app.models_job_scope import BackgroundJobScope  # noqa: E402
 from app.services import admin_action_rate_limit as rate_limit_service  # noqa: E402
 from app.api import admin as admin_api  # noqa: E402
 from app.api import admin_queue as admin_queue_api  # noqa: E402
@@ -130,6 +136,15 @@ def test_requeue_endpoint_is_guarded_by_rate_limit(client):
             max_attempts=3,
         )
         db.add(job)
+        db.flush()
+        scope = db.get(BackgroundJobScope, job.id)
+        assert scope is not None
+        scope.scope_type = "platform"
+        scope.tenant_id = None
+        scope.customer_id = None
+        scope.purpose = "administration"
+        scope.resource_type = "background_job"
+        scope.resource_id = str(job.id)
         db.commit()
         db.refresh(job)
         job_id = job.id
