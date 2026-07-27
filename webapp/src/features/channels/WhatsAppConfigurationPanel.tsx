@@ -281,7 +281,6 @@ function WhatsAppConnectionCard({ connection, onChanged }: { connection: WhatsAp
             <Chip color={operatorToneColor(state.tone)} label={state.label} />
             <Chip variant="outlined" label={transportLabel(connection.transport)} />
           </Stack>
-          <Typography variant="caption" color="text.secondary">账号标识：{sanitizeDisplayText(connection.account_id)}</Typography>
         </Box>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <Button size="small" variant="contained" disabled={mutation.isPending} onClick={() => mutation.mutate('bind')}>{connection.transport === 'meta_cloud_api' ? '订阅并验证' : '开始绑定'}</Button>
@@ -343,6 +342,7 @@ function WhatsAppConnectionCard({ connection, onChanged }: { connection: WhatsAp
 
       <OperatorTechnicalDisclosure title="技术与审计信息">
         <OperatorFactGrid facts={[
+          ['Nexus Account ID', connection.account_id],
           ['Connection ID', connection.id],
           ['Channel Account ID', connection.channel_account_id],
           ['WABA ID', connection.waba_id || '不适用'],
