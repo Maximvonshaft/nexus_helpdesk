@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OperatorTaskRead(BaseModel):
     id: int
-    tenant_id: int = Field(gt=0)
+    tenant_id: int | None = Field(default=None, gt=0)
     source_type: str
     source_id: str | None = None
     source_version: int | None = None
