@@ -1,4 +1,4 @@
-"""Add canonical Tenant-scoped channel intake authorities.
+"""Add canonical Tenant and legacy-shadow channel intake authorities.
 
 Revision ID: 20260727_r4p0
 Revises: 20260727_aud9
@@ -23,7 +23,7 @@ def _assert_no_identity_collisions(bind) -> None:
         "external_ref": "lower(trim(external_ref))",
     }
     for identity_type, expression in checks.items():
-        collision_count = int(
+        real_collisions = int(
             bind.execute(
                 sa.text(
                     "SELECT count(*) FROM ("
@@ -42,10 +42,29 @@ def _assert_no_identity_collisions(bind) -> None:
             ).scalar()
             or 0
         )
-        if collision_count:
+        shadow_collisions = int(
+            bind.execute(
+                sa.text(
+                    "SELECT count(*) FROM ("
+                    " SELECT "
+                    + expression
+                    + " AS identity_value, count(*) AS c"
+                    " FROM customers"
+                    " WHERE tenant_id IS NULL AND "
+                    + expression
+                    + " <> ''"
+                    " GROUP BY "
+                    + expression
+                    + " HAVING count(*) > 1"
+                    ") collisions"
+                )
+            ).scalar()
+            or 0
+        )
+        if real_collisions or shadow_collisions:
             raise RuntimeError(
                 "customer_identity_collision_requires_explicit_remediation:"
-                f"{identity_type}:{collision_count}"
+                f"{identity_type}:tenant={real_collisions}:shadow={shadow_collisions}"
             )
 
 
@@ -56,7 +75,7 @@ def upgrade() -> None:
     op.create_table(
         "customer_identity_bindings",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("tenant_id", sa.Integer(), nullable=False),
+        sa.Column("tenant_id", sa.Integer(), nullable=True),
         sa.Column("customer_id", sa.Integer(), nullable=False),
         sa.Column("identity_type", sa.String(length=32), nullable=False),
         sa.Column("normalized_value", sa.String(length=320), nullable=False),
@@ -78,12 +97,6 @@ def upgrade() -> None:
             ["tenant_id"], ["tenants.id"], ondelete="RESTRICT"
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "tenant_id",
-            "identity_type",
-            "normalized_value",
-            name="uq_customer_identity_tenant_type_value",
-        ),
     )
     op.create_index(
         "ix_customer_identity_bindings_tenant_id",
@@ -104,47 +117,51 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
+        "uq_customer_identity_tenant_type_value",
+        "customer_identity_bindings",
+        ["tenant_id", "identity_type", "normalized_value"],
+        unique=True,
+        postgresql_where=sa.text("tenant_id IS NOT NULL"),
+        sqlite_where=sa.text("tenant_id IS NOT NULL"),
+    )
+    op.create_index(
+        "uq_customer_identity_shadow_type_value",
+        "customer_identity_bindings",
+        ["identity_type", "normalized_value"],
+        unique=True,
+        postgresql_where=sa.text("tenant_id IS NULL"),
+        sqlite_where=sa.text("tenant_id IS NULL"),
+    )
+    op.create_index(
         "ix_customer_identity_customer",
         "customer_identity_bindings",
         ["tenant_id", "customer_id", "identity_type"],
         unique=False,
     )
 
-    bind.execute(
-        sa.text(
-            "INSERT INTO customer_identity_bindings "
-            "(tenant_id, customer_id, identity_type, normalized_value, source, created_at, updated_at) "
-            "SELECT tenant_id, id, 'email', lower(trim(coalesce(email_normalized, email))), "
-            "'migration_backfill', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
-            "FROM customers WHERE tenant_id IS NOT NULL "
-            "AND lower(trim(coalesce(email_normalized, email))) <> ''"
+    for identity_type, expression in (
+        ("email", "lower(trim(coalesce(email_normalized, email)))"),
+        ("phone", "trim(coalesce(phone_normalized, phone))"),
+        ("external_ref", "lower(trim(external_ref))"),
+    ):
+        bind.execute(
+            sa.text(
+                "INSERT INTO customer_identity_bindings "
+                "(tenant_id, customer_id, identity_type, normalized_value, source, created_at, updated_at) "
+                "SELECT tenant_id, id, :identity_type, "
+                + expression
+                + ", 'migration_backfill', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                "FROM customers WHERE "
+                + expression
+                + " <> ''"
+            ),
+            {"identity_type": identity_type},
         )
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO customer_identity_bindings "
-            "(tenant_id, customer_id, identity_type, normalized_value, source, created_at, updated_at) "
-            "SELECT tenant_id, id, 'phone', trim(coalesce(phone_normalized, phone)), "
-            "'migration_backfill', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
-            "FROM customers WHERE tenant_id IS NOT NULL "
-            "AND trim(coalesce(phone_normalized, phone)) <> ''"
-        )
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO customer_identity_bindings "
-            "(tenant_id, customer_id, identity_type, normalized_value, source, created_at, updated_at) "
-            "SELECT tenant_id, id, 'external_ref', lower(trim(external_ref)), "
-            "'migration_backfill', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
-            "FROM customers WHERE tenant_id IS NOT NULL "
-            "AND lower(trim(external_ref)) <> ''"
-        )
-    )
 
     op.create_table(
         "email_intake_quarantine",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("tenant_id", sa.Integer(), nullable=False),
+        sa.Column("tenant_id", sa.Integer(), nullable=True),
         sa.Column("account_id", sa.Integer(), nullable=False),
         sa.Column("provider_message_id", sa.String(length=255), nullable=False),
         sa.Column("mailbox_uid", sa.String(length=80), nullable=False),
@@ -178,121 +195,53 @@ def upgrade() -> None:
             ["ticket_id"], ["tickets.id"], ondelete="SET NULL"
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "account_id",
-            "provider_message_id",
-            name="uq_email_intake_quarantine_account_provider_message",
+    )
+    op.create_index(
+        "uq_email_intake_quarantine_account_provider_message",
+        "email_intake_quarantine",
+        ["account_id", "provider_message_id"],
+        unique=True,
+    )
+    for name, columns in (
+        ("ix_email_intake_quarantine_tenant_id", ["tenant_id"]),
+        ("ix_email_intake_quarantine_account_id", ["account_id"]),
+        ("ix_email_intake_quarantine_provider_message_id", ["provider_message_id"]),
+        ("ix_email_intake_quarantine_from_address", ["from_address"]),
+        ("ix_email_intake_quarantine_status", ["status"]),
+        ("ix_email_intake_quarantine_conversation_id", ["conversation_id"]),
+        ("ix_email_intake_quarantine_ticket_id", ["ticket_id"]),
+        ("ix_email_intake_quarantine_created_at", ["created_at"]),
+        (
+            "ix_email_intake_quarantine_tenant_status",
+            ["tenant_id", "status", "created_at"],
         ),
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_tenant_id",
-        "email_intake_quarantine",
-        ["tenant_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_account_id",
-        "email_intake_quarantine",
-        ["account_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_provider_message_id",
-        "email_intake_quarantine",
-        ["provider_message_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_from_address",
-        "email_intake_quarantine",
-        ["from_address"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_status",
-        "email_intake_quarantine",
-        ["status"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_conversation_id",
-        "email_intake_quarantine",
-        ["conversation_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_ticket_id",
-        "email_intake_quarantine",
-        ["ticket_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_created_at",
-        "email_intake_quarantine",
-        ["created_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_email_intake_quarantine_tenant_status",
-        "email_intake_quarantine",
-        ["tenant_id", "status", "created_at"],
-        unique=False,
-    )
+    ):
+        op.create_index(name, "email_intake_quarantine", columns, unique=False)
 
 
 def downgrade() -> None:
-    op.drop_index(
+    for name in (
         "ix_email_intake_quarantine_tenant_status",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_created_at",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_ticket_id",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_conversation_id",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_status",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_from_address",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_provider_message_id",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_account_id",
-        table_name="email_intake_quarantine",
-    )
-    op.drop_index(
         "ix_email_intake_quarantine_tenant_id",
-        table_name="email_intake_quarantine",
-    )
+        "uq_email_intake_quarantine_account_provider_message",
+    ):
+        op.drop_index(name, table_name="email_intake_quarantine")
     op.drop_table("email_intake_quarantine")
 
-    op.drop_index(
+    for name in (
         "ix_customer_identity_customer",
-        table_name="customer_identity_bindings",
-    )
-    op.drop_index(
+        "uq_customer_identity_shadow_type_value",
+        "uq_customer_identity_tenant_type_value",
         "ix_customer_identity_bindings_identity_type",
-        table_name="customer_identity_bindings",
-    )
-    op.drop_index(
         "ix_customer_identity_bindings_customer_id",
-        table_name="customer_identity_bindings",
-    )
-    op.drop_index(
         "ix_customer_identity_bindings_tenant_id",
-        table_name="customer_identity_bindings",
-    )
+    ):
+        op.drop_index(name, table_name="customer_identity_bindings")
     op.drop_table("customer_identity_bindings")
