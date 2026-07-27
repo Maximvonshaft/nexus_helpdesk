@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..models import WhatsAppInboundMessage
 from ..models_whatsapp import WhatsAppConnection, WhatsAppMediaAsset
 from ..models_whatsapp_outbound import WhatsAppOutboundPart
+from .whatsapp_inbound import WhatsAppInboundError, ingest_whatsapp_inbound
 
 
 class WhatsAppUatEvidenceError(ValueError):
@@ -21,6 +22,75 @@ class WhatsAppUatSelection:
     outbound_provider_message_id: str
     media_inbound_provider_message_id: str | None = None
     media_outbound_provider_message_id: str | None = None
+
+
+def replay_whatsapp_uat_inbound(
+    db: Session,
+    *,
+    connection: WhatsAppConnection,
+    provider_message_id: str,
+) -> dict[str, Any]:
+    provider_id = _safe_provider_id(
+        provider_message_id,
+        "whatsapp_uat_inbound_provider_id_invalid",
+    )
+    inbound = (
+        db.query(WhatsAppInboundMessage)
+        .filter(
+            WhatsAppInboundMessage.channel_account_id
+            == connection.channel_account_id,
+            WhatsAppInboundMessage.external_message_id == provider_id,
+            WhatsAppInboundMessage.processed_at.isnot(None),
+        )
+        .first()
+    )
+    if inbound is None:
+        raise WhatsAppUatEvidenceError("whatsapp_uat_inbound_not_found")
+    raw = (
+        dict(inbound.raw_payload_json)
+        if isinstance(inbound.raw_payload_json, dict)
+        else {}
+    )
+    raw.update(
+        {
+            "transport": connection.transport,
+            "account_id": connection.channel_account.account_id,
+            "external_message_id": inbound.external_message_id,
+            "chat_jid": inbound.chat_jid,
+            "sender_jid": inbound.sender_jid,
+            "sender_phone": inbound.sender_phone,
+            "message_type": inbound.message_type,
+            "body_text": inbound.body_text,
+            "received_at": _timestamp(inbound.received_at),
+        }
+    )
+    try:
+        result = ingest_whatsapp_inbound(db, raw)
+    except WhatsAppInboundError as exc:
+        code = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "whatsapp_uat_replay_failed"
+        raise WhatsAppUatEvidenceError(code) from exc
+    if (
+        result.idempotent is not True
+        or result.inbound_message_id != inbound.id
+        or result.ticket_id != inbound.ticket_id
+        or result.conversation_id != inbound.conversation_id
+        or result.webchat_message_id != inbound.webchat_message_id
+    ):
+        raise WhatsAppUatEvidenceError("whatsapp_uat_idempotent_replay_failed")
+    db.flush()
+    return {
+        "ok": True,
+        "idempotent": True,
+        "connection_id": connection.id,
+        "transport": connection.transport,
+        "provider_message_id": inbound.external_message_id,
+        "inbound_message_id": inbound.id,
+        "ticket_id": inbound.ticket_id,
+        "conversation_id": inbound.conversation_id,
+        "webchat_message_id": inbound.webchat_message_id,
+        "contains_secrets": False,
+        "contains_full_phone_numbers": False,
+    }
 
 
 def collect_whatsapp_uat_facts(
@@ -87,7 +157,9 @@ def collect_whatsapp_uat_facts(
             selection.media_inbound_provider_message_id
             and selection.media_outbound_provider_message_id
         ):
-            raise WhatsAppUatEvidenceError("whatsapp_uat_media_selection_incomplete")
+            raise WhatsAppUatEvidenceError(
+                "whatsapp_uat_media_selection_incomplete"
+            )
         media_inbound = (
             db.query(WhatsAppInboundMessage)
             .filter(
@@ -100,7 +172,9 @@ def collect_whatsapp_uat_facts(
             .first()
         )
         if media_inbound is None:
-            raise WhatsAppUatEvidenceError("whatsapp_uat_media_inbound_not_found")
+            raise WhatsAppUatEvidenceError(
+                "whatsapp_uat_media_inbound_not_found"
+            )
         asset = (
             db.query(WhatsAppMediaAsset)
             .filter(
@@ -111,7 +185,9 @@ def collect_whatsapp_uat_facts(
             .first()
         )
         if asset is None:
-            raise WhatsAppUatEvidenceError("whatsapp_uat_media_asset_not_found")
+            raise WhatsAppUatEvidenceError(
+                "whatsapp_uat_media_asset_not_found"
+            )
         media_outbound = _outbound_part(
             db,
             connection=connection,
@@ -162,7 +238,9 @@ def _outbound_part(
         or ticket.tenant_id != connection.tenant_id
         or ticket.channel_account_id != connection.channel_account_id
     ):
-        raise WhatsAppUatEvidenceError("whatsapp_uat_outbound_scope_invalid")
+        raise WhatsAppUatEvidenceError(
+            "whatsapp_uat_outbound_scope_invalid"
+        )
     return row
 
 
