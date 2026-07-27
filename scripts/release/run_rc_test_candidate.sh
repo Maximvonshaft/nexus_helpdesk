@@ -44,7 +44,7 @@ compose() {
 
 ALL_SERVICES=(
   postgres-rc migrate-rc seed-rc app-rc nginx-rc
-  worker-outbound-rc worker-background-rc worker-webchat-ai-rc worker-handoff-snapshot-rc
+  worker-outbound-rc worker-background-rc worker-webchat-ai-rc
 )
 
 wait_for_health() {
@@ -466,7 +466,7 @@ print("RC_TEST_OPERATOR_READY=true")
 PY
 
 set_stage start-runtime
-compose up -d app-rc nginx-rc worker-outbound-rc worker-background-rc worker-webchat-ai-rc worker-handoff-snapshot-rc
+compose up -d app-rc nginx-rc worker-outbound-rc worker-background-rc worker-webchat-ai-rc
 
 wait_for_url() {
   local url="$1"
@@ -482,7 +482,7 @@ wait_for_url() {
   return 1
 }
 wait_for_url "${BASE_URL%/}/readyz"
-for service in app-rc nginx-rc worker-outbound-rc worker-background-rc worker-webchat-ai-rc worker-handoff-snapshot-rc; do
+for service in app-rc nginx-rc worker-outbound-rc worker-background-rc worker-webchat-ai-rc; do
   wait_for_health "${service}"
 done
 compose ps > "${EVIDENCE_DIR}/compose-ps-healthy.txt"
