@@ -23,7 +23,7 @@ _REQUIRED_SOURCES: dict[str, tuple[str, ...]] = {
         "https://web.facebook.com",
     ),
 }
-_REGISTERED = False
+_APP_STATE_KEY = "whatsapp_embedded_signup_csp_registered"
 
 
 def augment_embedded_signup_csp(value: str) -> str:
@@ -88,8 +88,7 @@ class WhatsAppEmbeddedSignupCspMiddleware(BaseHTTPMiddleware):
 
 
 def register_whatsapp_embedded_signup_csp(app: FastAPI) -> None:
-    global _REGISTERED
-    if _REGISTERED:
+    if bool(getattr(app.state, _APP_STATE_KEY, False)):
         return
     app.add_middleware(WhatsAppEmbeddedSignupCspMiddleware)
-    _REGISTERED = True
+    setattr(app.state, _APP_STATE_KEY, True)
