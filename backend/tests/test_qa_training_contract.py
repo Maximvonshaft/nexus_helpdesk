@@ -22,20 +22,61 @@ from app import voice_models as _voice_models  # noqa: E402,F401
 from app import webchat_models as _webchat_models  # noqa: E402,F401
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
-from app.enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.enums import (  # noqa: E402
+    ConversationState,
+    EventType,
+    MessageStatus,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+    UserRole,
+)
 from app.main import app  # noqa: E402
-from app.models import AIConfigResource, AdminAuditLog, Customer, Team, Ticket, TicketAIIntake, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.models import (  # noqa: E402
+    AIConfigResource,
+    AdminAuditLog,
+    Customer,
+    Market,
+    Team,
+    Tenant,
+    Ticket,
+    TicketAIIntake,
+    TicketEvent,
+    TicketOutboundMessage,
+    User,
+)
 from app.operator_models import OperatorTask  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 from app.voice_models import WebchatVoiceSession  # noqa: E402
-from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatHandoffRequest, WebchatMessage  # noqa: E402
+from app.webchat_models import (  # noqa: E402
+    WebchatAITurn,
+    WebchatConversation,
+    WebchatHandoffRequest,
+    WebchatMessage,
+)
 
 
 def _headers(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(str(user.id))}"}
 
 
-def _user(db_session, *, role: UserRole, team_id: int | None = None, suffix: str = "") -> User:
+def _ownership(tenant: Tenant) -> dict[str, object]:
+    return {
+        "tenant_id": tenant.id,
+        "tenant_assignment_source": "fixture",
+        "tenant_assignment_version": "qa-training-test-v1",
+    }
+
+
+def _user(
+    db_session,
+    *,
+    tenant: Tenant,
+    role: UserRole,
+    team_id: int | None = None,
+    suffix: str = "",
+) -> User:
     row = User(
         username=f"{role.value}_qa{suffix}",
         display_name=f"{role.value.title()} QA",
@@ -44,6 +85,7 @@ def _user(db_session, *, role: UserRole, team_id: int | None = None, suffix: str
         role=role,
         team_id=team_id,
         is_active=True,
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
@@ -53,6 +95,8 @@ def _user(db_session, *, role: UserRole, team_id: int | None = None, suffix: str
 def _ticket(
     db_session,
     *,
+    tenant: Tenant,
+    market: Market,
     ticket_no: str,
     team_id: int,
     assignee_id: int,
@@ -66,6 +110,7 @@ def _ticket(
         name=f"Customer {ticket_no}",
         email=f"{ticket_no.lower()}@example.test",
         phone="+41790000000",
+        **_ownership(tenant),
     )
     db_session.add(customer)
     db_session.flush()
@@ -78,6 +123,7 @@ def _ticket(
         source_channel=source_channel,
         priority=TicketPriority.high,
         status=TicketStatus.in_progress,
+        market_id=market.id,
         team_id=team_id,
         assignee_id=assignee_id,
         conversation_state=conversation_state,
@@ -85,6 +131,7 @@ def _ticket(
         missing_fields=missing_fields,
         required_action=required_action,
         customer_request="Where is my parcel?",
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
@@ -92,13 +139,47 @@ def _ticket(
 
 
 def _seed_qa_training(db_session):
-    team = Team(name="QA Loop Support", team_type="support")
+    tenant = Tenant(
+        tenant_key="qa-training",
+        display_name="QA Training",
+        is_active=True,
+    )
+    db_session.add(tenant)
+    db_session.flush()
+    market = Market(
+        code="QA-ME",
+        name="QA Training Market",
+        country_code="ME",
+        is_active=True,
+        **_ownership(tenant),
+    )
+    db_session.add(market)
+    db_session.flush()
+    team = Team(
+        name="QA Loop Support",
+        team_type="support",
+        market_id=market.id,
+        **_ownership(tenant),
+    )
     db_session.add(team)
     db_session.flush()
-    lead = _user(db_session, role=UserRole.lead, team_id=team.id)
-    agent = _user(db_session, role=UserRole.agent, team_id=team.id, suffix="_agent")
+    lead = _user(
+        db_session,
+        tenant=tenant,
+        role=UserRole.lead,
+        team_id=team.id,
+    )
+    agent = _user(
+        db_session,
+        tenant=tenant,
+        role=UserRole.agent,
+        team_id=team.id,
+        suffix="_agent",
+    )
     webchat_ticket = _ticket(
         db_session,
+        tenant=tenant,
+        market=market,
         ticket_no="QA-001",
         team_id=team.id,
         assignee_id=agent.id,
@@ -110,6 +191,8 @@ def _seed_qa_training(db_session):
     )
     email_ticket = _ticket(
         db_session,
+        tenant=tenant,
+        market=market,
         ticket_no="QA-002",
         team_id=team.id,
         assignee_id=agent.id,
@@ -118,6 +201,8 @@ def _seed_qa_training(db_session):
     )
     voice_ticket = _ticket(
         db_session,
+        tenant=tenant,
+        market=market,
         ticket_no="QA-003",
         team_id=team.id,
         assignee_id=agent.id,
@@ -128,7 +213,7 @@ def _seed_qa_training(db_session):
     webchat_conversation = WebchatConversation(
         public_id="qa_training_conv",
         visitor_token_hash="hash",
-        tenant_key="default",
+        tenant_key=tenant.tenant_key,
         channel_key="website",
         ticket_id=webchat_ticket.id,
         visitor_name="Taylor",
@@ -166,7 +251,7 @@ def _seed_qa_training(db_session):
     voice_conversation = WebchatConversation(
         public_id="qa_voice_conversation",
         visitor_token_hash="voice-hash",
-        tenant_key="default",
+        tenant_key=tenant.tenant_key,
         channel_key="voice",
         ticket_id=voice_ticket.id,
         visitor_name="Voice Customer",
@@ -242,10 +327,12 @@ def _seed_qa_training(db_session):
             is_active=True,
             draft_summary="Draft from QA sample",
             published_version=0,
+            market_id=market.id,
         )
     )
     db_session.add(
         OperatorTask(
+            tenant_id=tenant.id,
             source_type="qa",
             source_id="sample-webchat",
             ticket_id=webchat_ticket.id,
@@ -283,7 +370,11 @@ def _database(tmp_path, name: str):
         f"sqlite:///{tmp_path / name}",
         connect_args={"check_same_thread": False},
     )
-    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    factory = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
     Base.metadata.create_all(engine)
     return engine, factory()
 
@@ -303,7 +394,9 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
         assert response.status_code == 200, response.text
         payload = response.json()
         appeal_sample = next(
-            item for item in payload["qa_queue"] if item["channel"] == "WebChat"
+            item
+            for item in payload["qa_queue"]
+            if item["channel"] == "WebChat"
         )
         knowledge_gap_sample = next(
             item
@@ -334,11 +427,17 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
                 "sample": appeal_sample["sample"],
                 "current_score": appeal_sample["ai_pre_score"],
                 "requested_score": appeal_sample["ai_pre_score"] + 10,
-                "reason": "Agent supplied policy evidence and requests lead score review.",
+                "reason": (
+                    "Agent supplied policy evidence and requests lead score "
+                    "review."
+                ),
                 "evidence": appeal_sample["evidence"],
             },
         )
-        followup = client.get("/api/lite/qa-training", headers=_headers(lead))
+        followup = client.get(
+            "/api/lite/qa-training",
+            headers=_headers(lead),
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -381,7 +480,10 @@ def test_qa_training_requires_qa_manage_capability(tmp_path):
     app.dependency_overrides[get_db] = override_db
     try:
         client = TestClient(app)
-        response = client.get("/api/lite/qa-training", headers=_headers(agent))
+        response = client.get(
+            "/api/lite/qa-training",
+            headers=_headers(agent),
+        )
         appeal = client.post(
             "/api/lite/qa-training/appeals",
             headers=_headers(agent),
