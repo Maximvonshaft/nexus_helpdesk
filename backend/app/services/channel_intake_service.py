@@ -16,6 +16,7 @@ from .customer_identity_service import (
     resolve_or_create_customer,
 )
 from .customer_recontact_service import reopen_from_customer_message
+from .tenant_authority import tenant_runtime_authority_mode
 from .webchat_ai_turn_service import safe_write_webchat_event
 
 
@@ -25,7 +26,9 @@ class ChannelIntakeError(RuntimeError):
 
 @dataclass(frozen=True)
 class ChannelIntakeContext:
-    tenant: Tenant
+    tenant: Tenant | None
+    tenant_id: int | None
+    tenant_key: str
     market: Market | None
     customer: Customer
     conversation: WebchatConversation
@@ -44,21 +47,29 @@ class ChannelIntakeMessage:
 def _account_scope(
     db: Session,
     account: ChannelAccount,
-) -> tuple[Tenant, Market | None]:
-    if not account.is_active or account.tenant_id is None:
-        raise ChannelIntakeError("channel_account_tenant_missing")
+) -> tuple[Tenant | None, int | None, str, Market | None]:
+    if not account.is_active:
+        raise ChannelIntakeError("channel_account_inactive")
+    market = db.get(Market, account.market_id) if account.market_id is not None else None
+
+    if account.tenant_id is None:
+        if tenant_runtime_authority_mode() != "shadow":
+            raise ChannelIntakeError("channel_account_tenant_missing")
+        if market is not None and (not market.is_active or market.tenant_id is not None):
+            raise ChannelIntakeError("channel_account_market_tenant_conflict")
+        return None, None, "default", market
+
     tenant = db.get(Tenant, int(account.tenant_id))
     if tenant is None or not tenant.is_active:
         raise ChannelIntakeError("channel_account_tenant_inactive")
     tenant_key = str(tenant.tenant_key or "").strip().lower()
     if not tenant_key or tenant_key == "default":
         raise ChannelIntakeError("channel_account_tenant_key_invalid")
-    market = db.get(Market, account.market_id) if account.market_id is not None else None
     if market is not None and (
         not market.is_active or market.tenant_id != tenant.id
     ):
         raise ChannelIntakeError("channel_account_market_tenant_conflict")
-    return tenant, market
+    return tenant, int(tenant.id), tenant_key, market
 
 
 def channel_conversation_public_id(
@@ -98,7 +109,7 @@ def _control(
     *,
     conversation: WebchatConversation,
     customer: Customer,
-    tenant: Tenant,
+    tenant_key: str,
     market: Market | None,
     channel_key: str,
 ) -> ConversationControl:
@@ -112,7 +123,7 @@ def _control(
         row = ConversationControl(
             conversation_id=conversation.id,
             customer_id=customer.id,
-            tenant_key=tenant.tenant_key,
+            tenant_key=tenant_key,
             country_code=country_code,
             channel_key=channel_key,
             created_at=conversation.created_at or utc_now(),
@@ -122,7 +133,7 @@ def _control(
         db.flush()
         return row
     if (
-        row.tenant_key != tenant.tenant_key
+        row.tenant_key != tenant_key
         or row.channel_key != channel_key
         or row.customer_id not in {None, customer.id}
         or (country_code is not None and row.country_code not in {None, country_code})
@@ -149,7 +160,7 @@ def resolve_channel_intake_context(
     visitor_ref: str | None = None,
     origin: str,
 ) -> ChannelIntakeContext:
-    tenant, market = _account_scope(db, account)
+    tenant, tenant_id, tenant_key, market = _account_scope(db, account)
     normalized_channel = str(channel_key or "").strip().lower()
     external_key = str(external_conversation_key or "").strip()
     if not normalized_channel or not external_key:
@@ -159,7 +170,7 @@ def resolve_channel_intake_context(
 
     customer = resolve_or_create_customer(
         db,
-        tenant_id=tenant.id,
+        tenant_id=tenant_id,
         identity_type=identity_type,
         identity_value=identity_value,
         display_name=display_name,
@@ -177,7 +188,7 @@ def resolve_channel_intake_context(
         )
 
     public_id = channel_conversation_public_id(
-        tenant_key=tenant.tenant_key,
+        tenant_key=tenant_key,
         channel_key=normalized_channel,
         account_id=account.id,
         external_conversation_key=external_key,
@@ -193,13 +204,13 @@ def resolve_channel_intake_context(
         conversation = WebchatConversation(
             public_id=public_id,
             visitor_token_hash=_token_hash(
-                tenant_key=tenant.tenant_key,
+                tenant_key=tenant_key,
                 channel_key=normalized_channel,
                 account_id=account.id,
                 external_conversation_key=external_key,
             ),
             visitor_token_expires_at=None,
-            tenant_key=tenant.tenant_key,
+            tenant_key=tenant_key,
             channel_key=normalized_channel,
             ticket_id=None,
             visitor_name=str(display_name or customer.name or "")[:160] or None,
@@ -216,7 +227,7 @@ def resolve_channel_intake_context(
         db.flush()
     else:
         if (
-            conversation.tenant_key != tenant.tenant_key
+            conversation.tenant_key != tenant_key
             or conversation.channel_key != normalized_channel
         ):
             raise ChannelIntakeError("channel_conversation_scope_conflict")
@@ -233,12 +244,14 @@ def resolve_channel_intake_context(
         db,
         conversation=conversation,
         customer=customer,
-        tenant=tenant,
+        tenant_key=tenant_key,
         market=market,
         channel_key=normalized_channel,
     )
     return ChannelIntakeContext(
         tenant=tenant,
+        tenant_id=tenant_id,
+        tenant_key=tenant_key,
         market=market,
         customer=customer,
         conversation=conversation,
@@ -274,7 +287,7 @@ def append_channel_customer_message(
         if context.conversation.ticket_id is not None
         else None
     )
-    if ticket is not None and ticket.tenant_id != context.tenant.id:
+    if ticket is not None and ticket.tenant_id != context.tenant_id:
         raise ChannelIntakeError("channel_ticket_tenant_conflict")
     if existing is not None:
         return ChannelIntakeMessage(
