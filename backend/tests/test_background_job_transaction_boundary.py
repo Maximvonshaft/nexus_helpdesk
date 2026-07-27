@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import Base
 from app.enums import JobStatus
 from app.models import BackgroundJob
-from app.services import background_jobs
+from app.services import background_job_execution_scope, background_jobs
 from app.services.background_job_transaction_boundary import (
     dispatch_pending_background_jobs,
     dispatch_pending_webchat_ai_reply_jobs,
@@ -43,6 +43,10 @@ class _FakeDB:
         del model
         return _FakeQuery(self)
 
+    def get(self, model, row_id):
+        del model
+        return self.rows.get(row_id)
+
     def commit(self):
         if self.fail_next_commit:
             self.fail_next_commit = False
@@ -70,6 +74,19 @@ def _job(
         next_run_at=None,
         last_error=None,
         updated_at=None,
+    )
+
+
+def _patch_scope_claim(monkeypatch, rows) -> None:
+    monkeypatch.setattr(
+        background_job_execution_scope,
+        "claim_executable_background_jobs",
+        lambda db, limit=None, worker_id=None, job_types=None: list(rows),
+    )
+    monkeypatch.setattr(
+        background_job_execution_scope,
+        "require_executable_background_job_scope",
+        lambda db, job: SimpleNamespace(job_id=job.id),
     )
 
 
@@ -168,11 +185,7 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
     processed_ids: list[int] = []
 
     monkeypatch.setattr(background_jobs.settings, "email_mailbox_sync_enabled", False)
-    monkeypatch.setattr(
-        background_jobs,
-        "claim_pending_jobs",
-        lambda db, limit=None, worker_id=None, job_types=None: [first, second],
-    )
+    _patch_scope_claim(monkeypatch, [first, second])
 
     def fake_process(db_arg, job):
         del db_arg
@@ -210,11 +223,7 @@ def test_dispatch_pending_background_jobs_marks_dead_when_attempt_exhausts_retri
     db.current_recovery_row = row
 
     monkeypatch.setattr(background_jobs.settings, "email_mailbox_sync_enabled", False)
-    monkeypatch.setattr(
-        background_jobs,
-        "claim_pending_jobs",
-        lambda db, limit=None, worker_id=None, job_types=None: [row],
-    )
+    _patch_scope_claim(monkeypatch, [row])
     monkeypatch.setattr(
         background_jobs,
         "process_background_job",
@@ -234,11 +243,7 @@ def test_dispatch_pending_webchat_ai_jobs_uses_attempt_boundary(monkeypatch):
     row = _job(11, job_type=background_jobs.WEBCHAT_AI_REPLY_JOB)
     db = _FakeDB([row])
     db.current_recovery_row = row
-    monkeypatch.setattr(
-        background_jobs,
-        "claim_pending_jobs",
-        lambda db, limit=None, worker_id=None, job_types=None: [row],
-    )
+    _patch_scope_claim(monkeypatch, [row])
     monkeypatch.setattr(
         background_jobs,
         "process_background_job",
@@ -263,11 +268,7 @@ def test_attempt_boundary_recovers_commit_failure(monkeypatch):
     db = _FakeDB([row])
     db.current_recovery_row = row
     db.fail_next_commit = True
-    monkeypatch.setattr(
-        background_jobs,
-        "claim_pending_jobs",
-        lambda db, limit=None, worker_id=None, job_types=None: [row],
-    )
+    _patch_scope_claim(monkeypatch, [row])
 
     def fake_process(db_arg, job):
         del db_arg
