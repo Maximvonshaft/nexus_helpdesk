@@ -18,17 +18,18 @@ from .case_outcome_service import (
     record_case_evidence,
 )
 from .nexus_osr.business_scenarios import (
-    BusinessScenarioCatalogError,
     BusinessScenarioDefinition,
     ScenarioReadiness,
     evaluate_scenario_readiness,
-    load_business_scenario_catalog,
-    resolve_business_scenario,
 )
 from .permissions import ensure_can_change_status, ensure_ticket_visible
+from .scenario_assignment_service import (
+    TicketScenarioAssignmentError,
+    get_assigned_scenario,
+)
 
 CLOSURE_EVIDENCE_SCHEMA = "nexus.case-closure-evidence.v2"
-CLOSURE_RECEIPT_SCHEMA = "nexus.ticket-closure-receipt.v2"
+CLOSURE_RECEIPT_SCHEMA = "nexus.ticket-closure-receipt.v3"
 CLOSURE_RECEIPT_FIELD = "closure_readiness_receipt"
 CLOSURE_RECEIPT_INVALIDATED_FIELD = "closure_readiness_receipt_invalidated"
 
@@ -105,60 +106,30 @@ def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _scenario_identity(ticket: Ticket) -> tuple[str | None, str | None]:
-    candidates = (
-        ticket.case_type,
-        ticket.sub_category,
-        ticket.category,
-        ticket.ai_classification,
-    )
-    for value in candidates:
-        normalized = str(value or "").strip().lower()
-        if normalized:
-            return normalized, normalized
-    return None, None
-
-
 def _resolve_scenario(
+    db: Session,
     ticket: Ticket,
 ) -> tuple[
     BusinessScenarioDefinition | None,
     str | None,
     str | None,
     str | None,
+    int | None,
+    str | None,
 ]:
     try:
-        catalog = load_business_scenario_catalog()
-    except BusinessScenarioCatalogError as exc:
-        return None, None, None, exc.reason
-    scenario_key, issue_type = _scenario_identity(ticket)
-    if not scenario_key:
-        return (
-            None,
-            catalog.catalog_version,
-            catalog.source_sha256,
-            "scenario_identity_missing",
-        )
-    try:
-        scenario = resolve_business_scenario(
-            catalog,
-            scenario_key=scenario_key,
-            issue_type=issue_type,
-        )
-    except BusinessScenarioCatalogError:
-        try:
-            scenario = resolve_business_scenario(
-                catalog,
-                issue_type=issue_type,
-            )
-        except BusinessScenarioCatalogError as exc:
-            return (
-                None,
-                catalog.catalog_version,
-                catalog.source_sha256,
-                exc.reason,
-            )
-    return scenario, catalog.catalog_version, catalog.source_sha256, None
+        assigned = get_assigned_scenario(db, ticket=ticket, required=True)
+    except TicketScenarioAssignmentError as exc:
+        return None, None, None, str(exc), None, None
+    assert assigned is not None
+    return (
+        assigned.scenario,
+        assigned.assignment.catalog_version,
+        assigned.assignment.catalog_sha256,
+        None,
+        assigned.assignment.assignment_revision,
+        assigned.assignment.definition_sha256,
+    )
 
 
 def _field_projection(ticket: Ticket) -> tuple[set[str], set[str]]:
@@ -208,7 +179,7 @@ def _notification_projection(
 
     for row in outbound:
         ids.append(row.id)
-        status = str(
+        status_value = str(
             row.status.value if hasattr(row.status, "value") else row.status
         ).strip().lower()
         delivery = str(row.delivery_status or "").strip().lower()
@@ -224,13 +195,13 @@ def _notification_projection(
             latest_at = observed
 
         if (
-            status in {MessageStatus.failed.value, MessageStatus.dead.value}
+            status_value in {MessageStatus.failed.value, MessageStatus.dead.value}
             or delivery in _NOTIFICATION_FAILURE_STATES
         ):
             repair_required = True
 
         attempted = (
-            status in {MessageStatus.pending.value, MessageStatus.sent.value}
+            status_value in {MessageStatus.pending.value, MessageStatus.sent.value}
             or delivery in _NOTIFICATION_ATTEMPT_STATES
             or delivery in _NOTIFICATION_CONFIRMED_STATES
         )
@@ -272,19 +243,19 @@ def build_closure_snapshot(
     *,
     now: datetime | None = None,
 ) -> ClosureSnapshot:
-    """Build the base fact/action/outcome projection.
-
-    Notification delivery strength is applied by
-    ``notification_evidence_policy.build_governed_closure_snapshot``. This
-    function is not itself a close authorization.
-    """
+    """Build the governed fact/action/outcome projection for a frozen Scenario."""
 
     observed_now = ensure_utc(now or utc_now())
     if observed_now is None:
         raise ValueError("closure_time_unavailable")
-    scenario, catalog_version, catalog_sha256, scenario_error = _resolve_scenario(
-        ticket
-    )
+    (
+        scenario,
+        catalog_version,
+        catalog_sha256,
+        scenario_error,
+        assignment_revision,
+        definition_sha256,
+    ) = _resolve_scenario(db, ticket)
     ledger = project_case_ledger(db, ticket_id=ticket.id)
     outbound = (
         db.query(TicketOutboundMessage)
@@ -338,9 +309,7 @@ def build_closure_snapshot(
     else:
         readiness = evaluate_scenario_readiness(
             scenario,
-            available_fact_classes=(
-                field_facts | set(ledger.fact_classes)
-            ),
+            available_fact_classes=(field_facts | set(ledger.fact_classes)),
             available_customer_inputs=(
                 field_inputs | set(ledger.customer_inputs)
             ),
@@ -371,17 +340,15 @@ def build_closure_snapshot(
             ticket_revision.isoformat() if ticket_revision is not None else None
         ),
         "scenario_key": scenario.scenario_key if scenario else None,
+        "scenario_assignment_revision": assignment_revision,
         "scenario_catalog_version": catalog_version,
         "scenario_catalog_sha256": catalog_sha256,
+        "scenario_definition_sha256": definition_sha256,
         "generated_at": observed_now.isoformat(),
         "readiness": readiness.as_dict(),
         "evidence": {
-            "case_evidence_record_ids": list(
-                ledger.evidence_record_ids
-            ),
-            "case_outcome_record_ids": list(
-                ledger.outcome_record_ids
-            ),
+            "case_evidence_record_ids": list(ledger.evidence_record_ids),
+            "case_outcome_record_ids": list(ledger.outcome_record_ids),
             "outbound_message_ids": outbound_ids,
             "latest_material_at": (
                 latest_material_at.isoformat()
@@ -406,9 +373,7 @@ def build_closure_snapshot(
 def require_closure_ready(db: Session, ticket: Ticket) -> dict[str, Any]:
     """Compatibility name for the one governed close authorization."""
 
-    from .notification_evidence_policy import (
-        require_governed_closure_ready,
-    )
+    from .notification_evidence_policy import require_governed_closure_ready
 
     return require_governed_closure_ready(db, ticket)
 
@@ -434,6 +399,12 @@ def append_closure_receipt_event(
         payload={
             "receipt_sha256": digest,
             "scenario_key": receipt.get("scenario_key"),
+            "scenario_assignment_revision": receipt.get(
+                "scenario_assignment_revision"
+            ),
+            "scenario_definition_sha256": receipt.get(
+                "scenario_definition_sha256"
+            ),
             "closure_ready": bool(
                 (receipt.get("readiness") or {}).get("closure_ready")
             ),
@@ -491,9 +462,7 @@ def invalidate_latest_closure_receipt(
         ticket_id=ticket_id,
         record_type="closure_assessment",
         state="reopened",
-        idempotency_key=(
-            f"closure-invalidation:{prior.id}:{reason_sha[:24]}"
-        ),
+        idempotency_key=f"closure-invalidation:{prior.id}:{reason_sha[:24]}",
         occurred_at=utc_now(),
         created_by=actor_id,
         parent_record_id=prior.id,
@@ -598,21 +567,17 @@ def record_closure_evidence(
         and normalized_key == "business_result_confirmed"
         and normalized_source not in _BUSINESS_OUTCOME_SOURCE_KINDS
     ):
-        raise ValueError(
-            "closure_business_outcome_source_not_authoritative"
-        )
+        raise ValueError("closure_business_outcome_source_not_authoritative")
 
     normalized_ref = str(source_ref or "").strip()
     normalized_revision = str(source_revision or "").strip()
     if not normalized_key or not normalized_ref or not normalized_revision:
         raise ValueError("closure_evidence_source_identity_required")
 
-    scenario, _, _, error = _resolve_scenario(ticket)
+    scenario, _, _, error, _, _ = _resolve_scenario(db, ticket)
     if scenario is None:
         raise ValueError(error or "scenario_unavailable")
-    allowed_waiver_reasons = set(
-        scenario.allowed_no_notification_reasons
-    )
+    allowed_waiver_reasons = set(scenario.allowed_no_notification_reasons)
     allowed_keys = {
         "fact": set(scenario.required_fact_classes),
         "customer_input": set(scenario.required_customer_inputs),
@@ -621,9 +586,7 @@ def record_closure_evidence(
         "notification": allowed_waiver_reasons | {"sent", "delivered"},
     }
     if normalized_key not in allowed_keys[normalized_kind]:
-        raise ValueError(
-            "closure_evidence_key_not_in_scenario_contract"
-        )
+        raise ValueError("closure_evidence_key_not_in_scenario_contract")
     if normalized_kind != "notification" and normalized_state == "waived":
         raise ValueError("closure_evidence_waiver_kind_invalid")
 
