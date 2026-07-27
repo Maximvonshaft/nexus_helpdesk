@@ -41,7 +41,7 @@
     {
       "responsibility": "webchat-handoff",
       "public_authority": "backend/app/services/webchat_handoff_service.py",
-      "private_implementation": "backend/app/services/webchat_handoff_service_core.py",
+      "private_implementation": null,
       "compatibility_shims": []
     },
     {
