@@ -19,6 +19,7 @@ from .background_job_scope import (
     derive_job_scope_values,
 )
 from .data_subject_action_service import ensure_data_processing_allowed
+from .tenant_authority import tenant_runtime_authority_mode
 
 
 class BackgroundJobExecutionScopeError(RuntimeError):
@@ -37,29 +38,37 @@ def executable_background_job_scope_filter():
     """Return the sole SQL predicate for an automatically executable Job.
 
     Unknown, missing, unresolved, stale-schema and purpose-mismatched envelopes
-    fail closed. Platform execution is unavailable until a Job type is explicitly
-    allow-listed by the canonical BackgroundJob scope authority.
+    fail closed. The isolated shadow scope is executable only in non-production
+    shadow mode. Platform execution remains unavailable until a Job type is
+    explicitly allow-listed by the canonical scope authority.
     """
 
     tenant_scope = and_(
         BackgroundJobScope.scope_type == "tenant",
         BackgroundJobScope.tenant_id.is_not(None),
     )
-    if PLATFORM_JOB_TYPES:
-        platform_scope = and_(
-            BackgroundJobScope.scope_type == "platform",
-            BackgroundJobScope.tenant_id.is_(None),
-            BackgroundJob.job_type.in_(tuple(sorted(PLATFORM_JOB_TYPES))),
+    ownership_scopes = [tenant_scope]
+    if tenant_runtime_authority_mode() == "shadow":
+        ownership_scopes.append(
+            and_(
+                BackgroundJobScope.scope_type == "shadow",
+                BackgroundJobScope.tenant_id.is_(None),
+            )
         )
-        ownership_scope = or_(tenant_scope, platform_scope)
-    else:
-        ownership_scope = tenant_scope
+    if PLATFORM_JOB_TYPES:
+        ownership_scopes.append(
+            and_(
+                BackgroundJobScope.scope_type == "platform",
+                BackgroundJobScope.tenant_id.is_(None),
+                BackgroundJob.job_type.in_(tuple(sorted(PLATFORM_JOB_TYPES))),
+            )
+        )
     return and_(
         BackgroundJobScope.job_id == BackgroundJob.id,
         BackgroundJobScope.source_schema == SCOPE_SCHEMA,
         BackgroundJobScope.purpose == _expected_purpose_expression(),
         BackgroundJobScope.purpose != "unclassified",
-        ownership_scope,
+        or_(*ownership_scopes),
     )
 
 
@@ -106,8 +115,9 @@ def claim_executable_background_jobs(
     now = utc_now()
     pending_filters = _pending_filters(now, job_types=normalized_types)
     scope_filter = executable_background_job_scope_filter()
+    bind = getattr(db, "bind", None)
 
-    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+    if bind is not None and bind.dialect.name.startswith("postgresql"):
         rows = db.execute(
             select(BackgroundJob.id)
             .join(
@@ -234,6 +244,14 @@ def require_executable_background_job_scope(
             raise BackgroundJobExecutionScopeError(
                 "background_job_tenant_scope_missing"
             )
+    elif scope.scope_type == "shadow":
+        if (
+            tenant_runtime_authority_mode() != "shadow"
+            or scope.tenant_id is not None
+        ):
+            raise BackgroundJobExecutionScopeError(
+                "background_job_shadow_scope_not_authorized"
+            )
     else:
         raise BackgroundJobExecutionScopeError("background_job_scope_unresolved")
 
@@ -249,7 +267,7 @@ def require_executable_background_job_scope(
     if stored_signature != _scope_signature(current):
         raise BackgroundJobExecutionScopeError("background_job_scope_drift")
 
-    if scope.scope_type == "tenant" and scope.customer_id is not None:
+    if scope.customer_id is not None:
         ensure_data_processing_allowed(
             db,
             customer_id=scope.customer_id,
