@@ -47,7 +47,6 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
         "worker-outbound-controlled",
         "worker-background-controlled",
         "worker-webchat-ai-controlled",
-        "worker-handoff-snapshot-controlled",
     }
     mounted = {
         service_name
@@ -95,7 +94,8 @@ def test_controlled_runtime_uses_one_shared_prometheus_registry() -> None:
     assert "METRICS_TOKEN=<dedicated-metrics-token-at-least-32-characters>" in env_example
     assert "METRICS_ENABLED=" not in env_example
     assert "unauthenticated `/metrics` returns 401" in runbook
-    assert "worker-handoff-snapshot-controlled" in runbook
+    assert "worker-handoff-snapshot-controlled" not in runbook
+    assert "worker-handoff-snapshot-controlled" not in services
     assert "worker-metrics" not in services
     assert "pushgateway" not in CONTROLLED_COMPOSE.read_text(encoding="utf-8").lower()
 
