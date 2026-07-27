@@ -58,13 +58,19 @@ def notification_evidence(
         .all()
     )
     confirmed_ledger_ids = [
-        row.id for row in ledger_rows if row.state in _CONFIRMED_LEDGER_STATES
+        row.id
+        for row in ledger_rows
+        if row.state in _CONFIRMED_LEDGER_STATES
     ]
-    allowed_waivers = {str(value).strip().lower() for value in allowed_waiver_reasons}
+    allowed_waivers = {
+        str(value).strip().lower()
+        for value in allowed_waiver_reasons
+    }
     waived_rows = [
         row
         for row in ledger_rows
-        if row.state == "waived" and _waiver_reason(row) in allowed_waivers
+        if row.state == "waived"
+        and _waiver_reason(row) in allowed_waivers
     ]
 
     outbound_rows = (
@@ -83,7 +89,11 @@ def notification_evidence(
         row.id
         for row in outbound_rows
         if (
-            str(row.status.value if hasattr(row.status, "value") else row.status)
+            str(
+                row.status.value
+                if hasattr(row.status, "value")
+                else row.status
+            )
             .strip()
             .lower()
             in {"pending", "sent"}
@@ -118,7 +128,7 @@ def _notification_satisfied(
 ) -> bool:
     normalized = str(policy or "required").strip().lower()
     if normalized == "prohibited":
-        return not evidence["confirmed"] and not evidence["waived"]
+        return evidence["state"] == "missing"
     if normalized == "optional":
         return True
     if normalized == "required_if_contactable":
