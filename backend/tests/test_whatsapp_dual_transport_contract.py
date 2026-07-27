@@ -63,6 +63,7 @@ def test_activation_fails_closed_until_transport_is_verified() -> None:
         verification_state="pending",
         desired_generation=1,
         observed_generation=1,
+        sidecar_session_key="wa-main",
     )
     with pytest.raises(WhatsAppActivationError, match="verification_required"):
         assert_connection_can_activate(connection)
