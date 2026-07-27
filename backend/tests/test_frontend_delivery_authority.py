@@ -81,7 +81,7 @@ def test_webchat_security_invariants_are_current():
     public_api = (ROOT / "app/api/webchat_public.py").read_text()
     service = (ROOT / "app/services/webchat_service.py").read_text()
     settings = (ROOT / "app/settings.py").read_text()
-    widget = (ROOT / "app/static/webchat/widget.js").read_text()
+    widget = (ROOT / "app/static/webchat/widget-runtime.js").read_text()
     main = (ROOT / "app/main.py").read_text()
 
     assert "WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT" in public_api
