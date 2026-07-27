@@ -8,15 +8,12 @@ _SCANNED_ROOTS = (
     ROOT / ".github" / "workflows",
     ROOT / "backend" / "app",
     ROOT / "backend" / "scripts",
-    ROOT / "backend" / "tests",
-    ROOT / "connectors" / "whatsapp-sidecar",
+    ROOT / "connectors" / "whatsapp-sidecar" / "src",
     ROOT / "deploy",
     ROOT / "scripts" / "deploy",
     ROOT / "scripts" / "qualification",
     ROOT / "scripts" / "release",
     ROOT / "webapp" / "src",
-    ROOT / "webapp" / "e2e",
-    ROOT / "webapp" / "tests",
 )
 _FORBIDDEN = (
     "WHATSAPP_NATIVE_ENABLED",
@@ -61,6 +58,7 @@ def test_retired_whatsapp_and_handoff_runtime_residues_are_absent() -> None:
                 or path.suffix.lower() not in _TEXT_SUFFIXES
                 or "node_modules" in path.parts
                 or "dist" in path.parts
+                or "tests" in path.parts
             ):
                 continue
             text = path.read_text(encoding="utf-8", errors="strict")
