@@ -100,6 +100,7 @@ def compile_evidence(
             "media_required": require_media,
             "delivery_states": ["sent", "delivered", "read"],
             "restart_without_reauthentication": True,
+            "inbound_replay_bound_to_persisted_identity": True,
         },
         "transports": normalized,
         "contains_secrets": False,
@@ -133,8 +134,15 @@ def verify_compiled_evidence(
     supplied = str(signature.get("value") or "")
     unsigned = dict(evidence)
     unsigned.pop("signature", None)
-    expected = hmac.new(signing_key, _canonical(unsigned), hashlib.sha256).hexdigest()
-    return len(supplied) == len(expected) and hmac.compare_digest(supplied, expected)
+    expected = hmac.new(
+        signing_key,
+        _canonical(unsigned),
+        hashlib.sha256,
+    ).hexdigest()
+    return len(supplied) == len(expected) and hmac.compare_digest(
+        supplied,
+        expected,
+    )
 
 
 def _transport_evidence(
@@ -151,7 +159,10 @@ def _transport_evidence(
         value.get("connection_id"),
         f"{transport}_connection_id_invalid",
     )
-    account_id = _safe_id(value.get("account_id"), f"{transport}_account_id_invalid")
+    account_id = _safe_id(
+        value.get("account_id"),
+        f"{transport}_account_id_invalid",
+    )
     phone_suffix = str(value.get("phone_suffix") or "")
     if not re.fullmatch(r"[0-9]{4}", phone_suffix):
         raise EvidenceError(f"{transport}_phone_suffix_invalid")
@@ -246,7 +257,11 @@ def _transport_evidence(
     }
 
 
-def _message_direction(transport: str, direction: str, value: Any) -> dict[str, Any]:
+def _message_direction(
+    transport: str,
+    direction: str,
+    value: Any,
+) -> dict[str, Any]:
     row = _mapping(value, f"{transport}_{direction}_missing")
     provider_message_id = _safe_id(
         row.get("provider_message_id"),
@@ -257,18 +272,29 @@ def _message_direction(transport: str, direction: str, value: Any) -> dict[str, 
             row.get("received_at"),
             f"{transport}_inbound_received_at_invalid",
         )
+        replay_inbound_message_id = _positive_int(
+            row.get("replay_inbound_message_id"),
+            f"{transport}_replay_inbound_message_id_invalid",
+        )
         return {
             "provider_message_id": provider_message_id,
             "received_at": received_at,
             "stored": row.get("stored") is True,
             "idempotent_replay": row.get("idempotent_replay") is True,
+            "replay_inbound_message_id": replay_inbound_message_id,
         }
-    sent_at = _timestamp(row.get("sent_at"), f"{transport}_sent_at_invalid")
+    sent_at = _timestamp(
+        row.get("sent_at"),
+        f"{transport}_sent_at_invalid",
+    )
     delivered_at = _timestamp(
         row.get("delivered_at"),
         f"{transport}_delivered_at_invalid",
     )
-    read_at = _timestamp(row.get("read_at"), f"{transport}_read_at_invalid")
+    read_at = _timestamp(
+        row.get("read_at"),
+        f"{transport}_read_at_invalid",
+    )
     if not (
         _parse_timestamp(sent_at)
         <= _parse_timestamp(delivered_at)
@@ -285,9 +311,18 @@ def _message_direction(transport: str, direction: str, value: Any) -> dict[str, 
 
 def _media_evidence(transport: str, value: Any) -> dict[str, Any]:
     row = _mapping(value, f"{transport}_media_missing")
-    inbound = _mapping(row.get("inbound"), f"{transport}_media_inbound_missing")
-    outbound = _mapping(row.get("outbound"), f"{transport}_media_outbound_missing")
-    if inbound.get("scan_status") != "clean" or inbound.get("storage_status") != "available":
+    inbound = _mapping(
+        row.get("inbound"),
+        f"{transport}_media_inbound_missing",
+    )
+    outbound = _mapping(
+        row.get("outbound"),
+        f"{transport}_media_outbound_missing",
+    )
+    if (
+        inbound.get("scan_status") != "clean"
+        or inbound.get("storage_status") != "available"
+    ):
         raise EvidenceError(f"{transport}_media_scan_or_storage_unproven")
     sha256 = str(inbound.get("sha256") or "").lower()
     if not re.fullmatch(r"[0-9a-f]{64}", sha256):
@@ -336,7 +371,9 @@ def _reject_forbidden_material(
                 or normalized.endswith("_secret")
                 or normalized.endswith("_token")
             ):
-                raise EvidenceError(f"forbidden_evidence_field:{path}.{normalized}")
+                raise EvidenceError(
+                    f"forbidden_evidence_field:{path}.{normalized}"
+                )
             _reject_forbidden_material(
                 item,
                 path=f"{path}.{normalized}",
@@ -364,6 +401,13 @@ def _mapping(value: Any, code: str) -> dict[str, Any]:
     return value
 
 
+def _safe_id(value: Any, code: str) -> str:
+    normalized = str(value or "").strip()
+    if not _SAFE_ID.fullmatch(normalized):
+        raise EvidenceError(code)
+    return normalized
+
+
 def _positive_int(value: Any, code: str) -> int:
     parsed = _nonnegative_int(value, code)
     if parsed <= 0:
@@ -383,13 +427,6 @@ def _nonnegative_int(value: Any, code: str) -> int:
     return parsed
 
 
-def _safe_id(value: Any, code: str) -> str:
-    normalized = str(value or "").strip()
-    if not _SAFE_ID.fullmatch(normalized):
-        raise EvidenceError(code)
-    return normalized
-
-
 def _sha40(value: Any, code: str) -> str:
     normalized = str(value or "").strip().lower()
     if not _SHA40.fullmatch(normalized):
@@ -407,19 +444,20 @@ def _digest(value: Any, code: str) -> str:
 def _timestamp(value: Any, code: str) -> str:
     normalized = str(value or "").strip()
     try:
-        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        parsed = _parse_timestamp(normalized)
     except ValueError as exc:
         raise EvidenceError(code) from exc
-    if parsed.tzinfo is None:
-        raise EvidenceError(code)
-    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return parsed.isoformat().replace("+00:00", "Z")
 
 
 def _parse_timestamp(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timezone_required")
+    return parsed.astimezone(timezone.utc)
 
 
-def _canonical(value: Any) -> bytes:
+def _canonical(value: dict[str, Any]) -> bytes:
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -430,7 +468,7 @@ def _canonical(value: Any) -> bytes:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--observation", type=Path, required=True)
     parser.add_argument("--expected-source-sha", required=True)
     parser.add_argument("--expected-image-digest", required=True)
     parser.add_argument("--signing-key-file", type=Path, required=True)
@@ -438,35 +476,47 @@ def main() -> int:
     parser.add_argument("--require-media", action="store_true")
     args = parser.parse_args()
     try:
-        if not args.input.is_file() or args.input.is_symlink():
+        if not args.observation.is_file() or args.observation.is_symlink():
             raise EvidenceError("observation_file_invalid")
-        if not args.signing_key_file.is_file() or args.signing_key_file.is_symlink():
-            raise EvidenceError("signing_key_file_invalid")
-        observation = json.loads(args.input.read_text(encoding="utf-8"))
-        if not isinstance(observation, dict):
-            raise EvidenceError("observation_root_invalid")
+        observation = json.loads(args.observation.read_text(encoding="utf-8"))
+        signing_key = args.signing_key_file.read_bytes().strip()
         evidence = compile_evidence(
             observation,
             expected_source_sha=args.expected_source_sha,
             expected_image_digest=args.expected_image_digest,
-            signing_key=args.signing_key_file.read_bytes().strip(),
+            signing_key=signing_key,
             require_media=args.require_media,
         )
-    except (OSError, UnicodeError, json.JSONDecodeError, EvidenceError) as exc:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(
+                evidence,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except (
+        EvidenceError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"whatsapp_e2e_evidence_error:{exc}")
         return 2
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     print(
         json.dumps(
             {
                 "status": evidence["status"],
                 "source_sha": evidence["candidate"]["source_sha"],
-                "media_required": evidence["requirements"]["media_required"],
                 "transports": list(evidence["transports"]),
+                "media_required": evidence["requirements"]["media_required"],
+                "contains_secrets": evidence["contains_secrets"],
+                "contains_full_phone_numbers": evidence[
+                    "contains_full_phone_numbers"
+                ],
             },
             sort_keys=True,
         )
