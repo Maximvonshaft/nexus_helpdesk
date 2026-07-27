@@ -13,7 +13,9 @@ from ..enums import TicketStatus
 from ..models import Ticket, User
 from ..schemas import TicketReopenRequest, TicketStatusChangeRequest
 from . import ticket_service_core as _core
-from .notification_evidence_policy import require_governed_closure_ready
+from .notification_evidence_policy import (
+    require_governed_closure_ready as require_closure_ready,
+)
 from .ticket_closure_readiness import (
     append_closure_receipt_event,
     invalidate_latest_closure_receipt,
@@ -30,7 +32,7 @@ def change_status(
     receipt = None
     if payload.new_status == TicketStatus.closed:
         ticket = _core.get_ticket_or_404(db, ticket_id)
-        receipt = require_governed_closure_ready(db, ticket)
+        receipt = require_closure_ready(db, ticket)
 
     ticket = _core.change_status(db, ticket_id, payload, current_user)
     if receipt is not None:
