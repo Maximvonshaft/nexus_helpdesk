@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -46,6 +48,14 @@ class EmbeddedSignupError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class EmbeddedSignupAccountIntent:
+    display_name: str
+    account_id: str
+    market_id: int | None
+    priority: int
+
+
+@dataclass(frozen=True)
 class EmbeddedSignupPublicSession:
     session_id: str
     state: str
@@ -71,11 +81,19 @@ def start_embedded_signup_session(
     *,
     tenant_id: int,
     requested_by: int,
+    intent: EmbeddedSignupAccountIntent,
 ) -> EmbeddedSignupPublicSession:
     settings = _settings()
-    state = secrets.token_urlsafe(48)
+    session_id = uuid.uuid4().hex
+    state = _encode_state(
+        settings,
+        session_id=session_id,
+        tenant_id=tenant_id,
+        requested_by=requested_by,
+        intent=intent,
+    )
     row = WhatsAppEmbeddedSignupSession(
-        id=uuid.uuid4().hex,
+        id=session_id,
         tenant_id=tenant_id,
         requested_by=requested_by,
         state_digest=_digest(state),
@@ -102,6 +120,7 @@ def require_pending_signup_session(
     tenant_id: int,
     requested_by: int,
     state: str,
+    intent: EmbeddedSignupAccountIntent,
 ) -> WhatsAppEmbeddedSignupSession:
     row = (
         db.query(WhatsAppEmbeddedSignupSession)
@@ -124,6 +143,19 @@ def require_pending_signup_session(
     supplied = _digest(state)
     if not hmac.compare_digest(supplied, row.state_digest):
         raise EmbeddedSignupError("embedded_signup_state_invalid")
+    payload = _decode_state(_settings(), state)
+    expected = {
+        "session_id": session_id,
+        "tenant_id": tenant_id,
+        "requested_by": requested_by,
+        "display_name": intent.display_name,
+        "account_id": intent.account_id,
+        "market_id": intent.market_id,
+        "priority": intent.priority,
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise EmbeddedSignupError("embedded_signup_intent_mismatch")
     return row
 
 
@@ -319,6 +351,63 @@ def _get_json(
     return payload
 
 
+def _encode_state(
+    settings: WhatsAppEmbeddedSignupSettings,
+    *,
+    session_id: str,
+    tenant_id: int,
+    requested_by: int,
+    intent: EmbeddedSignupAccountIntent,
+) -> str:
+    payload = {
+        "session_id": session_id,
+        "tenant_id": tenant_id,
+        "requested_by": requested_by,
+        "display_name": intent.display_name,
+        "account_id": intent.account_id,
+        "market_id": intent.market_id,
+        "priority": intent.priority,
+        "nonce": secrets.token_hex(16),
+    }
+    encoded = _b64url(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    signature = hmac.new(
+        str(settings.app_secret).encode("utf-8"),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def _decode_state(
+    settings: WhatsAppEmbeddedSignupSettings,
+    state: str,
+) -> dict[str, Any]:
+    try:
+        encoded, supplied_signature = state.rsplit(".", 1)
+    except ValueError as exc:
+        raise EmbeddedSignupError("embedded_signup_state_invalid") from exc
+    expected_signature = hmac.new(
+        str(settings.app_secret).encode("utf-8"),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(supplied_signature, expected_signature):
+        raise EmbeddedSignupError("embedded_signup_state_invalid")
+    try:
+        payload = json.loads(_b64url_decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EmbeddedSignupError("embedded_signup_state_invalid") from exc
+    if not isinstance(payload, dict):
+        raise EmbeddedSignupError("embedded_signup_state_invalid")
+    return payload
+
+
 def _owner_business_id(payload: dict[str, Any]) -> str | None:
     owner = payload.get("owner_business_info")
     if isinstance(owner, dict):
@@ -328,6 +417,14 @@ def _owner_business_id(payload: dict[str, Any]) -> str | None:
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _b64url(content: bytes) -> str:
+    return base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
 def _optional(value: Any) -> str | None:
