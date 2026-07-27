@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import User
+from ..models import Tenant, User
 from ..models_agent_routing import ConversationControl
 from ..services.agent_availability_service import availability_summary
 from ..services.agent_routing_service import (
@@ -19,6 +19,7 @@ from ..services.conversation_operator_service import (
     read_conversation_thread,
     reply_to_conversation,
 )
+from ..services.identity_tenant_scope import actor_tenant_id
 from ..services.operator_agent_capacity_service import set_operator_agent_capacity
 from ..services.operator_queue_scope import authorize_operator_scope
 from ..services.permissions import (
@@ -105,8 +106,28 @@ def _ensure_voice_opt_in_capability(capabilities: set[str]) -> None:
         )
 
 
-def _managed_operator(db: Session, *, user_id: int) -> User:
-    target = db.get(User, user_id)
+def _actor_tenant_key(db: Session, actor: User) -> str | None:
+    tenant_id = actor_tenant_id(db, actor)
+    if tenant_id is None:
+        return None
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None or not tenant.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_tenant_unavailable",
+        )
+    return tenant.tenant_key
+
+
+def _managed_operator(db: Session, *, actor: User, user_id: int) -> User:
+    tenant_id = actor_tenant_id(db, actor)
+    query = db.query(User).filter(User.id == user_id)
+    query = (
+        query.filter(User.tenant_id == tenant_id)
+        if tenant_id is not None
+        else query.filter(User.tenant_id.is_(None))
+    )
+    target = query.first()
     if target is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -127,19 +148,53 @@ def _managed_operator(db: Session, *, user_id: int) -> User:
 def _conversation_by_public_id(
     db: Session,
     *,
+    actor: User,
     conversation_id: str,
 ) -> WebchatConversation:
-    conversation = (
-        db.query(WebchatConversation)
-        .filter(WebchatConversation.public_id == conversation_id)
-        .first()
+    tenant_key = _actor_tenant_key(db, actor)
+    query = db.query(WebchatConversation).filter(
+        WebchatConversation.public_id == conversation_id
     )
+    query = (
+        query.filter(WebchatConversation.tenant_key == tenant_key)
+        if tenant_key is not None
+        else query.filter(WebchatConversation.tenant_key == "default")
+    )
+    conversation = query.first()
     if conversation is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="conversation_not_found",
         )
     return conversation
+
+
+def _handoff_request_in_actor_tenant(
+    db: Session,
+    *,
+    actor: User,
+    request_id: int,
+) -> tuple[WebchatHandoffRequest, WebchatConversation]:
+    request_row = db.get(WebchatHandoffRequest, request_id)
+    if request_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="handoff_not_found",
+        )
+    conversation = db.get(WebchatConversation, request_row.conversation_id)
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="handoff_conversation_missing",
+        )
+    tenant_key = _actor_tenant_key(db, actor)
+    expected_key = tenant_key if tenant_key is not None else "default"
+    if conversation.tenant_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="handoff_not_found",
+        )
+    return request_row, conversation
 
 
 @router.get("/agent-state")
@@ -210,7 +265,7 @@ def get_managed_agent_state(
 ):
     ensure_capability(current_user, CAP_USER_MANAGE, db)
     with managed_session(db):
-        target = _managed_operator(db, user_id=user_id)
+        target = _managed_operator(db, actor=current_user, user_id=user_id)
         return {
             **read_agent_state(db, user_id=target.id),
             "username": target.username,
@@ -228,7 +283,7 @@ def update_managed_agent_capacity(
 ):
     ensure_capability(current_user, CAP_USER_MANAGE, db)
     with managed_session(db):
-        target = _managed_operator(db, user_id=user_id)
+        target = _managed_operator(db, actor=current_user, user_id=user_id)
         return set_operator_agent_capacity(
             db,
             actor=current_user,
@@ -294,18 +349,11 @@ def accept_operator_handoff(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        request_row = db.get(WebchatHandoffRequest, request_id)
-        if request_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="handoff_not_found",
-            )
-        conversation = db.get(WebchatConversation, request_row.conversation_id)
-        if conversation is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="handoff_conversation_missing",
-            )
+        request_row, conversation = _handoff_request_in_actor_tenant(
+            db,
+            actor=current_user,
+            request_id=request_id,
+        )
         return assign_handoff_to_agent(
             db,
             request_row=request_row,
@@ -324,7 +372,11 @@ def get_operator_conversation_thread(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
-    conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
+    conversation = _conversation_by_public_id(
+        db,
+        actor=current_user,
+        conversation_id=conversation_id,
+    )
     return read_conversation_thread(
         db,
         conversation=conversation,
@@ -343,7 +395,11 @@ def reply_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
+        conversation = _conversation_by_public_id(
+            db,
+            actor=current_user,
+            conversation_id=conversation_id,
+        )
         return reply_to_conversation(
             db,
             conversation=conversation,
@@ -361,7 +417,11 @@ def close_operator_conversation(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
-        conversation = _conversation_by_public_id(db, conversation_id=conversation_id)
+        conversation = _conversation_by_public_id(
+            db,
+            actor=current_user,
+            conversation_id=conversation_id,
+        )
         control = (
             db.query(ConversationControl)
             .filter(ConversationControl.conversation_id == conversation.id)

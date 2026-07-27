@@ -40,15 +40,13 @@ from .customer_visible_policy import (
     format_policy_reasons,
 )
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
-from .observability import LOGGER
 from .outbound_adapters.email import dispatch_email_outbound
-from .outbound_adapters.whatsapp_native import (
-    dispatch_whatsapp_native_outbound,
-)
+from .outbound_adapters.whatsapp import dispatch_whatsapp_outbound
 from .outbound_semantics import (
     external_delivery_channel_values,
     is_external_outbound_message,
 )
+
 
 settings = get_settings()
 ALLOWED_OUTBOUND_PROVIDERS = {"native", "smtp", "email"}
@@ -116,33 +114,29 @@ def _resolve_channel_account(
 
 
 def ensure_external_dispatch_allowed() -> None:
-    """Fail closed unless runtime is explicitly configured for external sends."""
     blocked = _external_dispatch_block_reason()
     if blocked:
-        _, reason = blocked
-        raise RuntimeError(reason)
+        raise RuntimeError(blocked[1])
 
 
 def _provider_idempotency_key(message: TicketOutboundMessage) -> str:
-    return message.provider_message_id or f"nexusdesk-outbound-{message.id}"
+    # Provider identity and retry identity are different concerns. Derive a
+    # deterministic retry key from the durable outbox id and reserve
+    # provider_message_id exclusively for the provider-accepted identifier.
+    return f"nexusdesk-outbound-{message.id}"
 
 
 def _ensure_provider_idempotency_key(
     message: TicketOutboundMessage,
 ) -> str:
-    key = _provider_idempotency_key(message)
-    if not message.provider_message_id:
-        # Persist one stable key before attempting an external effect so retry,
-        # recovery and future Provider adapters use the same identity.
-        message.provider_message_id = key
-    return key
+    return _provider_idempotency_key(message)
 
 
 def _resolve_first_send_channel_account(
     db: Session,
     ticket: Ticket | None,
 ) -> ChannelAccount | None:
-    if ticket is not None and getattr(ticket, "channel_account_id", None):
+    if ticket is not None and ticket.channel_account_id:
         row = (
             db.query(ChannelAccount)
             .filter(
@@ -222,9 +216,7 @@ def queue_outbound_message(
     )
     db.add(message)
     db.flush()
-    _ensure_provider_idempotency_key(message)
-    channel_value = channel.value if hasattr(channel, "value") else str(channel)
-    if channel_value == SourceChannel.email.value:
+    if (channel.value if hasattr(channel, "value") else str(channel)) == SourceChannel.email.value:
         ensure_outbound_mailbox_identity(message, include_message_id=True)
     db.flush()
     return message
@@ -258,10 +250,7 @@ def _enforce_customer_visible_origin(
     if origin in FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS:
         raise ValueError(f"{origin}_cannot_queue_customer_visible_text")
     if origin in AI_ORIGINS:
-        if (
-            ticket is not None
-            and ticket.conversation_state in HUMAN_REPLY_STATES
-        ):
+        if ticket is not None and ticket.conversation_state in HUMAN_REPLY_STATES:
             raise ValueError("human_active_blocks_ai_autoreply")
         payload_violation = validate_contract_payload_hash(
             runtime_contract_payload_json,
@@ -348,13 +337,9 @@ def _mark_retry(
     else:
         message.status = MessageStatus.pending
         message.failure_code = failure_code or "retryable_dispatch_error"
-        failure_suffix = f":{message.failure_code}" if failure_code else ""
-        message.provider_status = (
-            f"retry_scheduled:{backoff_minutes}m{failure_suffix}"
-        )
-        message.next_retry_at = utc_now() + timedelta(
-            minutes=backoff_minutes
-        )
+        suffix = f":{message.failure_code}" if failure_code else ""
+        message.provider_status = f"retry_scheduled:{backoff_minutes}m{suffix}"
+        message.next_retry_at = utc_now() + timedelta(minutes=backoff_minutes)
 
 
 def _mark_dead(
@@ -378,10 +363,13 @@ def _mark_sent(
     message: TicketOutboundMessage,
     provider_status: str | None,
     sent_at,
+    *,
+    provider_message_id: str | None = None,
+    receipt_provider: str | None = None,
 ) -> None:
     message.status = MessageStatus.sent
     message.provider_status = provider_status
-    message.sent_at = sent_at
+    message.sent_at = sent_at or utc_now()
     message.error_message = None
     message.failure_code = None
     message.failure_reason = None
@@ -389,6 +377,14 @@ def _mark_sent(
     message.next_retry_at = None
     message.locked_at = None
     message.locked_by = None
+    message.delivery_status = "sent"
+    message.delivery_event_type = "sent"
+    message.delivery_receipt_at = message.sent_at
+    if provider_message_id:
+        message.provider_message_id = provider_message_id
+        message.delivery_receipt_id = provider_message_id
+    if receipt_provider:
+        message.delivery_receipt_provider = receipt_provider
 
 
 def requeue_dead_outbound_message(
@@ -426,7 +422,6 @@ def requeue_dead_outbound_message(
     message.locked_by = None
     message.next_retry_at = utc_now()
     message.last_attempt_at = None
-    _ensure_provider_idempotency_key(message)
     db.flush()
     return message
 
@@ -509,9 +504,7 @@ def claim_pending_messages(
     return (
         db.query(TicketOutboundMessage)
         .options(
-            joinedload(TicketOutboundMessage.ticket).joinedload(
-                Ticket.customer
-            ),
+            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.customer),
             joinedload(TicketOutboundMessage.attachment_links).joinedload(
                 TicketOutboundAttachment.attachment
             ),
@@ -583,60 +576,12 @@ def _dispatch_whatsapp_message(
     ticket: Ticket | None,
     idempotency_key: str,
 ) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
-    try:
-        if settings.whatsapp_dispatch_mode == "native_sidecar":
-            return dispatch_whatsapp_native_outbound(
-                db,
-                message=message,
-                ticket=ticket,
-                idempotency_key=idempotency_key,
-            )
-        if settings.whatsapp_dispatch_mode != "disabled":
-            return (
-                MessageStatus.failed,
-                "unsupported_whatsapp_dispatch_mode",
-                None,
-                {
-                    "channel": SourceChannel.whatsapp.value,
-                    "adapter": "unsupported_whatsapp_dispatch_mode",
-                    "idempotency_key": idempotency_key,
-                    "failure_code": "unsupported_whatsapp_dispatch_mode",
-                    "error": (
-                        "Unsupported WHATSAPP_DISPATCH_MODE: "
-                        f"{settings.whatsapp_dispatch_mode}"
-                    ),
-                    "retryable": False,
-                },
-            )
-        return (
-            MessageStatus.failed,
-            "whatsapp_dispatch_disabled",
-            None,
-            {
-                "channel": SourceChannel.whatsapp.value,
-                "adapter": "whatsapp_dispatch_disabled",
-                "idempotency_key": idempotency_key,
-                "failure_code": "whatsapp_dispatch_disabled",
-                "error": (
-                    "WHATSAPP_DISPATCH_MODE=disabled blocks WhatsApp "
-                    "dispatch"
-                ),
-                "retryable": False,
-            },
-        )
-    except ValueError as exc:
-        error_code = str(exc)
-        return (
-            MessageStatus.failed,
-            error_code,
-            None,
-            {
-                "channel": SourceChannel.whatsapp.value,
-                "adapter": "whatsapp_route_resolution",
-                "idempotency_key": idempotency_key,
-                "error": error_code,
-            },
-        )
+    return dispatch_whatsapp_outbound(
+        db,
+        message=message,
+        ticket=ticket,
+        idempotency_key=idempotency_key,
+    )
 
 
 def _dispatch_email_message(
@@ -659,17 +604,17 @@ def _dispatch_email_message(
             idempotency_key=idempotency_key,
         )
     except ValueError as exc:
-        error_code = str(exc)
+        code = str(exc)
         return (
             MessageStatus.failed,
-            error_code,
+            code,
             None,
             {
                 "channel": SourceChannel.email.value,
                 "adapter": "smtp",
                 "idempotency_key": idempotency_key,
-                "failure_code": error_code,
-                "error": error_code,
+                "failure_code": code,
+                "error": code,
             },
         )
 
@@ -684,13 +629,23 @@ def _handle_dispatch_result(
     sent_at,
     route_context: dict[str, Any],
 ) -> TicketOutboundMessage:
-    session_key = route_context.get("session_key")
     if status_value == MessageStatus.sent:
-        _mark_sent(message, provider_status, sent_at)
-        if (
-            ticket is not None
-            and getattr(ticket, "conversation_state", None) is not None
-        ):
+        transport = str(route_context.get("transport") or "").strip()
+        _mark_sent(
+            message,
+            provider_status,
+            sent_at,
+            provider_message_id=(
+                str(route_context.get("provider_message_id") or "").strip()
+                or None
+            ),
+            receipt_provider=(
+                f"whatsapp_{transport}"
+                if transport
+                else str(route_context.get("adapter") or "provider")
+            ),
+        )
+        if ticket is not None and ticket.conversation_state is not None:
             ticket.conversation_state = ConversationState.waiting_customer
         log_event(
             db,
@@ -712,54 +667,39 @@ def _handle_dispatch_result(
         if isinstance(route_error, str) and route_error
         else (provider_status or "Dispatch failed")
     )
-    route_failure_code = route_context.get("failure_code")
+    failure_code = route_context.get("failure_code")
     if route_context.get("retryable") is False:
         _mark_dead(
             message,
             reason,
             failure_code=(
-                route_failure_code
-                if isinstance(route_failure_code, str)
+                failure_code
+                if isinstance(failure_code, str)
                 else "non_retryable_dispatch_error"
             ),
         )
-        log_event(
-            db,
-            ticket_id=message.ticket_id,
-            actor_id=message.created_by,
-            event_type=EventType.outbound_dead,
-            note=(
-                "Queued outbound message failed dispatch with "
-                "non-retryable error"
+        event_type = EventType.outbound_dead
+        note = "Queued outbound message failed dispatch with non-retryable error"
+    else:
+        _mark_retry(
+            message,
+            reason,
+            failure_code=(
+                failure_code if isinstance(failure_code, str) else None
             ),
-            payload={
-                "message_id": message.id,
-                "error": message.failure_reason,
-                "retry_count": message.retry_count,
-                "route": route_context,
-            },
         )
-        return message
-    _mark_retry(
-        message,
-        reason,
-        failure_code=(
-            route_failure_code
-            if isinstance(route_failure_code, str)
-            else None
-        ),
-    )
-    event_type = (
-        EventType.outbound_dead
-        if message.status == MessageStatus.dead
-        else EventType.outbound_retry_scheduled
-    )
+        event_type = (
+            EventType.outbound_dead
+            if message.status == MessageStatus.dead
+            else EventType.outbound_retry_scheduled
+        )
+        note = "Queued outbound message failed dispatch"
     log_event(
         db,
         ticket_id=message.ticket_id,
         actor_id=message.created_by,
         event_type=event_type,
-        note="Queued outbound message failed dispatch",
+        note=note,
         payload={
             "message_id": message.id,
             "error": message.failure_reason,
@@ -787,10 +727,7 @@ def process_outbound_message(
             ticket_id=message.ticket_id,
             actor_id=message.created_by,
             event_type=EventType.outbound_dead,
-            note=(
-                "Non-external outbound row was blocked from provider "
-                "dispatch"
-            ),
+            note="Non-external outbound row was blocked from provider dispatch",
             payload={
                 "message_id": message.id,
                 "channel": (
@@ -802,6 +739,7 @@ def process_outbound_message(
             },
         )
         return message
+
     try:
         ticket_for_origin = message.ticket
         has_origin_contract = bool(
@@ -852,6 +790,7 @@ def process_outbound_message(
             },
         )
         return message
+
     blocked = _external_dispatch_block_reason()
     if blocked:
         failure_code, reason = blocked
@@ -870,47 +809,44 @@ def process_outbound_message(
             },
         )
         return message
+
     idempotency_key = _ensure_provider_idempotency_key(message)
     ticket = message.ticket
     if not _enforce_customer_visible_policy(db, message, ticket):
         return message
 
     if message.channel == SourceChannel.whatsapp:
-        status_value, provider_status, sent_at, route_context = (
-            _dispatch_whatsapp_message(
-                db,
-                message,
-                ticket,
-                idempotency_key,
-            )
+        result = _dispatch_whatsapp_message(
+            db,
+            message,
+            ticket,
+            idempotency_key,
         )
         return _handle_dispatch_result(
             db,
             message=message,
             ticket=ticket,
-            status_value=status_value,
-            provider_status=provider_status,
-            sent_at=sent_at,
-            route_context=route_context,
+            status_value=result[0],
+            provider_status=result[1],
+            sent_at=result[2],
+            route_context=result[3],
         )
 
     if message.channel == SourceChannel.email:
-        status_value, provider_status, sent_at, route_context = (
-            _dispatch_email_message(
-                db,
-                message,
-                ticket,
-                idempotency_key,
-            )
+        result = _dispatch_email_message(
+            db,
+            message,
+            ticket,
+            idempotency_key,
         )
         return _handle_dispatch_result(
             db,
             message=message,
             ticket=ticket,
-            status_value=status_value,
-            provider_status=provider_status,
-            sent_at=sent_at,
-            route_context=route_context,
+            status_value=result[0],
+            provider_status=result[1],
+            sent_at=result[2],
+            route_context=result[3],
         )
 
     target = None
@@ -920,7 +856,6 @@ def process_outbound_message(
             or ticket.preferred_reply_contact
             or (ticket.customer.phone if ticket.customer else None)
         )
-
     if not target:
         _mark_retry(message, "No target address available")
         event_type = (
@@ -944,10 +879,10 @@ def process_outbound_message(
         return message
 
     channel_value = message.channel.value
-    resolved_channel_account = _resolve_first_send_channel_account(db, ticket)
+    resolved_account = _resolve_first_send_channel_account(db, ticket)
     route_context = {
         "channel": channel_value,
-        "account_id": resolved_channel_account.account_id if resolved_channel_account else None,
+        "account_id": resolved_account.account_id if resolved_account else None,
         "target": target,
         "idempotency_key": idempotency_key,
         "source": "ticket_or_market",
@@ -967,8 +902,6 @@ def process_outbound_message(
     )
 
 
-# Compatibility name remains a thin delegate only. The transaction-boundary
-# module is the sole owner of claim/lease/process/commit loops.
 def dispatch_pending_messages(
     db: Session,
     *,

@@ -20,8 +20,6 @@ services:
       NEXUS_DB_BACKGROUND_PASSWORD: ${NEXUS_DB_BACKGROUND_PASSWORD:?set Background role password}
       NEXUS_DB_WEBCHAT_AI_USER: ${NEXUS_DB_WEBCHAT_AI_USER:?set WebChat AI role user}
       NEXUS_DB_WEBCHAT_AI_PASSWORD: ${NEXUS_DB_WEBCHAT_AI_PASSWORD:?set WebChat AI role password}
-      NEXUS_DB_HANDOFF_USER: ${NEXUS_DB_HANDOFF_USER:?set Handoff role user}
-      NEXUS_DB_HANDOFF_PASSWORD: ${NEXUS_DB_HANDOFF_PASSWORD:?set Handoff role password}
     volumes:
       - controlled-postgres-data:/var/lib/postgresql/data
       - ./postgres/init-controlled-roles.sh:/docker-entrypoint-initdb.d/10-nexus-controlled-roles.sh:ro

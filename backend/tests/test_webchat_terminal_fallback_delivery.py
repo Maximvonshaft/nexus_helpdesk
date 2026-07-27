@@ -9,14 +9,18 @@ from app.db import Base, SessionLocal, engine
 from app.enums import JobStatus
 from app.main import app
 from app.models import BackgroundJob
-from app.services import background_jobs, webchat_ai_orchestration_service, webchat_ai_service
-from app.services.agent_runtime.terminal_reply import customer_visible_fallback
-from app.services.background_job_transaction_boundary import (
-    _finalize_dead_webchat_ai_job,
+from app.services import (
+    background_jobs,
+    webchat_ai_orchestration_service,
+    webchat_ai_service,
 )
+from app.services.agent_runtime.terminal_reply import customer_visible_fallback
 from app.services.background_jobs import (
     WEBCHAT_AI_REPLY_JOB,
     dispatch_pending_webchat_ai_reply_jobs,
+)
+from app.services.webchat_ai_terminal_job_service import (
+    finalize_dead_webchat_ai_job,
 )
 from app.utils.time import utc_now
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
@@ -140,7 +144,7 @@ def test_exhausted_webchat_ai_job_commits_one_safe_ticketless_terminal_outcome(
         assert "private-provider-secret" not in messages[0].body
         assert "RuntimeError" not in messages[0].body
 
-        _finalize_dead_webchat_ai_job(db, job)
+        finalize_dead_webchat_ai_job(db, job)
         db.commit()
         assert (
             db.query(WebchatMessage)
@@ -187,7 +191,7 @@ def test_committed_handoff_suppresses_dead_job_terminal_fallback(monkeypatch):
         job.attempt_count = job.max_attempts
         db.commit()
 
-        _finalize_dead_webchat_ai_job(db, job)
+        finalize_dead_webchat_ai_job(db, job)
         db.commit()
         db.refresh(turn)
         assert turn.status == "superseded"

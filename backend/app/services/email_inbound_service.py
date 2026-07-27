@@ -6,12 +6,14 @@ from typing import Iterable
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, SourceChannel, TicketStatus
+from ..enums import ConversationState, EventType, SourceChannel
 from ..models import Customer, Ticket, TicketInboundEmailMessage, TicketOutboundMessage, User
 from ..schemas import InboundEmailIngestRequest
 from ..utils.normalize import normalize_email
 from ..utils.time import ensure_utc, utc_now
 from .audit_service import log_admin_audit, log_event
+from .customer_identity_service import CustomerIdentityError, bind_customer_identity
+from .customer_recontact_service import reopen_ticket_from_customer_message
 from .email_mailbox_identity import (
     build_inbound_mailbox_message_id,
     build_mailbox_thread_id,
@@ -47,7 +49,10 @@ def _safe_address(value: str | None) -> str | None:
 def _valid_from_address(value: str | None) -> str:
     normalized = normalize_email(value)
     if not normalized or "@" not in normalized or "\r" in normalized or "\n" in normalized:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_inbound_email_from_address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid_inbound_email_from_address",
+        )
     return normalized[:320]
 
 
@@ -56,7 +61,10 @@ def _known_mailbox_rows(db: Session, ticket_id: int) -> list[TicketOutboundMessa
         db.query(TicketOutboundMessage)
         .filter(TicketOutboundMessage.ticket_id == ticket_id)
         .filter(TicketOutboundMessage.mailbox_thread_id.isnot(None))
-        .order_by(TicketOutboundMessage.created_at.desc(), TicketOutboundMessage.id.desc())
+        .order_by(
+            TicketOutboundMessage.created_at.desc(),
+            TicketOutboundMessage.id.desc(),
+        )
         .limit(50)
         .all()
     )
@@ -67,24 +75,56 @@ def _text_contains_any(text: str, values: Iterable[str | None]) -> bool:
     return any(value and value in haystack for value in values)
 
 
-def _resolve_mailbox_thread_id(db: Session, ticket: Ticket, payload: InboundEmailIngestRequest) -> str:
+def _resolve_mailbox_thread_id(
+    db: Session,
+    ticket: Ticket,
+    payload: InboundEmailIngestRequest,
+) -> str:
     provided_thread = normalize_mailbox_header_id(payload.mailbox_thread_id)
     provided_message = normalize_mailbox_header_id(payload.mailbox_message_id)
     provided_reply_to = normalize_mailbox_header_id(payload.in_reply_to)
     references = normalize_mailbox_references(payload.mailbox_references)
     known_rows = _known_mailbox_rows(db, ticket.id)
-    known_thread = next((row.mailbox_thread_id for row in known_rows if row.mailbox_thread_id), None)
-    known_text = " ".join(item for item in [provided_thread, provided_message, provided_reply_to, references] if item)
+    known_thread = next(
+        (row.mailbox_thread_id for row in known_rows if row.mailbox_thread_id),
+        None,
+    )
+    known_text = " ".join(
+        item
+        for item in [
+            provided_thread,
+            provided_message,
+            provided_reply_to,
+            references,
+        ]
+        if item
+    )
 
     for row in known_rows:
-        if _text_contains_any(known_text, [row.mailbox_thread_id, row.mailbox_message_id, row.provider_message_id]):
+        if _text_contains_any(
+            known_text,
+            [row.mailbox_thread_id, row.mailbox_message_id, row.provider_message_id],
+        ):
             return str(row.mailbox_thread_id)
 
     return provided_thread or known_thread or build_mailbox_thread_id(ticket.id)
 
 
-def _resolve_mailbox_references(thread_id: str, payload: InboundEmailIngestRequest) -> str:
-    references = normalize_mailbox_references(" ".join(item for item in [payload.mailbox_references, payload.in_reply_to, thread_id] if item))
+def _resolve_mailbox_references(
+    thread_id: str,
+    payload: InboundEmailIngestRequest,
+) -> str:
+    references = normalize_mailbox_references(
+        " ".join(
+            item
+            for item in [
+                payload.mailbox_references,
+                payload.in_reply_to,
+                thread_id,
+            ]
+            if item
+        )
+    )
     return references or thread_id
 
 
@@ -99,22 +139,38 @@ def _existing_inbound(
     if provider_message_id:
         row = (
             db.query(TicketInboundEmailMessage)
-            .filter(TicketInboundEmailMessage.provider == provider, TicketInboundEmailMessage.provider_message_id == provider_message_id)
+            .filter(
+                TicketInboundEmailMessage.provider == provider,
+                TicketInboundEmailMessage.provider_message_id
+                == provider_message_id,
+            )
             .first()
         )
         if row is not None:
+            if row.ticket_id != ticket_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="inbound_email_provider_identity_conflict",
+                )
             return row
     if mailbox_message_id:
         return (
             db.query(TicketInboundEmailMessage)
-            .filter(TicketInboundEmailMessage.ticket_id == ticket_id, TicketInboundEmailMessage.mailbox_message_id == mailbox_message_id)
+            .filter(
+                TicketInboundEmailMessage.ticket_id == ticket_id,
+                TicketInboundEmailMessage.mailbox_message_id == mailbox_message_id,
+            )
             .first()
         )
     return None
 
 
-def _update_ticket_from_inbound(ticket: Ticket, *, from_address: str, body: str) -> None:
-    now = utc_now()
+def _update_ticket_from_inbound(
+    ticket: Ticket,
+    *,
+    from_address: str,
+    body: str,
+) -> None:
     ticket.last_customer_message = _clip(body, MAX_CUSTOMER_MESSAGE_PREVIEW)
     if not ticket.customer_request:
         ticket.customer_request = _clip(body, MAX_CUSTOMER_MESSAGE_PREVIEW)
@@ -122,27 +178,42 @@ def _update_ticket_from_inbound(ticket: Ticket, *, from_address: str, body: str)
     ticket.preferred_reply_contact = from_address
     if not ticket.source_chat_id:
         ticket.source_chat_id = from_address[:120]
-    ticket.updated_at = now
-
-    if ticket.status in {TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled}:
-        ticket.status = TicketStatus.pending_assignment
-        ticket.reopen_count += 1
-        ticket.closed_at = None
-        ticket.resolved_at = None
-        ticket.conversation_state = ConversationState.reopened_by_customer
-    elif ticket.conversation_state != ConversationState.human_review_required:
+    if ticket.conversation_state != ConversationState.human_review_required:
         ticket.conversation_state = ConversationState.human_owned
+    ticket.updated_at = utc_now()
 
 
-def _update_customer_email(db: Session, ticket: Ticket, from_address: str) -> None:
+def _bind_customer_email(
+    db: Session,
+    ticket: Ticket,
+    from_address: str,
+) -> None:
     if ticket.customer_id is None:
         return
-    customer = db.query(Customer).filter(Customer.id == ticket.customer_id).first()
-    if customer is None:
-        return
-    if not customer.email:
-        customer.email = from_address
-        customer.email_normalized = normalize_email(from_address)
+    if ticket.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ticket_tenant_required_for_customer_identity",
+        )
+    customer = db.get(Customer, ticket.customer_id)
+    if customer is None or customer.tenant_id != ticket.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ticket_customer_tenant_conflict",
+        )
+    try:
+        bind_customer_identity(
+            db,
+            customer=customer,
+            identity_type="email",
+            identity_value=from_address,
+            source="email",
+        )
+    except CustomerIdentityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 def ingest_ticket_inbound_email(
@@ -154,7 +225,10 @@ def ingest_ticket_inbound_email(
 ) -> InboundEmailIngestResult:
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found",
+        )
     ensure_ticket_visible(current_user, ticket, db)
     ensure_can_manage_runtime(current_user, db)
     return _ingest_ticket_inbound_email(
@@ -174,10 +248,19 @@ def ingest_ticket_inbound_email_system(
     payload: InboundEmailIngestRequest,
     actor_id: int | None = None,
     source: str = "imap_poll",
+    expected_tenant_id: int | None = None,
 ) -> InboundEmailIngestResult:
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found",
+        )
+    if expected_tenant_id is not None and ticket.tenant_id != expected_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found",
+        )
     return _ingest_ticket_inbound_email(
         db,
         ticket=ticket,
@@ -199,12 +282,13 @@ def _ingest_ticket_inbound_email(
 ) -> InboundEmailIngestResult:
     from_address = _valid_from_address(payload.from_address)
     provider = _clip(payload.provider, 80) or "manual"
+    provider_message_id = _clip(payload.provider_message_id, 255)
     mailbox_message_id = normalize_mailbox_header_id(payload.mailbox_message_id)
     existing = _existing_inbound(
         db,
         ticket_id=ticket.id,
         provider=provider,
-        provider_message_id=_clip(payload.provider_message_id, 255),
+        provider_message_id=provider_message_id,
         mailbox_message_id=mailbox_message_id,
     )
     if existing is not None:
@@ -212,7 +296,10 @@ def _ingest_ticket_inbound_email(
 
     body = payload.body.strip()
     if not body:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="inbound_email_body_required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="inbound_email_body_required",
+        )
 
     mailbox_thread_id = _resolve_mailbox_thread_id(db, ticket, payload)
     mailbox_references = _resolve_mailbox_references(mailbox_thread_id, payload)
@@ -224,7 +311,7 @@ def _ingest_ticket_inbound_email(
         actor_id=actor_id,
         source=_clip(source, 40) or "manual_sync",
         provider=provider,
-        provider_message_id=_clip(payload.provider_message_id, 255),
+        provider_message_id=provider_message_id,
         from_address=from_address,
         from_name=_clip(payload.from_name, 160),
         to_address=_safe_address(payload.to_address),
@@ -243,11 +330,28 @@ def _ingest_ticket_inbound_email(
 
     if row.mailbox_message_id is None:
         row.mailbox_message_id = build_inbound_mailbox_message_id(ticket.id, row.id)
-        row.mailbox_references = normalize_mailbox_references(f"{row.mailbox_references or ''} {row.mailbox_message_id}") or row.mailbox_references
+        row.mailbox_references = (
+            normalize_mailbox_references(
+                f"{row.mailbox_references or ''} {row.mailbox_message_id}"
+            )
+            or row.mailbox_references
+        )
         db.flush()
 
+    recontact_identity = (
+        row.provider_message_id
+        or row.mailbox_message_id
+        or f"inbound-email:{row.id}"
+    )
+    reopen_ticket_from_customer_message(
+        db,
+        ticket=ticket,
+        source=row.source,
+        external_message_id=recontact_identity,
+        actor_id=actor_id,
+    )
     _update_ticket_from_inbound(ticket, from_address=from_address, body=body)
-    _update_customer_email(db, ticket, from_address)
+    _bind_customer_email(db, ticket, from_address)
 
     event = log_event(
         db,

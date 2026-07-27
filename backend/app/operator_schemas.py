@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OperatorTaskRead(BaseModel):
     id: int
+    tenant_id: int | None = Field(default=None, gt=0)
     source_type: str
     source_id: str | None = None
     source_version: int | None = None
@@ -20,7 +21,10 @@ class OperatorTaskRead(BaseModel):
     reason_code: str | None = None
     payload_json: dict[str, Any] = Field(
         default_factory=dict,
-        description="Admin-only redacted payload; never includes raw visitor token, session key, email, phone, or full raw error.",
+        description=(
+            "Admin-only redacted payload; never includes raw visitor token, "
+            "session key, email, phone, or full raw error."
+        ),
     )
     created_at: str | None = None
     updated_at: str | None = None

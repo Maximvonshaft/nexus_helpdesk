@@ -55,10 +55,10 @@ def test_canonical_app_worker_topology_exists_in_one_file_only():
         "worker-outbound-controlled",
         "worker-background-controlled",
         "worker-webchat-ai-controlled",
-        "worker-handoff-snapshot-controlled",
     }
     assert expected_runtime.issubset(controlled)
     assert expected_runtime.isdisjoint(local_db)
+    assert "worker-handoff-snapshot-controlled" not in controlled
     assert "postgres-controlled" not in controlled
     assert "postgres-controlled" in local_db
     assert "migrate-controlled" in local_db
@@ -77,7 +77,6 @@ def test_external_and_local_controlled_envs_use_distinct_service_identities():
         "DATABASE_URL_OUTBOUND": "nexus_outbound",
         "DATABASE_URL_BACKGROUND": "nexus_background",
         "DATABASE_URL_WEBCHAT_AI": "nexus_webchat_ai",
-        "DATABASE_URL_HANDOFF": "nexus_handoff",
     }
     for path, expected_host in (
         (CONTROLLED_ENV, "10.2.64.2"),
@@ -96,6 +95,8 @@ def test_external_and_local_controlled_envs_use_distinct_service_identities():
             found_users.add(match.group(1))
         assert len(found_users) == len(expected_users)
         assert not re.search(r"(?m)^DATABASE_URL=", text)
+        assert "DATABASE_URL_HANDOFF" not in text
+        assert "NEXUS_DB_HANDOFF" not in text
 
 
 def test_local_postgres_overlay_bootstraps_only_database_authority():
@@ -109,6 +110,8 @@ def test_local_postgres_overlay_bootstraps_only_database_authority():
     assert "ALTER DEFAULT PRIVILEGES" in bootstrap
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES" in bootstrap
     assert "GRANT USAGE, SELECT ON SEQUENCES" in bootstrap
+    assert "NEXUS_DB_HANDOFF" not in compose
+    assert "handoff_user" not in bootstrap
     assert "DROP DATABASE" not in bootstrap
     assert "DROP ROLE" not in bootstrap
 
@@ -193,11 +196,14 @@ def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_sco
             if "--queue" in command:
                 queue_index = command.index("--queue")
                 assert command[queue_index + 1] != "all", service_name
+                assert command[queue_index + 1] != "handoff-snapshot", service_name
 
     raw = _read(CONTROLLED).lower()
     for forbidden in (
         "/run/secrets",
         "ai_runtime_token",
         "live_voice_token",
+        "worker-handoff-snapshot",
+        "database_url_handoff",
     ):
         assert forbidden not in raw

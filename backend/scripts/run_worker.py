@@ -15,9 +15,6 @@ from app.services.background_job_transaction_boundary import (  # noqa: E402
     dispatch_pending_background_jobs,
     dispatch_pending_webchat_ai_reply_jobs,
 )
-from app.services.outbound_dispatch_transaction_boundary import (  # noqa: E402
-    dispatch_pending_messages,
-)
 from app.services.observability import (  # noqa: E402
     configure_logging,
     log_event,
@@ -25,10 +22,13 @@ from app.services.observability import (  # noqa: E402
     record_worker_poll,
     record_worker_result,
 )
+from app.services.outbound_dispatch_transaction_boundary import (  # noqa: E402
+    dispatch_pending_messages,
+)
 from app.services.queue_health import collect_queue_health  # noqa: E402
 from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
-from app.services.webchat_handoff_snapshot_worker import (  # noqa: E402
-    dispatch_pending_webchat_handoff_snapshot_jobs,
+from app.services.whatsapp_media_worker import (  # noqa: E402
+    dispatch_pending_whatsapp_media,
 )
 from app.settings import get_settings  # noqa: E402
 
@@ -40,19 +40,10 @@ QUEUES = {
     "outbound",
     "background",
     "webchat-ai",
-    "handoff-snapshot",
 }
 _LAST_WEBCHAT_AI_RECONCILER_RUN_AT = 0.0
 _LAST_QUEUE_DEPTH_SNAPSHOT_AT = 0.0
 _QUEUE_DEPTH_LABELS: set[tuple[str, str]] = set()
-
-
-def _is_sqlalchemy_session(db) -> bool:
-    return (
-        hasattr(db, "bind")
-        and hasattr(db, "query")
-        and hasattr(db, "commit")
-    )
 
 
 def _run_outbound(worker_id: str) -> int:
@@ -81,27 +72,18 @@ def _run_background(worker_id: str) -> int:
                 "processed",
                 len(jobs),
             )
-        return len(jobs)
-
-
-def _run_handoff_snapshot(worker_id: str) -> int:
-    with db_context() as db:
-        handoff_jobs = (
-            dispatch_pending_webchat_handoff_snapshot_jobs(
-                db,
-                worker_id=worker_id,
-            )
-            if _is_sqlalchemy_session(db)
-            else []
+        media_ids = dispatch_pending_whatsapp_media(
+            db,
+            worker_id=worker_id,
         )
-        if handoff_jobs:
+        if media_ids:
             record_worker_result(
                 worker_id,
-                "webchat_handoff_snapshot",
+                "whatsapp_media",
                 "processed",
-                len(handoff_jobs),
+                len(media_ids),
             )
-        return len(handoff_jobs)
+        return len(jobs) + len(media_ids)
 
 
 def _webchat_ai_reconciler_interval_seconds() -> int:
@@ -300,8 +282,6 @@ def run_queue_once(worker_id: str, queue: str) -> int:
         processed = _run_outbound(worker_id)
     elif queue == "background":
         processed = _run_background(worker_id)
-    elif queue == "handoff-snapshot":
-        processed = _run_handoff_snapshot(worker_id)
     else:
         processed = _run_webchat_ai(worker_id)
     _record_queue_depth_snapshot_if_due(worker_id, queue=queue)

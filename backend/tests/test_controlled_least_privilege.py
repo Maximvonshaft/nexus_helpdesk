@@ -113,6 +113,8 @@ def test_controlled_runtime_has_global_least_privilege_defaults():
     text = COMPOSE.read_text(encoding="utf-8")
     assert "NEXUS_RUNTIME_SECRETS_HOST_PATH" not in text
     assert "/run/secrets" not in text
+    assert "worker-handoff-snapshot-controlled" not in text
+    assert "DATABASE_URL_HANDOFF" not in text
 
 
 def test_retired_disabled_capability_credentials_are_absent():
@@ -191,7 +193,7 @@ def test_outbound_worker_has_read_only_attachments_and_no_http_secret():
     )
 
 
-def test_background_worker_has_writable_uploads_and_only_required_telephony_control():
+def test_background_worker_owns_snapshot_and_required_control_credentials():
     environment = _environment("worker-background-controlled")
     assert "DATABASE_URL_BACKGROUND" in str(environment["DATABASE_URL"])
     assert "QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS" in environment
@@ -216,22 +218,12 @@ def test_background_worker_has_writable_uploads_and_only_required_telephony_cont
     )
 
 
-@pytest.mark.parametrize(
-    "service,database_key,runtime_signing_required",
-    [
-        ("worker-webchat-ai-controlled", "DATABASE_URL_WEBCHAT_AI", True),
-        ("worker-handoff-snapshot-controlled", "DATABASE_URL_HANDOFF", False),
-    ],
-)
-def test_isolated_workers_have_no_unrelated_secret_or_file_mount(
-    service: str,
-    database_key: str,
-    runtime_signing_required: bool,
-):
+def test_isolated_webchat_ai_worker_has_no_unrelated_secret_or_file_mount():
+    service = "worker-webchat-ai-controlled"
     environment = _environment(service)
-    assert database_key in str(environment["DATABASE_URL"])
+    assert "DATABASE_URL_WEBCHAT_AI" in str(environment["DATABASE_URL"])
     assert "prometheus-multiproc:/var/run/nexus-prometheus" in _volumes(service)
-    assert ("RUNTIME_CONTRACT_SIGNING_SECRET" in environment) is runtime_signing_required
+    assert "RUNTIME_CONTRACT_SIGNING_SECRET" in environment
     for forbidden in (
         "SECRET_KEY",
         "METRICS_TOKEN",
@@ -284,6 +276,7 @@ def test_preflight_executes_the_same_role_isolation_contract():
         expected_database_port=5432,
     )
     assert set(roles) == set(module.DATABASE_ROLE_KEYS)
+    assert "handoff" not in roles
     assert len({row["username"] for row in roles.values()}) == len(roles)
     rendered = json.dumps(roles, sort_keys=True)
     for index in range(1, len(roles) + 1):
@@ -302,7 +295,6 @@ def test_preflight_executes_the_same_role_isolation_contract():
         "migration",
         "worker-outbound",
         "worker-background",
-        "worker-handoff-snapshot",
     ],
 )
 def test_non_http_production_roles_start_without_web_secrets(
@@ -348,7 +340,7 @@ def test_ai_worker_cannot_enable_ai_without_real_knowledge_runtime(
         Settings()
 
 
-def test_background_worker_claims_only_its_owned_queue_types():
+def test_background_worker_claims_all_canonical_background_job_types():
     source = BACKGROUND_BOUNDARY.read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
@@ -362,12 +354,12 @@ def test_background_worker_claims_only_its_owned_queue_types():
         "SPEEDAF_ADDRESS_UPDATE_JOB",
         "SPEEDAF_VOICE_CALLBACK_JOB",
         "EMAIL_MAILBOX_SYNC_JOB",
+        "WEBCHAT_HANDOFF_SNAPSHOT_JOB",
     ):
         assert required in function
     for forbidden in (
         "AUTO_REPLY_JOB",
         "WEBCHAT_AI_REPLY_JOB",
-        "WEBCHAT_HANDOFF_SNAPSHOT_JOB",
         "EXTERNAL_CHANNEL_SYNC_JOB",
     ):
         assert forbidden not in function
@@ -376,7 +368,8 @@ def test_background_worker_claims_only_its_owned_queue_types():
 def test_worker_runner_keeps_processed_counts_separate_from_queue_depth():
     runner = WORKER_RUNNER.read_text(encoding="utf-8")
     assert 'if queue == "webchat-ai"' in runner
-    assert 'if queue == "handoff-snapshot"' in runner
+    assert 'if queue == "handoff-snapshot"' not in runner
+    assert "dispatch_pending_webchat_handoff_snapshot_jobs" not in runner
     assert "collect_queue_health" in runner
     assert "_record_queue_depth_snapshot_if_due" in runner
     assert 'record_queue_snapshot("outbound", "processed"' not in runner
@@ -396,6 +389,7 @@ def test_process_role_authority_is_explicit_in_settings():
         "NEXUS_PROCESS_ROLE is not supported",
     ):
         assert marker in source
+    assert '"worker-handoff-snapshot"' not in source
 
 
 def test_external_database_network_remains_reachable():

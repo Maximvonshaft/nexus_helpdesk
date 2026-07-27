@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed preflight for the Swiss controlled-server deployment."""
+"""Fail-closed preflight for the canonical controlled-server deployment."""
 
 from __future__ import annotations
 
@@ -25,13 +25,15 @@ _APP_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,79}$")
 _COMPOSE_PROJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 _ATTESTATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 
+# One database principal per actual executable process class. Handoff snapshots
+# are BackgroundJobs owned by worker-background; a sixth Handoff role would
+# recreate the retired parallel execution chain.
 DATABASE_ROLE_KEYS = {
     "migration": "DATABASE_URL_MIGRATION",
     "app": "DATABASE_URL_APP",
     "outbound": "DATABASE_URL_OUTBOUND",
     "background": "DATABASE_URL_BACKGROUND",
     "webchat_ai": "DATABASE_URL_WEBCHAT_AI",
-    "handoff": "DATABASE_URL_HANDOFF",
 }
 
 SAFE_CONTROLS = {
@@ -96,6 +98,7 @@ OPTIONAL_DISABLED_CONTROLS = {
 
 FORBIDDEN_DISABLED_CAPABILITY_KEYS = {
     "DATABASE_URL",
+    "DATABASE_URL_HANDOFF",
     "NEXUS_RUNTIME_SECRETS_HOST_PATH",
     "AI_RUNTIME_TOKEN_HOST_PATH",
     "LIVE_VOICE_TOKEN_HOST_PATH",
@@ -154,7 +157,6 @@ _SERVICE_SECRET_ALLOWLIST = {
         "LIVEKIT_API_SECRET_FILE",
     },
     "worker-webchat-ai-controlled": {"RUNTIME_CONTRACT_SIGNING_SECRET"},
-    "worker-handoff-snapshot-controlled": set(),
 }
 
 _SERVICE_DATABASE_KEYS = {
@@ -163,14 +165,19 @@ _SERVICE_DATABASE_KEYS = {
     "worker-outbound-controlled": "DATABASE_URL_OUTBOUND",
     "worker-background-controlled": "DATABASE_URL_BACKGROUND",
     "worker-webchat-ai-controlled": "DATABASE_URL_WEBCHAT_AI",
-    "worker-handoff-snapshot-controlled": "DATABASE_URL_HANDOFF",
 }
 
 _SERVICE_QUEUE_KEYS = {
     "worker-outbound-controlled": "outbound",
     "worker-background-controlled": "background",
     "worker-webchat-ai-controlled": "webchat-ai",
-    "worker-handoff-snapshot-controlled": "handoff-snapshot",
+}
+
+_RETIRED_EXECUTION_MARKERS = {
+    "worker-handoff-snapshot-controlled",
+    "worker-handoff-snapshot",
+    "handoff-snapshot",
+    "DATABASE_URL_HANDOFF",
 }
 
 
@@ -247,6 +254,14 @@ def _validate_compose(path: Path) -> None:
     missing = sorted(required_services - set(services))
     if missing:
         raise PreflightError(f"compose_service_missing:{','.join(missing)}")
+    unexpected = sorted(set(services) - required_services)
+    if unexpected:
+        raise PreflightError(f"compose_service_unexpected:{','.join(unexpected)}")
+
+    text = path.read_text(encoding="utf-8")
+    for marker in _RETIRED_EXECUTION_MARKERS:
+        if marker in text:
+            raise PreflightError(f"compose_retired_execution_path:{marker}")
 
     for service_name, raw_service in services.items():
         if not isinstance(raw_service, dict):
@@ -280,7 +295,9 @@ def _validate_compose(path: Path) -> None:
             value = str(environment.get("DATABASE_URL") or "")
             expected = _SERVICE_DATABASE_KEYS[service_name]
             if expected not in value:
-                raise PreflightError(f"compose_database_role_missing:{service_name}:{expected}")
+                raise PreflightError(
+                    f"compose_database_role_missing:{service_name}:{expected}"
+                )
         elif "DATABASE_URL" in environment:
             raise PreflightError(f"compose_database_forbidden:{service_name}")
 
@@ -291,14 +308,17 @@ def _validate_compose(path: Path) -> None:
                 queue_index = command.index("--queue")
                 observed_queue = command[queue_index + 1]
             except (ValueError, IndexError) as exc:
-                raise PreflightError(f"compose_worker_queue_missing:{service_name}") from exc
+                raise PreflightError(
+                    f"compose_worker_queue_missing:{service_name}"
+                ) from exc
             if observed_queue != expected_queue or observed_queue == "all":
-                raise PreflightError(f"compose_worker_queue_invalid:{service_name}:{observed_queue}")
+                raise PreflightError(
+                    f"compose_worker_queue_invalid:{service_name}:{observed_queue}"
+                )
 
     image_value = str(services["app-controlled"].get("image") or "")
     if "${CONTROLLED_IMAGE:?" not in image_value:
         raise PreflightError("compose_digest_variable_missing")
-    text = path.read_text(encoding="utf-8")
     for forbidden in (
         "external: true",
         "production_runtime",
@@ -376,7 +396,7 @@ def _manifest_identity(manifest: dict) -> tuple[dict, dict]:
     safety = manifest.get("safety")
     if not isinstance(safety, dict):
         raise PreflightError("manifest_safety_invalid")
-    expected_manifest_safety = {
+    expected_safety = {
         "production_ready": False,
         "full_osr_automation": "NO_GO",
         "issue_533_go": False,
@@ -388,7 +408,7 @@ def _manifest_identity(manifest: dict) -> tuple[dict, dict]:
         "speedaf_writes_enabled": False,
         "operations_dispatch_enabled": False,
     }
-    for key, expected in expected_manifest_safety.items():
+    for key, expected in expected_safety.items():
         if safety.get(key) != expected:
             raise PreflightError(f"manifest_safety_invalid:{key}")
     attestation = manifest.get("attestation")
@@ -449,6 +469,8 @@ def _validate_database_roles(
 ) -> dict[str, dict[str, object]]:
     if "DATABASE_URL" in values:
         raise PreflightError("generic_database_url_forbidden")
+    if "DATABASE_URL_HANDOFF" in values:
+        raise PreflightError("retired_handoff_database_role_forbidden")
     roles: dict[str, dict[str, object]] = {}
     for role, key in DATABASE_ROLE_KEYS.items():
         roles[role] = _parse_database_url(
@@ -584,7 +606,10 @@ def validate(
         checked_paths[key] = kind
         if check_host_paths and (not path.is_dir() or path.is_symlink()):
             raise PreflightError(f"host_directory_missing:{key}")
-    if declared_paths["NEXUS_UPLOADS_HOST_PATH"] == declared_paths["NEXUS_UPLOAD_BACKUP_HOST_PATH"]:
+    if (
+        declared_paths["NEXUS_UPLOADS_HOST_PATH"]
+        == declared_paths["NEXUS_UPLOAD_BACKUP_HOST_PATH"]
+    ):
         raise PreflightError("upload_and_backup_paths_must_differ")
 
     app_database = database_roles["app"]

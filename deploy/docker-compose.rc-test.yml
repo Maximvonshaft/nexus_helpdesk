@@ -129,17 +129,6 @@ services:
       app-rc:
         condition: service_healthy
 
-  worker-handoff-snapshot-rc:
-    <<: *rc_app
-    environment:
-      NEXUS_WORKER_ID: worker-handoff-snapshot-rc
-      NEXUS_WORKER_QUEUE: handoff-snapshot
-    command: python scripts/run_worker_supervised.py --worker-id worker-handoff-snapshot-rc --queue handoff-snapshot
-    healthcheck: *rc_worker_healthcheck
-    depends_on:
-      app-rc:
-        condition: service_healthy
-
   nginx-rc:
     image: ${RC_NGINX_IMAGE:-nginx:1.27-alpine}
     volumes:

@@ -51,13 +51,12 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_sla_runtime",
     "app.models_privacy_runtime",
     "app.models_job_scope",
+    "app.models_channel_intake",
+    "app.models_whatsapp",
+    "app.models_whatsapp_outbound",
 )
 
-# There are currently no optional production model plugins. Future plugins must
-# be declared here with an explicit capability and enabled state; do not restore
-# file-existence-based discovery.
 MODEL_PLUGINS: tuple[ModelPlugin, ...] = ()
-
 
 REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models": "tickets",
@@ -80,6 +79,9 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_sla_runtime": "ticket_sla_targets",
     "app.models_privacy_runtime": "data_processing_restrictions",
     "app.models_job_scope": "background_job_scopes",
+    "app.models_channel_intake": "customer_identity_bindings",
+    "app.models_whatsapp": "whatsapp_connections",
+    "app.models_whatsapp_outbound": "whatsapp_outbound_parts",
 }
 
 

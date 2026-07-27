@@ -1,5 +1,4 @@
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -27,7 +26,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   OperatorEmptyState,
   OperatorErrorNotice,
-  OperatorFactGrid,
   OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
@@ -37,7 +35,9 @@ import { supportApi } from '@/lib/supportApi'
 import { channelPresentation, healthPresentation } from '@/lib/supportStatus'
 import type { ChannelOnboardingTask } from '@/lib/channelControlTypes'
 import type { ChannelAccount } from '@/lib/types'
+import { MetaEmbeddedSignupPanel } from './MetaEmbeddedSignupPanel'
 import { TelephonyConfigurationPanel } from './TelephonyConfigurationPanel'
+import { WhatsAppConfigurationPanel } from './WhatsAppConfigurationPanel'
 
 type PendingTaskAction = 'complete' | 'fail' | 'cancel' | null
 
@@ -49,17 +49,10 @@ type OnboardingDraft = {
 }
 
 const emptyDraft: OnboardingDraft = {
-  provider: 'whatsapp',
+  provider: 'email',
   targetSlot: '',
   displayName: '',
   accountBinding: '',
-}
-
-function maskPhone(value: string | null | undefined) {
-  const text = String(value || '').trim()
-  if (!text) return '未返回'
-  const digits = text.replace(/\D/g, '')
-  return digits.length > 4 ? `•••• ${digits.slice(-4)}` : '已配置'
 }
 
 function taskStatus(task: ChannelOnboardingTask) {
@@ -101,28 +94,11 @@ export function ChannelsPage() {
     () => (accounts.data ?? []).filter((item: ChannelAccount) => item.is_active),
     [accounts.data],
   )
-  const whatsappAccount = useMemo(
-    () => activeAccounts.find((item: ChannelAccount) => item.provider === 'whatsapp'),
-    [activeAccounts],
-  )
-  const whatsappStatus = useQuery({
-    queryKey: ['canonicalWhatsappStatus', whatsappAccount?.account_id],
-    queryFn: () => supportApi.whatsappNativeStatus(whatsappAccount?.account_id || ''),
-    enabled: Boolean(whatsappAccount?.account_id),
-    refetchInterval: 10_000,
-    retry: false,
-  })
-  const whatsappHealth = healthPresentation(
-    whatsappStatus.data?.channel_health_status
-      || whatsappStatus.data?.status
-      || whatsappAccount?.health_status,
-  )
 
   const invalidateChannels = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['canonicalChannelAccounts'] }),
       queryClient.invalidateQueries({ queryKey: ['canonicalChannelOnboardingTasks'] }),
-      queryClient.invalidateQueries({ queryKey: ['canonicalWhatsappStatus'] }),
     ])
   }
 
@@ -167,7 +143,10 @@ export function ChannelsPage() {
   })
 
   const actionError = createTask.error || startTask.error || settleTask.error
-  const createReady = Boolean(draft.provider.trim() && (draft.displayName.trim() || draft.targetSlot.trim() || draft.accountBinding.trim()))
+  const createReady = Boolean(
+    draft.provider.trim()
+      && (draft.displayName.trim() || draft.targetSlot.trim() || draft.accountBinding.trim()),
+  )
   const closeTaskDialog = () => {
     if (settleTask.isPending) return
     setSelectedTask(null)
@@ -182,83 +161,73 @@ export function ChannelsPage() {
         spacing={2}
         sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' }, justifyContent: 'space-between', mb: 2.5 }}
       >
-        <Typography component="h1" variant="h1">渠道管理</Typography>
+        <Box>
+          <Typography component="h1" variant="h1">渠道管理</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            渠道账号、认证、运行状态和生产激活的唯一运营入口。
+          </Typography>
+        </Box>
         {accounts.isFetching || tasks.isFetching ? <CircularProgress size={22} aria-label="正在刷新" /> : null}
       </Stack>
 
       {actionError ? <Box sx={{ mb: 2 }}><OperatorErrorNotice title="操作失败" error={actionError} fallback="请稍后重试" /></Box> : null}
 
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 2fr) minmax(300px, 1fr)' } }}>
-        <Paper component="section" variant="outlined" aria-labelledby="channel-accounts-title" sx={{ minWidth: 0, p: 2 }}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography id="channel-accounts-title" component="h2" variant="h3">已启用渠道</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{activeAccounts.length} 个账号</Typography>
-          </Stack>
-          <Divider sx={{ my: 2 }} />
-          {accounts.isError ? (
-            <OperatorErrorNotice title="无法读取渠道账号" error={accounts.error} fallback="请稍后重试" />
-          ) : activeAccounts.length ? (
-            <TableContainer>
-              <Table size="small" aria-label="当前启用的渠道账号">
-                <TableHead><TableRow><TableCell>渠道</TableCell><TableCell>账号名称</TableCell><TableCell>状态</TableCell><TableCell align="right">优先级</TableCell><TableCell>最近更新</TableCell></TableRow></TableHead>
-                <TableBody>
-                  {activeAccounts.map((item) => {
-                    const health = healthPresentation(item.health_status)
-                    const channel = channelPresentation(item.provider)
-                    return (
-                      <TableRow key={item.id} hover>
-                        <TableCell>{channel.label}</TableCell>
-                        <TableCell>{sanitizeDisplayText(item.display_name || `${channel.label} 账号`)}</TableCell>
-                        <TableCell><Chip color={operatorToneColor(health.tone)} label={health.label} /></TableCell>
-                        <TableCell align="right">{item.priority}</TableCell>
-                        <TableCell>{formatDateTime(item.updated_at)}</TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : <OperatorEmptyState title="暂无已启用渠道" description="请先创建接入任务" />}
-        </Paper>
+      <Paper component="section" variant="outlined" aria-labelledby="channel-accounts-title" sx={{ minWidth: 0, p: 2 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography id="channel-accounts-title" component="h2" variant="h3">已启用渠道</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>{activeAccounts.length} 个账号</Typography>
+        </Stack>
+        <Divider sx={{ my: 2 }} />
+        {accounts.isError ? (
+          <OperatorErrorNotice title="无法读取渠道账号" error={accounts.error} fallback="请稍后重试" />
+        ) : activeAccounts.length ? (
+          <TableContainer>
+            <Table size="small" aria-label="当前启用的渠道账号">
+              <TableHead><TableRow><TableCell>渠道</TableCell><TableCell>账号名称</TableCell><TableCell>状态</TableCell><TableCell align="right">优先级</TableCell><TableCell>最近更新</TableCell></TableRow></TableHead>
+              <TableBody>
+                {activeAccounts.map((item) => {
+                  const health = healthPresentation(item.health_status)
+                  const channel = channelPresentation(item.provider)
+                  return (
+                    <TableRow key={item.id} hover>
+                      <TableCell>{channel.label}</TableCell>
+                      <TableCell>{sanitizeDisplayText(item.display_name || `${channel.label} 账号`)}</TableCell>
+                      <TableCell><Chip color={operatorToneColor(health.tone)} label={health.label} /></TableCell>
+                      <TableCell align="right">{item.priority}</TableCell>
+                      <TableCell>{formatDateTime(item.updated_at)}</TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : <OperatorEmptyState title="暂无已启用渠道" description="请先完成对应渠道的技术验证和生产激活" />}
 
-        <Paper component="aside" variant="outlined" aria-labelledby="whatsapp-health-title" sx={{ minWidth: 0, p: 2, alignSelf: 'start' }}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography id="whatsapp-health-title" component="h2" variant="h3">WhatsApp 状态</Typography>
-            <Chip color={operatorToneColor(whatsappHealth.tone)} label={whatsappHealth.label} />
-          </Stack>
-          <Divider sx={{ my: 2 }} />
-          {!whatsappAccount ? <OperatorEmptyState title="未启用 WhatsApp" description="暂无账号" /> : whatsappStatus.isError ? (
-            <OperatorErrorNotice title="无法读取 WhatsApp 状态" error={whatsappStatus.error} fallback="请稍后重试" />
-          ) : (
-            <Stack spacing={1.5}>
-              <OperatorFactGrid facts={[
-                ['状态', whatsappHealth.label],
-                ['绑定号码', maskPhone(whatsappStatus.data?.phone_number)],
-                ['登录状态', sanitizeDisplayText(whatsappStatus.data?.qr_status || '状态未知')],
-                ['最近连接', whatsappStatus.data?.last_connected_at ? formatDateTime(whatsappStatus.data.last_connected_at) : '暂无'],
-              ]} />
-              {whatsappStatus.data?.last_error_message ? <Alert severity="error" variant="outlined">{sanitizeDisplayText(whatsappStatus.data.last_error_message)}</Alert> : null}
-              <OperatorTechnicalDisclosure title="系统信息">
-                <OperatorFactGrid facts={[
-                  ['服务提供方', <Box component="code">{sanitizeDisplayText(whatsappAccount.provider)}</Box>],
-                  ['渠道账号编号', <Box component="code">{sanitizeDisplayText(whatsappAccount.account_id)}</Box>],
-                  ['重连次数', whatsappStatus.data?.reconnect_count ?? 0],
-                  ['错误编号', sanitizeDisplayText(whatsappStatus.data?.last_error_code || '无')],
-                ]} />
-              </OperatorTechnicalDisclosure>
-            </Stack>
-          )}
-        </Paper>
-      </Box>
+        <OperatorTechnicalDisclosure
+          title="渠道权威与路由规则"
+          summary="所有渠道共用唯一账号、权限、会话与出站权威。"
+        >
+          <Typography variant="body2" color="text.secondary">
+            ChannelAccount 是唯一渠道身份与路由权威。WhatsApp 的 Meta Cloud API 与 Baileys 只是同一账号下的可选传输适配器，不创建第二套客户、Conversation、Inbox、Outbox、权限或审计链。
+          </Typography>
+        </OperatorTechnicalDisclosure>
+      </Paper>
 
+      <MetaEmbeddedSignupPanel />
+      <WhatsAppConfigurationPanel />
       <TelephonyConfigurationPanel accounts={activeAccounts} />
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', xl: 'minmax(300px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2 }}>
         <Paper component="section" variant="outlined" aria-labelledby="channel-onboarding-create-title" sx={{ p: 2 }}>
-          <Typography id="channel-onboarding-create-title" component="h2" variant="h3">新建接入任务</Typography>
+          <Typography id="channel-onboarding-create-title" component="h2" variant="h3">其他渠道接入任务</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            WhatsApp 已有独立的可执行控制面，不允许通过人工任务绕过绑定和双向验证。
+          </Typography>
           <Stack spacing={1.5} sx={{ mt: 2 }}>
             <TextField select label="渠道" required value={draft.provider} onChange={(event) => setDraft((current) => ({ ...current, provider: event.target.value }))}>
-              <MenuItem value="whatsapp">WhatsApp</MenuItem><MenuItem value="email">邮件</MenuItem><MenuItem value="webchat">网页客服</MenuItem><MenuItem value="voice">语音</MenuItem>
+              <MenuItem value="email">邮件</MenuItem>
+              <MenuItem value="webchat">网页客服</MenuItem>
+              <MenuItem value="voice">语音</MenuItem>
             </TextField>
             <TextField label="接入位置" helperText="内部接入位置，如 ch-primary" value={draft.targetSlot} onChange={(event) => setDraft((current) => ({ ...current, targetSlot: event.target.value }))} />
             <TextField label="账号名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
@@ -266,7 +235,6 @@ export function ChannelsPage() {
             <Button variant="contained" disabled={!createReady || createTask.isPending} startIcon={createTask.isPending ? <CircularProgress color="inherit" size={16} /> : undefined} onClick={() => createTask.mutate()}>
               {createTask.isPending ? '创建中…' : '创建接入任务'}
             </Button>
-            <Typography variant="caption" color="text.secondary">验证通过后才能确认完成。</Typography>
           </Stack>
         </Paper>
 
@@ -277,25 +245,19 @@ export function ChannelsPage() {
           </Stack>
           <Divider sx={{ my: 2 }} />
           {tasks.isError ? <OperatorErrorNotice title="无法读取接入任务" error={tasks.error} fallback="请稍后重试" /> : !(tasks.data?.tasks.length) ? (
-            <OperatorEmptyState title="暂无任务" description="可新建接入任务" />
+            <OperatorEmptyState title="暂无任务" description="可新建其他渠道接入任务" />
           ) : (
             <Stack divider={<Divider flexItem />}>
               {tasks.data.tasks.map((task) => {
-                const status = taskStatus(task)
+                const taskPresentation = taskStatus(task)
                 const result = operationalPresentation(task.status, task.last_error)
                 const channel = channelPresentation(task.provider)
                 return (
-                  <Stack
-                    component="article"
-                    key={task.id}
-                    direction={{ xs: 'column', md: 'row' }}
-                    spacing={2}
-                    sx={{ justifyContent: 'space-between', py: 1.5 }}
-                  >
+                  <Stack component="article" key={task.id} direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', py: 1.5 }}>
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                         <Typography variant="subtitle2">{channel.label} · {sanitizeDisplayText(task.desired_display_name || task.target_slot || `任务 #${task.id}`)}</Typography>
-                        <Chip color={operatorToneColor(status.tone)} label={status.label} />
+                        <Chip color={operatorToneColor(taskPresentation.tone)} label={taskPresentation.label} />
                       </Stack>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{task.last_error ? sanitizeDisplayText(task.last_error) : result.detail || '等待处理'}</Typography>
                       <Typography variant="caption" color="text.disabled">更新于 {formatDateTime(task.updated_at)}</Typography>
@@ -328,7 +290,7 @@ export function ChannelsPage() {
       >
         <DialogTitle id="channel-task-dialog-title">{pendingAction === 'complete' ? '确认任务完成？' : pendingAction === 'fail' ? '记录任务失败？' : '取消任务？'}</DialogTitle>
         <DialogContent>
-          <DialogContentText>{pendingAction === 'complete' ? '确认已完成账号和绑定验证。' : pendingAction === 'fail' ? '请填写失败原因。' : '任务将停止，历史记录会保留。'}</DialogContentText>
+          <DialogContentText>{pendingAction === 'complete' ? '确认已完成账号和技术验证。' : pendingAction === 'fail' ? '请填写失败原因。' : '任务将停止，历史记录会保留。'}</DialogContentText>
           {pendingAction === 'fail' ? <TextField label="失败原因" required value={failureReason} onChange={(event) => setFailureReason(event.target.value)} multiline minRows={4} placeholder="填写具体失败原因" sx={{ mt: 2 }} /> : null}
         </DialogContent>
         <DialogActions>
