@@ -34,10 +34,9 @@ export class DurableCallbackOutbox {
     payload: unknown;
     dedupeKey?: string;
   }): string {
-    const digest = params.dedupeKey
-      ? createHash("sha256").update(params.dedupeKey).digest("hex")
-      : randomUUID();
-    const id = `${Date.now()}-${digest}`;
+    const id = params.dedupeKey
+      ? `replaceable-${createHash("sha256").update(params.dedupeKey).digest("hex")}`
+      : `${Date.now()}-${randomUUID()}`;
     const envelope: CallbackEnvelope = {
       id,
       path: params.path,
