@@ -85,7 +85,14 @@ def _email_case_filter():
 
 def _active_handoff_count(db: Session, user: User) -> int:
     scope = actor_tenant_query_scope(db, user)
-    query = scope.operator_tasks(db)
+    # OperatorTask is a Tenant-scoped projection. Explicitly associate its
+    # optional Ticket before applying Ticket visibility predicates; referencing
+    # Ticket columns without this join creates a Cartesian product and counts one
+    # Handoff once per visible Ticket.
+    query = scope.operator_tasks(db).outerjoin(
+        Ticket,
+        OperatorTask.ticket_id == Ticket.id,
+    )
     if not has_global_case_visibility(user, db):
         query = query.filter(
             or_(
@@ -99,7 +106,7 @@ def _active_handoff_count(db: Session, user: User) -> int:
             OperatorTask.task_type == "handoff",
             OperatorTask.status.notin_(TERMINAL_TASK_STATUSES),
         )
-        .with_entities(func.count(OperatorTask.id))
+        .with_entities(func.count(func.distinct(OperatorTask.id)))
         .scalar()
         or 0
     )
