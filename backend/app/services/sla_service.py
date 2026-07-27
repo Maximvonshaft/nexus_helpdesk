@@ -29,7 +29,7 @@ DEFAULTS: dict[TicketPriority, tuple[int, int]] = {
 
 
 class SLAConfigurationError(RuntimeError):
-    pass
+    """Raised for explicit SLA administration or policy-integrity failures."""
 
 
 def _enum_value(value: Any) -> str:
@@ -100,6 +100,8 @@ def _revision_snapshot(
 
 
 def seed_default_sla_policies(db: Session) -> None:
+    """Create the one global default policy/revision set for controlled bootstrap."""
+
     for priority, (first_minutes, resolution_minutes) in DEFAULTS.items():
         policy = (
             db.query(SLAPolicy)
@@ -266,7 +268,14 @@ def ensure_ticket_sla_assignment(
     *,
     assigned_by: int | None = None,
     at: datetime | None = None,
-) -> TicketSLAAssignment | None:
+) -> TicketSLAAssignment:
+    """Assign one immutable approved revision.
+
+    This is an explicit governance operation and therefore fails closed when no
+    approved revision exists. Runtime customer communication paths use the
+    non-blocking evaluation functions below and never synthesize a policy.
+    """
+
     existing = _assignment(db, ticket.id)
     if existing is not None:
         snapshot = existing.snapshot_json or {}
@@ -419,16 +428,17 @@ def business_seconds_between(
 
     zone = _zone(timezone_name)
     holidays_set = _holiday_dates(holidays)
-    local_start = start_utc.astimezone(zone)
-    local_end = end_utc.astimezone(zone)
-    current_day = local_start.date()
-    final_day = local_end.date()
+    current_day = start_utc.astimezone(zone).date()
+    final_day = end_utc.astimezone(zone).date()
     total = 0.0
     for _ in range(3700):
         if current_day > final_day:
             break
         if current_day.isoformat() not in holidays_set:
-            for start_clock, end_clock in _intervals_for_day(schedule, current_day):
+            for start_clock, end_clock in _intervals_for_day(
+                schedule,
+                current_day,
+            ):
                 interval_start = datetime.combine(
                     current_day,
                     start_clock,
@@ -538,6 +548,10 @@ def apply_policy_to_ticket(
     db: Session | None = None,
     assigned_by: int | None = None,
 ) -> None:
+    """Apply an explicitly selected policy to the immutable assignment/target."""
+
+    if policy is None:
+        raise SLAConfigurationError("sla_policy_missing")
     observed_at = ensure_utc(now or utc_now()) or utc_now()
     base = ensure_utc(ticket.created_at) or observed_at
     runtime_db = _runtime_session(ticket, db)
@@ -557,8 +571,6 @@ def apply_policy_to_ticket(
         assigned_by=assigned_by,
         at=observed_at,
     )
-    if assignment is None:
-        raise SLAConfigurationError("sla_assignment_missing")
     snapshot = assignment.snapshot_json or _default_snapshot(policy)
     assigned_policy_id = _assigned_policy_id(snapshot)
     timezone_name = str(snapshot.get("timezone_name") or "UTC")
@@ -599,6 +611,7 @@ def apply_policy_to_ticket(
             weekly_schedule=weekly_schedule,
             holidays=holidays,
         )
+
     risk_window = timedelta(
         minutes=max(0, int(snapshot.get("risk_window_minutes") or 0))
     )
@@ -643,6 +656,8 @@ def pause_sla(
     *,
     actor_id: int | None = None,
 ) -> TicketSLAPauseInterval:
+    """Open an explicit, governed pause interval."""
+
     runtime_db = _runtime_session(ticket, db)
     if runtime_db is None:
         raise SLAConfigurationError("sla_unit_of_work_required")
@@ -654,14 +669,18 @@ def pause_sla(
         if existing.reason_code != normalized:
             raise SLAConfigurationError("sla_pause_already_open")
         return existing
+
     assignment = ensure_ticket_sla_assignment(
         runtime_db,
         ticket,
         assigned_by=actor_id,
     )
-    allowed = set((assignment.snapshot_json or {}).get("pause_reasons") or [])
+    allowed = set(
+        (assignment.snapshot_json or {}).get("pause_reasons") or []
+    )
     if normalized not in allowed:
         raise SLAConfigurationError("sla_pause_reason_not_allowed")
+
     interval = TicketSLAPauseInterval(
         ticket_id=ticket.id,
         reason_code=normalized,
@@ -673,30 +692,7 @@ def pause_sla(
     )
     runtime_db.add(interval)
     runtime_db.flush()
-    apply_policy_to_ticket(
-        ticket,
-        ticket.sla_policy or get_policy_for_priority(runtime_db, ticket.priority),
-        db=runtime_db,
-        assigned_by=actor_id,
-    )
-    return interval
 
-
-def resume_sla(
-    ticket: Ticket,
-    db: Session | None = None,
-    *,
-    actor_id: int | None = None,
-) -> TicketSLAPauseInterval | None:
-    runtime_db = _runtime_session(ticket, db)
-    if runtime_db is None:
-        raise SLAConfigurationError("sla_unit_of_work_required")
-    interval = _open_pause(runtime_db, ticket.id)
-    if interval is None:
-        return None
-    interval.ended_at = utc_now()
-    interval.ended_by = actor_id
-    runtime_db.flush()
     policy = ticket.sla_policy or get_policy_for_priority(
         runtime_db,
         ticket.priority,
@@ -712,6 +708,47 @@ def resume_sla(
     return interval
 
 
+def _clear_pause_projection(ticket: Ticket) -> None:
+    ticket.sla_paused = False
+    ticket.sla_paused_at = None
+    ticket.sla_pause_reason = None
+
+
+def resume_sla(
+    ticket: Ticket,
+    db: Session | None = None,
+    *,
+    actor_id: int | None = None,
+) -> TicketSLAPauseInterval | None:
+    """Close an existing pause without blocking service on missing SLA config."""
+
+    runtime_db = _runtime_session(ticket, db)
+    if runtime_db is None:
+        raise SLAConfigurationError("sla_unit_of_work_required")
+    interval = _open_pause(runtime_db, ticket.id)
+    if interval is None:
+        _clear_pause_projection(ticket)
+        return None
+
+    interval.ended_at = utc_now()
+    interval.ended_by = actor_id
+    runtime_db.flush()
+    _clear_pause_projection(ticket)
+
+    policy = ticket.sla_policy or get_policy_for_priority(
+        runtime_db,
+        ticket.priority,
+    )
+    if policy is not None and _assignment(runtime_db, ticket.id) is not None:
+        apply_policy_to_ticket(
+            ticket,
+            policy,
+            db=runtime_db,
+            assigned_by=actor_id,
+        )
+    return interval
+
+
 def update_pause_state_for_status(
     ticket: Ticket,
     new_status: TicketStatus,
@@ -719,11 +756,33 @@ def update_pause_state_for_status(
     *,
     actor_id: int | None = None,
 ) -> None:
-    assignment = ensure_ticket_sla_assignment(
-        db,
-        ticket,
-        assigned_by=actor_id,
-    )
+    """Synchronize status-driven pauses when an SLA assignment exists.
+
+    Missing SLA configuration is an operational-readiness condition, not a
+    customer-communication blocker. The function therefore leaves the case
+    unpaused and returns when no approved assignment can be established.
+    """
+
+    assignment = _assignment(db, ticket.id)
+    if assignment is None:
+        try:
+            assignment = ensure_ticket_sla_assignment(
+                db,
+                ticket,
+                assigned_by=actor_id,
+            )
+        except SLAConfigurationError as exc:
+            if str(exc) in {
+                "approved_sla_revision_missing",
+                "sla_policy_missing",
+            }:
+                if _open_pause(db, ticket.id) is not None:
+                    resume_sla(ticket, db, actor_id=actor_id)
+                else:
+                    _clear_pause_projection(ticket)
+                return
+            raise
+
     pause_reasons = set(
         (assignment.snapshot_json or {}).get("pause_reasons") or []
     )
@@ -742,20 +801,20 @@ def update_pause_state_for_status(
     if reason is not None:
         pause_sla(ticket, reason, db, actor_id=actor_id)
         return
+
     closed_interval = resume_sla(ticket, db, actor_id=actor_id)
     if closed_interval is None:
         policy = ticket.sla_policy or get_policy_for_priority(
             db,
             ticket.priority,
         )
-        if policy is None:
-            raise SLAConfigurationError("sla_policy_missing")
-        apply_policy_to_ticket(
-            ticket,
-            policy,
-            db=db,
-            assigned_by=actor_id,
-        )
+        if policy is not None:
+            apply_policy_to_ticket(
+                ticket,
+                policy,
+                db=db,
+                assigned_by=actor_id,
+            )
 
 
 def update_first_response(ticket: Ticket) -> None:
@@ -763,40 +822,79 @@ def update_first_response(ticket: Ticket) -> None:
         ticket.first_response_at = utc_now()
 
 
+def _runtime_due_times(
+    ticket: Ticket,
+    db: Session,
+    *,
+    now: datetime,
+) -> tuple[datetime | None, datetime | None]:
+    target = _target(db, ticket.id)
+    if target is not None and _open_pause(db, ticket.id) is None:
+        return (
+            ensure_utc(target.first_response_due_at),
+            ensure_utc(target.resolution_due_at),
+        )
+
+    policy = ticket.sla_policy or get_policy_for_priority(
+        db,
+        ticket.priority,
+    )
+    if policy is None:
+        return (
+            ensure_utc(ticket.first_response_due_at),
+            ensure_utc(ticket.resolution_due_at),
+        )
+
+    try:
+        apply_policy_to_ticket(
+            ticket,
+            policy,
+            now=now,
+            db=db,
+        )
+    except SLAConfigurationError as exc:
+        if str(exc) in {
+            "approved_sla_revision_missing",
+            "sla_assignment_missing",
+            "sla_policy_missing",
+        }:
+            return (
+                ensure_utc(ticket.first_response_due_at),
+                ensure_utc(ticket.resolution_due_at),
+            )
+        raise
+
+    target = _target(db, ticket.id)
+    return (
+        ensure_utc(
+            target.first_response_due_at if target is not None else None
+        ),
+        ensure_utc(
+            target.resolution_due_at if target is not None else None
+        ),
+    )
+
+
 def compute_sla_snapshot(
     ticket: Ticket,
     db: Session | None = None,
 ) -> dict[str, bool]:
+    """Evaluate breach state without blocking customer service on missing config."""
+
     now = utc_now()
     runtime_db = _runtime_session(ticket, db)
     if runtime_db is not None:
-        target = _target(runtime_db, ticket.id)
-        if target is None or _open_pause(runtime_db, ticket.id) is not None:
-            policy = ticket.sla_policy or get_policy_for_priority(
-                runtime_db,
-                ticket.priority,
-            )
-            if policy is None:
-                raise SLAConfigurationError("sla_policy_missing")
-            apply_policy_to_ticket(
-                ticket,
-                policy,
-                now=now,
-                db=runtime_db,
-            )
-            target = _target(runtime_db, ticket.id)
-        first_due = ensure_utc(
-            target.first_response_due_at if target is not None else None
-        )
-        resolution_due = ensure_utc(
-            target.resolution_due_at if target is not None else None
+        first_due, resolution_due = _runtime_due_times(
+            ticket,
+            runtime_db,
+            now=now,
         )
     else:
         first_due = ensure_utc(ticket.first_response_due_at)
         resolution_due = ensure_utc(ticket.resolution_due_at)
+
     first_at = ensure_utc(ticket.first_response_at)
     status = ticket.status
-
     first_breached = bool(
         ticket.first_response_breached
         or (
