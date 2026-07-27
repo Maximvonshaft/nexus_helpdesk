@@ -55,7 +55,10 @@ def test_voice_paths_and_html_are_bounded() -> None:
 
 
 def test_widget_avatar_is_same_origin_and_not_configurable() -> None:
-    widget = (ROOT / "backend/app/static/webchat/widget.js").read_text(
+    loader = (ROOT / "backend/app/static/webchat/widget.js").read_text(
+        encoding="utf-8"
+    )
+    runtime = (ROOT / "backend/app/static/webchat/widget-runtime.js").read_text(
         encoding="utf-8"
     )
     voice_entry = (ROOT / "backend/app/static/webchat/voice-entry.js").read_text(
@@ -65,15 +68,14 @@ def test_widget_avatar_is_same_origin_and_not_configurable() -> None:
         encoding="utf-8"
     )
     docs = (ROOT / "docs/webchat-widget.md").read_text(encoding="utf-8")
-    assert "data-avatar-url" not in widget
-    assert "data-avatar-url" not in voice_entry
-    assert "data-avatar-url" not in demo
-    assert "data-avatar-url" not in docs
+    for content in (loader, runtime, voice_entry, demo, docs):
+        assert "data-avatar-url" not in content
+    assert "/webchat/widget-runtime.js" in loader
     assert (
         "new URL('/webchat/demo/assets/speedaf-ai-bot-avatar.png', scriptUrl.origin)"
-        in widget
+        in runtime
     )
-    assert "/^#[0-9a-f]{6}$/i.test(requestedAccentColor)" in widget
+    assert "/^#[0-9a-f]{6}$/i.test(requestedAccentColor)" in runtime
 
 
 def test_integration_secret_delivery_is_stdin_only_and_never_echoed() -> None:
