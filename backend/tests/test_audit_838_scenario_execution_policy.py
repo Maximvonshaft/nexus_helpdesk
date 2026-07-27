@@ -20,7 +20,7 @@ from app.db import Base
 from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus
 from app.model_registry import register_all_models
 from app.models import Tenant, Ticket
-from app.services.ticket_scenario_assignment_service import (
+from app.services.scenario_assignment_service import (
     TicketScenarioAssignmentError,
     assign_ticket_scenario,
     get_assigned_scenario,
