@@ -1,7 +1,7 @@
 """Add canonical WhatsApp dual-transport connection state.
 
 Revision ID: 20260727_wa1
-Revises: 20260727_r4p0b
+Revises: 20260727_r4p0c
 Create Date: 2026-07-27
 """
 
@@ -12,9 +12,45 @@ from alembic import op
 
 
 revision = "20260727_wa1"
-down_revision = "20260727_r4p0b"
+down_revision = "20260727_r4p0c"
 branch_labels = None
 depends_on = None
+
+
+_INDEXES: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    ("ix_whatsapp_connections_tenant_id", ("tenant_id",), False),
+    ("ix_whatsapp_connections_channel_account_id", ("channel_account_id",), True),
+    ("ix_whatsapp_connections_transport", ("transport",), False),
+    ("ix_whatsapp_connections_desired_state", ("desired_state",), False),
+    ("ix_whatsapp_connections_observed_state", ("observed_state",), False),
+    (
+        "ix_whatsapp_connections_authentication_state",
+        ("authentication_state",),
+        False,
+    ),
+    ("ix_whatsapp_connections_listener_state", ("listener_state",), False),
+    (
+        "ix_whatsapp_connections_verification_state",
+        ("verification_state",),
+        False,
+    ),
+    ("ix_whatsapp_connections_waba_id", ("waba_id",), False),
+    ("ix_whatsapp_connections_phone_number_id", ("phone_number_id",), True),
+    ("ix_whatsapp_connections_created_by", ("created_by",), False),
+    ("ix_whatsapp_connections_updated_by", ("updated_by",), False),
+    ("ix_whatsapp_connections_created_at", ("created_at",), False),
+    ("ix_whatsapp_connections_updated_at", ("updated_at",), False),
+    (
+        "ix_whatsapp_connection_tenant_transport_state",
+        ("tenant_id", "transport", "desired_state", "observed_state"),
+        False,
+    ),
+    (
+        "ix_whatsapp_connection_probe",
+        ("desired_state", "last_probe_at"),
+        False,
+    ),
+)
 
 
 def upgrade() -> None:
@@ -82,7 +118,7 @@ def upgrade() -> None:
             name="ck_whatsapp_connection_transport",
         ),
         sa.CheckConstraint(
-            "desired_state IN ('disabled','active')",
+            "desired_state IN ('disabled','binding','active')",
             name="ck_whatsapp_connection_desired_state",
         ),
         sa.CheckConstraint(
@@ -156,102 +192,13 @@ def upgrade() -> None:
             name="uq_whatsapp_connections_phone_number_id",
         ),
     )
-    op.create_index(
-        "ix_whatsapp_connections_tenant_id",
-        "whatsapp_connections",
-        ["tenant_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_channel_account_id",
-        "whatsapp_connections",
-        ["channel_account_id"],
-        unique=True,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_transport",
-        "whatsapp_connections",
-        ["transport"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_desired_state",
-        "whatsapp_connections",
-        ["desired_state"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_observed_state",
-        "whatsapp_connections",
-        ["observed_state"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_authentication_state",
-        "whatsapp_connections",
-        ["authentication_state"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_listener_state",
-        "whatsapp_connections",
-        ["listener_state"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_verification_state",
-        "whatsapp_connections",
-        ["verification_state"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_waba_id",
-        "whatsapp_connections",
-        ["waba_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_phone_number_id",
-        "whatsapp_connections",
-        ["phone_number_id"],
-        unique=True,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_created_by",
-        "whatsapp_connections",
-        ["created_by"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_updated_by",
-        "whatsapp_connections",
-        ["updated_by"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_created_at",
-        "whatsapp_connections",
-        ["created_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connections_updated_at",
-        "whatsapp_connections",
-        ["updated_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connection_tenant_transport_state",
-        "whatsapp_connections",
-        ["tenant_id", "transport", "desired_state", "observed_state"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_whatsapp_connection_probe",
-        "whatsapp_connections",
-        ["desired_state", "last_probe_at"],
-        unique=False,
-    )
+    for name, columns, unique in _INDEXES:
+        op.create_index(
+            name,
+            "whatsapp_connections",
+            list(columns),
+            unique=unique,
+        )
 
     bind.execute(
         sa.text(
@@ -270,68 +217,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_whatsapp_connection_probe",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connection_tenant_transport_state",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_updated_at",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_created_at",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_updated_by",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_created_by",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_phone_number_id",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_waba_id",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_verification_state",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_listener_state",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_authentication_state",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_observed_state",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_desired_state",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_transport",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_channel_account_id",
-        table_name="whatsapp_connections",
-    )
-    op.drop_index(
-        "ix_whatsapp_connections_tenant_id",
-        table_name="whatsapp_connections",
-    )
     op.drop_table("whatsapp_connections")
