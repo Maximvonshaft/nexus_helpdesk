@@ -7,7 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from ..db import engine
-from ..enums import JobStatus, MessageStatus
+from ..enums import JobStatus, MessageStatus, SourceChannel
 from ..models import BackgroundJob, Ticket, TicketOutboundMessage
 from ..models_job_scope import BackgroundJobScope
 from ..models_privacy_runtime import DataProcessingRestriction
@@ -20,6 +20,14 @@ from .data_subject_action_service import (
 PURPOSE_PROVIDER_TOOL_EXECUTION = "provider_tool_execution"
 PURPOSE_ANALYTICS = "analytics"
 PURPOSE_AUTOMATIC_OUTBOUND = "automatic_outbound"
+_EXTERNAL_CHANNELS = frozenset(
+    {
+        SourceChannel.email.value,
+        SourceChannel.whatsapp.value,
+        SourceChannel.telegram.value,
+        SourceChannel.sms.value,
+    }
+)
 _INSTALLED = False
 
 
@@ -63,11 +71,14 @@ def ensure_ticket_processing_allowed(
     *,
     ticket_id: int | None,
     purpose: str,
+    require_ticket: bool = False,
 ) -> None:
     if ticket_id is None:
         return
     ticket = db.get(Ticket, int(ticket_id))
     if ticket is None:
+        if require_ticket:
+            raise RuntimeError("processing_guard_ticket_missing")
         return
     ensure_data_processing_allowed(
         db,
@@ -81,11 +92,7 @@ def ensure_ticket_processing_allowed_fresh(
     ticket_id: int | None,
     purpose: str,
 ) -> None:
-    """Re-read the latest committed restriction immediately before Provider I/O.
-
-    Provider latency must not reuse a stale request Session. The fresh read is
-    bounded, read-only and uses the canonical application Engine.
-    """
+    """Re-read the latest committed restriction immediately before Provider I/O."""
 
     if ticket_id is None:
         return
@@ -94,6 +101,7 @@ def ensure_ticket_processing_allowed_fresh(
             db,
             ticket_id=ticket_id,
             purpose=purpose,
+            require_ticket=True,
         )
 
 
@@ -130,9 +138,21 @@ def _active_restriction_for_customer(
     return None
 
 
+def _channel_value(target: TicketOutboundMessage) -> str:
+    value = target.channel
+    return value.value if hasattr(value, "value") else str(value)
+
+
 def _automatic_outbound(target: TicketOutboundMessage) -> bool:
     origin = str(target.origin or "").strip().lower()
-    return target.created_by is None and origin not in {"human_agent", "human"}
+    provider_status = str(target.provider_status or "").strip().lower()
+    if provider_status.startswith("privacy_handoff"):
+        return False
+    return (
+        _channel_value(target) in _EXTERNAL_CHANNELS
+        and target.created_by is None
+        and origin not in {"human_agent", "human"}
+    )
 
 
 def _outbound_requires_guard(target: TicketOutboundMessage) -> bool:
@@ -191,6 +211,7 @@ def _cancel_pending_restricted_effects(
                 TicketOutboundMessage.ticket_id.in_(ticket_ids),
                 TicketOutboundMessage.status == MessageStatus.pending,
                 TicketOutboundMessage.created_by.is_(None),
+                TicketOutboundMessage.channel.in_(tuple(_EXTERNAL_CHANNELS)),
             )
             .values(
                 status=MessageStatus.dead,
@@ -207,7 +228,11 @@ def _cancel_pending_restricted_effects(
     blocked_job_purposes = tuple(
         purpose
         for purpose in blocked
-        if purpose in {"automated_ai", PURPOSE_PROVIDER_TOOL_EXECUTION, PURPOSE_AUTOMATIC_OUTBOUND}
+        if purpose in {
+            "automated_ai",
+            PURPOSE_PROVIDER_TOOL_EXECUTION,
+            PURPOSE_AUTOMATIC_OUTBOUND,
+        }
     )
     if blocked_job_purposes:
         job_ids = select(BackgroundJobScope.job_id).where(
