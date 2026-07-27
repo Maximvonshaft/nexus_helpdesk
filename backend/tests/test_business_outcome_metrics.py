@@ -10,7 +10,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/business_outcome_metric_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/business_outcome_metric_tests.db",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -23,7 +26,7 @@ from app.enums import (  # noqa: E402
     TicketSource,
     TicketStatus,
 )
-from app.models import Customer, Tenant, Ticket, TicketComment  # noqa: E402
+from app.models import Customer, Tenant, Ticket, TicketComment, User  # noqa: E402
 from app.models_case_governance import CaseOutcomeRecord  # noqa: E402
 from app.services.business_outcome_metrics import (  # noqa: E402
     build_business_outcome_metrics,
@@ -78,7 +81,16 @@ def make_scope(db):
     return tenant, customer
 
 
-def make_ticket(db, tenant, customer, *, suffix: str, created_offset_days: int):
+def make_ticket(
+    db,
+    tenant,
+    customer,
+    *,
+    suffix: str,
+    created_offset_days: int,
+    tracking_number: str | None = None,
+    scenario_key: str | None = None,
+):
     created = utc_now() - timedelta(days=created_offset_days)
     ticket = Ticket(
         tenant_id=tenant.id,
@@ -92,6 +104,8 @@ def make_ticket(db, tenant, customer, *, suffix: str, created_offset_days: int):
         source_channel=SourceChannel.web_chat,
         priority=TicketPriority.medium,
         status=TicketStatus.closed,
+        tracking_number=tracking_number,
+        case_type=scenario_key,
         created_at=created,
         updated_at=created,
         closed_at=created + timedelta(hours=1),
@@ -135,7 +149,15 @@ def metric(payload, key):
     return next(item for item in payload["items"] if item["key"] == key)
 
 
-def test_outcomes_use_explicit_denominators_and_reopen_window(db_session):
+def build(db, tenant):
+    return build_business_outcome_metrics(
+        db,
+        visible_query=db.query(Ticket).filter(Ticket.tenant_id == tenant.id),
+        tenant_id=tenant.id,
+    )
+
+
+def test_outcomes_require_structured_business_evidence(db_session):
     tenant, customer = make_scope(db_session)
     current = make_ticket(
         db_session,
@@ -143,6 +165,8 @@ def test_outcomes_use_explicit_denominators_and_reopen_window(db_session):
         customer,
         suffix="current",
         created_offset_days=5,
+        tracking_number="WB-1",
+        scenario_key="tracking_status_inquiry",
     )
     closed_at = current.closed_at
     outcome(
@@ -152,6 +176,10 @@ def test_outcomes_use_explicit_denominators_and_reopen_window(db_session):
         record_type="closure_assessment",
         state="closed",
         occurred_at=closed_at,
+        payload={
+            "first_contact_eligible": True,
+            "first_contact_resolved": True,
+        },
     )
     outcome(
         db_session,
@@ -180,46 +208,179 @@ def test_outcomes_use_explicit_denominators_and_reopen_window(db_session):
         parent_record_id=attempt.id,
         payload={"outcome_level": "business_result_confirmed"},
     )
+
+    payload = build(db_session, tenant)
+
+    assert metric(payload, "safe_effective_closure_rate")["value"] == 1.0
+    assert metric(payload, "first_contact_resolution_rate")["value"] == 1.0
+    assert metric(payload, "reopen_72h_rate")["value"] == 0.0
+    assert metric(payload, "customer_notification_compliance")["value"] == 1.0
+    assert metric(payload, "action_operational_completion_rate")["value"] == 1.0
+    assert payload["contains_customer_data"] is False
+    assert payload["schema"] == "nexus.business-outcome-metrics.v2"
+
+
+def test_reopened_case_is_not_counted_as_safe_closed(db_session):
+    tenant, customer = make_scope(db_session)
+    ticket = make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="reopened",
+        created_offset_days=8,
+        tracking_number="WB-REOPEN",
+        scenario_key="delivery_eta_delay_inquiry",
+    )
     outcome(
         db_session,
-        current,
-        sequence=5,
+        ticket,
+        sequence=1,
+        record_type="closure_assessment",
+        state="closed",
+        occurred_at=ticket.closed_at,
+    )
+    outcome(
+        db_session,
+        ticket,
+        sequence=2,
         record_type="closure_assessment",
         state="reopened",
-        occurred_at=closed_at + timedelta(hours=48),
-    )
-    db_session.add(
-        TicketComment(
-            ticket_id=current.id,
-            author_id=None,
-            body="One human touch",
-            created_at=closed_at,
-            updated_at=closed_at,
-        )
-    )
-    db_session.flush()
-
-    payload = build_business_outcome_metrics(
-        db_session,
-        visible_query=db_session.query(Ticket).filter(Ticket.tenant_id == tenant.id),
-        tenant_id=tenant.id,
+        occurred_at=ticket.closed_at + timedelta(hours=48),
     )
 
+    payload = build(db_session, tenant)
     safe = metric(payload, "safe_effective_closure_rate")
     reopen = metric(payload, "reopen_72h_rate")
-    notification = metric(payload, "customer_notification_compliance")
-    action = metric(payload, "action_operational_completion_rate")
 
-    assert safe["numerator"] == 1
+    assert safe["numerator"] == 0
     assert safe["denominator"] == 1
-    assert safe["value"] == 1.0
+    assert safe["value"] == 0.0
     assert reopen["numerator"] == 1
     assert reopen["denominator"] == 1
     assert reopen["value"] == 1.0
     assert reopen["status"] == "danger"
-    assert notification["value"] == 1.0
-    assert action["value"] == 1.0
-    assert payload["contains_customer_data"] is False
+
+
+def test_sent_notification_and_technical_attempt_are_not_business_completion(db_session):
+    tenant, customer = make_scope(db_session)
+    ticket = make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="technical-only",
+        created_offset_days=5,
+        tracking_number="WB-TECH",
+        scenario_key="delivery_followup_work_order",
+    )
+    outcome(
+        db_session,
+        ticket,
+        sequence=1,
+        record_type="closure_assessment",
+        state="closed",
+        occurred_at=ticket.closed_at,
+    )
+    outcome(
+        db_session,
+        ticket,
+        sequence=2,
+        record_type="customer_notification",
+        state="succeeded",
+        occurred_at=ticket.closed_at,
+    )
+    outcome(
+        db_session,
+        ticket,
+        sequence=3,
+        record_type="execution_attempt",
+        state="succeeded",
+        occurred_at=ticket.closed_at,
+    )
+
+    payload = build(db_session, tenant)
+
+    assert metric(payload, "customer_notification_compliance")["value"] == 0.0
+    assert metric(payload, "action_operational_completion_rate")["value"] == 0.0
+
+
+def test_repeat_contact_requires_same_customer_waybill_and_scenario(db_session):
+    tenant, customer = make_scope(db_session)
+    make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="repeat-1",
+        created_offset_days=6,
+        tracking_number="WB-SAME",
+        scenario_key="tracking_status_inquiry",
+    )
+    make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="repeat-2",
+        created_offset_days=2,
+        tracking_number="WB-SAME",
+        scenario_key="tracking_status_inquiry",
+    )
+    make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="different-waybill",
+        created_offset_days=1,
+        tracking_number="WB-DIFFERENT",
+        scenario_key="tracking_status_inquiry",
+    )
+    make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="different-scenario",
+        created_offset_days=1,
+        tracking_number="WB-SAME",
+        scenario_key="address_contact_correction",
+    )
+    make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="identity-missing",
+        created_offset_days=1,
+    )
+
+    repeat = metric(build(db_session, tenant), "repeat_contact_7d_rate")
+
+    assert repeat["numerator"] == 1
+    assert repeat["denominator"] == 4
+    assert repeat["value"] == 0.25
+
+
+def test_first_contact_resolution_is_unavailable_without_explicit_assessment(db_session):
+    tenant, customer = make_scope(db_session)
+    ticket = make_ticket(
+        db_session,
+        tenant,
+        customer,
+        suffix="no-fcr-evidence",
+        created_offset_days=5,
+        tracking_number="WB-FCR",
+        scenario_key="tracking_status_inquiry",
+    )
+    outcome(
+        db_session,
+        ticket,
+        sequence=1,
+        record_type="closure_assessment",
+        state="closed",
+        occurred_at=ticket.closed_at,
+    )
+
+    fcr = metric(build(db_session, tenant), "first_contact_resolution_rate")
+
+    assert fcr["value"] is None
+    assert fcr["denominator"] == 0
+    assert fcr["status"] == "unavailable"
 
 
 def test_previous_window_produces_direction_aware_trend(db_session):
@@ -255,12 +416,7 @@ def test_previous_window_produces_direction_aware_trend(db_session):
         occurred_at=current.closed_at,
     )
 
-    payload = build_business_outcome_metrics(
-        db_session,
-        visible_query=db_session.query(Ticket).filter(Ticket.tenant_id == tenant.id),
-        tenant_id=tenant.id,
-    )
-    provider = metric(payload, "provider_failure_rate")
+    provider = metric(build(db_session, tenant), "provider_failure_rate")
 
     assert provider["value"] == 0.0
     assert provider["previous_value"] == 1.0
@@ -271,16 +427,16 @@ def test_previous_window_produces_direction_aware_trend(db_session):
 def test_no_samples_are_unavailable_not_false_success(db_session):
     tenant, _ = make_scope(db_session)
 
-    payload = build_business_outcome_metrics(
-        db_session,
-        visible_query=db_session.query(Ticket).filter(Ticket.tenant_id == tenant.id),
-        tenant_id=tenant.id,
-    )
+    payload = build(db_session, tenant)
 
     for item in payload["items"]:
         assert item["value"] is None
         assert item["status"] == "unavailable"
         assert item["denominator"] == 0
+    assert "ai_live_resolution_quality_rate" not in {
+        item["key"] for item in payload["items"]
+    }
+    assert payload["diagnostics"]["ai_live_containment"]["quality_claim"] is False
 
 
 def test_handoff_wait_p90_uses_accepted_requests(db_session):
@@ -303,7 +459,10 @@ def test_handoff_wait_p90_uses_accepted_requests(db_session):
                 status="closed",
                 requested_by_actor_type="visitor",
                 requested_at=requested_at + timedelta(minutes=index),
-                accepted_at=requested_at + timedelta(minutes=index, seconds=wait),
+                accepted_at=requested_at + timedelta(
+                    minutes=index,
+                    seconds=wait,
+                ),
                 closed_at=requested_at + timedelta(minutes=index + 1),
                 lock_version=1,
                 created_at=requested_at,
@@ -312,12 +471,7 @@ def test_handoff_wait_p90_uses_accepted_requests(db_session):
         )
     db_session.flush()
 
-    payload = build_business_outcome_metrics(
-        db_session,
-        visible_query=db_session.query(Ticket).filter(Ticket.tenant_id == tenant.id),
-        tenant_id=tenant.id,
-    )
-    wait_metric = metric(payload, "handoff_wait_p90_seconds")
+    wait_metric = metric(build(db_session, tenant), "handoff_wait_p90_seconds")
 
     assert wait_metric["value"] == 90.0
     assert wait_metric["numerator"] == 3
