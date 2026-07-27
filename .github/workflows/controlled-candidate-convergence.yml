@@ -63,7 +63,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 105
     env:
       SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
       RC_SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
@@ -76,7 +76,9 @@ jobs:
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
       COMPOSE_PROJECT_NAME: nexus_controlled_${{ github.run_id }}
       CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-${{ env.CANDIDATE_SHA }}
+      SIDECAR_IMAGE: nexusdesk/whatsapp-sidecar:controlled-${{ env.CANDIDATE_SHA }}
       RELEASE_IMAGE_DIR: artifacts/release-image
+      SIDECAR_RELEASE_DIR: artifacts/sidecar-image
       CONTROLLED_DIR: artifacts/controlled
       RC_POSTGRES_IMAGE_PIN: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
       RC_NGINX_IMAGE_PIN: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
@@ -225,10 +227,85 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      - name: Build exact-main WhatsApp Sidecar image once
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$SIDECAR_RELEASE_DIR"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker build --pull=false \
+            --file connectors/whatsapp-sidecar/Dockerfile \
+            --build-arg GIT_SHA="$SOURCE_SHA" \
+            --build-arg BUILD_TIME="$build_time" \
+            --build-arg APP_VERSION="controlled-$SOURCE_SHA" \
+            --tag "$SIDECAR_IMAGE" \
+            connectors/whatsapp-sidecar 2>&1 | tee "$SIDECAR_RELEASE_DIR/build.log"
+          test "$(docker image inspect "$SIDECAR_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
+          test "$(docker image inspect "$SIDECAR_IMAGE" --format '{{ .Config.User }}')" = "node"
+          docker image inspect "$SIDECAR_IMAGE" > "$SIDECAR_RELEASE_DIR/image-inspect.json"
+
+      - name: Scan exact Sidecar image with immutable Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.SIDECAR_IMAGE }}
+          format: json
+          output: artifacts/sidecar-image/trivy.raw.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
+          scanners: vuln
+
+      - name: Block Sidecar high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.SIDECAR_IMAGE }}
+          format: table
+          output: artifacts/sidecar-image/trivy-gate.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "1"
+          scanners: vuln
+
+      - name: Generate exact Sidecar CycloneDX
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.SIDECAR_IMAGE }}
+          format: cyclonedx
+          output: artifacts/sidecar-image/image.raw.cdx.json
+          scanners: vuln
+          ignore-unfixed: false
+          exit-code: "0"
+
+      - name: Bind Sidecar image assurance to exact source
+        run: |
+          set -Eeuo pipefail
+          critical_count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "$SIDECAR_RELEASE_DIR/trivy.raw.json")"
+          high_count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "$SIDECAR_RELEASE_DIR/trivy.raw.json")"
+          test "$critical_count" = "0"
+          test "$high_count" = "0"
+          image_id="$(docker image inspect "$SIDECAR_IMAGE" --format '{{.Id}}')"
+          revision="$(docker image inspect "$SIDECAR_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          created="$(docker image inspect "$SIDECAR_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.created" }}')"
+          version="$(docker image inspect "$SIDECAR_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')"
+          user="$(docker image inspect "$SIDECAR_IMAGE" --format '{{.Config.User}}')"
+          sbom_digest="sha256:$(sha256sum "$SIDECAR_RELEASE_DIR/image.raw.cdx.json" | awk '{print $1}')"
+          jq -n \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg image_id "$image_id" \
+            --arg image_tag "$SIDECAR_IMAGE" \
+            --arg revision "$revision" \
+            --arg build_time "$created" \
+            --arg app_version "$version" \
+            --arg runtime_user "$user" \
+            --arg sbom_digest "$sbom_digest" \
+            --argjson critical_count "$critical_count" \
+            --argjson high_count "$high_count" \
+            '{schema:"nexus.whatsapp-sidecar.image-assurance.v1",status:"pass",source_sha:$source_sha,image_id:$image_id,image_tag:$image_tag,revision:$revision,build_time:$build_time,app_version:$app_version,runtime_user:$runtime_user,critical_count:$critical_count,high_count:$high_count,sbom_digest:$sbom_digest,image_pushed:false,deployment_performed:false}' \
+            > "$SIDECAR_RELEASE_DIR/sidecar-image-manifest.json"
+
       - name: Reconfirm exact current main before registry publication
         run: bash scripts/release/require_exact_current_main.sh
 
-      - name: Publish and pull back the assured binary
+      - name: Publish and pull back both assured binaries
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: bash scripts/release/publish_controlled_image.sh
@@ -239,6 +316,7 @@ jobs:
           path: |
             artifacts/rc-test
             artifacts/release-image
+            artifacts/sidecar-image
             artifacts/controlled
           retention-days: 30
           if-no-files-found: error
@@ -318,7 +396,7 @@ jobs:
       id-token: write
       packages: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
       FINAL_DIR: artifacts/final-controlled-candidate
@@ -345,24 +423,31 @@ jobs:
           name: controlled-recovery-${{ env.CANDIDATE_SHA }}
           path: artifacts/recovery
 
-      - name: Resolve immutable registry identity
+      - name: Resolve immutable application and Sidecar registry identities
         id: identity
         run: |
           set -Eeuo pipefail
-          receipt=artifacts/build/controlled/registry-publish-receipt.json
-          test "$(jq -r '.status' "$receipt")" = pass
-          test "$(jq -r '.source_sha' "$receipt")" = "$SOURCE_SHA"
-          image="$(jq -r '.registry_image' "$receipt")"
-          digest="$(jq -r '.registry_digest' "$receipt")"
-          local_id="$(jq -r '.local_image_id' "$receipt")"
-          pulled_id="$(jq -r '.pulled_image_id' "$receipt")"
-          [[ "$image" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]]
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          test "$local_id" = "$pulled_id"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "local_id=$local_id" >> "$GITHUB_OUTPUT"
-          echo "pulled_id=$pulled_id" >> "$GITHUB_OUTPUT"
+          app_receipt=artifacts/build/controlled/registry-publish-receipt.json
+          sidecar_receipt=artifacts/build/controlled/whatsapp-sidecar-registry-publish-receipt.json
+          for receipt in "$app_receipt" "$sidecar_receipt"; do
+            test "$(jq -r '.status' "$receipt")" = pass
+            test "$(jq -r '.source_sha' "$receipt")" = "$SOURCE_SHA"
+            image="$(jq -r '.registry_image' "$receipt")"
+            digest="$(jq -r '.registry_digest' "$receipt")"
+            local_id="$(jq -r '.local_image_id' "$receipt")"
+            pulled_id="$(jq -r '.pulled_image_id' "$receipt")"
+            [[ "$image" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]]
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            test "$local_id" = "$pulled_id"
+          done
+          echo "application_image=$(jq -r '.registry_image' "$app_receipt")" >> "$GITHUB_OUTPUT"
+          echo "application_digest=$(jq -r '.registry_digest' "$app_receipt")" >> "$GITHUB_OUTPUT"
+          echo "application_local_id=$(jq -r '.local_image_id' "$app_receipt")" >> "$GITHUB_OUTPUT"
+          echo "application_pulled_id=$(jq -r '.pulled_image_id' "$app_receipt")" >> "$GITHUB_OUTPUT"
+          echo "sidecar_image=$(jq -r '.registry_image' "$sidecar_receipt")" >> "$GITHUB_OUTPUT"
+          echo "sidecar_digest=$(jq -r '.registry_digest' "$sidecar_receipt")" >> "$GITHUB_OUTPUT"
+          echo "sidecar_local_id=$(jq -r '.local_image_id' "$sidecar_receipt")" >> "$GITHUB_OUTPUT"
+          echo "sidecar_pulled_id=$(jq -r '.pulled_image_id' "$sidecar_receipt")" >> "$GITHUB_OUTPUT"
 
       - name: Reconfirm exact current main before provenance attestation
         run: bash scripts/release/require_exact_current_main.sh
@@ -374,12 +459,21 @@ jobs:
           set -Eeuo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: Attest exact registry digest
-        id: attest
+      - name: Attest exact application registry digest
+        id: attest_application
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
-          subject-name: ${{ steps.identity.outputs.image }}
-          subject-digest: ${{ steps.identity.outputs.digest }}
+          subject-name: ${{ steps.identity.outputs.application_image }}
+          subject-digest: ${{ steps.identity.outputs.application_digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest exact WhatsApp Sidecar registry digest
+        id: attest_sidecar
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-name: ${{ steps.identity.outputs.sidecar_image }}
+          subject-digest: ${{ steps.identity.outputs.sidecar_digest }}
           push-to-registry: true
           create-storage-record: false
 
@@ -389,12 +483,18 @@ jobs:
 
       - name: Build final evidence-bound candidate
         env:
-          REGISTRY_IMAGE: ${{ steps.identity.outputs.image }}
-          REGISTRY_DIGEST: ${{ steps.identity.outputs.digest }}
-          LOCAL_IMAGE_ID: ${{ steps.identity.outputs.local_id }}
-          PULLED_IMAGE_ID: ${{ steps.identity.outputs.pulled_id }}
-          ATTESTATION_ID: ${{ steps.attest.outputs.attestation-id }}
-          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+          REGISTRY_IMAGE: ${{ steps.identity.outputs.application_image }}
+          REGISTRY_DIGEST: ${{ steps.identity.outputs.application_digest }}
+          LOCAL_IMAGE_ID: ${{ steps.identity.outputs.application_local_id }}
+          PULLED_IMAGE_ID: ${{ steps.identity.outputs.application_pulled_id }}
+          ATTESTATION_ID: ${{ steps.attest_application.outputs.attestation-id }}
+          ATTESTATION_URL: ${{ steps.attest_application.outputs.attestation-url }}
+          SIDECAR_REGISTRY_IMAGE: ${{ steps.identity.outputs.sidecar_image }}
+          SIDECAR_REGISTRY_DIGEST: ${{ steps.identity.outputs.sidecar_digest }}
+          SIDECAR_LOCAL_IMAGE_ID: ${{ steps.identity.outputs.sidecar_local_id }}
+          SIDECAR_PULLED_IMAGE_ID: ${{ steps.identity.outputs.sidecar_pulled_id }}
+          SIDECAR_ATTESTATION_ID: ${{ steps.attest_sidecar.outputs.attestation-id }}
+          SIDECAR_ATTESTATION_URL: ${{ steps.attest_sidecar.outputs.attestation-url }}
         run: bash scripts/release/finalize_controlled_candidate.sh
 
       - name: Bind Canonical Acceptance and render deployment identity
@@ -402,6 +502,7 @@ jobs:
           set -Eeuo pipefail
           manifest="$FINAL_DIR/controlled-candidate-manifest.json"
           image="$(jq -r '.candidate.registry_reference' "$manifest")"
+          sidecar_image="$(jq -r '.candidate.whatsapp_sidecar.registry_reference' "$manifest")"
           digest="$(jq -r '.candidate.registry_digest' "$manifest")"
           [[ "$CANONICAL_ACCEPTANCE_RUN_ID" =~ ^[0-9]+$ ]]
           [[ "$CANONICAL_ACCEPTANCE_RUN_URL" =~ ^https://github\.com/ ]]
@@ -413,6 +514,7 @@ jobs:
             > "$FINAL_DIR/canonical-acceptance-receipt.json"
           cat > "$FINAL_DIR/controlled-candidate.env" <<EOF
           CONTROLLED_IMAGE=${image}
+          WHATSAPP_SIDECAR_IMAGE=${sidecar_image}
           IMAGE_TAG=${image}
           GIT_SHA=${SOURCE_SHA}
           FRONTEND_BUILD_SHA=$(jq -r '.candidate.frontend_build_sha' "$manifest")
@@ -442,7 +544,8 @@ jobs:
           manifest="$FINAL_DIR/controlled-candidate-manifest.json"
           echo '## Controlled candidate published' >> "$GITHUB_STEP_SUMMARY"
           echo "- Source: \`$(jq -r '.candidate.source_sha' "$manifest")\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Image: \`$(jq -r '.candidate.registry_reference' "$manifest")\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Application image: \`$(jq -r '.candidate.registry_reference' "$manifest")\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- WhatsApp Sidecar image: \`$(jq -r '.candidate.whatsapp_sidecar.registry_reference' "$manifest")\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Migration: \`$(jq -r '.candidate.migration_revision' "$manifest")\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Canonical Acceptance: \`#${CANONICAL_ACCEPTANCE_RUN_ID}\`" >> "$GITHUB_STEP_SUMMARY"
           echo '- Controlled deployment performed: `false`' >> "$GITHUB_STEP_SUMMARY"
