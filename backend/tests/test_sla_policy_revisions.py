@@ -28,6 +28,7 @@ from app.models_case_governance import (  # noqa: E402
     TicketSLAPauseInterval,
 )
 from app.models_sla_runtime import TicketSLATarget  # noqa: E402
+from app.services.scenario_assignment_service import assign_ticket_scenario  # noqa: E402
 from app.services.sla_service import (  # noqa: E402
     add_business_minutes,
     apply_policy_to_ticket,
@@ -119,6 +120,16 @@ def make_ticket(db, tenant, market, *, priority=TicketPriority.medium):
         updated_at=created,
     )
     db.add(ticket)
+    db.flush()
+    assign_ticket_scenario(
+        db,
+        ticket=ticket,
+        scenario_key="tracking_status_inquiry",
+        actor_id=None,
+        source="test_fixture",
+        reason="SLA revision selection contract",
+        allow_reclassification=False,
+    )
     db.flush()
     return ticket
 
@@ -238,6 +249,8 @@ def test_most_specific_revision_is_assigned_and_targeted(db_session):
 
     assert assignment.policy_revision_id == revision.id
     assert assignment.snapshot_json["risk_window_minutes"] == 45
+    assert assignment.snapshot_json["scenario_assignment"]["scenario_key"] == "tracking_status_inquiry"
+    assert assignment.snapshot_json["scenario_assignment"]["assignment_revision"] == 1
     assert ensure_utc(target.first_response_due_at) == datetime(
         2026,
         8,
