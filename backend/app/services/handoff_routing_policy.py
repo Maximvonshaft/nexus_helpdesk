@@ -29,7 +29,6 @@ from .scenario_assignment_service import (
 ROUTING_POLICY_SCHEMA = "nexus.handoff-routing-policy.v1"
 DECLINE_TTL_SECONDS = 15 * 60
 RELEASE_DECLINE_TTL_SECONDS = 5 * 60
-RETRY_DELAY_SECONDS = 30
 ROUTING_OUTCOMES = frozenset(
     {
         "waiting",
@@ -450,22 +449,24 @@ def classify_candidate_exhaustion(
             None,
         )
     if available_agents <= 0 and declined_agents >= skilled_agents:
+        # The Decision TTL is the sole decline cooldown authority. A second
+        # request-level retry timestamp can outlive an expired Decision and block
+        # an otherwise eligible operator, so all_declined remains event-driven.
         return (
             "all_declined",
             "all_eligible_agents_declined_current_generation",
             "queue_supervisor",
-            utc_now() + timedelta(seconds=RETRY_DELAY_SECONDS),
+            None,
         )
     if available_agents <= 0:
-        # Capacity is event-driven. Mark the retry immediately due so a release,
-        # close, resume, heartbeat, or presence transition can consume the same
-        # waiting Handoff without imposing an artificial 30-second dead zone.
-        # Decline exhaustion keeps its cooldown above and is never bypassed.
+        # Capacity is also event-driven. Release, close, resume, heartbeat and
+        # presence transitions re-evaluate the same waiting Handoff immediately;
+        # no parallel cooldown clock is permitted.
         return (
             "capacity_exhausted",
             "eligible_agents_have_no_available_capacity",
             "queue_supervisor",
-            utc_now(),
+            None,
         )
     return ("waiting", "eligible_candidate_available", "human_support", None)
 
