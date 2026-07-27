@@ -49,9 +49,25 @@ def get_whatsapp_connection(
     db: Session,
     connection_id: int,
 ) -> WhatsAppConnection:
-    row = db.get(WhatsAppConnection, connection_id)
+    # Always join ChannelAccount so the canonical admin Tenant loader criterion
+    # applies. A direct Session.get() would bypass that joined authority and turn
+    # a predictable integer id into a cross-Tenant read primitive.
+    row = (
+        db.query(WhatsAppConnection)
+        .join(
+            ChannelAccount,
+            ChannelAccount.id == WhatsAppConnection.channel_account_id,
+        )
+        .filter(
+            WhatsAppConnection.id == connection_id,
+            ChannelAccount.provider == "whatsapp",
+        )
+        .first()
+    )
     if row is None:
         raise WhatsAppConnectionError("whatsapp_connection_not_found")
+    if row.tenant_id != row.channel_account.tenant_id:
+        raise WhatsAppConnectionError("whatsapp_connection_scope_mismatch")
     return row
 
 
@@ -61,7 +77,14 @@ def get_whatsapp_connection_for_channel_account(
 ) -> WhatsAppConnection | None:
     return (
         db.query(WhatsAppConnection)
-        .filter(WhatsAppConnection.channel_account_id == channel_account_id)
+        .join(
+            ChannelAccount,
+            ChannelAccount.id == WhatsAppConnection.channel_account_id,
+        )
+        .filter(
+            WhatsAppConnection.channel_account_id == channel_account_id,
+            ChannelAccount.provider == "whatsapp",
+        )
         .first()
     )
 
