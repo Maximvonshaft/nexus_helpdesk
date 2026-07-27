@@ -27,6 +27,7 @@ from ..services.permissions import (
 from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import is_auto_work_order_type_allowed
+from ..services.ticket_scenario_assignment_service import require_scenario_action_allowed
 from ..utils.time import utc_now
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
@@ -118,6 +119,21 @@ def _load_visible_ticket(db: Session, *, ticket_id: int, user) -> Ticket:
     return ticket
 
 
+def _require_scenario_action(
+    db: Session,
+    *,
+    ticket: Ticket,
+    action_class: str,
+) -> None:
+    """Apply the frozen Scenario contract before any Provider read or write."""
+
+    require_scenario_action_allowed(
+        db,
+        ticket=ticket,
+        action_class=action_class,
+    )
+
+
 def _append_event(db: Session, *, ticket_id: int, actor_id: int | None, field_name: str, new_value: str, note: str, payload: dict[str, Any]) -> None:
     db.add(
         TicketEvent(
@@ -166,7 +182,8 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
 def query_speedaf_waybills(ticket_id: int, payload: SpeedafWaybillLookupRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     _require_feature("SPEEDAF_MCP_ENABLED", "speedaf_mcp_disabled")
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=WAYBILL_LOOKUP_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_batch_max, request_id=_request_id(request))
-    _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    ticket = _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    _require_scenario_action(db, ticket=ticket, action_class="tracking_lookup")
     caller = _clean(payload.callerID, limit=80)
     country = _clean(payload.countryCode, limit=8).upper() or "CH"
     result = SpeedafCoreAdapter().query_waybills_by_caller(caller_id=caller, country_code=country)
@@ -207,7 +224,12 @@ def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, 
     _require_feature("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "speedaf_work_order_create_disabled")
     ensure_can_create_speedaf_work_order(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=WORK_ORDER_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_single_max, request_id=_request_id(request))
-    _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    ticket = _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    _require_scenario_action(
+        db,
+        ticket=ticket,
+        action_class="create_delivery_work_order",
+    )
     work_order_type = _clean(payload.workOrderType, limit=32)
     if not is_auto_work_order_type_allowed(work_order_type):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="speedaf_work_order_type_not_allowed")
@@ -237,7 +259,12 @@ def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateR
     _require_feature("SPEEDAF_UPDATE_ADDRESS_ENABLED", "speedaf_update_address_disabled")
     ensure_can_update_speedaf_address(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=ADDRESS_UPDATE_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_batch_max, request_id=_request_id(request))
-    _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    ticket = _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    _require_scenario_action(
+        db,
+        ticket=ticket,
+        action_class="update_address_contact",
+    )
     waybill = _clean(payload.waybillCode, limit=80).upper()
     caller = _clean(payload.callerID, limit=80)
     phone = _clean(payload.whatsAppPhone, limit=80)
