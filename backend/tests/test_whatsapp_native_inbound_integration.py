@@ -23,7 +23,15 @@ sys.path.insert(0, str(ROOT.parent))
 from app.db import Base  # noqa: E402
 from app.api.whatsapp_native_integration import apply_whatsapp_native_delivery_payload  # noqa: E402
 from app.enums import MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
-from app.models import BackgroundJob, ChannelAccount, Ticket, TicketOutboundMessage, WhatsAppInboundMessage  # noqa: E402
+from app.models import (  # noqa: E402
+    BackgroundJob,
+    ChannelAccount,
+    Market,
+    Tenant,
+    Ticket,
+    TicketOutboundMessage,
+    WhatsAppInboundMessage,
+)
 from app.settings import get_settings  # noqa: E402
 from app.services.whatsapp_native_inbound import (  # noqa: E402
     WhatsAppNativeAuthError,
@@ -67,7 +75,36 @@ def _uid() -> str:
 
 
 def _account(session, *, account_id: str = "wa-main") -> ChannelAccount:
-    row = ChannelAccount(provider="whatsapp", account_id=account_id, display_name="WhatsApp Main", is_active=True, priority=10)
+    tenant = Tenant(
+        tenant_key=f"tenant-{account_id}",
+        display_name=f"Tenant {account_id}",
+        is_active=True,
+    )
+    session.add(tenant)
+    session.flush()
+    ownership = {
+        "tenant_id": tenant.id,
+        "tenant_assignment_source": "fixture",
+        "tenant_assignment_version": "whatsapp-native-test-v1",
+    }
+    market = Market(
+        code=f"WA-{account_id}"[:40],
+        name=f"WhatsApp Market {account_id}",
+        country_code="ME",
+        is_active=True,
+        **ownership,
+    )
+    session.add(market)
+    session.flush()
+    row = ChannelAccount(
+        provider="whatsapp",
+        account_id=account_id,
+        display_name="WhatsApp Main",
+        market_id=market.id,
+        is_active=True,
+        priority=10,
+        **ownership,
+    )
     session.add(row)
     session.flush()
     return row
@@ -116,7 +153,7 @@ def test_connector_hmac_headers_are_verified():
         )
 
 
-def test_inbound_creates_ticket_webchat_projection_and_ai_turn(db_session):
+def test_inbound_creates_conversation_projection_and_ai_turn_without_synthetic_ticket(db_session):
     account = _account(db_session)
 
     result = ingest_whatsapp_native_inbound(db_session, _payload(account_id=account.account_id, external_message_id="wamid.first"))
@@ -125,20 +162,20 @@ def test_inbound_creates_ticket_webchat_projection_and_ai_turn(db_session):
     assert result.ok is True
     assert result.idempotent is False
     inbound = db_session.query(WhatsAppInboundMessage).one()
-    ticket = db_session.query(Ticket).one()
     conversation = db_session.query(WebchatConversation).one()
     message = db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").one()
     turn = db_session.query(WebchatAITurn).one()
     job = db_session.query(BackgroundJob).one()
 
-    assert inbound.ticket_id == ticket.id
+    assert result.ticket_id is None
+    assert db_session.query(Ticket).count() == 0
+    assert inbound.ticket_id is None
     assert inbound.conversation_id == conversation.id
     assert inbound.webchat_message_id == message.id
-    assert ticket.source_channel == SourceChannel.whatsapp
-    assert ticket.channel_account_id == account.id
-    assert ticket.preferred_reply_channel == SourceChannel.whatsapp.value
+    assert conversation.ticket_id is None
     assert conversation.channel_key == "whatsapp"
     assert conversation.origin == "whatsapp-native"
+    assert conversation.tenant_key == account.tenant.tenant_key
     assert message.client_message_id == "wamid.first"
     assert turn.trigger_message_id == message.id
     assert job.queue_name == "webchat_ai_reply"
@@ -196,7 +233,7 @@ def test_from_me_store_only_persists_raw_without_projection_or_ai(db_session):
     assert db_session.query(WebchatAITurn).count() == 0
 
 
-def test_from_me_test_visitor_with_prefix_projects_and_marks_metadata(db_session):
+def test_from_me_test_visitor_with_prefix_projects_conversation_and_marks_metadata(db_session):
     account = _account(db_session)
 
     result = ingest_whatsapp_native_inbound(
@@ -215,10 +252,10 @@ def test_from_me_test_visitor_with_prefix_projects_and_marks_metadata(db_session
     inbound = db_session.query(WhatsAppInboundMessage).one()
     message = db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").one()
     metadata = json.loads(message.metadata_json)
-    assert result.ticket_id is not None
+    assert result.ticket_id is None
     assert result.conversation_id is not None
     assert result.webchat_message_id == message.id
-    assert inbound.ticket_id is not None
+    assert inbound.ticket_id is None
     assert inbound.conversation_id is not None
     assert inbound.webchat_message_id == message.id
     assert inbound.body_text == "hello from self smoke"
@@ -226,6 +263,7 @@ def test_from_me_test_visitor_with_prefix_projects_and_marks_metadata(db_session
     assert metadata["source"] == "self_echo_test"
     assert metadata["from_me"] is True
     assert metadata["projection_mode"] == "test_visitor"
+    assert db_session.query(Ticket).count() == 0
     assert db_session.query(WebchatAITurn).count() == 1
 
 
@@ -295,6 +333,7 @@ def test_duplicate_inbound_is_idempotent_and_does_not_duplicate_projection(db_se
     assert first.idempotent is False
     assert second.idempotent is True
     assert db_session.query(WhatsAppInboundMessage).count() == 1
+    assert db_session.query(Ticket).count() == 0
     assert db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").count() == 1
     assert db_session.query(WebchatAITurn).count() == 1
 
