@@ -267,11 +267,22 @@ class WhatsAppMediaAsset(Base):
             "byte_size IS NULL OR byte_size >= 0",
             name="ck_whatsapp_media_byte_size_nonnegative",
         ),
+        CheckConstraint(
+            "attempt_count >= 0 AND max_attempts >= 1",
+            name="ck_whatsapp_media_attempts_valid",
+        ),
         Index(
             "ix_whatsapp_media_tenant_status",
             "tenant_id",
             "storage_status",
             "created_at",
+        ),
+        Index(
+            "ix_whatsapp_media_claim",
+            "provider",
+            "storage_status",
+            "next_retry_at",
+            "locked_at",
         ),
     )
 
@@ -308,6 +319,15 @@ class WhatsAppMediaAsset(Base):
     scan_status: Mapped[str] = mapped_column(
         String(24), nullable=False, default="pending", index=True
     )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime, nullable=True, index=True
+    )
+    locked_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime, nullable=True, index=True
+    )
+    locked_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     storage_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     ticket_attachment_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("ticket_attachments.id", ondelete="SET NULL"),
