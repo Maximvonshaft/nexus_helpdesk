@@ -28,7 +28,7 @@ def _init_and_send(body: str) -> tuple[str, str, int]:
     initialized = client.post(
         "/api/webchat/init",
         json={
-            "tenant_key": f"terminal-convergence-{key}",
+            "tenant_key": "default",
             "channel_key": "website",
             "visitor_name": "Terminal Convergence Visitor",
             "origin": "https://example.test",
@@ -183,7 +183,6 @@ def test_watchdog_timeout_uses_same_idempotent_terminal_outcome(monkeypatch):
             == 1
         )
 
-        # Reconciliation is idempotent and may not create a second public result.
         reconcile_webchat_ai_state(db, conversation_id=conversation.id)
         db.commit()
         assert (
