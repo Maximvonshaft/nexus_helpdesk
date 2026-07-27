@@ -12,8 +12,8 @@ from ..settings import get_settings
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from . import background_jobs
-from .background_job_transaction_boundary import _finalize_dead_webchat_ai_job
 from .observability import record_webchat_ai_timeout
+from .webchat_ai_terminal_job_service import finalize_dead_webchat_ai_job
 from .webchat_ai_turn_service import (
     AI_TURN_TERMINAL_STATUSES,
     DEFAULT_BRIDGE_GRACE_SECONDS,
@@ -165,7 +165,7 @@ def _finalize_terminal_outcome(
     action: str,
 ) -> None:
     job = _terminal_job_for_turn(db, turn=turn, reason=reason)
-    _finalize_dead_webchat_ai_job(db, job)
+    finalize_dead_webchat_ai_job(db, job)
 
     # A public fallback is the customer outcome, not a rewrite of the failed
     # execution cause. Watchdog-expired turns remain ``timeout`` so runtime SLOs,
@@ -296,8 +296,10 @@ def reconcile_webchat_ai_state(
                     db,
                     conversation=conversation,
                     turn=turn,
-                    reason=turn.status_reason
-                    or f"terminal_turn_without_outcome:{turn.status}",
+                    reason=(
+                        turn.status_reason
+                        or f"terminal_turn_without_outcome:{turn.status}"
+                    ),
                     action="repair_terminal_without_outcome",
                 )
                 recovered += 1
@@ -326,7 +328,7 @@ def reconcile_webchat_ai_state(
             if job is not None and _status_value(job.status) == _status_value(
                 JobStatus.dead
             ):
-                _finalize_dead_webchat_ai_job(db, job)
+                finalize_dead_webchat_ai_job(db, job)
                 safe_write_webchat_event(
                     db,
                     conversation_id=conversation.id,
