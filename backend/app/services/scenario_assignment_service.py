@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from ..enums import EventType, TicketStatus
 from ..models import Ticket, TicketEvent
+from ..models_case_governance import TicketSLAAssignment, TicketSLAPauseInterval
 from ..models_scenario_assignment import TicketScenarioAssignment
+from ..models_sla_runtime import TicketSLATarget
 from ..utils.time import ensure_utc, utc_now
 from .nexus_osr.business_scenarios import (
     CATALOG_SCHEMA,
@@ -207,6 +209,107 @@ def backfill_ticket_scenario_assignment(
     )
 
 
+def _invalidate_sla_for_reclassification(
+    db: Session,
+    *,
+    ticket: Ticket,
+    actor_id: int | None,
+    now: datetime,
+) -> dict[str, Any]:
+    """Retire only SLA projections derived from the superseded Scenario.
+
+    Pause history remains append-only. An open pause is explicitly closed, then
+    the new SLA is calculated from the original Case creation time plus the full
+    governed pause history; service elapsed time is never reset by reclassification.
+    """
+
+    target = (
+        db.query(TicketSLATarget)
+        .filter(TicketSLATarget.ticket_id == ticket.id)
+        .first()
+    )
+    assignment = (
+        db.query(TicketSLAAssignment)
+        .filter(TicketSLAAssignment.ticket_id == ticket.id)
+        .first()
+    )
+    open_pause = (
+        db.query(TicketSLAPauseInterval)
+        .filter(
+            TicketSLAPauseInterval.ticket_id == ticket.id,
+            TicketSLAPauseInterval.ended_at.is_(None),
+        )
+        .first()
+    )
+    if open_pause is not None:
+        open_pause.ended_at = now
+        open_pause.ended_by = actor_id
+    old = {
+        "sla_assignment_id": assignment.id if assignment is not None else None,
+        "sla_policy_revision_id": (
+            assignment.policy_revision_id if assignment is not None else None
+        ),
+        "sla_target_id": target.id if target is not None else None,
+        "open_pause_closed": open_pause is not None,
+    }
+    if target is not None:
+        db.delete(target)
+    if assignment is not None:
+        db.delete(assignment)
+    ticket.sla_policy_id = None
+    ticket.first_response_due_at = None
+    ticket.resolution_due_at = None
+    ticket.sla_paused = False
+    ticket.sla_paused_at = None
+    ticket.sla_pause_reason = None
+    ticket.first_response_breached = False
+    ticket.resolution_breached = False
+    db.flush()
+    return old
+
+
+def _rebuild_sla_after_reclassification(
+    db: Session,
+    *,
+    ticket: Ticket,
+    actor_id: int | None,
+) -> dict[str, Any]:
+    from .sla_service import (
+        SLAConfigurationError,
+        apply_policy_to_ticket,
+        get_policy_for_priority,
+    )
+
+    policy = get_policy_for_priority(db, ticket.priority)
+    if policy is None:
+        return {"status": "unavailable", "reason": "sla_policy_missing"}
+    try:
+        apply_policy_to_ticket(
+            ticket,
+            policy,
+            db=db,
+            assigned_by=actor_id,
+        )
+    except SLAConfigurationError as exc:
+        if str(exc) == "approved_sla_revision_missing":
+            return {"status": "unavailable", "reason": str(exc)}
+        raise
+    return {
+        "status": "assigned",
+        "sla_policy_id": ticket.sla_policy_id,
+        "first_response_due_at": (
+            ticket.first_response_due_at.isoformat()
+            if ticket.first_response_due_at is not None
+            else None
+        ),
+        "resolution_due_at": (
+            ticket.resolution_due_at.isoformat()
+            if ticket.resolution_due_at is not None
+            else None
+        ),
+    }
+
+
 def assign_ticket_scenario(
     db: Session,
     *,
@@ -226,6 +329,7 @@ def assign_ticket_scenario(
     now = utc_now()
     existing = db.get(TicketScenarioAssignment, ticket.id)
     old_payload: dict[str, Any] | None = None
+    sla_transition: dict[str, Any] | None = None
     if existing is None:
         assignment = TicketScenarioAssignment(
             ticket_id=ticket.id,
@@ -258,6 +362,12 @@ def assign_ticket_scenario(
             "catalog_sha256": assignment.catalog_sha256,
             "definition_sha256": assignment.definition_sha256,
         }
+        sla_retired = _invalidate_sla_for_reclassification(
+            db,
+            ticket=ticket,
+            actor_id=actor_id,
+            now=now,
+        )
         assignment.assignment_revision += 1
         assignment.scenario_key = frozen.scenario.scenario_key
         assignment.catalog_version = frozen.catalog_version
@@ -274,6 +384,15 @@ def assign_ticket_scenario(
             ticket.status = TicketStatus.pending_assignment
         ticket.resolution_summary = None
         ticket.updated_at = now
+        db.flush()
+        sla_transition = {
+            "retired": sla_retired,
+            "replacement": _rebuild_sla_after_reclassification(
+                db,
+                ticket=ticket,
+                actor_id=actor_id,
+            ),
+        }
 
     db.flush()
     event_payload = {
@@ -286,6 +405,7 @@ def assign_ticket_scenario(
         "assignment_source": assignment.assignment_source,
         "assignment_reason": assignment.assignment_reason,
         "old_assignment": old_payload,
+        "sla_transition": sla_transition,
         "contains_payloads": False,
     }
     db.add(
