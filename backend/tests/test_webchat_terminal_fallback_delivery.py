@@ -33,7 +33,10 @@ def _init_and_send(body: str) -> tuple[str, str]:
     init = client.post(
         "/api/webchat/init",
         json={
-            "tenant_key": f"terminal-{key}",
+            # Terminal fallback is exercised in the explicit non-production
+            # shadow domain. An invented non-default Tenant would correctly make
+            # the BackgroundJob unresolved and therefore non-executable.
+            "tenant_key": "default",
             "channel_key": "website",
             "visitor_name": "Terminal Fallback Visitor",
             "origin": "https://example.test",
