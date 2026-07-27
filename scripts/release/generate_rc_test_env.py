@@ -22,13 +22,22 @@ def _normalize_origin(value: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("RC origin must be HTTP(S)")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError("RC origin must not contain credentials, query or fragment")
+        raise ValueError(
+            "RC origin must not contain credentials, query or fragment"
+        )
     if parsed.path not in {"", "/"}:
         raise ValueError("RC origin must be a root/origin URL")
-    if parsed.scheme == "http" and parsed.hostname.lower() not in {"127.0.0.1", "localhost", "::1"}:
+    if (
+        parsed.scheme == "http"
+        and parsed.hostname.lower() not in {"127.0.0.1", "localhost", "::1"}
+    ):
         raise ValueError("HTTP RC origin is allowed only on loopback")
     port = parsed.port
-    host = f"[{parsed.hostname.lower()}]" if ":" in parsed.hostname else parsed.hostname.lower()
+    host = (
+        f"[{parsed.hostname.lower()}]"
+        if ":" in parsed.hostname
+        else parsed.hostname.lower()
+    )
     default_port = 443 if parsed.scheme == "https" else 80
     authority = host if port in {None, default_port} else f"{host}:{port}"
     return f"{parsed.scheme}://{authority}"
@@ -37,9 +46,16 @@ def _normalize_origin(value: str) -> str:
 def _assignment_literal(tree: ast.Module, name: str):
     value_node: ast.expr | None = None
     for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
             value_node = node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+        ):
             value_node = node.value
     if value_node is None:
         return _MISSING
@@ -54,7 +70,9 @@ def _normalize_down_revisions(value) -> tuple[str, ...]:
         return ()
     if isinstance(value, str):
         values = (value,)
-    elif isinstance(value, (tuple, list)) and all(isinstance(item, str) for item in value):
+    elif isinstance(value, (tuple, list)) and all(
+        isinstance(item, str) for item in value
+    ):
         values = tuple(value)
     else:
         raise ValueError("alembic_down_revision_invalid")
@@ -63,7 +81,10 @@ def _normalize_down_revisions(value) -> tuple[str, ...]:
     return values
 
 
-def _validate_revision_graph(revisions: dict[str, tuple[str, ...]], head: str) -> None:
+def _validate_revision_graph(
+    revisions: dict[str, tuple[str, ...]],
+    head: str,
+) -> None:
     state: dict[str, int] = {}
     visited: set[str] = set()
 
@@ -93,7 +114,10 @@ def discover_alembic_head(versions_dir: Path) -> str:
         if path.name == "__init__.py":
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = ast.parse(
+                path.read_text(encoding="utf-8"),
+                filename=str(path),
+            )
         except (OSError, UnicodeError, SyntaxError) as exc:
             raise ValueError("alembic_revision_file_invalid") from exc
         revision = _assignment_literal(tree, "revision")
@@ -130,11 +154,18 @@ def build_values(
     expected_migration_head: str,
 ) -> dict[str, str]:
     if not SHA_RE.fullmatch(source_sha):
-        raise ValueError("source SHA must be exact lowercase 40-character Git SHA")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", compose_project):
+        raise ValueError(
+            "source SHA must be exact lowercase 40-character Git SHA"
+        )
+    if not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}",
+        compose_project,
+    ):
         raise ValueError("invalid Compose project name")
     if not REVISION_RE.fullmatch(expected_migration_head):
-        raise ValueError("expected migration head must be a bounded revision identifier")
+        raise ValueError(
+            "expected migration head must be a bounded revision identifier"
+        )
     normalized_origin = _normalize_origin(origin)
     pg_password = secrets.token_urlsafe(24)
     jwt_secret = secrets.token_urlsafe(48)
@@ -164,7 +195,10 @@ def build_values(
         "POSTGRES_DB": "nexus_rc",
         "POSTGRES_USER": "nexus_rc",
         "POSTGRES_PASSWORD": pg_password,
-        "DATABASE_URL": f"postgresql+psycopg://nexus_rc:{pg_password}@postgres-rc:5432/nexus_rc",
+        "DATABASE_URL": (
+            "postgresql+psycopg://nexus_rc:"
+            f"{pg_password}@postgres-rc:5432/nexus_rc"
+        ),
         "DATABASE_ECHO": "false",
         "APP_ENV": "production",
         "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
@@ -190,7 +224,8 @@ def build_values(
         "WEBCHAT_WS_PUBLIC_ENABLED": "false",
         "WEBCHAT_WS_ADMIN_ENABLED": "false",
         "WEBCHAT_WS_BROKER": "database",
-        "WEBCHAT_VOICE_ENABLED": "false",
+        "WEBCHAT_HUMAN_CALL_ENABLED": "false",
+        "WEBCHAT_LIVE_AI_VOICE_ENABLED": "false",
         "STORAGE_BACKEND": "local",
         "UPLOAD_ROOT": "/app/backend/uploads",
         "LOCAL_STORAGE_BACKUP_REQUIRED": "true",
@@ -211,8 +246,14 @@ def build_values(
         "ENABLE_OUTBOUND_DISPATCH": "false",
         "OUTBOUND_PROVIDER": "disabled",
         "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED": "false",
-        "WHATSAPP_NATIVE_ENABLED": "false",
-        "WHATSAPP_DISPATCH_MODE": "disabled",
+        "WHATSAPP_ENABLED": "false",
+        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED": "false",
+        "WHATSAPP_MEDIA_ENABLED": "false",
+        "WHATSAPP_MEDIA_SCANNER": "disabled",
+        "WHATSAPP_META_WEBHOOK_PUBLIC_URL": "",
+        "WHATSAPP_BAILEYS_SIDECAR_URL": (
+            "http://whatsapp-sidecar-controlled:18793"
+        ),
         "EMAIL_MAILBOX_SYNC_ENABLED": "false",
         "ALLOW_LEGACY_ORIGINLESS_OUTBOUND": "false",
         "EXTERNAL_CHANNEL_DEPLOYMENT_MODE": "disabled",
@@ -251,9 +292,15 @@ def write_env(path: Path, values: dict[str, str]) -> None:
         if any(char in value for char in "\r\n\x00"):
             raise ValueError(f"unsafe control character in {key}")
         if any(char.isspace() for char in value):
-            raise ValueError(f"unquoted whitespace is not allowed in shell-loadable RC value {key}")
+            raise ValueError(
+                "unquoted whitespace is not allowed in shell-loadable RC "
+                f"value {key}"
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
+    path.write_text(
+        "".join(f"{key}={value}\n" for key, value in values.items()),
+        encoding="utf-8",
+    )
     path.chmod(0o600)
 
 
@@ -266,7 +313,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         repo_root = Path(__file__).resolve().parents[2]
-        expected_migration_head = discover_alembic_head(repo_root / "backend" / "alembic" / "versions")
+        expected_migration_head = discover_alembic_head(
+            repo_root / "backend" / "alembic" / "versions"
+        )
         values = build_values(
             source_sha=args.source_sha,
             compose_project=args.compose_project,
