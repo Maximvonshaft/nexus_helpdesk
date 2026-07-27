@@ -27,9 +27,10 @@ class WhatsAppEvidenceTests(unittest.TestCase):
         }
 
     def _transport(self, transport: str, suffix: str) -> dict:
+        connection_id = 11 if transport == "meta_cloud_api" else 12
         return {
             "transport": transport,
-            "connection_id": 11 if transport == "meta_cloud_api" else 12,
+            "connection_id": connection_id,
             "account_id": f"wa-{transport}",
             "phone_suffix": suffix,
             "binding": {
@@ -44,6 +45,7 @@ class WhatsAppEvidenceTests(unittest.TestCase):
                 "received_at": "2026-07-27T09:59:00Z",
                 "stored": True,
                 "idempotent_replay": True,
+                "replay_inbound_message_id": 100 + connection_id,
             },
             "outbound": self._direction(f"{transport}.outbound"),
             "restart": {
@@ -97,6 +99,17 @@ class WhatsAppEvidenceTests(unittest.TestCase):
             {"meta_cloud_api", "baileys_sidecar"},
         )
         self.assertTrue(
+            evidence["requirements"][
+                "inbound_replay_bound_to_persisted_identity"
+            ]
+        )
+        self.assertEqual(
+            evidence["transports"]["meta_cloud_api"]["inbound"][
+                "replay_inbound_message_id"
+            ],
+            111,
+        )
+        self.assertTrue(
             MODULE.verify_compiled_evidence(
                 evidence,
                 signing_key=self.signing_key,
@@ -139,10 +152,30 @@ class WhatsAppEvidenceTests(unittest.TestCase):
                 require_media=True,
             )
 
+    def test_missing_replay_identity_fails_closed(self):
+        observation = self._observation()
+        del observation["transports"]["meta_cloud_api"]["inbound"][
+            "replay_inbound_message_id"
+        ]
+        with self.assertRaisesRegex(
+            MODULE.EvidenceError,
+            "replay_inbound_message_id_invalid",
+        ):
+            MODULE.compile_evidence(
+                observation,
+                expected_source_sha=self.source_sha,
+                expected_image_digest=self.image_digest,
+                signing_key=self.signing_key,
+                require_media=True,
+            )
+
     def test_secrets_and_full_phone_numbers_are_rejected(self):
         observation = self._observation()
         observation["transports"]["meta_cloud_api"]["access_token"] = "secret"
-        with self.assertRaisesRegex(MODULE.EvidenceError, "forbidden_evidence_field"):
+        with self.assertRaisesRegex(
+            MODULE.EvidenceError,
+            "forbidden_evidence_field",
+        ):
             MODULE.compile_evidence(
                 observation,
                 expected_source_sha=self.source_sha,
@@ -152,7 +185,10 @@ class WhatsAppEvidenceTests(unittest.TestCase):
             )
         observation = self._observation()
         observation["operator_note"] = "called +15550001234"
-        with self.assertRaisesRegex(MODULE.EvidenceError, "full_phone_number_forbidden"):
+        with self.assertRaisesRegex(
+            MODULE.EvidenceError,
+            "full_phone_number_forbidden",
+        ):
             MODULE.compile_evidence(
                 observation,
                 expected_source_sha=self.source_sha,
@@ -166,7 +202,10 @@ class WhatsAppEvidenceTests(unittest.TestCase):
         observation["transports"]["baileys_sidecar"]["outbound"]["read_at"] = (
             "2026-07-27T09:59:59Z"
         )
-        with self.assertRaisesRegex(MODULE.EvidenceError, "delivery_order_invalid"):
+        with self.assertRaisesRegex(
+            MODULE.EvidenceError,
+            "delivery_order_invalid",
+        ):
             MODULE.compile_evidence(
                 observation,
                 expected_source_sha=self.source_sha,
