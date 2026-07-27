@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
@@ -15,11 +13,19 @@ from ..models_scenario_assignment import TicketScenarioAssignment
 from ..utils.time import ensure_utc, utc_now
 from .nexus_osr.business_scenarios import (
     CATALOG_SCHEMA,
-    BusinessScenarioCatalog,
     BusinessScenarioCatalogError,
     BusinessScenarioDefinition,
-    load_business_scenario_catalog,
     parse_business_scenario_catalog,
+)
+from .scenario_contract import (
+    ScenarioContractError,
+    canonical_json,
+    current_scenario_catalog,
+    freeze_scenario,
+    legacy_alias_matches,
+    resolve_catalog_scenario,
+    scenario_is_operationally_active,
+    sha256_json,
 )
 from .tenant_authority import tenant_runtime_authority_mode
 
@@ -50,9 +56,8 @@ class ScenarioExecutionPolicy:
     expires_at: datetime | None
 
     def agent_is_eligible(self, capabilities: Iterable[str]) -> bool:
-        return self.required_capabilities.issubset(
-            {str(value).strip().lower() for value in capabilities}
-        )
+        normalized = {str(value).strip().lower() for value in capabilities}
+        return self.required_capabilities.issubset(normalized)
 
     def action_is_allowed(self, action_class: str) -> bool:
         action = str(action_class or "").strip().lower()
@@ -70,104 +75,6 @@ class AssignedScenario:
     policy: ScenarioExecutionPolicy
 
 
-def _canonical_json(value: Any) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-
-
-def _sha256(value: Any) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
-
-
-def _iso(value: datetime | None) -> str | None:
-    normalized = ensure_utc(value) if value is not None else None
-    return normalized.isoformat() if normalized is not None else None
-
-
-def _definition_payload(scenario: BusinessScenarioDefinition) -> dict[str, Any]:
-    return {
-        "scenario_key": scenario.scenario_key,
-        "issue_type_aliases": list(scenario.issue_type_aliases),
-        "trigger_sources": list(scenario.trigger_sources),
-        "required_fact_classes": list(scenario.required_fact_classes),
-        "required_customer_inputs": list(scenario.required_customer_inputs),
-        "risk_level": scenario.risk_level,
-        "escalation_policy_key": scenario.escalation_policy_key,
-        "owner_queue_key": scenario.owner_queue_key,
-        "required_capabilities": list(scenario.required_capabilities),
-        "allowed_action_classes": list(scenario.allowed_action_classes),
-        "required_action_classes": list(scenario.required_action_classes),
-        "blocked_action_classes": list(scenario.blocked_action_classes),
-        "notification_policy": scenario.notification_policy,
-        "allowed_no_notification_reasons": list(
-            scenario.allowed_no_notification_reasons
-        ),
-        "terminal_behavior": scenario.terminal_behavior,
-        "required_outcome_levels": list(scenario.required_outcome_levels),
-        "completion_rules": list(scenario.completion_rules),
-        "definition_of_done": scenario.definition_of_done,
-        "observation_period_seconds": scenario.observation_period_seconds,
-        "reopen_conditions": list(scenario.reopen_conditions),
-        "cancellation_semantics": scenario.cancellation_semantics,
-        "metrics": list(scenario.metrics),
-        "scope_mode": scenario.scope_mode,
-        "lifecycle": {
-            "status": scenario.lifecycle.status,
-            "owner": scenario.lifecycle.owner,
-            "approved_at": _iso(scenario.lifecycle.approved_at),
-            "effective_from": _iso(scenario.lifecycle.effective_from),
-            "review_due": _iso(scenario.lifecycle.review_due),
-            "expires_at": _iso(scenario.lifecycle.expires_at),
-            "supersedes": scenario.lifecycle.supersedes,
-        },
-    }
-
-
-def scenario_is_operationally_active(
-    scenario: BusinessScenarioDefinition,
-    *,
-    at: datetime | None = None,
-) -> bool:
-    """Review due is a governance warning, never an implicit production kill."""
-
-    observed = ensure_utc(at or utc_now())
-    if observed is None:
-        return False
-    lifecycle = scenario.lifecycle
-    return bool(
-        lifecycle.status == "approved"
-        and lifecycle.effective_from <= observed
-        and (lifecycle.expires_at is None or observed < lifecycle.expires_at)
-    )
-
-
-def _current_catalog() -> BusinessScenarioCatalog:
-    # A stale review date must not make the entire service unready or block all
-    # closures. Explicit expires_at remains the operational stop control.
-    return load_business_scenario_catalog(require_all_active=False)
-
-
-def _resolve_catalog_scenario(
-    catalog: BusinessScenarioCatalog,
-    scenario_key: str,
-    *,
-    at: datetime | None = None,
-) -> BusinessScenarioDefinition:
-    normalized = str(scenario_key or "").strip().lower()
-    target = catalog.alias_map().get(normalized)
-    if target is None:
-        raise TicketScenarioAssignmentError("scenario_not_found")
-    scenario = catalog.by_key()[target]
-    if not scenario_is_operationally_active(scenario, at=at):
-        raise TicketScenarioAssignmentError("scenario_not_operationally_active")
-    return scenario
-
-
 def _scope_matches(ticket: Ticket, assignment: TicketScenarioAssignment) -> bool:
     return ticket.tenant_id == assignment.tenant_id
 
@@ -178,7 +85,7 @@ def _snapshot_scenario(
     definition = assignment.definition_json
     if not isinstance(definition, dict):
         raise TicketScenarioAssignmentError("scenario_definition_snapshot_invalid")
-    if _sha256(definition) != assignment.definition_sha256:
+    if sha256_json(definition) != assignment.definition_sha256:
         raise TicketScenarioAssignmentError("scenario_definition_digest_mismatch")
     lifecycle = definition.get("lifecycle") or {}
     approved_at = lifecycle.get("approved_at")
@@ -214,9 +121,9 @@ def _execution_policy(
     at: datetime | None = None,
 ) -> ScenarioExecutionPolicy:
     observed = ensure_utc(at or utc_now())
+    review_due = ensure_utc(scenario.lifecycle.review_due)
     if observed is None:
         raise TicketScenarioAssignmentError("scenario_policy_time_unavailable")
-    review_due = ensure_utc(scenario.lifecycle.review_due)
     if review_due is None:
         raise TicketScenarioAssignmentError("scenario_review_due_invalid")
     return ScenarioExecutionPolicy(
@@ -261,27 +168,13 @@ def get_assigned_scenario(
     )
 
 
-def _legacy_alias_matches(
-    ticket: Ticket,
-    catalog: BusinessScenarioCatalog,
-) -> tuple[set[str], list[str]]:
-    matched: set[str] = set()
-    observed: list[str] = []
-    aliases = catalog.alias_map()
-    for field_name, raw in (
+def _ticket_alias_values(ticket: Ticket):
+    return (
         ("case_type", ticket.case_type),
         ("sub_category", ticket.sub_category),
         ("category", ticket.category),
         ("ai_classification", ticket.ai_classification),
-    ):
-        normalized = str(raw or "").strip().lower()
-        if not normalized:
-            continue
-        observed.append(f"{field_name}:{normalized}")
-        target = aliases.get(normalized)
-        if target is not None:
-            matched.add(target)
-    return matched, observed
+    )
 
 
 def backfill_ticket_scenario_assignment(
@@ -294,8 +187,11 @@ def backfill_ticket_scenario_assignment(
     existing = db.get(TicketScenarioAssignment, ticket.id)
     if existing is not None:
         return existing
-    catalog = _current_catalog()
-    matched, observed = _legacy_alias_matches(ticket, catalog)
+    catalog = current_scenario_catalog()
+    matched, observed = legacy_alias_matches(
+        values=_ticket_alias_values(ticket),
+        catalog=catalog,
+    )
     if not matched:
         raise TicketScenarioAssignmentError("scenario_identity_missing")
     if len(matched) != 1:
@@ -321,10 +217,12 @@ def assign_ticket_scenario(
     reason: str | None,
     allow_reclassification: bool,
 ) -> TicketScenarioAssignment:
-    catalog = _current_catalog()
-    scenario = _resolve_catalog_scenario(catalog, scenario_key)
-    definition = _definition_payload(scenario)
-    definition_sha = _sha256(definition)
+    catalog = current_scenario_catalog()
+    try:
+        scenario = resolve_catalog_scenario(catalog, scenario_key)
+    except ScenarioContractError as exc:
+        raise TicketScenarioAssignmentError(str(exc)) from exc
+    frozen = freeze_scenario(catalog, scenario)
     now = utc_now()
     existing = db.get(TicketScenarioAssignment, ticket.id)
     old_payload: dict[str, Any] | None = None
@@ -332,14 +230,14 @@ def assign_ticket_scenario(
         assignment = TicketScenarioAssignment(
             ticket_id=ticket.id,
             tenant_id=ticket.tenant_id,
-            scenario_key=scenario.scenario_key,
+            scenario_key=frozen.scenario.scenario_key,
             assignment_revision=1,
-            catalog_version=catalog.catalog_version,
-            catalog_sha256=catalog.source_sha256,
-            definition_sha256=definition_sha,
-            definition_json=definition,
+            catalog_version=frozen.catalog_version,
+            catalog_sha256=frozen.catalog_sha256,
+            definition_sha256=frozen.definition_sha256,
+            definition_json=frozen.definition_json,
             assignment_source=str(source or "operator")[:40],
-            assignment_reason=(str(reason).strip() if reason else None),
+            assignment_reason=str(reason).strip() if reason else None,
             assigned_by=actor_id,
             assigned_at=now,
             updated_at=now,
@@ -349,7 +247,7 @@ def assign_ticket_scenario(
         assignment = existing
         if not _scope_matches(ticket, assignment):
             raise TicketScenarioAssignmentError("scenario_assignment_tenant_conflict")
-        if assignment.scenario_key == scenario.scenario_key:
+        if assignment.scenario_key == frozen.scenario.scenario_key:
             return assignment
         if not allow_reclassification:
             raise TicketScenarioAssignmentError("scenario_reclassification_required")
@@ -361,17 +259,16 @@ def assign_ticket_scenario(
             "definition_sha256": assignment.definition_sha256,
         }
         assignment.assignment_revision += 1
-        assignment.scenario_key = scenario.scenario_key
-        assignment.catalog_version = catalog.catalog_version
-        assignment.catalog_sha256 = catalog.source_sha256
-        assignment.definition_sha256 = definition_sha
-        assignment.definition_json = definition
+        assignment.scenario_key = frozen.scenario.scenario_key
+        assignment.catalog_version = frozen.catalog_version
+        assignment.catalog_sha256 = frozen.catalog_sha256
+        assignment.definition_sha256 = frozen.definition_sha256
+        assignment.definition_json = frozen.definition_json
         assignment.assignment_source = str(source or "operator")[:40]
         assignment.assignment_reason = str(reason).strip() if reason else None
         assignment.assigned_by = actor_id
         assignment.assigned_at = now
         assignment.updated_at = now
-        # Reclassification invalidates old workflow ownership and closure facts.
         ticket.assignee_id = None
         if ticket.status not in {TicketStatus.closed, TicketStatus.canceled}:
             ticket.status = TicketStatus.pending_assignment
@@ -400,7 +297,7 @@ def assign_ticket_scenario(
             old_value=(old_payload or {}).get("scenario_key") if old_payload else None,
             new_value=assignment.scenario_key,
             note=assignment.assignment_reason,
-            payload_json=_canonical_json(event_payload),
+            payload_json=canonical_json(event_payload),
             created_at=now,
         )
     )
