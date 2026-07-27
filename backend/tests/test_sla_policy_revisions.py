@@ -26,10 +26,10 @@ from app.models_case_governance import (  # noqa: E402
 )
 from app.models_sla_runtime import TicketSLATarget  # noqa: E402
 from app.services.sla_service import (  # noqa: E402
+    SLAConfigurationError,
     add_business_minutes,
     apply_policy_to_ticket,
-    pause_sla,
-    resume_sla,
+    business_seconds_between,
     select_policy_revision,
 )
 from app.services.ticket_sla_policy import sla_risk_filter  # noqa: E402
@@ -99,7 +99,7 @@ def make_policy(db, priority=TicketPriority.medium):
 
 
 def make_ticket(db, tenant, market, *, priority=TicketPriority.medium):
-    created = datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc)  # Friday 16:00 Zurich
+    created = datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc)
     ticket = Ticket(
         tenant_id=tenant.id,
         tenant_assignment_source="test",
@@ -121,6 +121,19 @@ def make_ticket(db, tenant, market, *, priority=TicketPriority.medium):
     return ticket
 
 
+def business_schedule():
+    return {
+        day: [{"start": "09:00", "end": "17:00"}]
+        for day in (
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+        )
+    }
+
+
 def approved_revision(
     db,
     policy,
@@ -131,11 +144,8 @@ def approved_revision(
     first_minutes=120,
     resolution_minutes=480,
     risk_window=45,
+    customer_tier=None,
 ):
-    schedule = {
-        day: [{"start": "09:00", "end": "17:00"}]
-        for day in ("monday", "tuesday", "wednesday", "thursday", "friday")
-    }
     revision = SLAPolicyRevision(
         policy_id=policy.id,
         version=version,
@@ -144,10 +154,10 @@ def approved_revision(
         market_id=market.id,
         channel_key="web_chat",
         scenario_key="tracking_status_inquiry",
-        customer_tier=None,
+        customer_tier=customer_tier,
         status="approved",
         timezone_name="Europe/Zurich",
-        weekly_schedule_json=schedule,
+        weekly_schedule_json=business_schedule(),
         holidays_json=[],
         first_response_minutes=first_minutes,
         resolution_minutes=resolution_minutes,
@@ -166,29 +176,45 @@ def approved_revision(
 
 
 def test_business_calendar_crosses_weekend_and_holiday():
-    schedule = {
-        day: [["09:00", "17:00"]]
-        for day in ("monday", "tuesday", "wednesday", "thursday", "friday")
-    }
-    start = datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc)  # Friday 16:00 CEST
+    start = datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc)
 
     monday = add_business_minutes(
         start,
         120,
         timezone_name="Europe/Zurich",
-        weekly_schedule=schedule,
+        weekly_schedule=business_schedule(),
         holidays=[],
     )
     tuesday = add_business_minutes(
         start,
         120,
         timezone_name="Europe/Zurich",
-        weekly_schedule=schedule,
+        weekly_schedule=business_schedule(),
         holidays=["2026-08-03"],
     )
 
     assert monday == datetime(2026, 8, 3, 8, 0, tzinfo=timezone.utc)
     assert tuesday == datetime(2026, 8, 4, 8, 0, tzinfo=timezone.utc)
+
+
+def test_business_seconds_between_excludes_nights_and_weekend():
+    start = datetime(2026, 7, 31, 14, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 3, 8, 30, tzinfo=timezone.utc)
+
+    assert business_seconds_between(
+        start,
+        end,
+        timezone_name="Europe/Zurich",
+        weekly_schedule=business_schedule(),
+        holidays=[],
+    ) == 7200
+    assert business_seconds_between(
+        start,
+        end,
+        timezone_name="UTC",
+        weekly_schedule={},
+        holidays=[],
+    ) == int((end - start).total_seconds())
 
 
 def test_most_specific_revision_is_assigned_and_targeted(db_session):
@@ -208,10 +234,20 @@ def test_most_specific_revision_is_assigned_and_targeted(db_session):
     assert assignment.policy_revision_id == revision.id
     assert assignment.snapshot_json["risk_window_minutes"] == 45
     assert ensure_utc(target.first_response_due_at) == datetime(
-        2026, 8, 3, 8, 0, tzinfo=timezone.utc
+        2026,
+        8,
+        3,
+        8,
+        0,
+        tzinfo=timezone.utc,
     )
     assert ensure_utc(target.first_response_risk_at) == datetime(
-        2026, 8, 3, 7, 15, tzinfo=timezone.utc
+        2026,
+        8,
+        3,
+        7,
+        15,
+        tzinfo=timezone.utc,
     )
     assert ticket.first_response_due_at == target.first_response_due_at
 
@@ -244,25 +280,82 @@ def test_assignment_is_immutable_when_priority_changes(db_session):
     assert ticket.sla_policy_id == medium.id
 
 
-def test_pause_interval_shifts_target_and_risk_query_uses_target(db_session):
+def test_pause_compensates_only_business_time(db_session):
     tenant, market = make_scope(db_session)
     policy = make_policy(db_session)
     approved_revision(db_session, policy, tenant, market)
     ticket = make_ticket(db_session, tenant, market)
     apply_policy_to_ticket(ticket, policy, db=db_session)
-    original = db_session.query(TicketSLATarget).one()
-    original_due = ensure_utc(original.first_response_due_at)
+    original_due = ensure_utc(
+        db_session.query(TicketSLATarget).one().first_response_due_at
+    )
 
-    interval = pause_sla(ticket, "waiting_customer", db_session)
-    interval.started_at = interval.started_at - timedelta(hours=2)
-    resume_sla(ticket, db_session)
+    db_session.add(
+        TicketSLAPauseInterval(
+            ticket_id=ticket.id,
+            reason_code="waiting_customer",
+            started_at=datetime(
+                2026,
+                7,
+                31,
+                14,
+                30,
+                tzinfo=timezone.utc,
+            ),
+            ended_at=datetime(
+                2026,
+                8,
+                3,
+                8,
+                30,
+                tzinfo=timezone.utc,
+            ),
+            created_at=datetime(
+                2026,
+                7,
+                31,
+                14,
+                30,
+                tzinfo=timezone.utc,
+            ),
+        )
+    )
+    db_session.flush()
+    apply_policy_to_ticket(
+        ticket,
+        policy,
+        now=datetime(2026, 8, 3, 9, 0, tzinfo=timezone.utc),
+        db=db_session,
+    )
     target = db_session.query(TicketSLATarget).one()
 
-    assert target.paused_seconds >= 7199
-    assert ensure_utc(target.first_response_due_at) >= original_due + timedelta(hours=1, minutes=59)
+    assert target.paused_seconds == 7200
+    assert ensure_utc(target.first_response_due_at) == original_due + timedelta(
+        hours=2
+    )
 
-    target.first_response_risk_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    target.first_response_risk_at = datetime.now(timezone.utc) - timedelta(
+        seconds=1
+    )
     db_session.flush()
-    rows = db_session.query(Ticket).filter(sla_risk_filter(datetime.now(timezone.utc))).all()
+    rows = db_session.query(Ticket).filter(
+        sla_risk_filter(datetime.now(timezone.utc))
+    ).all()
     assert [row.id for row in rows] == [ticket.id]
-    assert db_session.query(TicketSLAPauseInterval).count() == 1
+
+
+def test_customer_tier_revision_fails_closed_instead_of_silent_miss(db_session):
+    tenant, market = make_scope(db_session)
+    policy = make_policy(db_session)
+    approved_revision(
+        db_session,
+        policy,
+        tenant,
+        market,
+        customer_tier="gold",
+    )
+    ticket = make_ticket(db_session, tenant, market)
+
+    with pytest.raises(SLAConfigurationError) as exc:
+        select_policy_revision(db_session, ticket)
+    assert str(exc.value) == "sla_customer_tier_not_supported"
