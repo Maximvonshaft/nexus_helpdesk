@@ -147,4 +147,8 @@ export type EmbeddedSignupCompleteResult = {
   phone_number_id: string
   desired_state: string
   verification_state: string
+  binding_state: 'started' | 'attention_required'
+  binding_error_code: string | null
+  binding_retryable: boolean
+  idempotent: boolean
 }
