@@ -19,6 +19,7 @@ _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
 _CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
 _COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 _NON_PRODUCTION_ENVS = {"development", "test", "local"}
+_NON_PRODUCTION_SHADOW_TENANT_KEY = "default"
 
 
 @dataclass(frozen=True)
@@ -126,15 +127,28 @@ def resolve_public_webchat_scope(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="webchat_public_binding_required",
             )
-        tenant = _normalize_scope_key(requested_tenant_key, field="tenant", default="default")
-        channel = _normalize_scope_key(requested_channel_key, field="channel", default="default")
+        # Validate caller input so malformed values still fail deterministically,
+        # but never let an unbound browser manufacture a Tenant boundary. All
+        # development/test/local traffic without a server-owned Origin binding
+        # belongs to one isolated shadow domain. Real Tenant keys are available
+        # only through WebchatPublicOriginBinding.
+        _normalize_scope_key(
+            requested_tenant_key,
+            field="tenant",
+            default=_NON_PRODUCTION_SHADOW_TENANT_KEY,
+        )
+        channel = _normalize_scope_key(
+            requested_channel_key,
+            field="channel",
+            default="default",
+        )
         scope = VerifiedWebchatPublicScope(
-            tenant_key=tenant,
+            tenant_key=_NON_PRODUCTION_SHADOW_TENANT_KEY,
             country_code=None,
             channel_key=channel,
             normalized_origin=origin,
             binding_id=None,
-            authority="non_production_legacy",
+            authority="non_production_shadow",
         )
     else:
         tenant = _normalize_scope_key(binding.tenant_key, field="tenant", default="default")
