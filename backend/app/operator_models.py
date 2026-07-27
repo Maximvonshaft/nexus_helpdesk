@@ -27,13 +27,13 @@ ACTIVE_TASK_SQL = (
 
 
 class OperatorTask(Base):
-    """Rebuildable Tenant-owned projection of canonical source workflows.
+    """Rebuildable Tenant-scoped projection of canonical source workflows.
 
-    OperatorTask is never a source-domain state machine. ``source_type`` and
-    ``source_id`` identify the aggregate that owns the mutable fact;
-    ``source_version`` makes stale projections detectable. Every task carries
-    explicit immutable Tenant ownership so standalone management tasks cannot
-    collide with or leak into another Tenant.
+    ``tenant_id`` identifies a relational Tenant. A NULL value is reserved for
+    the single legacy-shadow scope and is reachable only while the runtime
+    Tenant authority is in ``shadow`` mode. Production ``enforce`` mode never
+    authorizes that scope. Separate partial unique indexes preserve atomic
+    identity in both domains without treating shadow work as platform-global.
     """
 
     __tablename__ = "operator_tasks"
@@ -66,10 +66,22 @@ class OperatorTask(Base):
             "task_type",
             unique=True,
             postgresql_where=text(
-                f"webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+                f"tenant_id IS NOT NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
             ),
             sqlite_where=text(
-                f"webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+                f"tenant_id IS NOT NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            ),
+        ),
+        Index(
+            "uq_operator_tasks_active_webchat_handoff_shadow",
+            "webchat_conversation_id",
+            "task_type",
+            unique=True,
+            postgresql_where=text(
+                f"tenant_id IS NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            ),
+            sqlite_where=text(
+                f"tenant_id IS NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
             ),
         ),
         Index(
@@ -80,18 +92,31 @@ class OperatorTask(Base):
             "task_type",
             unique=True,
             postgresql_where=text(
-                f"source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+                f"tenant_id IS NOT NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
             ),
             sqlite_where=text(
-                f"source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+                f"tenant_id IS NOT NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            ),
+        ),
+        Index(
+            "uq_operator_tasks_active_source_shadow",
+            "source_type",
+            "source_id",
+            "task_type",
+            unique=True,
+            postgresql_where=text(
+                f"tenant_id IS NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            ),
+            sqlite_where=text(
+                f"tenant_id IS NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
             ),
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     source_type: Mapped[str] = mapped_column(String(40))
@@ -126,11 +151,7 @@ class OperatorTask(Base):
 
 
 class OperatorQueueScopeGrant(Base):
-    """Exact server-owned visibility scope for the live unified queue.
-
-    This table is authorization policy only. It intentionally stores no queue
-    item, customer payload or mutable workflow state.
-    """
+    """Exact server-owned visibility scope for the live unified queue."""
 
     __tablename__ = "operator_queue_scope_grants"
     __table_args__ = (
@@ -157,27 +178,17 @@ class OperatorQueueScopeGrant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"),
-        nullable=False,
-        index=True,
+        ForeignKey("users.id"), nullable=False, index=True
     )
     tenant_key: Mapped[str] = mapped_column(String(80), nullable=False)
     country_code: Mapped[str] = mapped_column(String(16), nullable=False)
     channel_key: Mapped[str] = mapped_column(String(40), nullable=False)
-    enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     granted_by: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("users.id"),
-        nullable=True,
-        index=True,
+        ForeignKey("users.id"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime,
-        default=utc_now,
-        nullable=False,
+        UTCDateTime, default=utc_now, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime,
