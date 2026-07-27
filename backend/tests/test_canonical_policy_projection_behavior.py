@@ -201,7 +201,7 @@ def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> N
         _authorize(db_session, user, tenant="tenant-other")
     assert (
         wrong_tenant.value.detail
-        == "operator_queue_cross_tenant_grant_forbidden"
+        == "operator_queue_cross_tenant_scope_forbidden"
     )
 
     with pytest.raises(HTTPException) as wrong_channel:
