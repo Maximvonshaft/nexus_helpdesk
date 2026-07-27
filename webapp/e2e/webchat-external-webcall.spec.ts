@@ -110,14 +110,27 @@ test('external WebChat embed opens WebCall on the server-owned Nexus origin when
   try {
     await installNexusRoutes(page, nexusOrigin, customerOrigin)
     await page.addInitScript(() => {
-      window.open = () => null
+      const hostOpen = () => null
+      ;(window as Window & { __nexusHostOpen?: typeof window.open }).__nexusHostOpen = hostOpen
+      window.open = hostOpen
     })
     await page.goto(customerOrigin)
+
+    expect(await page.evaluate(() => (
+      window.open
+      === (window as Window & { __nexusHostOpen?: typeof window.open }).__nexusHostOpen
+    ))).toBe(true)
 
     await page.getByRole('button', { name: 'Chat with us' }).click()
     const voiceButton = page.getByRole('button', { name: 'VOIP Call' })
     await expect(voiceButton).toBeVisible()
     await voiceButton.click()
+
+    expect(await page.evaluate(() => (
+      window.open
+      === (window as Window & { __nexusHostOpen?: typeof window.open }).__nexusHostOpen
+    ))).toBe(true)
+
     await page.getByRole('button', { name: 'Start call' }).click()
 
     await expect(page).toHaveURL(new RegExp(`^${nexusOrigin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/webcall/wv_external#`))
