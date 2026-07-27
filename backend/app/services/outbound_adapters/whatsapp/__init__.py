@@ -8,15 +8,7 @@ from sqlalchemy.orm import Session
 from app.enums import MessageStatus, SourceChannel
 from app.models import ChannelAccount, Ticket, TicketOutboundMessage
 from app.models_whatsapp import WhatsAppConnection
-from app.services.secret_crypto import SecretCryptoService
-from app.services.whatsapp_baileys_sidecar import (
-    BaileysSidecarError,
-    send_baileys_text,
-)
-from app.services.whatsapp_meta_cloud import (
-    MetaCloudTransportError,
-    send_meta_cloud_text,
-)
+from app.services.whatsapp_outbound_parts import dispatch_whatsapp_parts
 from app.services.whatsapp_runtime_settings import get_whatsapp_runtime_settings
 from app.utils.time import utc_now
 
@@ -161,7 +153,11 @@ def dispatch_whatsapp_outbound(
             ticket=ticket,
         )
     except ValueError as exc:
-        code = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "whatsapp_route_resolution_failed"
+        code = (
+            exc.args[0]
+            if exc.args and isinstance(exc.args[0], str)
+            else "whatsapp_route_resolution_failed"
+        )
         return _failed(
             code,
             code,
@@ -193,57 +189,28 @@ def dispatch_whatsapp_outbound(
             retryable=True,
         )
     context = route.context(idempotency_key=idempotency_key)
-    try:
-        if route.transport == "baileys_sidecar":
-            result = send_baileys_text(
-                connection,
-                target=route.target,
-                body=message.body,
-                idempotency_key=idempotency_key,
-                metadata={
-                    "tenant_id": ticket.tenant_id if ticket else None,
-                    "ticket_id": message.ticket_id,
-                    "outbound_message_id": message.id,
-                    "connection_id": connection.id,
-                },
-            )
-            provider_status = "whatsapp_baileys_sent"
-        elif route.transport == "meta_cloud_api":
-            access_token = SecretCryptoService.whatsapp().decrypt(
-                connection.access_token_encrypted
-            )
-            if not access_token:
-                raise ValueError("meta_access_token_missing")
-            result = send_meta_cloud_text(
-                connection,
-                access_token=access_token,
-                target=route.target,
-                body=message.body,
-            )
-            provider_status = "whatsapp_meta_sent"
-        else:
-            raise ValueError("unsupported_whatsapp_transport")
-    except (BaileysSidecarError, MetaCloudTransportError) as exc:
-        return _failed(
-            exc.code,
-            exc.message,
-            context,
-            retryable=exc.retryable,
-        )
-    except (RuntimeError, ValueError) as exc:
-        code = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "whatsapp_dispatch_failed"
-        return _failed(
-            code,
-            code,
-            context,
-            retryable=False,
-        )
-
-    context["provider_message_id"] = result.provider_message_id
+    result = dispatch_whatsapp_parts(
+        db,
+        connection=connection,
+        message=message,
+        target=route.target,
+    )
     context["transport"] = route.transport
-    connection.last_outbound_at = result.sent_at
+    context["provider_message_ids"] = list(result.provider_message_ids)
+    if result.provider_message_ids:
+        context["provider_message_id"] = result.provider_message_ids[0]
+    if not result.ok:
+        return _failed(
+            result.failure_code or "whatsapp_part_dispatch_failed",
+            result.failure_reason or "WhatsApp provider part dispatch failed",
+            context,
+            retryable=result.retryable,
+        )
+    sent_at = result.sent_at or utc_now()
+    connection.last_outbound_at = sent_at
     connection.updated_at = utc_now()
-    return MessageStatus.sent, provider_status, result.sent_at, context
+    provider_status = f"whatsapp_{route.transport}_parts_sent"
+    return MessageStatus.sent, provider_status, sent_at, context
 
 
 def _failed(
