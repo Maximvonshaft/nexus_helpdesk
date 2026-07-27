@@ -8,7 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_voice_p0_gap_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/webchat_voice_p0_gap_tests.db",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -32,7 +35,10 @@ def isolated_voice_queue(monkeypatch):
     monkeypatch.setenv("WEBCHAT_LIVE_AI_VOICE_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webcall")
-    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test")
+    monkeypatch.setenv(
+        "WEBCHAT_VOICE_CONNECT_SRC",
+        "wss://voice.example.test",
+    )
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -62,7 +68,9 @@ def _create_ringing_session(client: TestClient) -> tuple[str, str, str]:
     initialized = client.post(
         "/api/webchat/init",
         json={
-            "tenant_key": "pytest-voice-p0",
+            # These tests validate Voice queue privacy/idempotency, not Tenant
+            # provisioning. `default` is the sole supported development shadow.
+            "tenant_key": "default",
             "channel_key": "website",
             "visitor_name": "Queue Visitor",
             "page_url": "https://example.test/help",
@@ -122,7 +130,9 @@ def _create_ringing_session(client: TestClient) -> tuple[str, str, str]:
 
 def test_agent_ringing_queue_never_exposes_room_credentials_or_page_metadata():
     client = TestClient(app)
-    _conversation_id, _visitor_token, voice_session_id = _create_ringing_session(client)
+    _conversation_id, _visitor_token, voice_session_id = _create_ringing_session(
+        client
+    )
 
     response = client.get(
         "/api/webchat/admin/voice/sessions?status=ringing&limit=20",
@@ -146,7 +156,9 @@ def test_agent_ringing_queue_never_exposes_room_credentials_or_page_metadata():
 
 def test_declining_offer_is_idempotent_and_does_not_end_customer_call():
     client = TestClient(app)
-    _conversation_id, _visitor_token, voice_session_id = _create_ringing_session(client)
+    _conversation_id, _visitor_token, voice_session_id = _create_ringing_session(
+        client
+    )
 
     first = client.post(
         f"/api/webchat/admin/voice/{voice_session_id}/reject",
