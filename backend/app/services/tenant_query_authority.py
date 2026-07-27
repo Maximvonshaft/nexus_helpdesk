@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Query, Session
 
 from ..models import (
@@ -16,7 +16,6 @@ from ..models import (
     TicketOutboundMessage,
     User,
 )
-from ..models_agent_routing import ConversationControl
 from ..models_job_scope import BackgroundJobScope
 from ..operator_models import OperatorTask
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
@@ -95,29 +94,14 @@ class ActorTenantQueryScope:
         )
 
     def operator_tasks(self, db: Session) -> Query:
-        """Scope rebuildable tasks by their canonical Ticket or Conversation."""
+        return self.query(db, OperatorTask)
 
-        ticket_predicate = self.model_predicate(Ticket)
-        return (
-            db.query(OperatorTask)
-            .outerjoin(Ticket, OperatorTask.ticket_id == Ticket.id)
-            .outerjoin(
-                WebchatConversation,
-                OperatorTask.webchat_conversation_id == WebchatConversation.id,
-            )
-            .outerjoin(
-                ConversationControl,
-                ConversationControl.conversation_id == WebchatConversation.id,
-            )
-            .filter(
-                or_(
-                    ticket_predicate,
-                    ConversationControl.tenant_key == self.tenant_key,
-                )
-            )
-        )
-
-    def background_jobs(self, db: Session, *, purpose: str | None = None) -> Query:
+    def background_jobs(
+        self,
+        db: Session,
+        *,
+        purpose: str | None = None,
+    ) -> Query:
         query = (
             db.query(BackgroundJob)
             .join(
