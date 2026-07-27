@@ -9,8 +9,18 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { normalizeBaileysInbound } from "./inboundMapper.js";
 import { qrDataUrl } from "./qrManager.js";
-import type { AccountSnapshot, NormalizedInboundMessage, PairingCodeRequest, PairingCodeResult, SendRequest, SendResult, SidecarConfig, WhatsAppConnector } from "./types.js";
-import { SessionStore } from "./sessionStore.js";
+import type {
+  AccountSnapshot,
+  NormalizedInboundMessage,
+  PairingCodeRequest,
+  PairingCodeResult,
+  SendRequest,
+  SendResult,
+  SidecarConfig,
+  WhatsAppConnector
+} from "./types.js";
+import { SessionStore, type AccountOwnerLease } from "./sessionStore.js";
+
 
 type InboundHandler = (message: NormalizedInboundMessage) => Promise<void>;
 type StatusHandler = (accountId: string, snapshot: AccountSnapshot) => Promise<void>;
@@ -19,37 +29,46 @@ const PAIRING_CODE_ATTEMPTS = 5;
 const PAIRING_CODE_READY_DELAY_MS = 1500;
 const PAIRING_CODE_RETRY_DELAY_MS = 2000;
 const PAIRING_CODE_WINDOW_MS = 180_000;
-const PAIRING_CODE_RECONNECT_DELAY_MS = 2000;
 
 interface RuntimeAccount {
   accountId: string;
+  generation: number;
   socket?: WASocket;
   suppressReconnectFor?: WASocket;
+  owner?: AccountOwnerLease;
   pairingUntilMs?: number;
+  qrTimer?: ReturnType<typeof setTimeout>;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
+  stopped: boolean;
+  reconnectAttempts: number;
   status: AccountSnapshot;
-  idempotency: Map<string, SendResult>;
 }
 
-function baseSnapshot(accountId: string): AccountSnapshot {
+function baseSnapshot(
+  accountId: string,
+  generation = 0,
+  linked = false
+): AccountSnapshot {
   return {
     account_id: accountId,
     status: "idle",
+    authentication_state: linked ? "linked" : "unconfigured",
+    listener_state: "stopped",
     qr_status: "none",
+    generation,
     reconnect_count: 0
   };
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 function errorStatusCode(error: unknown): number | undefined {
   const outputStatus = (error as { output?: { statusCode?: unknown } })?.output?.statusCode;
   if (typeof outputStatus === "number") return outputStatus;
   const statusCode = (error as { statusCode?: unknown })?.statusCode;
-  if (typeof statusCode === "number") return statusCode;
-  const status = (error as { status?: unknown })?.status;
-  return typeof status === "number" ? status : undefined;
+  return typeof statusCode === "number" ? statusCode : undefined;
 }
 
 function errorCode(error: unknown, fallback: string): string {
@@ -79,140 +98,183 @@ export class BaileysConnector implements WhatsAppConnector {
     private readonly logger: Logger,
     private readonly onInbound: InboundHandler,
     private readonly onStatus: StatusHandler,
-    private readonly config: Pick<SidecarConfig, "browserName" | "allowFromMeInbound" | "fromMeMode" | "fromMeTestPrefix">
+    private readonly config: SidecarConfig
   ) {}
 
-  async start(accountId: string): Promise<AccountSnapshot> {
+  async start(accountId: string, generation?: number): Promise<AccountSnapshot> {
     const account = this.account(accountId);
-    if (account.socket && ["connected", "connecting", "qr_pending"].includes(account.status.status)) {
+    if (generation !== undefined) account.generation = Math.max(0, generation);
+    account.status.generation = account.generation;
+    account.stopped = false;
+    if (
+      account.socket &&
+      ["connected", "connecting", "qr_pending", "auth_persisting"].includes(account.status.status)
+    ) {
       return account.status;
     }
-    account.status = { ...account.status, status: "connecting", last_error_code: null, last_error_message: null };
+    this.clearReconnectTimer(account);
+    if (!account.owner) {
+      try {
+        account.owner = this.sessions.acquireOwner(accountId);
+      } catch (error) {
+        account.status = {
+          ...account.status,
+          status: "error",
+          authentication_state: this.sessions.credentialsPersisted(accountId) ? "linked" : "unconfigured",
+          listener_state: "error",
+          generation: account.generation,
+          last_error_code: "whatsapp_connection_owner_busy",
+          last_error_message: error instanceof Error ? error.message : String(error)
+        };
+        await this.emitStatus(account);
+        return account.status;
+      }
+    }
+
+    account.status = {
+      ...account.status,
+      status: "connecting",
+      authentication_state: this.sessions.credentialsPersisted(accountId) ? "linked" : "pending",
+      listener_state: "starting",
+      generation: account.generation,
+      qr_status: "none",
+      qr: null,
+      qr_data_url: null,
+      qr_expires_at: null,
+      last_error_code: null,
+      last_error_message: null,
+      last_transport_activity_at: new Date().toISOString()
+    };
     await this.emitStatus(account);
 
-    const { state, saveCreds } = await useMultiFileAuthState(this.sessions.accountPath(accountId));
-    const { version } = await fetchLatestBaileysVersion();
-    const socket = makeWASocket({
-      version,
-      auth: state,
-      browser: Browsers.ubuntu(this.config.browserName),
-      printQRInTerminal: false,
-      logger: this.logger.child({ account_id: accountId }) as any
-    });
-    account.socket = socket;
-    socket.ev.on("creds.update", saveCreds);
-    socket.ev.on("connection.update", async (update) => {
-      if (update.qr) {
-        account.status = {
-          ...account.status,
-          status: "qr_pending",
-          qr_status: "pending",
-          qr: update.qr,
-          qr_data_url: await qrDataUrl(update.qr),
-          last_qr_generated_at: new Date().toISOString()
-        };
-        await this.emitStatus(account);
-      }
-      if (update.connection === "open") {
-        account.pairingUntilMs = undefined;
-        const jid = socket.user?.id || null;
-        account.status = {
-          ...account.status,
-          status: "connected",
-          qr_status: "consumed",
-          qr: null,
-          qr_data_url: null,
-          jid,
-          phone_number: jid ? `+${jid.split("@")[0].split(":")[0].replace(/\D/g, "")}` : null,
-          last_connected_at: new Date().toISOString()
-        };
-        await this.emitStatus(account);
-      }
-      if (update.connection === "close") {
-        const suppressReconnect = account.suppressReconnectFor === socket;
-        if (suppressReconnect) {
-          account.suppressReconnectFor = undefined;
-        }
-        if (account.socket !== socket) {
-          return;
-        }
-        const statusCode = (update.lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
-        const loggedOut = statusCode === DisconnectReason.loggedOut;
-        const pairingInProgress = this.isPairingInProgress(account);
-        const disconnected = loggedOut && !pairingInProgress;
-        account.status = {
-          ...account.status,
-          status: disconnected ? "disconnected" : "reconnecting",
-          last_disconnected_at: new Date().toISOString(),
-          last_error_code: statusCode ? String(statusCode) : "socket_closed",
-          last_error_message: update.lastDisconnect?.error?.message || "socket closed",
-          reconnect_count: account.status.reconnect_count + (disconnected ? 0 : 1)
-        };
-        await this.emitStatus(account);
-        if (!disconnected && !suppressReconnect) {
-          account.socket = undefined;
-          void (async () => {
-            if (pairingInProgress) {
-              await sleep(PAIRING_CODE_RECONNECT_DELAY_MS);
-            }
-            await this.start(accountId);
-          })().catch((error) => {
-            this.logger.error({ account_id: accountId, error }, "whatsapp_reconnect_failed");
-          });
-        }
-      }
-    });
-    socket.ev.on("messages.upsert", async ({ messages }) => {
-      for (const raw of messages || []) {
-        const normalized = normalizeBaileysInbound(accountId, raw, {
-          allowFromMeInbound: this.config.allowFromMeInbound,
-          fromMeMode: this.config.fromMeMode,
-          fromMeTestPrefix: this.config.fromMeTestPrefix
+    try {
+      const { state, saveCreds } = await useMultiFileAuthState(this.sessions.accountPath(accountId));
+      const { version } = await fetchLatestBaileysVersion();
+      const socket = makeWASocket({
+        version,
+        auth: state,
+        browser: Browsers.ubuntu(this.config.browserName),
+        printQRInTerminal: false,
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        logger: this.logger.child({ account_id: accountId }) as any
+      });
+      account.socket = socket;
+      socket.ev.on("creds.update", () => {
+        void Promise.resolve(saveCreds()).catch((error) => {
+          this.abortForCredentialFailure(account, socket, error);
         });
-        if (normalized) {
-          const projected = projectSelfTestInboundToPhoneJid(normalized, account.status);
-          try {
-            await this.onInbound(projected);
-          } catch (error) {
-            this.logger.warn(
-              {
-                account_id: accountId,
-                external_message_id: normalized.external_message_id,
-                chat_jid: normalized.chat_jid,
-                error
-              },
-              "whatsapp_inbound_callback_failed"
-            );
-          }
-        }
+      });
+      socket.ev.on("connection.update", (update) => {
+        void this.handleConnectionUpdate(account, socket, update).catch((error) => {
+          this.logger.error({ account_id: accountId, error }, "whatsapp_connection_update_failed");
+        });
+      });
+      socket.ev.on("messages.upsert", ({ messages }) => {
+        void this.handleMessages(account, messages || []).catch((error) => {
+          this.logger.error({ account_id: accountId, error }, "whatsapp_messages_upsert_failed");
+        });
+      });
+      if (socket.ws && typeof (socket.ws as any).on === "function") {
+        (socket.ws as any).on("error", (error: unknown) => {
+          this.logger.warn({ account_id: accountId, error }, "whatsapp_websocket_error");
+        });
+        (socket.ws as any).on("message", () => {
+          account.status.last_transport_activity_at = new Date().toISOString();
+        });
       }
-    });
+      return account.status;
+    } catch (error) {
+      account.status = {
+        ...account.status,
+        status: "error",
+        authentication_state: this.sessions.credentialsPersisted(accountId) ? "linked" : "error",
+        listener_state: "error",
+        last_error_code: errorCode(error, "whatsapp_start_failed"),
+        last_error_message: error instanceof Error ? error.message : String(error)
+      };
+      await this.emitStatus(account);
+      await this.scheduleReconnect(account);
+      return account.status;
+    }
+  }
+
+  async stop(accountId: string): Promise<AccountSnapshot> {
+    const account = this.account(accountId);
+    account.stopped = true;
+    this.clearQrTimer(account);
+    this.clearReconnectTimer(account);
+    this.closeSocket(account, true);
+    account.owner?.release();
+    account.owner = undefined;
+    account.status = {
+      ...baseSnapshot(
+        accountId,
+        account.generation,
+        this.sessions.credentialsPersisted(accountId)
+      ),
+      last_disconnected_at: new Date().toISOString(),
+      reconnect_count: account.status.reconnect_count
+    };
+    await this.emitStatus(account);
     return account.status;
   }
 
   async logout(accountId: string): Promise<AccountSnapshot> {
     const account = this.account(accountId);
-    if (account.socket) {
-      await account.socket.logout();
-      account.socket = undefined;
+    account.stopped = true;
+    this.clearQrTimer(account);
+    this.clearReconnectTimer(account);
+    const socket = account.socket;
+    if (socket) {
+      account.suppressReconnectFor = socket;
+      try {
+        await socket.logout();
+      } catch (error) {
+        this.logger.warn({ account_id: accountId, error }, "whatsapp_logout_socket_failed");
+      }
     }
+    this.closeSocket(account, true);
+    this.sessions.clearCredentials(accountId);
+    account.owner?.release();
+    account.owner = undefined;
     account.pairingUntilMs = undefined;
-    account.status = { ...baseSnapshot(accountId), status: "disconnected" };
+    account.status = {
+      ...baseSnapshot(accountId, account.generation, false),
+      status: "disconnected",
+      authentication_state: "revoked",
+      last_disconnected_at: new Date().toISOString()
+    };
     await this.emitStatus(account);
     return account.status;
   }
 
-  async restart(accountId: string): Promise<AccountSnapshot> {
+  async restart(accountId: string, generation?: number): Promise<AccountSnapshot> {
     const account = this.account(accountId);
-    this.closeSocket(account, true);
-    return this.start(accountId);
+    if (generation !== undefined) account.generation = Math.max(0, generation);
+    await this.stop(accountId);
+    return await this.start(accountId, account.generation);
   }
 
   async status(accountId: string): Promise<AccountSnapshot> {
-    return this.account(accountId).status;
+    const account = this.accounts.get(accountId);
+    if (account) {
+      if (
+        account.status.qr_status === "pending" &&
+        account.status.qr_expires_at &&
+        Date.parse(account.status.qr_expires_at) <= Date.now()
+      ) {
+        this.expireQr(account);
+      }
+      return account.status;
+    }
+    return baseSnapshot(accountId, 0, this.sessions.credentialsPersisted(accountId));
   }
 
-  async requestPairingCode(accountId: string, request: PairingCodeRequest): Promise<PairingCodeResult> {
+  async requestPairingCode(
+    accountId: string,
+    request: PairingCodeRequest
+  ): Promise<PairingCodeResult> {
     const digits = request.phone_number.replace(/\D/g, "");
     if (!/^\d{8,16}$/.test(digits)) {
       return {
@@ -234,26 +296,30 @@ export class BaileysConnector implements WhatsAppConnector {
 
     let lastErrorCode = "whatsapp_socket_not_ready";
     let retryable = true;
-
     for (let attempt = 1; attempt <= PAIRING_CODE_ATTEMPTS; attempt += 1) {
-      this.closeSocket(account, true);
+      await this.stop(accountId);
       this.sessions.resetAccount(accountId);
-      await this.start(accountId);
-
+      await this.start(accountId, account.generation);
       if (account.socket) {
         const socket = account.socket;
         await sleep(PAIRING_CODE_READY_DELAY_MS);
-        if (account.socket !== socket) {
-          continue;
-        }
+        if (account.socket !== socket) continue;
         try {
           const code = await socket.requestPairingCode(digits);
           account.pairingUntilMs = Date.now() + PAIRING_CODE_WINDOW_MS;
+          account.status = {
+            ...account.status,
+            status: "auth_persisting",
+            authentication_state: "pending",
+            listener_state: "starting"
+          };
+          await this.emitStatus(account);
           return {
             ok: true,
             account_id: accountId,
             pairing_code: code,
-            phone_number_suffix: digits.slice(-4)
+            phone_number_suffix: digits.slice(-4),
+            expires_at: new Date(account.pairingUntilMs).toISOString()
           };
         } catch (error) {
           lastErrorCode = errorCode(error, "pairing_code_request_failed");
@@ -274,94 +340,307 @@ export class BaileysConnector implements WhatsAppConnector {
           if (!retryable) break;
         }
       }
-
       if (attempt < PAIRING_CODE_ATTEMPTS && retryable) {
         await sleep(PAIRING_CODE_RETRY_DELAY_MS);
       }
     }
-
     account.pairingUntilMs = undefined;
-    this.closeSocket(account, true);
+    await this.stop(accountId);
     this.sessions.resetAccount(accountId);
     return {
       ok: false,
       account_id: accountId,
       error_code: lastErrorCode,
+      error_message: lastErrorCode,
       retryable
     };
   }
 
   async send(accountId: string, request: SendRequest): Promise<SendResult> {
+    const cached = this.sessions.readSendResult(
+      accountId,
+      request.idempotency_key,
+      this.config.idempotencyTtlMs
+    );
+    if (cached) return cached;
     const account = this.account(accountId);
-    const existing = account.idempotency.get(request.idempotency_key);
-    if (existing) return existing;
+    let result: SendResult;
     if (account.status.status !== "connected" || !account.socket) {
-      return this.cacheSend(account, request.idempotency_key, {
+      result = {
         ok: false,
         status: "failed",
         error_code: "whatsapp_not_connected",
         retryable: true
-      });
+      };
+    } else {
+      const jid = targetToWhatsAppJid(request.chat_jid) || targetToWhatsAppJid(request.target);
+      if (!jid) {
+        result = {
+          ok: false,
+          status: "failed",
+          error_code: "missing_target",
+          retryable: false
+        };
+      } else {
+        try {
+          const sent = await account.socket.sendMessage(jid, { text: request.body });
+          const providerMessageId = sent?.key?.id || null;
+          if (!providerMessageId) {
+            result = {
+              ok: false,
+              status: "failed",
+              error_code: "provider_message_id_missing",
+              retryable: true
+            };
+          } else {
+            const sentAt = new Date().toISOString();
+            result = {
+              ok: true,
+              status: "sent",
+              provider_message_id: providerMessageId,
+              sent_at: sentAt
+            };
+            account.status.last_outbound_at = sentAt;
+            account.status.last_transport_activity_at = sentAt;
+          }
+        } catch (error) {
+          result = {
+            ok: false,
+            status: "failed",
+            error_code: errorCode(error, "whatsapp_send_failed"),
+            error_message: error instanceof Error ? error.message : String(error),
+            retryable: true
+          };
+        }
+      }
     }
-    const jid = targetToWhatsAppJid(request.chat_jid) || targetToWhatsAppJid(request.target);
-    if (!jid) {
-      return this.cacheSend(account, request.idempotency_key, {
-        ok: false,
-        status: "failed",
-        error_code: "missing_target",
-        retryable: false
-      });
-    }
-    const result = await account.socket.sendMessage(jid, { text: request.body });
-    return this.cacheSend(account, request.idempotency_key, {
-      ok: true,
-      status: "sent",
-      provider_message_id: result?.key?.id || null,
-      sent_at: new Date().toISOString()
-    });
+    this.sessions.writeSendResult(accountId, request.idempotency_key, result);
+    return result;
   }
 
   private account(accountId: string): RuntimeAccount {
     let account = this.accounts.get(accountId);
     if (!account) {
-      account = { accountId, status: baseSnapshot(accountId), idempotency: new Map() };
+      account = {
+        accountId,
+        generation: 0,
+        status: baseSnapshot(accountId, 0, this.sessions.credentialsPersisted(accountId)),
+        stopped: true,
+        reconnectAttempts: 0
+      };
       this.accounts.set(accountId, account);
     }
     return account;
+  }
+
+  private async handleConnectionUpdate(
+    account: RuntimeAccount,
+    socket: WASocket,
+    update: any
+  ): Promise<void> {
+    account.status.last_transport_activity_at = new Date().toISOString();
+    if (update.qr) {
+      const generatedAt = new Date();
+      account.status = {
+        ...account.status,
+        status: "qr_pending",
+        authentication_state: "pending",
+        listener_state: "starting",
+        qr_status: "pending",
+        qr: update.qr,
+        qr_data_url: await qrDataUrl(update.qr),
+        last_qr_generated_at: generatedAt.toISOString(),
+        qr_expires_at: new Date(generatedAt.getTime() + this.config.qrTtlMs).toISOString()
+      };
+      this.clearQrTimer(account);
+      account.qrTimer = setTimeout(() => this.expireQr(account), this.config.qrTtlMs);
+      account.qrTimer.unref?.();
+      await this.emitStatus(account);
+    }
+    if (update.connection === "open") {
+      this.clearQrTimer(account);
+      account.status = {
+        ...account.status,
+        status: "auth_persisting",
+        authentication_state: "pending",
+        listener_state: "starting",
+        qr_status: "consumed",
+        qr: null,
+        qr_data_url: null,
+        qr_expires_at: null
+      };
+      await this.emitStatus(account);
+      const persisted = await this.sessions.waitForCredentials(
+        account.accountId,
+        this.config.credentialPersistenceTimeoutMs
+      );
+      if (!persisted) {
+        this.abortForCredentialFailure(
+          account,
+          socket,
+          new Error("whatsapp_credentials_not_persisted")
+        );
+        return;
+      }
+      const jid = socket.user?.id || null;
+      account.reconnectAttempts = 0;
+      account.status = {
+        ...account.status,
+        status: "connected",
+        authentication_state: "linked",
+        listener_state: "active",
+        qr_status: "consumed",
+        jid,
+        phone_number: jid ? `+${jid.split("@")[0].split(":")[0].replace(/\D/g, "")}` : null,
+        last_connected_at: new Date().toISOString(),
+        last_error_code: null,
+        last_error_message: null
+      };
+      await this.emitStatus(account);
+    }
+    if (update.connection === "close") {
+      const suppressed = account.suppressReconnectFor === socket;
+      if (suppressed) account.suppressReconnectFor = undefined;
+      if (account.socket !== socket) return;
+      account.socket = undefined;
+      const statusCode = (update.lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      account.status = {
+        ...account.status,
+        status: loggedOut ? "disconnected" : "reconnecting",
+        authentication_state: loggedOut ? "revoked" : account.status.authentication_state,
+        listener_state: loggedOut ? "stopped" : "reconnecting",
+        last_disconnected_at: new Date().toISOString(),
+        last_error_code: statusCode ? String(statusCode) : "socket_closed",
+        last_error_message: update.lastDisconnect?.error?.message || "socket closed",
+        reconnect_count: account.status.reconnect_count + (loggedOut ? 0 : 1)
+      };
+      await this.emitStatus(account);
+      if (loggedOut || suppressed || account.stopped) {
+        account.owner?.release();
+        account.owner = undefined;
+        return;
+      }
+      await this.scheduleReconnect(account);
+    }
+  }
+
+  private async handleMessages(account: RuntimeAccount, messages: any[]): Promise<void> {
+    for (const raw of messages) {
+      const normalized = normalizeBaileysInbound(account.accountId, raw, {
+        allowFromMeInbound: this.config.allowFromMeInbound,
+        fromMeMode: this.config.fromMeMode,
+        fromMeTestPrefix: this.config.fromMeTestPrefix
+      });
+      if (!normalized) continue;
+      const projected = projectSelfTestInboundToPhoneJid(normalized, account.status);
+      await this.onInbound(projected);
+      const occurredAt = new Date().toISOString();
+      account.status.last_inbound_at = occurredAt;
+      account.status.last_transport_activity_at = occurredAt;
+      await this.emitStatus(account);
+    }
+  }
+
+  private async scheduleReconnect(account: RuntimeAccount): Promise<void> {
+    if (account.stopped || account.reconnectTimer) return;
+    if (account.reconnectAttempts >= this.config.reconnectMaxAttempts) {
+      account.status = {
+        ...account.status,
+        status: "error",
+        authentication_state: this.sessions.credentialsPersisted(account.accountId) ? "linked" : "error",
+        listener_state: "error",
+        last_error_code: "reconnect_attempts_exhausted",
+        last_error_message: "Reconnect attempts exhausted"
+      };
+      account.owner?.release();
+      account.owner = undefined;
+      await this.emitStatus(account);
+      return;
+    }
+    const base = Math.min(
+      this.config.reconnectInitialMs * 1.8 ** account.reconnectAttempts,
+      this.config.reconnectMaxMs
+    );
+    const jitter = base * this.config.reconnectJitter * (Math.random() * 2 - 1);
+    const delayMs = Math.max(250, Math.round(base + jitter));
+    account.reconnectAttempts += 1;
+    account.reconnectTimer = setTimeout(() => {
+      account.reconnectTimer = undefined;
+      void this.start(account.accountId, account.generation).catch((error) => {
+        this.logger.error({ account_id: account.accountId, error }, "whatsapp_reconnect_failed");
+      });
+    }, delayMs);
+    account.reconnectTimer.unref?.();
+  }
+
+  private abortForCredentialFailure(
+    account: RuntimeAccount,
+    socket: WASocket,
+    error: unknown
+  ): void {
+    if (account.socket === socket) account.socket = undefined;
+    account.suppressReconnectFor = socket;
+    try {
+      socket.end(error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      // best effort
+    }
+    account.status = {
+      ...account.status,
+      status: "error",
+      authentication_state: "unstable",
+      listener_state: "error",
+      last_error_code: "credential_persistence_failed",
+      last_error_message: error instanceof Error ? error.message : String(error)
+    };
+    void this.emitStatus(account);
   }
 
   private closeSocket(account: RuntimeAccount, suppressReconnect: boolean): void {
     const socket = account.socket;
     if (!socket) return;
     account.socket = undefined;
-    if (suppressReconnect) {
-      account.suppressReconnectFor = socket;
-    }
+    if (suppressReconnect) account.suppressReconnectFor = socket;
     try {
       socket.end(undefined);
     } catch {
-      // Socket may already be closed by Baileys.
+      // Socket may already be closed.
     }
   }
 
-  private isPairingInProgress(account: RuntimeAccount): boolean {
-    return typeof account.pairingUntilMs === "number" && account.pairingUntilMs > Date.now();
+  private expireQr(account: RuntimeAccount): void {
+    if (account.status.qr_status !== "pending") return;
+    account.status = {
+      ...account.status,
+      status: "connecting",
+      qr_status: "expired",
+      qr: null,
+      qr_data_url: null,
+      qr_expires_at: null
+    };
+    void this.emitStatus(account);
   }
 
-  private cacheSend(account: RuntimeAccount, key: string, result: SendResult): SendResult {
-    account.idempotency.set(key, result);
-    return result;
+  private clearQrTimer(account: RuntimeAccount): void {
+    if (account.qrTimer) clearTimeout(account.qrTimer);
+    account.qrTimer = undefined;
+  }
+
+  private clearReconnectTimer(account: RuntimeAccount): void {
+    if (account.reconnectTimer) clearTimeout(account.reconnectTimer);
+    account.reconnectTimer = undefined;
   }
 
   private async emitStatus(account: RuntimeAccount): Promise<void> {
+    account.status.generation = account.generation;
     await this.onStatus(account.accountId, account.status);
   }
 }
 
 export function targetToWhatsAppJid(target: string | null | undefined): string | null {
   const trimmed = (target || "").trim();
-  if (!trimmed) return null;
-  if (trimmed === "status@broadcast") return null;
+  if (!trimmed || trimmed === "status@broadcast") return null;
   if (trimmed.endsWith("@broadcast") || trimmed.endsWith("@g.us") || trimmed.endsWith("@newsletter")) return null;
   if (trimmed.endsWith("@s.whatsapp.net") || trimmed.endsWith("@lid")) return trimmed;
   if (trimmed.includes("@")) return null;
@@ -369,30 +648,34 @@ export function targetToWhatsAppJid(target: string | null | undefined): string |
   return digits ? `${digits}@s.whatsapp.net` : null;
 }
 
-export function phoneJidFromAccountSnapshot(status: Pick<AccountSnapshot, "phone_number" | "jid">): string | null {
+export function phoneJidFromAccountSnapshot(
+  status: Pick<AccountSnapshot, "phone_number" | "jid">
+): string | null {
   const phoneDigits = (status.phone_number || "").replace(/\D/g, "");
   if (phoneDigits) return `${phoneDigits}@s.whatsapp.net`;
   const jidDigits = (status.jid || "").split("@")[0]?.split(":")[0]?.replace(/\D/g, "") || "";
   return jidDigits ? `${jidDigits}@s.whatsapp.net` : null;
 }
 
-export function projectSelfTestInboundToPhoneJid(message: NormalizedInboundMessage, status: Pick<AccountSnapshot, "phone_number" | "jid">): NormalizedInboundMessage {
+export function projectSelfTestInboundToPhoneJid(
+  message: NormalizedInboundMessage,
+  status: Pick<AccountSnapshot, "phone_number" | "jid">
+): NormalizedInboundMessage {
   if (message.from_me !== true || message.projection_mode !== "test_visitor") return message;
   const selfPhoneJid = phoneJidFromAccountSnapshot(status);
   if (!selfPhoneJid) return message;
-  const rawPayload =
-    message.raw_payload && typeof message.raw_payload === "object" && !Array.isArray(message.raw_payload)
-      ? {
-          ...(message.raw_payload as Record<string, unknown>),
-          nexus_self_test_original_chat_jid: message.chat_jid,
-          nexus_self_test_projected_chat_jid: selfPhoneJid
-        }
-      : message.raw_payload;
   return {
     ...message,
     chat_jid: selfPhoneJid,
     sender_jid: selfPhoneJid,
     sender_phone: `+${selfPhoneJid.split("@")[0]}`,
-    raw_payload: rawPayload
+    raw_message:
+      message.raw_message && typeof message.raw_message === "object" && !Array.isArray(message.raw_message)
+        ? {
+            ...(message.raw_message as Record<string, unknown>),
+            nexus_self_test_original_chat_jid: message.chat_jid,
+            nexus_self_test_projected_chat_jid: selfPhoneJid
+          }
+        : message.raw_message
   };
 }
