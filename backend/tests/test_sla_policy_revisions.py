@@ -10,7 +10,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/sla_policy_revision_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/sla_policy_revision_tests.db",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -26,7 +29,6 @@ from app.models_case_governance import (  # noqa: E402
 )
 from app.models_sla_runtime import TicketSLATarget  # noqa: E402
 from app.services.sla_service import (  # noqa: E402
-    SLAConfigurationError,
     add_business_minutes,
     apply_policy_to_ticket,
     business_seconds_between,
@@ -144,7 +146,6 @@ def approved_revision(
     first_minutes=120,
     resolution_minutes=480,
     risk_window=45,
-    customer_tier=None,
 ):
     revision = SLAPolicyRevision(
         policy_id=policy.id,
@@ -154,7 +155,6 @@ def approved_revision(
         market_id=market.id,
         channel_key="web_chat",
         scenario_key="tracking_status_inquiry",
-        customer_tier=customer_tier,
         status="approved",
         timezone_name="Europe/Zurich",
         weekly_schedule_json=business_schedule(),
@@ -173,6 +173,11 @@ def approved_revision(
     db.add(revision)
     db.flush()
     return revision
+
+
+def test_customer_tier_is_absent_from_canonical_sla_model():
+    assert "customer_tier" not in SLAPolicyRevision.__table__.c
+    assert not hasattr(SLAPolicyRevision, "customer_tier")
 
 
 def test_business_calendar_crosses_weekend_and_holiday():
@@ -342,20 +347,3 @@ def test_pause_compensates_only_business_time(db_session):
         sla_risk_filter(datetime.now(timezone.utc))
     ).all()
     assert [row.id for row in rows] == [ticket.id]
-
-
-def test_customer_tier_revision_fails_closed_instead_of_silent_miss(db_session):
-    tenant, market = make_scope(db_session)
-    policy = make_policy(db_session)
-    approved_revision(
-        db_session,
-        policy,
-        tenant,
-        market,
-        customer_tier="gold",
-    )
-    ticket = make_ticket(db_session, tenant, market)
-
-    with pytest.raises(SLAConfigurationError) as exc:
-        select_policy_revision(db_session, ticket)
-    assert str(exc.value) == "sla_customer_tier_not_supported"
