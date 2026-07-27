@@ -23,7 +23,13 @@ from app.enums import (
     TicketStatus,
 )
 from app.model_registry import register_all_models
-from app.models import ChannelAccount, Customer, Tenant, Ticket, TicketOutboundMessage
+from app.models import (
+    ChannelAccount,
+    Customer,
+    Tenant,
+    Ticket,
+    TicketOutboundMessage,
+)
 from app.models_whatsapp import WhatsAppConnection
 from app.models_whatsapp_outbound import WhatsAppOutboundPart
 from app.services.whatsapp_delivery import apply_whatsapp_delivery
@@ -206,5 +212,7 @@ def test_part_receipt_cannot_cross_connection_or_tenant(db_session):
         provider="meta",
     )
     assert result.updated is False
-    assert result.reason == "delivery_scope_mismatch"
+    assert result.reason == "outbound_message_not_found"
+    assert result.outbound_message_id is None
+    assert result.outbound_part_id is None
     assert first_a.status == "queued"
