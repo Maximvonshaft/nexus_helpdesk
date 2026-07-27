@@ -558,18 +558,19 @@ def _project_handoff_request(
     return row, created
 
 
-def _retire_stale_handoff_projections(db: Session) -> int:
-    rows = (
-        db.query(OperatorTask)
-        .filter(
-            OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
-            OperatorTask.task_type == "handoff",
-            OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
-        )
-        .order_by(OperatorTask.id.asc())
-        .limit(5000)
-        .all()
+def _retire_stale_handoff_projections(
+    db: Session,
+    *,
+    tenant_id: int | None = None,
+) -> int:
+    query = db.query(OperatorTask).filter(
+        OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
+        OperatorTask.task_type == "handoff",
+        OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
     )
+    if tenant_id is not None:
+        query = query.filter(OperatorTask.tenant_id == tenant_id)
+    rows = query.order_by(OperatorTask.id.asc()).limit(5000).all()
     retired = 0
     now = utc_now()
     for row in rows:
@@ -611,7 +612,12 @@ def _retire_stale_handoff_projections(db: Session) -> int:
     return retired
 
 
-def _handoff_projection_candidates(db: Session, *, limit: int):
+def _handoff_projection_candidates(
+    db: Session,
+    *,
+    limit: int,
+    tenant_id: int | None = None,
+):
     expected_status = case(
         (WebchatHandoffRequest.status == "accepted", "assigned"),
         else_="pending",
@@ -623,7 +629,7 @@ def _handoff_projection_candidates(db: Session, *, limit: int):
         OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
         OperatorTask.source_id == cast(WebchatHandoffRequest.id, String),
     )
-    return (
+    query = (
         db.query(WebchatHandoffRequest, WebchatConversation, Ticket)
         .join(
             WebchatConversation,
@@ -647,7 +653,11 @@ def _handoff_projection_candidates(db: Session, *, limit: int):
                 ),
             ),
         )
-        .order_by(
+    )
+    if tenant_id is not None:
+        query = query.filter(Tenant.id == tenant_id)
+    return (
+        query.order_by(
             WebchatHandoffRequest.requested_at.asc(),
             WebchatHandoffRequest.id.asc(),
         )
@@ -662,8 +672,13 @@ def project_webchat_handoff_tasks(
     limit: int = 100,
     actor_id: int | None = None,
     note: str | None = None,
+    tenant_id: int | None = None,
 ) -> ProjectResult:
-    rows = _handoff_projection_candidates(db, limit=limit)
+    rows = _handoff_projection_candidates(
+        db,
+        limit=limit,
+        tenant_id=tenant_id,
+    )
     result = ProjectResult()
     for request_row, conversation, ticket in rows:
         _, created = _project_handoff_request(
@@ -676,7 +691,10 @@ def project_webchat_handoff_tasks(
             result.created += 1
         else:
             result.skipped_existing += 1
-    result.retired = _retire_stale_handoff_projections(db)
+    result.retired = _retire_stale_handoff_projections(
+        db,
+        tenant_id=tenant_id,
+    )
     if result.created or result.skipped_existing or result.retired:
         _log_operator_audit(
             db,
@@ -685,6 +703,7 @@ def project_webchat_handoff_tasks(
             old_value=None,
             new_value={
                 "source_type": HANDOFF_PROJECTION_SOURCE,
+                "tenant_id": tenant_id,
                 "created": result.created,
                 "refreshed": result.skipped_existing,
                 "retired": result.retired,
@@ -699,11 +718,13 @@ def project_operator_queue(
     *,
     actor_id: int | None = None,
     note: str | None = None,
+    tenant_id: int | None = None,
 ) -> dict[str, int]:
     handoff = project_webchat_handoff_tasks(
         db,
         actor_id=actor_id,
         note=note,
+        tenant_id=tenant_id,
     )
     return {
         "projected_webchat_handoff": handoff.created,
