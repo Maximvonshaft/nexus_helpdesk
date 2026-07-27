@@ -29,8 +29,10 @@ env:
   WEBCHAT_LIVE_AI_VOICE_ENABLED: "false"
   ENABLE_OUTBOUND_DISPATCH: "false"
   OUTBOUND_PROVIDER: disabled
-  WHATSAPP_NATIVE_ENABLED: "false"
-  WHATSAPP_DISPATCH_MODE: disabled
+  WHATSAPP_ENABLED: "false"
+  WHATSAPP_EMBEDDED_SIGNUP_ENABLED: "false"
+  WHATSAPP_MEDIA_ENABLED: "false"
+  WHATSAPP_MEDIA_SCANNER: disabled
   EMAIL_MAILBOX_SYNC_ENABLED: "false"
   SPEEDAF_MCP_ENABLED: "false"
   SPEEDAF_TRACK_QUERY_ENABLED: "false"
@@ -222,6 +224,100 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  sidecar-supply-chain:
+    name: sidecar-supply-chain
+    needs: candidate-identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout frozen Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: connectors/whatsapp-sidecar/package-lock.json
+      - name: Install exact Sidecar dependencies
+        working-directory: connectors/whatsapp-sidecar
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify Sidecar types, tests and build
+        working-directory: connectors/whatsapp-sidecar
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-sidecar
+          npm run typecheck 2>&1 | tee /tmp/nexus-sidecar/typecheck.log
+          npm test 2>&1 | tee /tmp/nexus-sidecar/tests.log
+          npm run build 2>&1 | tee /tmp/nexus-sidecar/build.log
+      - name: Audit Sidecar dependencies and generate npm SBOM
+        working-directory: connectors/whatsapp-sidecar
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm audit --audit-level=high --json > /tmp/nexus-sidecar/dependencies.json
+          npm sbom --package-lock-only --sbom-format=cyclonedx \
+            > /tmp/nexus-sidecar/sidecar.raw.cdx.json
+      - name: Build exact-Head Sidecar image
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker build --pull=false \
+            --file connectors/whatsapp-sidecar/Dockerfile \
+            --build-arg GIT_SHA="$SOURCE_SHA" \
+            --build-arg BUILD_TIME="$build_time" \
+            --build-arg APP_VERSION="pr-$SOURCE_SHA" \
+            --tag "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" \
+            connectors/whatsapp-sidecar 2>&1 | tee /tmp/nexus-sidecar/image-build.log
+          test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
+          test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ .Config.User }}')" = "node"
+          docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" \
+            > /tmp/nexus-sidecar/image-inspect.json
+      - name: Run Sidecar Trivy vulnerability inventory
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: json
+          output: /tmp/nexus-sidecar/sidecar-trivy.raw.json
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+      - name: Block Sidecar high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: table
+          output: /tmp/nexus-sidecar/sidecar-trivy-gate.txt
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+      - name: Generate Sidecar image CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: cyclonedx
+          output: /tmp/nexus-sidecar/sidecar-image.raw.cdx.json
+          scanners: vuln
+          ignore-unfixed: false
+          exit-code: '0'
+      - name: Upload Sidecar supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sidecar-supply-chain-${{ needs.candidate-identity.outputs.source_sha }}
+          path: /tmp/nexus-sidecar
+          if-no-files-found: error
+          retention-days: 30
+
   backend-full:
     name: backend-full
     needs: candidate-identity
@@ -243,13 +339,18 @@ jobs:
       - name: Install exact Python dependencies
         run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
       - name: Compile production Python
-        run: python -m compileall -q backend/app backend/scripts scripts/qualification scripts/release
+        run: python -m compileall -q backend/app backend/scripts scripts/qualification scripts/deploy scripts/release
       - name: Run complete backend regression
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p /tmp/nexus-backend
           python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-backend/pytest.log
+          python -m pytest -q \
+            scripts/qualification/tests/test_whatsapp_live_uat.py \
+            scripts/deploy/tests/test_validate_production_activation.py \
+            scripts/release/tests/test_controlled_candidate_workflow_contract.py \
+            2>&1 | tee /tmp/nexus-backend/whatsapp-delivery-contracts.log
       - name: Upload backend evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -460,7 +561,10 @@ jobs:
             -e PROVIDER_RUNTIME_ENABLED=false \
             -e PROVIDER_RUNTIME_KILL_SWITCH=true \
             -e ENABLE_OUTBOUND_DISPATCH=false \
-            -e WHATSAPP_NATIVE_ENABLED=false \
+            -e WHATSAPP_ENABLED=false \
+            -e WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false \
+            -e WHATSAPP_MEDIA_ENABLED=false \
+            -e WHATSAPP_MEDIA_SCANNER=disabled \
             "nexus-ci:$SOURCE_SHA" python -m alembic upgrade head
       - name: Start isolated candidate and prove health
         env:
@@ -484,8 +588,10 @@ jobs:
             -e WEBCHAT_LIVE_AI_VOICE_ENABLED=false \
             -e ENABLE_OUTBOUND_DISPATCH=false \
             -e OUTBOUND_PROVIDER=disabled \
-            -e WHATSAPP_NATIVE_ENABLED=false \
-            -e WHATSAPP_DISPATCH_MODE=disabled \
+            -e WHATSAPP_ENABLED=false \
+            -e WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false \
+            -e WHATSAPP_MEDIA_ENABLED=false \
+            -e WHATSAPP_MEDIA_SCANNER=disabled \
             -e SPEEDAF_MCP_ENABLED=false \
             -e OPERATIONS_DISPATCH_MODE=disabled \
             "nexus-ci:$SOURCE_SHA"
@@ -530,6 +636,7 @@ jobs:
       - candidate-identity
       - static-authority
       - security-supply-chain
+      - sidecar-supply-chain
       - backend-full
       - frontend-browser
       - postgres-acceptance
@@ -543,6 +650,7 @@ jobs:
           CANDIDATE_IDENTITY: ${{ needs.candidate-identity.result }}
           STATIC_AUTHORITY: ${{ needs.static-authority.result }}
           SECURITY_SUPPLY_CHAIN: ${{ needs.security-supply-chain.result }}
+          SIDECAR_SUPPLY_CHAIN: ${{ needs.sidecar-supply-chain.result }}
           BACKEND_FULL: ${{ needs.backend-full.result }}
           FRONTEND_BROWSER: ${{ needs.frontend-browser.result }}
           POSTGRES_ACCEPTANCE: ${{ needs.postgres-acceptance.result }}
@@ -553,6 +661,7 @@ jobs:
             "candidate-identity=$CANDIDATE_IDENTITY" \
             "static-authority=$STATIC_AUTHORITY" \
             "security-supply-chain=$SECURITY_SUPPLY_CHAIN" \
+            "sidecar-supply-chain=$SIDECAR_SUPPLY_CHAIN" \
             "backend-full=$BACKEND_FULL" \
             "frontend-browser=$FRONTEND_BROWSER" \
             "postgres-acceptance=$POSTGRES_ACCEPTANCE" \
@@ -561,6 +670,7 @@ jobs:
             "$CANDIDATE_IDENTITY" \
             "$STATIC_AUTHORITY" \
             "$SECURITY_SUPPLY_CHAIN" \
+            "$SIDECAR_SUPPLY_CHAIN" \
             "$BACKEND_FULL" \
             "$FRONTEND_BROWSER" \
             "$POSTGRES_ACCEPTANCE" \
