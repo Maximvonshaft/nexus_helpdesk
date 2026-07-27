@@ -230,3 +230,35 @@ def test_conditional_waiver_requires_allowed_structured_reason(db_session):
     assert governed.readiness.closure_ready is True
     assert governed.receipt["evidence"]["notification"]["state"] == "waived"
     assert forbidden_for_required.readiness.closure_ready is False
+
+
+def test_prohibited_policy_requires_zero_notification_attempts(db_session):
+    ticket = _ticket(db_session)
+    empty = apply_notification_evidence_policy(
+        db_session,
+        ticket=ticket,
+        snapshot=_snapshot(_scenario(policy="prohibited")),
+    )
+    assert empty.readiness.closure_ready is True
+
+    db_session.add(
+        TicketOutboundMessage(
+            ticket_id=ticket.id,
+            channel=SourceChannel.email,
+            status=MessageStatus.pending,
+            body="must not be sent",
+            delivery_status="queued",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+    attempted = apply_notification_evidence_policy(
+        db_session,
+        ticket=ticket,
+        snapshot=_snapshot(_scenario(policy="prohibited")),
+    )
+
+    assert attempted.readiness.closure_ready is False
+    assert attempted.readiness.notification_satisfied is False
+    assert attempted.receipt["evidence"]["notification"]["state"] == "attempted"
