@@ -80,21 +80,25 @@ def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _human_triage_capabilities() -> frozenset[str]:
+    return frozenset({CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_OUTBOUND_SEND})
+
+
 def _ticketless_policy(
     *,
     conversation: WebchatConversation,
 ) -> HandoffRoutingPolicy:
+    required_capabilities = _human_triage_capabilities()
     payload = {
         "schema": ROUTING_POLICY_SCHEMA,
         "ticket_id": None,
         "scenario_key": None,
         "scenario_assignment_revision": None,
+        "scenario_assignment_state": "not_applicable",
         "owner_queue_key": "human_support",
         "priority": 50,
         "risk_level": "medium",
-        "required_capabilities": sorted(
-            {CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_OUTBOUND_SEND}
-        ),
+        "required_capabilities": sorted(required_capabilities),
         "tenant_key": conversation.tenant_key,
         "channel_key": conversation.channel_key,
         "ticketless": True,
@@ -107,7 +111,51 @@ def _ticketless_policy(
         owner_queue_key="human_support",
         priority=50,
         risk_level="medium",
-        required_capabilities=frozenset(payload["required_capabilities"]),
+        required_capabilities=required_capabilities,
+        policy_sha256=_sha256(encoded),
+        policy_json=encoded,
+    )
+
+
+def _unclassified_ticket_policy(
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket,
+) -> HandoffRoutingPolicy:
+    """Fail safely into human triage without authorizing Scenario effects.
+
+    A missing Scenario assignment must continue to block Scenario-specific tools,
+    SLA selection and safe closure. It must not block the safety-critical human
+    fallback itself. The same Handoff authority therefore emits a frozen,
+    high-priority triage envelope with no Scenario identity or specialist tool
+    capability.
+    """
+
+    required_capabilities = _human_triage_capabilities()
+    payload = {
+        "schema": ROUTING_POLICY_SCHEMA,
+        "ticket_id": ticket.id,
+        "scenario_key": None,
+        "scenario_assignment_revision": None,
+        "scenario_assignment_state": "missing_human_triage",
+        "owner_queue_key": "human_triage",
+        "priority": 5,
+        "risk_level": "high",
+        "required_capabilities": sorted(required_capabilities),
+        "tenant_id": ticket.tenant_id,
+        "tenant_key": conversation.tenant_key,
+        "channel_key": conversation.channel_key,
+        "ticketless": False,
+    }
+    encoded = _canonical_json(payload)
+    return HandoffRoutingPolicy(
+        ticket_id=ticket.id,
+        scenario_key=None,
+        scenario_assignment_revision=None,
+        owner_queue_key="human_triage",
+        priority=5,
+        risk_level="high",
+        required_capabilities=required_capabilities,
         policy_sha256=_sha256(encoded),
         policy_json=encoded,
     )
@@ -134,6 +182,11 @@ def build_handoff_routing_policy(
             required=True,
         )
     except TicketScenarioAssignmentError as exc:
+        if str(exc) == "scenario_assignment_missing":
+            return _unclassified_ticket_policy(
+                conversation=conversation,
+                ticket=resolved_ticket,
+            )
         raise HandoffRoutingPolicyError(str(exc)) from exc
     assert assigned is not None
     priority = scenario_routing_priority(resolved_ticket, assigned.policy)
@@ -142,6 +195,7 @@ def build_handoff_routing_policy(
         "ticket_id": resolved_ticket.id,
         "scenario_key": assigned.policy.scenario_key,
         "scenario_assignment_revision": assigned.policy.assignment_revision,
+        "scenario_assignment_state": "assigned",
         "catalog_version": assigned.policy.catalog_version,
         "catalog_sha256": assigned.policy.catalog_sha256,
         "definition_sha256": assigned.policy.definition_sha256,
