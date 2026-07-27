@@ -61,7 +61,9 @@ def test_fallback_runtime_is_digest_pinned_migrated_and_fail_closed() -> None:
         'WEBCHAT_LIVE_AI_VOICE_ENABLED=false',
         'ENABLE_OUTBOUND_DISPATCH=false',
         'OUTBOUND_PROVIDER=disabled',
-        'WHATSAPP_NATIVE_ENABLED=false',
+        'WHATSAPP_ENABLED=false',
+        'WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false',
+        'WHATSAPP_MEDIA_ENABLED=false',
         'SPEEDAF_MCP_ENABLED=false',
         'OPERATIONS_DISPATCH_MODE=disabled',
     ):
