@@ -39,6 +39,7 @@ from app.services.whatsapp_uat_evidence import (
     WhatsAppUatEvidenceError,
     WhatsAppUatSelection,
     collect_whatsapp_uat_facts,
+    replay_whatsapp_uat_inbound,
 )
 from app.utils.time import utc_now
 
@@ -136,7 +137,11 @@ def _seed(db_session):
         sender_phone="+15550005678",
         message_type="text",
         body_text="UAT inbound",
-        raw_payload_json={},
+        raw_payload_json={
+            "transport": "meta_cloud_api",
+            "projection_mode": "visitor",
+            "from_me": False,
+        },
         ticket_id=ticket.id,
         received_at=now,
         processed_at=now,
@@ -151,7 +156,11 @@ def _seed(db_session):
         sender_phone="+15550005678",
         message_type="image",
         body_text="<media:image>",
-        raw_payload_json={},
+        raw_payload_json={
+            "transport": "meta_cloud_api",
+            "projection_mode": "visitor",
+            "from_me": False,
+        },
         ticket_id=ticket.id,
         received_at=now,
         processed_at=now,
@@ -243,11 +252,11 @@ def _seed(db_session):
     )
     db_session.add_all([text_part, media_part, asset])
     db_session.flush()
-    return connection
+    return connection, inbound
 
 
 def test_uat_evidence_is_redacted_and_bound_to_canonical_parts(db_session):
-    connection = _seed(db_session)
+    connection, _inbound = _seed(db_session)
     payload = collect_whatsapp_uat_facts(
         db_session,
         connection=connection,
@@ -270,8 +279,29 @@ def test_uat_evidence_is_redacted_and_bound_to_canonical_parts(db_session):
     assert payload["contains_full_phone_numbers"] is False
 
 
+def test_uat_replay_uses_canonical_intake_and_returns_same_projection(db_session):
+    connection, inbound = _seed(db_session)
+    before_count = db_session.query(WhatsAppInboundMessage).count()
+
+    result = replay_whatsapp_uat_inbound(
+        db_session,
+        connection=connection,
+        provider_message_id="provider-inbound",
+    )
+
+    assert result["ok"] is True
+    assert result["idempotent"] is True
+    assert result["inbound_message_id"] == inbound.id
+    assert result["ticket_id"] == inbound.ticket_id
+    assert result["conversation_id"] == inbound.conversation_id
+    assert result["webchat_message_id"] == inbound.webchat_message_id
+    assert db_session.query(WhatsAppInboundMessage).count() == before_count
+    assert result["contains_secrets"] is False
+    assert result["contains_full_phone_numbers"] is False
+
+
 def test_uat_evidence_rejects_unknown_provider_message(db_session):
-    connection = _seed(db_session)
+    connection, _inbound = _seed(db_session)
     with pytest.raises(WhatsAppUatEvidenceError, match="outbound_not_found"):
         collect_whatsapp_uat_facts(
             db_session,
