@@ -54,6 +54,9 @@ from ..api.webchat_voice import router as webchat_voice_router
 from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_integration import router as whatsapp_integration_router
 from ..api.whatsapp_media_integration import router as whatsapp_media_integration_router
+from ..services.whatsapp_embedded_signup_csp import (
+    register_whatsapp_embedded_signup_csp,
+)
 from .runtime_contracts import register_runtime_contracts
 
 
@@ -80,9 +83,10 @@ def _retire_legacy_admin_readiness_routes() -> None:
 
 
 def register_api_routers(app: FastAPI) -> None:
-    """Register every supported API router exactly once in deterministic order."""
+    """Register every supported API router and scoped security contract once."""
 
     register_runtime_contracts()
+    register_whatsapp_embedded_signup_csp(app)
 
     for router in (
         admin_perf_router,
