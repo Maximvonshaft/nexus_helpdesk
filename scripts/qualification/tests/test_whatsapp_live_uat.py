@@ -29,13 +29,22 @@ TIMES = {
 
 
 class FakeClient:
-    def __init__(self, *, change_session: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        change_session: bool = False,
+        replay_idempotent: bool = True,
+    ) -> None:
         self.restarted: set[int] = set()
         self.change_session = change_session
+        self.replay_idempotent = replay_idempotent
+        self.replayed: dict[int, str] = {}
 
     def get(self, path: str, *, query=None):
         connection_id = int(path.split("/")[5])
-        transport = "meta_cloud_api" if connection_id == 1 else "baileys_sidecar"
+        transport = (
+            "meta_cloud_api" if connection_id == 1 else "baileys_sidecar"
+        )
         if path.endswith("/uat-evidence"):
             return self._facts(connection_id, transport, query or {})
         session_generation = 7
@@ -55,11 +64,38 @@ class FakeClient:
 
     def post(self, path: str, *, payload=None):
         connection_id = int(path.split("/")[5])
-        assert path.endswith("/restart")
-        self.restarted.add(connection_id)
-        return {"ok": True}
+        transport = (
+            "meta_cloud_api" if connection_id == 1 else "baileys_sidecar"
+        )
+        if path.endswith("/restart"):
+            self.restarted.add(connection_id)
+            return {"ok": True}
+        if path.endswith("/uat-replay-inbound"):
+            provider_message_id = str(
+                (payload or {}).get("provider_message_id") or ""
+            )
+            self.replayed[connection_id] = provider_message_id
+            return {
+                "ok": True,
+                "idempotent": self.replay_idempotent,
+                "connection_id": connection_id,
+                "transport": transport,
+                "provider_message_id": provider_message_id,
+                "inbound_message_id": 100 + connection_id,
+                "ticket_id": 200 + connection_id,
+                "conversation_id": 300 + connection_id,
+                "webchat_message_id": 400 + connection_id,
+                "contains_secrets": False,
+                "contains_full_phone_numbers": False,
+            }
+        raise AssertionError(f"unexpected POST path: {path}")
 
-    def _facts(self, connection_id: int, transport: str, query: dict[str, str]):
+    def _facts(
+        self,
+        connection_id: int,
+        transport: str,
+        query: dict[str, str],
+    ):
         suffix = "1111" if connection_id == 1 else "2222"
         payload = {
             "transport": transport,
@@ -80,14 +116,18 @@ class FakeClient:
                 "stored": True,
                 "inbound_message_id": 100 + connection_id,
             },
-            "outbound": self._outbound(query["outbound_provider_message_id"]),
+            "outbound": self._outbound(
+                query["outbound_provider_message_id"]
+            ),
             "contains_secrets": False,
             "contains_full_phone_numbers": False,
         }
         if "media_inbound_provider_message_id" in query:
             payload["media"] = {
                 "inbound": {
-                    "provider_message_id": query["media_inbound_provider_message_id"],
+                    "provider_message_id": query[
+                        "media_inbound_provider_message_id"
+                    ],
                     "asset_id": 200 + connection_id,
                     "attachment_id": 300 + connection_id,
                     "scan_status": "clean",
@@ -115,7 +155,7 @@ class FakeClient:
         }
 
 
-def _plan(*, replay: bool = True):
+def _plan():
     return {
         "schema": "nexus.whatsapp-live-uat-plan.v1",
         "candidate": {
@@ -126,7 +166,6 @@ def _plan(*, replay: bool = True):
             "meta_cloud_api": {
                 "connection_id": 1,
                 "inbound_provider_message_id": "meta-inbound",
-                "inbound_idempotent_replay": replay,
                 "outbound_provider_message_id": "meta-outbound",
                 "media_inbound_provider_message_id": "meta-media-inbound",
                 "media_outbound_provider_message_id": "meta-media-outbound",
@@ -134,19 +173,23 @@ def _plan(*, replay: bool = True):
             "baileys_sidecar": {
                 "connection_id": 2,
                 "inbound_provider_message_id": "baileys-inbound",
-                "inbound_idempotent_replay": replay,
                 "outbound_provider_message_id": "baileys-outbound",
-                "media_inbound_provider_message_id": "baileys-media-inbound",
-                "media_outbound_provider_message_id": "baileys-media-outbound",
+                "media_inbound_provider_message_id": (
+                    "baileys-media-inbound"
+                ),
+                "media_outbound_provider_message_id": (
+                    "baileys-media-outbound"
+                ),
             },
         },
     }
 
 
 def test_live_uat_builds_signed_dual_transport_media_evidence():
+    client = FakeClient()
     observation, evidence = MODULE.run_live_uat(
         _plan(),
-        client=FakeClient(),
+        client=client,
         expected_source_sha=SOURCE_SHA,
         expected_image_digest=IMAGE_DIGEST,
         signing_key=b"u" * 64,
@@ -162,15 +205,19 @@ def test_live_uat_builds_signed_dual_transport_media_evidence():
         "baileys_sidecar",
     }
     assert observation["transports"]["meta_cloud_api"]["phone_suffix"] == "1111"
+    assert observation["transports"]["meta_cloud_api"]["inbound"][
+        "replay_inbound_message_id"
+    ] == 101
+    assert client.replayed == {1: "meta-inbound", 2: "baileys-inbound"}
     assert evidence["contains_secrets"] is False
     assert evidence["contains_full_phone_numbers"] is False
 
 
-def test_live_uat_rejects_unproven_provider_replay():
-    with pytest.raises(MODULE.LiveUatError, match="real_inbound_replay_required"):
+def test_live_uat_rejects_server_replay_that_is_not_idempotent():
+    with pytest.raises(MODULE.LiveUatError, match="idempotent_replay_failed"):
         MODULE.run_live_uat(
-            _plan(replay=False),
-            client=FakeClient(),
+            _plan(),
+            client=FakeClient(replay_idempotent=False),
             expected_source_sha=SOURCE_SHA,
             expected_image_digest=IMAGE_DIGEST,
             signing_key=b"u" * 64,
