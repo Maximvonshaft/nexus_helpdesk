@@ -123,10 +123,10 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertLess(login, attest)
         for marker in (
             ': "${SOURCE_SHA:?SOURCE_SHA required}"',
-            'git fetch --no-tags origin main',
-            'git rev-parse origin/main',
-            'git diff --quiet',
-            'git diff --cached --quiet',
+            "git fetch --no-tags origin main",
+            "git rev-parse origin/main",
+            "git diff --quiet",
+            "git diff --cached --quiet",
         ):
             self.assertIn(marker, HELPERS)
 
@@ -178,20 +178,25 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             "PROVIDER_RUNTIME_KILL_SWITCH=true",
             "PROVIDER_RUNTIME_CANARY_PERCENT=0",
             "ENABLE_OUTBOUND_DISPATCH=false",
-            "WHATSAPP_NATIVE_ENABLED=false",
+            "WHATSAPP_ENABLED=false",
+            "WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false",
+            "WHATSAPP_MEDIA_ENABLED=false",
+            "WHATSAPP_MEDIA_SCANNER=disabled",
             "SPEEDAF_WORK_ORDER_CREATE_ENABLED=false",
             "OPERATIONS_DISPATCH_MODE=disabled",
             "ALLOW_DEV_AUTH=false",
             "LOCAL_STORAGE_BACKUP_REQUIRED=true",
         ):
             self.assertIn(marker, ENV_EXAMPLE)
+        self.assertNotIn("WHATSAPP_NATIVE_ENABLED", ENV_EXAMPLE)
+        self.assertNotIn("WHATSAPP_DISPATCH_MODE", ENV_EXAMPLE)
         self.assertIn(
             "- Controlled deployment performed: `false`",
             WORKFLOW,
         )
         self.assertIn("- External effects authorized: `false`", WORKFLOW)
 
-    def test_controlled_compose_is_digest_only_and_has_no_external_sidecars(
+    def test_controlled_compose_is_digest_only_with_optional_canonical_sidecar(
         self,
     ) -> None:
         self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
@@ -201,16 +206,37 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertNotIn(":latest", COMPOSE)
         self.assertNotIn("external: true", COMPOSE)
         self.assertNotIn("production_runtime", COMPOSE)
-        self.assertNotIn("whatsapp-sidecar", COMPOSE)
+        self.assertIn("whatsapp-sidecar-controlled:", COMPOSE)
+        self.assertIn("${WHATSAPP_SIDECAR_IMAGE:?", COMPOSE)
+        self.assertIn("- whatsapp-baileys", COMPOSE)
         for service in (
             "migrate-controlled:",
             "app-controlled:",
             "worker-outbound-controlled:",
             "worker-background-controlled:",
             "worker-webchat-ai-controlled:",
-            "worker-handoff-snapshot-controlled:",
+            "whatsapp-sidecar-controlled:",
         ):
             self.assertIn(service, COMPOSE)
+        self.assertNotIn("worker-handoff-snapshot-controlled:", COMPOSE)
+
+    def test_canonical_acceptance_treats_sidecar_as_first_class_supply_chain(
+        self,
+    ) -> None:
+        for marker in (
+            "sidecar-supply-chain:",
+            "connectors/whatsapp-sidecar/package-lock.json",
+            "connectors/whatsapp-sidecar/Dockerfile",
+            "npm run typecheck",
+            "npm test",
+            "sidecar.raw.cdx.json",
+            "sidecar-image.raw.cdx.json",
+            "sidecar-trivy.raw.json",
+            "SIDECAR_SUPPLY_CHAIN",
+        ):
+            self.assertIn(marker, CANONICAL)
+        self.assertNotIn("WHATSAPP_NATIVE_ENABLED", CANONICAL)
+        self.assertNotIn("WHATSAPP_DISPATCH_MODE", CANONICAL)
 
 
 if __name__ == "__main__":
