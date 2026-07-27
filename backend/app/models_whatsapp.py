@@ -22,7 +22,7 @@ from .utils.time import utc_now
 UTCDateTime = DateTime(timezone=True)
 
 WHATSAPP_TRANSPORTS = ("baileys_sidecar", "meta_cloud_api")
-WHATSAPP_DESIRED_STATES = ("disabled", "active")
+WHATSAPP_DESIRED_STATES = ("disabled", "binding", "active")
 WHATSAPP_OBSERVED_STATES = (
     "unconfigured",
     "auth_required",
@@ -78,7 +78,7 @@ class WhatsAppConnection(Base):
             name="ck_whatsapp_connection_transport",
         ),
         CheckConstraint(
-            "desired_state IN ('disabled','active')",
+            "desired_state IN ('disabled','binding','active')",
             name="ck_whatsapp_connection_desired_state",
         ),
         CheckConstraint(
@@ -186,7 +186,6 @@ class WhatsAppConnection(Base):
     phone_number: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     jid: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
 
-    # Meta Cloud API identifiers and encrypted account credentials.
     business_account_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     waba_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     phone_number_id: Mapped[Optional[str]] = mapped_column(
@@ -201,8 +200,6 @@ class WhatsAppConnection(Base):
     app_secret_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     verify_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Baileys stores auth files in the sidecar-owned encrypted volume. Nexus stores
-    # only the opaque session key and generation, never raw Baileys credentials.
     sidecar_session_key: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
     session_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
