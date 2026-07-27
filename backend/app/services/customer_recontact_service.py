@@ -11,7 +11,7 @@ from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
 from .ticket_closure_readiness import invalidate_latest_closure_receipt
-from .webchat_event_service import safe_write_webchat_event
+from .webchat_ai_turn_service import safe_write_webchat_event
 
 _TERMINAL_TICKET_STATUSES = frozenset(
     {TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled}
