@@ -15,9 +15,24 @@ import type {
   WhatsAppConnector
 } from "./types.js";
 
+export interface RegistryReadiness {
+  ready: boolean;
+  status: "ready" | "starting" | "degraded" | "not_ready";
+  authority_established: boolean;
+  authority_fresh: boolean;
+  last_authority_success_at: string | null;
+  last_authority_failure_at: string | null;
+  last_authority_error_code: string | null;
+  desired_accounts: number;
+  pending_callbacks: number;
+}
+
 export class AccountRegistry {
   readonly connector: WhatsAppConnector;
   private readonly desiredAccounts = new Map<string, number>();
+  private lastAuthoritySuccessMs: number | null = null;
+  private lastAuthorityFailureMs: number | null = null;
+  private lastAuthorityErrorCode: string | null = null;
 
   constructor(
     private readonly config: SidecarConfig,
@@ -120,6 +135,44 @@ export class AccountRegistry {
     }
   }
 
+  recordAuthoritySuccess(observedAt = Date.now()): void {
+    this.lastAuthoritySuccessMs = observedAt;
+    this.lastAuthorityErrorCode = null;
+  }
+
+  recordAuthorityFailure(error: unknown, observedAt = Date.now()): void {
+    this.lastAuthorityFailureMs = observedAt;
+    this.lastAuthorityErrorCode = publicAuthorityErrorCode(error);
+  }
+
+  readiness(now = Date.now()): RegistryReadiness {
+    const established = this.lastAuthoritySuccessMs !== null;
+    const staleAfterMs = Math.max(this.config.reconcileIntervalMs * 3, 30_000);
+    const fresh = established && now - Number(this.lastAuthoritySuccessMs) <= staleAfterMs;
+    const currentlyFailing =
+      this.lastAuthorityFailureMs !== null &&
+      (this.lastAuthoritySuccessMs === null || this.lastAuthorityFailureMs > this.lastAuthoritySuccessMs);
+    const ready = Boolean(fresh);
+    const status: RegistryReadiness["status"] = !established
+      ? "starting"
+      : ready && currentlyFailing
+        ? "degraded"
+        : ready
+          ? "ready"
+          : "not_ready";
+    return {
+      ready,
+      status,
+      authority_established: established,
+      authority_fresh: Boolean(fresh),
+      last_authority_success_at: iso(this.lastAuthoritySuccessMs),
+      last_authority_failure_at: iso(this.lastAuthorityFailureMs),
+      last_authority_error_code: this.lastAuthorityErrorCode,
+      desired_accounts: this.desiredAccounts.size,
+      pending_callbacks: this.backend.pendingCallbacks()
+    };
+  }
+
   desiredAccountCount(): number {
     return this.desiredAccounts.size;
   }
@@ -141,4 +194,18 @@ export class AccountRegistry {
       metadata: request.metadata || {}
     });
   }
+}
+
+function iso(value: number | null): string | null {
+  return value === null ? null : new Date(value).toISOString();
+}
+
+function publicAuthorityErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("backend_callback_failed:")) return "backend_authority_http_error";
+  if (message === "invalid_desired_account_response") return message;
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "backend_authority_timeout";
+  }
+  return "backend_authority_unavailable";
 }
