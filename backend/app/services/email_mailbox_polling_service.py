@@ -336,7 +336,7 @@ def poll_imap_account(
     client: MailboxClient | None = None,
     limit: int = MAX_FETCH_PER_ACCOUNT,
 ) -> MailboxSyncResult:
-    _account_tenant_id(db, account)
+    tenant_id = _account_tenant_id(db, account)
     if not _configured(account):
         account.imap_last_status = "not_configured"
         account.imap_last_error = "IMAP inbound sync is not configured"
@@ -413,6 +413,7 @@ def poll_imap_account(
                 ticket_id=ticket.id,
                 actor_id=account.updated_by or account.created_by,
                 source="imap_poll",
+                expected_tenant_id=tenant_id,
                 payload=InboundEmailIngestRequest(
                     from_address=parsed.from_address,
                     from_name=parsed.from_name,
@@ -591,7 +592,7 @@ def build_email_mailbox_sync_status(
     job_ids = select(BackgroundJobScope.job_id).where(
         BackgroundJobScope.scope_type == "tenant",
         BackgroundJobScope.tenant_id == tenant_id,
-        BackgroundJobScope.purpose == "provider_tool_execution",
+        BackgroundJobScope.purpose == "human_support",
     )
     return EmailMailboxSyncStatusRead(
         generated_at=utc_now(),
