@@ -187,12 +187,13 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             "worker-outbound-rc",
             "worker-background-rc",
             "worker-webchat-ai-rc",
-            "worker-handoff-snapshot-rc",
         ):
             self.assertRegex(
                 self.compose,
                 rf"(?ms)^  {re.escape(service)}:\n.*?^    <<: \*rc_app$",
             )
+        self.assertNotIn("worker-handoff-snapshot-rc", self.compose)
+        self.assertNotIn("handoff-snapshot", self.runner)
         self.assertIn(
             "COPY --from=webapp-builder /build/frontend_dist /layout/app/frontend_dist",
             self.dockerfile,
@@ -201,7 +202,12 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             "COPY --from=runtime-layout --chown=65532:65532 /layout/ /",
             self.dockerfile,
         )
-        for forbidden in ("RC_FRONTEND_IMAGE", "frontend-rc:", "sync-daemon-rc:", "event-daemon-rc:"):
+        for forbidden in (
+            "RC_FRONTEND_IMAGE",
+            "frontend-rc:",
+            "sync-daemon-rc:",
+            "event-daemon-rc:",
+        ):
             self.assertNotIn(forbidden, self.compose + self.env_example + self.runner)
 
     def test_postgres_receives_only_database_environment(self):
