@@ -20,6 +20,11 @@ type Draft = {
   priority: string
 }
 
+type SignupNotice = {
+  severity: 'success' | 'warning'
+  message: string
+}
+
 const emptyDraft: Draft = {
   displayName: '',
   accountId: '',
@@ -30,7 +35,7 @@ const emptyDraft: Draft = {
 export function MetaEmbeddedSignupPanel() {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState<Draft>(emptyDraft)
-  const [result, setResult] = useState<string | null>(null)
+  const [result, setResult] = useState<SignupNotice | null>(null)
 
   const signup = useMutation({
     mutationFn: async () => {
@@ -60,7 +65,17 @@ export function MetaEmbeddedSignupPanel() {
       })
     },
     onSuccess: async (completed) => {
-      setResult(`已创建 ${completed.account_id}，连接编号 ${completed.connection_id}，当前进入绑定验证。`)
+      if (completed.binding_state === 'attention_required') {
+        setResult({
+          severity: 'warning',
+          message: `已安全创建 ${completed.account_id}（连接 ${completed.connection_id}），但绑定需要继续处理。错误编号：${completed.binding_error_code || 'embedded_signup_binding_failed'}。请在下方连接卡执行“订阅并验证”或“运行探针”。`,
+        })
+      } else {
+        setResult({
+          severity: 'success',
+          message: `已创建 ${completed.account_id}，连接编号 ${completed.connection_id}，当前进入绑定验证。`,
+        })
+      }
       setDraft(emptyDraft)
       await queryClient.invalidateQueries({ queryKey: ['whatsappConnections'] })
       await queryClient.invalidateQueries({ queryKey: ['canonicalChannelAccounts'] })
@@ -77,7 +92,7 @@ export function MetaEmbeddedSignupPanel() {
       </Typography>
       <Stack spacing={1.5} sx={{ mt: 2 }}>
         {signup.error ? <OperatorErrorNotice title="Embedded Signup 失败" error={signup.error} fallback="请检查 Meta App Review、Configuration ID、HTTPS Origin 和授权资产" /> : null}
-        {result ? <Alert severity="success" variant="outlined">{result}</Alert> : null}
+        {result ? <Alert severity={result.severity} variant="outlined">{result.message}</Alert> : null}
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
           <TextField required fullWidth label="账号名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
           <TextField required fullWidth label="Nexus 账号标识" helperText="稳定内部标识，例如 wa-meta-ch-primary" value={draft.accountId} onChange={(event) => setDraft((current) => ({ ...current, accountId: event.target.value }))} />
