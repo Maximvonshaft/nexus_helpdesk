@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Logger } from "pino";
 import {
   DurableCallbackOutbox,
   type CallbackEnvelope,
   type CallbackKind
 } from "./callbackOutbox.js";
+import {
+  DurableMediaOutbox,
+  type InboundMediaEnvelope
+} from "./mediaOutbox.js";
 import { connectorBinaryHeaders, connectorHeaders } from "./security.js";
 import { assertSafeAccountId } from "./sessionStore.js";
 import type {
@@ -19,17 +24,25 @@ const CALLBACK_PATHS: Record<CallbackKind, string> = {
   status: "/api/integrations/whatsapp/baileys/status",
   delivery: "/api/integrations/whatsapp/baileys/delivery"
 };
+const MEDIA_PATH = "/api/integrations/whatsapp/baileys/media";
 
 export class BackendClient {
   private readonly outbox: DurableCallbackOutbox;
+  private readonly mediaOutbox: DurableMediaOutbox;
 
   constructor(
     private readonly config: SidecarConfig,
     private readonly logger: Logger,
-    outbox?: DurableCallbackOutbox
+    outbox?: DurableCallbackOutbox,
+    mediaOutbox?: DurableMediaOutbox
   ) {
     this.outbox = outbox ?? new DurableCallbackOutbox(
       config.callbackSpoolRoot,
+      logger,
+      config.connectorHmacSecret
+    );
+    this.mediaOutbox = mediaOutbox ?? new DurableMediaOutbox(
+      join(config.callbackSpoolRoot, "media"),
       logger,
       config.connectorHmacSecret
     );
@@ -52,46 +65,15 @@ export class BackendClient {
     filename?: string | null;
     content: Buffer;
   }): Promise<void> {
-    const accountId = assertSafeAccountId(options.accountId);
-    const messageId = String(options.messageId || "").trim();
-    if (!messageId || messageId.length > 180) {
-      throw new Error("invalid_media_message_id");
-    }
-    if (!options.content.byteLength) {
-      throw new Error("empty_media_content");
-    }
-    const sha256 = createHash("sha256").update(options.content).digest("hex");
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      Math.max(this.config.callbackTimeoutMs, 60_000)
-    );
-    try {
-      const response = await fetch(
-        `${this.config.backendUrl}/api/integrations/whatsapp/baileys/media`,
-        {
-          method: "POST",
-          headers: connectorBinaryHeaders({
-            accountId,
-            connectorKey: this.config.connectorKey,
-            hmacSecret: this.config.connectorHmacSecret,
-            body: options.content,
-            messageId,
-            mediaKind: options.mediaKind,
-            mediaType: options.mediaType,
-            filename: options.filename,
-            sha256
-          }),
-          body: options.content,
-          signal: controller.signal
-        }
-      );
-      if (!response.ok) {
-        throw new Error(`backend_media_upload_failed:${response.status}`);
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
+    this.mediaOutbox.enqueue({
+      accountId: options.accountId,
+      externalMessageId: options.messageId,
+      mediaKind: options.mediaKind,
+      mediaType: options.mediaType,
+      fileName: options.filename,
+      content: options.content
+    });
+    await this.flushCallbacks();
   }
 
   async postStatus(accountId: string, payload: unknown): Promise<void> {
@@ -142,19 +124,57 @@ export class BackendClient {
   }
 
   async flushCallbacks(): Promise<{ delivered: number; pending: number }> {
-    return await this.outbox.drain(async (envelope) => {
+    const callbacks = await this.outbox.drain(async (envelope) => {
       await this.sendEnvelope(envelope);
     });
+    const media = await this.mediaOutbox.drain(async (envelope) => {
+      await this.sendMediaEnvelope(envelope);
+    });
+    return {
+      delivered: callbacks.delivered + media.delivered,
+      pending: callbacks.pending + media.pending
+    };
   }
 
   pendingCallbacks(): number {
-    return this.outbox.count();
+    return this.outbox.count() + this.mediaOutbox.count();
   }
 
   private async sendEnvelope(envelope: CallbackEnvelope): Promise<void> {
     const path = CALLBACK_PATHS[envelope.kind];
     const accountId = assertSafeAccountId(envelope.account_id);
     await this.postDirect(path, accountId, envelope.payload);
+  }
+
+  private async sendMediaEnvelope(envelope: InboundMediaEnvelope): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.max(this.config.callbackTimeoutMs, 60_000)
+    );
+    try {
+      const response = await fetch(`${this.config.backendUrl}${MEDIA_PATH}`, {
+        method: "POST",
+        headers: connectorBinaryHeaders({
+          accountId: envelope.account_id,
+          connectorKey: this.config.connectorKey,
+          hmacSecret: this.config.connectorHmacSecret,
+          body: envelope.content,
+          messageId: envelope.external_message_id,
+          mediaKind: envelope.media_kind,
+          mediaType: envelope.media_type,
+          filename: envelope.file_name,
+          sha256: envelope.sha256
+        }),
+        body: envelope.content,
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        throw new Error(`backend_media_upload_failed:${response.status}`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async postDirect(
