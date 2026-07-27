@@ -59,7 +59,7 @@ The business-object authority is explicit:
 
 - `WebchatConversation` owns live text, voice and participation continuity;
 - `Ticket` is the sole durable Case aggregate and stable `case_id` authority;
-- `WebchatHandoffRequest` is the sole mutable live human-handoff lifecycle;
+- `WebchatHandoffRequest` is the sole mutable live human-handoff and routing lifecycle;
 - `OperatorTask` is a rebuildable queue projection and may not mutate source-domain state;
 - no `Case` ORM model, `cases` table, parallel Case identifier or second ownership state machine is permitted.
 
@@ -74,7 +74,9 @@ Canonical WebChat authorities are:
 - Agent orchestration: `backend/app/services/webchat_ai_orchestration_service.py`
 - Agent reply execution/persistence: `backend/app/services/webchat_ai_service.py`
 - operator read/reply: `backend/app/services/conversation_operator_service.py`
-- live Handoff commands: `backend/app/services/webchat_handoff_service_core.py`
+- live Handoff commands: `backend/app/services/webchat_handoff_service.py`
+- Handoff routing execution: `backend/app/services/agent_routing_service.py`
+- frozen Handoff policy: `backend/app/services/handoff_routing_policy.py`
 
 A direct model CLI, standalone Auto Reply Job, channel-specific Agent loop, separate ticketless reply service or OperatorTask-owned source transition is forbidden.
 
@@ -87,12 +89,13 @@ cd backend
 uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-Controlled production topology uses dedicated supervised Workers:
+Controlled production topology uses exactly three supervised Workers:
 
 - `worker-outbound-controlled` → `run_worker_supervised.py --queue outbound`
 - `worker-background-controlled` → `run_worker_supervised.py --queue background`
 - `worker-webchat-ai-controlled` → `run_worker_supervised.py --queue webchat-ai`
-- `worker-handoff-snapshot-controlled` → `run_worker_supervised.py --queue handoff-snapshot`
+
+Handoff snapshot jobs are consumed by the canonical Background Worker. A separate Handoff Snapshot Worker, database role or queue process is retired and must not return.
 
 A deployment unit may not invoke `run_worker.py` directly or run `--queue all`.
 
@@ -140,8 +143,8 @@ Migration `20260722_0074` terminates persisted pending or processing jobs from t
 
 Voice is split into two explicit, non-overlapping capabilities:
 
-- Human WebCall: `WEBCHAT_HUMAN_CALL_ENABLED`, owned by `api/webchat_voice.py` and `webchat_voice_service.py`.
-- Live AI Voice: `WEBCHAT_LIVE_AI_VOICE_ENABLED`, owned by `api/webchat_live_voice.py` and `live_voice_orchestration_service.py`.
+- Human WebCall: `WEBCHAT_HUMAN_CALL_ENABLED`, owned by the canonical telephony and voice session services.
+- Live AI Voice: `WEBCHAT_LIVE_AI_VOICE_ENABLED`, owned by the LiveKit Agent and Nexus Agent Runtime.
 
 `WEBCHAT_VOICE_ENABLED` is compatibility-only. Production activation must use the explicit flags and deployment evidence; source-code presence is not production enablement.
 
