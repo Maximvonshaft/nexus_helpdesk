@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ..data_subject_action_service import DataProcessingRestricted
 from ..processing_purpose_enforcement import (
     PURPOSE_PROVIDER_TOOL_EXECUTION,
     ensure_ticket_processing_allowed_fresh,
@@ -76,11 +77,24 @@ class SpeedafActionService:
         self.background_job_id = background_job_id
         self.request_id = request_id
 
-    def _ensure_processing_allowed(self) -> None:
-        ensure_ticket_processing_allowed_fresh(
-            ticket_id=self.ticket_id,
-            purpose=PURPOSE_PROVIDER_TOOL_EXECUTION,
-        )
+    def _processing_allowed(self) -> bool:
+        try:
+            ensure_ticket_processing_allowed_fresh(
+                ticket_id=self.ticket_id,
+                purpose=PURPOSE_PROVIDER_TOOL_EXECUTION,
+            )
+        except DataProcessingRestricted:
+            return False
+        return True
+
+    @staticmethod
+    def _blocked_payload(action_type: str) -> dict[str, Any]:
+        return {
+            "blocked": True,
+            "reason_code": "data_processing_restricted",
+            "action_type": action_type,
+            "contains_customer_data": False,
+        }
 
     def create_work_order(
         self,
@@ -100,7 +114,25 @@ class SpeedafActionService:
             "description": description[:WORK_ORDER_DESCRIPTION_MAX_LENGTH],
             "callerID": caller_id,
         }
-        self._ensure_processing_allowed()
+        if not self._processing_allowed():
+            safe_payload = self._blocked_payload("work_order_create")
+            self._record_action_audit(
+                action_type="work_order_create",
+                payload=payload,
+                output_payload=safe_payload,
+                status="blocked",
+                error_code="data_processing_restricted",
+                error_message="Provider Tool execution blocked by processing restriction",
+                elapsed_ms=0,
+            )
+            return SpeedafWorkOrderResult(
+                ok=False,
+                status="blocked",
+                error_code="data_processing_restricted",
+                error_message="Provider Tool execution is not allowed",
+                retryable=False,
+                safe_payload=safe_payload,
+            )
         started = time.monotonic()
         try:
             response = self.client.post(WORK_ORDER_CREATE_PATH, payload)
@@ -195,7 +227,26 @@ class SpeedafActionService:
         path: str,
         payload: dict[str, Any],
     ) -> SpeedafActionResult:
-        self._ensure_processing_allowed()
+        if not self._processing_allowed():
+            safe_payload = self._blocked_payload(action_type)
+            self._record_action_audit(
+                action_type=action_type,
+                payload=payload,
+                output_payload=safe_payload,
+                status="blocked",
+                error_code="data_processing_restricted",
+                error_message="Provider Tool execution blocked by processing restriction",
+                elapsed_ms=0,
+            )
+            return SpeedafActionResult(
+                ok=False,
+                action_type=action_type,
+                status="blocked",
+                error_code="data_processing_restricted",
+                error_message="Provider Tool execution is not allowed",
+                retryable=False,
+                safe_payload=safe_payload,
+            )
         started = time.monotonic()
         try:
             response = self.client.post(path, payload)
