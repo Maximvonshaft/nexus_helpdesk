@@ -10,13 +10,18 @@ from sqlalchemy.orm import Session, object_session
 
 from ..models import AdminAuditLog, User
 from ..operator_models import OperatorQueueScopeGrant
-from ..services.permissions import (
+from ..utils.time import utc_now
+from .permissions import (
     CAP_OPERATOR_QUEUE_READ,
     capability_fingerprint,
     ensure_capability,
     ensure_can_manage_users,
 )
-from ..utils.time import utc_now
+from .tenant_query_authority import (
+    ActorTenantQueryScope,
+    TenantQueryScopeError,
+    actor_tenant_query_scope,
+)
 
 _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 _COUNTRY_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,15}$")
@@ -29,20 +34,43 @@ def normalize_operator_scope(
     country_code: str,
     channel_key: str,
 ) -> tuple[str, str, str]:
-    tenant = str(tenant_key or "").strip()
+    tenant = str(tenant_key or "").strip().lower()
     country = str(country_code or "").strip().upper()
     channel = str(channel_key or "").strip().lower()
     if not _TENANT_RE.fullmatch(tenant):
-        raise HTTPException(status_code=400, detail="invalid_operator_queue_tenant_scope")
+        raise HTTPException(
+            status_code=400,
+            detail="invalid_operator_queue_tenant_scope",
+        )
     if not _COUNTRY_RE.fullmatch(country):
-        raise HTTPException(status_code=400, detail="invalid_operator_queue_country_scope")
+        raise HTTPException(
+            status_code=400,
+            detail="invalid_operator_queue_country_scope",
+        )
     if not _CHANNEL_RE.fullmatch(channel):
-        raise HTTPException(status_code=400, detail="invalid_operator_queue_channel_scope")
+        raise HTTPException(
+            status_code=400,
+            detail="invalid_operator_queue_channel_scope",
+        )
     return tenant, country, channel
 
 
 def tenant_scope_hash(tenant_key: str) -> str:
     return hashlib.sha256(tenant_key.encode("utf-8")).hexdigest()[:12]
+
+
+def _actor_scope(db: Session, current_user) -> ActorTenantQueryScope:
+    try:
+        return actor_tenant_query_scope(
+            db,
+            current_user,
+            require_bound_tenant=True,
+        )
+    except TenantQueryScopeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
 
 
 def active_scope_grant(
@@ -80,11 +108,17 @@ def authorize_operator_scope(
         db,
         message="Operator queue read permission required",
     )
+    actor_scope = _actor_scope(db, current_user)
     tenant, country, channel = normalize_operator_scope(
         tenant_key=tenant_key,
         country_code=country_code,
         channel_key=channel_key,
     )
+    if tenant != actor_scope.tenant_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_queue_cross_tenant_scope_forbidden",
+        )
     grant = active_scope_grant(
         db,
         user_id=int(current_user.id),
@@ -100,7 +134,11 @@ def authorize_operator_scope(
     return tenant, country, channel, grant
 
 
-def scope_grant_version(grant: OperatorQueueScopeGrant | None, *, current_user) -> str:
+def scope_grant_version(
+    grant: OperatorQueueScopeGrant | None,
+    *,
+    current_user,
+) -> str:
     session = object_session(grant) if grant is not None else None
     policy_fingerprint = capability_fingerprint(current_user, session)
     team_identity = getattr(current_user, "team_id", None) or "none"
@@ -110,7 +148,11 @@ def scope_grant_version(grant: OperatorQueueScopeGrant | None, *, current_user) 
             f"capabilities:{policy_fingerprint}:grant:none"
         )
     else:
-        updated = grant.updated_at.isoformat() if isinstance(grant.updated_at, datetime) else str(grant.updated_at)
+        updated = (
+            grant.updated_at.isoformat()
+            if isinstance(grant.updated_at, datetime)
+            else str(grant.updated_at)
+        )
         raw = (
             f"user:{int(current_user.id)}:team:{team_identity}:"
             f"capabilities:{policy_fingerprint}:"
@@ -133,7 +175,8 @@ def serialize_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, object]:
 
 
 def serialize_current_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, str]:
-    """Return the exact scope only to the user who already owns the active grant."""
+    """Return the exact scope only to the user who owns the active grant."""
+
     return {
         "tenant_key": row.tenant_key,
         "tenant_hash": tenant_scope_hash(row.tenant_key),
@@ -142,28 +185,30 @@ def serialize_current_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, str
     }
 
 
-def list_current_scope_grants(db: Session, *, current_user) -> dict[str, object]:
-    """Project active current-user grants into the Canonical Workspace selector.
+def list_current_scope_grants(
+    db: Session,
+    *,
+    current_user,
+) -> dict[str, object]:
+    """Project only current-user grants inside the actor's immutable Tenant."""
 
-    The grant tuple is the sole normal-work scope authority. Every projected
-    tuple is revalidated by ``authorize_operator_scope`` when queue data is read.
-    """
     ensure_capability(
         current_user,
         CAP_OPERATOR_QUEUE_READ,
         db,
         message="Operator queue read permission required",
     )
+    actor_scope = _actor_scope(db, current_user)
     rows = (
         db.query(OperatorQueueScopeGrant)
         .filter(
             OperatorQueueScopeGrant.user_id == int(current_user.id),
+            OperatorQueueScopeGrant.tenant_key == actor_scope.tenant_key,
             OperatorQueueScopeGrant.enabled.is_(True),
         )
         .order_by(
             OperatorQueueScopeGrant.country_code.asc(),
             OperatorQueueScopeGrant.channel_key.asc(),
-            OperatorQueueScopeGrant.tenant_key.asc(),
         )
         .all()
     )
@@ -190,28 +235,57 @@ def _audit(
             action=action,
             target_type="operator_queue_scope_grant",
             target_id=row.id,
-            old_value_json=json.dumps({"enabled": old_enabled}) if old_enabled is not None else None,
-            new_value_json=json.dumps(safe_scope, sort_keys=True, separators=(",", ":")),
+            old_value_json=(
+                json.dumps({"enabled": old_enabled})
+                if old_enabled is not None
+                else None
+            ),
+            new_value_json=json.dumps(
+                safe_scope,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
             created_at=utc_now(),
         )
     )
 
 
-def upsert_scope_grant(db: Session, *, current_user, payload) -> OperatorQueueScopeGrant:
+def upsert_scope_grant(
+    db: Session,
+    *,
+    current_user,
+    payload,
+) -> OperatorQueueScopeGrant:
     ensure_can_manage_users(current_user, db)
+    actor_scope = _actor_scope(db, current_user)
     tenant, country, channel = normalize_operator_scope(
         tenant_key=payload.tenant_key,
         country_code=payload.country_code,
         channel_key=payload.channel_key,
     )
-    target = db.query(User).filter(User.id == payload.user_id, User.is_active.is_(True)).first()
+    if tenant != actor_scope.tenant_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="operator_queue_cross_tenant_grant_forbidden",
+        )
+    target = (
+        actor_scope.users(db)
+        .filter(
+            User.id == payload.user_id,
+            User.is_active.is_(True),
+        )
+        .first()
+    )
     if target is None:
-        raise HTTPException(status_code=404, detail="Operator queue grant user not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Operator queue grant user not found",
+        )
     row = (
         db.query(OperatorQueueScopeGrant)
         .filter(
             OperatorQueueScopeGrant.user_id == payload.user_id,
-            OperatorQueueScopeGrant.tenant_key == tenant,
+            OperatorQueueScopeGrant.tenant_key == actor_scope.tenant_key,
             OperatorQueueScopeGrant.country_code == country,
             OperatorQueueScopeGrant.channel_key == channel,
         )
@@ -221,7 +295,7 @@ def upsert_scope_grant(db: Session, *, current_user, payload) -> OperatorQueueSc
     if row is None:
         row = OperatorQueueScopeGrant(
             user_id=payload.user_id,
-            tenant_key=tenant,
+            tenant_key=actor_scope.tenant_key,
             country_code=country,
             channel_key=channel,
             enabled=bool(payload.enabled),
@@ -237,16 +311,38 @@ def upsert_scope_grant(db: Session, *, current_user, payload) -> OperatorQueueSc
         row.updated_at = utc_now()
         db.flush()
         action = "operator_queue.scope_grant.updated"
-    _audit(db, actor_id=current_user.id, action=action, row=row, old_enabled=old_enabled)
+    _audit(
+        db,
+        actor_id=current_user.id,
+        action=action,
+        row=row,
+        old_enabled=old_enabled,
+    )
     db.flush()
     return row
 
 
-def delete_scope_grant(db: Session, *, current_user, grant_id: int) -> None:
+def delete_scope_grant(
+    db: Session,
+    *,
+    current_user,
+    grant_id: int,
+) -> None:
     ensure_can_manage_users(current_user, db)
-    row = db.query(OperatorQueueScopeGrant).filter(OperatorQueueScopeGrant.id == grant_id).first()
+    actor_scope = _actor_scope(db, current_user)
+    row = (
+        db.query(OperatorQueueScopeGrant)
+        .filter(
+            OperatorQueueScopeGrant.id == grant_id,
+            OperatorQueueScopeGrant.tenant_key == actor_scope.tenant_key,
+        )
+        .first()
+    )
     if row is None:
-        raise HTTPException(status_code=404, detail="Operator queue scope grant not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Operator queue scope grant not found",
+        )
     _audit(
         db,
         actor_id=current_user.id,
