@@ -457,11 +457,15 @@ def classify_candidate_exhaustion(
             utc_now() + timedelta(seconds=RETRY_DELAY_SECONDS),
         )
     if available_agents <= 0:
+        # Capacity is event-driven. Mark the retry immediately due so a release,
+        # close, resume, heartbeat, or presence transition can consume the same
+        # waiting Handoff without imposing an artificial 30-second dead zone.
+        # Decline exhaustion keeps its cooldown above and is never bypassed.
         return (
             "capacity_exhausted",
             "eligible_agents_have_no_available_capacity",
             "queue_supervisor",
-            utc_now() + timedelta(seconds=RETRY_DELAY_SECONDS),
+            utc_now(),
         )
     return ("waiting", "eligible_candidate_available", "human_support", None)
 
