@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,7 @@ from app.models import Tenant, User
 from app.models_whatsapp import WhatsAppConnection, WhatsAppEmbeddedSignupSession
 from app.schemas_whatsapp_signup import EmbeddedSignupCompleteRequest
 from app.unit_of_work import managed_session
+from app.utils.time import utc_now
 
 
 register_all_models()
@@ -126,9 +128,8 @@ def test_completed_signup_retry_returns_existing_connection_without_code_exchang
         requested_by=admin.id,
         state_digest=hashlib.sha256(state.encode("utf-8")).hexdigest(),
         status="completed",
-        expires_at=admin_whatsapp_embedded_signup.utc_now()
-        + admin_whatsapp_embedded_signup.timedelta(minutes=5),
-        completed_at=admin_whatsapp_embedded_signup.utc_now(),
+        expires_at=utc_now() + timedelta(minutes=5),
+        completed_at=utc_now(),
         connection_id=created.id,
     )
     db_session.add(signup)
@@ -137,12 +138,16 @@ def test_completed_signup_retry_returns_existing_connection_without_code_exchang
     monkeypatch.setattr(
         admin_whatsapp_embedded_signup,
         "exchange_and_validate_signup",
-        lambda **_kwargs: pytest.fail("completed retry must not exchange OAuth code"),
+        lambda **_kwargs: pytest.fail(
+            "completed retry must not exchange OAuth code"
+        ),
     )
     monkeypatch.setattr(
         admin_whatsapp_embedded_signup,
         "start_whatsapp_binding",
-        lambda *_args, **_kwargs: pytest.fail("completed retry must not duplicate binding side effects"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "completed retry must not duplicate binding side effects"
+        ),
     )
 
     result = admin_whatsapp_embedded_signup.complete_embedded_signup_session(
@@ -176,8 +181,7 @@ def test_binding_failure_preserves_created_connection_and_returns_recovery_state
         requested_by=admin.id,
         state_digest=hashlib.sha256(state.encode("utf-8")).hexdigest(),
         status="pending",
-        expires_at=admin_whatsapp_embedded_signup.utc_now()
-        + admin_whatsapp_embedded_signup.timedelta(minutes=5),
+        expires_at=utc_now() + timedelta(minutes=5),
     )
     db_session.add(signup)
     db_session.commit()
@@ -185,7 +189,10 @@ def test_binding_failure_preserves_created_connection_and_returns_recovery_state
     monkeypatch.setattr(
         admin_whatsapp_embedded_signup,
         "require_pending_signup_session",
-        lambda db, **_kwargs: db.get(WhatsAppEmbeddedSignupSession, "pending-session"),
+        lambda db, **_kwargs: db.get(
+            WhatsAppEmbeddedSignupSession,
+            "pending-session",
+        ),
     )
     monkeypatch.setattr(
         admin_whatsapp_embedded_signup,
