@@ -2,6 +2,7 @@ import type {
   AccountSnapshot,
   PairingCodeRequest,
   PairingCodeResult,
+  SendMediaRequest,
   SendRequest,
   SendResult,
   WhatsAppConnector
@@ -90,7 +91,37 @@ export class MockConnector implements WhatsAppConnector {
   }
 
   async send(accountId: string, request: SendRequest): Promise<SendResult> {
-    const existing = this.sends.get(request.idempotency_key);
+    return this.sendByKey(accountId, request.idempotency_key);
+  }
+
+  async sendMedia(
+    accountId: string,
+    request: SendMediaRequest,
+    content: Buffer
+  ): Promise<SendResult> {
+    if (!content.byteLength) {
+      return {
+        ok: false,
+        status: "failed",
+        error_code: "empty_media_content",
+        retryable: false
+      };
+    }
+    return this.sendByKey(accountId, request.idempotency_key);
+  }
+
+  setConnected(accountId: string): AccountSnapshot {
+    const generation = this.accounts.get(accountId)?.generation ?? 0;
+    const state = snapshot(accountId, "connected", generation);
+    this.accounts.set(accountId, state);
+    return state;
+  }
+
+  private async sendByKey(
+    accountId: string,
+    idempotencyKey: string
+  ): Promise<SendResult> {
+    const existing = this.sends.get(idempotencyKey);
     if (existing) return existing;
     const state = this.accounts.get(accountId);
     if (state?.status !== "connected") {
@@ -100,23 +131,16 @@ export class MockConnector implements WhatsAppConnector {
         error_code: "whatsapp_not_connected",
         retryable: true
       };
-      this.sends.set(request.idempotency_key, failed);
+      this.sends.set(idempotencyKey, failed);
       return failed;
     }
     const sent: SendResult = {
       ok: true,
       status: "sent",
-      provider_message_id: `mock-${request.idempotency_key}`,
+      provider_message_id: `mock-${idempotencyKey}`,
       sent_at: new Date().toISOString()
     };
-    this.sends.set(request.idempotency_key, sent);
+    this.sends.set(idempotencyKey, sent);
     return sent;
-  }
-
-  setConnected(accountId: string): AccountSnapshot {
-    const generation = this.accounts.get(accountId)?.generation ?? 0;
-    const state = snapshot(accountId, "connected", generation);
-    this.accounts.set(accountId, state);
-    return state;
   }
 }
