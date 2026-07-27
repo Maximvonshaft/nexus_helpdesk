@@ -1,5 +1,9 @@
 import { apiRequest } from '@/lib/apiClient'
 import type {
+  EmbeddedSignupCompleteResult,
+  EmbeddedSignupCompletion,
+  EmbeddedSignupIntent,
+  EmbeddedSignupSession,
   WhatsAppBindingStatus,
   WhatsAppConnection,
   WhatsAppConnectionCreate,
@@ -9,6 +13,7 @@ import type {
 } from '@/lib/whatsappTypes'
 
 const base = '/api/admin/whatsapp/connections'
+const embeddedSignupBase = '/api/admin/whatsapp/embedded-signup'
 
 export const whatsappApi = {
   connections: () => apiRequest<WhatsAppConnection[]>(base),
@@ -55,5 +60,15 @@ export const whatsappApi = {
   testOutbound: (connectionId: number, target: string, body: string) => apiRequest<WhatsAppTestResult>(`${base}/${connectionId}/test-outbound`, {
     method: 'POST',
     body: JSON.stringify({ target, body }),
+  }),
+  createEmbeddedSignupSession: (payload: EmbeddedSignupIntent) => apiRequest<EmbeddedSignupSession>(`${embeddedSignupBase}/sessions`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  }),
+  completeEmbeddedSignup: (sessionId: string, payload: EmbeddedSignupCompletion) => apiRequest<EmbeddedSignupCompleteResult>(`${embeddedSignupBase}/sessions/${encodeURIComponent(sessionId)}/complete`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
   }),
 }
