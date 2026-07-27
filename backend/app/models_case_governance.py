@@ -25,11 +25,7 @@ UTCDateTime = DateTime(timezone=True)
 
 
 class SLAPolicyRevision(Base):
-    """Immutable, scoped SLA contract revision.
-
-    ``SLAPolicy`` remains the stable policy family/priority identity. Runtime
-    selection and historical interpretation use this immutable revision.
-    """
+    """Immutable SLA contract scoped by Tenant, market, channel and scenario."""
 
     __tablename__ = "sla_policy_revisions"
     __table_args__ = (
@@ -38,7 +34,10 @@ class SLAPolicyRevision(Base):
             "version",
             name="uq_sla_policy_revision_version",
         ),
-        CheckConstraint("version > 0", name="ck_sla_revision_version_positive"),
+        CheckConstraint(
+            "version > 0",
+            name="ck_sla_revision_version_positive",
+        ),
         CheckConstraint(
             "status IN ('draft','approved','retired')",
             name="ck_sla_revision_status",
@@ -77,7 +76,6 @@ class SLAPolicyRevision(Base):
             "market_id",
             "channel_key",
             "scenario_key",
-            "customer_tier",
             "status",
             "effective_from",
         ),
@@ -113,11 +111,6 @@ class SLAPolicyRevision(Base):
     )
     scenario_key: Mapped[Optional[str]] = mapped_column(
         String(160),
-        nullable=True,
-        index=True,
-    )
-    customer_tier: Mapped[Optional[str]] = mapped_column(
-        String(80),
         nullable=True,
         index=True,
     )
@@ -184,7 +177,10 @@ class TicketSLAAssignment(Base):
 
     __tablename__ = "ticket_sla_assignments"
     __table_args__ = (
-        UniqueConstraint("ticket_id", name="uq_ticket_sla_assignment_ticket"),
+        UniqueConstraint(
+            "ticket_id",
+            name="uq_ticket_sla_assignment_ticket",
+        ),
         Index("ix_ticket_sla_assignment_revision", "policy_revision_id"),
     )
 
@@ -242,7 +238,11 @@ class TicketSLAPauseInterval(Base):
         nullable=False,
         index=True,
     )
-    reason_code: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    reason_code: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        index=True,
+    )
     started_at: Mapped[datetime] = mapped_column(
         UTCDateTime,
         nullable=False,
@@ -286,7 +286,10 @@ class CaseOutcomeRecord(Base):
             "idempotency_key",
             name="uq_case_outcome_ticket_idempotency",
         ),
-        CheckConstraint("sequence > 0", name="ck_case_outcome_sequence_positive"),
+        CheckConstraint(
+            "sequence > 0",
+            name="ck_case_outcome_sequence_positive",
+        ),
         CheckConstraint(
             "record_type IN ("
             "'action_intent','execution_attempt','provider_receipt',"
@@ -297,7 +300,8 @@ class CaseOutcomeRecord(Base):
         CheckConstraint(
             "state IN ("
             "'requested','accepted','processing','succeeded','failed','waived',"
-            "'delivered','confirmed','repair_required','blocked','eligible','closed','reopened'"
+            "'delivered','confirmed','repair_required','blocked','eligible',"
+            "'closed','reopened'"
             ")",
             name="ck_case_outcome_state",
         ),
@@ -321,8 +325,16 @@ class CaseOutcomeRecord(Base):
         index=True,
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
-    record_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
-    state: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    record_type: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        index=True,
+    )
+    state: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        index=True,
+    )
     idempotency_key: Mapped[str] = mapped_column(String(180), nullable=False)
     parent_record_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("case_outcome_records.id", ondelete="SET NULL"),
@@ -360,7 +372,7 @@ class CaseOutcomeRecord(Base):
 
 
 class RetentionPolicyVersion(Base):
-    """Versioned retention rule, scoped to one Tenant or a global template."""
+    """Versioned retention rule, scoped to one Tenant or global template."""
 
     __tablename__ = "retention_policy_versions"
     __table_args__ = (
@@ -370,8 +382,14 @@ class RetentionPolicyVersion(Base):
             "version",
             name="uq_retention_policy_scope_version",
         ),
-        CheckConstraint("version > 0", name="ck_retention_version_positive"),
-        CheckConstraint("retention_days >= 0", name="ck_retention_days_nonnegative"),
+        CheckConstraint(
+            "version > 0",
+            name="ck_retention_version_positive",
+        ),
+        CheckConstraint(
+            "retention_days >= 0",
+            name="ck_retention_days_nonnegative",
+        ),
         CheckConstraint(
             "status IN ('draft','approved','retired')",
             name="ck_retention_status",
@@ -408,7 +426,11 @@ class RetentionPolicyVersion(Base):
         nullable=False,
         default=False,
     )
-    resource_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        index=True,
+    )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     retention_days: Mapped[int] = mapped_column(Integer, nullable=False)
     legal_basis: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -484,7 +506,11 @@ class LegalHoldRecord(Base):
         nullable=True,
         index=True,
     )
-    reason_code: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    reason_code: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        index=True,
+    )
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(24),
@@ -529,8 +555,8 @@ class DataSubjectRequest(Base):
         ),
         CheckConstraint(
             "status IN ("
-            "'received','identity_pending','qualified','processing','blocked_legal_hold',"
-            "'completed','rejected','cancelled'"
+            "'received','identity_pending','qualified','processing',"
+            "'blocked_legal_hold','completed','rejected','cancelled'"
             ")",
             name="ck_dsar_status",
         ),
@@ -558,7 +584,11 @@ class DataSubjectRequest(Base):
         index=True,
     )
     request_key: Mapped[str] = mapped_column(String(160), nullable=False)
-    request_type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    request_type: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(
         String(40),
         nullable=False,
@@ -570,16 +600,29 @@ class DataSubjectRequest(Base):
         nullable=True,
     )
     scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    result_manifest_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    result_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    blocked_reason: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    result_manifest_json: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    result_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    blocked_reason: Mapped[Optional[str]] = mapped_column(
+        String(160),
+        nullable=True,
+    )
     received_at: Mapped[datetime] = mapped_column(
         UTCDateTime,
         nullable=False,
         default=utc_now,
         index=True,
     )
-    due_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, index=True)
+    due_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        nullable=False,
+        index=True,
+    )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         UTCDateTime,
         nullable=True,
@@ -645,7 +688,10 @@ class DataLifecycleExecution(Base):
     affected_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     held_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     receipt_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    receipt_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    receipt_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
     created_by: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
