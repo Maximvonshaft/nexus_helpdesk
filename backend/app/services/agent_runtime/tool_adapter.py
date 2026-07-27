@@ -19,6 +19,10 @@ from ..agent_tool_handlers import (
     build_agent_tool_handlers,
     extension_executable_tool_names,
 )
+from ..data_subject_action_service import (
+    DataProcessingRestricted,
+    ensure_data_processing_allowed,
+)
 from ..nexus_osr.case_context import CaseContext
 from ..nexus_osr.controlled_action_executor import ActionExecutionResult
 from ..nexus_osr.tool_execution_service import (
@@ -26,6 +30,7 @@ from ..nexus_osr.tool_execution_service import (
     execute_controlled_tool_calls,
     executable_tool_names as core_executable_tool_names,
 )
+from ..processing_purpose_enforcement import PURPOSE_PROVIDER_TOOL_EXECUTION
 from ..webchat_ai_decision_runtime.schemas import AIDecisionToolCall
 from ..webchat_ai_decision_runtime.tool_registry import get_tool_contract
 from .execution_scope import bind_agent_release_snapshot, bind_agent_tool_handlers
@@ -230,6 +235,32 @@ def _confirmation_result(
     )
 
 
+def _processing_restricted_result(
+    *,
+    call: AIDecisionToolCall,
+    case_context: CaseContext,
+) -> ActionExecutionResult:
+    return ActionExecutionResult(
+        ok=False,
+        tool_name=call.tool_name,
+        status="blocked",
+        summary={
+            "processing_allowed": False,
+            "human_support_required": True,
+        },
+        customer_visible_summary=(
+            "This action cannot be completed automatically. A support agent "
+            "will continue with you."
+        ),
+        case_context=case_context,
+        error_code="data_processing_restricted",
+        error_message=(
+            "Automated Provider Tool execution is blocked by an active "
+            "data-processing restriction."
+        ),
+    )
+
+
 def _execute_one(
     db: Session,
     *,
@@ -241,6 +272,25 @@ def _execute_one(
     customer: Customer | None,
     allow_high_risk_writes: bool,
 ) -> ActionExecutionResult:
+    subject_customer_id = (
+        customer.id
+        if customer is not None
+        else ticket.customer_id
+        if ticket is not None
+        else context.customer_id
+    )
+    try:
+        ensure_data_processing_allowed(
+            db,
+            customer_id=subject_customer_id,
+            purpose=PURPOSE_PROVIDER_TOOL_EXECUTION,
+        )
+    except DataProcessingRestricted:
+        return _processing_restricted_result(
+            call=call,
+            case_context=case_context,
+        )
+
     contract = get_tool_contract(call.tool_name)
     exact_confirmation = (
         _active_exact_confirmation(db, conversation=conversation, call=call)
