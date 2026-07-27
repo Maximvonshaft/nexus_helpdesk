@@ -113,6 +113,60 @@ def _load_bound_customer(
     return customer
 
 
+def bind_customer_identity(
+    db: Session,
+    *,
+    customer: Customer,
+    identity_type: str,
+    identity_value: str,
+    source: str,
+    display_name: str | None = None,
+) -> CustomerIdentityBinding:
+    """Bind an additional identity without permitting cross-Customer takeover."""
+
+    if customer.tenant_id is None:
+        raise CustomerIdentityError("customer_identity_customer_tenant_missing")
+    _active_tenant(db, int(customer.tenant_id))
+    identity = normalize_customer_identity(identity_type, identity_value)
+    existing = _binding(
+        db,
+        tenant_id=int(customer.tenant_id),
+        identity=identity,
+    )
+    if existing is not None:
+        if existing.customer_id != customer.id:
+            raise CustomerIdentityError("customer_identity_already_bound")
+        _apply_profile(customer, identity=identity, display_name=display_name)
+        db.flush()
+        return existing
+
+    source_value = str(source or "channel_intake").strip()[:40] or "channel_intake"
+    try:
+        with db.begin_nested():
+            binding = CustomerIdentityBinding(
+                tenant_id=int(customer.tenant_id),
+                customer_id=customer.id,
+                identity_type=identity.identity_type,
+                normalized_value=identity.normalized_value,
+                source=source_value,
+            )
+            db.add(binding)
+            _apply_profile(customer, identity=identity, display_name=display_name)
+            db.flush()
+            return binding
+    except IntegrityError:
+        winner = _binding(
+            db,
+            tenant_id=int(customer.tenant_id),
+            identity=identity,
+        )
+        if winner is None:
+            raise
+        if winner.customer_id != customer.id:
+            raise CustomerIdentityError("customer_identity_already_bound")
+        return winner
+
+
 def resolve_or_create_customer(
     db: Session,
     *,
@@ -187,6 +241,7 @@ def resolve_or_create_customer(
 __all__ = [
     "CustomerIdentity",
     "CustomerIdentityError",
+    "bind_customer_identity",
     "normalize_customer_identity",
     "resolve_or_create_customer",
 ]
