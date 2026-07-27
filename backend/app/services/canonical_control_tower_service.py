@@ -4,10 +4,16 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, JobStatus, MessageStatus, SourceChannel, TicketStatus
+from ..enums import (
+    ConversationState,
+    JobStatus,
+    MessageStatus,
+    SourceChannel,
+    TicketStatus,
+)
 from ..models import (
     AIConfigResource,
     AdminAuditLog,
@@ -46,6 +52,11 @@ from .permissions import (
     resolve_capabilities,
 )
 from .scope_permissions import has_global_case_visibility
+from .tenant_query_authority import (
+    ActorTenantQueryScope,
+    TenantQueryScopeError,
+    actor_tenant_query_scope,
+)
 from .ticket_sla_policy import sla_risk_filter
 
 ACTIVE_TICKET_STATUSES = (
@@ -55,7 +66,13 @@ ACTIVE_TICKET_STATUSES = (
     TicketStatus.waiting_internal,
     TicketStatus.escalated,
 )
-TERMINAL_TASK_STATUSES = ("resolved", "dropped", "replayed", "replay_failed", "cancelled")
+TERMINAL_TASK_STATUSES = (
+    "resolved",
+    "dropped",
+    "replayed",
+    "replay_failed",
+    "cancelled",
+)
 ACTIVE_VOICE_STATUSES = ("created", "ringing", "accepted", "active")
 HEALTHY_ACCOUNT_STATUSES = ("healthy", "ok", "ready")
 
@@ -75,14 +92,46 @@ SPEEDAF_WRITE_CAPABILITIES = {
     CAP_SPEEDAF_VOICE_CALLBACK_WRITE,
 }
 CONTROL_TOWER_ACTIONS: dict[str, dict[str, str]] = {
-    "assign-unassigned": {"capability": CAP_TICKET_ASSIGN, "label": "调度未分配队列", "href": "/workspace"},
-    "clear-sla-risk": {"capability": CAP_TICKET_ASSIGN, "label": "处理 SLA 风险", "href": "/workspace"},
-    "publish-bulletin": {"capability": CAP_BULLETIN_MANAGE, "label": "更新公告口径", "href": "/control-tower"},
-    "recover-runtime": {"capability": CAP_RUNTIME_MANAGE, "label": "恢复运行异常", "href": "/runtime"},
-    "fix-email-route": {"capability": CAP_CHANNEL_ACCOUNT_MANAGE, "label": "修复 Email 线路", "href": "/channels"},
-    "review-ai-rules": {"capability": CAP_AI_CONFIG_MANAGE, "label": "复核 AI 配置", "href": "/knowledge"},
-    "provider-ops": {"capability": CAP_CHANNEL_ACCOUNT_MANAGE, "label": "巡检渠道账号", "href": "/channels"},
-    "speedaf-wizard": {"capability": CAP_SPEEDAF_WORK_ORDER_WRITE, "label": "复核 Speedaf 高危动作", "href": "/workspace"},
+    "assign-unassigned": {
+        "capability": CAP_TICKET_ASSIGN,
+        "label": "调度未分配队列",
+        "href": "/workspace",
+    },
+    "clear-sla-risk": {
+        "capability": CAP_TICKET_ASSIGN,
+        "label": "处理 SLA 风险",
+        "href": "/workspace",
+    },
+    "publish-bulletin": {
+        "capability": CAP_BULLETIN_MANAGE,
+        "label": "更新公告口径",
+        "href": "/control-tower",
+    },
+    "recover-runtime": {
+        "capability": CAP_RUNTIME_MANAGE,
+        "label": "恢复运行异常",
+        "href": "/runtime",
+    },
+    "fix-email-route": {
+        "capability": CAP_CHANNEL_ACCOUNT_MANAGE,
+        "label": "修复 Email 线路",
+        "href": "/channels",
+    },
+    "review-ai-rules": {
+        "capability": CAP_AI_CONFIG_MANAGE,
+        "label": "复核 AI 配置",
+        "href": "/knowledge",
+    },
+    "provider-ops": {
+        "capability": CAP_CHANNEL_ACCOUNT_MANAGE,
+        "label": "巡检渠道账号",
+        "href": "/channels",
+    },
+    "speedaf-wizard": {
+        "capability": CAP_SPEEDAF_WORK_ORDER_WRITE,
+        "label": "复核 Speedaf 高危动作",
+        "href": "/workspace",
+    },
 }
 
 
@@ -90,18 +139,52 @@ def _value(raw: Any) -> Any:
     return raw.value if hasattr(raw, "value") else raw
 
 
-def _visible_ticket_query(db: Session, user: User):
-    query = db.query(Ticket)
+def _actor_scope(db: Session, user: User) -> ActorTenantQueryScope:
+    try:
+        return actor_tenant_query_scope(
+            db,
+            user,
+            require_bound_tenant=True,
+        )
+    except TenantQueryScopeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _visible_ticket_query(
+    db: Session,
+    user: User,
+    scope: ActorTenantQueryScope,
+):
+    query = scope.tickets(db)
     if not has_global_case_visibility(user, db):
-        query = query.filter(or_(Ticket.team_id == user.team_id, Ticket.assignee_id == user.id))
+        query = query.filter(
+            or_(
+                Ticket.team_id == user.team_id,
+                Ticket.assignee_id == user.id,
+            )
+        )
     return query
 
 
-def _visible_operator_task_query(db: Session, user: User):
-    query = db.query(OperatorTask)
+def _visible_operator_task_query(
+    db: Session,
+    user: User,
+    scope: ActorTenantQueryScope,
+):
+    query = scope.operator_tasks(db)
     if not has_global_case_visibility(user, db):
-        query = query.outerjoin(Ticket, OperatorTask.ticket_id == Ticket.id).filter(
-            or_(Ticket.team_id == user.team_id, Ticket.assignee_id == user.id, OperatorTask.assignee_id == user.id)
+        query = query.outerjoin(
+            Ticket,
+            OperatorTask.ticket_id == Ticket.id,
+        ).filter(
+            or_(
+                Ticket.team_id == user.team_id,
+                Ticket.assignee_id == user.id,
+                OperatorTask.assignee_id == user.id,
+            )
         )
     return query
 
@@ -122,8 +205,20 @@ def _tone(value: int, *, danger: int, warning: int = 1) -> str:
     return "success"
 
 
-def _kpi(key: str, label: str, value: int, hint: str, tone: str = "default") -> dict[str, Any]:
-    return {"key": key, "label": label, "value": value, "hint": hint, "tone": tone}
+def _kpi(
+    key: str,
+    label: str,
+    value: int,
+    hint: str,
+    tone: str = "default",
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "label": label,
+        "value": value,
+        "hint": hint,
+        "tone": tone,
+    }
 
 
 def _action(
@@ -151,7 +246,16 @@ def _action(
     }
 
 
-def _lane(key: str, area: str, value: int, risk: str, next_step: str, href: str, capability: str, capabilities: set[str]) -> dict[str, Any]:
+def _lane(
+    key: str,
+    area: str,
+    value: int,
+    risk: str,
+    next_step: str,
+    href: str,
+    capability: str,
+    capabilities: set[str],
+) -> dict[str, Any]:
     return {
         "key": key,
         "area": area,
@@ -164,8 +268,23 @@ def _lane(key: str, area: str, value: int, risk: str, next_step: str, href: str,
     }
 
 
-def _channel(key: str, label: str, health: str, queue: int, risk: int, href: str, capability: str, capabilities: set[str]) -> dict[str, Any]:
-    tone = "danger" if health == "danger" else "warning" if risk > 0 or health == "warning" else "success"
+def _channel(
+    key: str,
+    label: str,
+    health: str,
+    queue: int,
+    risk: int,
+    href: str,
+    capability: str,
+    capabilities: set[str],
+) -> dict[str, Any]:
+    tone = (
+        "danger"
+        if health == "danger"
+        else "warning"
+        if risk > 0 or health == "warning"
+        else "success"
+    )
     return {
         "key": key,
         "label": label,
@@ -178,10 +297,17 @@ def _channel(key: str, label: str, health: str, queue: int, risk: int, href: str
     }
 
 
-def _active_control_tower_actions(db: Session, user: User) -> dict[str, OperatorTask]:
+def _active_control_tower_actions(
+    db: Session,
+    user: User,
+    scope: ActorTenantQueryScope,
+) -> dict[str, OperatorTask]:
     rows = (
-        _visible_operator_task_query(db, user)
-        .filter(OperatorTask.task_type == "control_tower_action", OperatorTask.status.notin_(TERMINAL_TASK_STATUSES))
+        _visible_operator_task_query(db, user, scope)
+        .filter(
+            OperatorTask.task_type == "control_tower_action",
+            OperatorTask.status.notin_(TERMINAL_TASK_STATUSES),
+        )
         .order_by(OperatorTask.updated_at.desc(), OperatorTask.id.desc())
         .all()
     )
@@ -192,24 +318,59 @@ def _active_control_tower_actions(db: Session, user: User) -> dict[str, Operator
     return tasks
 
 
-def _dead_runtime_count(db: Session) -> int:
-    jobs = int(db.query(func.count(BackgroundJob.id)).filter(BackgroundJob.status == JobStatus.dead).scalar() or 0)
-    outbound = int(db.query(func.count(TicketOutboundMessage.id)).filter(TicketOutboundMessage.status == MessageStatus.dead).scalar() or 0)
+def _dead_runtime_count(
+    db: Session,
+    scope: ActorTenantQueryScope,
+) -> int:
+    jobs = int(
+        scope.background_jobs(db)
+        .filter(BackgroundJob.status == JobStatus.dead)
+        .with_entities(func.count(BackgroundJob.id))
+        .scalar()
+        or 0
+    )
+    outbound = int(
+        scope.outbound_messages(db)
+        .filter(TicketOutboundMessage.status == MessageStatus.dead)
+        .with_entities(func.count(TicketOutboundMessage.id))
+        .scalar()
+        or 0
+    )
     return jobs + outbound
 
 
-def _team_workload(db: Session, user: User, now: datetime) -> list[dict[str, Any]]:
+def _team_workload(
+    db: Session,
+    user: User,
+    scope: ActorTenantQueryScope,
+    now: datetime,
+) -> list[dict[str, Any]]:
     sla_risk = sla_risk_filter(now)
     rows = (
-        _active_tickets(_visible_ticket_query(db, user))
+        _active_tickets(_visible_ticket_query(db, user, scope))
         .outerjoin(Team, Team.id == Ticket.team_id)
         .with_entities(
             Ticket.team_id,
             Team.name,
             func.count(Ticket.id).label("active_count"),
-            func.sum(case((Ticket.assignee_id.is_(None), 1), else_=0)).label("unassigned_count"),
+            func.sum(
+                case((Ticket.assignee_id.is_(None), 1), else_=0)
+            ).label("unassigned_count"),
             func.sum(case((sla_risk, 1), else_=0)).label("sla_risk_count"),
-            func.sum(case((or_(Ticket.first_response_breached.is_(True), Ticket.resolution_breached.is_(True), Ticket.first_response_due_at < now, Ticket.resolution_due_at < now), 1), else_=0)).label("overdue_count"),
+            func.sum(
+                case(
+                    (
+                        or_(
+                            Ticket.first_response_breached.is_(True),
+                            Ticket.resolution_breached.is_(True),
+                            Ticket.first_response_due_at < now,
+                            Ticket.resolution_due_at < now,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("overdue_count"),
         )
         .group_by(Ticket.team_id, Team.name)
         .order_by(func.count(Ticket.id).desc(), Team.name.asc())
@@ -225,42 +386,83 @@ def _team_workload(db: Session, user: User, now: datetime) -> list[dict[str, Any
             "sla_risk": int(sla_risk_count or 0),
             "overdue": int(overdue_count or 0),
         }
-        for team_id, name, active_count, unassigned_count, sla_risk_count, overdue_count in rows
+        for (
+            team_id,
+            name,
+            active_count,
+            unassigned_count,
+            sla_risk_count,
+            overdue_count,
+        ) in rows
     ]
 
 
-def _bulletin_impact(db: Session, now: datetime) -> list[dict[str, Any]]:
+def _bulletin_impact(
+    db: Session,
+    scope: ActorTenantQueryScope,
+    now: datetime,
+) -> list[dict[str, Any]]:
     rows = (
         db.query(MarketBulletin)
         .filter(
+            MarketBulletin.market_id.in_(scope.active_market_ids()),
             MarketBulletin.is_active.is_(True),
-            or_(MarketBulletin.starts_at.is_(None), MarketBulletin.starts_at <= now),
-            or_(MarketBulletin.ends_at.is_(None), MarketBulletin.ends_at >= now),
+            or_(
+                MarketBulletin.starts_at.is_(None),
+                MarketBulletin.starts_at <= now,
+            ),
+            or_(
+                MarketBulletin.ends_at.is_(None),
+                MarketBulletin.ends_at >= now,
+            ),
         )
-        .with_entities(MarketBulletin.severity, MarketBulletin.category, func.count(MarketBulletin.id))
+        .with_entities(
+            MarketBulletin.severity,
+            MarketBulletin.category,
+            func.count(MarketBulletin.id),
+        )
         .group_by(MarketBulletin.severity, MarketBulletin.category)
         .order_by(func.count(MarketBulletin.id).desc())
         .limit(8)
         .all()
     )
     return [
-        {"severity": severity or "info", "category": category or "notice", "count": int(count or 0), "tone": _tone(int(count or 0), danger=3)}
+        {
+            "severity": severity or "info",
+            "category": category or "notice",
+            "count": int(count or 0),
+            "tone": _tone(int(count or 0), danger=3),
+        }
         for severity, category, count in rows
     ]
 
 
-def submit_control_tower_action(db: Session, current_user: User, payload) -> dict[str, Any]:
+def submit_control_tower_action(
+    db: Session,
+    current_user: User,
+    payload,
+) -> dict[str, Any]:
     capabilities = resolve_capabilities(current_user, db)
     if not (capabilities & CONTROL_TOWER_CAPABILITIES):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control_tower_requires_management_capability")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="control_tower_requires_management_capability",
+        )
+    scope = _actor_scope(db, current_user)
 
     action_key = str(payload.action_key).strip()
     action = CONTROL_TOWER_ACTIONS.get(action_key)
     if action is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="control_tower_action_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="control_tower_action_not_found",
+        )
     required_capability = action["capability"]
     if required_capability not in capabilities:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control_tower_action_requires_capability")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="control_tower_action_requires_capability",
+        )
 
     label = payload.label or action["label"]
     href = canonical_operator_href(payload.href) or action["href"]
@@ -278,6 +480,7 @@ def submit_control_tower_action(db: Session, current_user: User, payload) -> dic
     }
     task, created = create_operator_task(
         db,
+        tenant_id=scope.tenant_id,
         source_type="control_tower",
         task_type="control_tower_action",
         source_id=action_key,
@@ -307,20 +510,38 @@ def submit_control_tower_action(db: Session, current_user: User, payload) -> dic
     }
 
 
-def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
+def build_control_tower(
+    db: Session,
+    current_user: User,
+) -> dict[str, Any]:
     now = utc_now()
     capabilities = resolve_capabilities(current_user, db)
     if not (capabilities & CONTROL_TOWER_CAPABILITIES):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control_tower_requires_management_capability")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="control_tower_requires_management_capability",
+        )
+    scope = _actor_scope(db, current_user)
 
-    visible = _visible_ticket_query(db, current_user)
+    visible = _visible_ticket_query(db, current_user, scope)
     active = _active_tickets(visible)
     active_count = _count(active, Ticket.id)
-    unassigned = _count(_active_tickets(visible).filter(Ticket.assignee_id.is_(None)), Ticket.id)
-    sla_risk = _count(_active_tickets(visible).filter(sla_risk_filter(now)), Ticket.id)
+    unassigned = _count(
+        _active_tickets(visible).filter(Ticket.assignee_id.is_(None)),
+        Ticket.id,
+    )
+    sla_risk = _count(
+        _active_tickets(visible).filter(sla_risk_filter(now)),
+        Ticket.id,
+    )
     overdue = _count(
         _active_tickets(visible).filter(
-            or_(Ticket.first_response_breached.is_(True), Ticket.resolution_breached.is_(True), Ticket.first_response_due_at < now, Ticket.resolution_due_at < now)
+            or_(
+                Ticket.first_response_breached.is_(True),
+                Ticket.resolution_breached.is_(True),
+                Ticket.first_response_due_at < now,
+                Ticket.resolution_due_at < now,
+            )
         ),
         Ticket.id,
     )
@@ -328,37 +549,172 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
         _active_tickets(visible).filter(
             or_(
                 Ticket.status == TicketStatus.waiting_internal,
-                Ticket.conversation_state.in_((ConversationState.human_review_required, ConversationState.ready_to_reply, ConversationState.reopened_by_customer)),
+                Ticket.conversation_state.in_(
+                    (
+                        ConversationState.human_review_required,
+                        ConversationState.ready_to_reply,
+                        ConversationState.reopened_by_customer,
+                    )
+                ),
             )
         ),
         Ticket.id,
     )
-    email_cases = _count(_active_tickets(visible).filter(Ticket.source_channel == SourceChannel.email), Ticket.id)
-    webchat_cases = _count(_active_tickets(visible).filter(Ticket.source_channel == SourceChannel.web_chat), Ticket.id)
+    email_cases = _count(
+        _active_tickets(visible).filter(
+            Ticket.source_channel == SourceChannel.email
+        ),
+        Ticket.id,
+    )
+    webchat_cases = _count(
+        _active_tickets(visible).filter(
+            Ticket.source_channel == SourceChannel.web_chat
+        ),
+        Ticket.id,
+    )
     handoff_count = _count(
-        _visible_operator_task_query(db, current_user).filter(OperatorTask.task_type == "handoff", OperatorTask.status.notin_(TERMINAL_TASK_STATUSES)),
+        _visible_operator_task_query(db, current_user, scope).filter(
+            OperatorTask.task_type == "handoff",
+            OperatorTask.status.notin_(TERMINAL_TASK_STATUSES),
+        ),
         OperatorTask.id,
     )
+
     active_webcalls = int(
         db.query(func.count(WebchatVoiceSession.id))
-        .filter(WebchatVoiceSession.mode != "internal_ai_demo", WebchatVoiceSession.status.in_(ACTIVE_VOICE_STATUSES), WebchatVoiceSession.ended_at.is_(None))
+        .join(
+            WebchatConversation,
+            WebchatConversation.id == WebchatVoiceSession.conversation_id,
+        )
+        .filter(
+            WebchatConversation.tenant_key == scope.tenant_key,
+            WebchatVoiceSession.mode != "internal_ai_demo",
+            WebchatVoiceSession.status.in_(ACTIVE_VOICE_STATUSES),
+            WebchatVoiceSession.ended_at.is_(None),
+        )
         .scalar()
         or 0
     )
-    open_webchat_conversations = int(db.query(func.count(WebchatConversation.id)).filter(WebchatConversation.status == "open").scalar() or 0)
-    active_bulletins = int(db.query(func.count(MarketBulletin.id)).filter(MarketBulletin.is_active.is_(True)).scalar() or 0)
-    dead_runtime = _dead_runtime_count(db)
-    pending_outbound = int(db.query(func.count(TicketOutboundMessage.id)).filter(TicketOutboundMessage.status.in_((MessageStatus.pending, MessageStatus.processing))).scalar() or 0)
-    dead_outbound = int(db.query(func.count(TicketOutboundMessage.id)).filter(TicketOutboundMessage.status == MessageStatus.dead).scalar() or 0)
-    active_email_accounts = int(db.query(func.count(OutboundEmailAccount.id)).filter(OutboundEmailAccount.is_active.is_(True)).scalar() or 0)
-    risky_email_accounts = int(db.query(func.count(OutboundEmailAccount.id)).filter(OutboundEmailAccount.is_active.is_(True), or_(OutboundEmailAccount.health_status.is_(None), OutboundEmailAccount.health_status.notin_(HEALTHY_ACCOUNT_STATUSES))).scalar() or 0)
-    risky_channel_accounts = int(db.query(func.count(ChannelAccount.id)).filter(ChannelAccount.is_active.is_(True), or_(ChannelAccount.health_status.is_(None), ChannelAccount.health_status.notin_(HEALTHY_ACCOUNT_STATUSES))).scalar() or 0)
-    draft_ai_configs = int(db.query(func.count(AIConfigResource.id)).filter(AIConfigResource.is_active.is_(True), AIConfigResource.published_version == 0).scalar() or 0)
-    published_ai_configs = int(db.query(func.count(AIConfigResource.id)).filter(AIConfigResource.is_active.is_(True), AIConfigResource.published_version > 0).scalar() or 0)
-    active_users = int(db.query(func.count(User.id)).filter(User.is_active.is_(True)).scalar() or 0)
-    capability_overrides = int(db.query(func.count(UserCapabilityOverride.id)).scalar() or 0)
-    recent_audit = int(db.query(func.count(AdminAuditLog.id)).filter(AdminAuditLog.created_at >= now - timedelta(hours=24)).scalar() or 0)
-    active_control_actions = _active_control_tower_actions(db, current_user)
+    open_webchat_conversations = int(
+        scope.webchat_conversations(db)
+        .filter(WebchatConversation.status == "open")
+        .with_entities(func.count(WebchatConversation.id))
+        .scalar()
+        or 0
+    )
+    active_bulletins = int(
+        db.query(func.count(MarketBulletin.id))
+        .filter(
+            MarketBulletin.market_id.in_(scope.active_market_ids()),
+            MarketBulletin.is_active.is_(True),
+        )
+        .scalar()
+        or 0
+    )
+    dead_runtime = _dead_runtime_count(db, scope)
+    pending_outbound = int(
+        scope.outbound_messages(db)
+        .filter(
+            TicketOutboundMessage.status.in_(
+                (MessageStatus.pending, MessageStatus.processing)
+            )
+        )
+        .with_entities(func.count(TicketOutboundMessage.id))
+        .scalar()
+        or 0
+    )
+    dead_outbound = int(
+        scope.outbound_messages(db)
+        .filter(TicketOutboundMessage.status == MessageStatus.dead)
+        .with_entities(func.count(TicketOutboundMessage.id))
+        .scalar()
+        or 0
+    )
+    active_email_accounts = int(
+        db.query(func.count(OutboundEmailAccount.id))
+        .filter(
+            OutboundEmailAccount.market_id.in_(scope.active_market_ids()),
+            OutboundEmailAccount.is_active.is_(True),
+        )
+        .scalar()
+        or 0
+    )
+    risky_email_accounts = int(
+        db.query(func.count(OutboundEmailAccount.id))
+        .filter(
+            OutboundEmailAccount.market_id.in_(scope.active_market_ids()),
+            OutboundEmailAccount.is_active.is_(True),
+            or_(
+                OutboundEmailAccount.health_status.is_(None),
+                OutboundEmailAccount.health_status.notin_(
+                    HEALTHY_ACCOUNT_STATUSES
+                ),
+            ),
+        )
+        .scalar()
+        or 0
+    )
+    risky_channel_accounts = int(
+        scope.query(db, ChannelAccount)
+        .filter(
+            ChannelAccount.is_active.is_(True),
+            or_(
+                ChannelAccount.health_status.is_(None),
+                ChannelAccount.health_status.notin_(HEALTHY_ACCOUNT_STATUSES),
+            ),
+        )
+        .with_entities(func.count(ChannelAccount.id))
+        .scalar()
+        or 0
+    )
+    draft_ai_configs = int(
+        db.query(func.count(AIConfigResource.id))
+        .filter(
+            AIConfigResource.market_id.in_(scope.active_market_ids()),
+            AIConfigResource.is_active.is_(True),
+            AIConfigResource.published_version == 0,
+        )
+        .scalar()
+        or 0
+    )
+    published_ai_configs = int(
+        db.query(func.count(AIConfigResource.id))
+        .filter(
+            AIConfigResource.market_id.in_(scope.active_market_ids()),
+            AIConfigResource.is_active.is_(True),
+            AIConfigResource.published_version > 0,
+        )
+        .scalar()
+        or 0
+    )
+    active_users = int(
+        scope.users(db)
+        .filter(User.is_active.is_(True))
+        .with_entities(func.count(User.id))
+        .scalar()
+        or 0
+    )
+    tenant_user_ids = select(User.id).where(scope.model_predicate(User))
+    capability_overrides = int(
+        db.query(func.count(UserCapabilityOverride.id))
+        .filter(UserCapabilityOverride.user_id.in_(tenant_user_ids))
+        .scalar()
+        or 0
+    )
+    recent_audit = int(
+        db.query(func.count(AdminAuditLog.id))
+        .filter(
+            AdminAuditLog.actor_id.in_(tenant_user_ids),
+            AdminAuditLog.created_at >= now - timedelta(hours=24),
+        )
+        .scalar()
+        or 0
+    )
+    active_control_actions = _active_control_tower_actions(
+        db,
+        current_user,
+        scope,
+    )
     speedaf_capability_count = len(capabilities & SPEEDAF_WRITE_CAPABILITIES)
 
     return {
@@ -367,43 +723,274 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
         "user_id": current_user.id,
         "capabilities": sorted(capabilities),
         "kpis": [
-            _kpi("active_tickets", "活动工单", active_count, "当前账号授权范围内未关闭工单", _tone(active_count, danger=80)),
-            _kpi("sla_risk", "SLA 风险", sla_risk, "30 分钟内到期或已违约", _tone(sla_risk, danger=3)),
-            _kpi("handoff_waiting", "待接管会话", handoff_count, "未关闭人工接管任务", _tone(handoff_count, danger=5)),
-            _kpi("active_webcalls", "活动通话", active_webcalls, "当前活动或振铃通话", _tone(active_webcalls, danger=5)),
-            _kpi("runtime_dead", "运行异常", dead_runtime, "dead jobs 与 outbound", _tone(dead_runtime, danger=1)),
-            _kpi("active_bulletins", "生效公告", active_bulletins, "当前会影响客服口径的公告", _tone(active_bulletins, danger=5)),
+            _kpi(
+                "active_tickets",
+                "活动工单",
+                active_count,
+                "当前 Tenant 授权范围内未关闭工单",
+                _tone(active_count, danger=80),
+            ),
+            _kpi(
+                "sla_risk",
+                "SLA 风险",
+                sla_risk,
+                "30 分钟内到期或已违约",
+                _tone(sla_risk, danger=3),
+            ),
+            _kpi(
+                "handoff_waiting",
+                "待接管会话",
+                handoff_count,
+                "未关闭人工接管任务",
+                _tone(handoff_count, danger=5),
+            ),
+            _kpi(
+                "active_webcalls",
+                "活动通话",
+                active_webcalls,
+                "当前活动或振铃通话",
+                _tone(active_webcalls, danger=5),
+            ),
+            _kpi(
+                "runtime_dead",
+                "运行异常",
+                dead_runtime,
+                "当前 Tenant 的 dead jobs 与 outbound",
+                _tone(dead_runtime, danger=1),
+            ),
+            _kpi(
+                "active_bulletins",
+                "生效公告",
+                active_bulletins,
+                "当前 Tenant 会影响客服口径的公告",
+                _tone(active_bulletins, danger=5),
+            ),
         ],
         "manager_actions": [
-            _action("assign-unassigned", "调度未分配队列", unassigned, _tone(unassigned, danger=10), "按团队负载和 SLA 风险分配", "/workspace", CAP_TICKET_ASSIGN, capabilities, active_control_actions.get("assign-unassigned")),
-            _action("clear-sla-risk", "处理 SLA 风险", sla_risk, _tone(sla_risk, danger=3), "优先处理临近 SLA 案例", "/workspace", CAP_TICKET_ASSIGN, capabilities, active_control_actions.get("clear-sla-risk")),
-            _action("publish-bulletin", "更新公告口径", active_bulletins, _tone(active_bulletins, danger=5), "创建公告治理任务", "/control-tower", CAP_BULLETIN_MANAGE, capabilities, active_control_actions.get("publish-bulletin")),
-            _action("recover-runtime", "恢复运行异常", dead_runtime, _tone(dead_runtime, danger=1), "检查并修复运行队列", "/runtime", CAP_RUNTIME_MANAGE, capabilities, active_control_actions.get("recover-runtime")),
-            _action("fix-email-route", "修复 Email 线路", risky_email_accounts, _tone(risky_email_accounts, danger=1), "检查账号健康和发送失败", "/channels", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities, active_control_actions.get("fix-email-route")),
-            _action("review-ai-rules", "复核 AI 配置", draft_ai_configs, _tone(draft_ai_configs, danger=3), "发布或补齐知识与政策", "/knowledge", CAP_AI_CONFIG_MANAGE, capabilities, active_control_actions.get("review-ai-rules")),
-            _action("provider-ops", "巡检渠道账号", risky_email_accounts + risky_channel_accounts, _tone(risky_email_accounts + risky_channel_accounts, danger=1), "进入渠道维护和修复任务", "/channels", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities, active_control_actions.get("provider-ops")),
-            _action("speedaf-wizard", "复核 Speedaf 高危动作", speedaf_capability_count, _tone(speedaf_capability_count, danger=3), "进入受控案例动作", "/workspace", CAP_SPEEDAF_WORK_ORDER_WRITE, capabilities, active_control_actions.get("speedaf-wizard")),
+            _action(
+                "assign-unassigned",
+                "调度未分配队列",
+                unassigned,
+                _tone(unassigned, danger=10),
+                "按团队负载和 SLA 风险分配",
+                "/workspace",
+                CAP_TICKET_ASSIGN,
+                capabilities,
+                active_control_actions.get("assign-unassigned"),
+            ),
+            _action(
+                "clear-sla-risk",
+                "处理 SLA 风险",
+                sla_risk,
+                _tone(sla_risk, danger=3),
+                "优先处理临近 SLA 案例",
+                "/workspace",
+                CAP_TICKET_ASSIGN,
+                capabilities,
+                active_control_actions.get("clear-sla-risk"),
+            ),
+            _action(
+                "publish-bulletin",
+                "更新公告口径",
+                active_bulletins,
+                _tone(active_bulletins, danger=5),
+                "创建公告治理任务",
+                "/control-tower",
+                CAP_BULLETIN_MANAGE,
+                capabilities,
+                active_control_actions.get("publish-bulletin"),
+            ),
+            _action(
+                "recover-runtime",
+                "恢复运行异常",
+                dead_runtime,
+                _tone(dead_runtime, danger=1),
+                "检查并修复运行队列",
+                "/runtime",
+                CAP_RUNTIME_MANAGE,
+                capabilities,
+                active_control_actions.get("recover-runtime"),
+            ),
+            _action(
+                "fix-email-route",
+                "修复 Email 线路",
+                risky_email_accounts,
+                _tone(risky_email_accounts, danger=1),
+                "检查账号健康和发送失败",
+                "/channels",
+                CAP_CHANNEL_ACCOUNT_MANAGE,
+                capabilities,
+                active_control_actions.get("fix-email-route"),
+            ),
+            _action(
+                "review-ai-rules",
+                "复核 AI 配置",
+                draft_ai_configs,
+                _tone(draft_ai_configs, danger=3),
+                "发布或补齐知识与政策",
+                "/knowledge",
+                CAP_AI_CONFIG_MANAGE,
+                capabilities,
+                active_control_actions.get("review-ai-rules"),
+            ),
+            _action(
+                "provider-ops",
+                "巡检渠道账号",
+                risky_email_accounts + risky_channel_accounts,
+                _tone(risky_email_accounts + risky_channel_accounts, danger=1),
+                "进入渠道维护和修复任务",
+                "/channels",
+                CAP_CHANNEL_ACCOUNT_MANAGE,
+                capabilities,
+                active_control_actions.get("provider-ops"),
+            ),
+            _action(
+                "speedaf-wizard",
+                "复核 Speedaf 高危动作",
+                speedaf_capability_count,
+                _tone(speedaf_capability_count, danger=3),
+                "进入受控案例动作",
+                "/workspace",
+                CAP_SPEEDAF_WORK_ORDER_WRITE,
+                capabilities,
+                active_control_actions.get("speedaf-wizard"),
+            ),
         ],
-        "team_workload": _team_workload(db, current_user, now),
+        "team_workload": _team_workload(db, current_user, scope, now),
         "channel_health": [
-            _channel("webchat", "WebChat", "warning" if handoff_count else "success", webchat_cases + open_webchat_conversations, handoff_count, "/workspace", CAP_WEBCHAT_HANDOFF_ACCEPT, capabilities),
-            _channel("webcall", "WebCall", "warning" if active_webcalls else "success", active_webcalls, active_webcalls, "/workspace", CAP_WEBCALL_VOICE_QUEUE_VIEW, capabilities),
-            _channel("email", "Email", "warning" if risky_email_accounts or dead_outbound else "success", email_cases + pending_outbound, risky_email_accounts + dead_outbound, "/channels", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities),
-            _channel("runtime", "Runtime", "danger" if dead_runtime else "success", pending_outbound, dead_runtime, "/runtime", CAP_RUNTIME_MANAGE, capabilities),
+            _channel(
+                "webchat",
+                "WebChat",
+                "warning" if handoff_count else "success",
+                webchat_cases + open_webchat_conversations,
+                handoff_count,
+                "/workspace",
+                CAP_WEBCHAT_HANDOFF_ACCEPT,
+                capabilities,
+            ),
+            _channel(
+                "webcall",
+                "WebCall",
+                "warning" if active_webcalls else "success",
+                active_webcalls,
+                active_webcalls,
+                "/workspace",
+                CAP_WEBCALL_VOICE_QUEUE_VIEW,
+                capabilities,
+            ),
+            _channel(
+                "email",
+                "Email",
+                (
+                    "warning"
+                    if risky_email_accounts or dead_outbound
+                    else "success"
+                ),
+                email_cases + pending_outbound,
+                risky_email_accounts + dead_outbound,
+                "/channels",
+                CAP_CHANNEL_ACCOUNT_MANAGE,
+                capabilities,
+            ),
+            _channel(
+                "runtime",
+                "Runtime",
+                "danger" if dead_runtime else "success",
+                pending_outbound,
+                dead_runtime,
+                "/runtime",
+                CAP_RUNTIME_MANAGE,
+                capabilities,
+            ),
         ],
-        "bulletin_impact": _bulletin_impact(db, now),
+        "bulletin_impact": _bulletin_impact(db, scope, now),
         "governance_lanes": [
-            _lane("queue-load", "队列负载", active_count, _tone(sla_risk + overdue, danger=3), "下钻案例队列和团队负载", "/workspace", CAP_TICKET_READ, capabilities),
-            _lane("bulletin-impact", "公告影响", active_bulletins, _tone(active_bulletins, danger=5), "创建公告治理任务", "/control-tower", CAP_BULLETIN_MANAGE, capabilities),
-            _lane("rbac-lens", "权限覆盖", capability_overrides, _tone(capability_overrides, danger=10), f"活跃账号 {active_users}；复核高风险覆盖", "/administration", CAP_USER_MANAGE, capabilities),
-            _lane("provider-channel", "渠道账号", active_email_accounts + risky_channel_accounts, _tone(risky_email_accounts + risky_channel_accounts, danger=1), "检查渠道账号和兜底线路", "/channels", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities),
-            _lane("ai-governance", "AI 治理", published_ai_configs + draft_ai_configs, _tone(draft_ai_configs, danger=3), "复核已发布配置和草稿", "/knowledge", CAP_AI_CONFIG_MANAGE, capabilities),
-            _lane("audit-safety", "审计活跃", recent_audit, _tone(recent_audit, danger=50), "查看运行与审计证据", "/runtime", CAP_RUNTIME_MANAGE, capabilities),
+            _lane(
+                "queue-load",
+                "队列负载",
+                active_count,
+                _tone(sla_risk + overdue, danger=3),
+                "下钻案例队列和团队负载",
+                "/workspace",
+                CAP_TICKET_READ,
+                capabilities,
+            ),
+            _lane(
+                "bulletin-impact",
+                "公告影响",
+                active_bulletins,
+                _tone(active_bulletins, danger=5),
+                "创建公告治理任务",
+                "/control-tower",
+                CAP_BULLETIN_MANAGE,
+                capabilities,
+            ),
+            _lane(
+                "rbac-lens",
+                "权限覆盖",
+                capability_overrides,
+                _tone(capability_overrides, danger=10),
+                f"活跃账号 {active_users}；复核高风险覆盖",
+                "/administration",
+                CAP_USER_MANAGE,
+                capabilities,
+            ),
+            _lane(
+                "provider-channel",
+                "渠道账号",
+                active_email_accounts + risky_channel_accounts,
+                _tone(risky_email_accounts + risky_channel_accounts, danger=1),
+                "检查渠道账号和兜底线路",
+                "/channels",
+                CAP_CHANNEL_ACCOUNT_MANAGE,
+                capabilities,
+            ),
+            _lane(
+                "ai-governance",
+                "AI 治理",
+                published_ai_configs + draft_ai_configs,
+                _tone(draft_ai_configs, danger=3),
+                "复核已发布配置和草稿",
+                "/knowledge",
+                CAP_AI_CONFIG_MANAGE,
+                capabilities,
+            ),
+            _lane(
+                "audit-safety",
+                "审计活跃",
+                recent_audit,
+                _tone(recent_audit, danger=50),
+                "查看运行与审计证据",
+                "/runtime",
+                CAP_RUNTIME_MANAGE,
+                capabilities,
+            ),
         ],
         "template_blocks": [
-            {"key": "kpi-tower", "label": "KPI / Tower", "backend_contract": "/api/lite/control-tower", "status": "implemented", "evidence": "tickets, tasks, channels and runtime", "href": "/control-tower"},
-            {"key": "provider-ops", "label": "Channel Operations", "backend_contract": "/api/channel-control/onboarding-tasks", "status": "implemented", "evidence": "canonical onboarding and repair tasks", "href": "/channels"},
-            {"key": "speedaf-wizard", "label": "Speedaf Governed Actions", "backend_contract": "Speedaf capability gates", "status": "implemented", "evidence": "workspace confirmation and result semantics", "href": "/workspace"},
+            {
+                "key": "kpi-tower",
+                "label": "KPI / Tower",
+                "backend_contract": "/api/lite/control-tower",
+                "status": "implemented",
+                "evidence": "tenant-scoped tickets, tasks, channels and runtime",
+                "href": "/control-tower",
+            },
+            {
+                "key": "provider-ops",
+                "label": "Channel Operations",
+                "backend_contract": "/api/channel-control/onboarding-tasks",
+                "status": "implemented",
+                "evidence": "canonical onboarding and repair tasks",
+                "href": "/channels",
+            },
+            {
+                "key": "speedaf-wizard",
+                "label": "Speedaf Governed Actions",
+                "backend_contract": "Speedaf capability gates",
+                "status": "implemented",
+                "evidence": "workspace confirmation and result semantics",
+                "href": "/workspace",
+            },
         ],
         "facts": {
             "unassigned": unassigned,
@@ -422,7 +1009,9 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
             "active_users": active_users,
             "capability_overrides": capability_overrides,
             "recent_admin_audit_24h": recent_audit,
-            "speedaf_write_capabilities": sorted(capabilities & SPEEDAF_WRITE_CAPABILITIES),
+            "speedaf_write_capabilities": sorted(
+                capabilities & SPEEDAF_WRITE_CAPABILITIES
+            ),
             "active_control_tower_actions": len(active_control_actions),
         },
     }
