@@ -20,6 +20,8 @@ from .tenant_authority import tenant_key_for_id
 
 ROOT = Path(__file__).resolve().parents[3]
 TARGETS_PATH = ROOT / "config/operations/outcome-metric-targets.v1.json"
+REOPEN_WINDOW = timedelta(hours=72)
+REPEAT_CONTACT_WINDOW = timedelta(days=7)
 
 
 class OutcomeMetricConfigurationError(RuntimeError):
@@ -32,12 +34,23 @@ class TicketMetricRow:
     customer_id: int | None
     created_at: datetime
     closed_at: datetime | None
+    tracking_number: str | None
+    scenario_key: str | None
+
+    @property
+    def repeat_contact_identity(self) -> tuple[int, str, str] | None:
+        tracking = str(self.tracking_number or "").strip().upper()
+        scenario = str(self.scenario_key or "").strip().lower()
+        if self.customer_id is None or not tracking or not scenario:
+            return None
+        return self.customer_id, tracking, scenario
 
 
 @dataclass(frozen=True)
 class WindowFacts:
     values: dict[str, tuple[float | None, int, int]]
     source_ticket_ids: tuple[int, ...]
+    diagnostics: dict[str, Any]
 
 
 def _targets() -> dict[str, Any]:
@@ -47,7 +60,7 @@ def _targets() -> dict[str, Any]:
         raise OutcomeMetricConfigurationError(
             "outcome_metric_targets_unavailable"
         ) from exc
-    if payload.get("schema") != "nexus.outcome-metric-targets.v1":
+    if payload.get("schema") != "nexus.outcome-metric-targets.v2":
         raise OutcomeMetricConfigurationError("outcome_metric_targets_invalid")
     if not isinstance(payload.get("metrics"), dict):
         raise OutcomeMetricConfigurationError("outcome_metric_targets_empty")
@@ -66,7 +79,10 @@ def _p90(values: Iterable[int]) -> float | None:
     ordered = sorted(max(0, int(value)) for value in values)
     if not ordered:
         return None
-    index = min(len(ordered) - 1, max(0, math.ceil(0.9 * len(ordered)) - 1))
+    index = min(
+        len(ordered) - 1,
+        max(0, math.ceil(0.9 * len(ordered)) - 1),
+    )
     return float(ordered[index])
 
 
@@ -123,18 +139,101 @@ def _ticket_rows(
             Ticket.customer_id,
             Ticket.created_at,
             Ticket.closed_at,
+            Ticket.tracking_number,
+            Ticket.case_type,
+            Ticket.sub_category,
+            Ticket.category,
+            Ticket.ai_classification,
         )
         .all()
     )
-    return [
-        TicketMetricRow(
-            id=int(ticket_id),
-            customer_id=int(customer_id) if customer_id is not None else None,
-            created_at=ensure_utc(created_at) or start,
-            closed_at=ensure_utc(closed_at) if closed_at is not None else None,
+    result: list[TicketMetricRow] = []
+    for (
+        ticket_id,
+        customer_id,
+        created_at,
+        closed_at,
+        tracking_number,
+        case_type,
+        sub_category,
+        category,
+        ai_classification,
+    ) in rows:
+        scenario_key = next(
+            (
+                str(value).strip().lower()
+                for value in (
+                    case_type,
+                    sub_category,
+                    category,
+                    ai_classification,
+                )
+                if str(value or "").strip()
+            ),
+            None,
         )
-        for ticket_id, customer_id, created_at, closed_at in rows
-    ]
+        result.append(
+            TicketMetricRow(
+                id=int(ticket_id),
+                customer_id=(
+                    int(customer_id) if customer_id is not None else None
+                ),
+                created_at=ensure_utc(created_at) or start,
+                closed_at=(
+                    ensure_utc(closed_at) if closed_at is not None else None
+                ),
+                tracking_number=(
+                    str(tracking_number).strip()
+                    if str(tracking_number or "").strip()
+                    else None
+                ),
+                scenario_key=scenario_key,
+            )
+        )
+    return result
+
+
+def _payload_bool(row: CaseOutcomeRecord, key: str) -> bool | None:
+    payload = row.payload_json if isinstance(row.payload_json, dict) else {}
+    value = payload.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _ancestor_execution_attempt_id(
+    record: CaseOutcomeRecord,
+    *,
+    record_by_id: dict[int, CaseOutcomeRecord],
+) -> int | None:
+    observed: set[int] = set()
+    current: CaseOutcomeRecord | None = record
+    while current is not None and current.id not in observed:
+        observed.add(current.id)
+        if current.record_type == "execution_attempt":
+            return current.id
+        parent_id = current.parent_record_id
+        current = record_by_id.get(parent_id) if parent_id is not None else None
+    return None
+
+
+def _repeat_contacts(
+    tickets: list[TicketMetricRow],
+) -> tuple[set[int], set[int]]:
+    by_identity: dict[tuple[int, str, str], list[TicketMetricRow]] = defaultdict(list)
+    eligible: set[int] = set()
+    repeated: set[int] = set()
+    for row in tickets:
+        identity = row.repeat_contact_identity
+        if identity is None:
+            continue
+        eligible.add(row.id)
+        by_identity[identity].append(row)
+    for rows in by_identity.values():
+        ordered = sorted(rows, key=lambda item: (item.created_at, item.id))
+        for index, row in enumerate(ordered[1:], start=1):
+            prior = ordered[index - 1]
+            if row.created_at - prior.created_at <= REPEAT_CONTACT_WINDOW:
+                repeated.add(row.id)
+    return repeated, eligible
 
 
 def _window_facts(
@@ -149,7 +248,9 @@ def _window_facts(
     ticket_ids = [row.id for row in tickets]
     ticket_id_set = set(ticket_ids)
     terminal_ticket_ids = {
-        row.id for row in tickets if row.closed_at is not None and row.closed_at < end
+        row.id
+        for row in tickets
+        if row.closed_at is not None and row.closed_at < end
     }
 
     outcome_rows: list[CaseOutcomeRecord] = []
@@ -158,58 +259,87 @@ def _window_facts(
             db.query(CaseOutcomeRecord)
             .filter(
                 CaseOutcomeRecord.ticket_id.in_(ticket_ids),
-                CaseOutcomeRecord.occurred_at >= start,
                 CaseOutcomeRecord.occurred_at < end,
             )
             .order_by(
                 CaseOutcomeRecord.ticket_id.asc(),
                 CaseOutcomeRecord.sequence.asc(),
+                CaseOutcomeRecord.id.asc(),
             )
             .all()
         )
+    record_by_id = {row.id: row for row in outcome_rows}
     outcomes_by_ticket: dict[int, list[CaseOutcomeRecord]] = defaultdict(list)
     for row in outcome_rows:
         outcomes_by_ticket[row.ticket_id].append(row)
 
     safe_closed: set[int] = set()
+    reopen_eligible: set[int] = set()
     reopened_72h: set[int] = set()
     notified: set[int] = set()
     repair_required: set[int] = set()
+    first_contact_eligible: set[int] = set()
+    first_contact_resolved: set[int] = set()
     execution_attempts: list[CaseOutcomeRecord] = []
-    operational_success_parents: set[int] = set()
+    operationally_completed_attempts: set[int] = set()
     provider_receipts: list[CaseOutcomeRecord] = []
     provider_failures = 0
+
     for ticket_id, records in outcomes_by_ticket.items():
-        closed_rows = [
+        closure_rows = [
             row
             for row in records
-            if row.record_type == "closure_assessment" and row.state == "closed"
+            if row.record_type == "closure_assessment"
+            and row.state in {"closed", "reopened"}
         ]
-        reopen_rows = [
-            row
-            for row in records
-            if row.record_type == "closure_assessment" and row.state == "reopened"
-        ]
-        if closed_rows:
+        closed_rows = [row for row in closure_rows if row.state == "closed"]
+        reopen_rows = [row for row in closure_rows if row.state == "reopened"]
+        if (
+            ticket_id in terminal_ticket_ids
+            and closure_rows
+            and closure_rows[-1].state == "closed"
+        ):
             safe_closed.add(ticket_id)
-        for reopened in reopen_rows:
-            reopened_at = ensure_utc(reopened.occurred_at)
-            if reopened_at is None:
+
+        for closed in closed_rows:
+            closed_at = ensure_utc(closed.occurred_at)
+            if closed_at is None or closed_at + REOPEN_WINDOW > end:
                 continue
-            prior = [
-                ensure_utc(row.occurred_at)
-                for row in closed_rows
-                if ensure_utc(row.occurred_at) is not None
-                and ensure_utc(row.occurred_at) <= reopened_at
-            ]
-            if prior and reopened_at - max(prior) <= timedelta(hours=72):
+            reopen_eligible.add(ticket_id)
+            if any(
+                (reopened_at := ensure_utc(reopened.occurred_at)) is not None
+                and closed_at <= reopened_at <= closed_at + REOPEN_WINDOW
+                for reopened in reopen_rows
+            ):
                 reopened_72h.add(ticket_id)
+
+        assessments = [
+            row
+            for row in records
+            if row.record_type == "closure_assessment"
+        ]
+        if any(
+            _payload_bool(row, "first_contact_eligible") is True
+            for row in assessments
+        ):
+            first_contact_eligible.add(ticket_id)
+            if (
+                ticket_id in safe_closed
+                and any(
+                    _payload_bool(row, "first_contact_resolved") is True
+                    for row in assessments
+                )
+                and ticket_id not in reopened_72h
+            ):
+                first_contact_resolved.add(ticket_id)
+
         if any(
             row.record_type == "customer_notification"
-            and row.state in {"succeeded", "delivered", "confirmed", "waived"}
+            and row.state in {"delivered", "confirmed", "waived"}
             for row in records
         ):
             notified.add(ticket_id)
+
         if any(
             row.state in {"failed", "repair_required"}
             for row in records
@@ -217,6 +347,7 @@ def _window_facts(
             in {"execution_attempt", "provider_receipt", "operational_outcome"}
         ):
             repair_required.add(ticket_id)
+
         attempts = [
             row
             for row in records
@@ -224,13 +355,18 @@ def _window_facts(
             and row.state in {"succeeded", "failed"}
         ]
         execution_attempts.extend(attempts)
-        operational_success_parents.update(
-            row.parent_record_id
-            for row in records
-            if row.record_type == "operational_outcome"
-            and row.state in {"succeeded", "delivered", "confirmed"}
-            and row.parent_record_id is not None
-        )
+        for row in records:
+            if (
+                row.record_type == "operational_outcome"
+                and row.state in {"succeeded", "delivered", "confirmed"}
+            ):
+                attempt_id = _ancestor_execution_attempt_id(
+                    row,
+                    record_by_id=record_by_id,
+                )
+                if attempt_id is not None:
+                    operationally_completed_attempts.add(attempt_id)
+
         receipts = [
             row
             for row in records
@@ -245,14 +381,23 @@ def _window_facts(
     if ticket_ids:
         for ticket_id, count in (
             db.query(TicketComment.ticket_id, func.count(TicketComment.id))
-            .filter(TicketComment.ticket_id.in_(ticket_ids))
+            .filter(
+                TicketComment.ticket_id.in_(ticket_ids),
+                TicketComment.author_id.is_not(None),
+            )
             .group_by(TicketComment.ticket_id)
             .all()
         ):
             comments_by_ticket[int(ticket_id)] = int(count or 0)
         for ticket_id, count in (
-            db.query(TicketInternalNote.ticket_id, func.count(TicketInternalNote.id))
-            .filter(TicketInternalNote.ticket_id.in_(ticket_ids))
+            db.query(
+                TicketInternalNote.ticket_id,
+                func.count(TicketInternalNote.id),
+            )
+            .filter(
+                TicketInternalNote.ticket_id.in_(ticket_ids),
+                TicketInternalNote.author_id.is_not(None),
+            )
             .group_by(TicketInternalNote.ticket_id)
             .all()
         ):
@@ -271,16 +416,11 @@ def _window_facts(
         )
     accepted_handoffs = [row for row in handoffs if row.accepted_at is not None]
     handoff_waits = [
-        int(
-            (
-                ensure_utc(row.accepted_at)
-                - ensure_utc(row.requested_at)
-            ).total_seconds()
-        )
+        int((accepted_at - requested_at).total_seconds())
         for row in accepted_handoffs
-        if ensure_utc(row.accepted_at) is not None
-        and ensure_utc(row.requested_at) is not None
-        and ensure_utc(row.accepted_at) >= ensure_utc(row.requested_at)
+        if (accepted_at := ensure_utc(row.accepted_at)) is not None
+        and (requested_at := ensure_utc(row.requested_at)) is not None
+        and accepted_at >= requested_at
     ]
     handoff_touches: dict[int, int] = defaultdict(int)
     for row in accepted_handoffs:
@@ -296,25 +436,8 @@ def _window_facts(
     total_touches = sum(
         touches_by_ticket[ticket_id] for ticket_id in terminal_ticket_ids
     )
-    first_contact_resolved = {
-        ticket_id
-        for ticket_id in safe_closed
-        if ticket_id in terminal_ticket_ids
-        and touches_by_ticket.get(ticket_id, 0) <= 1
-        and ticket_id not in reopened_72h
-    }
 
-    repeat_contacts: set[int] = set()
-    by_customer: dict[int, list[TicketMetricRow]] = defaultdict(list)
-    for row in tickets:
-        if row.customer_id is not None:
-            by_customer[row.customer_id].append(row)
-    for customer_rows in by_customer.values():
-        ordered = sorted(customer_rows, key=lambda row: (row.created_at, row.id))
-        for index, row in enumerate(ordered[1:], start=1):
-            previous = ordered[index - 1]
-            if row.created_at - previous.created_at <= timedelta(days=7):
-                repeat_contacts.add(row.id)
+    repeat_contacts, repeat_contact_eligible = _repeat_contacts(tickets)
 
     tenant_key = tenant_key_for_id(db, tenant_id)
     controls = (
@@ -346,7 +469,7 @@ def _window_facts(
             .distinct()
             .all()
         }
-    ai_quality_numerator = sum(
+    ai_contained = sum(
         1
         for control, conversation in controls
         if control.outcome == "ai_resolved"
@@ -354,35 +477,32 @@ def _window_facts(
         and control.conversation_id not in handoff_conversations
     )
 
-    completed_attempt_ids = {
-        row.id
-        for row in execution_attempts
-        if row.state == "succeeded"
-        and (
-            not operational_success_parents
-            or row.id in operational_success_parents
-        )
-    }
     values: dict[str, tuple[float | None, int, int]] = {
         "safe_effective_closure_rate": (
-            _ratio(len(safe_closed & terminal_ticket_ids), len(terminal_ticket_ids)),
-            len(safe_closed & terminal_ticket_ids),
+            _ratio(len(safe_closed), len(terminal_ticket_ids)),
+            len(safe_closed),
             len(terminal_ticket_ids),
         ),
         "first_contact_resolution_rate": (
-            _ratio(len(first_contact_resolved), len(terminal_ticket_ids)),
+            _ratio(
+                len(first_contact_resolved),
+                len(first_contact_eligible),
+            ),
             len(first_contact_resolved),
-            len(terminal_ticket_ids),
+            len(first_contact_eligible),
         ),
         "reopen_72h_rate": (
-            _ratio(len(reopened_72h), len(safe_closed)),
+            _ratio(len(reopened_72h), len(reopen_eligible)),
             len(reopened_72h),
-            len(safe_closed),
+            len(reopen_eligible),
         ),
         "repeat_contact_7d_rate": (
-            _ratio(len(repeat_contacts), len(tickets)),
+            _ratio(
+                len(repeat_contacts),
+                len(repeat_contact_eligible),
+            ),
             len(repeat_contacts),
-            len(tickets),
+            len(repeat_contact_eligible),
         ),
         "customer_notification_compliance": (
             _ratio(len(notified & safe_closed), len(safe_closed)),
@@ -390,8 +510,11 @@ def _window_facts(
             len(safe_closed),
         ),
         "action_operational_completion_rate": (
-            _ratio(len(completed_attempt_ids), len(execution_attempts)),
-            len(completed_attempt_ids),
+            _ratio(
+                len(operationally_completed_attempts),
+                len(execution_attempts),
+            ),
+            len(operationally_completed_attempts),
             len(execution_attempts),
         ),
         "repair_required_rate": (
@@ -419,13 +542,31 @@ def _window_facts(
             provider_failures,
             len(provider_receipts),
         ),
-        "ai_live_resolution_quality_rate": (
-            _ratio(ai_quality_numerator, len(controls)),
-            ai_quality_numerator,
-            len(controls),
+    }
+    diagnostics = {
+        "ai_live_containment": {
+            "value": _ratio(ai_contained, len(controls)),
+            "numerator": ai_contained,
+            "denominator": len(controls),
+            "quality_claim": False,
+            "reason": (
+                "Containment is operational routing data, not proof of customer "
+                "resolution quality. It is excluded from scored outcome metrics."
+            ),
+        },
+        "first_contact_resolution_contract": (
+            "Only explicit closure-assessment fields first_contact_eligible and "
+            "first_contact_resolved enter the metric."
+        ),
+        "repeat_contact_identity": (
+            "customer_id + tracking_number + scenario_key within 7 days"
         ),
     }
-    return WindowFacts(values=values, source_ticket_ids=tuple(ticket_ids))
+    return WindowFacts(
+        values=values,
+        source_ticket_ids=tuple(ticket_ids),
+        diagnostics=diagnostics,
+    )
 
 
 def build_business_outcome_metrics(
@@ -493,10 +634,11 @@ def build_business_outcome_metrics(
                 "delta": delta,
                 "trend": trend,
                 "drilldown": contract["drilldown"],
+                "definition": contract["definition"],
             }
         )
     return {
-        "schema": "nexus.business-outcome-metrics.v1",
+        "schema": "nexus.business-outcome-metrics.v2",
         "generated_at": observed_at.isoformat(),
         "window": {
             "days": window_days,
@@ -508,4 +650,5 @@ def build_business_outcome_metrics(
         "items": items,
         "source_ticket_count": len(current.source_ticket_ids),
         "contains_customer_data": False,
+        "diagnostics": current.diagnostics,
     }
