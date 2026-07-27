@@ -98,6 +98,15 @@ class SecretCryptoService:
         )
 
     @classmethod
+    def whatsapp(cls) -> "SecretCryptoService":
+        return cls(
+            purpose="whatsapp",
+            key_file_env="WHATSAPP_ENCRYPTION_KEY_FILE",
+            key_env="WHATSAPP_ENCRYPTION_KEY",
+            default_prod_key_path="/run/nexus/whatsapp_encryption_key",
+        )
+
+    @classmethod
     def identity_mfa(cls) -> "SecretCryptoService":
         return cls(
             purpose="identity-mfa",
