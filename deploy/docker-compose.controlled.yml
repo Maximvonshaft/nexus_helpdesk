@@ -59,11 +59,18 @@ x-controlled-app: &controlled_app
     PROVIDER_RUNTIME_CANARY_PERCENT: ${PROVIDER_RUNTIME_CANARY_PERCENT:-0}
     PRIVATE_AI_RUNTIME_ENABLED: ${PRIVATE_AI_RUNTIME_ENABLED:-false}
     KNOWLEDGE_EMBEDDINGS_ENABLED: ${KNOWLEDGE_EMBEDDINGS_ENABLED:-false}
-    ENABLE_OUTBOUND_DISPATCH: "false"
-    OUTBOUND_PROVIDER: disabled
+    ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
+    OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
     OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: "false"
-    WHATSAPP_NATIVE_ENABLED: "false"
-    WHATSAPP_DISPATCH_MODE: disabled
+    WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+    WHATSAPP_BAILEYS_SIDECAR_URL: http://whatsapp-sidecar-controlled:18793
+    WHATSAPP_BAILEYS_SIDECAR_TOKEN_FILE: /run/nexus/whatsapp_baileys_sidecar_token
+    WHATSAPP_CONNECTOR_KEY_FILE: /run/nexus/whatsapp_connector_key
+    WHATSAPP_CONNECTOR_HMAC_SECRET_FILE: /run/nexus/whatsapp_connector_hmac_secret
+    WHATSAPP_ENCRYPTION_KEY_FILE: /run/nexus/whatsapp_encryption_key
+    WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
+    WHATSAPP_TRANSPORT_TIMEOUT_SECONDS: ${WHATSAPP_TRANSPORT_TIMEOUT_SECONDS:-10}
+    WHATSAPP_CONNECTOR_TIMESTAMP_TOLERANCE_SECONDS: ${WHATSAPP_CONNECTOR_TIMESTAMP_TOLERANCE_SECONDS:-300}
     EMAIL_MAILBOX_SYNC_ENABLED: "false"
     ALLOW_LEGACY_ORIGINLESS_OUTBOUND: "false"
     WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED: "false"
@@ -153,6 +160,7 @@ services:
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:rw
       - ${NEXUS_UPLOAD_BACKUP_HOST_PATH:?set upload backup path}:/var/backups/nexusdesk/uploads:ro
+      - ${NEXUS_WHATSAPP_SECRETS_HOST_PATH:?set WhatsApp secrets directory}:/run/nexus:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
     ports:
       - "127.0.0.1:${CONTROLLED_APP_PORT:-18095}:8080"
@@ -187,6 +195,65 @@ services:
     depends_on:
       migrate-controlled:
         condition: service_completed_successfully
+
+  whatsapp-sidecar-controlled:
+    image: ${WHATSAPP_SIDECAR_IMAGE:?set immutable WhatsApp sidecar image digest}
+    profiles:
+      - whatsapp-baileys
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: production
+      WA_SIDECAR_CONNECTOR_MODE: baileys
+      WA_SIDECAR_PORT: "18793"
+      NEXUS_BACKEND_URL: http://app-controlled:8080
+      WA_SIDECAR_INTERNAL_TOKEN_FILE: /run/nexus/whatsapp_baileys_sidecar_token
+      NEXUS_CONNECTOR_KEY_FILE: /run/nexus/whatsapp_connector_key
+      NEXUS_CONNECTOR_HMAC_SECRET_FILE: /run/nexus/whatsapp_connector_hmac_secret
+      WHATSAPP_SESSION_ROOT: /data/whatsapp-sessions
+      WHATSAPP_CALLBACK_SPOOL_ROOT: /data/whatsapp-callback-spool
+      WA_SIDECAR_RECONCILE_INTERVAL_MS: ${WA_SIDECAR_RECONCILE_INTERVAL_MS:-15000}
+      WA_SIDECAR_CALLBACK_RETRY_INTERVAL_MS: ${WA_SIDECAR_CALLBACK_RETRY_INTERVAL_MS:-5000}
+      WA_SIDECAR_CREDENTIAL_PERSISTENCE_TIMEOUT_MS: ${WA_SIDECAR_CREDENTIAL_PERSISTENCE_TIMEOUT_MS:-15000}
+      WA_SIDECAR_QR_TTL_MS: ${WA_SIDECAR_QR_TTL_MS:-60000}
+      WA_SIDECAR_RECONNECT_INITIAL_MS: ${WA_SIDECAR_RECONNECT_INITIAL_MS:-2000}
+      WA_SIDECAR_RECONNECT_MAX_MS: ${WA_SIDECAR_RECONNECT_MAX_MS:-30000}
+      WA_SIDECAR_RECONNECT_MAX_ATTEMPTS: ${WA_SIDECAR_RECONNECT_MAX_ATTEMPTS:-12}
+      WA_SIDECAR_RECONNECT_JITTER: ${WA_SIDECAR_RECONNECT_JITTER:-0.25}
+      WA_SIDECAR_IDEMPOTENCY_TTL_MS: ${WA_SIDECAR_IDEMPOTENCY_TTL_MS:-86400000}
+      LOG_LEVEL: ${WA_SIDECAR_LOG_LEVEL:-info}
+    volumes:
+      - whatsapp-sessions:/data/whatsapp-sessions
+      - whatsapp-callback-spool:/data/whatsapp-callback-spool
+      - ${NEXUS_WHATSAPP_SECRETS_HOST_PATH:?set WhatsApp secrets directory}:/run/nexus:ro
+    networks:
+      - controlled
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    pids_limit: 256
+    stop_grace_period: 45s
+    command:
+      - node
+      - dist/index.js
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:18793/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      app-controlled:
+        condition: service_healthy
 
   livekit-agent-controlled:
     <<: *controlled_app
@@ -241,6 +308,7 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_OUTBOUND:-2}
     volumes:
       - ${NEXUS_UPLOADS_HOST_PATH:?set uploads path}:/app/backend/uploads:ro
+      - ${NEXUS_WHATSAPP_SECRETS_HOST_PATH:?set WhatsApp secrets directory}:/run/nexus:ro
       - prometheus-multiproc:/var/run/nexus-prometheus
     command:
       - python
@@ -320,3 +388,5 @@ networks:
 
 volumes:
   prometheus-multiproc:
+  whatsapp-sessions:
+  whatsapp-callback-spool:
