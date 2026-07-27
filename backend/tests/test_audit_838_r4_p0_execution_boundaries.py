@@ -16,6 +16,7 @@ os.environ.setdefault(
     "sqlite:////tmp/audit-838-r4-p0.db",
 )
 
+from app.api.operator_agent_state import _managed_operator
 from app.db import Base
 from app.enums import (
     JobStatus,
@@ -39,6 +40,7 @@ from app.models import (
 )
 from app.models_channel_intake import EmailIntakeQuarantine
 from app.models_job_scope import BackgroundJobScope
+from app.models_whatsapp import WhatsAppConnection
 from app.services.background_job_execution_scope import (
     BackgroundJobExecutionScopeError,
     claim_executable_background_jobs,
@@ -51,8 +53,7 @@ from app.services.email_mailbox_polling_service import (
     _resolve_ticket,
     poll_imap_account,
 )
-from app.services.whatsapp_native_inbound import ingest_whatsapp_native_inbound
-from app.api.operator_agent_state import _managed_operator
+from app.services.whatsapp_inbound import ingest_whatsapp_inbound
 
 register_all_models()
 install_background_job_scope_events()
@@ -153,7 +154,11 @@ def _org(db, tenant: Tenant, suffix: str):
 
 def test_unresolved_and_missing_scope_jobs_are_never_claimed(db_session):
     tenant = _tenant(db_session, "r4-worker")
-    _market, _team, _user, _customer, ticket = _org(db_session, tenant, "WORKER")
+    _market, _team, _user, _customer, ticket = _org(
+        db_session,
+        tenant,
+        "WORKER",
+    )
     executable = BackgroundJob(
         queue_name="speedaf_work_order",
         job_type="speedaf.work_order.create",
@@ -260,9 +265,13 @@ def test_customer_identity_is_atomic_and_tenant_scoped(db_session):
     assert other_tenant.tenant_id == tenant_b.id
 
 
-def test_native_whatsapp_uses_account_tenant_and_conversation_first(db_session):
+def test_canonical_whatsapp_uses_account_tenant_and_conversation_first(db_session):
     tenant = _tenant(db_session, "r4-whatsapp")
-    market, _team, _user, _customer, _ticket = _org(db_session, tenant, "WA")
+    market, _team, _user, _customer, _ticket = _org(
+        db_session,
+        tenant,
+        "WA",
+    )
     account = ChannelAccount(
         provider=SourceChannel.whatsapp.value,
         account_id="r4-wa-account",
@@ -273,10 +282,26 @@ def test_native_whatsapp_uses_account_tenant_and_conversation_first(db_session):
     )
     db_session.add(account)
     db_session.flush()
+    connection = WhatsAppConnection(
+        tenant_id=tenant.id,
+        channel_account_id=account.id,
+        transport="baileys_sidecar",
+        desired_state="active",
+        observed_state="connected",
+        authentication_state="linked",
+        listener_state="active",
+        verification_state="verified",
+        desired_generation=1,
+        observed_generation=1,
+        sidecar_session_key=account.account_id,
+    )
+    db_session.add(connection)
+    db_session.flush()
 
-    result = ingest_whatsapp_native_inbound(
+    result = ingest_whatsapp_inbound(
         db_session,
         {
+            "transport": "baileys_sidecar",
             "account_id": account.account_id,
             "external_message_id": "wamid-r4-1",
             "chat_jid": "15551234567@s.whatsapp.net",
@@ -321,6 +346,7 @@ def test_imap_resolution_cannot_cross_tenant(db_session):
         host="smtp.invalid.test",
         port=587,
         username="support-a",
+        password_encrypted="ciphertext",
         from_address="support-a@example.com",
         security_mode="starttls",
         is_active=True,
@@ -330,6 +356,7 @@ def test_imap_resolution_cannot_cross_tenant(db_session):
         imap_host="imap.invalid.test",
         imap_port=993,
         imap_username="support-a",
+        imap_password_encrypted="ciphertext",
         imap_security_mode="ssl",
         created_by=user_a.id,
         updated_by=user_a.id,
@@ -358,12 +385,17 @@ def test_unmatched_imap_message_is_durably_quarantined_before_cursor_advances(
     db_session,
 ):
     tenant = _tenant(db_session, "r4-email-quarantine")
-    market, _team, user, _customer, _ticket = _org(db_session, tenant, "EQ")
+    market, _team, user, _customer, _ticket = _org(
+        db_session,
+        tenant,
+        "EQ",
+    )
     account = OutboundEmailAccount(
         display_name="Quarantine mailbox",
         host="smtp.invalid.test",
         port=587,
         username="support-q",
+        password_encrypted="ciphertext",
         from_address="support-q@example.com",
         security_mode="starttls",
         is_active=True,
