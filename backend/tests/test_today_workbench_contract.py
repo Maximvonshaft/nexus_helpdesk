@@ -20,9 +20,27 @@ from app import models as _models  # noqa: E402,F401
 from app import operator_models as _operator_models  # noqa: E402,F401
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
-from app.enums import ConversationState, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.enums import (  # noqa: E402
+    ConversationState,
+    JobStatus,
+    MessageStatus,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+    UserRole,
+)
 from app.main import app  # noqa: E402
-from app.models import BackgroundJob, Customer, Team, Ticket, TicketOutboundMessage, User  # noqa: E402
+from app.models import (  # noqa: E402
+    BackgroundJob,
+    Customer,
+    Team,
+    Tenant,
+    Ticket,
+    TicketOutboundMessage,
+    User,
+)
+from app.models_job_scope import BackgroundJobScope  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 
@@ -31,14 +49,43 @@ def _headers(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(str(user.id))}"}
 
 
-def _team(db_session) -> Team:
-    row = Team(name="Today Support", team_type="support")
+def _tenant(db_session) -> Tenant:
+    row = Tenant(
+        tenant_key="today-workbench",
+        display_name="Today Workbench",
+        is_active=True,
+    )
     db_session.add(row)
     db_session.flush()
     return row
 
 
-def _user(db_session, *, role: UserRole, team_id: int | None = None) -> User:
+def _ownership(tenant: Tenant) -> dict[str, object]:
+    return {
+        "tenant_id": tenant.id,
+        "tenant_assignment_source": "fixture",
+        "tenant_assignment_version": "today-workbench-test-v1",
+    }
+
+
+def _team(db_session, *, tenant: Tenant) -> Team:
+    row = Team(
+        name="Today Support",
+        team_type="support",
+        **_ownership(tenant),
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def _user(
+    db_session,
+    *,
+    tenant: Tenant,
+    role: UserRole,
+    team_id: int | None = None,
+) -> User:
     row = User(
         username=f"{role.value}_today",
         display_name=f"{role.value.title()} Today",
@@ -47,6 +94,7 @@ def _user(db_session, *, role: UserRole, team_id: int | None = None) -> User:
         role=role,
         team_id=team_id,
         is_active=True,
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
@@ -56,6 +104,7 @@ def _user(db_session, *, role: UserRole, team_id: int | None = None) -> User:
 def _ticket(
     db_session,
     *,
+    tenant: Tenant,
     ticket_no: str,
     team_id: int,
     assignee_id: int | None,
@@ -65,7 +114,11 @@ def _ticket(
     conversation_state: ConversationState = ConversationState.ai_active,
     category: str | None = None,
 ) -> Ticket:
-    customer = Customer(name=f"Customer {ticket_no}", email=f"{ticket_no.lower()}@example.test")
+    customer = Customer(
+        name=f"Customer {ticket_no}",
+        email=f"{ticket_no.lower()}@example.test",
+        **_ownership(tenant),
+    )
     db_session.add(customer)
     db_session.flush()
     now = utc_now()
@@ -76,15 +129,28 @@ def _ticket(
         customer_id=customer.id,
         source=TicketSource.user_message,
         source_channel=source_channel,
-        priority=TicketPriority.high if minutes_to_due is not None else TicketPriority.medium,
+        priority=(
+            TicketPriority.high
+            if minutes_to_due is not None
+            else TicketPriority.medium
+        ),
         status=status,
         team_id=team_id,
         assignee_id=assignee_id,
         conversation_state=conversation_state,
         category=category,
-        first_response_due_at=now + timedelta(minutes=minutes_to_due) if minutes_to_due is not None else None,
-        resolution_due_at=now + timedelta(minutes=minutes_to_due + 30) if minutes_to_due is not None else None,
+        first_response_due_at=(
+            now + timedelta(minutes=minutes_to_due)
+            if minutes_to_due is not None
+            else None
+        ),
+        resolution_due_at=(
+            now + timedelta(minutes=minutes_to_due + 30)
+            if minutes_to_due is not None
+            else None
+        ),
         customer_request="Where is my parcel?",
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
@@ -92,10 +158,17 @@ def _ticket(
 
 
 def _seed_today(db_session, *, role: UserRole):
-    team = _team(db_session)
-    user = _user(db_session, role=role, team_id=team.id)
+    tenant = _tenant(db_session)
+    team = _team(db_session, tenant=tenant)
+    user = _user(
+        db_session,
+        tenant=tenant,
+        role=role,
+        team_id=team.id,
+    )
     risk_ticket = _ticket(
         db_session,
+        tenant=tenant,
         ticket_no="TW-001",
         team_id=team.id,
         assignee_id=user.id,
@@ -106,6 +179,7 @@ def _seed_today(db_session, *, role: UserRole):
     )
     _ticket(
         db_session,
+        tenant=tenant,
         ticket_no="TW-002",
         team_id=team.id,
         assignee_id=None,
@@ -116,10 +190,10 @@ def _seed_today(db_session, *, role: UserRole):
     )
     db_session.add(
         OperatorTask(
-            source_type="webchat",
-            source_id="conversation-1",
+            tenant_id=tenant.id,
+            source_type="webchat_handoff",
+            source_id="today-handoff-1",
             ticket_id=risk_ticket.id,
-            webchat_conversation_id=101,
             task_type="handoff",
             status="pending",
             priority=10,
@@ -135,23 +209,43 @@ def _seed_today(db_session, *, role: UserRole):
             max_retries=3,
         )
     )
+    job = BackgroundJob(
+        queue_name="background",
+        job_type="probe",
+        payload_json="{}",
+        status=JobStatus.dead,
+        max_attempts=3,
+    )
+    db_session.add(job)
+    db_session.flush()
     db_session.add(
-        BackgroundJob(
-            queue_name="outbound",
-            job_type="probe",
-            payload_json="{}",
-            status="dead",
-            max_attempts=3,
+        BackgroundJobScope(
+            job_id=job.id,
+            scope_type="tenant",
+            tenant_id=tenant.id,
+            customer_id=risk_ticket.customer_id,
+            purpose="human_support",
+            resource_type="ticket",
+            resource_id=str(risk_ticket.id),
         )
     )
     db_session.flush()
     return user, risk_ticket
 
 
-def test_today_workbench_agent_contract_uses_real_ticket_and_handoff_counts(tmp_path):
+def test_today_workbench_agent_contract_uses_real_ticket_and_handoff_counts(
+    tmp_path,
+):
     db_file = tmp_path / "today_agent.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSession = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
     Base.metadata.create_all(engine)
     db_session = TestingSession()
     user, risk_ticket = _seed_today(db_session, role=UserRole.agent)
@@ -163,7 +257,10 @@ def test_today_workbench_agent_contract_uses_real_ticket_and_handoff_counts(tmp_
     app.dependency_overrides[get_db] = override_db
     try:
         client = TestClient(app)
-        response = client.get("/api/lite/today-workbench", headers=_headers(user))
+        response = client.get(
+            "/api/lite/today-workbench",
+            headers=_headers(user),
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -185,7 +282,13 @@ def test_today_workbench_agent_contract_uses_real_ticket_and_handoff_counts(tmp_
     assert metrics["sla_risk"]["value"] == 1
     assert payload["sla_priorities"][0]["ticket_id"] == risk_ticket.id
     assert payload["sla_priorities"][0]["minutes_to_due"] <= 20
-    assert {item["key"] for item in payload["interaction_states"]} >= {"loading", "empty", "error", "permission", "dirty"}
+    assert {item["key"] for item in payload["interaction_states"]} >= {
+        "loading",
+        "empty",
+        "error",
+        "permission",
+        "dirty",
+    }
     assert commands["cmd-webchat"]["enabled"] is True
     assert commands["cmd-ticket"]["enabled"] is True
     assert commands["cmd-email"]["enabled"] is True
@@ -194,8 +297,15 @@ def test_today_workbench_agent_contract_uses_real_ticket_and_handoff_counts(tmp_
 
 def test_today_workbench_admin_includes_runtime_recovery_command(tmp_path):
     db_file = tmp_path / "today_admin.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSession = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
     Base.metadata.create_all(engine)
     db_session = TestingSession()
     user, _risk_ticket = _seed_today(db_session, role=UserRole.admin)
@@ -207,7 +317,10 @@ def test_today_workbench_admin_includes_runtime_recovery_command(tmp_path):
     app.dependency_overrides[get_db] = override_db
     try:
         client = TestClient(app)
-        response = client.get("/api/lite/today-workbench", headers=_headers(user))
+        response = client.get(
+            "/api/lite/today-workbench",
+            headers=_headers(user),
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
