@@ -34,6 +34,7 @@ from .agent_routing_service import (
     request_handoff,
 )
 from .audit_service import log_admin_audit
+from .handoff_responsibility_policy import can_resume_handoff
 from .handoff_routing_policy import (
     HandoffRoutingPolicyError,
     active_decline_exists,
@@ -55,7 +56,6 @@ from .permissions import (
     has_global_case_visibility,
     resolve_capabilities,
 )
-from .ticketless_handoff_policy import can_resume_ticketless_handoff
 from .webchat_ai_turn_service import (
     ai_snapshot,
     safe_write_webchat_event,
@@ -338,14 +338,16 @@ def serialize_handoff_request(
         and conversation.active_agent_id == current_user.id
         and CAP_OUTBOUND_SEND in capabilities
     )
-    can_resume = False
-    if current_user is not None and conversation is not None:
-        can_resume = can_resume_ticketless_handoff(
+    can_resume = bool(
+        current_user is not None
+        and conversation is not None
+        and can_resume_handoff(
             handoff=request_row,
             conversation=conversation,
             user_id=current_user.id,
             capabilities=capabilities,
-        ) if ticket is None else CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities
+        )
+    )
     payload: dict[str, Any] = {
         "id": request_row.id,
         "conversation_id": conversation.public_id if conversation else None,
@@ -1042,16 +1044,11 @@ def resume_ai_for_handoff(
     current_user: User,
     note: str | None = None,
 ) -> dict[str, Any]:
-    capabilities = _require_capability(
-        db,
-        current_user=current_user,
-        capability=CAP_WEBCHAT_HANDOFF_RESUME_AI,
-        detail="webchat_handoff_resume_ai_requires_capability",
-    )
+    capabilities = resolve_capabilities(current_user, db)
     row = _request_by_id(db, request_id, lock=True)
     conversation, control, ticket = _context(db, row)
     _require_scope(db, current_user=current_user, control=control)
-    if ticket is None and not can_resume_ticketless_handoff(
+    if not can_resume_handoff(
         handoff=row,
         conversation=conversation,
         user_id=current_user.id,
@@ -1059,12 +1056,7 @@ def resume_ai_for_handoff(
     ):
         raise HTTPException(
             status_code=403,
-            detail="ticketless_handoff_resume_not_authorized",
-        )
-    if row.status not in OPEN_HANDOFF_STATUSES:
-        raise HTTPException(
-            status_code=409,
-            detail="webchat handoff request is already terminal",
+            detail="handoff_resume_not_authorized",
         )
     previous_agent_id = row.assigned_agent_id
     now = utc_now()
