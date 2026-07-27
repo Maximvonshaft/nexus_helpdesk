@@ -39,7 +39,10 @@ async function mockIncomingVoice(page: Page) {
 
   await page.addInitScript(([tokenKey, scopeKey]) => {
     sessionStorage.setItem(tokenKey, 'operator-token')
-    sessionStorage.setItem(scopeKey, JSON.stringify({ tenantKey: 'default', countryCode: 'ME', channelKey: 'voice' }))
+    sessionStorage.setItem(
+      scopeKey,
+      JSON.stringify({ tenantKey: 'default', countryCode: 'ME', channelKey: 'voice' }),
+    )
   }, [TOKEN_KEY, SCOPE_KEY])
 
   await page.route('**/api/**', async (route: Route) => {
@@ -76,7 +79,15 @@ async function mockIncomingVoice(page: Page) {
         items: [],
         next_cursor: null,
         scope: { tenant_hash: 'tenant-hash', country_code: 'ME', channel_key: 'voice' },
-        filters: { state: 'active', source_type: null, owner: 'any', priority: null, sla: null, retry: null, sort: 'oldest' },
+        filters: {
+          state: 'active',
+          source_type: null,
+          owner: 'any',
+          priority: null,
+          sla: null,
+          retry: null,
+          sort: 'oldest',
+        },
       })
     }
     if (url.pathname === '/api/operator/agent-state') return json(agentState())
@@ -100,12 +111,18 @@ async function mockIncomingVoice(page: Page) {
       }] : []
       return json({ items })
     }
-    if (url.pathname === '/api/webchat/admin/voice/wv_offer_1/reject' && request.method() === 'POST') {
+    if (
+      url.pathname === '/api/webchat/admin/voice/wv_offer_1/reject'
+      && request.method() === 'POST'
+    ) {
       rejectCount += 1
       offerVisible = false
       return json({ ok: true, voice_session_id: 'wv_offer_1', status: 'ringing' })
     }
-    if (url.pathname === '/api/webchat/admin/voice/wv_offer_1/accept' && request.method() === 'POST') {
+    if (
+      url.pathname === '/api/webchat/admin/voice/wv_offer_1/accept'
+      && request.method() === 'POST'
+    ) {
       acceptCount += 1
       offerVisible = false
       return json({
@@ -142,16 +159,25 @@ test('assigned offer is visible globally and rejection rotates without accepting
   await expect(dialog).toHaveCount(0)
 })
 
-test('accepting an offer enters the sole WebCall route and calls accept once', async ({ page }) => {
+test('entering WebCall does not accept or request microphone before explicit media join', async ({ page }) => {
   const state = await mockIncomingVoice(page)
   await page.goto('/workspace')
 
-  await page.getByRole('dialog', { name: '新的语音来电' }).getByRole('button', { name: '接听通话' }).click()
+  await page
+    .getByRole('dialog', { name: '新的语音来电' })
+    .getByRole('button', { name: '接听通话' })
+    .click()
+
   await expect(page).toHaveURL(/\/webcall\/wv_offer_1$/)
-  await expect.poll(state.acceptCount).toBe(1)
+  await expect.poll(state.acceptCount).toBe(0)
   await expect.poll(state.rejectCount).toBe(0)
   await expect(page.getByRole('heading', { name: '来电上下文' })).toBeVisible()
   await expect(page.getByText('Montenegro Caller')).toBeVisible()
   await expect(page.getByRole('link', { name: '工作台' })).toBeVisible()
+  await expect(page.getByText('LiveKit 会话凭证不可用')).toHaveCount(0)
+
+  await page.getByRole('button', { name: '接听并加入' }).click()
+
+  await expect.poll(state.acceptCount).toBe(1)
   await expect(page.getByText('LiveKit 会话凭证不可用')).toBeVisible()
 })
