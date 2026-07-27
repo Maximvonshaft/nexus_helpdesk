@@ -16,7 +16,8 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     "content-type": "application/json",
-    "content-length": Buffer.byteLength(body)
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store"
   });
   res.end(body);
 }
@@ -27,22 +28,45 @@ function matchAccountRoute(pathname: string): RouteMatch | null {
   return { accountId: decodeURIComponent(match[1]), action: match[2] };
 }
 
-async function readJson(req: IncomingMessage): Promise<any> {
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) {
-      throw new Error("payload_too_large");
-    }
+    if (size > MAX_BODY_BYTES) throw new Error("payload_too_large");
     chunks.push(buffer);
   }
   const body = Buffer.concat(chunks).toString("utf8");
-  return body ? JSON.parse(body) : {};
+  if (!body) return {};
+  const parsed = JSON.parse(body);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("object_payload_required");
+  }
+  return parsed as Record<string, unknown>;
 }
 
-export function createSidecarServer(config: SidecarConfig, logger: Logger, registry = new AccountRegistry(config, logger)) {
+function optionalGeneration(payload: Record<string, unknown>): number | undefined {
+  if (payload.generation === undefined || payload.generation === null) return undefined;
+  const generation = Number(payload.generation);
+  if (!Number.isInteger(generation) || generation < 0) {
+    throw new Error("invalid_generation");
+  }
+  return generation;
+}
+
+function errorStatus(message: string): number {
+  if (message === "payload_too_large") return 413;
+  if (message === "whatsapp_connection_owner_busy") return 409;
+  if (message.includes("required") || message.startsWith("invalid_")) return 400;
+  return 500;
+}
+
+export function createSidecarServer(
+  config: SidecarConfig,
+  logger: Logger,
+  registry = new AccountRegistry(config, logger)
+) {
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", "http://localhost");
@@ -51,7 +75,12 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
         return;
       }
       if (req.method === "GET" && url.pathname === "/readyz") {
-        sendJson(res, 200, { status: "ready", mode: config.mode });
+        sendJson(res, 200, {
+          status: "ready",
+          mode: config.mode,
+          desired_accounts: registry.desiredAccountCount(),
+          pending_callbacks: registry.backend.pendingCallbacks()
+        });
         return;
       }
       if (!isAuthorized(req.headers.authorization, config.internalToken)) {
@@ -67,7 +96,12 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
       const accountId = assertSafeAccountId(route.accountId);
 
       if (req.method === "POST" && route.action === "start") {
-        sendJson(res, 200, await registry.start(accountId));
+        const payload = await readJson(req);
+        sendJson(res, 200, await registry.start(accountId, optionalGeneration(payload)));
+        return;
+      }
+      if (req.method === "POST" && route.action === "stop") {
+        sendJson(res, 200, await registry.stop(accountId));
         return;
       }
       if (req.method === "POST" && route.action === "logout") {
@@ -75,7 +109,8 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
         return;
       }
       if (req.method === "POST" && route.action === "restart") {
-        sendJson(res, 200, await registry.restart(accountId));
+        const payload = await readJson(req);
+        sendJson(res, 200, await registry.restart(accountId, optionalGeneration(payload)));
         return;
       }
       if (req.method === "GET" && route.action === "status") {
@@ -87,7 +122,7 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
         return;
       }
       if (req.method === "POST" && route.action === "pairing-code") {
-        const payload = await readJson(req) as PairingCodeRequest;
+        const payload = await readJson(req) as unknown as PairingCodeRequest;
         const digits = String(payload.phone_number || "").replace(/\D/g, "");
         if (!/^\d{8,16}$/.test(digits)) {
           sendJson(res, 400, { ok: false, error_code: "invalid_phone_number" });
@@ -97,7 +132,7 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
         return;
       }
       if (req.method === "POST" && route.action === "send") {
-        const payload = await readJson(req) as SendRequest;
+        const payload = await readJson(req) as unknown as SendRequest;
         if (!payload.idempotency_key || !payload.body?.trim()) {
           sendJson(res, 400, { ok: false, error_code: "invalid_send_payload" });
           return;
@@ -107,9 +142,9 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
       }
       sendJson(res, 405, { ok: false, error_code: "method_not_allowed" });
     } catch (error) {
-      logger.warn({ error }, "request_failed");
       const message = error instanceof Error ? error.message : "internal_error";
-      sendJson(res, message === "payload_too_large" ? 413 : 400, { ok: false, error_code: message });
+      logger.warn({ error_code: message }, "request_failed");
+      sendJson(res, errorStatus(message), { ok: false, error_code: message });
     }
   });
 }
