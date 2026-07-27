@@ -88,7 +88,6 @@ class WebchatConversation(Base):
     page_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="open", index=True)
-    # Runtime server-side continuity. Historical column names are preserved.
     runtime_session_id: Mapped[Optional[str]] = mapped_column(
         "fast_session_id", String(120), nullable=True, index=True
     )
@@ -107,7 +106,6 @@ class WebchatConversation(Base):
     runtime_context_updated_at: Mapped[Optional[datetime]] = mapped_column(
         "fast_context_updated_at", UTCDateTime, nullable=True, index=True
     )
-    # AI runtime snapshot. These are cache values, not source-of-truth FKs.
     active_ai_turn_id: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, index=True
     )
@@ -348,7 +346,7 @@ class WebchatInboxReadState(Base):
 
 
 class WebchatHandoffRequest(Base):
-    """Durable AI-to-human handoff and active ownership state."""
+    """The sole durable handoff and routing execution authority."""
 
     __tablename__ = "webchat_handoff_requests"
     __table_args__ = (
@@ -369,6 +367,12 @@ class WebchatHandoffRequest(Base):
             "ix_webchat_handoff_requests_source_trigger",
             "source",
             "trigger_type",
+        ),
+        Index(
+            "ix_webchat_handoff_routing_outcome_retry",
+            "routing_outcome",
+            "routing_retry_at",
+            "requested_at",
         ),
         Index(
             "uq_webchat_handoff_open_conversation",
@@ -424,6 +428,31 @@ class WebchatHandoffRequest(Base):
         ForeignKey("users.id"), nullable=True, index=True
     )
     decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    routing_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, index=True
+    )
+    routing_outcome: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="waiting", index=True
+    )
+    routing_reason_code: Mapped[Optional[str]] = mapped_column(
+        String(160), nullable=True, index=True
+    )
+    routing_owner: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+    routing_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime, nullable=True, index=True
+    )
+    routing_exhausted_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime, nullable=True, index=True
+    )
+    routing_policy_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    routing_policy_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    routing_fallback_action: Mapped[Optional[str]] = mapped_column(
+        String(80), nullable=True, index=True
+    )
     requested_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utc_now, index=True
     )
@@ -449,7 +478,7 @@ class WebchatHandoffRequest(Base):
 
 
 class WebchatHandoffDecision(Base):
-    """Per-agent skip/decline history without closing the queue item."""
+    """Per-agent generation-bound decline history with a bounded TTL."""
 
     __tablename__ = "webchat_handoff_decisions"
     __table_args__ = (
@@ -459,9 +488,20 @@ class WebchatHandoffDecision(Base):
             "actor_id",
         ),
         Index(
+            "ix_webchat_handoff_decisions_request_actor_generation",
+            "request_id",
+            "actor_id",
+            "routing_generation",
+        ),
+        Index(
             "ix_webchat_handoff_decisions_decision_created",
             "decision",
             "created_at",
+        ),
+        Index(
+            "ix_webchat_handoff_decisions_expiry",
+            "expires_at",
+            "decision",
         ),
     )
 
@@ -470,6 +510,9 @@ class WebchatHandoffDecision(Base):
         ForeignKey("webchat_handoff_requests.id"), index=True
     )
     actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    routing_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, index=True
+    )
     decision: Mapped[str] = mapped_column(
         String(40), default="declined", index=True
     )
@@ -477,6 +520,9 @@ class WebchatHandoffDecision(Base):
         String(160), nullable=True, index=True
     )
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        UTCDateTime, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utc_now, index=True
     )
