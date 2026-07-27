@@ -11,7 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,19 +24,14 @@ UTCDateTime = DateTime(timezone=True)
 class CustomerIdentityBinding(Base):
     """Canonical Tenant-scoped external identity binding for one Customer.
 
-    Customer remains the profile aggregate. This table is the sole atomic lookup
-    authority for channel identities and prevents global or race-prone Customer
-    discovery from leaking across Tenant boundaries.
+    A relational ``tenant_id`` owns production identities. NULL is the one
+    isolated legacy-shadow identity domain and is available only while runtime
+    Tenant authority is in shadow mode. Separate partial unique indexes preserve
+    atomic identity in both domains without global cross-Tenant matching.
     """
 
     __tablename__ = "customer_identity_bindings"
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_id",
-            "identity_type",
-            "normalized_value",
-            name="uq_customer_identity_tenant_type_value",
-        ),
         CheckConstraint(
             "identity_type IN ('email','phone','external_ref')",
             name="ck_customer_identity_type",
@@ -44,6 +39,23 @@ class CustomerIdentityBinding(Base):
         CheckConstraint(
             "length(trim(normalized_value)) > 0",
             name="ck_customer_identity_value_nonempty",
+        ),
+        Index(
+            "uq_customer_identity_tenant_type_value",
+            "tenant_id",
+            "identity_type",
+            "normalized_value",
+            unique=True,
+            postgresql_where=text("tenant_id IS NOT NULL"),
+            sqlite_where=text("tenant_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_customer_identity_shadow_type_value",
+            "identity_type",
+            "normalized_value",
+            unique=True,
+            postgresql_where=text("tenant_id IS NULL"),
+            sqlite_where=text("tenant_id IS NULL"),
         ),
         Index(
             "ix_customer_identity_customer",
@@ -54,9 +66,9 @@ class CustomerIdentityBinding(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     customer_id: Mapped[int] = mapped_column(
@@ -84,19 +96,20 @@ class CustomerIdentityBinding(Base):
 
 
 class EmailIntakeQuarantine(Base):
-    """Durable, recoverable intake record for an Email not yet bound to a Case.
+    """Durable failure state for an Email not yet bound to a Case.
 
     The IMAP cursor may advance only after the message is either projected into
-    the canonical Conversation intake or persisted here. Quarantine is not a
-    second queue: it is the failure state of the same channel-intake contract.
+    canonical intake or persisted here. NULL ``tenant_id`` is the isolated
+    legacy-shadow account domain; production enforce mode never processes it.
     """
 
     __tablename__ = "email_intake_quarantine"
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_email_intake_quarantine_account_provider_message",
             "account_id",
             "provider_message_id",
-            name="uq_email_intake_quarantine_account_provider_message",
+            unique=True,
         ),
         CheckConstraint(
             "status IN ('pending_intake','projected','rejected')",
@@ -111,9 +124,9 @@ class EmailIntakeQuarantine(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     account_id: Mapped[int] = mapped_column(
