@@ -15,16 +15,17 @@ UTCDateTime = DateTime(timezone=True)
 class BackgroundJobScope(Base):
     """Canonical execution envelope for one durable BackgroundJob.
 
-    BackgroundJob remains the queue/lease record. This one-to-one row carries the
-    server-derived Tenant, data-subject purpose and source identity required for
-    authorization, privacy enforcement and safe operational recovery. It is not a
-    second queue or business state machine.
+    ``tenant`` is a relational Tenant boundary. ``shadow`` is the single
+    isolated legacy migration domain and remains non-executable when the runtime
+    Tenant authority is in production ``enforce`` mode. ``platform`` is reserved
+    for explicitly allow-listed infrastructure work; ``unresolved`` always
+    fails closed.
     """
 
     __tablename__ = "background_job_scopes"
     __table_args__ = (
         CheckConstraint(
-            "scope_type IN ('tenant','platform','unresolved')",
+            "scope_type IN ('tenant','shadow','platform','unresolved')",
             name="ck_background_job_scope_type",
         ),
         CheckConstraint(
