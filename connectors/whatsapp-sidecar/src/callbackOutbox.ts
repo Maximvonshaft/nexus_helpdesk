@@ -7,12 +7,14 @@ import {
   randomUUID
 } from "node:crypto";
 import {
+  closeSync,
+  fstatSync,
   mkdirSync,
-  readdirSync,
+  openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -106,10 +108,7 @@ export class DurableCallbackOutbox {
       const path = resolve(join(this.root, file));
       let envelope: CallbackEnvelope;
       try {
-        if (statSync(path).size > MAX_CALLBACK_FILE_BYTES) {
-          throw new Error("callback_outbox_file_too_large");
-        }
-        envelope = this.decrypt(readFileSync(path, "utf8"));
+        envelope = this.decrypt(this.readBoundedFile(path));
       } catch (error) {
         this.logger.error(
           {
@@ -168,6 +167,19 @@ export class DurableCallbackOutbox {
 
   count(): number {
     return readdirSync(this.root).filter((name) => name.endsWith(".json")).length;
+  }
+
+  private readBoundedFile(path: string): string {
+    const descriptor = openSync(path, "r");
+    try {
+      const metadata = fstatSync(descriptor);
+      if (!metadata.isFile() || metadata.size <= 0 || metadata.size > MAX_CALLBACK_FILE_BYTES) {
+        throw new Error("callback_outbox_file_size_invalid");
+      }
+      return readFileSync(descriptor, { encoding: "utf8" });
+    } finally {
+      closeSync(descriptor);
+    }
   }
 
   private write(envelope: CallbackEnvelope): void {
