@@ -22,6 +22,8 @@ from app.services.activation_evidence_policy import (  # noqa: E402
 _PROFILES = {"provider_canary", "full"}
 _TOKEN = re.compile(r"^[a-z0-9_.-]{1,80}$")
 _DIGEST_IMAGE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+_META_ID = re.compile(r"^[0-9]{5,32}$")
+_GRAPH_VERSION = re.compile(r"^v[0-9]{1,2}\.[0-9]{1,2}$")
 _EVIDENCE_LABELS = {
     "production_e2e_evidence_url": "production",
     "provider_canary_e2e_evidence_url": "provider_canary",
@@ -134,10 +136,32 @@ def _require_https(values: dict[str, str], key: str) -> str:
     return value
 
 
+def _configured_https(values: dict[str, str], key: str) -> bool:
+    value = values.get(key, "").strip()
+    if _placeholder(value):
+        return False
+    _require_https(values, key)
+    return True
+
+
 def _require_digest_image(values: dict[str, str], key: str) -> str:
     value = _require_value(values, key).lower()
     if not _DIGEST_IMAGE.fullmatch(value):
         raise ActivationError(f"configuration_digest_image_required:{key}")
+    return value
+
+
+def _require_meta_id(values: dict[str, str], key: str) -> str:
+    value = _require_value(values, key)
+    if not _META_ID.fullmatch(value):
+        raise ActivationError(f"configuration_meta_id_invalid:{key}")
+    return value
+
+
+def _require_graph_version(values: dict[str, str], key: str) -> str:
+    value = _require_value(values, key)
+    if not _GRAPH_VERSION.fullmatch(value):
+        raise ActivationError(f"configuration_graph_version_invalid:{key}")
     return value
 
 
@@ -202,7 +226,16 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         "WHATSAPP_MEDIA_SCANNER",
         "disabled",
     )
+    embedded_signup_enabled = _bool(
+        values,
+        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED",
+    )
     compose_profiles = _profiles(values)
+    meta_enabled = _configured_https(
+        values,
+        "WHATSAPP_META_WEBHOOK_PUBLIC_URL",
+    )
+    baileys_enabled = "whatsapp-baileys" in compose_profiles
     operations_mode = _token(
         values,
         "OPERATIONS_DISPATCH_MODE",
@@ -226,6 +259,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             or outbound_enabled
             or whatsapp_enabled
             or whatsapp_media_enabled
+            or embedded_signup_enabled
             or operations_mode != "disabled"
         ):
             raise ActivationError("provider_canary_external_capability_forbidden")
@@ -269,7 +303,20 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         if whatsapp_enabled:
             if not outbound_enabled or outbound_provider != "native":
                 raise ActivationError("whatsapp_outbound_authority_invalid")
-            _require_https(values, "WHATSAPP_META_WEBHOOK_PUBLIC_URL")
+            if not meta_enabled and not baileys_enabled:
+                raise ActivationError("whatsapp_transport_missing")
+            if baileys_enabled:
+                _require_digest_image(values, "WHATSAPP_SIDECAR_IMAGE")
+        elif baileys_enabled:
+            raise ActivationError("whatsapp_baileys_profile_without_whatsapp")
+        if embedded_signup_enabled:
+            if not whatsapp_enabled or not meta_enabled:
+                raise ActivationError("embedded_signup_requires_meta_transport")
+            _require_meta_id(values, "WHATSAPP_META_APP_ID")
+            _require_value(values, "WHATSAPP_META_APP_SECRET_FILE")
+            _require_meta_id(values, "WHATSAPP_META_CONFIGURATION_ID")
+            _require_graph_version(values, "WHATSAPP_META_GRAPH_API_VERSION")
+            _require_https(values, "WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN")
         if whatsapp_media_enabled and not whatsapp_enabled:
             raise ActivationError("whatsapp_media_requires_whatsapp")
         if whatsapp_media_enabled:
@@ -288,6 +335,20 @@ def validate(values: dict[str, str]) -> dict[str, object]:
                 != 3310
             ):
                 raise ActivationError("whatsapp_clamav_port_not_controlled")
+            _int(
+                values,
+                "WHATSAPP_CLAMAV_TIMEOUT_SECONDS",
+                20,
+                minimum=1,
+                maximum=120,
+            )
+            _int(
+                values,
+                "WHATSAPP_MEDIA_MAX_TOTAL_BYTES",
+                100 * 1024 * 1024,
+                minimum=1024,
+                maximum=100 * 1024 * 1024,
+            )
             if "whatsapp-media" not in compose_profiles:
                 raise ActivationError("whatsapp_media_profile_missing")
             _require_digest_image(values, "WHATSAPP_CLAMAV_IMAGE")
@@ -305,6 +366,9 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         },
         "whatsapp": {
             "enabled": whatsapp_enabled,
+            "meta_enabled": meta_enabled,
+            "baileys_enabled": baileys_enabled,
+            "embedded_signup_enabled": embedded_signup_enabled,
             "media_enabled": whatsapp_media_enabled,
             "media_scanner": whatsapp_media_scanner,
         },
@@ -321,7 +385,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
     }
 
     return {
-        "schema": "nexus.production-activation-preflight.v3",
+        "schema": "nexus.production-activation-preflight.v4",
         "status": "pass",
         "profile": profile,
         "candidate": activation.get("candidate") or {},
@@ -336,10 +400,18 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             "voice": voice_enabled,
             "outbound": outbound_enabled,
             "whatsapp": whatsapp_enabled,
+            "whatsapp_meta": meta_enabled,
+            "whatsapp_baileys": baileys_enabled,
+            "whatsapp_embedded_signup": embedded_signup_enabled,
             "whatsapp_media": whatsapp_media_enabled,
             "operations": operations_mode != "disabled",
         },
         "whatsapp": {
+            "transports": {
+                "meta_cloud_api": meta_enabled,
+                "baileys_sidecar": baileys_enabled,
+            },
+            "embedded_signup": embedded_signup_enabled,
             "media_scanner": whatsapp_media_scanner,
             "compose_profiles": sorted(compose_profiles),
         },
