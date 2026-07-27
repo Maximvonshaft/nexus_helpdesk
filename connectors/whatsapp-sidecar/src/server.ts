@@ -3,9 +3,22 @@ import type { Logger } from "pino";
 import { AccountRegistry } from "./accountRegistry.js";
 import { isAuthorized } from "./security.js";
 import { assertSafeAccountId } from "./sessionStore.js";
-import type { PairingCodeRequest, SendRequest, SidecarConfig } from "./types.js";
+import type {
+  PairingCodeRequest,
+  SendMediaRequest,
+  SendRequest,
+  SidecarConfig,
+  WhatsAppMediaKind
+} from "./types.js";
 
-const MAX_BODY_BYTES = 64 * 1024;
+const MAX_JSON_BODY_BYTES = 64 * 1024;
+const MEDIA_LIMITS: Record<WhatsAppMediaKind, number> = {
+  image: 5 * 1024 * 1024,
+  audio: 16 * 1024 * 1024,
+  video: 16 * 1024 * 1024,
+  document: 100 * 1024 * 1024,
+  sticker: 500 * 1024
+};
 
 type PublicErrorCode =
   | "payload_too_large"
@@ -14,6 +27,7 @@ type PublicErrorCode =
   | "invalid_account_id"
   | "invalid_phone_number"
   | "invalid_send_payload"
+  | "invalid_media_payload"
   | "object_payload_required"
   | "internal_error";
 
@@ -38,16 +52,20 @@ function matchAccountRoute(pathname: string): RouteMatch | null {
   return { accountId: decodeURIComponent(match[1]), action: match[2] };
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new Error("payload_too_large");
+    if (size > maxBytes) throw new Error("payload_too_large");
     chunks.push(buffer);
   }
-  const body = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const body = (await readBody(req, MAX_JSON_BODY_BYTES)).toString("utf8");
   if (!body) return {};
   const parsed = JSON.parse(body);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -80,6 +98,8 @@ function publicErrorCode(error: unknown): PublicErrorCode {
       return "invalid_phone_number";
     case "invalid_send_payload":
       return "invalid_send_payload";
+    case "invalid_media_payload":
+      return "invalid_media_payload";
     case "object_payload_required":
       return "object_payload_required";
     default:
@@ -92,6 +112,24 @@ function errorStatus(code: PublicErrorCode): number {
   if (code === "whatsapp_connection_owner_busy") return 409;
   if (code === "internal_error") return 500;
   return 400;
+}
+
+function header(req: IncomingMessage, name: string): string {
+  const value = req.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] || "" : String(value || "");
+}
+
+function mediaKind(value: string): WhatsAppMediaKind {
+  if (
+    value === "image" ||
+    value === "video" ||
+    value === "audio" ||
+    value === "document" ||
+    value === "sticker"
+  ) {
+    return value;
+  }
+  throw new Error("invalid_media_payload");
 }
 
 export function createSidecarServer(
@@ -170,6 +208,27 @@ export function createSidecarServer(
           return;
         }
         sendJson(res, 200, await registry.send(accountId, payload));
+        return;
+      }
+      if (req.method === "POST" && route.action === "send-media") {
+        const kind = mediaKind(header(req, "x-nexus-media-kind").trim().toLowerCase());
+        const idempotencyKey = header(req, "x-nexus-idempotency-key").trim();
+        const mediaType = header(req, "x-nexus-media-type").split(";", 1)[0].trim().toLowerCase();
+        if (!idempotencyKey || !mediaType) {
+          throw new Error("invalid_media_payload");
+        }
+        const content = await readBody(req, MEDIA_LIMITS[kind]);
+        if (!content.byteLength) throw new Error("invalid_media_payload");
+        const request: SendMediaRequest = {
+          idempotency_key: idempotencyKey,
+          target: header(req, "x-nexus-target").trim() || null,
+          chat_jid: header(req, "x-nexus-chat-jid").trim() || null,
+          media_kind: kind,
+          media_type: mediaType,
+          filename: decodeURIComponent(header(req, "x-nexus-media-filename")).slice(0, 255) || null,
+          caption: decodeURIComponent(header(req, "x-nexus-media-caption")).slice(0, 1024) || null
+        };
+        sendJson(res, 200, await registry.sendMedia(accountId, request, content));
         return;
       }
       sendJson(res, 405, { ok: false, error_code: "method_not_allowed" });
