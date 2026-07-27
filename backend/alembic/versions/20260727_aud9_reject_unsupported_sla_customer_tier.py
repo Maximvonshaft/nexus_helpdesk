@@ -1,4 +1,4 @@
-"""Reject the unsupported SLA customer-tier scope.
+"""Permanently remove the unsupported SLA customer-tier scope.
 
 Revision ID: 20260727_aud9
 Revises: 20260727_aud8
@@ -15,7 +15,8 @@ down_revision = "20260727_aud8"
 branch_labels = None
 depends_on = None
 
-_CONSTRAINT = "ck_sla_revision_customer_tier_unimplemented"
+_SCOPE_INDEX = "ix_sla_revision_scope_effective"
+_TIER_INDEX = "ix_sla_policy_revisions_customer_tier"
 
 
 def upgrade() -> None:
@@ -31,16 +32,45 @@ def upgrade() -> None:
     )
     if count:
         raise RuntimeError(
-            "sla_customer_tier_not_supported: "
-            f"{count} revision(s) require explicit remediation"
+            "sla_customer_tier_data_requires_explicit_remediation: "
+            f"{count} revision(s) contain unsupported values"
         )
+
     with op.batch_alter_table("sla_policy_revisions") as batch:
-        batch.create_check_constraint(
-            _CONSTRAINT,
-            "customer_tier IS NULL",
+        batch.drop_index(_SCOPE_INDEX)
+        batch.drop_index(_TIER_INDEX)
+        batch.drop_column("customer_tier")
+        batch.create_index(
+            _SCOPE_INDEX,
+            [
+                "tenant_id",
+                "market_id",
+                "channel_key",
+                "scenario_key",
+                "status",
+                "effective_from",
+            ],
+            unique=False,
         )
 
 
 def downgrade() -> None:
     with op.batch_alter_table("sla_policy_revisions") as batch:
-        batch.drop_constraint(_CONSTRAINT, type_="check")
+        batch.drop_index(_SCOPE_INDEX)
+        batch.add_column(
+            sa.Column("customer_tier", sa.String(length=80), nullable=True)
+        )
+        batch.create_index(_TIER_INDEX, ["customer_tier"], unique=False)
+        batch.create_index(
+            _SCOPE_INDEX,
+            [
+                "tenant_id",
+                "market_id",
+                "channel_key",
+                "scenario_key",
+                "customer_tier",
+                "status",
+                "effective_from",
+            ],
+            unique=False,
+        )
