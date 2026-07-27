@@ -553,12 +553,7 @@ def _record_state(
     if key == "delivered" and state in {"verified", "completed"}:
         return "customer_notification", "delivered"
     if key == "sent" and state in {"verified", "completed"}:
-        return "customer_notification", "sent"
-    if key in {"not_required", "prohibited"} and state in {
-        "verified",
-        "completed",
-    }:
-        return "customer_notification", key
+        return "customer_notification", "accepted"
     return "customer_notification", state
 
 
@@ -623,10 +618,7 @@ def record_closure_evidence(
         "customer_input": set(scenario.required_customer_inputs),
         "action": set(scenario.allowed_action_classes),
         "outcome": set(scenario.required_outcome_levels),
-        "notification": (
-            allowed_waiver_reasons
-            | {"sent", "delivered", "not_required", "prohibited"}
-        ),
+        "notification": allowed_waiver_reasons | {"sent", "delivered"},
     }
     if normalized_key not in allowed_keys[normalized_kind]:
         raise ValueError(
