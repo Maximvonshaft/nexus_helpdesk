@@ -16,6 +16,9 @@ _CONFIRMED_OUTBOUND_STATES = frozenset(
     {"delivered", "confirmed", "opened", "read"}
 )
 _CONFIRMED_LEDGER_STATES = frozenset({"delivered", "confirmed"})
+_ATTEMPT_LEDGER_STATES = frozenset(
+    {"requested", "accepted", "processing", "succeeded"}
+)
 
 
 def _canonical_json(value: Any) -> str:
@@ -62,6 +65,11 @@ def notification_evidence(
         for row in ledger_rows
         if row.state in _CONFIRMED_LEDGER_STATES
     ]
+    attempted_ledger_ids = [
+        row.id
+        for row in ledger_rows
+        if row.state in _ATTEMPT_LEDGER_STATES
+    ]
     allowed_waivers = {
         str(value).strip().lower()
         for value in allowed_waiver_reasons
@@ -85,26 +93,13 @@ def notification_evidence(
         if str(row.delivery_status or "").strip().lower()
         in _CONFIRMED_OUTBOUND_STATES
     ]
-    attempted_outbound_ids = [
-        row.id
-        for row in outbound_rows
-        if (
-            str(
-                row.status.value
-                if hasattr(row.status, "value")
-                else row.status
-            )
-            .strip()
-            .lower()
-            in {"pending", "sent"}
-        )
-    ]
+    attempted_outbound_ids = [row.id for row in outbound_rows]
 
     if confirmed_ledger_ids or confirmed_outbound_ids:
         state = "confirmed"
     elif waived_rows:
         state = "waived"
-    elif attempted_outbound_ids:
+    elif attempted_ledger_ids or attempted_outbound_ids:
         state = "attempted"
     else:
         state = "missing"
@@ -116,6 +111,7 @@ def notification_evidence(
         "confirmed_case_outcome_record_ids": confirmed_ledger_ids,
         "confirmed_outbound_message_ids": confirmed_outbound_ids,
         "waived_case_outcome_record_ids": [row.id for row in waived_rows],
+        "attempted_case_outcome_record_ids": attempted_ledger_ids,
         "attempted_outbound_message_ids": attempted_outbound_ids,
         "contains_payloads": False,
     }
