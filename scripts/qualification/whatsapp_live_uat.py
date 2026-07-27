@@ -2,10 +2,11 @@
 """Run operator-assisted WhatsApp UAT against an exact Nexus candidate.
 
 External operator actions remain explicit: bind the real accounts, cause a real
-inbound replay, send a canonical Inbox reply, and read the message on the real
-recipient device. This command never fabricates those facts. It retrieves the
-server-side durable evidence, performs a controlled connection restart for both
-transports, and emits the signed production evidence artifact.
+inbound delivery, send a canonical Inbox reply, and read the message on the real
+recipient device. Nexus itself replays the stored inbound through the canonical
+Intake authority to prove idempotency. This command never fabricates Provider
+facts. It retrieves durable server evidence, performs a controlled connection
+restart for both transports, and emits the signed production evidence artifact.
 """
 
 from __future__ import annotations
@@ -35,10 +36,20 @@ class LiveUatError(ValueError):
 
 
 class AdminClient(Protocol):
-    def get(self, path: str, *, query: dict[str, str] | None = None) -> dict[str, Any]:
+    def get(
+        self,
+        path: str,
+        *,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         ...
 
-    def post(self, path: str, *, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def post(
+        self,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -50,10 +61,21 @@ class LiveUatOptions:
 
 
 class NexusAdminClient:
-    def __init__(self, *, base_url: str, token: str, timeout_seconds: int = 20) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        token: str,
+        timeout_seconds: int = 20,
+    ) -> None:
         normalized = base_url.rstrip("/")
         parsed = urllib.parse.urlsplit(normalized)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+        ):
             raise LiveUatError("base_url_https_required")
         if any(char in normalized for char in "\r\n\x00"):
             raise LiveUatError("base_url_invalid")
@@ -64,10 +86,20 @@ class NexusAdminClient:
         self.timeout_seconds = max(5, min(int(timeout_seconds), 120))
         self.context = ssl.create_default_context()
 
-    def get(self, path: str, *, query: dict[str, str] | None = None) -> dict[str, Any]:
+    def get(
+        self,
+        path: str,
+        *,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         return self._request("GET", path, query=query)
 
-    def post(self, path: str, *, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def post(
+        self,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return self._request("POST", path, payload=payload)
 
     def _request(
@@ -184,8 +216,14 @@ def _run_transport(
         plan.get("connection_id"),
         f"uat_{transport}_connection_id_invalid",
     )
-    if plan.get("inbound_idempotent_replay") is not True:
-        raise LiveUatError(f"uat_{transport}_real_inbound_replay_required")
+    inbound_provider_id = _safe_id(
+        plan.get("inbound_provider_message_id"),
+        f"uat_{transport}_inbound_provider_id_invalid",
+    )
+    outbound_provider_id = _safe_id(
+        plan.get("outbound_provider_message_id"),
+        f"uat_{transport}_outbound_provider_id_invalid",
+    )
     base_path = f"/api/admin/whatsapp/connections/{connection_id}"
     before = client.get(base_path)
     _require_transport_state(before, transport=transport, require_connected=True)
@@ -207,21 +245,36 @@ def _run_transport(
         f"uat_{transport}_session_generation_invalid",
     )
     if before_session != after_session:
-        raise LiveUatError(f"uat_{transport}_restart_required_reauthentication")
+        raise LiveUatError(
+            f"uat_{transport}_restart_required_reauthentication"
+        )
+
+    replay = client.post(
+        base_path + "/uat-replay-inbound",
+        payload={"provider_message_id": inbound_provider_id},
+    )
+    if (
+        replay.get("idempotent") is not True
+        or replay.get("transport") != transport
+        or replay.get("provider_message_id") != inbound_provider_id
+    ):
+        raise LiveUatError(f"uat_{transport}_idempotent_replay_failed")
+    replay_inbound_id = _positive_int(
+        replay.get("inbound_message_id"),
+        f"uat_{transport}_replay_inbound_id_invalid",
+    )
 
     query = {
-        "inbound_provider_message_id": _safe_id(
-            plan.get("inbound_provider_message_id"),
-            f"uat_{transport}_inbound_provider_id_invalid",
-        ),
-        "outbound_provider_message_id": _safe_id(
-            plan.get("outbound_provider_message_id"),
-            f"uat_{transport}_outbound_provider_id_invalid",
-        ),
+        "inbound_provider_message_id": inbound_provider_id,
+        "outbound_provider_message_id": outbound_provider_id,
     }
     media_inbound = plan.get("media_inbound_provider_message_id")
     media_outbound = plan.get("media_outbound_provider_message_id")
-    if options.require_media or media_inbound is not None or media_outbound is not None:
+    if (
+        options.require_media
+        or media_inbound is not None
+        or media_outbound is not None
+    ):
         query["media_inbound_provider_message_id"] = _safe_id(
             media_inbound,
             f"uat_{transport}_media_inbound_provider_id_invalid",
@@ -233,8 +286,20 @@ def _run_transport(
     facts = client.get(base_path + "/uat-evidence", query=query)
     if facts.get("transport") != transport:
         raise LiveUatError(f"uat_{transport}_server_transport_mismatch")
-    inbound = _mapping(facts.get("inbound"), f"uat_{transport}_inbound_missing")
-    outbound = _mapping(facts.get("outbound"), f"uat_{transport}_outbound_missing")
+    inbound = _mapping(
+        facts.get("inbound"),
+        f"uat_{transport}_inbound_missing",
+    )
+    outbound = _mapping(
+        facts.get("outbound"),
+        f"uat_{transport}_outbound_missing",
+    )
+    facts_inbound_id = _positive_int(
+        inbound.get("inbound_message_id"),
+        f"uat_{transport}_inbound_id_invalid",
+    )
+    if facts_inbound_id != replay_inbound_id:
+        raise LiveUatError(f"uat_{transport}_idempotent_replay_identity_mismatch")
     result: dict[str, Any] = {
         "transport": transport,
         "connection_id": connection_id,
@@ -242,7 +307,10 @@ def _run_transport(
             facts.get("account_id"),
             f"uat_{transport}_account_id_invalid",
         ),
-        "phone_suffix": _phone_suffix(facts.get("phone_suffix"), transport),
+        "phone_suffix": _phone_suffix(
+            facts.get("phone_suffix"),
+            transport,
+        ),
         "binding": _binding(facts.get("binding"), transport),
         "inbound": {
             "provider_message_id": _safe_id(
@@ -254,7 +322,8 @@ def _run_transport(
                 f"uat_{transport}_inbound_timestamp_invalid",
             ),
             "stored": inbound.get("stored") is True,
-            "idempotent_replay": True,
+            "idempotent_replay": replay.get("idempotent") is True,
+            "replay_inbound_message_id": replay_inbound_id,
         },
         "outbound": _outbound(outbound, transport),
         "restart": {
@@ -274,7 +343,10 @@ def _run_transport(
         },
     }
     if "media" in facts:
-        media = _mapping(facts["media"], f"uat_{transport}_media_missing")
+        media = _mapping(
+            facts["media"],
+            f"uat_{transport}_media_missing",
+        )
         media_inbound_facts = _mapping(
             media.get("inbound"),
             f"uat_{transport}_media_inbound_missing",
@@ -325,7 +397,11 @@ def _poll_connected(
     while time.monotonic() < deadline:
         value = client.get(path)
         try:
-            _require_transport_state(value, transport=transport, require_connected=True)
+            _require_transport_state(
+                value,
+                transport=transport,
+                require_connected=True,
+            )
             return value, _now()
         except LiveUatError:
             time.sleep(delay)
@@ -339,12 +415,15 @@ def _require_transport_state(
     require_connected: bool,
 ) -> None:
     if value.get("transport") != transport:
-        raise LiveUatError(f"uat_{transport}_connection_transport_mismatch")
+        raise LiveUatError(
+            f"uat_{transport}_connection_transport_mismatch"
+        )
     if require_connected and not (
         value.get("observed_state") == "connected"
         and value.get("authentication_state") == "linked"
         and value.get("listener_state") == "active"
-        and value.get("desired_generation") == value.get("observed_generation")
+        and value.get("desired_generation")
+        == value.get("observed_generation")
     ):
         raise LiveUatError(f"uat_{transport}_connection_not_ready")
 
@@ -454,7 +533,9 @@ def _timestamp(value: Any, code: str) -> str:
 
 def _normalize_digest(value: Any) -> str:
     normalized = str(value or "").strip().lower().removeprefix("sha256:")
-    if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+    if len(normalized) != 64 or any(
+        char not in "0123456789abcdef" for char in normalized
+    ):
         raise LiveUatError("uat_image_digest_invalid")
     return "sha256:" + normalized
 
@@ -509,13 +590,28 @@ def main() -> int:
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
-            json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                evidence,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
         if args.observation_output:
-            args.observation_output.parent.mkdir(parents=True, exist_ok=True)
+            args.observation_output.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
             args.observation_output.write_text(
-                json.dumps(observation, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                json.dumps(
+                    observation,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
                 encoding="utf-8",
             )
     except (
