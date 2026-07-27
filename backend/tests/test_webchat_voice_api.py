@@ -8,7 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_voice_api_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/webchat_voice_api_tests.db",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -38,8 +41,14 @@ def canonical_voice_database(monkeypatch):
     monkeypatch.setenv("WEBCHAT_HUMAN_CALL_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_LIVE_AI_VOICE_ENABLED", "false")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
-    monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice")
-    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test")
+    monkeypatch.setenv(
+        "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
+        "/webchat/voice",
+    )
+    monkeypatch.setenv(
+        "WEBCHAT_VOICE_CONNECT_SRC",
+        "wss://voice.example.test",
+    )
     monkeypatch.setattr(
         webchat_rate_limit_service.settings,
         "webchat_rate_limit_max_requests",
@@ -85,7 +94,9 @@ def _init_conversation(
     response = client.post(
         "/api/webchat/init",
         json={
-            "tenant_key": "pytest-voice",
+            # Voice API tests validate media/routing contracts, not Tenant
+            # provisioning. `default` is the sole supported development shadow.
+            "tenant_key": "default",
             "channel_key": "website",
             "visitor_name": "Voice Visitor",
             "page_url": "https://example.test/help",
@@ -215,7 +226,7 @@ def test_missing_country_scope_fails_before_room_creation():
     response = client.post(
         "/api/webchat/init",
         json={
-            "tenant_key": "pytest-voice",
+            "tenant_key": "default",
             "channel_key": "website",
             "visitor_name": "Unscoped Visitor",
         },
@@ -230,7 +241,11 @@ def test_missing_country_scope_fails_before_room_creation():
 
     assert created.status_code == 409
     assert created.json()["detail"] == "conversation_scope_unavailable"
-    assert SessionLocal().query(WebchatVoiceSession).count() == 0
+    db = SessionLocal()
+    try:
+        assert db.query(WebchatVoiceSession).count() == 0
+    finally:
+        db.close()
 
 
 def test_only_offered_agent_can_accept_and_ownership_lands_on_handoff():
