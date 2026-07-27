@@ -21,7 +21,6 @@ class Settings:
         "worker-outbound",
         "worker-background",
         "worker-webchat-ai",
-        "worker-handoff-snapshot",
         "legacy-worker",
         "runtime-warmer",
     }
