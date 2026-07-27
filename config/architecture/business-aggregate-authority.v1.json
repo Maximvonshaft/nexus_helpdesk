@@ -19,7 +19,7 @@
   "live_handoff": {
     "model": "app.webchat_models.WebchatHandoffRequest",
     "table": "webchat_handoff_requests",
-    "writer": "app.services.webchat_handoff_service_core"
+    "writer": "app.services.webchat_handoff_service"
   },
   "operator_queue_projection": {
     "model": "app.operator_models.OperatorTask",
