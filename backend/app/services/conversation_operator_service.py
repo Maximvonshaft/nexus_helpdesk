@@ -31,6 +31,7 @@ from .customer_visible_policy import (
     evaluate_customer_visible_policy,
     format_policy_reasons,
 )
+from .handoff_responsibility_policy import can_resume_handoff
 from .permissions import (
     CAP_OUTBOUND_SEND,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
@@ -43,7 +44,6 @@ from .permissions import (
 from .server_fact_evidence import resolve_server_fact_evidence
 from .sla_service import evaluate_sla, update_first_response
 from .ticket_service import get_ticket_or_404
-from .ticketless_handoff_policy import can_resume_ticketless_handoff
 from .webchat_ai_turn_service import ai_snapshot, safe_write_webchat_event
 from .webchat_handoff_service import (
     ensure_can_reply_in_handoff,
@@ -188,7 +188,7 @@ def _handoff_payload(
     capabilities: set[str],
 ) -> dict[str, Any]:
     assigned_to_current_user = handoff.assigned_agent_id == user.id
-    can_resume_ai = can_resume_ticketless_handoff(
+    can_resume_ai = can_resume_handoff(
         handoff=handoff,
         conversation=conversation,
         user_id=user.id,
@@ -218,6 +218,9 @@ def _handoff_payload(
         ),
         "accepted_at": (
             handoff.accepted_at.isoformat() if handoff.accepted_at else None
+        ),
+        "released_at": (
+            handoff.released_at.isoformat() if handoff.released_at else None
         ),
         "closed_at": (
             handoff.closed_at.isoformat() if handoff.closed_at else None
