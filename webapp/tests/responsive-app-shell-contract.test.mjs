@@ -38,7 +38,10 @@ test('live operator runtimes remain mounted above the temporary Drawer', () => {
   assert.match(presence, /refetchInterval: 30_000/)
   assert.match(presence, /agentRoutingApi\.heartbeat\(\)/)
   assert.match(incomingVoice, /export function IncomingVoiceCallProvider/)
-  assert.match(incomingVoice, /visibilityState === 'visible' \? 2_000 : 15_000/)
+  assert.match(
+    incomingVoice,
+    /visibilityState\s*===\s*'visible'\s*\?\s*2_000\s*:\s*15_000/,
+  )
   assert.match(incomingVoice, /refetchIntervalInBackground: false/)
   assert.match(incomingVoice, /<Dialog/)
 })
