@@ -72,8 +72,6 @@ def _revision_snapshot(
     revision: SLAPolicyRevision,
     policy: SLAPolicy,
 ) -> dict[str, Any]:
-    if revision.customer_tier is not None:
-        raise SLAConfigurationError("sla_customer_tier_not_supported")
     return {
         "schema": "nexus.sla-assignment.v1",
         "policy_id": policy.id,
@@ -138,7 +136,6 @@ def seed_default_sla_policies(db: Session) -> None:
                     market_id=None,
                     channel_key=None,
                     scenario_key=None,
-                    customer_tier=None,
                     status="approved",
                     timezone_name="UTC",
                     weekly_schedule_json={},
@@ -203,8 +200,6 @@ def _active_revisions(
     scenario = _scenario_key(ticket)
     eligible: list[tuple[SLAPolicyRevision, SLAPolicy]] = []
     for revision, policy in rows:
-        if revision.customer_tier is not None:
-            raise SLAConfigurationError("sla_customer_tier_not_supported")
         if revision.is_global_template:
             if revision.tenant_id is not None:
                 continue
@@ -278,9 +273,6 @@ def ensure_ticket_sla_assignment(
 
     existing = _assignment(db, ticket.id)
     if existing is not None:
-        snapshot = existing.snapshot_json or {}
-        if snapshot.get("customer_tier") is not None:
-            raise SLAConfigurationError("sla_customer_tier_not_supported")
         return existing
     selected = select_policy_revision(db, ticket, at=at)
     if selected is None:
