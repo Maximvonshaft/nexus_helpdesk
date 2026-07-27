@@ -26,6 +26,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   OperatorEmptyState,
   OperatorErrorNotice,
+  OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
 import { operationalPresentation } from '@/domain/operationalPresentation'
@@ -141,7 +142,10 @@ export function ChannelsPage() {
   })
 
   const actionError = createTask.error || startTask.error || settleTask.error
-  const createReady = Boolean(draft.provider.trim() && (draft.displayName.trim() || draft.targetSlot.trim() || draft.accountBinding.trim()))
+  const createReady = Boolean(
+    draft.provider.trim()
+      && (draft.displayName.trim() || draft.targetSlot.trim() || draft.accountBinding.trim()),
+  )
   const closeTaskDialog = () => {
     if (settleTask.isPending) return
     setSelectedTask(null)
@@ -197,6 +201,15 @@ export function ChannelsPage() {
             </Table>
           </TableContainer>
         ) : <OperatorEmptyState title="暂无已启用渠道" description="请先完成对应渠道的技术验证和生产激活" />}
+
+        <OperatorTechnicalDisclosure
+          title="渠道权威与路由规则"
+          summary="所有渠道共用唯一账号、权限、会话与出站权威。"
+        >
+          <Typography variant="body2" color="text.secondary">
+            ChannelAccount 是唯一渠道身份与路由权威。WhatsApp 的 Meta Cloud API 与 Baileys 只是同一账号下的可选传输适配器，不创建第二套客户、Conversation、Inbox、Outbox、权限或审计链。
+          </Typography>
+        </OperatorTechnicalDisclosure>
       </Paper>
 
       <WhatsAppConfigurationPanel />
