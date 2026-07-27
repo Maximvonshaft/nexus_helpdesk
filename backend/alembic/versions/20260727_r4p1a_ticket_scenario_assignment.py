@@ -29,8 +29,13 @@ def _canonical_json(value) -> str:
     )
 
 
-def _catalog_payload() -> tuple[dict, dict[str, str], dict[str, dict]]:
-    path = Path(__file__).resolve().parents[2] / "app" / "config" / "business_scenarios.v1.json"
+def _catalog_payload() -> tuple[dict, dict[str, str], dict[str, dict], str]:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "config"
+        / "business_scenarios.v1.json"
+    )
     raw = path.read_bytes()
     payload = json.loads(raw.decode("utf-8"))
     aliases: dict[str, str] = {}
@@ -46,7 +51,7 @@ def _catalog_payload() -> tuple[dict, dict[str, str], dict[str, dict]]:
                     f"scenario_catalog_alias_conflict:{normalized}:{existing}:{key}"
                 )
             aliases[normalized] = key
-    return payload, aliases, definitions
+    return payload, aliases, definitions, hashlib.sha256(raw).hexdigest()
 
 
 def upgrade() -> None:
@@ -113,8 +118,7 @@ def upgrade() -> None:
         unique=False,
     )
 
-    payload, aliases, definitions = _catalog_payload()
-    catalog_sha = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    payload, aliases, definitions, catalog_sha = _catalog_payload()
     rows = op.get_bind().execute(
         sa.text(
             "SELECT id, tenant_id, case_type, sub_category, category, ai_classification "
@@ -124,7 +128,12 @@ def upgrade() -> None:
     for row in rows:
         matched: set[str] = set()
         observed: list[str] = []
-        for column in ("case_type", "sub_category", "category", "ai_classification"):
+        for column in (
+            "case_type",
+            "sub_category",
+            "category",
+            "ai_classification",
+        ):
             value = str(row[column] or "").strip().lower()
             if not value:
                 continue
@@ -143,7 +152,9 @@ def upgrade() -> None:
         scenario_key = next(iter(matched))
         definition = definitions[scenario_key]
         definition_json = _canonical_json(definition)
-        definition_sha = hashlib.sha256(definition_json.encode("utf-8")).hexdigest()
+        definition_sha = hashlib.sha256(
+            definition_json.encode("utf-8")
+        ).hexdigest()
         op.get_bind().execute(
             sa.text(
                 "INSERT INTO ticket_scenario_assignments ("
