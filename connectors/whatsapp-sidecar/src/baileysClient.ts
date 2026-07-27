@@ -3,6 +3,7 @@ import { Boom } from "@hapi/boom";
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
   type WASocket
@@ -14,21 +15,39 @@ import type {
   NormalizedInboundMessage,
   PairingCodeRequest,
   PairingCodeResult,
+  SendMediaRequest,
   SendRequest,
   SendResult,
   SidecarConfig,
-  WhatsAppConnector
+  WhatsAppConnector,
+  WhatsAppMediaKind
 } from "./types.js";
 import { SessionStore, type AccountOwnerLease } from "./sessionStore.js";
 
 
 type InboundHandler = (message: NormalizedInboundMessage) => Promise<void>;
 type StatusHandler = (accountId: string, snapshot: AccountSnapshot) => Promise<void>;
+type MediaHandler = (options: {
+  accountId: string;
+  messageId: string;
+  mediaKind: WhatsAppMediaKind;
+  mediaType: string;
+  filename?: string | null;
+  content: Buffer;
+}) => Promise<void>;
 
 const PAIRING_CODE_ATTEMPTS = 5;
 const PAIRING_CODE_READY_DELAY_MS = 1500;
 const PAIRING_CODE_RETRY_DELAY_MS = 2000;
 const PAIRING_CODE_WINDOW_MS = 180_000;
+const MEDIA_UPLOAD_ATTEMPTS = 5;
+const MEDIA_LIMITS: Record<WhatsAppMediaKind, number> = {
+  image: 5 * 1024 * 1024,
+  audio: 16 * 1024 * 1024,
+  video: 16 * 1024 * 1024,
+  document: 100 * 1024 * 1024,
+  sticker: 500 * 1024
+};
 
 interface RuntimeAccount {
   accountId: string;
@@ -97,6 +116,7 @@ export class BaileysConnector implements WhatsAppConnector {
     private readonly sessions: SessionStore,
     private readonly logger: Logger,
     private readonly onInbound: InboundHandler,
+    private readonly onMedia: MediaHandler,
     private readonly onStatus: StatusHandler,
     private readonly config: SidecarConfig
   ) {}
@@ -366,51 +386,65 @@ export class BaileysConnector implements WhatsAppConnector {
     const account = this.account(accountId);
     let result: SendResult;
     if (account.status.status !== "connected" || !account.socket) {
+      result = notConnectedResult();
+    } else {
+      const jid = targetToWhatsAppJid(request.chat_jid) || targetToWhatsAppJid(request.target);
+      if (!jid) {
+        result = missingTargetResult();
+      } else {
+        try {
+          const sent = await account.socket.sendMessage(jid, { text: request.body });
+          result = sendResult(sent?.key?.id || null);
+          if (result.ok && result.sent_at) {
+            account.status.last_outbound_at = result.sent_at;
+            account.status.last_transport_activity_at = result.sent_at;
+          }
+        } catch (error) {
+          result = sendFailure(error);
+        }
+      }
+    }
+    this.sessions.writeSendResult(accountId, request.idempotency_key, result);
+    return result;
+  }
+
+  async sendMedia(
+    accountId: string,
+    request: SendMediaRequest,
+    content: Buffer
+  ): Promise<SendResult> {
+    const cached = this.sessions.readSendResult(
+      accountId,
+      request.idempotency_key,
+      this.config.idempotencyTtlMs
+    );
+    if (cached) return cached;
+    const account = this.account(accountId);
+    let result: SendResult;
+    if (account.status.status !== "connected" || !account.socket) {
+      result = notConnectedResult();
+    } else if (!content.byteLength || content.byteLength > MEDIA_LIMITS[request.media_kind]) {
       result = {
         ok: false,
         status: "failed",
-        error_code: "whatsapp_not_connected",
-        retryable: true
+        error_code: "whatsapp_media_size_invalid",
+        retryable: false
       };
     } else {
       const jid = targetToWhatsAppJid(request.chat_jid) || targetToWhatsAppJid(request.target);
       if (!jid) {
-        result = {
-          ok: false,
-          status: "failed",
-          error_code: "missing_target",
-          retryable: false
-        };
+        result = missingTargetResult();
       } else {
         try {
-          const sent = await account.socket.sendMessage(jid, { text: request.body });
-          const providerMessageId = sent?.key?.id || null;
-          if (!providerMessageId) {
-            result = {
-              ok: false,
-              status: "failed",
-              error_code: "provider_message_id_missing",
-              retryable: true
-            };
-          } else {
-            const sentAt = new Date().toISOString();
-            result = {
-              ok: true,
-              status: "sent",
-              provider_message_id: providerMessageId,
-              sent_at: sentAt
-            };
-            account.status.last_outbound_at = sentAt;
-            account.status.last_transport_activity_at = sentAt;
+          const message = mediaMessageContent(request, content);
+          const sent = await account.socket.sendMessage(jid, message as any);
+          result = sendResult(sent?.key?.id || null);
+          if (result.ok && result.sent_at) {
+            account.status.last_outbound_at = result.sent_at;
+            account.status.last_transport_activity_at = result.sent_at;
           }
         } catch (error) {
-          result = {
-            ok: false,
-            status: "failed",
-            error_code: errorCode(error, "whatsapp_send_failed"),
-            error_message: error instanceof Error ? error.message : String(error),
-            retryable: true
-          };
+          result = sendFailure(error);
         }
       }
     }
@@ -535,11 +569,98 @@ export class BaileysConnector implements WhatsAppConnector {
       if (!normalized) continue;
       const projected = projectSelfTestInboundToPhoneJid(normalized, account.status);
       await this.onInbound(projected);
+      if (
+        projected.media_kind &&
+        projected.media_mime_type &&
+        projected.external_message_id
+      ) {
+        await this.downloadAndUploadMedia(account, raw, projected);
+      }
       const occurredAt = new Date().toISOString();
       account.status.last_inbound_at = occurredAt;
       account.status.last_transport_activity_at = occurredAt;
       await this.emitStatus(account);
     }
+  }
+
+  private async downloadAndUploadMedia(
+    account: RuntimeAccount,
+    raw: any,
+    message: NormalizedInboundMessage
+  ): Promise<void> {
+    if (!message.media_kind || !message.media_mime_type || !account.socket) return;
+    let content: Buffer;
+    try {
+      const downloaded = await downloadMediaMessage(
+        raw,
+        "buffer",
+        {},
+        {
+          logger: this.logger.child({ account_id: account.accountId }) as any,
+          reuploadRequest: account.socket.updateMediaMessage
+        }
+      );
+      content = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded as any);
+    } catch (error) {
+      this.logger.error(
+        {
+          account_id: account.accountId,
+          message_id: message.external_message_id,
+          media_kind: message.media_kind,
+          error_code: errorCode(error, "baileys_media_download_failed")
+        },
+        "baileys_media_download_failed"
+      );
+      return;
+    }
+    if (!content.byteLength || content.byteLength > MEDIA_LIMITS[message.media_kind]) {
+      this.logger.warn(
+        {
+          account_id: account.accountId,
+          message_id: message.external_message_id,
+          media_kind: message.media_kind,
+          byte_size: content.byteLength
+        },
+        "baileys_media_size_rejected"
+      );
+      return;
+    }
+    for (let attempt = 1; attempt <= MEDIA_UPLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        await this.onMedia({
+          accountId: account.accountId,
+          messageId: message.external_message_id,
+          mediaKind: message.media_kind,
+          mediaType: message.media_mime_type,
+          filename: message.media_filename,
+          content
+        });
+        return;
+      } catch (error) {
+        this.logger.warn(
+          {
+            account_id: account.accountId,
+            message_id: message.external_message_id,
+            media_kind: message.media_kind,
+            attempt,
+            attempts: MEDIA_UPLOAD_ATTEMPTS,
+            error_name: error instanceof Error ? error.name : "UnknownError"
+          },
+          "baileys_media_upload_retry"
+        );
+        if (attempt < MEDIA_UPLOAD_ATTEMPTS) {
+          await sleep(Math.min(1000 * 2 ** (attempt - 1), 16_000));
+        }
+      }
+    }
+    this.logger.error(
+      {
+        account_id: account.accountId,
+        message_id: message.external_message_id,
+        media_kind: message.media_kind
+      },
+      "baileys_media_upload_exhausted"
+    );
   }
 
   private async scheduleReconnect(account: RuntimeAccount): Promise<void> {
@@ -636,6 +757,66 @@ export class BaileysConnector implements WhatsAppConnector {
     account.status.generation = account.generation;
     await this.onStatus(account.accountId, account.status);
   }
+}
+
+function notConnectedResult(): SendResult {
+  return {
+    ok: false,
+    status: "failed",
+    error_code: "whatsapp_not_connected",
+    retryable: true
+  };
+}
+
+function missingTargetResult(): SendResult {
+  return {
+    ok: false,
+    status: "failed",
+    error_code: "missing_target",
+    retryable: false
+  };
+}
+
+function sendResult(providerMessageId: string | null): SendResult {
+  if (!providerMessageId) {
+    return {
+      ok: false,
+      status: "failed",
+      error_code: "provider_message_id_missing",
+      retryable: true
+    };
+  }
+  return {
+    ok: true,
+    status: "sent",
+    provider_message_id: providerMessageId,
+    sent_at: new Date().toISOString()
+  };
+}
+
+function sendFailure(error: unknown): SendResult {
+  return {
+    ok: false,
+    status: "failed",
+    error_code: errorCode(error, "whatsapp_send_failed"),
+    error_message: error instanceof Error ? error.message : String(error),
+    retryable: true
+  };
+}
+
+function mediaMessageContent(request: SendMediaRequest, content: Buffer): Record<string, unknown> {
+  const caption = String(request.caption || "").trim() || undefined;
+  const mimetype = String(request.media_type || "application/octet-stream").split(";", 1)[0].trim().toLowerCase();
+  if (request.media_kind === "image") return { image: content, mimetype, caption };
+  if (request.media_kind === "video") return { video: content, mimetype, caption };
+  if (request.media_kind === "audio") return { audio: content, mimetype, ptt: false };
+  if (request.media_kind === "sticker") return { sticker: content };
+  return {
+    document: content,
+    mimetype,
+    fileName: String(request.filename || "document").slice(0, 255),
+    caption
+  };
 }
 
 export function targetToWhatsAppJid(target: string | null | undefined): string | null {
