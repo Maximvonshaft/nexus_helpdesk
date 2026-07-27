@@ -63,7 +63,7 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
 
     def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
-        self.assertGreaterEqual(len(uses), 10)
+        self.assertGreaterEqual(len(uses), 12)
         for reference in uses:
             if reference.startswith("./"):
                 continue
@@ -74,16 +74,19 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("attestations: write", WORKFLOW)
         self.assertIn("id-token: write", WORKFLOW)
 
-    def test_existing_rc_build_is_reused_and_no_second_build_exists(self) -> None:
+    def test_application_rc_is_reused_and_sidecar_is_built_exactly_once(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
         self.assertIn("scripts/release/run_rc_test_candidate.sh", combined)
-        self.assertNotIn("docker build ", WORKFLOW)
-        self.assertIn('docker tag "${CANDIDATE_IMAGE}"', combined)
-        self.assertIn('docker push "${registry_image}:${tag}"', combined)
+        self.assertEqual(WORKFLOW.count("docker build --pull=false"), 1)
         self.assertIn(
-            'test "${pulled_image_id}" = "${local_image_id}"',
-            combined,
+            "--file connectors/whatsapp-sidecar/Dockerfile",
+            WORKFLOW,
         )
+        self.assertIn("Build exact-main WhatsApp Sidecar image once", WORKFLOW)
+        self.assertIn("publish_and_pull()", HELPERS)
+        self.assertEqual(HELPERS.count("publish_and_pull \\"), 2)
+        self.assertIn('test "${pulled_image_id}" = "${expected_local_id}"', HELPERS)
+        self.assertIn("whatsapp-sidecar-registry-publish-receipt.json", combined)
 
     def test_failure_evidence_is_bounded_and_blocks_publication(self) -> None:
         for marker in (
@@ -103,7 +106,7 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         )
         self.assertLess(
             WORKFLOW.index("Upload bounded image-assurance failure evidence"),
-            WORKFLOW.index("Publish and pull back the assured binary"),
+            WORKFLOW.index("Publish and pull back both assured binaries"),
         )
 
     def test_irreversible_steps_recheck_exact_current_main(self) -> None:
@@ -112,15 +115,21 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         publish_guard = WORKFLOW.index(
             "Reconfirm exact current main before registry publication"
         )
-        publish = WORKFLOW.index("Publish and pull back the assured binary")
+        publish = WORKFLOW.index("Publish and pull back both assured binaries")
         attest_guard = WORKFLOW.index(
             "Reconfirm exact current main before provenance attestation"
         )
         login = WORKFLOW.index("Authenticate GHCR for registry attestation")
-        attest = WORKFLOW.index("Attest exact registry digest")
+        attest_application = WORKFLOW.index(
+            "Attest exact application registry digest"
+        )
+        attest_sidecar = WORKFLOW.index(
+            "Attest exact WhatsApp Sidecar registry digest"
+        )
         self.assertLess(publish_guard, publish)
         self.assertLess(attest_guard, login)
-        self.assertLess(login, attest)
+        self.assertLess(login, attest_application)
+        self.assertLess(attest_application, attest_sidecar)
         for marker in (
             ': "${SOURCE_SHA:?SOURCE_SHA required}"',
             "git fetch --no-tags origin main",
@@ -130,37 +139,54 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, HELPERS)
 
-    def test_same_binary_recovery_and_provenance_are_bound(self) -> None:
+    def test_both_binaries_recovery_and_provenance_are_bound(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
         for marker in (
             "image-ref: ${{ env.CANDIDATE_IMAGE }}",
             "image: ${{ env.CANDIDATE_IMAGE }}",
             "release-image-manifest.json",
+            "sidecar-image-manifest.json",
             "registry-publish-receipt.json",
+            "whatsapp-sidecar-registry-publish-receipt.json",
             "scripts/qualification/recovery/run_recovery_qualification.sh",
             "actions/attest-build-provenance@"
             "0f67c3f4856b2e3261c31976d6725780e5e4c373",
-            "subject-digest: ${{ steps.identity.outputs.digest }}",
+            "subject-digest: ${{ steps.identity.outputs.application_digest }}",
+            "subject-digest: ${{ steps.identity.outputs.sidecar_digest }}",
             "push-to-registry: true",
             "create-storage-record: false",
         ):
             self.assertIn(marker, combined)
+        self.assertEqual(
+            WORKFLOW.count(
+                "actions/attest-build-provenance@"
+                "0f67c3f4856b2e3261c31976d6725780e5e4c373"
+            ),
+            2,
+        )
         login = WORKFLOW.index("Authenticate GHCR for registry attestation")
-        attest = WORKFLOW.index("Attest exact registry digest")
+        attest_application = WORKFLOW.index(
+            "Attest exact application registry digest"
+        )
+        attest_sidecar = WORKFLOW.index(
+            "Attest exact WhatsApp Sidecar registry digest"
+        )
         logout = WORKFLOW.index("Clear GHCR registry credentials")
         finalize = WORKFLOW.index("Build final evidence-bound candidate")
-        self.assertLess(login, attest)
-        self.assertLess(attest, logout)
+        self.assertLess(login, attest_application)
+        self.assertLess(attest_application, attest_sidecar)
+        self.assertLess(attest_sidecar, logout)
         self.assertLess(logout, finalize)
         self.assertIn("docker logout ghcr.io", WORKFLOW)
 
-    def test_final_artifact_binds_acceptance_and_renders_server_identity(self) -> None:
+    def test_final_artifact_binds_acceptance_and_both_server_images(self) -> None:
         for marker in (
             "nexus.canonical-acceptance-receipt.v1",
             "CANONICAL_ACCEPTANCE_RUN_ID",
             "CANONICAL_ACCEPTANCE_RUN_URL",
             "controlled-candidate.env",
             "CONTROLLED_IMAGE=${image}",
+            "WHATSAPP_SIDECAR_IMAGE=${sidecar_image}",
             "GIT_SHA=${SOURCE_SHA}",
             "FRONTEND_BUILD_SHA=",
             "EXPECTED_MIGRATION_HEAD=",
@@ -170,6 +196,16 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             "scan_controlled_candidate_artifacts.py",
         ):
             self.assertIn(marker, WORKFLOW)
+        for marker in (
+            "--sidecar-registry-image",
+            "--sidecar-registry-digest",
+            "--sidecar-local-image-id",
+            "--sidecar-pulled-image-id",
+            "--sidecar-attestation-id",
+            "--sidecar-attestation-url",
+            "whatsapp_sidecar_attestation",
+        ):
+            self.assertIn(marker, HELPERS)
 
     def test_controlled_candidate_remains_fail_closed_for_external_effects(
         self,
