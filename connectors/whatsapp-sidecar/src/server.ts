@@ -132,6 +132,26 @@ function mediaKind(value: string): WhatsAppMediaKind {
   throw new Error("invalid_media_payload");
 }
 
+function optionalPositiveInteger(req: IncomingMessage, name: string): number | undefined {
+  const value = header(req, name).trim();
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("invalid_media_payload");
+  }
+  return parsed;
+}
+
+function optionalNonnegativeInteger(req: IncomingMessage, name: string): number | undefined {
+  const value = header(req, name).trim();
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error("invalid_media_payload");
+  }
+  return parsed;
+}
+
 export function createSidecarServer(
   config: SidecarConfig,
   logger: Logger,
@@ -219,6 +239,17 @@ export function createSidecarServer(
         }
         const content = await readBody(req, MEDIA_LIMITS[kind]);
         if (!content.byteLength) throw new Error("invalid_media_payload");
+        const metadata: Record<string, number> = {};
+        const outboundMessageId = optionalPositiveInteger(req, "x-nexus-outbound-message-id");
+        const ticketId = optionalPositiveInteger(req, "x-nexus-ticket-id");
+        const connectionId = optionalPositiveInteger(req, "x-nexus-connection-id");
+        const outboundPartId = optionalPositiveInteger(req, "x-nexus-outbound-part-id");
+        const sequence = optionalNonnegativeInteger(req, "x-nexus-sequence");
+        if (outboundMessageId !== undefined) metadata.outbound_message_id = outboundMessageId;
+        if (ticketId !== undefined) metadata.ticket_id = ticketId;
+        if (connectionId !== undefined) metadata.connection_id = connectionId;
+        if (outboundPartId !== undefined) metadata.outbound_part_id = outboundPartId;
+        if (sequence !== undefined) metadata.sequence = sequence;
         const request: SendMediaRequest = {
           idempotency_key: idempotencyKey,
           target: header(req, "x-nexus-target").trim() || null,
@@ -226,7 +257,8 @@ export function createSidecarServer(
           media_kind: kind,
           media_type: mediaType,
           filename: decodeURIComponent(header(req, "x-nexus-media-filename")).slice(0, 255) || null,
-          caption: decodeURIComponent(header(req, "x-nexus-media-caption")).slice(0, 1024) || null
+          caption: decodeURIComponent(header(req, "x-nexus-media-caption")).slice(0, 1024) || null,
+          metadata
         };
         sendJson(res, 200, await registry.sendMedia(accountId, request, content));
         return;
