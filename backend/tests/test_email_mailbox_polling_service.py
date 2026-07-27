@@ -26,7 +26,19 @@ from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, EventType, JobStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AdminAuditLog, BackgroundJob, Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketInboundEmailMessage, User  # noqa: E402
+from app.models import (  # noqa: E402
+    AdminAuditLog,
+    BackgroundJob,
+    Customer,
+    Market,
+    OutboundEmailAccount,
+    Team,
+    Tenant,
+    Ticket,
+    TicketEvent,
+    TicketInboundEmailMessage,
+    User,
+)
 from app.services import background_jobs, email_mailbox_polling_service  # noqa: E402
 from app.services.secret_crypto import SecretCryptoService  # noqa: E402
 from app.settings import get_settings  # noqa: E402
@@ -72,7 +84,26 @@ def _uid() -> str:
     return uuid.uuid4().hex[:10]
 
 
-def _admin(db_session, *, user_id: int = 9501) -> User:
+def _tenant(db_session) -> Tenant:
+    row = Tenant(
+        tenant_key=f"mailbox-{_uid()}",
+        display_name="Mailbox Tenant",
+        is_active=True,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def _ownership(tenant: Tenant) -> dict[str, object]:
+    return {
+        "tenant_id": tenant.id,
+        "tenant_assignment_source": "fixture",
+        "tenant_assignment_version": "mailbox-polling-test-v1",
+    }
+
+
+def _admin(db_session, *, tenant: Tenant, user_id: int = 9501) -> User:
     row = User(
         id=user_id,
         username=f"mailbox-poll-admin-{_uid()}",
@@ -81,13 +112,14 @@ def _admin(db_session, *, user_id: int = 9501) -> User:
         password_hash="test",
         role=UserRole.admin,
         is_active=True,
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
     return row
 
 
-def _auditor(db_session) -> User:
+def _auditor(db_session, *, tenant: Tenant) -> User:
     row = User(
         username=f"mailbox-poll-auditor-{_uid()}",
         display_name="Mailbox Poll Auditor",
@@ -95,6 +127,7 @@ def _auditor(db_session) -> User:
         password_hash="test",
         role=UserRole.auditor,
         is_active=True,
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
@@ -105,8 +138,13 @@ def _headers(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(user.id)}"}
 
 
-def _ticket(db_session, *, team: Team) -> Ticket:
-    customer = Customer(name="IMAP Customer", email="customer@example.test", email_normalized=normalize_email("customer@example.test"))
+def _ticket(db_session, *, tenant: Tenant, team: Team, market: Market) -> Ticket:
+    customer = Customer(
+        name="IMAP Customer",
+        email="customer@example.test",
+        email_normalized=normalize_email("customer@example.test"),
+        **_ownership(tenant),
+    )
     db_session.add(customer)
     db_session.flush()
     ticket = Ticket(
@@ -120,17 +158,19 @@ def _ticket(db_session, *, team: Team) -> Ticket:
         status=TicketStatus.in_progress,
         resolution_category=ResolutionCategory.none,
         conversation_state=ConversationState.human_owned,
+        market_id=market.id,
         team_id=team.id,
         source_chat_id="customer@example.test",
         preferred_reply_channel=SourceChannel.email.value,
         preferred_reply_contact="customer@example.test",
+        **_ownership(tenant),
     )
     db_session.add(ticket)
     db_session.flush()
     return ticket
 
 
-def _imap_account(db_session, *, admin: User) -> OutboundEmailAccount:
+def _imap_account(db_session, *, tenant: Tenant, market: Market, admin: User) -> OutboundEmailAccount:
     row = OutboundEmailAccount(
         display_name="Support IMAP",
         host="smtp.example.test",
@@ -149,11 +189,13 @@ def _imap_account(db_session, *, admin: User) -> OutboundEmailAccount:
         imap_mailbox="INBOX",
         is_active=True,
         priority=10,
+        market_id=market.id,
         created_by=admin.id,
         updated_by=admin.id,
     )
     db_session.add(row)
     db_session.flush()
+    assert market.tenant_id == tenant.id
     return row
 
 
@@ -192,13 +234,30 @@ def _raw_reply(ticket: Ticket) -> bytes:
 
 
 def test_email_mailbox_daemon_dispatch_ingests_imap_and_writes_timeline_audit(client: TestClient, db_session, monkeypatch):
-    admin = _admin(db_session)
-    auditor = _auditor(db_session)
-    team = Team(name=f"Mailbox {_uid()}", team_type="support")
+    tenant = _tenant(db_session)
+    ownership = _ownership(tenant)
+    market = Market(
+        code=f"MAIL-{_uid()}",
+        name="Mailbox Market",
+        country_code="ME",
+        is_active=True,
+        **ownership,
+    )
+    db_session.add(market)
+    db_session.flush()
+    team = Team(
+        name=f"Mailbox {_uid()}",
+        team_type="support",
+        market_id=market.id,
+        is_active=True,
+        **ownership,
+    )
     db_session.add(team)
     db_session.flush()
-    ticket = _ticket(db_session, team=team)
-    account = _imap_account(db_session, admin=admin)
+    admin = _admin(db_session, tenant=tenant)
+    auditor = _auditor(db_session, tenant=tenant)
+    ticket = _ticket(db_session, tenant=tenant, team=team, market=market)
+    account = _imap_account(db_session, tenant=tenant, market=market, admin=admin)
     fake_mailbox = FakeMailbox(_raw_reply(ticket))
     monkeypatch.setattr(email_mailbox_polling_service, "_connect_imap", lambda row: fake_mailbox)
 
