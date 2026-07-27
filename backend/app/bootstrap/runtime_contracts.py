@@ -5,19 +5,23 @@ from ..services.processing_purpose_enforcement import (
     install_processing_purpose_events,
 )
 from ..services.scenario_assignment_events import (
-    install_ticket_scenario_assignment_events,
+    install_scenario_assignment_events,
+)
+from ..services.voice_compliance_state_events import (
+    install_voice_compliance_state_events,
 )
 
 _INSTALLED = False
 
 
 def register_runtime_contracts() -> None:
-    """Install process-wide persistence and privacy guards exactly once."""
+    """Install process-wide persistence, Tenant, Scenario and privacy guards."""
 
     global _INSTALLED
     if _INSTALLED:
         return
     install_background_job_scope_events()
     install_processing_purpose_events()
-    install_ticket_scenario_assignment_events()
+    install_scenario_assignment_events()
+    install_voice_compliance_state_events()
     _INSTALLED = True
