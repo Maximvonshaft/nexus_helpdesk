@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -71,3 +72,7 @@ class EmbeddedSignupCompleteRead(EmbeddedSignupSchema):
     phone_number_id: str
     desired_state: str
     verification_state: str
+    binding_state: Literal["started", "attention_required"]
+    binding_error_code: str | None = None
+    binding_retryable: bool = False
+    idempotent: bool = False
