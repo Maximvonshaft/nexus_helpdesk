@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import timedelta
@@ -49,7 +50,6 @@ from app.models import (  # noqa: E402
     User,
     UserCapabilityOverride,
 )
-from app.models_job_scope import BackgroundJobScope  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 from app.voice_models import WebchatVoiceSession  # noqa: E402
@@ -329,24 +329,13 @@ def _seed_control_tower(db_session):
     )
     job = BackgroundJob(
         queue_name="background",
-        job_type="probe",
-        payload_json="{}",
+        job_type="webchat.handoff_snapshot",
+        payload_json=json.dumps({"ticket_id": risk_ticket.id}),
         status=JobStatus.dead,
         max_attempts=3,
     )
     db_session.add(job)
     db_session.flush()
-    db_session.add(
-        BackgroundJobScope(
-            job_id=job.id,
-            scope_type="tenant",
-            tenant_id=tenant.id,
-            customer_id=risk_ticket.customer_id,
-            purpose="human_support",
-            resource_type="ticket",
-            resource_id=str(risk_ticket.id),
-        )
-    )
     db_session.add(
         TicketOutboundMessage(
             ticket_id=risk_ticket.id,
