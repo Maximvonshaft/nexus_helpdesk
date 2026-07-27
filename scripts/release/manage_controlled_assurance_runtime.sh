@@ -60,34 +60,44 @@ start() {
     -e PYTHONPATH=/app/backend \
     -e APP_ENV=test \
     -e DATABASE_URL="${database_url}" \
-    -e JWT_SECRET_KEY=ci-only-not-a-production-secret-0123456789abcdef \
-    -e AI_REPLY_CONTRACT_SECRET=ci-only-contract-secret-0123456789abcdef \
+    -e SECRET_KEY=ci-only-not-a-production-secret-0123456789abcdef \
+    -e RUNTIME_CONTRACT_SIGNING_SECRET=ci-only-contract-secret-0123456789abcdef \
+    -e TENANT_RUNTIME_AUTHORITY_MODE=shadow \
     -e PROVIDER_RUNTIME_ENABLED=false \
     -e PROVIDER_RUNTIME_KILL_SWITCH=true \
     -e ENABLE_OUTBOUND_DISPATCH=false \
-    -e WHATSAPP_NATIVE_ENABLED=false \
+    -e OUTBOUND_PROVIDER=disabled \
+    -e WHATSAPP_ENABLED=false \
+    -e WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false \
+    -e WHATSAPP_MEDIA_ENABLED=false \
+    -e WHATSAPP_MEDIA_SCANNER=disabled \
     "${CANDIDATE_IMAGE}" python -m alembic upgrade head >&2
 
   docker run -d --name "${candidate_name}" --network "${network_name}" \
     -e PYTHONPATH=/app/backend \
     -e APP_ENV=test \
     -e DATABASE_URL="${database_url}" \
-    -e JWT_SECRET_KEY=ci-only-not-a-production-secret-0123456789abcdef \
-    -e AI_REPLY_CONTRACT_SECRET=ci-only-contract-secret-0123456789abcdef \
+    -e SECRET_KEY=ci-only-not-a-production-secret-0123456789abcdef \
+    -e RUNTIME_CONTRACT_SIGNING_SECRET=ci-only-contract-secret-0123456789abcdef \
+    -e TENANT_RUNTIME_AUTHORITY_MODE=shadow \
     -e PROVIDER_RUNTIME_ENABLED=false \
     -e PROVIDER_RUNTIME_TRAFFIC_MODE=control \
     -e PROVIDER_RUNTIME_KILL_SWITCH=true \
     -e PROVIDER_RUNTIME_CANARY_PERCENT=0 \
     -e PRIVATE_AI_RUNTIME_ENABLED=false \
     -e WEBCHAT_AI_ENABLED=false \
+    -e WEBCHAT_AI_AUTO_REPLY_MODE=off \
     -e WEBCHAT_HUMAN_CALL_ENABLED=false \
     -e WEBCHAT_LIVE_AI_VOICE_ENABLED=false \
     -e ENABLE_OUTBOUND_DISPATCH=false \
     -e OUTBOUND_PROVIDER=disabled \
-    -e WHATSAPP_NATIVE_ENABLED=false \
-    -e WHATSAPP_DISPATCH_MODE=disabled \
+    -e WHATSAPP_ENABLED=false \
+    -e WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false \
+    -e WHATSAPP_MEDIA_ENABLED=false \
+    -e WHATSAPP_MEDIA_SCANNER=disabled \
     -e SPEEDAF_MCP_ENABLED=false \
     -e OPERATIONS_DISPATCH_MODE=disabled \
+    -e OPERATIONS_DISPATCH_ADAPTER=disabled \
     "${CANDIDATE_IMAGE}" >/dev/null
 
   running=false
