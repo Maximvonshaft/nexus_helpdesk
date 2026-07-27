@@ -13,6 +13,7 @@ from ..models_case_governance import (
     TicketSLAAssignment,
     TicketSLAPauseInterval,
 )
+from ..models_scenario_assignment import TicketScenarioAssignment
 from ..models_sla_runtime import TicketSLATarget
 from ..utils.time import ensure_utc, utc_now
 from .audit_service import log_event
@@ -65,12 +66,56 @@ def _default_snapshot(
         "risk_window_minutes": DEFAULT_RISK_WINDOW_MINUTES,
         "pause_reasons": pause_reasons,
         "scope": {"global_template": True},
+        "scenario_assignment": None,
+    }
+
+
+def _scenario_assignment(
+    db: Session,
+    ticket: Ticket,
+) -> TicketScenarioAssignment | None:
+    assignment = db.get(TicketScenarioAssignment, ticket.id)
+    if assignment is None:
+        return None
+    if assignment.tenant_id != ticket.tenant_id:
+        raise SLAConfigurationError("scenario_assignment_tenant_conflict")
+    return assignment
+
+
+def _scenario_identity(
+    db: Session,
+    ticket: Ticket,
+) -> str | None:
+    """Return only the server-owned frozen Scenario identity.
+
+    Legacy category, sub-category, case_type and AI classification fields are
+    intentionally excluded. They may be consumed only by the explicit Scenario
+    backfill/reclassification authority, never by SLA runtime selection.
+    """
+
+    assignment = _scenario_assignment(db, ticket)
+    return assignment.scenario_key if assignment is not None else None
+
+
+def _scenario_snapshot(
+    assignment: TicketScenarioAssignment | None,
+) -> dict[str, Any] | None:
+    if assignment is None:
+        return None
+    return {
+        "scenario_key": assignment.scenario_key,
+        "assignment_revision": assignment.assignment_revision,
+        "catalog_version": assignment.catalog_version,
+        "catalog_sha256": assignment.catalog_sha256,
+        "definition_sha256": assignment.definition_sha256,
     }
 
 
 def _revision_snapshot(
     revision: SLAPolicyRevision,
     policy: SLAPolicy,
+    *,
+    scenario_assignment: TicketScenarioAssignment | None,
 ) -> dict[str, Any]:
     return {
         "schema": "nexus.sla-assignment.v1",
@@ -94,6 +139,7 @@ def _revision_snapshot(
             "channel_key": revision.channel_key,
             "scenario_key": revision.scenario_key,
         },
+        "scenario_assignment": _scenario_snapshot(scenario_assignment),
     }
 
 
@@ -166,16 +212,6 @@ def get_policy_for_priority(
     )
 
 
-def _scenario_key(ticket: Ticket) -> str:
-    return str(
-        ticket.case_type
-        or ticket.sub_category
-        or ticket.category
-        or ticket.ai_classification
-        or ""
-    ).strip().lower()
-
-
 def _active_revisions(
     db: Session,
     ticket: Ticket,
@@ -197,7 +233,7 @@ def _active_revisions(
         .all()
     )
     channel = _enum_value(ticket.source_channel)
-    scenario = _scenario_key(ticket)
+    scenario = _scenario_identity(db, ticket)
     eligible: list[tuple[SLAPolicyRevision, SLAPolicy]] = []
     for revision, policy in rows:
         if revision.is_global_template:
@@ -209,8 +245,9 @@ def _active_revisions(
             continue
         if revision.channel_key is not None and revision.channel_key != channel:
             continue
-        if revision.scenario_key is not None and revision.scenario_key != scenario:
-            continue
+        if revision.scenario_key is not None:
+            if scenario is None or revision.scenario_key != scenario:
+                continue
         eligible.append((revision, policy))
     return eligible
 
@@ -264,24 +301,29 @@ def ensure_ticket_sla_assignment(
     assigned_by: int | None = None,
     at: datetime | None = None,
 ) -> TicketSLAAssignment:
-    """Assign one immutable approved revision.
-
-    This is an explicit governance operation and therefore fails closed when no
-    approved revision exists. Runtime customer communication paths use the
-    non-blocking evaluation functions below and never synthesize a policy.
-    """
+    """Assign one immutable approved revision to one frozen Case contract."""
 
     existing = _assignment(db, ticket.id)
     if existing is not None:
+        scenario_assignment = _scenario_assignment(db, ticket)
+        expected = _scenario_snapshot(scenario_assignment)
+        observed = (existing.snapshot_json or {}).get("scenario_assignment")
+        if observed != expected:
+            raise SLAConfigurationError("sla_scenario_assignment_revision_mismatch")
         return existing
     selected = select_policy_revision(db, ticket, at=at)
     if selected is None:
         raise SLAConfigurationError("approved_sla_revision_missing")
     revision, policy = selected
+    scenario_assignment = _scenario_assignment(db, ticket)
     assignment = TicketSLAAssignment(
         ticket_id=ticket.id,
         policy_revision_id=revision.id,
-        snapshot_json=_revision_snapshot(revision, policy),
+        snapshot_json=_revision_snapshot(
+            revision,
+            policy,
+            scenario_assignment=scenario_assignment,
+        ),
         assigned_at=ensure_utc(at or utc_now()) or utc_now(),
         assigned_by=assigned_by,
     )
@@ -748,12 +790,7 @@ def update_pause_state_for_status(
     *,
     actor_id: int | None = None,
 ) -> None:
-    """Synchronize status-driven pauses when an SLA assignment exists.
-
-    Missing SLA configuration is an operational-readiness condition, not a
-    customer-communication blocker. The function therefore leaves the case
-    unpaused and returns when no approved assignment can be established.
-    """
+    """Synchronize status-driven pauses when an SLA assignment exists."""
 
     assignment = _assignment(db, ticket.id)
     if assignment is None:
