@@ -11,27 +11,89 @@
   var loaderUrl = new URL(loader.src, window.location.href);
   var apiBase = (loader.getAttribute('data-api-base') || loaderUrl.origin).replace(/\/$/, '');
   var webCallOrigin = loaderUrl.origin;
-  var nativeOpen = window.open.bind(window);
+  var originalOpen = window.open;
+  var pendingWebCallWindow = null;
+  var bridgeTimer = null;
+  var bridgeActive = false;
 
   function canonicalWebCallTarget(target) {
     if (typeof target !== 'string' || target.indexOf('/webcall/') !== 0) return null;
     return new URL(target, webCallOrigin + '/').toString();
   }
 
-  window.open = function (target, name, features) {
-    var canonicalTarget = canonicalWebCallTarget(target);
-    if (!canonicalTarget) return nativeOpen(target, name, features);
+  function restoreOpenBridge(closePendingWindow) {
+    if (bridgeTimer) window.clearTimeout(bridgeTimer);
+    bridgeTimer = null;
+    if (bridgeActive && window.open === interceptWebCallOpen) {
+      window.open = originalOpen;
+    }
+    bridgeActive = false;
+    if (closePendingWindow && pendingWebCallWindow) {
+      try {
+        if (!pendingWebCallWindow.closed) pendingWebCallWindow.close();
+      } catch (err) {}
+      pendingWebCallWindow = null;
+    }
+  }
 
-    var opened = nativeOpen(canonicalTarget, name, features);
+  function interceptWebCallOpen(target, name, features) {
+    var canonicalTarget = canonicalWebCallTarget(target);
+    if (!canonicalTarget) return originalOpen.call(window, target, name, features);
+
+    var reserved = pendingWebCallWindow;
+    pendingWebCallWindow = null;
+    restoreOpenBridge(false);
+    if (reserved) {
+      try {
+        if (!reserved.closed) {
+          reserved.location.replace(canonicalTarget);
+          return reserved;
+        }
+      } catch (err) {}
+    }
+
+    var opened = originalOpen.call(window, canonicalTarget, name, features);
     if (opened) return opened;
 
-    // The runtime creates the VoiceSession before navigation. When the browser
-    // blocks the delayed popup, preserve the customer journey by navigating the
-    // current tab to the same server-owned WebCall origin. Return a truthy value
-    // so the runtime cannot execute its historical host-page relative fallback.
+    // The VoiceSession already exists. Preserve the customer journey when the
+    // browser blocks a delayed popup, but always navigate to the Nexus-owned
+    // WebCall origin rather than the embedding site's relative /webcall route.
     window.location.assign(canonicalTarget);
     return window;
-  };
+  }
+
+  function reserveWebCallWindow() {
+    if (bridgeActive) return;
+    try {
+      pendingWebCallWindow = originalOpen.call(
+        window,
+        'about:blank',
+        'nexusdesk-webcall'
+      );
+      if (pendingWebCallWindow) {
+        pendingWebCallWindow.opener = null;
+        pendingWebCallWindow.document.title = 'Preparing secure WebCall';
+      }
+    } catch (err) {
+      pendingWebCallWindow = null;
+    }
+    bridgeActive = true;
+    window.open = interceptWebCallOpen;
+    bridgeTimer = window.setTimeout(function () {
+      restoreOpenBridge(true);
+    }, 20000);
+  }
+
+  function onDocumentClick(event) {
+    var target = event.target;
+    var trigger = target && target.closest
+      ? target.closest('.nd-webchat-voice-start')
+      : null;
+    if (!trigger || trigger.disabled) return;
+    reserveWebCallWindow();
+  }
+
+  document.addEventListener('click', onDocumentClick, true);
 
   var runtime = document.createElement('script');
   runtime.src = new URL('/webchat/widget-runtime.js', loaderUrl.origin).toString();
@@ -49,7 +111,8 @@
   }
 
   runtime.addEventListener('error', function () {
-    window.open = nativeOpen;
+    restoreOpenBridge(true);
+    document.removeEventListener('click', onDocumentClick, true);
     window.__NEXUSDESK_WEBCHAT_BOOTSTRAP_LOADED__ = false;
   });
 
