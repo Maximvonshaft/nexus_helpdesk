@@ -1,0 +1,90 @@
+{
+  "schema": "nexus.processing-purpose-authority.v1",
+  "version": "1.0.0",
+  "owner": "privacy_runtime",
+  "default_posture": "fail_closed",
+  "purposes": {
+    "automated_ai": {
+      "implemented": true,
+      "enforcement": [
+        "webchat_public_ai_schedule",
+        "processing_restriction_handoff",
+        "open_ai_turn_cancellation"
+      ]
+    },
+    "provider_tool_execution": {
+      "implemented": true,
+      "enforcement": [
+        "agent_runtime_tool_adapter",
+        "speedaf_provider_boundary"
+      ]
+    },
+    "analytics": {
+      "implemented": true,
+      "enforcement": [
+        "business_outcome_metrics_visibility"
+      ]
+    },
+    "automatic_outbound": {
+      "implemented": true,
+      "enforcement": [
+        "ticket_outbound_message_persistence",
+        "processing_restriction_pending_effect_cancellation"
+      ]
+    },
+    "model_training": {
+      "implemented": false,
+      "enforcement": [
+        "no_runtime_training_path"
+      ]
+    },
+    "marketing": {
+      "implemented": false,
+      "enforcement": [
+        "no_runtime_marketing_path"
+      ]
+    },
+    "human_support": {
+      "implemented": true,
+      "allowed_when_restricted": true,
+      "enforcement": [
+        "canonical_handoff"
+      ]
+    },
+    "legal_obligation": {
+      "implemented": true,
+      "allowed_when_restricted": true,
+      "enforcement": [
+        "privacy_lifecycle"
+      ]
+    },
+    "security": {
+      "implemented": true,
+      "allowed_when_restricted": true,
+      "enforcement": [
+        "security_runtime"
+      ]
+    },
+    "fraud_prevention": {
+      "implemented": true,
+      "allowed_when_restricted": true,
+      "enforcement": [
+        "security_runtime"
+      ]
+    },
+    "dsar": {
+      "implemented": true,
+      "allowed_when_restricted": true,
+      "enforcement": [
+        "data_subject_action_service"
+      ]
+    },
+    "retention": {
+      "implemented": true,
+      "allowed_when_restricted": true,
+      "enforcement": [
+        "retention_execution_guard"
+      ]
+    }
+  }
+}

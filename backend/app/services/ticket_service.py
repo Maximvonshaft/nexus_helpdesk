@@ -13,10 +13,12 @@ from ..enums import TicketStatus
 from ..models import Ticket, User
 from ..schemas import TicketReopenRequest, TicketStatusChangeRequest
 from . import ticket_service_core as _core
+from .notification_evidence_policy import (
+    require_governed_closure_ready as require_closure_ready,
+)
 from .ticket_closure_readiness import (
     append_closure_receipt_event,
     invalidate_latest_closure_receipt,
-    require_closure_ready,
 )
 from .ticket_service_core import *  # noqa: F401,F403
 

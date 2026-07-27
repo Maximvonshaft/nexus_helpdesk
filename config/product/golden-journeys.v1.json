@@ -1,88 +1,57 @@
 {
-  "schema": "nexus.golden-journeys.v1",
-  "version": "1.0.0",
+  "schema": "nexus.golden-journeys.v2",
+  "version": "2.0.0",
   "owner": "customer_operations",
   "effective_at": "2026-07-27T00:00:00Z",
   "scope_freeze": "docs/product/90-day-value-closure.md",
-  "authority": {
-    "live_interaction": "WebchatConversation",
-    "durable_case": "Ticket",
-    "handoff": "WebchatHandoffRequest",
-    "queue_projection": "OperatorTask",
-    "evidence": "CaseEvidenceRecord",
-    "outcome": "CaseOutcomeRecord",
-    "safe_closure": "ticket_closure_readiness"
+  "scenario_authority": {
+    "path": "backend/app/config/business_scenarios.v1.json",
+    "schema": "nexus.business-scenario-catalog.v1",
+    "runtime_loader": "app.services.nexus_osr.business_scenarios.load_business_scenario_catalog",
+    "safe_closure": "app.services.ticket_closure_readiness"
   },
-  "journeys": [
+  "aggregate_authority": "config/architecture/business-aggregate-authority.v1.json",
+  "selection_semantics": "This file selects and orders approved scenarios only. Facts, customer inputs, actions, outcomes, notification policy, closure rules, metrics, fault behavior and lifecycle are owned exclusively by the referenced Business Scenario Catalog.",
+  "selected_scenarios": [
     {
-      "journey_key": "tracking-status-resolution",
       "scenario_key": "tracking_status_inquiry",
-      "customer_intent": "Understand the current authoritative parcel status and the next expected step.",
-      "entry_channels": ["web_chat", "whatsapp", "email", "operator"],
-      "case_creation_rule": "Create or reuse Ticket-as-Case only when a durable responsibility, follow-up, controlled action or formal record is required.",
-      "required_facts": ["parcel_identity", "tracking_current_status"],
-      "required_inputs": ["tracking_reference"],
-      "allowed_actions": ["tracking_lookup", "ask_customer_information", "notify_customer", "handoff"],
-      "terminal_customer_outcomes": ["authoritative_answer", "safe_fallback", "human_handoff"],
-      "definition_of_done": "Fresh authoritative status is communicated without unsupported commitment, customer notification is recorded, and no repair-required outcome remains open.",
-      "primary_metrics": ["first_contact_resolution_rate", "safe_effective_closure_rate", "repeat_contact_7d_rate", "customer_notification_compliance"],
-      "failure_injections": ["tracking_provider_timeout", "tracking_reference_missing", "provider_payload_invalid", "customer_recontacts_after_answer"]
+      "launch_order": 1,
+      "business_owner": "customer_operations"
     },
     {
-      "journey_key": "delivery-delay-resolution",
       "scenario_key": "delivery_eta_delay_inquiry",
-      "customer_intent": "Understand a delay against the service commitment and receive a reliable next step.",
-      "entry_channels": ["web_chat", "whatsapp", "email", "operator"],
-      "case_creation_rule": "A Ticket-as-Case is mandatory when service commitment evaluation, operations follow-up or observation is required.",
-      "required_facts": ["parcel_identity", "tracking_current_status", "tracking_event_history", "service_commitment"],
-      "required_inputs": ["tracking_reference"],
-      "allowed_actions": ["tracking_lookup", "notify_customer", "create_delivery_work_order", "dispatch_operations", "handoff"],
-      "terminal_customer_outcomes": ["delay_explained", "operations_followup_accepted", "human_handoff"],
-      "definition_of_done": "The current evidence and service commitment are evaluated, communicated and stable through the configured observation period.",
-      "primary_metrics": ["safe_effective_closure_rate", "reopen_72h_rate", "repeat_contact_7d_rate", "customer_notification_compliance"],
-      "failure_injections": ["stale_tracking", "service_commitment_missing", "work_order_rejected", "delivery_failure_during_observation"]
+      "launch_order": 2,
+      "business_owner": "delivery_operations"
     },
     {
-      "journey_key": "address-contact-correction",
       "scenario_key": "address_contact_correction",
-      "customer_intent": "Correct delivery contact details safely and know whether the carrier accepted the change.",
-      "entry_channels": ["web_chat", "whatsapp", "email", "operator"],
-      "case_creation_rule": "A Ticket-as-Case is mandatory before any controlled address or contact write.",
-      "required_facts": ["parcel_identity", "tracking_current_status", "address_contact", "identity_verification"],
-      "required_inputs": ["tracking_reference", "corrected_contact", "customer_confirmation"],
-      "allowed_actions": ["tracking_lookup", "ask_customer_information", "update_address_contact", "notify_customer", "handoff"],
-      "terminal_customer_outcomes": ["change_operationally_confirmed", "change_rejected_with_reason", "human_handoff"],
-      "definition_of_done": "The verified correction is accepted or explicitly rejected by the operational authority, communicated to the customer and stable through observation.",
-      "primary_metrics": ["action_operational_completion_rate", "safe_effective_closure_rate", "reopen_72h_rate", "customer_notification_compliance"],
-      "failure_injections": ["identity_verification_failed", "provider_accepts_but_not_applied", "duplicate_confirmation", "customer_changes_request_midflight"]
+      "launch_order": 3,
+      "business_owner": "delivery_operations"
     },
     {
-      "journey_key": "delivery-followup-work-order",
       "scenario_key": "delivery_followup_work_order",
-      "customer_intent": "Request a non-duplicate operational delivery follow-up and receive a concrete next step.",
-      "entry_channels": ["web_chat", "whatsapp", "email", "operator"],
-      "case_creation_rule": "A Ticket-as-Case is mandatory before creating an operations work order.",
-      "required_facts": ["parcel_identity", "tracking_current_status", "tracking_event_history"],
-      "required_inputs": ["tracking_reference", "request_reason"],
-      "allowed_actions": ["tracking_lookup", "create_delivery_work_order", "notify_customer", "handoff"],
-      "terminal_customer_outcomes": ["work_order_accepted", "duplicate_prevented", "work_order_rejected_with_reason", "human_handoff"],
-      "definition_of_done": "A non-duplicate follow-up is accepted or rejected with an authoritative reason and the customer receives the next step.",
-      "primary_metrics": ["action_operational_completion_rate", "provider_failure_rate", "customer_notification_compliance", "safe_effective_closure_rate"],
-      "failure_injections": ["duplicate_request", "provider_timeout_after_acceptance", "work_order_rejected", "notification_delivery_failed"]
+      "launch_order": 4,
+      "business_owner": "delivery_operations"
     },
     {
-      "journey_key": "failed-delivery-recovery",
       "scenario_key": "failed_repeated_delivery_attempt",
-      "customer_intent": "Resolve repeated failed delivery attempts with verified evidence and an owned recovery plan.",
-      "entry_channels": ["web_chat", "whatsapp", "email", "operator", "operational_signal"],
-      "case_creation_rule": "A Ticket-as-Case and explicit owner are mandatory because the scenario is high risk and requires cross-team follow-up.",
-      "required_facts": ["parcel_identity", "tracking_current_status", "delivery_attempts", "address_contact"],
-      "required_inputs": [],
-      "allowed_actions": ["tracking_lookup", "dispatch_operations", "create_delivery_work_order", "notify_customer", "handoff"],
-      "terminal_customer_outcomes": ["recovery_plan_confirmed", "return_or_redelivery_confirmed", "escalated_with_owner"],
-      "definition_of_done": "Attempt evidence is verified, an operational recovery outcome has an accountable owner, the customer is notified, and no high-risk escalation remains unowned.",
-      "primary_metrics": ["safe_effective_closure_rate", "average_human_touches", "reopen_72h_rate", "provider_failure_rate"],
-      "failure_injections": ["attempt_evidence_conflict", "no_available_owner", "provider_receipt_missing", "customer_disputes_closure"]
+      "launch_order": 5,
+      "business_owner": "delivery_exceptions"
     }
+  ],
+  "forbidden_duplicate_fields": [
+    "required_fact_classes",
+    "required_customer_inputs",
+    "allowed_action_classes",
+    "required_action_classes",
+    "required_outcome_levels",
+    "notification_policy",
+    "completion_rules",
+    "definition_of_done",
+    "observation_period_seconds",
+    "reopen_conditions",
+    "metrics",
+    "terminal_customer_outcomes",
+    "failure_injections"
   ]
 }

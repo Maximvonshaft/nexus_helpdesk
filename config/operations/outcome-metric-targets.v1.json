@@ -1,6 +1,6 @@
 {
-  "schema": "nexus.outcome-metric-targets.v1",
-  "version": "1.0.0",
+  "schema": "nexus.outcome-metric-targets.v2",
+  "version": "2.0.0",
   "window_days": 30,
   "metrics": {
     "safe_effective_closure_rate": {
@@ -9,6 +9,7 @@
       "direction": "min",
       "target": 0.95,
       "warning": 0.9,
+      "definition": "分母为窗口内状态已关闭且具备关闭时间的案例；分子为最新结构化 closure_assessment 仍为 closed 的案例。仅修改 Ticket 状态不计入。",
       "drilldown": "/workspace?metric=safe_effective_closure_rate"
     },
     "first_contact_resolution_rate": {
@@ -17,6 +18,7 @@
       "direction": "min",
       "target": 0.75,
       "warning": 0.65,
+      "definition": "仅使用 closure_assessment 中显式的 first_contact_eligible 与 first_contact_resolved 证据；评论数、内部备注数或未转人工不能替代首次解决证明。",
       "drilldown": "/workspace?metric=first_contact_resolution_rate"
     },
     "reopen_72h_rate": {
@@ -25,14 +27,16 @@
       "direction": "max",
       "target": 0.03,
       "warning": 0.06,
+      "definition": "分母只包含已完成完整 72 小时观察窗口的结构化关闭；分子为关闭后 72 小时内存在 reopened assessment 的案例。",
       "drilldown": "/workspace?metric=reopen_72h_rate"
     },
     "repeat_contact_7d_rate": {
-      "label": "7 天重复联系率",
+      "label": "7 天同问题重复联系率",
       "unit": "ratio",
       "direction": "max",
       "target": 0.08,
       "warning": 0.15,
+      "definition": "同一 Tenant 内，只有 customer_id、tracking_number 与 scenario_key 均一致且 7 天内再次创建的案例才计为重复联系。不同包裹或不同诉求不合并。",
       "drilldown": "/workspace?metric=repeat_contact_7d_rate"
     },
     "customer_notification_compliance": {
@@ -41,6 +45,7 @@
       "direction": "min",
       "target": 0.98,
       "warning": 0.94,
+      "definition": "分母为安全有效关闭案例；分子必须存在 delivered、confirmed 或按政策 waived 的结构化客户通知。queued、accepted、sent 均不等于客户已收到。",
       "drilldown": "/workspace?metric=customer_notification_compliance"
     },
     "action_operational_completion_rate": {
@@ -49,6 +54,7 @@
       "direction": "min",
       "target": 0.95,
       "warning": 0.9,
+      "definition": "分母为终态 execution_attempt；分子必须能沿结构化 parent_record 链追溯到 succeeded、delivered 或 confirmed 的 operational_outcome。技术调用成功不计运营完成。",
       "drilldown": "/workspace?metric=action_operational_completion_rate"
     },
     "repair_required_rate": {
@@ -57,6 +63,7 @@
       "direction": "max",
       "target": 0.02,
       "warning": 0.05,
+      "definition": "窗口内案例中，存在失败或 repair_required 的执行、Provider 回执或运营结果的比例。",
       "drilldown": "/workspace?metric=repair_required_rate"
     },
     "handoff_acceptance_rate": {
@@ -65,6 +72,7 @@
       "direction": "min",
       "target": 0.95,
       "warning": 0.9,
+      "definition": "窗口内 HandoffRequest 中具备 accepted_at 的比例。Queue Projection 状态不作为接管事实。",
       "drilldown": "/workspace?metric=handoff_acceptance_rate"
     },
     "handoff_wait_p90_seconds": {
@@ -73,6 +81,7 @@
       "direction": "max",
       "target": 60,
       "warning": 120,
+      "definition": "仅对已接受 Handoff，按 accepted_at - requested_at 计算等待秒数的 P90。",
       "drilldown": "/workspace?metric=handoff_wait_p90_seconds"
     },
     "average_human_touches": {
@@ -81,6 +90,7 @@
       "direction": "max",
       "target": 3,
       "warning": 5,
+      "definition": "仅统计具备人工 author_id 的评论、内部备注及已接受 Handoff；系统事件和匿名记录不计人工触点。",
       "drilldown": "/workspace?metric=average_human_touches"
     },
     "provider_failure_rate": {
@@ -89,15 +99,8 @@
       "direction": "max",
       "target": 0.02,
       "warning": 0.05,
+      "definition": "终态 ProviderReceipt 中 state=failed 的比例。",
       "drilldown": "/runtime?metric=provider_failure_rate"
-    },
-    "ai_live_resolution_quality_rate": {
-      "label": "AI 实时解决质量率",
-      "unit": "ratio",
-      "direction": "min",
-      "target": 0.7,
-      "warning": 0.55,
-      "drilldown": "/workspace?metric=ai_live_resolution_quality_rate"
     }
   }
 }

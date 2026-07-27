@@ -50,6 +50,7 @@ from ..api.webchat_events import router as webchat_events_router
 from ..api.webchat_voice import router as webchat_voice_router
 from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
+from .runtime_contracts import register_runtime_contracts
 
 
 _RETIRED_ADMIN_READINESS_PATHS = {
@@ -59,7 +60,7 @@ _RETIRED_ADMIN_READINESS_PATHS = {
 
 
 def _compose_admin_dependencies(*, dependencies: list) -> list:
-    """Return the one ordered policy chain for the canonical admin router."""
+    """Return the one ordered policy chain for canonical admin surfaces."""
 
     return [
         Depends(enforce_admin_tenant_query_scope),
@@ -81,6 +82,8 @@ def _retire_legacy_admin_readiness_routes() -> None:
 def register_api_routers(app: FastAPI) -> None:
     """Register every supported API router exactly once in deterministic order."""
 
+    register_runtime_contracts()
+
     for router in (
         admin_perf_router,
         admin_identity_router,
@@ -90,6 +93,8 @@ def register_api_routers(app: FastAPI) -> None:
         ticket_perf_router,
     ):
         app.include_router(router)
+
+    admin_scope_dependencies = _compose_admin_dependencies(dependencies=[])
     admin_dependencies = _compose_admin_dependencies(
         dependencies=[Depends(enforce_admin_password_request_policy)]
     )
@@ -98,11 +103,17 @@ def register_api_routers(app: FastAPI) -> None:
     app.include_router(release_readiness_router, dependencies=admin_dependencies)
     app.include_router(governance_router, dependencies=admin_dependencies)
     app.include_router(data_lifecycle_router, dependencies=admin_dependencies)
+
+    # These routers previously sat outside the canonical admin Tenant boundary.
+    # They operate on projections, Jobs and Outbound records that can carry
+    # customer effects, so the same server-derived scope must wrap reads and
+    # mutations. Endpoint capability checks remain additive.
+    app.include_router(admin_queue_router, dependencies=admin_scope_dependencies)
+    app.include_router(operator_queue_router, dependencies=admin_scope_dependencies)
+
     for router in (
-        admin_queue_router,
         osr_admin_router,
         operator_agent_state_router,
-        operator_queue_router,
         outbound_channels_router,
         auth_router,
         frontend_observability_router,

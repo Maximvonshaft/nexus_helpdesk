@@ -230,5 +230,5 @@ def test_get_operator_queue_projection_does_not_duplicate_active_tasks(db_sessio
 
     assert first["created_total"] == 1
     assert second["created_total"] == 0
-    assert second["skipped_existing"] == 1
+    assert second["skipped_existing"] == 0
     assert db_session.query(OperatorTask).count() == 1

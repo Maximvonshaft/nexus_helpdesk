@@ -50,6 +50,7 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_case_evidence",
     "app.models_sla_runtime",
     "app.models_privacy_runtime",
+    "app.models_job_scope",
 )
 
 # There are currently no optional production model plugins. Future plugins must
@@ -78,6 +79,7 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_case_evidence": "case_evidence_records",
     "app.models_sla_runtime": "ticket_sla_targets",
     "app.models_privacy_runtime": "data_processing_restrictions",
+    "app.models_job_scope": "background_job_scopes",
 }
 
 

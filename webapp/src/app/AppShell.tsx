@@ -209,6 +209,7 @@ function AppShellContent({
           <Box
             component="a"
             href="#nd-main-content"
+            tabIndex={0}
             onKeyDown={(event) => {
               if (event.key !== 'Tab' || event.shiftKey) return
               const next = document.querySelector<HTMLElement>('header button:not([disabled]), header a[href]')
