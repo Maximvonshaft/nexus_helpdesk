@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..models import TicketOutboundMessage
 from ..models_whatsapp import WhatsAppConnection
 from ..models_whatsapp_outbound import WhatsAppOutboundPart
-from ..utils.time import utc_now
+from ..utils.time import ensure_utc, utc_now
 from .secret_crypto import SecretCryptoService
 from .whatsapp_attachment_bytes import (
     WhatsAppAttachmentError,
@@ -57,7 +57,10 @@ def dispatch_whatsapp_parts(
             provider_message_ids=(),
             sent_at=None,
             failure_code="whatsapp_outbound_part_scope_mismatch",
-            failure_reason="WhatsApp outbound message does not belong to the selected connection",
+            failure_reason=(
+                "WhatsApp outbound message does not belong to the selected "
+                "connection"
+            ),
             retryable=False,
         )
     parts = _ensure_parts(db, connection=connection, message=message)
@@ -67,8 +70,9 @@ def dispatch_whatsapp_parts(
     for part in parts:
         if part.status in _SUCCESS_STATES and part.provider_message_id:
             provider_ids.append(part.provider_message_id)
-            if part.sent_at:
-                sent_at_values.append(part.sent_at)
+            persisted_sent_at = ensure_utc(part.sent_at)
+            if persisted_sent_at is not None:
+                sent_at_values.append(persisted_sent_at)
             continue
         try:
             if part.part_type == "text":
@@ -82,7 +86,9 @@ def dispatch_whatsapp_parts(
             else:
                 attachment = part.attachment
                 if attachment is None:
-                    raise WhatsAppAttachmentError("whatsapp_outbound_attachment_missing")
+                    raise WhatsAppAttachmentError(
+                        "whatsapp_outbound_attachment_missing"
+                    )
                 loaded = load_whatsapp_attachment(attachment)
                 if connection.transport == "baileys_sidecar":
                     result = send_baileys_media(
@@ -118,16 +124,17 @@ def dispatch_whatsapp_parts(
                 part.media_type = loaded.media_type
                 part.file_name = loaded.filename
                 part.provider_media_id = provider_media_id
+            sent_at = ensure_utc(result.sent_at) or utc_now()
             part.status = "sent"
             part.provider_message_id = result.provider_message_id
-            part.sent_at = result.sent_at
-            part.receipt_at = result.sent_at
+            part.sent_at = sent_at
+            part.receipt_at = sent_at
             part.failure_code = None
             part.failure_reason = None
             part.updated_at = utc_now()
             db.flush()
             provider_ids.append(result.provider_message_id)
-            sent_at_values.append(result.sent_at)
+            sent_at_values.append(sent_at)
         except (BaileysSidecarError, MetaCloudTransportError) as exc:
             return _failed_part(
                 db,
@@ -150,7 +157,11 @@ def dispatch_whatsapp_parts(
                 retryable=str(code).endswith("storage_read_failed"),
             )
         except (RuntimeError, ValueError) as exc:
-            code = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "whatsapp_part_dispatch_failed"
+            code = (
+                exc.args[0]
+                if exc.args and isinstance(exc.args[0], str)
+                else "whatsapp_part_dispatch_failed"
+            )
             return _failed_part(
                 db,
                 part=part,
@@ -194,13 +205,19 @@ def _ensure_parts(
                 attachment_id=None,
                 sequence=sequence,
                 part_type="text",
-                idempotency_key=f"nexusdesk-wa-part-{message.id}-{sequence}",
+                idempotency_key=(
+                    f"nexusdesk-wa-part-{message.id}-{sequence}"
+                ),
                 status="queued",
             )
         )
         sequence += 1
     links = sorted(
-        (link for link in message.attachment_links if link.attachment is not None),
+        (
+            link
+            for link in message.attachment_links
+            if link.attachment is not None
+        ),
         key=lambda link: (link.id or 0, link.attachment_id),
     )
     for link in links:
@@ -214,7 +231,9 @@ def _ensure_parts(
                 part_type="media",
                 media_type=link.attachment.mime_type,
                 file_name=link.attachment.file_name,
-                idempotency_key=f"nexusdesk-wa-part-{message.id}-{sequence}",
+                idempotency_key=(
+                    f"nexusdesk-wa-part-{message.id}-{sequence}"
+                ),
                 status="queued",
             )
         )
@@ -258,7 +277,9 @@ def _send_text_part(
 
 
 def _meta_access_token(connection: WhatsAppConnection) -> str:
-    token = SecretCryptoService.whatsapp().decrypt(connection.access_token_encrypted)
+    token = SecretCryptoService.whatsapp().decrypt(
+        connection.access_token_encrypted
+    )
     if not token:
         raise ValueError("meta_access_token_missing")
     return token
@@ -295,10 +316,15 @@ def _failed_part(
     part.receipt_at = utc_now()
     part.updated_at = utc_now()
     db.flush()
+    normalized_sent_at = [
+        value
+        for value in (ensure_utc(item) for item in sent_at_values)
+        if value is not None
+    ]
     return WhatsAppPartsDispatchResult(
         ok=False,
         provider_message_ids=tuple(provider_ids),
-        sent_at=max(sent_at_values) if sent_at_values else None,
+        sent_at=max(normalized_sent_at) if normalized_sent_at else None,
         failure_code=code[:120],
         failure_reason=reason[:1000],
         retryable=retryable,
