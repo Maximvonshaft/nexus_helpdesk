@@ -22,6 +22,7 @@ def _handoff(*, assigned_agent_id: int, status: str = "accepted"):
         recommended_agent_action=None,
         requested_at=None,
         accepted_at=None,
+        released_at=None,
         closed_at=None,
     )
 
