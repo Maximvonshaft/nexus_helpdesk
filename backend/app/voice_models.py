@@ -173,6 +173,16 @@ class WebchatVoiceSession(Base):
         UTCDateTime, default=utc_now, onupdate=utc_now, index=True
     )
 
+    @property
+    def duration_seconds(self) -> int:
+        """Return the non-negative connected-call duration from canonical timestamps."""
+
+        started = ensure_utc(self.active_at or self.accepted_at or self.started_at)
+        ended = ensure_utc(self.ended_at)
+        if started is None or ended is None:
+            return 0
+        return max(0, int((ended - started).total_seconds()))
+
 
 class WebchatVoiceParticipant(Base):
     """Provider Call Leg projection for caller, AI, human, transfer and service legs."""
