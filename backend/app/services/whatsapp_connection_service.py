@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -10,7 +11,6 @@ from ..models_whatsapp import WhatsAppConnection
 from ..utils.time import utc_now
 from .whatsapp_transport_registry import (
     BAILEYS_SIDECAR_TRANSPORT,
-    META_CLOUD_API_TRANSPORT,
     normalize_whatsapp_transport,
 )
 
@@ -135,14 +135,18 @@ def apply_observed_snapshot(
     connection: WhatsAppConnection,
     snapshot: dict[str, Any],
 ) -> None:
-    observed_state = str(snapshot.get("status") or snapshot.get("observed_state") or "").strip().lower()
+    observed_state = str(
+        snapshot.get("status") or snapshot.get("observed_state") or ""
+    ).strip().lower()
     state_map = {
         "idle": "auth_required",
         "qr_pending": "qr_pending",
         "pairing": "auth_persisting",
+        "auth_persisting": "auth_persisting",
         "connecting": "connecting",
         "connected": "connected",
         "reconnecting": "degraded",
+        "degraded": "degraded",
         "disconnected": "logged_out",
         "logged_out": "logged_out",
         "error": "error",
@@ -152,7 +156,14 @@ def apply_observed_snapshot(
         connection.observed_state = state_map.get(observed_state, "error")
 
     auth_state = str(snapshot.get("authentication_state") or "").strip().lower()
-    if auth_state in {"unconfigured", "pending", "linked", "unstable", "revoked", "error"}:
+    if auth_state in {
+        "unconfigured",
+        "pending",
+        "linked",
+        "unstable",
+        "revoked",
+        "error",
+    }:
         connection.authentication_state = auth_state
     elif connection.observed_state == "connected":
         connection.authentication_state = "linked"
@@ -175,7 +186,9 @@ def apply_observed_snapshot(
     elif connection.observed_state == "error":
         connection.listener_state = "error"
 
-    connection.phone_number = _optional(snapshot.get("phone_number")) or connection.phone_number
+    connection.phone_number = (
+        _optional(snapshot.get("phone_number")) or connection.phone_number
+    )
     connection.jid = _optional(snapshot.get("jid")) or connection.jid
     connection.last_error_code = _optional(snapshot.get("last_error_code"))
     connection.last_error_message = _optional(snapshot.get("last_error_message"))
@@ -197,12 +210,14 @@ def apply_observed_snapshot(
         "last_inbound_at",
         "last_outbound_at",
     ):
-        value = snapshot.get(field)
+        value = _optional_datetime(snapshot.get(field))
         if value is not None:
             setattr(connection, field, value)
     connection.last_probe_at = utc_now()
     connection.last_probe_status = (
-        "success" if connection.observed_state == "connected" else connection.observed_state
+        "success"
+        if connection.observed_state == "connected"
+        else connection.observed_state
     )
     connection.updated_at = utc_now()
 
@@ -279,6 +294,21 @@ def connection_audit_snapshot(connection: WhatsAppConnection) -> dict[str, Any]:
 def _optional(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise WhatsAppConnectionError("invalid_whatsapp_observed_timestamp") from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _masked_phone(value: str | None) -> str | None:
