@@ -114,6 +114,7 @@ test('external WebChat embed opens WebCall on the server-owned Nexus origin when
     })
     await page.goto(customerOrigin)
 
+    await page.getByRole('button', { name: 'Chat with us' }).click()
     const voiceButton = page.getByRole('button', { name: 'VOIP Call' })
     await expect(voiceButton).toBeVisible()
     await voiceButton.click()
