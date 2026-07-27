@@ -43,7 +43,10 @@ test('warm consultation never reports completion from the start command', () => 
   assert.match(page, /phase !== 'cancelled'/)
   assert.match(page, /Provider 已确认咨询转接完成/)
   assert.match(page, /咨询已取消，客户通话已恢复/)
-  assert.doesNotMatch(page, /Provider 已确认咨询转接完成['"]\s*:\s*['"]Provider 已确认咨询转接完成/)
+  assert.doesNotMatch(
+    page,
+    /Provider 已确认咨询转接完成['"]\s*:\s*['"]Provider 已确认咨询转接完成/,
+  )
 })
 
 
@@ -51,7 +54,10 @@ test('WebCall reports success only after the canonical Provider command reaches 
   assert.match(page, /waitForCommand/)
   assert.match(page, /telephonyApi\.listCommands/)
   assert.match(page, /current\.status === 'succeeded'/)
-  assert.match(page, /current\.status === 'failed' \|\| current\.status === 'cancelled'/)
+  assert.match(
+    page,
+    /current\.status === 'failed' \|\| current\.status === 'cancelled'/,
+  )
   assert.match(page, /Provider 状态确认超时/)
   assert.match(page, /return waitForCommand\(response\.action\)/)
   assert.match(telephonyApi, /export interface VoiceCommandRequest/)
@@ -67,8 +73,19 @@ test('WebCall reports success only after the canonical Provider command reaches 
 
 test('operator mute remains local while hold and resume use durable Provider commands', () => {
   assert.match(page, /setLocalMicrophoneState/)
-  assert.match(page, /setMicrophoneEnabled\(!\(nextMuted \|\| nextHeld\)\)/)
+  assert.match(page, /setMicrophoneEnabled\(\s*!\(nextMuted \|\| nextHeld\)/)
   assert.doesNotMatch(page, /recordAction\(next \? 'mute' : 'unmute'\)/)
   assert.match(page, /const action = next \? 'hold' : 'resume'/)
   assert.match(page, /recordAction\(action\)/)
+})
+
+
+test('WebCall requests credentials and microphone only after explicit media join', () => {
+  assert.match(page, /const joinCall = useCallback/)
+  assert.match(page, /onClick=\{\(\) => void joinCall\(\)\}/)
+  assert.match(page, /页面打开不会访问麦克风/)
+  assert.match(page, /只有点击下方按钮后/)
+  assert.match(page, /接听并加入/)
+  assert.match(page, /加入通话/)
+  assert.doesNotMatch(page, /void start\(\)/)
 })
