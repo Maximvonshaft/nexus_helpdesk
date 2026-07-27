@@ -31,6 +31,7 @@ POSTGRES_TESTS = (
     "backend/tests/test_support_conversations_postgres.py",
     "backend/tests/test_support_conversation_privacy.py",
     "backend/tests/test_support_sensitive_access.py",
+    "backend/tests/test_email_intake_authority.py",
     "backend/tests/resilience/test_postgres_worker_recovery.py",
 )
 FAIL_CLOSED_ENV = {
