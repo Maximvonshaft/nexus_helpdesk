@@ -146,10 +146,16 @@ def call_baileys_account_action(
     client: BaileysSidecarHttpClient | None = None,
 ) -> BaileysAccountSnapshot:
     account_id = _session_key(connection)
+    payload = (
+        {"generation": connection.desired_generation}
+        if method == "POST" and action in {"start", "restart"}
+        else None
+    )
     data = _request(
         account_id,
         action,
         method=method,
+        payload=payload,
         client=client,
     )
     return BaileysAccountSnapshot.from_payload(account_id, data)
