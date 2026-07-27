@@ -7,12 +7,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_controlled_workers_use_supervised_entrypoint_and_durable_health() -> None:
     compose = (ROOT / "deploy/docker-compose.controlled.yml").read_text(encoding="utf-8")
-    assert compose.count("run_worker_supervised.py") == 4
+    assert compose.count("run_worker_supervised.py") == 3
     assert "scripts/check_worker_progress.py" in compose
     assert "/proc/1/cmdline" not in compose
     assert "controlled-worker-ok" not in compose
-    for queue in ("outbound", "background", "webchat-ai", "handoff-snapshot"):
+    for queue in ("outbound", "background", "webchat-ai"):
         assert f"NEXUS_WORKER_QUEUE: {queue}" in compose
+    assert "handoff-snapshot" not in compose
+    assert "worker-handoff-snapshot" not in compose
 
 
 def test_worker_progress_is_durable_bounded_and_payload_free() -> None:
