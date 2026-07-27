@@ -32,30 +32,30 @@ def test_background_worker_claims_only_background_owned_job_types():
         "SPEEDAF_ADDRESS_UPDATE_JOB",
         "SPEEDAF_VOICE_CALLBACK_JOB",
         "EMAIL_MAILBOX_SYNC_JOB",
+        "WEBCHAT_HANDOFF_SNAPSHOT_JOB",
     ):
         assert required in function
-    for retired_or_other_queue in (
+    for other_queue in (
         "AUTO_REPLY_JOB",
         "WEBCHAT_AI_REPLY_JOB",
-        "WEBCHAT_HANDOFF_SNAPSHOT_JOB",
         "EXTERNAL_CHANNEL_SYNC_JOB",
     ):
-        assert retired_or_other_queue not in function
+        assert other_queue not in function
 
 
-def test_dedicated_dispatchers_own_webchat_ai_and_handoff_snapshot():
+def test_only_webchat_ai_retains_a_dedicated_dispatcher():
     runner = WORKER_RUNNER.read_text(encoding="utf-8")
     assert "dispatch_pending_webchat_ai_reply_jobs" in runner
-    assert "dispatch_pending_webchat_handoff_snapshot_jobs" in runner
+    assert "dispatch_pending_webchat_handoff_snapshot_jobs" not in runner
     assert 'if queue == "webchat-ai"' in runner
-    assert 'if queue == "handoff-snapshot"' in runner
+    assert 'if queue == "handoff-snapshot"' not in runner
+    assert '"handoff-snapshot"' not in runner
 
 
 def test_processed_counts_never_write_the_queue_depth_gauge():
     for function_name in (
         "_run_outbound",
         "_run_background",
-        "_run_handoff_snapshot",
         "_run_webchat_ai",
         "_run_webchat_ai_reconciler_watchdog",
     ):
@@ -80,7 +80,10 @@ def test_real_queue_depth_is_sampled_once_by_background_worker():
 
 def _command_tokens(service: dict) -> list[str]:
     command = service.get("command")
-    assert isinstance(command, list), "controlled workers must use shell-less exec-vector commands"
+    assert isinstance(
+        command,
+        list,
+    ), "controlled workers must use shell-less exec-vector commands"
     assert all(isinstance(token, str) and token for token in command)
     return command
 
@@ -92,7 +95,6 @@ def test_controlled_services_use_one_queue_per_supervised_worker():
         "worker-outbound-controlled": "outbound",
         "worker-background-controlled": "background",
         "worker-webchat-ai-controlled": "webchat-ai",
-        "worker-handoff-snapshot-controlled": "handoff-snapshot",
     }
 
     observed: dict[str, str] = {}
@@ -110,3 +112,4 @@ def test_controlled_services_use_one_queue_per_supervised_worker():
         observed[service_name] = queue
 
     assert observed == expected
+    assert "worker-handoff-snapshot-controlled" not in services
