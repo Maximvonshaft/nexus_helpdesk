@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Ticket
-from ..services.permissions import ensure_ticket_visible
-from ..services.ticket_closure_readiness import (
-    build_closure_snapshot,
-    record_closure_evidence,
+from ..services.notification_evidence_policy import (
+    build_governed_closure_snapshot,
 )
+from ..services.permissions import ensure_ticket_visible
+from ..services.ticket_closure_readiness import record_closure_evidence
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
@@ -55,7 +55,7 @@ def ticket_closure_readiness(
     current_user=Depends(get_current_user),
 ):
     ticket = _ticket(db, ticket_id, current_user)
-    return build_closure_snapshot(db, ticket).receipt
+    return build_governed_closure_snapshot(db, ticket).receipt
 
 
 @router.post("/{ticket_id}/closure-evidence")
@@ -84,7 +84,7 @@ def add_ticket_closure_evidence(
             db.flush()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    snapshot = build_closure_snapshot(db, ticket)
+    snapshot = build_governed_closure_snapshot(db, ticket)
     return {
         "schema": "nexus.case-closure-evidence-result.v2",
         "record_id": record.record_id,
