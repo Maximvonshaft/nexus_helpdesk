@@ -15,6 +15,7 @@ from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .audit_service import log_admin_audit
+from .tenant_authority import tenant_runtime_authority_mode
 
 TERMINAL_STATUSES = {
     "resolved",
@@ -26,6 +27,7 @@ TERMINAL_STATUSES = {
 OPEN_HANDOFF_STATUSES = {"requested", "accepted"}
 HANDOFF_PROJECTION_SOURCE = "webchat_handoff"
 HANDOFF_PROJECTION_SCHEMA = "nexus.operator-task.webchat-handoff.v2"
+_ALL_TENANTS = object()
 SENSITIVE_KEYS = {
     "session_key",
     "sessionkey",
@@ -63,20 +65,22 @@ class ProjectResult:
     retired: int = 0
 
 
+def _shadow_enabled() -> bool:
+    return tenant_runtime_authority_mode() == "shadow"
+
+
+def _tenant_predicate(column, tenant_id: int | None):
+    return column == tenant_id if tenant_id is not None else column.is_(None)
+
+
 def _safe_note(note: str | None) -> str | None:
     return note[:1000] if note is not None else None
 
 
 def _hash_preview(value: Any) -> dict[str, Any]:
     raw = "" if value is None else str(value)
-    digest = hashlib.sha256(
-        raw.encode("utf-8", errors="ignore")
-    ).hexdigest()[:16]
-    return {
-        "redacted": True,
-        "length": len(raw),
-        "sha256_prefix": digest,
-    }
+    digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return {"redacted": True, "length": len(raw), "sha256_prefix": digest}
 
 
 def _safe_error_summary(value: Any) -> dict[str, Any]:
@@ -196,9 +200,11 @@ def _task_snapshot(row: OperatorTask) -> dict[str, Any]:
 def _tenant_id_for_conversation(
     db: Session,
     conversation: WebchatConversation,
-) -> int:
+) -> int | None:
     tenant_key = str(conversation.tenant_key or "").strip().lower()
     if not tenant_key or tenant_key == "default":
+        if _shadow_enabled():
+            return None
         raise OperatorQueueError(
             409,
             "operator_task_conversation_tenant_missing",
@@ -221,14 +227,39 @@ def _tenant_id_for_conversation(
     return int(tenant.id)
 
 
+def _tenant_id_for_ticket(db: Session, ticket: Ticket) -> int | None:
+    if ticket.tenant_id is None:
+        if _shadow_enabled():
+            return None
+        raise OperatorQueueError(
+            409,
+            "operator_task_ticket_tenant_missing",
+            "operator task Ticket has no Tenant ownership",
+        )
+    tenant = db.get(Tenant, int(ticket.tenant_id))
+    if tenant is None or not tenant.is_active:
+        raise OperatorQueueError(
+            409,
+            "operator_task_tenant_unavailable",
+            "operator task Tenant is unavailable",
+        )
+    return int(tenant.id)
+
+
 def resolve_operator_task_tenant_id(
     db: Session,
     *,
     tenant_id: int | None = None,
     ticket_id: int | None = None,
     webchat_conversation_id: int | None = None,
-) -> int:
-    candidates: set[int] = set()
+) -> int | None:
+    """Resolve one immutable task scope.
+
+    ``None`` is the isolated legacy-shadow scope, never platform-global. It is
+    accepted only when the canonical Tenant authority is in shadow mode.
+    """
+
+    candidates: set[int | None] = set()
     if tenant_id is not None:
         tenant = db.get(Tenant, int(tenant_id))
         if tenant is None or not tenant.is_active:
@@ -238,28 +269,38 @@ def resolve_operator_task_tenant_id(
                 "operator task Tenant is unavailable",
             )
         candidates.add(int(tenant.id))
+
     if ticket_id is not None:
         ticket = db.get(Ticket, int(ticket_id))
-        if ticket is None or ticket.tenant_id is None:
-            raise OperatorQueueError(
-                409,
-                "operator_task_ticket_tenant_missing",
-                "operator task Ticket has no Tenant ownership",
-            )
-        candidates.add(int(ticket.tenant_id))
+        if ticket is None:
+            if _shadow_enabled() and tenant_id is None:
+                candidates.add(None)
+            else:
+                raise OperatorQueueError(
+                    409,
+                    "operator_task_ticket_missing",
+                    "operator task Ticket is unavailable",
+                )
+        else:
+            candidates.add(_tenant_id_for_ticket(db, ticket))
+
     if webchat_conversation_id is not None:
-        conversation = db.get(
-            WebchatConversation,
-            int(webchat_conversation_id),
-        )
+        conversation = db.get(WebchatConversation, int(webchat_conversation_id))
         if conversation is None:
-            raise OperatorQueueError(
-                409,
-                "operator_task_conversation_missing",
-                "operator task Conversation is unavailable",
-            )
-        candidates.add(_tenant_id_for_conversation(db, conversation))
+            if _shadow_enabled() and tenant_id is None:
+                candidates.add(None)
+            else:
+                raise OperatorQueueError(
+                    409,
+                    "operator_task_conversation_missing",
+                    "operator task Conversation is unavailable",
+                )
+        else:
+            candidates.add(_tenant_id_for_conversation(db, conversation))
+
     if not candidates:
+        if _shadow_enabled():
+            return None
         raise OperatorQueueError(
             409,
             "operator_task_tenant_required",
@@ -269,21 +310,26 @@ def resolve_operator_task_tenant_id(
         raise OperatorQueueError(
             409,
             "operator_task_tenant_conflict",
-            "operator task sources belong to different Tenants",
+            "operator task sources belong to different Tenant scopes",
         )
-    return candidates.pop()
+    resolved = candidates.pop()
+    if resolved is None and not _shadow_enabled():
+        raise OperatorQueueError(
+            409,
+            "operator_task_shadow_scope_forbidden",
+            "legacy-shadow operator tasks are disabled",
+        )
+    return resolved
 
 
 def _active_query(
     db: Session,
     *,
-    tenant_id: int,
-    source_type: str,
+    tenant_id: int | None,
     task_type: str,
 ):
     return db.query(OperatorTask).filter(
-        OperatorTask.tenant_id == tenant_id,
-        OperatorTask.source_type == source_type,
+        _tenant_predicate(OperatorTask.tenant_id, tenant_id),
         OperatorTask.task_type == task_type,
         OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
     )
@@ -292,32 +338,28 @@ def _active_query(
 def _find_existing_active_task(
     db: Session,
     *,
-    tenant_id: int,
+    tenant_id: int | None,
     source_type: str,
     task_type: str,
     source_id: str | None = None,
     webchat_conversation_id: int | None = None,
 ) -> OperatorTask | None:
-    query = _active_query(
-        db,
-        tenant_id=tenant_id,
-        source_type=source_type,
-        task_type=task_type,
-    )
+    query = _active_query(db, tenant_id=tenant_id, task_type=task_type)
     identities = []
     if source_id:
-        identities.append(OperatorTask.source_id == source_id)
+        identities.append(
+            and_(
+                OperatorTask.source_type == source_type,
+                OperatorTask.source_id == source_id,
+            )
+        )
     if webchat_conversation_id is not None:
         identities.append(
             OperatorTask.webchat_conversation_id == webchat_conversation_id
         )
     if not identities:
         return None
-    return (
-        query.filter(or_(*identities))
-        .order_by(OperatorTask.id.desc())
-        .first()
-    )
+    return query.filter(or_(*identities)).order_by(OperatorTask.id.desc()).first()
 
 
 def _ensure_task_mutable(row: OperatorTask) -> None:
@@ -342,7 +384,8 @@ def _is_source_owned_projection(row: OperatorTask) -> bool:
 def _refresh_existing_task(
     row: OperatorTask,
     *,
-    tenant_id: int,
+    tenant_id: int | None,
+    source_type: str,
     source_id: str | None = None,
     source_version: int | None = None,
     projection_schema: str | None = None,
@@ -356,8 +399,9 @@ def _refresh_existing_task(
         raise OperatorQueueError(
             409,
             "operator_task_tenant_conflict",
-            "operator task cannot move between Tenants",
+            "operator task cannot move between Tenant scopes",
         )
+    row.source_type = source_type[:40]
     if source_id:
         row.source_id = source_id[:160]
     if source_version is not None:
@@ -412,6 +456,7 @@ def create_operator_task(
         _refresh_existing_task(
             existing,
             tenant_id=resolved_tenant_id,
+            source_type=source_type,
             source_id=source_id,
             source_version=source_version,
             projection_schema=projection_schema,
@@ -456,6 +501,7 @@ def create_operator_task(
             _refresh_existing_task(
                 existing,
                 tenant_id=resolved_tenant_id,
+                source_type=source_type,
                 source_id=source_id,
                 source_version=source_version,
                 projection_schema=projection_schema,
@@ -469,7 +515,7 @@ def create_operator_task(
         raise OperatorQueueError(
             409,
             "operator_task_conflict",
-            "operator task already exists in this Tenant",
+            "operator task already exists in this Tenant scope",
         ) from exc
     return row, True
 
@@ -558,19 +604,32 @@ def _project_handoff_request(
     return row, created
 
 
+def _scoped_task_query(
+    db: Session,
+    tenant_id: int | None | object,
+):
+    query = db.query(OperatorTask)
+    if tenant_id is _ALL_TENANTS:
+        return query
+    return query.filter(_tenant_predicate(OperatorTask.tenant_id, tenant_id))
+
+
 def _retire_stale_handoff_projections(
     db: Session,
     *,
-    tenant_id: int | None = None,
+    tenant_id: int | None | object = _ALL_TENANTS,
 ) -> int:
-    query = db.query(OperatorTask).filter(
-        OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
-        OperatorTask.task_type == "handoff",
-        OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
+    rows = (
+        _scoped_task_query(db, tenant_id)
+        .filter(
+            OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
+            OperatorTask.task_type == "handoff",
+            OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
+        )
+        .order_by(OperatorTask.id.asc())
+        .limit(5000)
+        .all()
     )
-    if tenant_id is not None:
-        query = query.filter(OperatorTask.tenant_id == tenant_id)
-    rows = query.order_by(OperatorTask.id.asc()).limit(5000).all()
     retired = 0
     now = utc_now()
     for row in rows:
@@ -578,10 +637,19 @@ def _retire_stale_handoff_projections(
             request_id = int(row.source_id or "")
         except ValueError:
             request_id = 0
-        request_row = (
-            db.get(WebchatHandoffRequest, request_id) if request_id else None
-        )
-        if request_row is not None and request_row.status in OPEN_HANDOFF_STATUSES:
+        request_row = db.get(WebchatHandoffRequest, request_id) if request_id else None
+        source_scope_matches = False
+        if request_row is not None:
+            conversation = db.get(WebchatConversation, request_row.conversation_id)
+            if conversation is not None:
+                source_scope_matches = (
+                    _tenant_id_for_conversation(db, conversation) == row.tenant_id
+                )
+        if (
+            request_row is not None
+            and request_row.status in OPEN_HANDOFF_STATUSES
+            and source_scope_matches
+        ):
             continue
         row.status = (
             "cancelled"
@@ -591,21 +659,23 @@ def _retire_stale_handoff_projections(
         )
         row.reason_code = (
             f"source_{request_row.status}"
-            if request_row is not None
-            else "source_missing"
+            if request_row is not None and source_scope_matches
+            else "source_missing_or_scope_changed"
         )
         row.assignee_id = (
             request_row.assigned_agent_id
-            if request_row is not None
+            if request_row is not None and source_scope_matches
             else row.assignee_id
         )
         row.source_version = (
             request_row.lock_version
-            if request_row is not None
+            if request_row is not None and source_scope_matches
             else row.source_version
         )
         row.resolved_at = (
-            request_row.closed_at if request_row is not None else now
+            request_row.closed_at
+            if request_row is not None and source_scope_matches
+            else now
         )
         row.updated_at = now
         retired += 1
@@ -616,15 +686,22 @@ def _handoff_projection_candidates(
     db: Session,
     *,
     limit: int,
-    tenant_id: int | None = None,
+    tenant_id: int | None | object = _ALL_TENANTS,
 ):
     expected_status = case(
         (WebchatHandoffRequest.status == "accepted", "assigned"),
         else_="pending",
     )
+    source_scope_match = or_(
+        and_(Tenant.id.is_not(None), OperatorTask.tenant_id == Tenant.id),
+        and_(
+            Tenant.id.is_(None),
+            WebchatConversation.tenant_key == "default",
+            OperatorTask.tenant_id.is_(None),
+        ),
+    )
     active_join = and_(
-        OperatorTask.tenant_id == Tenant.id,
-        OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
+        source_scope_match,
         OperatorTask.task_type == "handoff",
         OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
         OperatorTask.source_id == cast(WebchatHandoffRequest.id, String),
@@ -635,14 +712,24 @@ def _handoff_projection_candidates(
             WebchatConversation,
             WebchatConversation.id == WebchatHandoffRequest.conversation_id,
         )
-        .join(Tenant, Tenant.tenant_key == WebchatConversation.tenant_key)
+        .outerjoin(
+            Tenant,
+            and_(
+                Tenant.tenant_key == WebchatConversation.tenant_key,
+                Tenant.is_active.is_(True),
+            ),
+        )
         .outerjoin(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
         .outerjoin(OperatorTask, active_join)
         .filter(
             WebchatHandoffRequest.status.in_(OPEN_HANDOFF_STATUSES),
-            Tenant.is_active.is_(True),
+            or_(
+                Tenant.id.is_not(None),
+                WebchatConversation.tenant_key == "default",
+            ),
             or_(
                 OperatorTask.id.is_(None),
+                OperatorTask.source_type != HANDOFF_PROJECTION_SOURCE,
                 OperatorTask.source_version.is_distinct_from(
                     WebchatHandoffRequest.lock_version
                 ),
@@ -654,10 +741,19 @@ def _handoff_projection_candidates(
             ),
         )
     )
-    if tenant_id is not None:
-        query = query.filter(Tenant.id == tenant_id)
+    if tenant_id is None:
+        query = query.filter(
+            Tenant.id.is_(None),
+            WebchatConversation.tenant_key == "default",
+        )
+    elif tenant_id is not _ALL_TENANTS:
+        query = query.filter(Tenant.id == int(tenant_id))
+
+    # Missing projections are always selected before stale rows so a large stale
+    # backlog cannot starve a newly missing customer handoff.
     return (
         query.order_by(
+            case((OperatorTask.id.is_(None), 0), else_=1),
             WebchatHandoffRequest.requested_at.asc(),
             WebchatHandoffRequest.id.asc(),
         )
@@ -672,7 +768,7 @@ def project_webchat_handoff_tasks(
     limit: int = 100,
     actor_id: int | None = None,
     note: str | None = None,
-    tenant_id: int | None = None,
+    tenant_id: int | None | object = _ALL_TENANTS,
 ) -> ProjectResult:
     rows = _handoff_projection_candidates(
         db,
@@ -703,7 +799,8 @@ def project_webchat_handoff_tasks(
             old_value=None,
             new_value={
                 "source_type": HANDOFF_PROJECTION_SOURCE,
-                "tenant_id": tenant_id,
+                "tenant_id": None if tenant_id is _ALL_TENANTS else tenant_id,
+                "all_tenants": tenant_id is _ALL_TENANTS,
                 "created": result.created,
                 "refreshed": result.skipped_existing,
                 "retired": result.retired,
@@ -718,7 +815,7 @@ def project_operator_queue(
     *,
     actor_id: int | None = None,
     note: str | None = None,
-    tenant_id: int | None = None,
+    tenant_id: int | None | object = _ALL_TENANTS,
 ) -> dict[str, int]:
     handoff = project_webchat_handoff_tasks(
         db,
@@ -761,14 +858,22 @@ def decode_operator_cursor(cursor: str | None) -> tuple[int, int] | None:
 def list_operator_tasks(
     db: Session,
     *,
-    tenant_id: int,
+    tenant_id: int | None = None,
     status: str | None = None,
     source_type: str | None = None,
     task_type: str | None = None,
     cursor: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    query = db.query(OperatorTask).filter(OperatorTask.tenant_id == tenant_id)
+    if tenant_id is None and not _shadow_enabled():
+        raise OperatorQueueError(
+            403,
+            "operator_task_shadow_scope_forbidden",
+            "legacy-shadow operator queue is disabled",
+        )
+    query = db.query(OperatorTask).filter(
+        _tenant_predicate(OperatorTask.tenant_id, tenant_id)
+    )
     if status:
         query = query.filter(OperatorTask.status == status)
     if source_type:
@@ -812,12 +917,23 @@ def list_operator_tasks(
     }
 
 
-def _get_task(db: Session, *, tenant_id: int, task_id: int) -> OperatorTask:
+def _get_task(
+    db: Session,
+    *,
+    tenant_id: int | None,
+    task_id: int,
+) -> OperatorTask:
+    if tenant_id is None and not _shadow_enabled():
+        raise OperatorQueueError(
+            403,
+            "operator_task_shadow_scope_forbidden",
+            "legacy-shadow operator queue is disabled",
+        )
     row = (
         db.query(OperatorTask)
         .filter(
             OperatorTask.id == task_id,
-            OperatorTask.tenant_id == tenant_id,
+            _tenant_predicate(OperatorTask.tenant_id, tenant_id),
         )
         .first()
     )
@@ -833,13 +949,13 @@ def _get_task(db: Session, *, tenant_id: int, task_id: int) -> OperatorTask:
 def transition_operator_task(
     db: Session,
     *,
-    tenant_id: int,
     task_id: int,
     action: str,
+    tenant_id: int | None = None,
     actor_id: int | None = None,
     note: str | None = None,
 ) -> OperatorTask:
-    """Transition only Tenant-owned projection administrative tasks."""
+    """Transition only one Tenant or isolated shadow projection task."""
 
     if action not in {"assign", "resolve", "drop"}:
         raise OperatorQueueError(
@@ -903,11 +1019,7 @@ def create_webchat_handoff_task(
             "handoff_projection_source_mismatch",
             "handoff projection source does not match conversation",
         )
-    ticket = (
-        db.get(Ticket, request_row.ticket_id)
-        if request_row.ticket_id
-        else None
-    )
+    ticket = db.get(Ticket, request_row.ticket_id) if request_row.ticket_id else None
     row, _ = _project_handoff_request(
         db,
         request_row=request_row,
