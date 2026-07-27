@@ -7,6 +7,16 @@ import type { PairingCodeRequest, SendRequest, SidecarConfig } from "./types.js"
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+type PublicErrorCode =
+  | "payload_too_large"
+  | "whatsapp_connection_owner_busy"
+  | "invalid_generation"
+  | "invalid_account_id"
+  | "invalid_phone_number"
+  | "invalid_send_payload"
+  | "object_payload_required"
+  | "internal_error";
+
 interface RouteMatch {
   accountId: string;
   action: string;
@@ -55,11 +65,33 @@ function optionalGeneration(payload: Record<string, unknown>): number | undefine
   return generation;
 }
 
-function errorStatus(message: string): number {
-  if (message === "payload_too_large") return 413;
-  if (message === "whatsapp_connection_owner_busy") return 409;
-  if (message.includes("required") || message.startsWith("invalid_")) return 400;
-  return 500;
+function publicErrorCode(error: unknown): PublicErrorCode {
+  const message = error instanceof Error ? error.message : "";
+  switch (message) {
+    case "payload_too_large":
+      return "payload_too_large";
+    case "whatsapp_connection_owner_busy":
+      return "whatsapp_connection_owner_busy";
+    case "invalid_generation":
+      return "invalid_generation";
+    case "invalid_account_id":
+      return "invalid_account_id";
+    case "invalid_phone_number":
+      return "invalid_phone_number";
+    case "invalid_send_payload":
+      return "invalid_send_payload";
+    case "object_payload_required":
+      return "object_payload_required";
+    default:
+      return "internal_error";
+  }
+}
+
+function errorStatus(code: PublicErrorCode): number {
+  if (code === "payload_too_large") return 413;
+  if (code === "whatsapp_connection_owner_busy") return 409;
+  if (code === "internal_error") return 500;
+  return 400;
 }
 
 export function createSidecarServer(
@@ -142,9 +174,15 @@ export function createSidecarServer(
       }
       sendJson(res, 405, { ok: false, error_code: "method_not_allowed" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "internal_error";
-      logger.warn({ error_code: message }, "request_failed");
-      sendJson(res, errorStatus(message), { ok: false, error_code: message });
+      const code = publicErrorCode(error);
+      logger.warn(
+        {
+          error_code: code,
+          error_name: error instanceof Error ? error.name : "UnknownError"
+        },
+        "request_failed"
+      );
+      sendJson(res, errorStatus(code), { ok: false, error_code: code });
     }
   });
 }
