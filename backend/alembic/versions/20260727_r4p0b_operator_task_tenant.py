@@ -1,4 +1,4 @@
-"""Enforce explicit Tenant ownership on every OperatorTask.
+"""Add relational Tenant ownership while preserving the isolated shadow scope.
 
 Revision ID: 20260727_r4p0b
 Revises: 20260727_r4p0
@@ -110,27 +110,11 @@ def upgrade() -> None:
     else:
         _backfill_sqlite(bind)
 
-    unresolved = int(
-        bind.execute(
-            sa.text(
-                "SELECT count(*) FROM operator_tasks WHERE tenant_id IS NULL"
-            )
-        ).scalar()
-        or 0
-    )
-    if unresolved:
-        raise RuntimeError(
-            "operator_task_tenant_backfill_requires_explicit_remediation:"
-            f"{unresolved}"
-        )
-
+    # A remaining NULL is not platform scope. It is the one isolated legacy
+    # shadow domain and is authorized only when runtime authority mode is
+    # explicitly ``shadow``. Production ``enforce`` mode cannot access it.
     if dialect == "sqlite":
         with op.batch_alter_table("operator_tasks") as batch:
-            batch.alter_column(
-                "tenant_id",
-                existing_type=sa.Integer(),
-                nullable=False,
-            )
             batch.create_foreign_key(
                 "fk_operator_tasks_tenant_id_tenants",
                 "tenants",
@@ -139,12 +123,6 @@ def upgrade() -> None:
                 ondelete="RESTRICT",
             )
     else:
-        op.alter_column(
-            "operator_tasks",
-            "tenant_id",
-            existing_type=sa.Integer(),
-            nullable=False,
-        )
         op.create_foreign_key(
             "fk_operator_tasks_tenant_id_tenants",
             "operator_tasks",
@@ -172,10 +150,22 @@ def upgrade() -> None:
         ["tenant_id", "webchat_conversation_id", "task_type"],
         unique=True,
         postgresql_where=sa.text(
-            f"webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            f"tenant_id IS NOT NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
         ),
         sqlite_where=sa.text(
-            f"webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            f"tenant_id IS NOT NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+        ),
+    )
+    op.create_index(
+        "uq_operator_tasks_active_webchat_handoff_shadow",
+        "operator_tasks",
+        ["webchat_conversation_id", "task_type"],
+        unique=True,
+        postgresql_where=sa.text(
+            f"tenant_id IS NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+        ),
+        sqlite_where=sa.text(
+            f"tenant_id IS NULL AND webchat_conversation_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
         ),
     )
     op.create_index(
@@ -184,10 +174,22 @@ def upgrade() -> None:
         ["tenant_id", "source_type", "source_id", "task_type"],
         unique=True,
         postgresql_where=sa.text(
-            f"source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            f"tenant_id IS NOT NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
         ),
         sqlite_where=sa.text(
-            f"source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+            f"tenant_id IS NOT NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+        ),
+    )
+    op.create_index(
+        "uq_operator_tasks_active_source_shadow",
+        "operator_tasks",
+        ["source_type", "source_id", "task_type"],
+        unique=True,
+        postgresql_where=sa.text(
+            f"tenant_id IS NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
+        ),
+        sqlite_where=sa.text(
+            f"tenant_id IS NULL AND source_id IS NOT NULL AND {ACTIVE_TASK_SQL}"
         ),
     )
 
@@ -196,22 +198,16 @@ def downgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
 
-    op.drop_index(
+    for name in (
+        "uq_operator_tasks_active_webchat_handoff_shadow",
         "uq_operator_tasks_active_webchat_handoff",
-        table_name="operator_tasks",
-    )
-    op.drop_index(
+        "uq_operator_tasks_active_source_shadow",
         "uq_operator_tasks_active_source",
-        table_name="operator_tasks",
-    )
-    op.drop_index(
         "ix_operator_tasks_tenant_status_priority_created",
-        table_name="operator_tasks",
-    )
-    op.drop_index(
         "ix_operator_tasks_tenant_id",
-        table_name="operator_tasks",
-    )
+    ):
+        op.drop_index(name, table_name="operator_tasks")
+
     op.create_index(
         "ix_operator_tasks_status_priority_created",
         "operator_tasks",
