@@ -99,23 +99,29 @@ def test_canonical_deployment_contains_one_hardened_sidecar_service() -> None:
     assert "WHATSAPP_NATIVE_ENABLED" not in compose
     assert "WHATSAPP_DISPATCH_MODE" not in compose
     assert "npm ci &&" not in compose
-    assert not (ROOT / "deploy" / "docker-compose.whatsapp-sidecar.example.yml").exists()
+    assert not (
+        ROOT / "deploy" / "docker-compose.whatsapp-sidecar.example.yml"
+    ).exists()
 
 
 def test_operator_api_exposes_the_complete_binding_lifecycle() -> None:
-    source = (ROOT / "webapp" / "src" / "lib" / "supportApi.ts").read_text(
-        encoding="utf-8"
-    )
+    source = (
+        ROOT / "webapp" / "src" / "lib" / "whatsappApi.ts"
+    ).read_text(encoding="utf-8")
     for authority in (
-        "createWhatsappConnection",
-        "updateWhatsappConnection",
-        "startWhatsappBinding",
-        "getWhatsappBindingQr",
-        "requestWhatsappPairingCode",
-        "logoutWhatsappConnection",
-        "restartWhatsappConnection",
-        "probeWhatsappConnection",
-        "testWhatsappInbound",
-        "testWhatsappOutbound",
+        "createConnection",
+        "updateConnection",
+        "startBinding",
+        "bindingQr",
+        "requestPairingCode",
+        "logout",
+        "restart",
+        "probe",
+        "testInbound",
+        "testOutbound",
+        "createEmbeddedSignupSession",
+        "completeEmbeddedSignup",
     ):
         assert authority in source
+    assert "/api/admin/whatsapp/connections" in source
+    assert "/native" not in source
