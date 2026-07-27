@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -9,12 +10,22 @@ from sqlalchemy.orm import Session
 from ..utils.time import utc_now
 from ..voice_compliance_models import VoiceComplianceEvidence
 from ..voice_models import WebchatVoiceSession
+from .voice_compliance_state import (
+    VoiceComplianceState,
+    normalize_voice_compliance_state,
+)
 
 POLICY_VERSION = "nexus.voice-compliance.v1"
 CAPABILITIES = {"recording", "transcript_persistence"}
 POLICIES = {"disabled", "notice", "explicit_consent"}
 SOURCES = {"browser", "sip_controller", "migration"}
 DECISIONS = {"notice_delivered", "accepted", "declined", "timeout"}
+_PRESERVE_WHEN_AUTHORIZED = {
+    VoiceComplianceState.START_REQUESTED,
+    VoiceComplianceState.ACTIVE,
+    VoiceComplianceState.STOP_REQUESTED,
+    VoiceComplianceState.COMPLETED,
+}
 
 
 class VoiceComplianceEvidenceError(ValueError):
@@ -25,6 +36,15 @@ class VoiceComplianceEvidenceError(ValueError):
     def __init__(self, reason_code: str) -> None:
         self.reason_code = reason_code
         super().__init__(self.public_code)
+
+
+@dataclass(frozen=True)
+class VoiceCapabilityAuthorization:
+    capability: str
+    policy: str
+    allowed: bool
+    reason_code: str
+    required_state: VoiceComplianceState
 
 
 _PROMPTS = {
@@ -154,6 +174,55 @@ def capability_authorized(
     )
 
 
+def capability_authorization(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+    capability: str,
+    policy: str,
+) -> VoiceCapabilityAuthorization:
+    normalized_capability = _clean(capability, limit=32).lower()
+    normalized_policy = _clean(policy, limit=32).lower()
+    policy_prompt(normalized_capability, normalized_policy)
+    if normalized_policy == "disabled":
+        return VoiceCapabilityAuthorization(
+            capability=normalized_capability,
+            policy=normalized_policy,
+            allowed=False,
+            reason_code="capability_disabled",
+            required_state=VoiceComplianceState.DISABLED,
+        )
+    allowed = capability_authorized(
+        db,
+        session=session,
+        capability=normalized_capability,
+        policy=normalized_policy,
+    )
+    if allowed:
+        return VoiceCapabilityAuthorization(
+            capability=normalized_capability,
+            policy=normalized_policy,
+            allowed=True,
+            reason_code="authorized",
+            required_state=VoiceComplianceState.AUTHORIZED,
+        )
+    return VoiceCapabilityAuthorization(
+        capability=normalized_capability,
+        policy=normalized_policy,
+        allowed=False,
+        reason_code=(
+            "notice_evidence_missing"
+            if normalized_policy == "notice"
+            else "consent_evidence_missing"
+        ),
+        required_state=(
+            VoiceComplianceState.NOTICE_REQUIRED
+            if normalized_policy == "notice"
+            else VoiceComplianceState.CONSENT_REQUIRED
+        ),
+    )
+
+
 def record_evidence(
     db: Session,
     *,
@@ -195,9 +264,17 @@ def record_evidence(
         raise VoiceComplianceEvidenceError(
             "voice_compliance_evidence_not_allowed_for_disabled_policy"
         )
-    if policy == "notice" and decision not in {"notice_delivered", "declined", "timeout"}:
+    if policy == "notice" and decision not in {
+        "notice_delivered",
+        "declined",
+        "timeout",
+    }:
         raise VoiceComplianceEvidenceError("voice_compliance_notice_decision_invalid")
-    if policy == "explicit_consent" and decision not in {"accepted", "declined", "timeout"}:
+    if policy == "explicit_consent" and decision not in {
+        "accepted",
+        "declined",
+        "timeout",
+    }:
         raise VoiceComplianceEvidenceError("voice_compliance_consent_decision_invalid")
 
     existing = (
@@ -240,53 +317,98 @@ def record_evidence(
     return row
 
 
+def _project_state(
+    *,
+    current_value: str | None,
+    authorization: VoiceCapabilityAuthorization,
+) -> VoiceComplianceState:
+    try:
+        current = normalize_voice_compliance_state(current_value)
+    except RuntimeError:
+        current = VoiceComplianceState.FAILED
+    if not authorization.allowed:
+        return authorization.required_state
+    if current in _PRESERVE_WHEN_AUTHORIZED:
+        return current
+    return VoiceComplianceState.AUTHORIZED
+
+
 def apply_session_compliance_state(
     db: Session,
     *,
     session: WebchatVoiceSession,
     recording_policy: str,
     transcription_policy: str,
-) -> None:
-    recording_allowed = capability_authorized(
+) -> dict[str, Any]:
+    recording = capability_authorization(
         db,
         session=session,
         capability="recording",
         policy=recording_policy,
     )
-    transcript_allowed = capability_authorized(
+    transcript = capability_authorization(
         db,
         session=session,
         capability="transcript_persistence",
         policy=transcription_policy,
     )
-    session.recording_status = (
-        "requested"
-        if recording_allowed
-        else (
-            "disabled"
-            if recording_policy == "disabled"
-            else (
-                "notice_required"
-                if recording_policy == "notice"
-                else "consent_required"
-            )
-        )
-    )
-    session.transcript_status = (
-        "active"
-        if transcript_allowed
-        else (
-            "disabled"
-            if transcription_policy == "disabled"
-            else (
-                "notice_required"
-                if transcription_policy == "notice"
-                else "consent_required"
-            )
-        )
-    )
+    session.recording_status = _project_state(
+        current_value=session.recording_status,
+        authorization=recording,
+    ).value
+    session.transcript_status = _project_state(
+        current_value=session.transcript_status,
+        authorization=transcript,
+    ).value
     session.updated_at = utc_now()
     db.flush()
+    return {
+        "recording": {
+            "state": session.recording_status,
+            "allowed": recording.allowed,
+            "reason_code": recording.reason_code,
+        },
+        "transcript_persistence": {
+            "state": session.transcript_status,
+            "allowed": transcript.allowed,
+            "reason_code": transcript.reason_code,
+        },
+    }
+
+
+def require_capability_state(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+    capability: str,
+    policy: str,
+    allowed_states: set[VoiceComplianceState],
+) -> VoiceCapabilityAuthorization:
+    authorization = capability_authorization(
+        db,
+        session=session,
+        capability=capability,
+        policy=policy,
+    )
+    state_value = (
+        session.recording_status
+        if capability == "recording"
+        else session.transcript_status
+    )
+    current = normalize_voice_compliance_state(state_value)
+    if not authorization.allowed:
+        if capability == "recording":
+            session.recording_status = authorization.required_state.value
+        else:
+            session.transcript_status = authorization.required_state.value
+        session.updated_at = utc_now()
+        db.flush()
+        raise RuntimeError(
+            f"voice_{capability}_not_authorized:{authorization.reason_code}"
+        )
+    if current not in allowed_states:
+        raise RuntimeError(f"voice_{capability}_state_invalid:{current.value}")
+    return authorization
 
 
 def evidence_projection(row: VoiceComplianceEvidence) -> dict[str, Any]:
@@ -301,3 +423,25 @@ def evidence_projection(row: VoiceComplianceEvidence) -> dict[str, Any]:
         "confirmation_id": row.confirmation_public_id,
         "evidence_at": row.evidence_at.isoformat() if row.evidence_at else None,
     }
+
+
+__all__ = [
+    "CAPABILITIES",
+    "DECISIONS",
+    "POLICIES",
+    "POLICY_VERSION",
+    "SOURCES",
+    "VoiceCapabilityAuthorization",
+    "VoiceComplianceEvidenceError",
+    "apply_session_compliance_state",
+    "capability_authorization",
+    "capability_authorized",
+    "evidence_projection",
+    "expected_authorizing_decision",
+    "latest_evidence",
+    "participant_identity_hash",
+    "policy_bundle",
+    "policy_prompt",
+    "record_evidence",
+    "require_capability_state",
+]
