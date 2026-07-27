@@ -39,6 +39,7 @@ from app.models import (  # noqa: E402
     TicketInboundEmailMessage,
     User,
 )
+from app.models_channel_intake import CustomerIdentityBinding  # noqa: E402
 from app.services import background_jobs, email_mailbox_polling_service  # noqa: E402
 from app.services.secret_crypto import SecretCryptoService  # noqa: E402
 from app.settings import get_settings  # noqa: E402
@@ -139,13 +140,24 @@ def _headers(user: User) -> dict[str, str]:
 
 
 def _ticket(db_session, *, tenant: Tenant, team: Team, market: Market) -> Ticket:
+    normalized_email = normalize_email("customer@example.test")
     customer = Customer(
         name="IMAP Customer",
         email="customer@example.test",
-        email_normalized=normalize_email("customer@example.test"),
+        email_normalized=normalized_email,
         **_ownership(tenant),
     )
     db_session.add(customer)
+    db_session.flush()
+    db_session.add(
+        CustomerIdentityBinding(
+            tenant_id=tenant.id,
+            customer_id=customer.id,
+            identity_type="email",
+            normalized_value=normalized_email,
+            source="fixture",
+        )
+    )
     db_session.flush()
     ticket = Ticket(
         ticket_no=f"IMAP-{_uid()}",
