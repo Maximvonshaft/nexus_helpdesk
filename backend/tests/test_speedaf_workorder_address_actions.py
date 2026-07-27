@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import json
+from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +11,21 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_current_user
 from app.db import Base, get_db
-from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
+from app.enums import (
+    ConversationState,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+    UserRole,
+)
 from app.main import app
-from app.models import BackgroundJob, Ticket, TicketEvent, User
-from app.services.background_jobs import SPEEDAF_ADDRESS_UPDATE_JOB, process_background_job
+from app.models import BackgroundJob, Tenant, Ticket, TicketEvent, User
+from app.services.background_jobs import (
+    SPEEDAF_ADDRESS_UPDATE_JOB,
+    process_background_job,
+)
+from app.services.scenario_assignment_service import assign_ticket_scenario
 from app.services.speedaf.action_service import SpeedafActionResult, SpeedafActionService
 from app.services.speedaf.adapter import SpeedafCoreAdapter, SpeedafWaybillLookupResult
 from app.services.speedaf.schemas import SpeedafWaybillCandidate
@@ -32,14 +42,55 @@ class Harness:
 
 @pytest.fixture
 def harness(monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool, future=True)
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+    )
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        user = User(username="speedaf-admin", display_name="Speedaf Admin", email="speedaf-admin@example.com", password_hash="x", role=UserRole.admin, is_active=True)
+        tenant = Tenant(
+            tenant_key="speedaf-action-tests",
+            display_name="Speedaf Action Tests",
+            is_active=True,
+        )
+        db.add(tenant)
+        db.flush()
+        ownership = {
+            "tenant_id": tenant.id,
+            "tenant_assignment_source": "fixture",
+            "tenant_assignment_version": "speedaf-actions-test-v1",
+        }
+        user = User(
+            username="speedaf-admin",
+            display_name="Speedaf Admin",
+            email="speedaf-admin@example.com",
+            password_hash="x",
+            role=UserRole.admin,
+            is_active=True,
+            **ownership,
+        )
         db.add(user)
         db.flush()
-        ticket = Ticket(ticket_no="T-SPEEDAF-1", title="Speedaf", description="Speedaf", source=TicketSource.manual, source_channel=SourceChannel.web_chat, priority=TicketPriority.medium, status=TicketStatus.in_progress, conversation_state=ConversationState.human_owned, created_by=user.id)
+        ticket = Ticket(
+            ticket_no="T-SPEEDAF-1",
+            title="Speedaf",
+            description="Speedaf",
+            source=TicketSource.manual,
+            source_channel=SourceChannel.web_chat,
+            priority=TicketPriority.medium,
+            status=TicketStatus.in_progress,
+            conversation_state=ConversationState.human_owned,
+            created_by=user.id,
+            **ownership,
+        )
         db.add(ticket)
         db.commit()
         user_id, ticket_id = user.id, ticket.id
@@ -65,14 +116,41 @@ def harness(monkeypatch):
         yield Harness(client, SessionLocal, user, ticket)
     finally:
         app.dependency_overrides.clear()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+def _assign_scenario(harness: Harness, scenario_key: str) -> None:
+    with harness.SessionLocal() as db:
+        ticket = db.get(Ticket, harness.ticket.id)
+        assert ticket is not None
+        assign_ticket_scenario(
+            db,
+            ticket=ticket,
+            scenario_key=scenario_key,
+            actor_id=harness.user.id,
+            source="test_fixture",
+            reason=f"Exercise {scenario_key} action contract.",
+            allow_reclassification=False,
+        )
+        db.commit()
 
 
 def work_order_payload(description: str = "Please follow up delivery"):
-    return {"waybillCode": "WB123", "callerID": "41000000000", "workOrderType": "WT0103-05", "description": description}
+    return {
+        "waybillCode": "WB123",
+        "callerID": "41000000000",
+        "workOrderType": "WT0103-05",
+        "description": description,
+    }
 
 
 def address_payload():
-    return {"waybillCode": "WB123", "callerID": "41000000000", "whatsAppPhone": "41790000000"}
+    return {
+        "waybillCode": "WB123",
+        "callerID": "41000000000",
+        "whatsAppPhone": "41790000000",
+    }
 
 
 def waybill_lookup_payload():
@@ -80,12 +158,19 @@ def waybill_lookup_payload():
 
 
 def test_waybill_lookup_disabled_by_default(harness):
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/waybills/query", json=waybill_lookup_payload())
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/waybills/query",
+        json=waybill_lookup_payload(),
+    )
     assert res.status_code == 403
     assert res.json()["detail"] == "speedaf_mcp_disabled"
 
 
-def test_waybill_lookup_enabled_returns_candidates_without_background_job(harness, monkeypatch):
+def test_waybill_lookup_enabled_returns_candidates_without_background_job(
+    harness,
+    monkeypatch,
+):
+    _assign_scenario(harness, "tracking_status_inquiry")
     monkeypatch.setenv("SPEEDAF_MCP_ENABLED", "true")
     calls = []
 
@@ -93,22 +178,44 @@ def test_waybill_lookup_enabled_returns_candidates_without_background_job(harnes
         calls.append({"caller_id": caller_id, "country_code": country_code})
         return SpeedafWaybillLookupResult(
             ok=True,
-            candidates=(SpeedafWaybillCandidate(waybill_code="CH020000129135", suffix="129135"),),
-            safe_summary={"tool": "speedaf.order.waybill_code.query", "ok": True, "count": 1},
+            candidates=(
+                SpeedafWaybillCandidate(
+                    waybill_code="CH020000129135",
+                    suffix="129135",
+                ),
+            ),
+            safe_summary={
+                "tool": "speedaf.order.waybill_code.query",
+                "ok": True,
+                "count": 1,
+            },
         )
 
-    monkeypatch.setattr(SpeedafCoreAdapter, "query_waybills_by_caller", fake_query)
+    monkeypatch.setattr(
+        SpeedafCoreAdapter,
+        "query_waybills_by_caller",
+        fake_query,
+    )
 
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/waybills/query", json=waybill_lookup_payload())
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/waybills/query",
+        json=waybill_lookup_payload(),
+    )
 
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "completed"
-    assert body["candidates"] == [{"waybillCode": "CH020000129135", "suffix": "129135"}]
+    assert body["candidates"] == [
+        {"waybillCode": "CH020000129135", "suffix": "129135"}
+    ]
     assert calls == [{"caller_id": "41000000000", "country_code": "CH"}]
     with harness.SessionLocal() as db:
         assert db.query(BackgroundJob).count() == 0
-        event = db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_waybill_lookup").one()
+        event = (
+            db.query(TicketEvent)
+            .filter(TicketEvent.field_name == "speedaf_waybill_lookup")
+            .one()
+        )
         event_payload = json.loads(event.payload_json)
         assert event_payload["candidate_count"] == 1
         assert "CH020000129135" not in event.payload_json
@@ -116,31 +223,56 @@ def test_waybill_lookup_enabled_returns_candidates_without_background_job(harnes
 
 
 def test_work_order_disabled_by_default(harness):
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload())
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=work_order_payload(),
+    )
     assert res.status_code == 403
     assert res.json()["detail"] == "speedaf_work_order_create_disabled"
 
 
-def test_work_order_enabled_queues_job_and_truncates_description(harness, monkeypatch):
+def test_work_order_enabled_queues_job_and_truncates_description(
+    harness,
+    monkeypatch,
+):
+    _assign_scenario(harness, "delivery_followup_work_order")
     monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
     long_description = "x" * 260
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload(long_description))
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=work_order_payload(long_description),
+    )
     assert res.status_code == 200
     assert res.json()["status"] == "queued"
     with harness.SessionLocal() as db:
         job = db.query(BackgroundJob).one()
         assert job.job_type == "speedaf.work_order.create"
         assert len(json.loads(job.payload_json)["description"]) == 200
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_work_order").count() == 1
+        assert (
+            db.query(TicketEvent)
+            .filter(TicketEvent.field_name == "speedaf_work_order")
+            .count()
+            == 1
+        )
 
 
-def test_work_order_dedupe_allows_distinct_waybills_on_same_ticket(harness, monkeypatch):
+def test_work_order_dedupe_allows_distinct_waybills_on_same_ticket(
+    harness,
+    monkeypatch,
+):
+    _assign_scenario(harness, "delivery_followup_work_order")
     monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
     first_payload = work_order_payload()
     second_payload = {**work_order_payload(), "waybillCode": "WB456"}
 
-    first = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=first_payload)
-    second = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=second_payload)
+    first = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=first_payload,
+    )
+    second = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=second_payload,
+    )
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -148,14 +280,26 @@ def test_work_order_dedupe_allows_distinct_waybills_on_same_ticket(harness, monk
     assert first.json()["dedupeKey"] != second.json()["dedupeKey"]
     with harness.SessionLocal() as db:
         jobs = db.query(BackgroundJob).order_by(BackgroundJob.id.asc()).all()
-        assert [json.loads(job.payload_json)["waybillCode"] for job in jobs] == ["WB123", "WB456"]
+        assert [
+            json.loads(job.payload_json)["waybillCode"] for job in jobs
+        ] == ["WB123", "WB456"]
 
 
-def test_work_order_dedupe_reuses_same_waybill_and_type_pending_job(harness, monkeypatch):
+def test_work_order_dedupe_reuses_same_waybill_and_type_pending_job(
+    harness,
+    monkeypatch,
+):
+    _assign_scenario(harness, "delivery_followup_work_order")
     monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
 
-    first = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload())
-    second = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload("Follow up again"))
+    first = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=work_order_payload(),
+    )
+    second = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=work_order_payload("Follow up again"),
+    )
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -165,7 +309,10 @@ def test_work_order_dedupe_reuses_same_waybill_and_type_pending_job(harness, mon
         assert db.query(BackgroundJob).count() == 1
 
 
-def test_work_order_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):
+def test_work_order_enabled_requires_tool_capability_for_visible_agent(
+    harness,
+    monkeypatch,
+):
     monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
     with harness.SessionLocal() as db:
         user = db.get(User, harness.user.id)
@@ -174,23 +321,46 @@ def test_work_order_enabled_requires_tool_capability_for_visible_agent(harness, 
         ticket.assignee_id = user.id
         db.commit()
 
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload())
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/work-orders",
+        json=work_order_payload(),
+    )
 
     assert res.status_code == 403
     assert res.json()["detail"] == "speedaf_work_order_requires_capability"
 
 
 def test_address_update_disabled_by_default(harness):
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/address-update",
+        json=address_payload(),
+    )
     assert res.status_code == 403
     assert res.json()["detail"] == "speedaf_update_address_disabled"
 
 
-def test_address_update_enabled_queues_job_without_synchronous_submit(harness, monkeypatch):
+def test_address_update_enabled_queues_job_without_synchronous_submit(
+    harness,
+    monkeypatch,
+):
+    _assign_scenario(harness, "address_contact_correction")
     monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
     calls = []
-    monkeypatch.setattr(SpeedafActionService, "submit_update_address_flow", lambda self, **kwargs: calls.append(kwargs) or SpeedafActionResult(ok=True, action_type="update_address_flow", status="success", safe_payload={"ok": True}))
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+    monkeypatch.setattr(
+        SpeedafActionService,
+        "submit_update_address_flow",
+        lambda self, **kwargs: calls.append(kwargs)
+        or SpeedafActionResult(
+            ok=True,
+            action_type="update_address_flow",
+            status="success",
+            safe_payload={"ok": True},
+        ),
+    )
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/address-update",
+        json=address_payload(),
+    )
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "queued"
@@ -199,11 +369,25 @@ def test_address_update_enabled_queues_job_without_synchronous_submit(harness, m
     with harness.SessionLocal() as db:
         job = db.query(BackgroundJob).one()
         assert job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB
-        assert json.loads(job.payload_json)["addressUpdateDedupeKey"] == body["dedupeKey"]
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "queued").count() == 1
+        assert (
+            json.loads(job.payload_json)["addressUpdateDedupeKey"]
+            == body["dedupeKey"]
+        )
+        assert (
+            db.query(TicketEvent)
+            .filter(
+                TicketEvent.field_name == "speedaf_address_update",
+                TicketEvent.new_value == "queued",
+            )
+            .count()
+            == 1
+        )
 
 
-def test_address_update_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):
+def test_address_update_enabled_requires_tool_capability_for_visible_agent(
+    harness,
+    monkeypatch,
+):
     monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
     with harness.SessionLocal() as db:
         user = db.get(User, harness.user.id)
@@ -212,25 +396,48 @@ def test_address_update_enabled_requires_tool_capability_for_visible_agent(harne
         ticket.assignee_id = user.id
         db.commit()
 
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/address-update",
+        json=address_payload(),
+    )
 
     assert res.status_code == 403
     assert res.json()["detail"] == "speedaf_address_update_requires_capability"
 
 
-def test_address_update_worker_executes_speedaf_action_and_writes_completion(harness, monkeypatch):
+def test_address_update_worker_executes_speedaf_action_and_writes_completion(
+    harness,
+    monkeypatch,
+):
+    _assign_scenario(harness, "address_contact_correction")
     monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
     calls = []
 
     def fake_submit(self, **kwargs):
         calls.append(kwargs)
-        return SpeedafActionResult(ok=True, action_type="update_address_flow", status="success", safe_payload={"ok": True})
+        return SpeedafActionResult(
+            ok=True,
+            action_type="update_address_flow",
+            status="success",
+            safe_payload={"ok": True},
+        )
 
-    monkeypatch.setattr(SpeedafActionService, "submit_update_address_flow", fake_submit)
-    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+    monkeypatch.setattr(
+        SpeedafActionService,
+        "submit_update_address_flow",
+        fake_submit,
+    )
+    res = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/address-update",
+        json=address_payload(),
+    )
     assert res.status_code == 200
     with harness.SessionLocal() as db:
-        job = db.query(BackgroundJob).filter(BackgroundJob.job_type == SPEEDAF_ADDRESS_UPDATE_JOB).one()
+        job = (
+            db.query(BackgroundJob)
+            .filter(BackgroundJob.job_type == SPEEDAF_ADDRESS_UPDATE_JOB)
+            .one()
+        )
         process_background_job(db, job)
         db.commit()
         db.refresh(job)
@@ -241,15 +448,36 @@ def test_address_update_worker_executes_speedaf_action_and_writes_completion(har
         safe_job_payload = json.loads(rendered_job_payload)
         assert safe_job_payload["scrubbed"] is True
         assert safe_job_payload["waybill_suffix"] == "B123"
-    assert calls == [{"waybill_code": "WB123", "whatsapp_phone": "41790000000", "caller_id": "41000000000"}]
+    assert calls == [
+        {
+            "waybill_code": "WB123",
+            "whatsapp_phone": "41790000000",
+            "caller_id": "41000000000",
+        }
+    ]
     with harness.SessionLocal() as db:
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "completed").count() == 1
+        assert (
+            db.query(TicketEvent)
+            .filter(
+                TicketEvent.field_name == "speedaf_address_update",
+                TicketEvent.new_value == "completed",
+            )
+            .count()
+            == 1
+        )
 
 
 def test_address_update_dedupe_blocks_duplicate(harness, monkeypatch):
+    _assign_scenario(harness, "address_contact_correction")
     monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
-    first = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
-    second = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+    first = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/address-update",
+        json=address_payload(),
+    )
+    second = harness.client.post(
+        f"/api/tickets/{harness.ticket.id}/speedaf/address-update",
+        json=address_payload(),
+    )
     assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["detail"] == "speedaf_address_update_already_requested"
