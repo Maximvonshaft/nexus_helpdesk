@@ -53,6 +53,7 @@ def apply_whatsapp_delivery(
     provider: str,
     receipt_id: str | None = None,
     outbound_message_id: int | None = None,
+    outbound_part_id: int | None = None,
     error_code: str | None = None,
     error_message: str | None = None,
     detail: str | None = None,
@@ -64,18 +65,22 @@ def apply_whatsapp_delivery(
             updated=False,
             reason="unsupported_delivery_status",
             outbound_message_id=None,
+            outbound_part_id=None,
             delivery_status=normalized_status or None,
         )
     part = _resolve_outbound_part(
         db,
+        connection=connection,
         provider_message_id=provider_message_id,
         outbound_message_id=outbound_message_id,
+        outbound_part_id=outbound_part_id,
     )
     if part is not None:
         return _apply_part_delivery(
             db,
             connection=connection,
             part=part,
+            expected_outbound_message_id=outbound_message_id,
             provider_message_id=provider_message_id,
             normalized_status=normalized_status,
             occurred_at=occurred_at,
@@ -85,6 +90,14 @@ def apply_whatsapp_delivery(
             error_message=error_message,
             detail=detail,
             payload=payload,
+        )
+    if outbound_part_id is not None:
+        return WhatsAppDeliveryResult(
+            updated=False,
+            reason="outbound_part_not_found",
+            outbound_message_id=outbound_message_id,
+            outbound_part_id=outbound_part_id,
+            delivery_status=normalized_status,
         )
     return _apply_legacy_parent_delivery(
         db,
@@ -105,27 +118,28 @@ def apply_whatsapp_delivery(
 def _resolve_outbound_part(
     db: Session,
     *,
+    connection: WhatsAppConnection,
     provider_message_id: str | None,
     outbound_message_id: int | None,
+    outbound_part_id: int | None,
 ) -> WhatsAppOutboundPart | None:
+    base = db.query(WhatsAppOutboundPart).filter(
+        WhatsAppOutboundPart.connection_id == connection.id,
+        WhatsAppOutboundPart.tenant_id == connection.tenant_id,
+    )
+    if outbound_part_id is not None:
+        return base.filter(WhatsAppOutboundPart.id == int(outbound_part_id)).first()
     if provider_message_id:
-        row = (
-            db.query(WhatsAppOutboundPart)
-            .filter(
-                WhatsAppOutboundPart.provider_message_id
-                == provider_message_id,
-            )
-            .first()
-        )
+        row = base.filter(
+            WhatsAppOutboundPart.provider_message_id == provider_message_id,
+        ).first()
         if row is not None:
             return row
     if outbound_message_id is None:
         return None
     query = (
-        db.query(WhatsAppOutboundPart)
-        .filter(
-            WhatsAppOutboundPart.outbound_message_id
-            == int(outbound_message_id),
+        base.filter(
+            WhatsAppOutboundPart.outbound_message_id == int(outbound_message_id),
             WhatsAppOutboundPart.provider_message_id.is_(None),
             WhatsAppOutboundPart.status.in_(("queued", "failed")),
         )
@@ -141,6 +155,7 @@ def _apply_part_delivery(
     *,
     connection: WhatsAppConnection,
     part: WhatsAppOutboundPart,
+    expected_outbound_message_id: int | None,
     provider_message_id: str | None,
     normalized_status: str,
     occurred_at: datetime | None,
@@ -160,6 +175,10 @@ def _apply_part_delivery(
         or part.tenant_id != connection.tenant_id
         or ticket.channel_account_id != connection.channel_account_id
         or ticket.tenant_id != connection.tenant_id
+        or (
+            expected_outbound_message_id is not None
+            and parent.id != int(expected_outbound_message_id)
+        )
     ):
         return WhatsAppDeliveryResult(
             updated=False,
@@ -194,8 +213,10 @@ def _apply_part_delivery(
     if normalized_status == "sent" and part.sent_at is None:
         part.sent_at = event_at
     elif normalized_status == "delivered":
+        part.sent_at = part.sent_at or event_at
         part.delivered_at = event_at
     elif normalized_status == "read":
+        part.sent_at = part.sent_at or event_at
         part.delivered_at = part.delivered_at or event_at
         part.read_at = event_at
     if normalized_status in _FAILURE_STATES:
@@ -248,7 +269,10 @@ def _aggregate_parent(
     statuses = [str(part.status or "queued").lower() for part in parts]
     if not statuses:
         return str(parent.delivery_status or "queued")
-    failure = next((status for status in statuses if status in _FAILURE_STATES), None)
+    failure = next(
+        (status for status in statuses if status in _FAILURE_STATES),
+        None,
+    )
     if failure:
         aggregate = failure
         parent.status = MessageStatus.failed
@@ -261,13 +285,16 @@ def _aggregate_parent(
             statuses,
             key=lambda value: _DELIVERY_RANK.get(value, 0),
         )
-        parent.status = MessageStatus.sent
+        if _DELIVERY_RANK.get(aggregate, 0) >= _DELIVERY_RANK["sent"]:
+            parent.status = MessageStatus.sent
+            if parent.sent_at is None:
+                sent_values = [part.sent_at for part in parts if part.sent_at]
+                parent.sent_at = min(sent_values) if sent_values else utc_now()
+        elif parent.status not in {MessageStatus.pending, MessageStatus.processing}:
+            parent.status = MessageStatus.processing
         parent.failure_code = None
         parent.failure_reason = None
         parent.error_message = None
-        if parent.sent_at is None:
-            sent_values = [part.sent_at for part in parts if part.sent_at]
-            parent.sent_at = min(sent_values) if sent_values else utc_now()
     parent.delivery_status = aggregate
     parent.delivery_event_type = aggregate
     parent.provider_status = f"whatsapp_{provider}_{aggregate}"
@@ -321,6 +348,7 @@ def _apply_legacy_parent_delivery(
             updated=False,
             reason="delivery_identity_missing",
             outbound_message_id=None,
+            outbound_part_id=None,
             delivery_status=normalized_status,
         )
     row = query.first()
@@ -329,6 +357,7 @@ def _apply_legacy_parent_delivery(
             updated=False,
             reason="outbound_message_not_found",
             outbound_message_id=None,
+            outbound_part_id=None,
             delivery_status=normalized_status,
         )
     ticket = row.ticket
@@ -341,6 +370,7 @@ def _apply_legacy_parent_delivery(
             updated=False,
             reason="delivery_scope_mismatch",
             outbound_message_id=row.id,
+            outbound_part_id=None,
             delivery_status=row.delivery_status,
         )
     current = str(row.delivery_status or "queued").strip().lower()
@@ -350,6 +380,7 @@ def _apply_legacy_parent_delivery(
             updated=False,
             reason=stale_reason,
             outbound_message_id=row.id,
+            outbound_part_id=None,
             delivery_status=current,
         )
     event_at = occurred_at or utc_now()
@@ -371,6 +402,7 @@ def _apply_legacy_parent_delivery(
                 updated=False,
                 reason="provider_message_id_mismatch",
                 outbound_message_id=row.id,
+                outbound_part_id=None,
                 delivery_status=current,
             )
         row.provider_message_id = provider_message_id
@@ -382,7 +414,10 @@ def _apply_legacy_parent_delivery(
     row.delivery_receipt_at = event_at
     row.delivery_detail = detail[:1000] if detail else None
     row.delivery_payload_json = json.dumps(
-        payload or {}, ensure_ascii=False, sort_keys=True, default=str
+        payload or {},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
     )[:12000]
     row.last_attempt_at = event_at
     row.updated_at = utc_now()
@@ -393,5 +428,6 @@ def _apply_legacy_parent_delivery(
         updated=True,
         reason="delivery_updated",
         outbound_message_id=row.id,
+        outbound_part_id=None,
         delivery_status=normalized_status,
     )
