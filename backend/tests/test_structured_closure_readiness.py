@@ -94,7 +94,10 @@ def test_legacy_ticket_event_cannot_fabricate_closure(db_session):
 
     snapshot = build_closure_snapshot(db_session, ticket)
 
-    assert snapshot.receipt["schema"] == "nexus.ticket-closure-receipt.v2"
+    assert snapshot.receipt["schema"] == "nexus.ticket-closure-receipt.v3"
+    assert snapshot.receipt["scenario_assignment_revision"] == 1
+    assert len(snapshot.receipt["scenario_catalog_sha256"]) == 64
+    assert len(snapshot.receipt["scenario_definition_sha256"]) == 64
     assert snapshot.readiness.closure_ready is False
     assert "business_result_confirmed" in snapshot.readiness.missing_outcome_levels
     assert snapshot.receipt["evidence"]["case_evidence_record_ids"] == []
@@ -157,6 +160,7 @@ def test_structured_case_ledgers_can_satisfy_tracking_closure(db_session):
 
     assert snapshot.readiness.closure_ready is True
     assert snapshot.receipt["readiness"]["blocked_reasons"] == []
+    assert snapshot.receipt["scenario_assignment_revision"] == 1
     assert len(snapshot.receipt["evidence"]["case_evidence_record_ids"]) == 1
     assert len(snapshot.receipt["evidence"]["case_outcome_record_ids"]) == 3
     assert "ticket_event_ids" not in snapshot.receipt["evidence"]
