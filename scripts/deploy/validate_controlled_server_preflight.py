@@ -25,9 +25,6 @@ _APP_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,79}$")
 _COMPOSE_PROJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 _ATTESTATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 
-# One database principal per actual executable process class. Handoff snapshots
-# are BackgroundJobs owned by worker-background; a sixth Handoff role would
-# recreate the retired parallel execution chain.
 DATABASE_ROLE_KEYS = {
     "migration": "DATABASE_URL_MIGRATION",
     "app": "DATABASE_URL_APP",
@@ -70,8 +67,10 @@ SAFE_CONTROLS = {
     "ENABLE_OUTBOUND_DISPATCH": "false",
     "OUTBOUND_PROVIDER": "disabled",
     "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED": "false",
-    "WHATSAPP_NATIVE_ENABLED": "false",
-    "WHATSAPP_DISPATCH_MODE": "disabled",
+    "WHATSAPP_ENABLED": "false",
+    "WHATSAPP_EMBEDDED_SIGNUP_ENABLED": "false",
+    "WHATSAPP_MEDIA_ENABLED": "false",
+    "WHATSAPP_MEDIA_SCANNER": "disabled",
     "EMAIL_MAILBOX_SYNC_ENABLED": "false",
     "ALLOW_LEGACY_ORIGINLESS_OUTBOUND": "false",
     "WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED": "false",
@@ -103,8 +102,11 @@ FORBIDDEN_DISABLED_CAPABILITY_KEYS = {
     "AI_RUNTIME_TOKEN_HOST_PATH",
     "LIVE_VOICE_TOKEN_HOST_PATH",
     "PRIVATE_AI_RUNTIME_TOKEN_FILE",
+    "WHATSAPP_NATIVE_ENABLED",
+    "WHATSAPP_DISPATCH_MODE",
     "WHATSAPP_SIDECAR_TOKEN",
     "WHATSAPP_CONNECTOR_HMAC_SECRET",
+    "WHATSAPP_META_APP_SECRET",
     "KNOWLEDGE_EMBEDDING_API_KEY",
     "KNOWLEDGE_EMBEDDING_API_KEY_FILE",
 }
@@ -124,7 +126,7 @@ _SENSITIVE_COMPOSE_KEYS = {
     "LIVEKIT_AGENT_SHARED_SECRET_FILE",
 }
 
-_SERVICE_SECRET_ALLOWLIST = {
+_REQUIRED_SERVICE_SECRET_ALLOWLIST = {
     "migrate-controlled": set(),
     "app-controlled": {
         "SECRET_KEY",
@@ -158,6 +160,13 @@ _SERVICE_SECRET_ALLOWLIST = {
     },
     "worker-webchat-ai-controlled": {"RUNTIME_CONTRACT_SIGNING_SECRET"},
 }
+_OPTIONAL_SERVICE_SECRET_ALLOWLIST = {
+    "whatsapp-sidecar-controlled": set(),
+}
+_SERVICE_SECRET_ALLOWLIST = {
+    **_REQUIRED_SERVICE_SECRET_ALLOWLIST,
+    **_OPTIONAL_SERVICE_SECRET_ALLOWLIST,
+}
 
 _SERVICE_DATABASE_KEYS = {
     "migrate-controlled": "DATABASE_URL_MIGRATION",
@@ -166,19 +175,21 @@ _SERVICE_DATABASE_KEYS = {
     "worker-background-controlled": "DATABASE_URL_BACKGROUND",
     "worker-webchat-ai-controlled": "DATABASE_URL_WEBCHAT_AI",
 }
-
 _SERVICE_QUEUE_KEYS = {
     "worker-outbound-controlled": "outbound",
     "worker-background-controlled": "background",
     "worker-webchat-ai-controlled": "webchat-ai",
 }
-
 _RETIRED_EXECUTION_MARKERS = {
     "worker-handoff-snapshot-controlled",
     "worker-handoff-snapshot",
     "handoff-snapshot",
     "DATABASE_URL_HANDOFF",
+    "WHATSAPP_NATIVE_ENABLED",
+    "WHATSAPP_DISPATCH_MODE",
+    "docker-compose.whatsapp-sidecar.example.yml",
 }
+_WHATSAPP_SECRET_MOUNT = "/run/nexus:ro"
 
 
 class PreflightError(ValueError):
@@ -247,14 +258,47 @@ def _command_vector(service_name: str, service: dict) -> list[str]:
     return rendered
 
 
+def _volume_targets(service: dict) -> set[str]:
+    targets: set[str] = set()
+    for item in service.get("volumes") or []:
+        text = str(item)
+        parts = text.split(":")
+        if len(parts) >= 2:
+            mode = parts[-1] if parts[-1] in {"ro", "rw"} else ""
+            target = parts[-2] if mode else parts[-1]
+            targets.add(target + (":" + mode if mode else ""))
+    return targets
+
+
+def _validate_service_hardening(service_name: str, service: dict) -> None:
+    if "build" in service:
+        raise PreflightError(f"compose_build_forbidden:{service_name}")
+    if "env_file" in service:
+        raise PreflightError("compose_shared_env_file_forbidden")
+    if service.get("read_only") is not True:
+        raise PreflightError(f"compose_read_only_required:{service_name}")
+    if service.get("cap_drop") != ["ALL"]:
+        raise PreflightError(f"compose_cap_drop_required:{service_name}")
+    if "no-new-privileges:true" not in (service.get("security_opt") or []):
+        raise PreflightError(f"compose_no_new_privileges_required:{service_name}")
+    if service.get("pids_limit") != 256:
+        raise PreflightError(f"compose_pids_limit_invalid:{service_name}")
+    if not any(
+        str(value).startswith("/tmp:rw,noexec,nosuid")
+        for value in (service.get("tmpfs") or [])
+    ):
+        raise PreflightError(f"compose_tmpfs_hardening_missing:{service_name}")
+
+
 def _validate_compose(path: Path) -> None:
     document = _load_compose(path)
     services: dict[str, dict] = document["services"]
-    required_services = set(_SERVICE_SECRET_ALLOWLIST)
-    missing = sorted(required_services - set(services))
+    required = set(_REQUIRED_SERVICE_SECRET_ALLOWLIST)
+    allowed = set(_SERVICE_SECRET_ALLOWLIST)
+    missing = sorted(required - set(services))
     if missing:
         raise PreflightError(f"compose_service_missing:{','.join(missing)}")
-    unexpected = sorted(set(services) - required_services)
+    unexpected = sorted(set(services) - allowed)
     if unexpected:
         raise PreflightError(f"compose_service_unexpected:{','.join(unexpected)}")
 
@@ -266,30 +310,13 @@ def _validate_compose(path: Path) -> None:
     for service_name, raw_service in services.items():
         if not isinstance(raw_service, dict):
             raise PreflightError(f"compose_service_invalid:{service_name}")
-        if "build" in raw_service:
-            raise PreflightError(f"compose_build_forbidden:{service_name}")
-        if "env_file" in raw_service:
-            raise PreflightError("compose_shared_env_file_forbidden")
-        if raw_service.get("read_only") is not True:
-            raise PreflightError(f"compose_read_only_required:{service_name}")
-        if raw_service.get("cap_drop") != ["ALL"]:
-            raise PreflightError(f"compose_cap_drop_required:{service_name}")
-        if "no-new-privileges:true" not in (raw_service.get("security_opt") or []):
-            raise PreflightError(f"compose_no_new_privileges_required:{service_name}")
-        if raw_service.get("pids_limit") != 256:
-            raise PreflightError(f"compose_pids_limit_invalid:{service_name}")
-        if not any(
-            str(value).startswith("/tmp:rw,noexec,nosuid")
-            for value in (raw_service.get("tmpfs") or [])
-        ):
-            raise PreflightError(f"compose_tmpfs_hardening_missing:{service_name}")
-
+        _validate_service_hardening(service_name, raw_service)
         environment = raw_service.get("environment") or {}
         if not isinstance(environment, dict):
             raise PreflightError(f"compose_environment_invalid:{service_name}")
-        allowed = _SERVICE_SECRET_ALLOWLIST.get(service_name, set())
+        secret_allowlist = _SERVICE_SECRET_ALLOWLIST.get(service_name, set())
         for key in _SENSITIVE_COMPOSE_KEYS:
-            if key in environment and key not in allowed:
+            if key in environment and key not in secret_allowlist:
                 raise PreflightError(f"compose_secret_not_allowed:{service_name}:{key}")
         if service_name in _SERVICE_DATABASE_KEYS:
             value = str(environment.get("DATABASE_URL") or "")
@@ -319,10 +346,31 @@ def _validate_compose(path: Path) -> None:
     image_value = str(services["app-controlled"].get("image") or "")
     if "${CONTROLLED_IMAGE:?" not in image_value:
         raise PreflightError("compose_digest_variable_missing")
+
+    sidecar = services.get("whatsapp-sidecar-controlled")
+    secret_consumers = {
+        "app-controlled",
+        "worker-outbound-controlled",
+        "worker-background-controlled",
+    }
+    if sidecar is not None:
+        secret_consumers.add("whatsapp-sidecar-controlled")
+        if sidecar.get("profiles") != ["whatsapp-baileys"]:
+            raise PreflightError("compose_whatsapp_sidecar_profile_invalid")
+        if "${WHATSAPP_SIDECAR_IMAGE:?" not in str(sidecar.get("image") or ""):
+            raise PreflightError("compose_whatsapp_sidecar_digest_variable_missing")
+        if _command_vector("whatsapp-sidecar-controlled", sidecar) != [
+            "node",
+            "dist/index.js",
+        ]:
+            raise PreflightError("compose_whatsapp_sidecar_command_invalid")
+    for service_name in secret_consumers:
+        if _WHATSAPP_SECRET_MOUNT not in _volume_targets(services[service_name]):
+            raise PreflightError(f"compose_whatsapp_secret_mount_missing:{service_name}")
+
     for forbidden in (
         "external: true",
         "production_runtime",
-        "whatsapp-sidecar",
         "node:22-bookworm-slim",
         ":latest",
         "NEXUS_RUNTIME_SECRETS_HOST_PATH",
@@ -391,9 +439,9 @@ def _manifest_identity(manifest: dict) -> tuple[dict, dict]:
     if manifest.get("release_class") != "controlled_server_deployment":
         raise PreflightError("manifest_release_class_invalid")
     candidate = manifest.get("candidate")
+    safety = manifest.get("safety")
     if not isinstance(candidate, dict):
         raise PreflightError("manifest_candidate_invalid")
-    safety = manifest.get("safety")
     if not isinstance(safety, dict):
         raise PreflightError("manifest_safety_invalid")
     expected_safety = {
@@ -595,6 +643,9 @@ def validate(
         "NEXUS_UPLOADS_HOST_PATH": "directory",
         "NEXUS_UPLOAD_BACKUP_HOST_PATH": "directory",
     }
+    compose_document = _load_compose(compose_path)
+    if "whatsapp-sidecar-controlled" in compose_document["services"]:
+        path_keys["NEXUS_WHATSAPP_SECRETS_HOST_PATH"] = "directory"
     checked_paths: dict[str, str] = {}
     declared_paths: dict[str, Path] = {}
     for key, kind in path_keys.items():
@@ -614,7 +665,7 @@ def validate(
 
     app_database = database_roles["app"]
     return {
-        "schema": "nexus.osr.controlled-server-preflight.v2",
+        "schema": "nexus.osr.controlled-server-preflight.v3",
         "status": "pass",
         "source_sha": source,
         "frontend_build_sha": frontend,
@@ -633,6 +684,8 @@ def validate(
         "declared_host_paths": checked_paths,
         "shared_env_file_injected": False,
         "disabled_capability_credentials_injected": False,
+        "whatsapp_enabled": False,
+        "whatsapp_media_enabled": False,
         "external_effects_enabled": False,
         "production_ready": False,
         "full_osr_automation": "NO_GO",
