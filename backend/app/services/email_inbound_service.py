@@ -190,11 +190,6 @@ def _bind_customer_email(
 ) -> None:
     if ticket.customer_id is None:
         return
-    if ticket.tenant_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="ticket_tenant_required_for_customer_identity",
-        )
     customer = db.get(Customer, ticket.customer_id)
     if customer is None or customer.tenant_id != ticket.tenant_id:
         raise HTTPException(
