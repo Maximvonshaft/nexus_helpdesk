@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models_whatsapp import WhatsAppEmbeddedSignupSession
+from ..models_whatsapp import WhatsAppConnection, WhatsAppEmbeddedSignupSession
 from ..schemas_whatsapp import WhatsAppConnectionCreate
 from ..schemas_whatsapp_signup import (
     EmbeddedSignupCompleteRead,
@@ -16,6 +18,10 @@ from ..schemas_whatsapp_signup import (
 )
 from ..services.identity_tenant_scope import actor_tenant_id
 from ..services.permissions import ensure_can_manage_channel_accounts
+from ..services.whatsapp_connection_service import (
+    WhatsAppConnectionError,
+    get_whatsapp_connection,
+)
 from ..services.whatsapp_embedded_signup import (
     EmbeddedSignupAccountIntent,
     EmbeddedSignupError,
@@ -41,6 +47,15 @@ router = APIRouter(
     prefix="/api/admin/whatsapp/embedded-signup",
     tags=["admin-whatsapp-embedded-signup"],
 )
+
+
+_RETRYABLE_BINDING_CODES = {
+    "baileys_sidecar_timeout",
+    "baileys_sidecar_transport_error",
+    "meta_cloud_timeout",
+    "meta_cloud_transport_error",
+    "meta_waba_subscription_failed",
+}
 
 
 def _tenant_id(db: Session, current_user) -> int:
@@ -94,6 +109,79 @@ def _signup_session(
     )
 
 
+def _completed_connection(
+    db: Session,
+    *,
+    signup: WhatsAppEmbeddedSignupSession,
+) -> WhatsAppConnection:
+    if signup.connection_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="embedded_signup_completed_connection_missing",
+        )
+    try:
+        connection = get_whatsapp_connection(db, signup.connection_id)
+    except WhatsAppConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="embedded_signup_completed_connection_missing",
+        ) from exc
+    if connection.tenant_id != signup.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="embedded_signup_connection_scope_mismatch",
+        )
+    return connection
+
+
+def _verify_idempotent_state(
+    signup: WhatsAppEmbeddedSignupSession,
+    state: str,
+) -> None:
+    supplied = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(supplied, signup.state_digest):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "embedded_signup_state_invalid",
+                "retryable": False,
+            },
+        )
+
+
+def _binding_error(exc: HTTPException) -> tuple[str, bool]:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    code = str(detail.get("error_code") or "embedded_signup_binding_failed")[:120]
+    retryable = bool(detail.get("retryable")) or code in _RETRYABLE_BINDING_CODES
+    return code, retryable
+
+
+def _completion_result(
+    *,
+    session_id: str,
+    connection: WhatsAppConnection,
+    binding_state: str,
+    binding_error_code: str | None = None,
+    binding_retryable: bool = False,
+    idempotent: bool = False,
+) -> EmbeddedSignupCompleteRead:
+    account = connection.channel_account
+    return EmbeddedSignupCompleteRead(
+        ok=True,
+        session_id=session_id,
+        connection_id=connection.id,
+        account_id=account.account_id,
+        waba_id=str(connection.waba_id or ""),
+        phone_number_id=str(connection.phone_number_id or ""),
+        desired_state=connection.desired_state,
+        verification_state=connection.verification_state,
+        binding_state=binding_state,
+        binding_error_code=binding_error_code,
+        binding_retryable=binding_retryable,
+        idempotent=idempotent,
+    )
+
+
 @router.post(
     "/sessions",
     response_model=EmbeddedSignupSessionRead,
@@ -131,6 +219,25 @@ def complete_embedded_signup_session(
 ):
     ensure_can_manage_channel_accounts(current_user, db)
     tenant_id = _tenant_id(db, current_user)
+    existing = _signup_session(
+        db,
+        session_id=session_id,
+        tenant_id=tenant_id,
+        requested_by=current_user.id,
+    )
+    if existing is not None and existing.status == "completed":
+        _verify_idempotent_state(existing, payload.state)
+        connection = _completed_connection(db, signup=existing)
+        error_code = connection.last_error_code
+        return _completion_result(
+            session_id=session_id,
+            connection=connection,
+            binding_state=("attention_required" if error_code else "started"),
+            binding_error_code=error_code,
+            binding_retryable=bool(error_code in _RETRYABLE_BINDING_CODES),
+            idempotent=True,
+        )
+
     intent = _intent(payload)
     signup: WhatsAppEmbeddedSignupSession | None = None
     try:
@@ -178,7 +285,7 @@ def complete_embedded_signup_session(
         )
     verify_token = secrets.token_urlsafe(48)
     try:
-        connection = create_whatsapp_connection(
+        created = create_whatsapp_connection(
             WhatsAppConnectionCreate(
                 display_name=payload.display_name,
                 account_id=payload.account_id,
@@ -205,7 +312,10 @@ def complete_embedded_signup_session(
         )
         if signup is not None:
             with managed_session(db):
-                mark_signup_failed(signup, code="embedded_signup_connection_create_failed")
+                mark_signup_failed(
+                    signup,
+                    code="embedded_signup_connection_create_failed",
+                )
                 db.flush()
         raise
 
@@ -221,17 +331,28 @@ def complete_embedded_signup_session(
             detail="embedded_signup_session_lost",
         )
     with managed_session(db):
-        mark_signup_completed(signup, connection_id=connection.id)
+        mark_signup_completed(signup, connection_id=created.id)
         db.flush()
 
-    binding = start_whatsapp_binding(connection.id, db, current_user)
-    return EmbeddedSignupCompleteRead(
-        ok=True,
+    connection = _completed_connection(db, signup=signup)
+    try:
+        start_whatsapp_binding(connection.id, db, current_user)
+    except HTTPException as exc:
+        db.expire_all()
+        connection = _completed_connection(db, signup=signup)
+        error_code, retryable = _binding_error(exc)
+        return _completion_result(
+            session_id=session_id,
+            connection=connection,
+            binding_state="attention_required",
+            binding_error_code=error_code,
+            binding_retryable=retryable,
+        )
+
+    db.expire_all()
+    connection = _completed_connection(db, signup=signup)
+    return _completion_result(
         session_id=session_id,
-        connection_id=connection.id,
-        account_id=connection.account_id,
-        waba_id=assets.waba_id,
-        phone_number_id=assets.phone_number_id,
-        desired_state="binding",
-        verification_state=binding.verification_state,
+        connection=connection,
+        binding_state="started",
     )
