@@ -5,12 +5,13 @@ import {
   type CallbackEnvelope,
   type CallbackKind
 } from "./callbackOutbox.js";
-import { connectorHeaders } from "./security.js";
+import { connectorBinaryHeaders, connectorHeaders } from "./security.js";
 import { assertSafeAccountId } from "./sessionStore.js";
 import type {
   DesiredAccountResponse,
   NormalizedInboundMessage,
-  SidecarConfig
+  SidecarConfig,
+  WhatsAppMediaKind
 } from "./types.js";
 
 const CALLBACK_PATHS: Record<CallbackKind, string> = {
@@ -41,6 +42,56 @@ export class BackendClient {
       payload: message
     });
     await this.flushCallbacks();
+  }
+
+  async postMedia(options: {
+    accountId: string;
+    messageId: string;
+    mediaKind: WhatsAppMediaKind;
+    mediaType: string;
+    filename?: string | null;
+    content: Buffer;
+  }): Promise<void> {
+    const accountId = assertSafeAccountId(options.accountId);
+    const messageId = String(options.messageId || "").trim();
+    if (!messageId || messageId.length > 180) {
+      throw new Error("invalid_media_message_id");
+    }
+    if (!options.content.byteLength) {
+      throw new Error("empty_media_content");
+    }
+    const sha256 = createHash("sha256").update(options.content).digest("hex");
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.max(this.config.callbackTimeoutMs, 60_000)
+    );
+    try {
+      const response = await fetch(
+        `${this.config.backendUrl}/api/integrations/whatsapp/baileys/media`,
+        {
+          method: "POST",
+          headers: connectorBinaryHeaders({
+            accountId,
+            connectorKey: this.config.connectorKey,
+            hmacSecret: this.config.connectorHmacSecret,
+            body: options.content,
+            messageId,
+            mediaKind: options.mediaKind,
+            mediaType: options.mediaType,
+            filename: options.filename,
+            sha256
+          }),
+          body: options.content,
+          signal: controller.signal
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`backend_media_upload_failed:${response.status}`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async postStatus(accountId: string, payload: unknown): Promise<void> {
