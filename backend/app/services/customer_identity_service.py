@@ -9,7 +9,7 @@ from ..models import Customer, Tenant
 from ..models_channel_intake import CustomerIdentityBinding
 from ..utils.normalize import normalize_email, normalize_phone
 from ..utils.time import utc_now
-from .tenant_authority import stamp_runtime_tenant
+from .tenant_authority import stamp_runtime_tenant, tenant_runtime_authority_mode
 
 _SUPPORTED_IDENTITY_TYPES = frozenset({"email", "phone", "external_ref"})
 
@@ -43,23 +43,30 @@ def normalize_customer_identity(
     return CustomerIdentity(kind, normalized[:320])
 
 
-def _active_tenant(db: Session, tenant_id: int) -> Tenant:
+def _validate_scope(db: Session, tenant_id: int | None) -> None:
+    if tenant_id is None:
+        if tenant_runtime_authority_mode() != "shadow":
+            raise CustomerIdentityError("customer_identity_shadow_scope_forbidden")
+        return
     tenant = db.get(Tenant, int(tenant_id))
     if tenant is None or not tenant.is_active:
         raise CustomerIdentityError("customer_identity_tenant_missing")
-    return tenant
+
+
+def _scope_predicate(column, tenant_id: int | None):
+    return column == tenant_id if tenant_id is not None else column.is_(None)
 
 
 def _binding(
     db: Session,
     *,
-    tenant_id: int,
+    tenant_id: int | None,
     identity: CustomerIdentity,
 ) -> CustomerIdentityBinding | None:
     return (
         db.query(CustomerIdentityBinding)
         .filter(
-            CustomerIdentityBinding.tenant_id == tenant_id,
+            _scope_predicate(CustomerIdentityBinding.tenant_id, tenant_id),
             CustomerIdentityBinding.identity_type == identity.identity_type,
             CustomerIdentityBinding.normalized_value == identity.normalized_value,
         )
@@ -70,10 +77,12 @@ def _binding(
 def _legacy_customer_candidates(
     db: Session,
     *,
-    tenant_id: int,
+    tenant_id: int | None,
     identity: CustomerIdentity,
 ) -> list[Customer]:
-    query = db.query(Customer).filter(Customer.tenant_id == tenant_id)
+    query = db.query(Customer).filter(
+        _scope_predicate(Customer.tenant_id, tenant_id)
+    )
     if identity.identity_type == "email":
         query = query.filter(Customer.email_normalized == identity.normalized_value)
     elif identity.identity_type == "phone":
@@ -122,17 +131,12 @@ def bind_customer_identity(
     source: str,
     display_name: str | None = None,
 ) -> CustomerIdentityBinding:
-    """Bind an additional identity without permitting cross-Customer takeover."""
+    """Bind an additional identity without cross-scope Customer takeover."""
 
-    if customer.tenant_id is None:
-        raise CustomerIdentityError("customer_identity_customer_tenant_missing")
-    _active_tenant(db, int(customer.tenant_id))
+    tenant_id = int(customer.tenant_id) if customer.tenant_id is not None else None
+    _validate_scope(db, tenant_id)
     identity = normalize_customer_identity(identity_type, identity_value)
-    existing = _binding(
-        db,
-        tenant_id=int(customer.tenant_id),
-        identity=identity,
-    )
+    existing = _binding(db, tenant_id=tenant_id, identity=identity)
     if existing is not None:
         if existing.customer_id != customer.id:
             raise CustomerIdentityError("customer_identity_already_bound")
@@ -144,7 +148,7 @@ def bind_customer_identity(
     try:
         with db.begin_nested():
             binding = CustomerIdentityBinding(
-                tenant_id=int(customer.tenant_id),
+                tenant_id=tenant_id,
                 customer_id=customer.id,
                 identity_type=identity.identity_type,
                 normalized_value=identity.normalized_value,
@@ -155,11 +159,7 @@ def bind_customer_identity(
             db.flush()
             return binding
     except IntegrityError:
-        winner = _binding(
-            db,
-            tenant_id=int(customer.tenant_id),
-            identity=identity,
-        )
+        winner = _binding(db, tenant_id=tenant_id, identity=identity)
         if winner is None:
             raise
         if winner.customer_id != customer.id:
@@ -170,21 +170,20 @@ def bind_customer_identity(
 def resolve_or_create_customer(
     db: Session,
     *,
-    tenant_id: int,
+    tenant_id: int | None,
     identity_type: str,
     identity_value: str,
     display_name: str | None = None,
     source: str,
 ) -> Customer:
-    """Resolve one Customer through the sole Tenant-scoped identity authority.
+    """Resolve one Customer through the sole scoped identity authority.
 
-    The unique binding is the concurrency boundary. Existing pre-authority
-    Customer rows are adopted only when the Tenant-scoped match is unambiguous.
-    A competing writer loses the nested transaction and then reads the winning
-    binding, so duplicate Customers are not retained as a compatibility path.
+    Real Tenants and the isolated non-production shadow domain use the same
+    service and database concurrency boundary. Production enforce mode rejects
+    the shadow domain before any read or write.
     """
 
-    _active_tenant(db, tenant_id)
+    _validate_scope(db, tenant_id)
     identity = normalize_customer_identity(identity_type, identity_value)
     existing = _binding(db, tenant_id=tenant_id, identity=identity)
     if existing is not None:
