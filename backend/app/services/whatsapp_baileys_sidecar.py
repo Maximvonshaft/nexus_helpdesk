@@ -7,7 +7,7 @@ from typing import Any, Literal, Protocol
 import httpx
 
 from ..models_whatsapp import WhatsAppConnection
-from ..settings import get_settings
+from .whatsapp_runtime_settings import get_whatsapp_runtime_settings
 
 
 class BaileysSidecarHttpClient(Protocol):
@@ -235,21 +235,21 @@ def _request(
     payload: dict[str, Any] | None = None,
     client: BaileysSidecarHttpClient | None = None,
 ) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.whatsapp_enabled:
+    settings = get_whatsapp_runtime_settings()
+    if not settings.enabled:
         raise BaileysSidecarError(
             "whatsapp_disabled",
             "WhatsApp is disabled in this runtime",
             retryable=False,
         )
-    token = settings.whatsapp_baileys_sidecar_token
+    token = settings.baileys_sidecar_token
     if not token:
         raise BaileysSidecarError(
             "whatsapp_baileys_sidecar_token_missing",
             "Baileys sidecar token is not configured",
             retryable=False,
         )
-    url = f"{settings.whatsapp_baileys_sidecar_url}/accounts/{account_id}/{action}"
+    url = f"{settings.baileys_sidecar_url}/accounts/{account_id}/{action}"
     active_client = client or httpx.Client()
     close_client = client is None
     try:
@@ -257,14 +257,14 @@ def _request(
             response = active_client.get(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=float(settings.whatsapp_transport_timeout_seconds),
+                timeout=float(settings.transport_timeout_seconds),
             )
         else:
             response = active_client.post(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
                 json=payload,
-                timeout=float(settings.whatsapp_transport_timeout_seconds),
+                timeout=float(settings.transport_timeout_seconds),
             )
         return _response_json(response)
     except httpx.TimeoutException as exc:
