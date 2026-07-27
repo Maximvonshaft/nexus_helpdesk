@@ -102,3 +102,49 @@ export type WhatsAppTestResult = {
   verification_state: string
   occurred_at: string
 }
+
+export type EmbeddedSignupIntent = {
+  display_name: string
+  account_id: string
+  market_id?: number | null
+  priority?: number
+}
+
+export type EmbeddedSignupSession = {
+  session_id: string
+  state: string
+  expires_at: string
+  app_id: string
+  configuration_id: string
+  graph_api_version: string
+  allowed_origin: string
+}
+
+export type EmbeddedSignupFinish = {
+  business_account_id?: string | null
+  waba_id: string
+  phone_number_id: string
+}
+
+export type EmbeddedSignupCompletion = {
+  state: string
+  code: string
+  business_account_id?: string | null
+  waba_id: string
+  phone_number_id: string
+  display_name: string
+  account_id: string
+  market_id?: number | null
+  priority?: number
+}
+
+export type EmbeddedSignupCompleteResult = {
+  ok: boolean
+  session_id: string
+  connection_id: number
+  account_id: string
+  waba_id: string
+  phone_number_id: string
+  desired_state: string
+  verification_state: string
+}
