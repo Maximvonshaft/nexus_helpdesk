@@ -47,7 +47,7 @@ from app.services.handoff_routing_policy import (  # noqa: E402
 from app.services.webchat_handoff_service import (  # noqa: E402
     release_handoff_request,
 )
-from app.utils.time import utc_now  # noqa: E402
+from app.utils.time import ensure_utc, utc_now  # noqa: E402
 from app.webchat_models import (  # noqa: E402
     WebchatConversation,
     WebchatHandoffDecision,
@@ -181,7 +181,7 @@ def test_release_excludes_previous_owner_only_for_the_new_generation(db_session)
     assert decision.decision == "declined"
     assert decision.reason_code == "agent_released"
     assert decision.expires_at is not None
-    assert decision.expires_at > utc_now()
+    assert ensure_utc(decision.expires_at) > ensure_utc(utc_now())
     assert active_decline_exists(
         db_session,
         request_row=request_row,
