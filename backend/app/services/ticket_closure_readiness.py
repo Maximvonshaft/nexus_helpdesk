@@ -65,10 +65,13 @@ _BUSINESS_OUTCOME_SOURCE_KINDS = frozenset(
         "policy_decision",
     }
 )
-_SUCCESSFUL_NOTIFICATION_STATES = frozenset(
-    {"accepted", "delivered", "opened", "sent"}
+_NOTIFICATION_ATTEMPT_STATES = frozenset(
+    {"accepted", "pending", "queued", "sent"}
 )
-_FAILURE_NOTIFICATION_STATES = frozenset(
+_NOTIFICATION_CONFIRMED_STATES = frozenset(
+    {"confirmed", "delivered", "opened", "read"}
+)
+_NOTIFICATION_FAILURE_STATES = frozenset(
     {"bounced", "failed", "rejected", "complained", "dead"}
 )
 
@@ -159,11 +162,7 @@ def _resolve_scenario(
 
 
 def _field_projection(ticket: Ticket) -> tuple[set[str], set[str]]:
-    """Project only stable Ticket-as-Case identity and customer-provided fields.
-
-    Action, Provider, operational, notification and closure completion never use
-    these mutable summary fields; they come exclusively from structured ledgers.
-    """
+    """Project stable case identity and customer-provided inputs only."""
 
     facts: set[str] = set()
     inputs: set[str] = set()
@@ -198,17 +197,20 @@ def _field_projection(ticket: Ticket) -> tuple[set[str], set[str]]:
 def _notification_projection(
     outbound: list[TicketOutboundMessage],
 ) -> tuple[str, set[str], set[str], bool, list[int], datetime | None]:
+    """Project technical attempts separately from confirmed customer delivery."""
+
     notification_state = "not_required"
     actions: set[str] = set()
     outcomes: set[str] = set()
     repair_required = False
     ids: list[int] = []
     latest_at: datetime | None = None
+
     for row in outbound:
         ids.append(row.id)
-        status = (
-            row.status.value if hasattr(row.status, "value") else str(row.status)
-        )
+        status = str(
+            row.status.value if hasattr(row.status, "value") else row.status
+        ).strip().lower()
         delivery = str(row.delivery_status or "").strip().lower()
         observed = ensure_utc(
             row.delivery_receipt_at
@@ -220,21 +222,27 @@ def _notification_projection(
             latest_at is None or observed > latest_at
         ):
             latest_at = observed
+
         if (
             status in {MessageStatus.failed.value, MessageStatus.dead.value}
-            or delivery in _FAILURE_NOTIFICATION_STATES
+            or delivery in _NOTIFICATION_FAILURE_STATES
         ):
             repair_required = True
-        if (
-            delivery in _SUCCESSFUL_NOTIFICATION_STATES
-            or status == MessageStatus.sent.value
-        ):
+
+        attempted = (
+            status in {MessageStatus.pending.value, MessageStatus.sent.value}
+            or delivery in _NOTIFICATION_ATTEMPT_STATES
+            or delivery in _NOTIFICATION_CONFIRMED_STATES
+        )
+        confirmed = delivery in _NOTIFICATION_CONFIRMED_STATES
+        if attempted:
             actions.add("notify_customer")
-            outcomes.add("customer_notified")
-            if delivery == "delivered":
-                notification_state = "delivered"
-            elif notification_state != "delivered":
+            if notification_state == "not_required":
                 notification_state = "sent"
+        if confirmed:
+            outcomes.add("customer_notified")
+            notification_state = "delivered"
+
     return (
         notification_state,
         actions,
@@ -264,6 +272,13 @@ def build_closure_snapshot(
     *,
     now: datetime | None = None,
 ) -> ClosureSnapshot:
+    """Build the base fact/action/outcome projection.
+
+    Notification delivery strength is applied by
+    ``notification_evidence_policy.build_governed_closure_snapshot``. This
+    function is not itself a close authorization.
+    """
+
     observed_now = ensure_utc(now or utc_now())
     if observed_now is None:
         raise ValueError("closure_time_unavailable")
@@ -389,20 +404,13 @@ def build_closure_snapshot(
 
 
 def require_closure_ready(db: Session, ticket: Ticket) -> dict[str, Any]:
-    snapshot = build_closure_snapshot(db, ticket)
-    if not snapshot.readiness.closure_ready:
-        from fastapi import HTTPException
+    """Compatibility name for the one governed close authorization."""
 
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "safe_closure_not_ready",
-                "scenario_key": snapshot.receipt.get("scenario_key"),
-                "readiness": snapshot.readiness.as_dict(),
-                "receipt_sha256": snapshot.receipt["receipt_sha256"],
-            },
-        )
-    return snapshot.receipt
+    from .notification_evidence_policy import (
+        require_governed_closure_ready,
+    )
+
+    return require_governed_closure_ready(db, ticket)
 
 
 def append_closure_receipt_event(
@@ -522,33 +530,36 @@ def invalidate_latest_closure_receipt(
     return row
 
 
-def _record_state(kind: str, state: str) -> tuple[str, str]:
+def _record_state(
+    kind: str,
+    key: str,
+    state: str,
+    allowed_waiver_reasons: set[str],
+) -> tuple[str, str]:
     if kind == "action":
         return (
             "execution_attempt",
-            (
-                "succeeded"
-                if state in {"verified", "completed"}
-                else state
-            ),
+            "succeeded" if state in {"verified", "completed"} else state,
         )
     if kind == "outcome":
         return (
             "operational_outcome",
-            (
-                "confirmed"
-                if state in {"verified", "completed"}
-                else state
-            ),
+            "confirmed" if state in {"verified", "completed"} else state,
         )
-    return (
-        "customer_notification",
-        (
-            "delivered"
-            if state in {"verified", "completed"}
-            else state
-        ),
-    )
+    if state == "waived":
+        if key not in allowed_waiver_reasons:
+            raise ValueError("closure_notification_waiver_not_allowed")
+        return "customer_notification", "waived"
+    if key == "delivered" and state in {"verified", "completed"}:
+        return "customer_notification", "delivered"
+    if key == "sent" and state in {"verified", "completed"}:
+        return "customer_notification", "sent"
+    if key in {"not_required", "prohibited"} and state in {
+        "verified",
+        "completed",
+    }:
+        return "customer_notification", key
+    return "customer_notification", state
 
 
 def record_closure_evidence(
@@ -595,6 +606,7 @@ def record_closure_evidence(
         raise ValueError(
             "closure_business_outcome_source_not_authoritative"
         )
+
     normalized_ref = str(source_ref or "").strip()
     normalized_revision = str(source_revision or "").strip()
     if not normalized_key or not normalized_ref or not normalized_revision:
@@ -603,13 +615,16 @@ def record_closure_evidence(
     scenario, _, _, error = _resolve_scenario(ticket)
     if scenario is None:
         raise ValueError(error or "scenario_unavailable")
+    allowed_waiver_reasons = set(
+        scenario.allowed_no_notification_reasons
+    )
     allowed_keys = {
         "fact": set(scenario.required_fact_classes),
         "customer_input": set(scenario.required_customer_inputs),
         "action": set(scenario.allowed_action_classes),
         "outcome": set(scenario.required_outcome_levels),
         "notification": (
-            set(scenario.allowed_no_notification_reasons)
+            allowed_waiver_reasons
             | {"sent", "delivered", "not_required", "prohibited"}
         ),
     }
@@ -617,6 +632,9 @@ def record_closure_evidence(
         raise ValueError(
             "closure_evidence_key_not_in_scenario_contract"
         )
+    if normalized_kind != "notification" and normalized_state == "waived":
+        raise ValueError("closure_evidence_waiver_kind_invalid")
+
     observed = ensure_utc(observed_at)
     if observed is None:
         raise ValueError("closure_evidence_observed_at_required")
@@ -666,17 +684,19 @@ def record_closure_evidence(
 
     record_type, outcome_state = _record_state(
         normalized_kind,
+        normalized_key,
         normalized_state,
+        allowed_waiver_reasons,
     )
-    payload: dict[str, Any]
     if normalized_kind == "action":
-        payload = {"action_class": normalized_key}
+        payload: dict[str, Any] = {"action_class": normalized_key}
     elif normalized_kind == "outcome":
         payload = {"outcome_level": normalized_key}
     elif normalized_state == "waived":
         payload = {"waiver_reason": normalized_key}
     else:
         payload = {"notification_state": normalized_key}
+
     row, created = append_case_outcome(
         db,
         ticket_id=ticket.id,
