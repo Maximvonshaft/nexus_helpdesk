@@ -17,7 +17,10 @@ def test_closure_receipt_uses_structured_case_ledgers_and_contains_no_payloads()
     source = (ROOT / "backend/app/services/ticket_closure_readiness.py").read_text(encoding="utf-8")
     for marker in (
         "nexus.case-closure-evidence.v2",
-        "nexus.ticket-closure-receipt.v2",
+        "nexus.ticket-closure-receipt.v3",
+        "scenario_assignment_revision",
+        "scenario_catalog_sha256",
+        "scenario_definition_sha256",
         "project_case_ledger(",
         "record_case_evidence(",
         "append_case_outcome(",
