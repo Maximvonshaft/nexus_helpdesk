@@ -12,7 +12,6 @@ export interface InboundMapperOptions {
 
 interface ExtractedContent {
   body: string;
-  mediaId: string | null;
   mediaKind: WhatsAppMediaKind | null;
   mediaMimeType: string | null;
   mediaFilename: string | null;
@@ -38,7 +37,6 @@ function extractText(message: any): ExtractedContent {
   if (content.conversation) {
     return {
       body: String(content.conversation).trim(),
-      mediaId: null,
       mediaKind: null,
       mediaMimeType: null,
       mediaFilename: null,
@@ -48,7 +46,6 @@ function extractText(message: any): ExtractedContent {
   if (extended.text) {
     return {
       body: String(extended.text).trim(),
-      mediaId: null,
       mediaKind: null,
       mediaMimeType: null,
       mediaFilename: null,
@@ -67,7 +64,6 @@ function extractText(message: any): ExtractedContent {
     const caption = String(value.caption || filename || "").trim();
     return {
       body: `<media:${kind}>${caption ? ` ${caption}` : ""}`,
-      mediaId: value.url ? String(value.url) : value.directPath ? String(value.directPath) : null,
       mediaKind: kind,
       mediaMimeType: value.mimetype ? String(value.mimetype).split(";", 1)[0].trim().toLowerCase() : null,
       mediaFilename: filename,
@@ -82,7 +78,6 @@ function extractText(message: any): ExtractedContent {
     const label = String(location.name || location.address || "").trim();
     return {
       body: `<location:${coordinates}>${label ? ` ${label}` : ""}`,
-      mediaId: null,
       mediaKind: null,
       mediaMimeType: null,
       mediaFilename: null,
@@ -92,7 +87,6 @@ function extractText(message: any): ExtractedContent {
   if (content.contactMessage || content.contactsArrayMessage) {
     return {
       body: "<contacts>",
-      mediaId: null,
       mediaKind: null,
       mediaMimeType: null,
       mediaFilename: null,
@@ -101,7 +95,6 @@ function extractText(message: any): ExtractedContent {
   }
   return {
     body: "",
-    mediaId: null,
     mediaKind: null,
     mediaMimeType: null,
     mediaFilename: null,
@@ -165,10 +158,11 @@ export function normalizeBaileysInbound(
     }
   }
   const timestamp = Number(event.messageTimestamp || Date.now() / 1000);
+  const externalMessageId = String(event.key.id);
   const normalized: NormalizedInboundMessage = {
     transport: "baileys_sidecar",
     account_id: accountId,
-    external_message_id: String(event.key.id),
+    external_message_id: externalMessageId,
     chat_jid: chatJid,
     sender_jid: senderJid,
     sender_phone: phoneFromJid(senderJid),
@@ -180,7 +174,7 @@ export function normalizeBaileysInbound(
     from_me: fromMe,
     projection_mode: projectionMode,
     reply_to_message_id: extracted.replyToMessageId,
-    media_id: extracted.mediaId,
+    media_id: extracted.mediaKind ? externalMessageId : null,
     media_kind: extracted.mediaKind,
     media_mime_type: extracted.mediaMimeType,
     media_filename: extracted.mediaFilename
