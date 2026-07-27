@@ -84,10 +84,8 @@ def _clear_web_and_ai_secrets(monkeypatch) -> None:
 
 def test_production_settings_accept_hardened_web_contract(monkeypatch):
     _frontend_exists(monkeypatch)
-
     with patched_env(production_env()):
         settings = Settings()
-
     assert settings.app_env == "production"
     assert settings.process_role == "web"
     assert settings.is_http_process is True
@@ -168,7 +166,6 @@ def test_removed_compatibility_settings_are_not_runtime_attributes(monkeypatch):
         "migration",
         "worker-outbound",
         "worker-background",
-        "worker-handoff-snapshot",
     ],
 )
 def test_non_http_production_roles_do_not_require_web_or_ai_secrets(
@@ -206,6 +203,22 @@ def test_non_http_production_roles_do_not_require_web_or_ai_secrets(
     assert settings.is_postgres is True
     assert settings.jwt_secret_key is None
     assert settings.knowledge_embeddings_enabled is False
+
+
+def test_retired_snapshot_process_role_fails_closed(tmp_path):
+    env = production_env(
+        NEXUS_PROCESS_ROLE="worker-handoff-snapshot",
+        STORAGE_BACKEND="local",
+        UPLOAD_ROOT=str(tmp_path / "retired-snapshot"),
+        WEBCHAT_AI_ENABLED="false",
+        WEBCHAT_AI_AUTO_REPLY_MODE="off",
+        PROVIDER_RUNTIME_ENABLED="false",
+        PRIVATE_AI_RUNTIME_ENABLED="false",
+        KNOWLEDGE_EMBEDDINGS_ENABLED="false",
+    )
+    with patched_env(env):
+        with pytest.raises(RuntimeError, match="NEXUS_PROCESS_ROLE"):
+            Settings()
 
 
 def test_webchat_ai_worker_requires_real_embedding_only_when_ai_is_enabled(tmp_path):
