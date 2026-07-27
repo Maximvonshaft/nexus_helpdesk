@@ -44,6 +44,7 @@ from ..api.support_intelligence import router as support_intelligence_router
 from ..api.telephony import router as telephony_router
 from ..api.ticket_closure import router as ticket_closure_router
 from ..api.ticket_perf import router as ticket_perf_router
+from ..api.ticket_scenario import router as ticket_scenario_router
 from ..api.tickets import router as tickets_router
 from ..api.webchat import router as webchat_router
 from ..api.webchat_events import router as webchat_events_router
@@ -131,6 +132,7 @@ def register_api_routers(app: FastAPI) -> None:
         persona_profiles_router,
         stats_router,
         tickets_router,
+        ticket_scenario_router,
         ticket_closure_router,
         speedaf_actions_router,
         speedaf_cancel_router,
